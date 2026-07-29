@@ -1,6 +1,5 @@
 import {
   AccountProfileResponseSchema,
-  DEFAULT_BUILT_IN_BACKEND_PROFILES,
   SessionMcpSelectionV1Schema,
   convertBackendTargetRefV2ToV1,
   readBackendTargetRefV2,
@@ -714,11 +713,11 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     spawnProfilesList: async (args) => {
       const accountSettings = await readAccountSettings();
-      const { customProfiles } = accountSettings
+      const { visibleProfiles } = accountSettings
         ? readProfilesFromAccountSettings(accountSettings as any)
-        : { customProfiles: [] };
+        : readProfilesFromAccountSettings({});
       const normalizedAgentId = normalizeStringValue((args as { agentId?: unknown }).agentId);
-      const items = [...DEFAULT_BUILT_IN_BACKEND_PROFILES, ...customProfiles]
+      const items = visibleProfiles
         .map(mapProfileToListItem)
         .filter((profile) => !normalizedAgentId || profile.supportedAgentIds.includes(normalizedAgentId))
         .map((profile) => ({
@@ -741,7 +740,6 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const accountProfile = await readAccountProfile();
       const accountSettings = await readAccountSettings();
       const supportedServiceIds = resolveAgentSupportedConnectedServiceIds({
-        connectedServicesFeatureEnabled: true,
         agentCore: AGENTS_CORE[agentId],
       });
       const connectedServicesV2 = accountProfile?.connectedServicesV2 ?? [];

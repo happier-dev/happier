@@ -1,7 +1,5 @@
-import {
-  buildTokenCountSessionMessageFromUsageObservation,
-  extractUsageObservationFromTokenCountMessage,
-} from '../../../usage/usageObservation';
+import { extractUsageObservationFromTokenCountMessage } from '../../../usage/usageObservation';
+import { buildTokenCountSessionMessageFromUsageObservation } from '../../../usage/legacy/legacyUsageTransport';
 
 function asFiniteNonNegativeNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;

@@ -3,22 +3,19 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
 
 function writeSnapshot(
   outputDir: string,
   source: string,
-  fingerprint: string,
   builtAt: string,
 ) {
   mkdirSync(outputDir, { recursive: true });
-  writeFileSync(join(outputDir, 'index.mjs'), source, 'utf8');
-  writeFileSync(
-    join(outputDir, '.build-manifest.json'),
-    `${JSON.stringify({ fingerprint, builtAt, fileCount: 1, toolVersion: '1' })}\n`,
-    'utf8',
-  );
+  const entrypoint = join(outputDir, 'index.mjs');
+  writeFileSync(entrypoint, source, 'utf8');
+  cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, { outputDir, builtAt });
 }
 
 function writeLocalRepoFixture(repoRoot: string) {
@@ -40,7 +37,6 @@ describe('importPreparedRuntimeEntrypoint', () => {
       writeSnapshot(
         resolve(projectRoot, 'dist'),
         'export const ready = true;\n',
-        '1111111111111111',
         '2026-07-09T00:00:00.000Z',
       );
       const launcher = await import('../../bin/_importRuntimeEntrypoint.mjs');
@@ -70,8 +66,9 @@ describe('importPreparedRuntimeEntrypoint', () => {
       const distDir = resolve(projectRoot, 'dist');
       const stagingDir = resolve(projectRoot, 'dist.staging.writer');
       const backupDir = resolve(projectRoot, 'dist.backup.writer');
-      writeSnapshot(distDir, 'export const generation = "old";\n', '1111111111111111', '2026-07-09T00:00:00.000Z');
-      writeSnapshot(stagingDir, 'export const generation = "new";\n', '1111111111111111', '2026-07-09T00:00:01.000Z');
+      const identicalSource = 'export const generation = "same-content";\n';
+      writeSnapshot(distDir, identicalSource, '2026-07-09T00:00:00.000Z');
+      writeSnapshot(stagingDir, identicalSource, '2026-07-09T00:00:01.000Z');
       const launcher = await import('../../bin/_importRuntimeEntrypoint.mjs');
       const swapError = Object.assign(new Error('entrypoint disappeared during swap'), {
         code: 'ERR_MODULE_NOT_FOUND',

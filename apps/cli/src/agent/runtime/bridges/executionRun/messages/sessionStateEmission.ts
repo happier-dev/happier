@@ -7,7 +7,7 @@ import type { ExecutionRunParentSessionPermissionRequestEnvelope } from '@/agent
 import type { ExecutionRunBackendController } from '@/agent/executionRuns/controllers/types';
 import { appendExecutionRunControllerHostBarrier } from '@/agent/executionRuns/controllers/failureSignal';
 import type { ExecutionRunState } from '../executionRunTypes';
-import { readBackendTargetRefV2 } from '@happier-dev/protocol';
+import { readBackendTargetRefV2, readRuntimeDescriptorV1 } from '@happier-dev/protocol';
 import { normalizePermissionRequestOptionsForAcp } from '@/agent/acp/bridge/acpCommonHandlers';
 import {
   buildExecutionRunParentSessionPermissionRequestEnvelope,
@@ -30,14 +30,13 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 }
 
 function readRuntimeKindFromDescriptor(payload: unknown): string | null {
-  const descriptor = readRecord(payload);
-  if (!descriptor) return null;
-  const direct = readNonEmptyString(descriptor.runtimeKind);
-  if (direct) return direct;
+  const descriptor = readRuntimeDescriptorV1(payload);
+  const runtimeKind = readNonEmptyString(readRecord(descriptor?.agent)?.backendMode);
+  if (runtimeKind) return runtimeKind;
 
-  const provider = readRecord(descriptor.provider);
-  if (!provider) return null;
-  return readNonEmptyString(provider.backendMode);
+  // Compatibility for pre-envelope events. Versioned descriptor envelopes are
+  // normalized exclusively by protocol's canonical parser above.
+  return readNonEmptyString(readRecord(payload)?.runtimeKind);
 }
 
 function readPermissionCapability(value: unknown): ExecutionRunPermissionCapability | null {

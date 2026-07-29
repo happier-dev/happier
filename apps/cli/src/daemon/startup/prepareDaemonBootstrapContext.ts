@@ -9,11 +9,13 @@ import { authAndSetupMachineIfNeeded } from '@/ui/auth';
 import { getPreferredHostName } from '../machine/metadata';
 import { stopDaemon, isDaemonRunningCurrentlyInstalledHappyVersion } from '../controlClient';
 import { setRespawnDescriptorEncryptionMaterialForRestore } from '../reattach';
+import type { DaemonStartupSource } from '../ownership/daemonOwnershipMetadata';
 
 export async function prepareDaemonBootstrapContext(
     params: Readonly<{
         daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>>;
         initialMachineMetadata: MachineMetadata;
+        startupSource: DaemonStartupSource;
     }>,
 ): Promise<Readonly<{
     daemonLockHandle: Awaited<ReturnType<typeof acquireDaemonLock>>;
@@ -38,9 +40,15 @@ export async function prepareDaemonBootstrapContext(
     const runningDaemonVersionMatches = await isDaemonRunningCurrentlyInstalledHappyVersion({
         expectedMachineId: machineId,
     });
-    if (!runningDaemonVersionMatches) {
-        logger.debug('[DAEMON RUN] Daemon version or machine identity mismatch detected, restarting daemon with current CLI version');
-        await stopDaemon();
+    if (runningDaemonVersionMatches && params.startupSource === 'self-restart') {
+        logger.debug('[DAEMON RUN] Self-restart replacement detected matching daemon; skipping synchronous machine preflight and continuing takeover');
+    } else if (!runningDaemonVersionMatches) {
+        if (params.daemonLockHandle) {
+            logger.debug('[DAEMON RUN] Daemon startup already owns the lock; continuing without asking the control client to stop its own pre-state process');
+        } else {
+            logger.debug('[DAEMON RUN] Daemon version or machine identity mismatch detected, restarting daemon with current CLI version');
+            await stopDaemon();
+        }
     } else {
         preflightMachineRegistration = await ensureMachineRegistered({
             api,

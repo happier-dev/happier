@@ -68,7 +68,6 @@ export function buildConnectedServiceUxDiagnostic(input: Readonly<{
   failurePhase: ConnectedServiceUxDiagnosticFailurePhaseV1;
   source: ConnectedServiceUxDiagnosticSourceV1;
   serviceId?: string;
-  providerId?: string;
   agentId?: string;
   profileId?: string | null;
   groupId?: string | null;
@@ -81,7 +80,6 @@ export function buildConnectedServiceUxDiagnostic(input: Readonly<{
     failurePhase: input.failurePhase,
     source: input.source,
     ...(input.serviceId ? { serviceId: input.serviceId } : {}),
-    ...(input.providerId ? { providerId: input.providerId } : {}),
     ...(input.agentId ? { agentId: input.agentId } : {}),
     ...(input.profileId ? { profileId: input.profileId } : {}),
     ...(input.groupId ? { groupId: input.groupId } : {}),

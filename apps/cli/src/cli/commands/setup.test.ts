@@ -160,7 +160,7 @@ describe('happier setup', () => {
         ['auth', 'login'],
         ['service', 'install'],
         ['service', 'start'],
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });
@@ -190,7 +190,7 @@ describe('happier setup', () => {
       );
 
       expect(calls).toEqual([
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });
@@ -221,7 +221,7 @@ describe('happier setup', () => {
 
       expect(calls).toEqual([
         ['auth', 'login'],
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });
@@ -261,7 +261,7 @@ describe('happier setup', () => {
       );
 
       expect(calls).toEqual([
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });
@@ -293,7 +293,7 @@ describe('happier setup', () => {
       );
 
       expect(calls).toEqual([
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });
@@ -403,7 +403,7 @@ describe('happier setup', () => {
         ['service', 'uninstall', '--all', '--yes'],
         ['service', 'install', '--takeover'],
         ['service', 'start', '--takeover'],
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });
@@ -458,7 +458,7 @@ describe('happier setup', () => {
       );
       expect(calls).toEqual([
         ['service', 'start', '--takeover'],
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });
@@ -503,7 +503,7 @@ describe('happier setup', () => {
       );
 
       expect(calls).toEqual([
-        ['providers', 'setup', '--yes'],
+        ['agents', 'setup', '--yes'],
       ]);
     });
   });

@@ -1,10 +1,10 @@
 import { resolveSessionControlSocketAckTimeoutMs } from './sessionTimeouts';
 
-type AckableSocket = Readonly<{
+type AckableSocket<TEvent extends string = string, TPayload = unknown> = Readonly<{
   connected?: boolean;
-  emitWithAck?: (event: string, payload: unknown) => Promise<unknown>;
-  emit?: (event: string, payload: unknown, callback: (answer: unknown) => void) => void;
-  timeout?: (ms: number) => AckableSocket;
+  emitWithAck?(event: TEvent, payload: TPayload): Promise<unknown>;
+  emit?(event: TEvent, payload: TPayload, callback: (answer: unknown) => void): void;
+  timeout?(ms: number): AckableSocket<TEvent, TPayload>;
 }>;
 
 export type SocketAckErrorCode = 'socket_not_connected' | 'socket_ack_timeout';
@@ -49,10 +49,14 @@ function createAckTimeoutPromise(event: string, timeoutMs: number): Promise<neve
   });
 }
 
-export async function emitSocketWithAck<T = unknown>(params: Readonly<{
-  socket: AckableSocket;
-  event: string;
-  payload: unknown;
+export async function emitSocketWithAck<
+  T = unknown,
+  TEvent extends string = string,
+  TPayload = unknown,
+>(params: Readonly<{
+  socket: AckableSocket<NoInfer<TEvent>, NoInfer<TPayload>>;
+  event: TEvent;
+  payload: TPayload;
   timeoutMs?: number;
 }>): Promise<T> {
   ensureSocketConnected(params.socket, params.event);
@@ -66,10 +70,14 @@ export async function emitSocketWithAck<T = unknown>(params: Readonly<{
   return await Promise.race([ackPromise, createAckTimeoutPromise(params.event, timeoutMs)]) as T;
 }
 
-export async function emitSocketCallbackAck<T = unknown>(params: Readonly<{
-  socket: AckableSocket;
-  event: string;
-  payload: unknown;
+export async function emitSocketCallbackAck<
+  T = unknown,
+  TEvent extends string = string,
+  TPayload = unknown,
+>(params: Readonly<{
+  socket: AckableSocket<NoInfer<TEvent>, NoInfer<TPayload>>;
+  event: TEvent;
+  payload: TPayload;
   timeoutMs?: number;
 }>): Promise<T> {
   ensureSocketConnected(params.socket, params.event);

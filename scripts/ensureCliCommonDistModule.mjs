@@ -1,7 +1,7 @@
-import { existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { pathToFileURL } from 'node:url';
+import { loadCliCommonWorkspacesModule } from './workspaces/loadCliCommonWorkspacesModule.mjs';
 
 function resolveCliCommonDistModulePath(repoRoot, subpath) {
   return resolve(repoRoot, 'packages', 'cli-common', 'dist', subpath, 'index.js');
@@ -12,15 +12,16 @@ function resolveCliCommonBuildScriptPath(repoRoot) {
 }
 
 function runCliCommonBuild(repoRoot, exec = execFileSync) {
-  exec(process.execPath, [resolveCliCommonBuildScriptPath(repoRoot)], {
+  exec(process.execPath, [resolveCliCommonBuildScriptPath(repoRoot), '--declarations'], {
     cwd: repoRoot,
     stdio: 'inherit',
   });
 }
 
 /**
- * Loads a built `@happier-dev/cli-common` dist submodule, rebuilding it on demand when missing.
- * @param {{ repoRoot: string; subpath: string; existsSync?: (path: string) => boolean; execFileSync?: typeof execFileSync; importModule?: (url: string) => Promise<any>; }} options
+ * Loads a built `@happier-dev/cli-common` dist submodule after canonical stale-only admission.
+ * Artifact callers can request forced admission through the canonical workspace loader.
+ * @param {{ repoRoot: string; subpath: string; force?: boolean; env?: NodeJS.ProcessEnv; execFileSync?: typeof execFileSync; importModule?: (url: string) => Promise<any>; loadCliCommonWorkspacesModuleImpl?: typeof loadCliCommonWorkspacesModule; }} options
  */
 export async function loadCliCommonDistModule(options) {
   const repoRoot = String(options.repoRoot ?? '').trim();
@@ -28,33 +29,31 @@ export async function loadCliCommonDistModule(options) {
   if (!repoRoot) throw new Error('[release] loadCliCommonDistModule requires repoRoot');
   if (!subpath) throw new Error('[release] loadCliCommonDistModule requires subpath');
 
-  const exists = options.existsSync ?? existsSync;
   const exec = options.execFileSync ?? execFileSync;
   const importModule = options.importModule ?? ((url) => import(url));
   const modulePath = resolveCliCommonDistModulePath(repoRoot, subpath);
 
   const importOnce = async () => importModule(pathToFileURL(modulePath).href);
 
-  if (!exists(modulePath)) {
+  if (options.force === true) {
+    const loadWorkspaces =
+      options.loadCliCommonWorkspacesModuleImpl ?? loadCliCommonWorkspacesModule;
+    await loadWorkspaces(
+      repoRoot,
+      options.env ?? process.env,
+      undefined,
+      {
+        force: true,
+        includeDevDependencies: false,
+        quiet: true,
+      },
+    );
+  } else {
     runCliCommonBuild(repoRoot, exec);
   }
-
-  try {
-    return await importOnce();
-  } catch (error) {
-    const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code ?? '') : '';
-    const message = String(error?.message ?? error ?? '');
-    if (code === 'ERR_MODULE_NOT_FOUND' || /Cannot find module/i.test(message)) {
-      if (!exists(modulePath)) {
-        runCliCommonBuild(repoRoot, exec);
-        return await importOnce();
-      }
-    }
-    throw error;
-  }
+  return await importOnce();
 }
 
 export function resolveCliCommonDistModulePathForTests(repoRoot, subpath) {
   return resolveCliCommonDistModulePath(repoRoot, subpath);
 }
-

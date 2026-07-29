@@ -1,12 +1,8 @@
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'node:path';
 
-import type {
-    SessionHookPluginDirCreateRequestV1,
-    SessionHooksRuntimeServiceV1,
-    SessionHookServerStartRequestV1,
-    SessionProviderTranscriptPublishRequestV1,
-} from '@happier-dev/plugin-sdk';
+import type { AgentSessionHostServices } from '@happier-dev/plugin-sdk/agent-runtime';
 import {
     SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1,
     SessionProviderTranscriptEventPayloadV1Schema,
@@ -19,14 +15,52 @@ import { buildMissingJavaScriptRuntimeMessage } from '@/packagedRuntime/js/build
 import { resolveJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/resolveJavaScriptRuntimeExecutable';
 import { logger } from '@/ui/logger';
 import { isBun } from '@/utils/runtime';
+import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 
-import { publishHostPluginEvent } from '../../context/events';
 import {
-    startSessionHookServer,
+    startSessionHookServerWithPersistedPortTakeover,
     type PermissionHookPayload,
     type SessionHookPayload,
     type StatuslineHookPayload,
 } from './server';
+
+type AgentSessionHooksService = AgentSessionHostServices['sessionHooks'];
+type HostSessionHookLifecycle =
+    | Readonly<{ kind: 'runner' }>
+    | Readonly<{ kind: 'session'; sessionId: string }>;
+type HostSessionHookServerStartRequest =
+    Parameters<AgentSessionHooksService['startServer']>[0]
+    & Readonly<{
+        providerId: string;
+        sessionId: string;
+        lifecycle?: HostSessionHookLifecycle;
+    }>;
+type HostSessionHookPluginDirCreateRequest =
+    Parameters<AgentSessionHooksService['createPluginDir']>[0]
+    & Readonly<{
+        providerId: string;
+        lifecycle?: HostSessionHookLifecycle;
+    }>;
+type HostSessionProviderTranscriptPublishRequest =
+    Parameters<AgentSessionHooksService['publishProviderTranscript']>[0]
+    & Readonly<{
+        providerId: string;
+        sessionId: string;
+    }>;
+
+export type HostSessionHooksOwner = Readonly<{
+    startServer(
+        request: HostSessionHookServerStartRequest,
+    ): ReturnType<AgentSessionHooksService['startServer']>;
+    resolveForwarderAssets(): ReturnType<AgentSessionHooksService['resolveForwarderAssets']>;
+    createPluginDir(
+        request: HostSessionHookPluginDirCreateRequest,
+    ): ReturnType<AgentSessionHooksService['createPluginDir']>;
+    disposePluginDir(pluginDir: string): ReturnType<AgentSessionHooksService['disposePluginDir']>;
+    publishProviderTranscript(
+        request: HostSessionProviderTranscriptPublishRequest,
+    ): ReturnType<AgentSessionHooksService['publishProviderTranscript']>;
+}>;
 
 export type CreateSessionHooksServiceParams = Readonly<{
     happyHomeDir: string;
@@ -70,21 +104,56 @@ function sanitizeProviderId(providerId: string): string {
     return sanitizePathSegment(providerId, 'provider');
 }
 
+function shortStableDigest(...values: string[]): string {
+    const digest = createHash('sha256')
+        .update(values.join('\0'))
+        .digest('hex')
+        .slice(0, 16);
+    return digest;
+}
+
+function resolveHookSessionsRoot(happyHomeDir: string): string {
+    return join(
+        happyHomeDir,
+        resolveReleaseRingScopedBasename('session-hooks', configuration.publicReleaseRing),
+    );
+}
+
+function resolveHookSessionScopeRoot(happyHomeDir: string, sessionId: string): string {
+    return join(
+        resolveHookSessionsRoot(happyHomeDir),
+        `session-${sanitizePathSegment(sessionId, 'session')}-${shortStableDigest(sessionId)}`,
+    );
+}
+
+function resolveHookSessionRoot(params: Readonly<{
+    happyHomeDir: string;
+    providerId: string;
+    sessionId: string;
+}>): string {
+    return join(
+        resolveHookSessionScopeRoot(params.happyHomeDir, params.sessionId),
+        `${sanitizeProviderId(params.providerId)}-session-${sanitizePathSegment(params.sessionId, 'session')}-${shortStableDigest(params.providerId)}`,
+    );
+}
+
 function resolveHookPluginDirPath(params: Readonly<{
+    happyHomeDir: string;
     pluginsRoot: string;
-    request: SessionHookPluginDirCreateRequestV1;
+    request: HostSessionHookPluginDirCreateRequest;
 }>): string {
     const providerSegment = sanitizeProviderId(params.request.providerId);
     if (params.request.lifecycle?.kind === 'session') {
-        return join(
-            params.pluginsRoot,
-            `${providerSegment}-session-${sanitizePathSegment(params.request.lifecycle.sessionId, 'session')}`,
-        );
+        return join(resolveHookSessionRoot({
+            happyHomeDir: params.happyHomeDir,
+            providerId: params.request.providerId,
+            sessionId: params.request.lifecycle.sessionId,
+        }), 'plugin');
     }
     return join(params.pluginsRoot, `${providerSegment}-${process.pid}-${pluginDirSequence++}`);
 }
 
-function shouldRetainHookPluginDir(request: SessionHookPluginDirCreateRequestV1): boolean {
+function shouldRetainHookPluginDir(request: HostSessionHookPluginDirCreateRequest): boolean {
     return request.lifecycle?.kind === 'session';
 }
 
@@ -126,7 +195,7 @@ function resolvePluginFilePath(pluginDir: string, relativePath: string): string 
     return join(pluginDir, normalized);
 }
 
-function toFileContents(file: SessionHookPluginDirCreateRequestV1['files'][number]): string {
+function toFileContents(file: HostSessionHookPluginDirCreateRequest['files'][number]): string {
     if (typeof file.contents === 'string') return file.contents;
     return `${JSON.stringify(file.json, null, 2)}\n`;
 }
@@ -190,7 +259,7 @@ function assertSessionHooksCapability(params: CreateSessionHooksServiceParams): 
 
 async function grantSessionHookTranscriptPath(params: Readonly<{
     service: CreateSessionHooksServiceParams;
-    request: SessionHookServerStartRequestV1;
+    request: HostSessionHookServerStartRequest;
     providerSessionId: string;
     data: SessionHookPayload;
 }>): Promise<void> {
@@ -214,43 +283,87 @@ async function grantSessionHookTranscriptPath(params: Readonly<{
 async function createHookSecretFiles(params: Readonly<{
     happyHomeDir: string;
     providerId: string;
+    lifecycle?: HostSessionHookServerStartRequest['lifecycle'];
     sessionHookSecret?: string;
     permissionHookSecret?: string;
 }>): Promise<Readonly<{
     secretDir: string | null;
+    retained: boolean;
+    sessionHookSecret?: string;
+    permissionHookSecret?: string;
     sessionHookSecretFile?: string;
     permissionHookSecretFile?: string;
 }>> {
     const sessionHookSecret = params.sessionHookSecret;
     const permissionHookSecret = params.permissionHookSecret;
     if (!sessionHookSecret && !permissionHookSecret) {
-        return { secretDir: null };
+        return { secretDir: null, retained: false };
     }
 
-    const secretsRoot = resolveHookSecretsRoot(params.happyHomeDir);
+    const retained = params.lifecycle?.kind === 'session';
+    const secretsRoot = retained
+        ? resolveHookSessionRoot({
+            happyHomeDir: params.happyHomeDir,
+            providerId: params.providerId,
+            sessionId: params.lifecycle.sessionId,
+        })
+        : resolveHookSecretsRoot(params.happyHomeDir);
     const providerSegment = sanitizeProviderId(params.providerId);
-    const secretDir = join(secretsRoot, `${providerSegment}-${process.pid}-${secretDirSequence++}`);
+    const secretDir = retained
+        ? join(secretsRoot, 'secrets')
+        : join(secretsRoot, `${providerSegment}-${process.pid}-${secretDirSequence++}`);
     await createPrivateDirectoryTree(secretsRoot, secretDir);
 
     const out: {
         secretDir: string | null;
+        retained: boolean;
+        sessionHookSecret?: string;
+        permissionHookSecret?: string;
         sessionHookSecretFile?: string;
         permissionHookSecretFile?: string;
-    } = { secretDir };
+    } = { secretDir, retained };
+    const resolveStableSecret = async (filePath: string, proposed: string): Promise<string> => {
+        if (retained) {
+            const existing = await readFile(filePath, 'utf8').catch(() => null);
+            if (existing?.trim()) return existing.trim();
+        }
+        await writePrivateFile(filePath, proposed);
+        return proposed;
+    };
     try {
         if (sessionHookSecret) {
             out.sessionHookSecretFile = join(secretDir, 'session.secret');
-            await writePrivateFile(out.sessionHookSecretFile, sessionHookSecret);
+            out.sessionHookSecret = await resolveStableSecret(out.sessionHookSecretFile, sessionHookSecret);
         }
         if (permissionHookSecret) {
             out.permissionHookSecretFile = join(secretDir, 'permission.secret');
-            await writePrivateFile(out.permissionHookSecretFile, permissionHookSecret);
+            out.permissionHookSecret = await resolveStableSecret(out.permissionHookSecretFile, permissionHookSecret);
         }
     } catch (error) {
-        await rm(secretDir, { recursive: true, force: true });
+        if (!retained) await rm(secretDir, { recursive: true, force: true });
         throw error;
     }
     return out;
+}
+
+async function readSessionHookEndpointPort(sessionRoot: string): Promise<number | null> {
+    try {
+        const parsed = JSON.parse(await readFile(join(sessionRoot, 'endpoint.json'), 'utf8')) as Record<string, unknown>;
+        const port = parsed.port;
+        return parsed.v === 1
+            && typeof port === 'number'
+            && Number.isInteger(port)
+            && port > 0
+            && port <= 65_535
+            ? port
+            : null;
+    } catch {
+        return null;
+    }
+}
+
+async function writeSessionHookEndpointPort(sessionRoot: string, port: number): Promise<void> {
+    await writeJsonAtomic(join(sessionRoot, 'endpoint.json'), { v: 1, port });
 }
 
 function createOnceDisposable(dispose: () => Promise<void>): { dispose(): Promise<void> } {
@@ -268,18 +381,32 @@ async function disposeHookPluginDir(pluginDir: string): Promise<void> {
     await rm(pluginDir, { recursive: true, force: true });
 }
 
+export async function disposeSessionHookArtifactsForSession(params: Readonly<{
+    happyHomeDir: string;
+    sessionId: string;
+}>): Promise<void> {
+    await rm(resolveHookSessionScopeRoot(params.happyHomeDir, params.sessionId), {
+        recursive: true,
+        force: true,
+    });
+}
+
 export function createSessionHooksService(
     params: CreateSessionHooksServiceParams,
-): SessionHooksRuntimeServiceV1 {
+): HostSessionHooksOwner {
     const activePluginDirs = new Set<string>();
     const disposedPluginDirs = new Set<string>();
     const retainedPluginDirs = new Set<string>();
     const pluginsRoot = resolveHookPluginsRoot(params.happyHomeDir);
+    const sessionHooksRoot = resolveHookSessionsRoot(params.happyHomeDir);
 
     async function disposeRegisteredHookPluginDir(pluginDir: string): Promise<void> {
         const resolvedPluginDir = resolve(pluginDir);
         if (disposedPluginDirs.has(resolvedPluginDir)) return;
-        if (!isPathInsideRoot(pluginsRoot, resolvedPluginDir) || !activePluginDirs.has(resolvedPluginDir)) {
+        if (
+            (!isPathInsideRoot(pluginsRoot, resolvedPluginDir) && !isPathInsideRoot(sessionHooksRoot, resolvedPluginDir))
+            || !activePluginDirs.has(resolvedPluginDir)
+        ) {
             throw new Error(`Session hook plugin dir is not owned by this service: ${pluginDir}`);
         }
         activePluginDirs.delete(resolvedPluginDir);
@@ -297,17 +424,31 @@ export function createSessionHooksService(
     }
 
     return Object.freeze({
-        async startServer(request: SessionHookServerStartRequestV1) {
+        async startServer(request: HostSessionHookServerStartRequest) {
             assertSessionHooksCapability(params);
+            if (request.lifecycle?.kind === 'session' && request.lifecycle.sessionId !== request.sessionId) {
+                throw new Error('Session hook lifecycle sessionId must match the hook server sessionId');
+            }
             const secretFiles = await createHookSecretFiles({
                 happyHomeDir: params.happyHomeDir,
                 providerId: request.providerId,
+                lifecycle: request.lifecycle,
                 sessionHookSecret: request.sessionHookSecret,
                 permissionHookSecret: request.permissionHookSecret,
             });
-            let server: Awaited<ReturnType<typeof startSessionHookServer>>;
+            const sessionRoot = request.lifecycle?.kind === 'session'
+                ? resolveHookSessionRoot({
+                    happyHomeDir: params.happyHomeDir,
+                    providerId: request.providerId,
+                    sessionId: request.lifecycle.sessionId,
+                })
+                : null;
+            const requestedPort = sessionRoot ? await readSessionHookEndpointPort(sessionRoot) : null;
+            const serverState: {
+                current: Awaited<ReturnType<typeof startSessionHookServerWithPersistedPortTakeover>> | null;
+            } = { current: null };
             try {
-                server = await startSessionHookServer({
+                const serverOptions = {
                     session: {
                         providerId: request.providerId,
                         sessionId: request.sessionId,
@@ -321,8 +462,8 @@ export function createSessionHooksService(
                                     providerSessionId,
                                     data,
                                 });
-                            } catch (grantError) {
-                                logger.debug('[sessionHookServer] Session hook transcript grant failed:', grantError);
+                            } catch {
+                                logger.debug('[sessionHookServer] Session hook transcript grant failed');
                             }
                             await request.onSessionHook?.(providerSessionId, data);
                         }
@@ -336,21 +477,38 @@ export function createSessionHooksService(
                     defaultPermissionHookResponse: request.defaultPermissionHookResponse
                         ? (data: PermissionHookPayload) => request.defaultPermissionHookResponse?.(data)
                         : undefined,
-                    sessionHookSecret: request.sessionHookSecret,
-                    permissionHookSecret: request.permissionHookSecret,
+                    sessionHookSecret: secretFiles.sessionHookSecret,
+                    permissionHookSecret: secretFiles.permissionHookSecret,
                     permissionRequestTimeoutMs: request.permissionRequestTimeoutMs,
                     permissionRequestTimeoutMsForTool: request.permissionRequestTimeoutMsForTool,
                     publishHostEvent: params.publishHostEvent,
-                });
+                    ...(requestedPort ? { requestedPort } : {}),
+                } as const;
+                serverState.current =
+                    await startSessionHookServerWithPersistedPortTakeover(
+                        serverOptions,
+                    );
+                if (sessionRoot && requestedPort === null) {
+                    await writeSessionHookEndpointPort(sessionRoot, serverState.current.port);
+                }
             } catch (error) {
-                if (secretFiles.secretDir) {
+                if (serverState.current) {
+                    serverState.current.stop();
+                    await serverState.current.closed;
+                }
+                if (secretFiles.secretDir && !secretFiles.retained) {
                     await rm(secretFiles.secretDir, { recursive: true, force: true });
                 }
                 throw error;
             }
+            const server = serverState.current;
+            if (!server) {
+                throw new Error('Session hook server failed to initialize');
+            }
             const cleanup = createOnceDisposable(async () => {
                 server.stop();
-                if (secretFiles.secretDir) {
+                await server.closed;
+                if (secretFiles.secretDir && !secretFiles.retained) {
                     await rm(secretFiles.secretDir, { recursive: true, force: true });
                 }
             });
@@ -371,23 +529,56 @@ export function createSessionHooksService(
                 statuslineForwarderScript: resolveCliRuntimeAssetPath('scripts', 'statusline_forwarder.cjs'),
             };
         },
-        async createPluginDir(request: SessionHookPluginDirCreateRequestV1) {
+        async createPluginDir(request: HostSessionHookPluginDirCreateRequest) {
             assertSessionHooksCapability(params);
-            const pluginDir = resolveHookPluginDirPath({ pluginsRoot, request });
+            const pluginDir = resolveHookPluginDirPath({
+                happyHomeDir: params.happyHomeDir,
+                pluginsRoot,
+                request,
+            });
             const resolvedPluginDir = resolve(pluginDir);
             const retainPluginDir = shouldRetainHookPluginDir(request);
+            const replacementSuffix = `${process.pid}-${Date.now()}-${pluginDirSequence++}`;
+            const writeRoot = retainPluginDir ? `${pluginDir}.staging-${replacementSuffix}` : pluginDir;
+            const backupRoot = `${pluginDir}.backup-${replacementSuffix}`;
             const filesToWrite = request.files.map((file) => ({
                 file,
-                filePath: resolvePluginFilePath(pluginDir, file.path),
+                filePath: resolvePluginFilePath(writeRoot, file.path),
             }));
 
             try {
                 for (const { file, filePath } of filesToWrite) {
-                    await createPrivateDirectoryTree(pluginsRoot, dirname(filePath));
+                    await createPrivateDirectoryTree(
+                        retainPluginDir ? sessionHooksRoot : pluginsRoot,
+                        dirname(filePath),
+                    );
                     await writePrivateFile(filePath, toFileContents(file));
                 }
+                if (retainPluginDir) {
+                    let movedPrevious = false;
+                    try {
+                        await rename(pluginDir, backupRoot);
+                        movedPrevious = true;
+                    } catch (error) {
+                        if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
+                    }
+                    try {
+                        await rename(writeRoot, pluginDir);
+                    } catch (error) {
+                        if (movedPrevious) {
+                            await rename(backupRoot, pluginDir).catch(() => {});
+                        }
+                        throw error;
+                    }
+                    if (movedPrevious) {
+                        await rm(backupRoot, { recursive: true, force: true });
+                    }
+                }
             } catch (error) {
-                if (!retainPluginDir) {
+                if (retainPluginDir) {
+                    await rm(writeRoot, { recursive: true, force: true });
+                    await rm(backupRoot, { recursive: true, force: true });
+                } else {
                     await disposeHookPluginDir(resolvedPluginDir);
                 }
                 throw error;
@@ -408,13 +599,10 @@ export function createSessionHooksService(
             assertSessionHooksCapability(params);
             await disposeRegisteredHookPluginDir(pluginDir);
         },
-        async publishProviderTranscript(request: SessionProviderTranscriptPublishRequestV1) {
+        async publishProviderTranscript(request: HostSessionProviderTranscriptPublishRequest) {
             assertSessionHooksCapability(params);
             const payload = SessionProviderTranscriptEventPayloadV1Schema.parse(request);
-            await (params.publishHostEvent ?? publishHostPluginEvent)(
-                SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1,
-                payload,
-            );
+            await params.publishHostEvent?.(SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1, payload);
         },
     });
 }

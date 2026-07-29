@@ -7,6 +7,11 @@ test('apps/cli prepack builds dist for npm pack', () => {
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
   const prepack = String(pkg?.scripts?.prepack ?? '');
   assert.ok(prepack.includes('build'), `expected scripts.prepack to include a build step, got: ${prepack || '(missing)'}`);
+  const buildIndex = prepack.indexOf('build');
+  const syncIndex = prepack.indexOf('syncPackageDist.mjs');
+  const bundleIndex = prepack.indexOf('bundleWorkspaceDeps.mjs');
+  assert.ok(syncIndex > buildIndex, `expected package dist sync after build, got: ${prepack}`);
+  assert.ok(bundleIndex > syncIndex, `expected workspace dependency bundling after package dist sync, got: ${prepack}`);
 });
 
 test('apps/cli npm files list ships archives (not unpacked tools)', () => {

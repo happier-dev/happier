@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
-import type { TransportHandler } from '@/agent/transport';
 import { AcpBackend } from '../AcpBackend';
 
 type PromptConnection = {
-  prompt: () => Promise<unknown>;
+  peer: {
+    prompt: () => Promise<unknown>;
+  };
 };
 
 type PromptHarness = {
@@ -39,18 +40,20 @@ describe('AcpBackend sendPrompt usage telemetry', () => {
     const harness = asPromptHarness(backend);
     harness.acpSessionId = 'sess_1';
     harness.connection = {
-      prompt: async () => ({
-        stopReason: 'end_turn',
-        modelId: 'openai/gpt-5',
-        usage: {
-          totalTokens: 10,
-          inputTokens: 7,
-          outputTokens: 3,
-          cachedReadTokens: 2,
-          cachedWriteTokens: 1,
-          thoughtTokens: 4,
-        },
-      }),
+      peer: {
+        prompt: async () => ({
+          stopReason: 'end_turn',
+          modelId: 'openai/gpt-5',
+          usage: {
+            totalTokens: 10,
+            inputTokens: 7,
+            outputTokens: 3,
+            cachedReadTokens: 2,
+            cachedWriteTokens: 1,
+            thoughtTokens: 4,
+          },
+        }),
+      },
     };
 
     await backend.sendPrompt('sess_1', 'hello');
@@ -87,53 +90,18 @@ describe('AcpBackend sendPrompt usage telemetry', () => {
     const harness = asPromptHarness(backend);
     harness.acpSessionId = 'sess_1';
     harness.connection = {
-      prompt: async () => {
-        harness.waitingForResponse = false;
-        throw createInternalEmptyStreamError();
+      peer: {
+        prompt: async () => {
+          harness.waitingForResponse = false;
+          throw createInternalEmptyStreamError();
+        },
       },
     };
 
-    await expect(backend.sendPrompt('sess_1', 'hello')).rejects.toMatchObject({ code: -32603 });
-  });
-
-  it('delegates provider-specific prompt error suppression to the transport hook', async () => {
-    let observedContext: Parameters<NonNullable<TransportHandler['shouldIgnorePromptError']>>[1] | null = null;
-    const transport: TransportHandler = {
-      agentName: 'provider-with-hook',
-      getInitTimeout: () => 1_000,
-      getToolPatterns: () => [],
-      shouldIgnorePromptError: (_error, context) => {
-        observedContext = context;
-        return context.activeToolCallCount === 0 && context.waitingForResponse === false;
-      },
-    };
-    const backend = new AcpBackend({
-      agentName: 'test',
-      cwd: process.cwd(),
-      command: 'noop',
-      transportHandler: transport,
-    });
-
-    const emitted: any[] = [];
-    backend.onMessage((msg) => emitted.push(msg));
-
-    const harness = asPromptHarness(backend);
-    harness.acpSessionId = 'sess_1';
-    harness.connection = {
-      prompt: async () => {
-        harness.waitingForResponse = false;
-        throw createInternalEmptyStreamError();
-      },
-    };
-
-    await expect(backend.sendPrompt('sess_1', 'hello')).resolves.toBeUndefined();
-
-    expect(observedContext).toEqual({
-      activeToolCallCount: 0,
-      sawSessionUpdateSincePrompt: false,
-      waitingForResponse: false,
+    await expect(backend.sendPrompt('sess_1', 'hello')).resolves.toMatchObject({
+      kind: 'effect_may_have_occurred',
     });
     const errorStatuses = emitted.filter((m) => m?.type === 'status' && m?.status === 'error');
-    expect(errorStatuses).toHaveLength(0);
+    expect(errorStatuses).toHaveLength(1);
   });
 });

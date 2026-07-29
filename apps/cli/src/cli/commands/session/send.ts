@@ -5,9 +5,16 @@ import type { PermissionIntent } from '@happier-dev/agents';
 
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
-import { hasFlag, readIntFlagValue, readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { hasFlag, readIntFlagValue, readFlagValue, readFlagValueUnlessFlagToken } from '@/cli/commands/shared/argvFlags';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import {
+  normalizeActionExecuteResult,
+  unwrapCliActionSuccessPayload,
+} from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
+
+const SESSION_SEND_USAGE = 'Usage: happier session send <session-id-or-prefix> <message|--message <text>|--prompt <text>> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]';
+const AMBIGUOUS_MESSAGE_USAGE = 'Provide the message either positionally or with --message/--prompt, not both.';
 
 function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
   const parsed = parsePermissionIntentAlias(raw);
@@ -19,13 +26,45 @@ function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
   return parsed;
 }
 
+function readSessionSendSuccessResult(value: unknown): Readonly<{
+  sessionId: unknown;
+  localId: unknown;
+  waited: unknown;
+}> {
+  const record = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  return {
+    sessionId: record.sessionId,
+    localId: record.localId,
+    waited: record.waited,
+  };
+}
+
 export async function cmdSessionSend(
   argv: string[],
   deps: Readonly<{ readCredentialsFn: () => Promise<Credentials | null> }>,
 ): Promise<void> {
   const json = wantsJson(argv);
-  const idOrPrefix = String(argv[1] ?? '').trim();
-  const message = String(argv[2] ?? '').trim();
+  const idOrPrefixRaw = String(argv[1] ?? '').trim();
+  const idOrPrefix = idOrPrefixRaw && !idOrPrefixRaw.startsWith('-') ? idOrPrefixRaw : '';
+  const positionalMessageRaw = String(argv[2] ?? '').trim();
+  const positionalMessage = positionalMessageRaw && !positionalMessageRaw.startsWith('-') ? positionalMessageRaw : '';
+  const hasMessageFlag = hasFlag(argv, '--message');
+  const hasPromptFlag = hasFlag(argv, '--prompt');
+  const messageFlag = readFlagValueUnlessFlagToken(argv, '--message');
+  const promptFlag = readFlagValueUnlessFlagToken(argv, '--prompt');
+  if (positionalMessage && (hasMessageFlag || hasPromptFlag)) {
+    const err = new Error(AMBIGUOUS_MESSAGE_USAGE);
+    (err as any).code = 'invalid_arguments';
+    throw err;
+  }
+  if (messageFlag && promptFlag) {
+    const err = new Error('Provide the message with --message or --prompt, not both.');
+    (err as any).code = 'invalid_arguments';
+    throw err;
+  }
+  const message = positionalMessage || messageFlag || promptFlag || '';
   const wait = hasFlag(argv, '--wait');
   const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');
   const permissionModeFlag = (readFlagValue(argv, '--permission-mode') ?? '').trim();
@@ -38,7 +77,9 @@ export async function cmdSessionSend(
       : 300;
 
   if (!idOrPrefix || !message) {
-    throw new Error('Usage: happier session send <session-id-or-prefix> <message> [--permission-mode <mode>] [--model <model-id>] [--wait] [--timeout <seconds>] [--json]');
+    const err = new Error(SESSION_SEND_USAGE);
+    (err as any).code = 'invalid_arguments';
+    throw err;
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -77,47 +118,42 @@ export async function cmdSessionSend(
     },
     { surface: 'cli', defaultSessionId: null },
   );
-  if (!actionRes.ok) {
+  const normalized = normalizeActionExecuteResult(actionRes as any);
+  if (!normalized.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_send',
         error: {
-          code: actionRes.errorCode,
-          ...(actionRes.error ? { message: actionRes.error } : {}),
+          code: normalized.errorCode,
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
         },
       });
       return;
     }
-    throw new Error(actionRes.errorCode);
+    throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
 
-  const result = (actionRes as any).result as any;
+  const result = unwrapCliActionSuccessPayload(normalized.data);
   if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_send', json, result })) {
     return;
   }
-  if (result && typeof result === 'object' && result.ok === false) {
-    const code = typeof result.errorCode === 'string' ? result.errorCode : typeof result.code === 'string' ? result.code : 'action_failed';
-    if (json) {
-      printJsonEnvelope({
-        ok: false,
-        kind: 'session_send',
-        error: {
-          code,
-          ...(Array.isArray(result.candidates) ? { candidates: result.candidates } : {}),
-          ...(typeof result.message === 'string' && result.message.trim().length > 0 ? { message: result.message } : {}),
-        },
-      });
-      return;
-    }
-    throw new Error(code);
-  }
+  const sendResult = readSessionSendSuccessResult(result);
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_send', data: { sessionId: result.sessionId, localId: result.localId, waited: result.waited } });
+    printJsonEnvelope({
+      ok: true,
+      kind: 'session_send',
+      data: {
+        sessionId: sendResult.sessionId,
+        localId: sendResult.localId,
+        waited: sendResult.waited,
+      },
+    });
     return;
   }
 
   console.log(chalk.green('✓'), 'message sent');
-  console.log(JSON.stringify({ sessionId: result.sessionId, localId: result.localId }, null, 2));
+  console.log(JSON.stringify({ sessionId: sendResult.sessionId, localId: sendResult.localId }, null, 2));
 }

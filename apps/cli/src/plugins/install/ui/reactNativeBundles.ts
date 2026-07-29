@@ -5,20 +5,7 @@ import {
     PluginUiExecutableArtifactManifestV1Schema,
     type PluginUiExecutableArtifactManifestV1,
     type PluginUiExecutableArtifactManifestWithIntegrityV1,
-    type PluginUiArtifactTrustRootV1,
 } from '@happier-dev/protocol';
-
-import {
-    validatePluginUiArtifactExecutionTrust,
-    type PluginUiArtifactExecutionTrust,
-    type PluginUiArtifactTrustedSourceReason,
-} from './artifactSigning';
-import { deriveInstalledPluginUiArtifactCacheKey } from './cacheKeys';
-import {
-    createPluginUiArtifactRevocationState,
-    isPluginUiArtifactRevoked,
-    type PluginUiArtifactRevocationState,
-} from './revocation';
 
 export type ReactNativeBundleHostRuntime = Readonly<{
     hostAppVersion: string;
@@ -54,13 +41,6 @@ export type ReactNativeBundleInstallValidationCode =
     | 'not_react_native_bundle'
     | 'plugin_id_mismatch'
     | 'contribution_id_mismatch'
-    | 'artifact_revoked'
-    | 'execution_trust_unverified'
-    | 'signature_verification_unavailable'
-    | 'signature_required'
-    | 'signing_key_required'
-    | 'signature_mismatch'
-    | 'signing_key_mismatch'
     | 'remote_url_unsupported'
     | 'dev_hot_reload_not_installable'
     | 'installed_asset_missing'
@@ -78,10 +58,6 @@ export type ReactNativeBundleInstallValidationResult =
     }>
     | Readonly<{ ok: false; code: ReactNativeBundleInstallValidationCode }>;
 
-export type ReactNativeBundleTrustedSourceReason = PluginUiArtifactTrustedSourceReason;
-
-export type ReactNativeBundleArtifactExecutionTrust = PluginUiArtifactExecutionTrust;
-
 export type ReactNativeBundleArtifactSourceClassification =
     | Readonly<{ kind: 'installedArtifact' }>
     | Readonly<{ kind: 'devHotReload' }>
@@ -92,6 +68,26 @@ export function deriveReactNativeNativeCapabilitiesDigest(
 ): string {
     const normalized = [...capabilities].map((capability) => capability.trim()).filter(Boolean).sort();
     return `sha256:${createHash('sha256').update(JSON.stringify(normalized)).digest('hex')}`;
+}
+
+export function deriveReactNativeBundleRuntimeCacheKey(
+    identity: ReactNativeBundleCacheIdentity,
+): string {
+    return [
+        identity.pluginId,
+        identity.contributionId,
+        identity.artifactDigest,
+        identity.hostAppVersion,
+        identity.hostUiApiVersion,
+        identity.reactVersion,
+        identity.reactNativeVersion,
+        identity.expoRuntimeVersion ?? '',
+        identity.hermesVersion ?? '',
+        identity.platform,
+        identity.channel,
+        identity.nativeCapabilitiesDigest,
+        String(identity.projectionGeneration),
+    ].join(':');
 }
 
 export function classifyReactNativeBundleArtifactSource(
@@ -140,23 +136,17 @@ function runtimeMatches(
  * and the author's `supportedChannels` declaration (present in the contribution
  * schema but never consulted). The declaration is now the ONE gate input:
  * - `supportedChannels` declared → the connecting client channel must be listed.
- * - absent/empty → fail closed, EXCEPT for first-party artifacts predating the
- *   declaration, which fall back to legacy provenance-channel equality (the
- *   only remaining, deliberately-narrow use of `channel` as a gate input).
- * `channel` itself stays provenance metadata (recorded in the cache identity,
- * signature payload, and diagnostics) — never a gate input for declared artifacts.
+ * - absent/empty → fail closed.
+ * The artifact `channel` itself stays provenance metadata and is never a gate
+ * input. Cache identity binds the connecting host channel, matching the rest of
+ * the host runtime identity and the generated-artifact path.
  */
 function channelSupported(
     artifact: PluginUiExecutableArtifactManifestV1,
     hostRuntime: ReactNativeBundleHostRuntime,
-    executionTrust: ReactNativeBundleArtifactExecutionTrust | undefined,
 ): boolean {
     const declared: readonly string[] | undefined = artifact.compatibility.supportedChannels;
-    if (declared && declared.length > 0) {
-        return declared.includes(hostRuntime.channel);
-    }
-    const isFirstParty = executionTrust?.kind === 'trustedSource' && executionTrust.reason === 'first_party';
-    return isFirstParty && artifact.channel === hostRuntime.channel;
+    return Boolean(declared?.includes(hostRuntime.channel));
 }
 
 export function validateInstalledReactNativeBundleArtifact(params: Readonly<{
@@ -164,10 +154,6 @@ export function validateInstalledReactNativeBundleArtifact(params: Readonly<{
     expectedPluginId: string;
     expectedContributionId: string;
     hostRuntime: ReactNativeBundleHostRuntime;
-    revokedDigests: ReadonlySet<string>;
-    revocationState?: PluginUiArtifactRevocationState;
-    executionTrust?: ReactNativeBundleArtifactExecutionTrust;
-    signatureTrustRoots?: readonly PluginUiArtifactTrustRootV1[];
 }>): ReactNativeBundleInstallValidationResult {
     const parsed = PluginUiExecutableArtifactManifestV1Schema.safeParse(params.artifact);
     if (!parsed.success) {
@@ -194,34 +180,13 @@ export function validateInstalledReactNativeBundleArtifact(params: Readonly<{
     if (!hasPluginUiExecutableArtifactIntegrityV1(artifact)) {
         return Object.freeze({ ok: false, code: 'invalid_manifest' });
     }
-    const revocationState = params.revocationState ?? createPluginUiArtifactRevocationState({
-        revokedDigests: params.revokedDigests,
-    });
-    if (isPluginUiArtifactRevoked({
-        pluginId: artifact.pluginId,
-        contributionId: artifact.contributionId,
-        digest: artifact.integrity.digest,
-        ...(artifact.integrity.signingKeyId ? { signingKeyId: artifact.integrity.signingKeyId } : {}),
-        ...(artifact.installSourceId ? { installSourceId: artifact.installSourceId } : {}),
-    }, revocationState)) {
-        return Object.freeze({ ok: false, code: 'artifact_revoked' });
-    }
-    const executionTrustError = validatePluginUiArtifactExecutionTrust({
-        artifact,
-        executionTrust: params.executionTrust,
-        signatureTrustRoots: params.signatureTrustRoots,
-        revocationState,
-    });
-    if (executionTrustError) {
-        return Object.freeze({ ok: false, code: executionTrustError });
-    }
     if (isHermesBytecodeArtifact(artifact)) {
         return Object.freeze({ ok: false, code: 'hermes_bytecode_unsupported' });
     }
     if (!runtimeMatches(artifact, params.hostRuntime)) {
         return Object.freeze({ ok: false, code: 'runtime_mismatch' });
     }
-    if (!channelSupported(artifact, params.hostRuntime, params.executionTrust)) {
+    if (!channelSupported(artifact, params.hostRuntime)) {
         return Object.freeze({ ok: false, code: 'channel_unsupported' });
     }
 
@@ -247,7 +212,7 @@ export function validateInstalledReactNativeBundleArtifact(params: Readonly<{
             ? { hermesVersion: artifact.compatibility.hermesVersion }
             : {}),
         platform: artifact.platform,
-        channel: artifact.channel,
+        channel: params.hostRuntime.channel,
         nativeCapabilitiesDigest: deriveReactNativeNativeCapabilitiesDigest(artifact.compatibility.nativeCapabilities),
         projectionGeneration: params.hostRuntime.projectionGeneration,
     });
@@ -255,7 +220,7 @@ export function validateInstalledReactNativeBundleArtifact(params: Readonly<{
     return Object.freeze({
         ok: true,
         artifact,
-        cacheKey: deriveInstalledPluginUiArtifactCacheKey(artifact),
+        cacheKey: deriveReactNativeBundleRuntimeCacheKey(cacheIdentity),
         cacheIdentity,
     });
 }

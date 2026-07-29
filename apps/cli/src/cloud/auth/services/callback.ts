@@ -9,7 +9,7 @@ import type {
     CloudAuthCallbackSessionV1,
     CloudAuthCallbackWaitInputV1,
     CloudAuthFailureCodeV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 import { findAvailableLoopbackPort, isLoopbackPortAvailable } from '@/cloud/loopbackPort';
 import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';

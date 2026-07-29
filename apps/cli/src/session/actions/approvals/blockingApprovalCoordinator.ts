@@ -1,22 +1,31 @@
-import type { ApprovalRequestV1 } from '@happier-dev/protocol';
+import type {
+  ApprovalRequestV1,
+  ExecutionRunHostActionApprovalRequestV1,
+  TargetActionApprovalRequestV1,
+} from '@happier-dev/protocol';
+
+export type BlockingApprovalRequest =
+  | ApprovalRequestV1
+  | TargetActionApprovalRequestV1
+  | ExecutionRunHostActionApprovalRequestV1;
 
 export type BlockingApprovalWaitDecision =
-  | Readonly<{ decision: 'approve'; request: ApprovalRequestV1 }>
-  | Readonly<{ decision: 'reject'; request: ApprovalRequestV1; reason?: string }>
-  | Readonly<{ decision: 'canceled'; request: ApprovalRequestV1; reason?: string }>;
+  | Readonly<{ decision: 'approve'; request: BlockingApprovalRequest }>
+  | Readonly<{ decision: 'reject'; request: BlockingApprovalRequest; reason?: string }>
+  | Readonly<{ decision: 'canceled'; request: BlockingApprovalRequest; reason?: string }>;
 
 export type BlockingApprovalCoordinator = Readonly<{
   waitForDecision: (args: Readonly<{
     artifactId: string;
-    request: ApprovalRequestV1;
+    request: BlockingApprovalRequest;
     serverId?: string | null;
     signal?: AbortSignal;
-    readRequest?: (() => Promise<ApprovalRequestV1 | null>) | null;
+    readRequest?: (() => Promise<BlockingApprovalRequest | null>) | null;
     pollIntervalMs?: number;
   }>) => Promise<BlockingApprovalWaitDecision>;
   notifyApprovalUpdated: (args: Readonly<{
     artifactId: string;
-    request: ApprovalRequestV1;
+    request: BlockingApprovalRequest;
   }>) => void;
   resolveBlockingDecision: (args: Readonly<{
     artifactId: string;
@@ -47,11 +56,11 @@ function createCoordinatorError(reason: unknown, fallback: string): Error {
   return new Error(typeof reason === 'string' && reason.trim().length > 0 ? reason.trim() : fallback);
 }
 
-function readDecision(request: ApprovalRequestV1): BlockingApprovalWaitDecision | null {
+function readDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDecision | null {
   if (
     (request.status === 'approved'
       || request.status === 'executed'
-      || (request.status === 'failed' && request.execution))
+      || (request.status === 'failed' && 'execution' in request && request.execution))
     && request.decision?.kind === 'approve'
   ) {
     return { decision: 'approve', request };
@@ -65,8 +74,17 @@ function readDecision(request: ApprovalRequestV1): BlockingApprovalWaitDecision 
   return null;
 }
 
-function readDurableDecision(request: ApprovalRequestV1): BlockingApprovalWaitDecision | null {
-  if ((request.status === 'executed' || request.status === 'failed') && request.decision?.kind === 'approve' && request.execution) {
+function readDurableDecision(request: BlockingApprovalRequest): BlockingApprovalWaitDecision | null {
+  if ('kind' in request
+    && (request.kind === 'plugin_target_action' || request.kind === 'execution_run_host_action')
+    && request.status === 'approved'
+    && request.decision?.kind === 'approve') {
+    return { decision: 'approve', request };
+  }
+  if ((request.status === 'executed' || request.status === 'failed')
+    && request.decision?.kind === 'approve'
+    && 'execution' in request
+    && request.execution) {
     return { decision: 'approve', request };
   }
   if (request.status === 'rejected' && request.decision?.kind === 'reject') {

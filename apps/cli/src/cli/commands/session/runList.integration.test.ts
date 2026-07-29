@@ -155,6 +155,25 @@ describe('happier session run list (integration)', () => {
 
   it('returns session_run_list JSON envelope', async () => {
     const { handleSessionCommand } = await import('./index');
+    const { writeExecutionRunMarker } = await import('@/daemon/executionRunRegistry');
+
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess_integration_ctrl_123',
+      runId: 'run_1',
+      callId: 'call_1',
+      sidechainId: 'call_1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'succeeded',
+      startedAtMs: 1,
+      finishedAtMs: 2,
+      updatedAtMs: 2,
+    });
 
     const output = captureConsoleJsonOutput();
 
@@ -183,26 +202,57 @@ describe('happier session run list (integration)', () => {
 
   it('forwards backend, status, and limit filters from the direct cli wrapper', async () => {
     const { handleSessionCommand } = await import('./index');
+    const { writeExecutionRunMarker } = await import('@/daemon/executionRunRegistry');
 
-    const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
-    const dek = new Uint8Array(32).fill(3);
-    const socket = createApiSessionSocketStub({
-      connected: true,
-      emit: (event: string, args: unknown[]) => {
-        const [data, cb] = args as [any, ((value: unknown) => void) | undefined];
-        if (event !== SOCKET_RPC_EVENTS.CALL) return;
-        const decodedParams = decodeBase64(String(data.params ?? ''));
-        const decrypted = decrypt(dek, 'dataKey', decodedParams) as any;
-        expect(decrypted).toMatchObject({
-          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-          status: 'running',
-          limit: 1,
-        });
-        const encryptedResult = encodeBase64Rpc(encrypt(dek, 'dataKey', { runs: [] }), 'base64');
-        cb?.({ ok: true, result: encryptedResult });
-      },
+    await writeExecutionRunMarker({
+      pid: 123,
+      happySessionId: 'sess_integration_ctrl_123',
+      runId: 'run_filter_match',
+      callId: 'call_filter_match',
+      sidechainId: 'call_filter_match',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 10,
+      updatedAtMs: 11,
     });
-    bindApiSessionSocketMock(mockIo, socket);
+    await writeExecutionRunMarker({
+      pid: 124,
+      happySessionId: 'sess_integration_ctrl_123',
+      runId: 'run_filter_status_hidden',
+      callId: 'call_filter_status_hidden',
+      sidechainId: 'call_filter_status_hidden',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'succeeded',
+      startedAtMs: 20,
+      finishedAtMs: 21,
+      updatedAtMs: 21,
+    });
+    await writeExecutionRunMarker({
+      pid: 125,
+      happySessionId: 'sess_integration_ctrl_123',
+      runId: 'run_filter_backend_hidden',
+      callId: 'call_filter_backend_hidden',
+      sidechainId: 'call_filter_backend_hidden',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+      permissionMode: 'read_only',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'ephemeral',
+      status: 'running',
+      startedAtMs: 30,
+      updatedAtMs: 31,
+    });
 
     const output = captureConsoleJsonOutput();
 
@@ -224,6 +274,8 @@ describe('happier session run list (integration)', () => {
       const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_list');
+      expect(parsed.data?.runs).toHaveLength(1);
+      expect(parsed.data?.runs?.[0]?.runId).toBe('run_filter_match');
     } finally {
       output.restore();
     }
@@ -258,7 +310,7 @@ describe('happier session run list (integration)', () => {
     }
   });
 
-  it('merges daemon marker runs when session RPC returns an empty list', async () => {
+  it('returns daemon marker runs through inactive-session durable fallback', async () => {
     const { handleSessionCommand } = await import('./index');
     const { writeExecutionRunMarker } = await import('@/daemon/executionRunRegistry');
 
@@ -294,18 +346,6 @@ describe('happier session run list (integration)', () => {
       startedAtMs: 30,
       updatedAtMs: 31,
     });
-
-    const { encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
-    const socket = createApiSessionSocketStub({
-      connected: true,
-      emit: (event: string, args: unknown[]) => {
-        const [_data, cb] = args as [any, ((value: unknown) => void) | undefined];
-        if (event !== SOCKET_RPC_EVENTS.CALL) return;
-        const encryptedResult = encodeBase64Rpc(encrypt(new Uint8Array(32).fill(3), 'dataKey', { runs: [] }), 'base64');
-        cb?.({ ok: true, result: encryptedResult });
-      },
-    });
-    bindApiSessionSocketMock(mockIo, socket);
 
     const output = captureConsoleJsonOutput();
 

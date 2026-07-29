@@ -12,8 +12,10 @@ import {
 } from './workspaceSyncArtifacts';
 import { applyWorkspaceSyncArtifacts } from './applyWorkspaceSyncArtifacts';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
+import { createScmBackendRegistry } from '@/scm/registry';
 
 const tempRoots: string[] = [];
+const scmRegistry = createScmBackendRegistry([]);
 
 function cloneWorkspaceManifest(manifest: Readonly<{ entries: readonly WorkspaceManifest['entries'][number][]; fingerprint?: string }>): WorkspaceManifest {
   return {
@@ -58,6 +60,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const currentManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: targetRoot,
+      scmRegistry,
     }));
 
     const sourceRoot = await makeTempDir('handoff-sync-apply-source-');
@@ -68,6 +71,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: sourceRoot,
+      scmRegistry,
     }));
 
     const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
@@ -78,6 +82,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      registry: scmRegistry,
       blobProvider: {
         getBlobFilePath: () => null,
       },
@@ -91,6 +96,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const currentManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: targetRoot,
+      scmRegistry,
     }));
 
     const sourceRoot = await makeTempDir('handoff-sync-apply-provider-source-');
@@ -99,6 +105,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: sourceRoot,
+      scmRegistry,
     }));
     const casStore = createWorkspaceReplicationCasStore({ activeServerDir });
 
@@ -121,6 +128,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     const applied = await applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      registry: scmRegistry,
       blobProvider: {
         getBlobFilePath: (digest) => casStore.resolveBlobPath(digest),
       },
@@ -137,6 +145,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const currentManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: targetRoot,
+      scmRegistry,
     }));
     const digest = await hashWorkspaceFile({
       filePath: join(targetRoot, 'README.md'),
@@ -152,6 +161,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      registry: scmRegistry,
       blobProvider: createSourcePathBlobProviderFromManifest(targetRoot, {
         entries: [
           {
@@ -172,6 +182,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const currentManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: targetRoot,
+      scmRegistry,
     }));
 
     const syncArtifacts = {
@@ -192,6 +203,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      registry: scmRegistry,
       blobProvider: {
         getBlobFilePath: () => null,
       },
@@ -204,6 +216,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const currentManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: targetRoot,
+      scmRegistry,
     }));
 
     const sourceRoot = await makeTempDir('handoff-sync-apply-parent-conflict-source-');
@@ -234,6 +247,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     await expect(applyWorkspaceSyncArtifacts({
       targetPath: targetRoot,
       syncArtifacts,
+      registry: scmRegistry,
       blobProvider: createSourcePathBlobProviderFromManifest(sourceRoot, nextManifest),
     })).resolves.toEqual({ targetPath: targetRoot });
     await expect(readFile(join(targetRoot, 'src/index.ts'), 'utf8')).resolves.toBe('export const ready = true;\n');
@@ -245,6 +259,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const currentManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: targetRoot,
+      scmRegistry,
     }));
 
     await mkdir(join(targetRoot, 'locked'), { recursive: true });
@@ -257,6 +272,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: sourceRoot,
+      scmRegistry,
     }));
 
     const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
@@ -268,6 +284,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
       await expect(applyWorkspaceSyncArtifacts({
         targetPath: targetRoot,
         syncArtifacts,
+        registry: scmRegistry,
         blobProvider: createSourcePathBlobProviderFromManifest(sourceRoot, nextManifest),
       })).rejects.toMatchObject({
         code: expect.stringMatching(/^(EACCES|EPERM)$/),
@@ -286,6 +303,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const currentManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: targetRoot,
+      scmRegistry,
     }));
 
     const sourceRoot = await makeTempDir('handoff-sync-apply-abort-source-');
@@ -295,6 +313,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
 
     const nextManifest = cloneWorkspaceManifest(await scanWorkspaceManifest({
       workspaceRoot: sourceRoot,
+      scmRegistry,
     }));
 
     const syncArtifacts = createWorkspaceSyncArtifactsFromManifest({
@@ -307,6 +326,7 @@ describe('applyWorkspaceSyncArtifacts', () => {
     }> = {
       targetPath: targetRoot,
       syncArtifacts,
+      registry: scmRegistry,
       blobProvider: createSourcePathBlobProviderFromManifest(sourceRoot, nextManifest),
       assertCanContinue: async () => {
         const firstFile = await readFile(join(targetRoot, '000-first.txt'), 'utf8').catch(() => null);

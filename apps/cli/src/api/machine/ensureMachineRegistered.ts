@@ -12,6 +12,13 @@ type RecoveryLogger = Readonly<{
   info: (message: string, ...args: ReadonlyArray<unknown>) => void;
 }>;
 
+function throwIfMachineRegistrationIsQuiescing(isShuttingDown: (() => boolean) | undefined): void {
+  if (isShuttingDown?.() !== true) return;
+  const error = new Error('Machine registration cancelled because the daemon is quiescing');
+  error.name = 'MachineRegistrationQuiescingError';
+  throw error;
+}
+
 async function rotateMachineIdForActiveServer(opts: Readonly<{ expectedCurrentMachineId: string }>): Promise<string> {
   // Extremely defensive: UUID collisions are practically impossible, but avoid a no-op rotation.
   let nextMachineId = randomUUID();
@@ -144,11 +151,13 @@ export async function ensureMachineRegistered(opts: Readonly<{
   timeoutMs?: number;
   caller?: string;
   recoveryLogger?: RecoveryLogger;
+  isShuttingDown?: () => boolean;
 }>): Promise<{
   machine: Machine;
   machineId: string;
   didRotateMachineId: boolean;
 }> {
+  throwIfMachineRegistrationIsQuiescing(opts.isShuttingDown);
   try {
     const machine = await opts.api.getOrCreateMachine({
       machineId: opts.machineId,
@@ -158,6 +167,8 @@ export async function ensureMachineRegistered(opts: Readonly<{
     });
     return { machine, machineId: opts.machineId, didRotateMachineId: false };
   } catch (error) {
+    throwIfMachineRegistrationIsQuiescing(opts.isShuttingDown);
+
     if (isMachineReplacedError(error)) {
       const caller = opts.caller ? ` (${opts.caller})` : '';
       const recoveryLogger = opts.recoveryLogger ?? logger;
@@ -170,6 +181,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
         replacementMachineId: error.replacementMachineId,
       });
 
+      throwIfMachineRegistrationIsQuiescing(opts.isShuttingDown);
       const machine = await opts.api.getOrCreateMachine({
         machineId: replacementMachineId,
         metadata: opts.metadata,
@@ -193,6 +205,7 @@ export async function ensureMachineRegistered(opts: Readonly<{
 
     const rotated = await rotateMachineIdForActiveServer({ expectedCurrentMachineId: opts.machineId });
 
+    throwIfMachineRegistrationIsQuiescing(opts.isShuttingDown);
     const machine = await opts.api.getOrCreateMachine({
       machineId: rotated,
       metadata: opts.metadata,

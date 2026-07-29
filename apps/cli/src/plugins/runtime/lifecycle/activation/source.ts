@@ -1,9 +1,7 @@
-import { dirname } from 'node:path';
-
-import type { PluginApi, PluginDisposable } from '../../api/types';
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { PluginCleanup } from '@happier-dev/plugin-sdk/runtime';
 import type { PluginActivationSource } from '../../activationSources';
 import type { PluginDaemonModuleNamespace } from '../../types';
-import { isRecord } from '../utils';
 import type { ActivationTarget } from './targets';
 
 /**
@@ -15,7 +13,7 @@ import type { ActivationTarget } from './targets';
 
 export type ActivationExport = (
     api: PluginApi,
-) => void | PluginDisposable | Promise<void | PluginDisposable>;
+) => void | PluginCleanup | Promise<void | PluginCleanup>;
 
 export function resolveActivationExport(moduleNamespace: PluginDaemonModuleNamespace): Readonly<
     | { status: 'found'; activate: ActivationExport }
@@ -26,18 +24,7 @@ export function resolveActivationExport(moduleNamespace: PluginDaemonModuleNames
         return { status: 'found', activate: moduleNamespace.activate as ActivationExport };
     }
 
-    if (typeof moduleNamespace.default === 'function') {
-        return { status: 'found', activate: moduleNamespace.default as ActivationExport };
-    }
-
-    if (isRecord(moduleNamespace.default) && typeof moduleNamespace.default.activate === 'function') {
-        return { status: 'found', activate: moduleNamespace.default.activate as ActivationExport };
-    }
-
-    if (
-        moduleNamespace.activate !== undefined
-        || (isRecord(moduleNamespace.default) && moduleNamespace.default.activate !== undefined)
-    ) {
+    if (moduleNamespace.activate !== undefined) {
         return { status: 'invalid' };
     }
 
@@ -53,20 +40,16 @@ export function resolveActivationSource(
         return resolved;
     }
 
-    return {
-        kind: 'file_backed',
-        entryPath: target.daemonEntryPath,
-        devEntryPath: target.devDaemonEntryPath,
-        trustPolicy: target.sourceSpec?.trustPolicy,
-    };
-}
-
-export function resolveAutoAcpPluginRoot(target: ActivationTarget, activationSource: PluginActivationSource<PluginDaemonModuleNamespace>): string | null {
-    if (activationSource.kind !== 'file_backed') {
-        return null;
-    }
-    if (target.sourceSpec?.kind === 'path' && target.sourceSpec.locator.trim().length > 0) {
-        return target.sourceSpec.locator;
-    }
-    return dirname(dirname(target.manifestPath));
+    const message = target.sourceSpec?.trustPolicy === 'prompt'
+        ? `Plugin '${target.pluginId}' requires approval before its daemon activation source can be committed`
+        : target.sourceSpec?.trustPolicy === 'untrusted'
+            ? `Plugin '${target.pluginId}' is untrusted and has no committed daemon activation source`
+            : `Plugin '${target.pluginId}' has no committed activation source for the daemon-applied generation`;
+    const error = new Error(message);
+    (error as Error & { code: string }).code = target.sourceSpec?.trustPolicy === 'prompt'
+        ? 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED'
+        : target.sourceSpec?.trustPolicy === 'untrusted'
+            ? 'PLUGIN_DAEMON_TRUST_UNTRUSTED'
+            : 'PLUGIN_DAEMON_ENTRY_MISSING';
+    throw error;
 }

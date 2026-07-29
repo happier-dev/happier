@@ -7,6 +7,7 @@ import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcp
 import { McpServersSettingsV1Schema } from '@happier-dev/protocol';
 
 import type { McpCommandDeps } from '../deps';
+import { createInvalidArgumentsError } from './errors';
 
 export async function cmdMcpServersUnbind(
   argv: string[],
@@ -32,7 +33,7 @@ export async function cmdMcpServersUnbind(
     mutate: (settings: Readonly<Record<string, unknown>>) => {
       const current = readMcpServersSettingsFromAccountSettings(settings);
       if (!current.bindings.some((b) => b.id === bindingId)) {
-        throw new Error(`Binding not found: ${bindingId}`);
+        throw createInvalidArgumentsError(`Binding not found: ${bindingId}`);
       }
       const next = McpServersSettingsV1Schema.parse({
         ...current,
@@ -49,4 +50,3 @@ export async function cmdMcpServersUnbind(
 
   console.log(chalk.green('✓'), `MCP binding removed: ${bindingId}`);
 }
-

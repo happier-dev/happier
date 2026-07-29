@@ -1,22 +1,34 @@
 import {
-  createPluginStateStore,
   PluginStateSourceRecordSchema,
   type PluginStateCompatibilityRecord,
   type PluginStateInstallRecord,
+  type PluginStateFileV1,
   type PluginStateRecord,
   type PluginStateSourceRecord,
 } from '@/plugins/store/state';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { installPluginFromSource, type InstallPluginFromSourceResult } from '@/plugins/store/install/source';
+import {
+  inspectPluginSource,
+  type InspectPluginSourceResult,
+} from '@/plugins/store/install/source';
 import { removeInstalledPlugin, type RemoveInstalledPluginResult } from '@/plugins/store/install/remove';
+import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
 import { resolvePluginSource } from '@/plugins/discovery/sources/resolve';
 import type { ResolvedPluginSource } from '@/plugins/discovery/sources/resolve';
-import { resolvePluginDaemonEntryPath } from '@/plugins/manifest/daemonEntry';
+import {
+  resolvePluginDaemonEntryPath,
+  shouldResolvePluginDevelopmentEntrypoint,
+} from '@/plugins/manifest/daemonEntry';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
-import { summarizePluginContributes, type PluginCatalogContributionSummary } from './summary';
+import { projectPluginCatalogEntryIntrospection } from '@/plugins/projection/introspection/catalogEntry';
+import type { PluginContributionIntrospectionProjectionV1 } from '@happier-dev/protocol';
 
 export type PluginCatalogEntry = Readonly<{
   pluginId: string;
+  desiredGeneration: string | null;
+  appliedGeneration: string | null;
+  rollbackAvailability?: 'available' | 'unavailable';
   title: string;
   description: string | null;
   version: string;
@@ -27,7 +39,7 @@ export type PluginCatalogEntry = Readonly<{
   manifestPath: string;
   manifestDigest: string | null;
   manifest: CanonicalPluginManifest | null;
-  contributionIds: PluginCatalogContributionSummary;
+  contributionIntrospection: PluginContributionIntrospectionProjectionV1;
   diagnostics: readonly PluginCompatibilityDiagnostic[];
 }>;
 
@@ -36,10 +48,12 @@ export type InstallPluginFromLocatorResult =
       ok: true;
       alreadyInstalled: boolean;
       entry: PluginCatalogEntry;
+      change?: UserPluginChangeResult;
     }>
   | Readonly<{
       ok: false;
       diagnostics: readonly PluginCompatibilityDiagnostic[];
+      change?: UserPluginChangeResult;
   }>;
 
 export type UninstallPluginFromCatalogResult =
@@ -48,21 +62,37 @@ export type UninstallPluginFromCatalogResult =
       pluginId: string;
       entry: PluginCatalogEntry;
       removedInstalledPath: string | null;
+      change?: UserPluginChangeResult;
     }>
   | Readonly<{
       ok: false;
       diagnostics: readonly PluginCompatibilityDiagnostic[];
   }>;
 
-type InstallPluginFromSourceErrorCode = Extract<Extract<InstallPluginFromSourceResult, { ok: false }>, { ok: false }>['errorCode'];
+export type RollbackPluginFromCatalogResult =
+  | Readonly<{
+      ok: true;
+      pluginId: string;
+      entry: PluginCatalogEntry;
+      change?: UserPluginChangeResult;
+    }>
+  | Readonly<{
+      ok: false;
+      diagnostics: readonly PluginCompatibilityDiagnostic[];
+  }>;
+
+type InspectPluginSourceErrorCode = Extract<InspectPluginSourceResult, { ok: false }>['errorCode'];
 type RemoveInstalledPluginErrorCode = Extract<Extract<RemoveInstalledPluginResult, { ok: false }>, { ok: false }>['errorCode'];
 
-function mapInstallPluginErrorCodeToDiagnosticCode(errorCode: InstallPluginFromSourceErrorCode): PluginCompatibilityDiagnostic['code'] {
+function mapInstallPluginErrorCodeToDiagnosticCode(errorCode: InspectPluginSourceErrorCode): PluginCompatibilityDiagnostic['code'] {
   switch (errorCode) {
     case 'plugin_install_failed':
+    case 'plugin_install_conflict':
       return 'plugin_manifest_invalid';
     case 'plugin_already_installed':
       return 'plugin_manifest_invalid';
+    case 'plugin_install_trust_required':
+      return 'plugin_trust_approval_required';
     case 'plugin_source_invalid':
     default:
       return 'plugin_source_missing';
@@ -77,6 +107,15 @@ function mapRemovePluginErrorCodeToDiagnosticCode(errorCode: RemoveInstalledPlug
     default:
       return 'plugin_source_missing';
   }
+}
+
+function pluginChangeDiagnostic(change: UserPluginChangeResult): PluginCompatibilityDiagnostic {
+  return {
+    code: change.kind === 'reviewRequired' ? 'plugin_trust_approval_required' : 'plugin_manifest_invalid',
+    message: change.kind === 'reviewRequired'
+      ? `Plugin '${change.review.pluginId}' requires an authenticated present-user Install and trust decision.`
+      : `The daemon did not commit the plugin change (${change.kind}).`,
+  };
 }
 
 function readResolvedManifest(
@@ -113,17 +152,25 @@ function readResolvedManifest(
 
 function buildCatalogEntry(params: Readonly<{
   pluginId: string;
+  desiredGeneration: string | null;
+  rollbackAvailability: 'available' | 'unavailable';
   record: PluginStateRecord;
   manifest: CanonicalPluginManifest | null;
   manifestPath: string;
   diagnostics: readonly PluginCompatibilityDiagnostic[];
 }>): PluginCatalogEntry {
-  const title = params.manifest?.displayName ?? params.pluginId;
+  const readText = (value: string | Readonly<{ fallback: string }> | undefined): string | undefined => (
+    typeof value === 'string' ? value : value?.fallback
+  );
+  const title = readText(params.manifest?.displayName) ?? params.pluginId;
   const version = params.manifest?.version ?? params.record.install.manifestVersion;
   return {
     pluginId: params.pluginId,
+    desiredGeneration: params.desiredGeneration,
+    appliedGeneration: null,
+    rollbackAvailability: params.rollbackAvailability,
     title,
-    description: params.manifest?.description ?? null,
+    description: readText(params.manifest?.description) ?? null,
     version,
     enabled: params.record.state.enabled,
     source: params.record.source,
@@ -132,7 +179,20 @@ function buildCatalogEntry(params: Readonly<{
     manifestPath: params.manifestPath,
     manifestDigest: params.record.install.manifestDigest ?? params.record.source.resolvedDigest ?? null,
     manifest: params.manifest,
-    contributionIds: summarizePluginContributes(params.manifest),
+    contributionIntrospection: projectPluginCatalogEntryIntrospection({
+      pluginId: params.pluginId,
+      pluginVersion: version,
+      source: params.record.source,
+      manifest: params.manifest,
+      generation: 0,
+      host: 'cli',
+      platform: process.platform,
+      occurredAtMs: params.record.compatibility.checkedAtMs
+        ?? params.record.source.installedAt
+        ?? params.record.state.lastLoadedAtMs
+        ?? 0,
+      diagnostics: params.diagnostics,
+    }),
     diagnostics: params.diagnostics,
   };
 }
@@ -140,10 +200,14 @@ function buildCatalogEntry(params: Readonly<{
 async function resolvePluginCatalogEntryFromRecord(
   pluginId: string,
   record: PluginStateRecord,
+  desiredGeneration: string | null = null,
+  rollbackAvailability: 'available' | 'unavailable' = 'unavailable',
 ): Promise<PluginCatalogEntry> {
   if (record.install.mode !== 'managed_install' && record.source.kind !== 'path') {
     return buildCatalogEntry({
       pluginId,
+      desiredGeneration,
+      rollbackAvailability,
       record,
       manifest: null,
       manifestPath: record.source.manifestPath,
@@ -186,17 +250,29 @@ async function resolvePluginCatalogEntryFromRecord(
       } satisfies ResolvedPluginSource;
 
   const resolvedManifest = readResolvedManifest(pluginId, sourceResolution);
+  const persistedManifestDigest = record.install.manifestDigest ?? record.source.resolvedDigest ?? null;
+  const manifestDigestMismatch = sourceResolution.ok
+    && typeof persistedManifestDigest === 'string'
+    && /^sha256:[0-9a-f]{64}$/iu.test(persistedManifestDigest)
+    && sourceResolution.manifestDigest.toLowerCase() !== persistedManifestDigest.toLowerCase();
+  const integrityDiagnostics: readonly PluginCompatibilityDiagnostic[] = manifestDigestMismatch
+    ? [{
+        code: 'plugin_manifest_semantic_invalid',
+        message: `Current manifest digest for '${pluginId}' does not match its persisted install digest`,
+      }]
+    : [];
   const daemonEntryDiagnostics = await (async (): Promise<readonly PluginCompatibilityDiagnostic[]> => {
     if (!sourceResolution.ok) {
       return [];
     }
-    if (!resolvedManifest.manifest) {
+    if (!resolvedManifest.manifest || manifestDigestMismatch) {
       return [];
     }
 
     const daemonEntryResolution = await resolvePluginDaemonEntryPath({
       pluginRootPath: sourceResolution.pluginRootPath,
       manifest: sourceResolution.manifest,
+      resolveDevEntrypoint: shouldResolvePluginDevelopmentEntrypoint(record),
     });
     if (daemonEntryResolution.ok) {
       return [];
@@ -205,23 +281,56 @@ async function resolvePluginCatalogEntryFromRecord(
   })();
   return buildCatalogEntry({
     pluginId,
+    desiredGeneration,
+    rollbackAvailability,
     record,
-    manifest: resolvedManifest.manifest,
+    manifest: manifestDigestMismatch ? null : resolvedManifest.manifest,
     manifestPath: sourceResolution.ok ? sourceResolution.manifestPath : record.source.manifestPath,
-    diagnostics: [...record.compatibility.diagnostics, ...resolvedManifest.diagnostics, ...daemonEntryDiagnostics],
+    diagnostics: [
+      ...record.compatibility.diagnostics,
+      ...resolvedManifest.diagnostics,
+      ...integrityDiagnostics,
+      ...daemonEntryDiagnostics,
+    ],
+  });
+}
+
+async function projectInstalledPluginCatalog(
+  state: PluginStateFileV1,
+  pluginGenerations: Readonly<Record<string, Readonly<{ immutableGenerationId: string }>>>,
+  rollbackAvailabilityByPluginId: Readonly<Record<string, 'available' | 'unavailable'>>,
+): Promise<readonly PluginCatalogEntry[]> {
+  const entries: PluginCatalogEntry[] = [];
+
+  for (const [pluginId, record] of Object.entries(state.plugins)) {
+    entries.push(await resolvePluginCatalogEntryFromRecord(
+      pluginId,
+      record,
+      pluginGenerations[pluginId]?.immutableGenerationId ?? null,
+      rollbackAvailabilityByPluginId[pluginId] ?? 'unavailable',
+    ));
+  }
+
+  return Object.freeze(entries.sort((a, b) => a.pluginId.localeCompare(b.pluginId)));
+}
+
+export async function readInstalledPluginCatalogSnapshot(params?: Readonly<{
+  happyHomeDir?: string;
+}>): Promise<Readonly<{ revision: number; entries: readonly PluginCatalogEntry[] }>> {
+  const stateStore = createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir });
+  const snapshot = await stateStore.readSnapshot();
+  return Object.freeze({
+    revision: snapshot.revision,
+    entries: await projectInstalledPluginCatalog(
+      snapshot.state,
+      snapshot.pluginGenerations,
+      snapshot.rollbackAvailabilityByPluginId,
+    ),
   });
 }
 
 export async function readInstalledPluginCatalog(params?: Readonly<{ happyHomeDir?: string }>): Promise<readonly PluginCatalogEntry[]> {
-  const stateStore = createPluginStateStore({ happyHomeDir: params?.happyHomeDir });
-  const state = await stateStore.read();
-  const entries: PluginCatalogEntry[] = [];
-
-  for (const [pluginId, record] of Object.entries(state.plugins)) {
-    entries.push(await resolvePluginCatalogEntryFromRecord(pluginId, record));
-  }
-
-  return Object.freeze(entries.sort((a, b) => a.pluginId.localeCompare(b.pluginId)));
+  return (await readInstalledPluginCatalogSnapshot(params)).entries;
 }
 
 export async function readInstalledPluginCatalogEntry(params: Readonly<{
@@ -240,16 +349,15 @@ export async function installPluginFromLocator(params: Readonly<{
   dev?: boolean;
   workspaceRoot?: string;
 }>): Promise<InstallPluginFromLocatorResult> {
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
+  const stateStore = createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir });
   const happyHomeDir = stateStore.paths.happyHomeDir;
   if (!happyHomeDir) {
     throw new Error('Plugin state store resolved without a happyHomeDir');
   }
-  const installResult = await installPluginFromSource({
+  const installResult = await inspectPluginSource({
     happyHomeDir,
     locator: params.locator,
     skipIfInstalled: params.skipIfInstalled,
-    dryRun: params.dryRun,
     dev: params.dev,
     workspaceRoot: params.workspaceRoot,
   });
@@ -304,6 +412,38 @@ export async function installPluginFromLocator(params: Readonly<{
     };
   }
 
+  if (!params.dryRun && !(params.skipIfInstalled && installResult.alreadyInstalled)) {
+    const change = await requestUserPluginChange({
+      request: installResult.sourceKind === 'archive'
+        ? { kind: 'installArchive', locator: params.locator }
+        : { kind: 'installPath', locator: params.locator, development: params.dev === true },
+      approval: 'none',
+    });
+    if (change.kind !== 'committed') {
+      return {
+        ok: false,
+        diagnostics: [pluginChangeDiagnostic(change)],
+        change,
+      };
+    }
+
+    const entry = await readInstalledPluginCatalogEntry({
+      pluginId: installResult.pluginId,
+      happyHomeDir: params.happyHomeDir,
+    });
+    if (!entry) {
+      return {
+        ok: false,
+        diagnostics: [{
+          code: 'plugin_source_missing',
+          message: `Daemon committed plugin '${installResult.pluginId}', but its installed catalog entry is not yet readable.`,
+        }],
+        change,
+      };
+    }
+    return { ok: true, alreadyInstalled: false, entry, change };
+  }
+
   return {
     ok: true,
     alreadyInstalled: installResult.alreadyInstalled,
@@ -336,7 +476,7 @@ export async function uninstallPluginFromCatalog(params: Readonly<{
     };
   }
 
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
+  const stateStore = createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir });
   const happyHomeDir = stateStore.paths.happyHomeDir;
   if (!happyHomeDir) {
     throw new Error('Plugin state store resolved without a happyHomeDir');
@@ -391,5 +531,63 @@ export async function uninstallPluginFromCatalog(params: Readonly<{
     pluginId: removed.pluginId,
     entry,
     removedInstalledPath: removed.removedInstalledPath,
+    change: removed.change,
   };
+}
+
+export async function rollbackPluginFromCatalog(params: Readonly<{
+  pluginId: string;
+  happyHomeDir?: string;
+}>): Promise<RollbackPluginFromCatalogResult> {
+  const pluginId = params.pluginId.trim();
+  if (!pluginId) {
+    return {
+      ok: false,
+      diagnostics: [{
+        code: 'plugin_manifest_semantic_invalid',
+        message: 'plugins.rollback requires a non-empty pluginId',
+      }],
+    };
+  }
+
+  const stateStore = createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir });
+  const current = await readInstalledPluginCatalogEntry({
+    pluginId,
+    happyHomeDir: stateStore.paths.happyHomeDir,
+  });
+  if (!current) {
+    return {
+      ok: false,
+      diagnostics: [{ code: 'plugin_source_missing', message: `Installed plugin '${pluginId}' was not found` }],
+    };
+  }
+  if (current.source.kind === 'bundled') {
+    return {
+      ok: false,
+      diagnostics: [{
+        code: 'plugin_source_kind_unsupported',
+        message: `Bundled first-party plugin '${pluginId}' has no user-managed rollback generation`,
+      }],
+    };
+  }
+
+  const change = await requestUserPluginChange({
+    request: { kind: 'rollback', pluginId },
+    approval: 'none',
+  });
+  if (change.kind !== 'committed') {
+    return {
+      ok: false,
+      diagnostics: [pluginChangeDiagnostic(change)],
+    };
+  }
+
+  const entry = await readInstalledPluginCatalogEntry({
+    pluginId,
+    happyHomeDir: stateStore.paths.happyHomeDir,
+  });
+  if (!entry) {
+    throw new Error(`Rolled-back plugin '${pluginId}' could not be re-read from the committed registry`);
+  }
+  return { ok: true, pluginId, entry, change };
 }

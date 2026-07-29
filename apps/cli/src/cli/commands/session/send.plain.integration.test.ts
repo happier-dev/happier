@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+  bindApiSessionSocketMock,
+  bindApiSessionSocketSequenceMock,
+  createApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
@@ -21,10 +25,29 @@ describe('happier session send plaintext sessions (integration)', () => {
   let server: Server | null = null;
   let happyHomeDir = '';
   const receivedMessages: any[] = [];
+  let sessionActive = true;
+  let sessionActiveAt = 2;
+  let latestTurnStatus: 'in_progress' | 'completed' = 'completed';
+  let latestTurnStatusObservedAt = 1;
+  let visibleMessageByLocalId: {
+    id: string;
+    localId: string;
+    seq: number;
+    createdAt: number;
+    updatedAt: number;
+    content: unknown;
+  } | null = null;
+  let transcriptMessages: Array<Record<string, unknown>> = [];
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-send-plain-');
     receivedMessages.length = 0;
+    sessionActive = true;
+    sessionActiveAt = 2;
+    latestTurnStatus = 'completed';
+    latestTurnStatusObservedAt = 1;
+    visibleMessageByLocalId = null;
+    transcriptMessages = [];
 
     const sessionId = 'sess_integration_send_plain_123';
     const metadataPlain = JSON.stringify({
@@ -49,20 +72,112 @@ describe('happier session send plaintext sessions (integration)', () => {
               seq: 1,
               createdAt: 1,
               updatedAt: 2,
-              active: false,
-              activeAt: 0,
+              active: sessionActive,
+              activeAt: sessionActiveAt,
               metadata: metadataPlain,
               metadataVersion: 0,
               agentState: JSON.stringify({ controlledByUser: false, requests: {} }),
               agentStateVersion: 0,
               pendingCount: 0,
               pendingVersion: 0,
+              latestTurnStatus,
+              latestTurnStatusObservedAt,
+              pendingPermissionRequestCount: 0,
+              pendingUserActionRequestCount: 0,
               dataEncryptionKey: null,
               encryptionMode: 'plain',
               share: null,
             },
           }),
         );
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === `/v2/sessions/${sessionId}/pending`) {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        }
+        const body = JSON.parse(Buffer.concat(chunks).toString('utf8')) as {
+          localId: string;
+          content: { t: 'plain'; v: unknown };
+        };
+        receivedMessages.push(body.content);
+        const createdAt = Date.now();
+        visibleMessageByLocalId = {
+          id: `msg-${body.localId}`,
+          localId: body.localId,
+          seq: 4,
+          createdAt,
+          updatedAt: createdAt,
+          content: body.content,
+        };
+        transcriptMessages = [visibleMessageByLocalId];
+
+        const promptText =
+          body.content?.t === 'plain'
+          && body.content.v
+          && typeof body.content.v === 'object'
+          && !Array.isArray(body.content.v)
+          && (body.content.v as { content?: unknown }).content
+          && typeof (body.content.v as { content: unknown }).content === 'object'
+          && !Array.isArray((body.content.v as { content: unknown }).content)
+            ? String(((body.content.v as { content: { text?: unknown } }).content.text) ?? '')
+            : '';
+        if (promptText === 'Wait for fast native response') {
+          transcriptMessages.push({
+            id: 'msg-fast-native-assistant',
+            localId: null,
+            seq: 5,
+            createdAt: createdAt + 1,
+            updatedAt: createdAt + 1,
+            content: {
+              t: 'plain',
+              v: {
+                role: 'agent',
+                content: {
+                  type: 'acp',
+                  agentId: 'agent',
+                  data: { type: 'text', text: 'PLAIN_FAST_READY' },
+                },
+              },
+            },
+          });
+          latestTurnStatus = 'completed';
+          latestTurnStatusObservedAt = createdAt + 1;
+        }
+
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ didWrite: true, terminal: false, suppressed: false }));
+        return;
+      }
+
+      const lookupPrefix = `/v2/sessions/${sessionId}/messages/by-local-id/`;
+      if (req.method === 'GET' && url.pathname.startsWith(lookupPrefix)) {
+        const localId = decodeURIComponent(url.pathname.slice(lookupPrefix.length));
+        if (!visibleMessageByLocalId || visibleMessageByLocalId.localId !== localId) {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ message: visibleMessageByLocalId }));
+        return;
+      }
+
+      if (req.method === 'GET' && url.pathname === `/v1/sessions/${sessionId}/messages`) {
+        const afterSeqRaw = url.searchParams.get('afterSeq');
+        const afterSeq = afterSeqRaw === null ? null : Number.parseInt(afterSeqRaw, 10);
+        const rows = afterSeq === null || !Number.isFinite(afterSeq)
+          ? transcriptMessages
+          : transcriptMessages.filter((message) => (
+              typeof message.seq === 'number' && message.seq > afterSeq
+            ));
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ messages: rows }));
         return;
       }
 
@@ -114,10 +229,27 @@ describe('happier session send plaintext sessions (integration)', () => {
     reloadConfiguration();
   });
 
-  it('emits a plaintext message envelope over the socket and includes meta defaults from plaintext metadata', async () => {
+  it('enqueues a plaintext message envelope and includes meta defaults from plaintext metadata', async () => {
     const { handleSessionCommand } = await import('./index');
 
     const output = captureConsoleJsonOutput();
+    const rpcSocket = createApiSessionSocketStub();
+    rpcSocket.connect = vi.fn(() => {
+      rpcSocket.trigger('connect_error', new Error('connect_error'));
+      return rpcSocket;
+    });
+    const committedSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [payload, ack] = args as [any, ((answer: any) => void) | undefined];
+        if (event === 'message') {
+          receivedMessages.push(payload?.message);
+          ack?.({ ok: true, id: 'm1', seq: 2, localId: payload?.localId ?? null, didWrite: true });
+          return;
+        }
+        ack?.({ ok: false, error: 'unsupported' });
+      },
+    });
+    bindApiSessionSocketSequenceMock(mockIo, [rpcSocket, committedSocket]);
 
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);
@@ -142,7 +274,62 @@ describe('happier session send plaintext sessions (integration)', () => {
       expect(last?.t).toBe('plain');
       expect(last?.v?.content?.text).toBe('Hello from controller');
       expect(last?.v?.meta?.permissionMode).toBe('safe-yolo');
-      expect(last?.v?.meta?.model).toBe('claude-sonnet-4-0');
+      expect(last?.v?.meta).not.toHaveProperty('model');
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('completes --wait when native assistant text and the terminal projection arrive before socket subscription', async () => {
+    const { handleSessionCommand } = await import('./index');
+    latestTurnStatus = 'in_progress';
+    latestTurnStatusObservedAt = Date.now();
+
+    const output = captureConsoleJsonOutput();
+    try {
+      const machineKeySeed = new Uint8Array(32).fill(8);
+      await handleSessionCommand(
+        [
+          'send',
+          'sess_integration_send_plain_123',
+          'Wait for fast native response',
+          '--wait',
+          '--timeout',
+          '1',
+          '--json',
+        ],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+              machineKey: machineKeySeed,
+            },
+          }),
+        },
+      );
+
+      expect(output.json()).toMatchObject({
+        ok: true,
+        kind: 'session_send',
+        data: {
+          sessionId: 'sess_integration_send_plain_123',
+          waited: true,
+        },
+      });
+      expect(transcriptMessages).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          seq: 5,
+          content: expect.objectContaining({
+            v: expect.objectContaining({
+              content: expect.objectContaining({
+                data: { type: 'text', text: 'PLAIN_FAST_READY' },
+              }),
+            }),
+          }),
+        }),
+      ]));
     } finally {
       output.restore();
     }

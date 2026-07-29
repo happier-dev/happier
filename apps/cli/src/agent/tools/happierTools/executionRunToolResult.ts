@@ -1,4 +1,8 @@
-import type { ExecutionRunServiceResult, WaitForExecutionRunResult } from '@/session/services/executionRuns';
+import {
+  normalizeExecutionRunFeatureBlockerDetails,
+  type ExecutionRunServiceResult,
+  type WaitForExecutionRunResult,
+} from '@/session/services/executionRuns';
 
 import type { HappierBuiltInToolDispatchResult } from './types';
 
@@ -6,7 +10,13 @@ export function normalizeExecutionRunToolResult(
   result: ExecutionRunServiceResult<unknown> | WaitForExecutionRunResult,
 ): HappierBuiltInToolDispatchResult {
   if (!result.ok) {
-    return { ok: false, errorCode: result.code, error: result.message ?? result.code };
+    const details = normalizeExecutionRunFeatureBlockerDetails(result.details);
+    return {
+      ok: false,
+      errorCode: result.code,
+      error: result.message ?? result.code,
+      ...(details ? { details } : {}),
+    };
   }
 
   if ('data' in result) {

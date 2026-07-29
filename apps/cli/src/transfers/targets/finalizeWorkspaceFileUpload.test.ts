@@ -5,11 +5,22 @@ import { dirname, join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { TransferSessionStore } from '../core/transferSessionStore';
+import {
+  createTransferSessionLifecycle,
+  finalizeUploadTransferSession,
+  openUploadTransferSession,
+  writeUploadTransferChunk,
+} from '../core/transferSessionLifecycle';
+
 let renameAttemptCount = 0;
 let firstRenameErrorCode: string | null = 'EXDEV';
 let failingRmPath: string | null = null;
 let failingRmCode: string | null = null;
 let createDestinationBeforeExclusiveCopy = false;
+let failingCopyFromPath: string | null = null;
+let failBackupRestore = false;
+let backupPath: string | null = null;
 
 vi.mock('node:fs/promises', async () => {
   const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
@@ -20,6 +31,9 @@ vi.mock('node:fs/promises', async () => {
   return {
     ...actual,
     copyFile: vi.fn(async (from: string, to: string, mode?: number) => {
+      if (from === failingCopyFromPath) {
+        throw new Error('simulated staged destination copy failure');
+      }
       if (createDestinationBeforeExclusiveCopy) {
         createDestinationBeforeExclusiveCopy = false;
         writeFileSync(to, 'raced-destination', 'utf8');
@@ -33,7 +47,13 @@ vi.mock('node:fs/promises', async () => {
         error.code = firstRenameErrorCode;
         throw error;
       }
+      if (failBackupRestore && backupPath === from) {
+        throw new Error('simulated destination backup restoration failure');
+      }
       await actualRename(from, to);
+      if (to.includes('.happier-upload-backup-')) {
+        backupPath = to;
+      }
     }),
     rm: vi.fn(async (targetPath: string, options?: Parameters<typeof actualRm>[1]) => {
       if (failingRmPath === targetPath && failingRmCode) {
@@ -58,6 +78,9 @@ describe('finalizeWorkspaceFileUpload', () => {
     failingRmPath = null;
     failingRmCode = null;
     createDestinationBeforeExclusiveCopy = false;
+    failingCopyFromPath = null;
+    failBackupRestore = false;
+    backupPath = null;
     vi.clearAllMocks();
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -113,6 +136,134 @@ describe('finalizeWorkspaceFileUpload', () => {
     });
     expect(readFileSync(destPath, 'utf8')).toBe('original-destination');
     expect(readFileSync(tempPath, 'utf8')).toBe('payload');
+  });
+
+  it('classifies incomplete destination restoration as retained recovery state', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-finalize-upload-rollback-failure-'));
+    tempDirs.push(root);
+    const tempPath = join(root, 'temp.txt');
+    const destPath = join(root, 'dest', 'file.txt');
+    mkdirSync(dirname(destPath), { recursive: true });
+    writeFileSync(destPath, 'original-destination', 'utf8');
+    writeFileSync(tempPath, 'payload', 'utf8');
+    failingCopyFromPath = tempPath;
+    failBackupRestore = true;
+
+    await expect(finalizeWorkspaceFileUpload({
+      tempPath,
+      destPath,
+      destDisplayPath: '~/dest/file.txt',
+      overwrite: true,
+      sizeBytes: 7,
+    })).resolves.toEqual({
+      success: false,
+      error: 'Failed to finalize uploaded file because destination recovery was incomplete. Recovery files were preserved; inspect the destination before retrying.',
+      errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+      keepSession: true,
+    });
+
+    expect(readFileSync(tempPath, 'utf8')).toBe('payload');
+    expect(backupPath).not.toBeNull();
+    expect(readFileSync(backupPath!, 'utf8')).toBe('original-destination');
+  });
+
+  it('keeps the real upload session attached when destination restoration fails', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-finalize-upload-session-retention-'));
+    tempDirs.push(root);
+    const destPath = join(root, 'dest', 'file.txt');
+    mkdirSync(dirname(destPath), { recursive: true });
+    writeFileSync(destPath, 'original-destination', 'utf8');
+    const store = new TransferSessionStore({
+      ttlMs: 10_000,
+      tempRoot: join(root, 'transfer-sessions'),
+    });
+    const lifecycle = createTransferSessionLifecycle({ store, chunkSizeBytes: 8 });
+    const payload = Buffer.from('payload', 'utf8');
+
+    try {
+      const session = await openUploadTransferSession({
+        lifecycle,
+        target: {
+          destPath,
+          destDisplayPath: '~/dest/file.txt',
+          overwrite: true,
+          expectedSizeBytes: payload.length,
+          finalizeUpload: async (input) => await finalizeWorkspaceFileUpload({
+            tempPath: input.tempPath,
+            destPath,
+            destDisplayPath: '~/dest/file.txt',
+            overwrite: true,
+            sizeBytes: input.sizeBytes,
+          }),
+        },
+      });
+      await expect(writeUploadTransferChunk({
+        lifecycle,
+        uploadId: session.uploadId,
+        index: 0,
+        contentBase64: payload.toString('base64'),
+      })).resolves.toEqual({ success: true });
+      const storedSession = store.getUploadSession(session.uploadId);
+      if (!storedSession) {
+        throw new Error('Expected active upload session');
+      }
+      failingCopyFromPath = storedSession.tempPath;
+      failBackupRestore = true;
+
+      await expect(finalizeUploadTransferSession({
+        lifecycle,
+        uploadId: session.uploadId,
+      })).resolves.toEqual({
+        success: false,
+        error: 'Failed to finalize uploaded file because destination recovery was incomplete. Recovery files were preserved; inspect the destination before retrying.',
+        errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+        keepSession: true,
+      });
+
+      expect(store.getUploadSession(session.uploadId)).toBe(storedSession);
+      expect(readFileSync(storedSession.tempPath)).toEqual(payload);
+      expect(backupPath).not.toBeNull();
+      expect(readFileSync(backupPath!, 'utf8')).toBe('original-destination');
+      await expect(writeUploadTransferChunk({
+        lifecycle,
+        uploadId: session.uploadId,
+        index: 0,
+        contentBase64: payload.toString('base64'),
+      })).resolves.toEqual({ success: true });
+    } finally {
+      await store.dispose();
+    }
+  });
+
+  it('retains recovery state when source cleanup and destination rollback both fail', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-finalize-upload-cleanup-rollback-failure-'));
+    tempDirs.push(root);
+    const tempPath = join(root, 'temp.txt');
+    const destPath = join(root, 'dest', 'file.txt');
+    mkdirSync(dirname(destPath), { recursive: true });
+    writeFileSync(destPath, 'original-destination', 'utf8');
+    writeFileSync(tempPath, 'payload', 'utf8');
+    failingRmPath = tempPath;
+    failingRmCode = 'EPERM';
+    failBackupRestore = true;
+
+    await expect(finalizeWorkspaceFileUpload({
+      tempPath,
+      destPath,
+      destDisplayPath: '~/dest/file.txt',
+      overwrite: true,
+      sizeBytes: 7,
+    })).resolves.toEqual({
+      success: false,
+      error: 'Failed to finalize uploaded file because destination recovery was incomplete. Recovery files were preserved; inspect the destination before retrying.',
+      errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+      keepSession: true,
+    });
+
+    expect(readFileSync(tempPath, 'utf8')).toBe('payload');
+    expect(backupPath).not.toBeNull();
+    expect(readFileSync(backupPath!, 'utf8')).toBe('original-destination');
+    await expect(access(destPath)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it.each(['EPERM', 'EEXIST'] as const)('overwrites an existing destination when same-volume rename fails with %s', async (renameErrorCode) => {

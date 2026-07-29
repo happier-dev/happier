@@ -17,9 +17,12 @@ export function getExecutionRunAvailableActionIds(
     : resolveExecutionRunIntentProfile(run.intent);
   if (!profile.listAvailableActionIds) return [];
 
-  return profile.listAvailableActionIds({
+  const actionIds = profile.listAvailableActionIds({
     start: buildExecutionRunProfileStartParams(run),
     structuredMeta: run.structuredMeta ?? null,
     controllerKind: controller?.kind ?? null,
   });
+  return run.status === 'succeeded'
+    ? actionIds
+    : actionIds.filter((actionId) => actionId !== 'reviews.comments.create');
 }

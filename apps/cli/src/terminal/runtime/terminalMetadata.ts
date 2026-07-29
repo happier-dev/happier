@@ -1,6 +1,35 @@
 import type { Metadata } from '@/api/types';
+import type { TerminalHostHandle } from '@happier-dev/agents';
 
 import type { TerminalRuntimeFlags } from './terminalRuntimeFlags';
+
+export function buildTerminalMetadataFromHostHandle(
+  handle: TerminalHostHandle,
+): NonNullable<Metadata['terminal']> {
+  if (handle.kind === 'tmux') {
+    return {
+      mode: 'tmux',
+      tmux: {
+        target: handle.paneId
+          ? `${handle.sessionName}:${handle.paneId}`
+          : handle.sessionName,
+        ...(handle.socketDir ? { tmpDir: handle.socketDir } : {}),
+      },
+    };
+  }
+
+  if (handle.kind === 'windows_console') {
+    return {
+      mode: 'windows_console',
+      windows: {
+        host: 'console',
+        ...(handle.paneId ? { windowId: handle.paneId } : {}),
+      },
+    };
+  }
+
+  return { mode: 'zellij' };
+}
 
 export function buildTerminalMetadataFromRuntimeFlags(
   flags: TerminalRuntimeFlags | null,
@@ -8,7 +37,7 @@ export function buildTerminalMetadataFromRuntimeFlags(
   if (!flags) return undefined;
 
   const mode = flags.mode;
-  if (mode !== 'plain' && mode !== 'tmux' && mode !== 'windows_terminal' && mode !== 'windows_console') return undefined;
+  if (mode !== 'plain' && mode !== 'tmux' && mode !== 'zellij' && mode !== 'windows_terminal' && mode !== 'windows_console') return undefined;
 
   const terminal: NonNullable<Metadata['terminal']> = {
     mode,
@@ -17,6 +46,7 @@ export function buildTerminalMetadataFromRuntimeFlags(
   if (
     flags.requested === 'plain'
     || flags.requested === 'tmux'
+    || flags.requested === 'zellij'
     || flags.requested === 'windows_terminal'
     || flags.requested === 'console'
   ) {
@@ -39,6 +69,9 @@ export function buildTerminalMetadataFromRuntimeFlags(
       host: mode === 'windows_terminal' ? 'windows_terminal' : 'console',
       ...(typeof flags.windowId === 'string' && flags.windowId.trim().length > 0
         ? { windowId: flags.windowId }
+        : {}),
+      ...(typeof flags.title === 'string' && flags.title.trim().length > 0
+        ? { title: flags.title }
         : {}),
     };
   }

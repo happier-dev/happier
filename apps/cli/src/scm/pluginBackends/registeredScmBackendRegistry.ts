@@ -1,15 +1,29 @@
-import type { ScmBackendContribution } from '@happier-dev/protocol';
-import type { ScmBackendRuntimeRegistration, ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+import {
+    ScmBackendCapabilitiesSchema,
+    ScmRepoModeSchema,
+    type ScmBackendContribution,
+} from '@happier-dev/protocol';
+import type { ScmBackendRuntimeRegistration, ScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 
 import type { ScmBackend } from '../types';
-import { createRegisteredScmBackendAdapter } from './registeredScmBackendAdapter';
+import {
+    createRegisteredScmBackendAdapter,
+    type ScmBackendExecutableDefinition,
+} from './registeredScmBackendAdapter';
 
 export type RegisteredScmBackendDefinition = Readonly<{
     pluginId: string;
     contributionId: string;
-    definition: ScmBackendContribution;
+    definition: ScmBackendContribution | LegacyScmBackendExecutableDeclaration;
+}>;
+
+type LegacyScmBackendExecutableDeclaration = Readonly<{
+    id: string;
+    repoModes: readonly unknown[];
+    capabilities: unknown;
+    tooling: unknown;
 }>;
 
 export type RegisteredScmBackendActivation = Readonly<{
@@ -123,8 +137,8 @@ const EXECUTABLE_SUPPORTED_LEAVES: readonly SupportedLeaf[] = [
     { key: 'workspaceIntegration.portablePathClassification', hasHandler: (registration) => typeof registration.handlers.workspaceIntegration?.classifyPortableWorkspacePath === 'function' },
 ];
 
-function isLeafAdvertised(definition: ScmBackendContribution, key: string): boolean {
-    const [group, leaf] = key.split('.') as [keyof ScmBackendContribution['capabilities'], string];
+function isLeafAdvertised(definition: ScmBackendExecutableDefinition, key: string): boolean {
+    const [group, leaf] = key.split('.') as [keyof ScmBackendExecutableDefinition['capabilities'], string];
     const groupValue = definition.capabilities[group];
     if (!groupValue || typeof groupValue !== 'object' || Array.isArray(groupValue)) {
         return false;
@@ -137,6 +151,51 @@ function isLeafAdvertised(definition: ScmBackendContribution, key: string): bool
         && ((leafValue as { support?: unknown }).support === 'supported'
             || (leafValue as { support?: unknown }).support === 'experimental'),
     );
+}
+
+function readExecutableDefinition(value: unknown): ScmBackendExecutableDefinition | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Readonly<Record<string, unknown>>;
+    if (!Array.isArray(record.repoModes) || record.repoModes.length === 0) return null;
+    const repoModes = record.repoModes.map((mode) => ScmRepoModeSchema.safeParse(mode));
+    if (repoModes.some((mode) => !mode.success)) return null;
+    const capabilities = ScmBackendCapabilitiesSchema.safeParse(record.capabilities);
+    if (!capabilities.success) return null;
+    if (!Array.isArray(record.commands)) return null;
+    const commands = record.commands.flatMap((command) => {
+        if (!command || typeof command !== 'object' || Array.isArray(command)) return [];
+        const candidate = command as Readonly<Record<string, unknown>>;
+        return typeof candidate.installableKey === 'string' && candidate.installableKey.trim().length > 0
+            && typeof candidate.command === 'string' && candidate.command.trim().length > 0
+            ? [{ installableKey: candidate.installableKey, command: candidate.command }]
+            : [];
+    });
+    if (commands.length !== record.commands.length) return null;
+    return Object.freeze({
+        repoModes: Object.freeze(repoModes.flatMap((mode) => mode.success ? [mode.data] : [])),
+        capabilities: capabilities.data,
+        commands: Object.freeze(commands),
+    });
+}
+
+function resolveExecutableDefinition(
+    definition: ScmBackendContribution | LegacyScmBackendExecutableDeclaration,
+    registration: ScmBackendRuntimeRegistration,
+): ScmBackendExecutableDefinition | null {
+    const registered = readExecutableDefinition(registration.runtime);
+    if (registered) return registered;
+
+    // Deployed V1 manifests carried executable facts directly. Read that exact
+    // shape only at this activation boundary; V2 declarations never imply them.
+    if (!definition || typeof definition !== 'object') return null;
+    const legacy = definition as unknown as Readonly<Record<string, unknown>>;
+    const tooling = legacy.tooling;
+    if (!tooling || typeof tooling !== 'object' || Array.isArray(tooling)) return null;
+    return readExecutableDefinition({
+        repoModes: legacy.repoModes,
+        capabilities: legacy.capabilities,
+        commands: (tooling as Readonly<Record<string, unknown>>).commands,
+    });
 }
 
 function createOwnerContributionKey(input: Readonly<{
@@ -186,8 +245,20 @@ export function createRegisteredScmBackendRegistry(input: Readonly<{
             continue;
         }
 
+        const executableDefinition = resolveExecutableDefinition(
+            entry.definition,
+            registrationEntry.registration,
+        );
+        if (!executableDefinition) {
+            appendDiagnostic(entry.pluginId, {
+                code: 'plugin_scm_backend_activation_drift',
+                message: `Plugin '${entry.pluginId}' SCM backend '${entry.contributionId}' has no valid executable runtime facts`,
+            });
+            continue;
+        }
+
         const missingHandlers = EXECUTABLE_SUPPORTED_LEAVES
-            .filter((leaf) => isLeafAdvertised(entry.definition, leaf.key) && !leaf.hasHandler(registrationEntry.registration))
+            .filter((leaf) => isLeafAdvertised(executableDefinition, leaf.key) && !leaf.hasHandler(registrationEntry.registration))
             .map((leaf) => leaf.key);
         if (missingHandlers.length > 0) {
             appendDiagnostic(entry.pluginId, {
@@ -199,6 +270,8 @@ export function createRegisteredScmBackendRegistry(input: Readonly<{
 
         backends.push(createRegisteredScmBackendAdapter({
             definition: entry.definition,
+            qualifiedId: `${entry.pluginId}/${entry.contributionId}`,
+            executableDefinition,
             registration: registrationEntry.registration,
             hostingProviderRuntimeServices: input.hostingProviderRuntimeServices,
         }));

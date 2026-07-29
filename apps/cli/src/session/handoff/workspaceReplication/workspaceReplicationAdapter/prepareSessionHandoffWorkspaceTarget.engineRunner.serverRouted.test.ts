@@ -7,11 +7,14 @@ import { describe, expect, it } from 'vitest';
 
 import type { MachineTransferReceiveEnvelope, MachineTransferSendEnvelope, WorkspaceManifest } from '@happier-dev/protocol';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
 
 import type { SessionHandoffWorkspaceReplicationMetadata } from './metadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './adapter';
+
+const scmRegistry = createScmBackendRegistry([]);
 
 function sha256DigestOfString(value: string): string {
     return `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -72,6 +75,7 @@ describe('prepareSessionHandoffWorkspaceTarget (engine-runner, server_routed_str
                 sourceMachineId: 'machine_source',
                 targetMachineId: 'machine_target',
                 targetPath: targetWorkspaceRoot,
+                scmRegistry,
                 workspaceTransfer: {
                     enabled: true,
                     strategy: 'transfer_snapshot',

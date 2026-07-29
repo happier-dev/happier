@@ -144,9 +144,6 @@ const DURABLE_CONNECTED_SERVICE_RESTART_INTENT_DEFINITION_BASENAMES: ReadonlySet
   'sessionRegistry.ts',
 ]);
 
-const DURABLE_RUNTIME_AUTH_RECOVERY_REPLAY_PATTERN =
-  /\b(runtime-auth-recovery\.json|runtimeAuthRecoveryScheduler\.hydrate\s*\(\s*\)|store\?:\s*DurableBackoffRecoveryStore<RuntimeAuthRecoveryIntent>|hydrate\s*\(\s*\):\s*ReadonlyArray<RuntimeAuthRecoveryIntent>|#scheduler\.hydrate\s*\(\s*\))/;
-
 // ---------------------------------------------------------------------------
 // Marker grammar
 // ---------------------------------------------------------------------------
@@ -301,26 +298,6 @@ async function collectDurableConnectedServiceRestartIntentRuntimeSites(): Promis
   return findings;
 }
 
-async function collectDurableRuntimeAuthRecoveryReplaySites(): Promise<string[]> {
-  const [daemonFiles, backendFiles, sessionFiles, agentFiles, rpcFiles] = await Promise.all([
-    listSourceFiles(daemonDir),
-    listSourceFiles(backendsDir),
-    listSourceFiles(sessionDir),
-    listSourceFiles(agentDir),
-    listSourceFiles(rpcDir),
-  ]);
-  const findings: string[] = [];
-  for (const file of [...daemonFiles, ...backendFiles, ...sessionFiles, ...agentFiles, ...rpcFiles]) {
-    const source = await readFile(file, 'utf8');
-    const lines = source.split('\n');
-    for (let index = 0; index < lines.length; index += 1) {
-      if (!DURABLE_RUNTIME_AUTH_RECOVERY_REPLAY_PATTERN.test(lines[index] ?? '')) continue;
-      findings.push(`${scopedPathOf(file)}:${index + 1}`);
-    }
-  }
-  return findings;
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -384,17 +361,6 @@ describe('connected-services restart/switch trigger inventory (K5 bypass guard)'
       findings,
       `Connected-service restart requests must remain in-memory live-daemon state only.\n`
       + `Persisted marker intents are legacy cleanup state; do not mark, preserve, or promote them from runtime paths.\n`
-      + `Runtime references:\n${findings.map((finding) => `  ${finding}`).join('\n')}`,
-    ).toEqual([]);
-  });
-
-  it('does not re-drive runtime-auth recovery from durable daemon-restart state', async () => {
-    const findings = await collectDurableRuntimeAuthRecoveryReplaySites();
-
-    expect(
-      findings,
-      `Runtime-auth recovery may retry while the daemon is alive, but daemon restart must not re-drive old recovery intents.\n`
-      + `Do not wire product runtime paths to runtime-auth-recovery.json or hydrate runtime-auth recovery on daemon start.\n`
       + `Runtime references:\n${findings.map((finding) => `  ${finding}`).join('\n')}`,
     ).toEqual([]);
   });

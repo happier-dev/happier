@@ -12,7 +12,9 @@ import type { ProviderAccountUsagePersistenceScheduler } from './persistence';
 import {
     type ProviderAccountUsageObservation,
     type ProviderAccountUsageStore,
+    type ProviderAccountUsageStoreMutationStatus,
 } from './store';
+import { normalizeConnectedServiceAccessTokenFingerprint } from '../refresh/credentialFreshness/tokenFingerprint';
 
 type TrackedSessionLike = Readonly<{
     happySessionId?: unknown;
@@ -40,52 +42,119 @@ export async function recordProviderAccountUsageSnapshotForSession(input: Readon
     observation?: Readonly<{
         sources?: readonly ConnectedServiceUsageSourceV1[];
     }>;
+    credentialFingerprint?: string | null;
+    verifyCredentialFingerprint?: (input: Readonly<{
+        serviceId: string;
+        profileId: string;
+        providerAccountId: string;
+        credentialFingerprint: string;
+    }>) => Promise<boolean>;
+    resolveAuthoritativeSource?: (
+        source: ConnectedServiceUsageSourceV1,
+    ) => Promise<ConnectedServiceUsageSourceV1 | null>;
     sessionId: string;
     snapshot: ProviderAccountUsageSnapshotV1;
 }>): Promise<
-    | Readonly<{ status: 'recorded'; recordId: string; persisted: boolean }>
+    | Readonly<{ status: ProviderAccountUsageStoreMutationStatus; recordId: string; persisted: boolean }>
     | Readonly<{ status: 'session_not_found' }>
+    | Readonly<{ status: 'credential_fingerprint_mismatch'; recordId: string; persisted: boolean }>
 > {
     const tracked = findTrackedSession(input.getChildren(), input.sessionId);
     if (!tracked) return { status: 'session_not_found' };
 
     const snapshot = ProviderAccountUsageSnapshotV1Schema.parse(input.snapshot);
-    const observation: ProviderAccountUsageObservation = {
-        ...(input.observation?.sources ? { sources: input.observation.sources } : {}),
-    };
-    const recorded = input.store.recordSnapshot(snapshot, observation);
-
-    let persisted = false;
-    if (input.persistence) {
-        try {
-            const persistedSnapshot = input.store.resolveRecordId(recorded.recordId) ?? snapshot;
-            await input.persistence.recordInBandSnapshot(
-                persistedSnapshot,
-                input.observation?.sources?.length ? { sources: input.observation.sources } : undefined,
-            );
-            persisted = true;
-        } catch {
-            persisted = false;
+    const claimedSources = input.observation?.sources?.length
+        ? input.observation.sources
+        : null;
+    let sourceQualificationMismatch = false;
+    let qualifiedSources: readonly ConnectedServiceUsageSourceV1[] | null = null;
+    if (input.credentialFingerprint !== undefined) {
+        const credentialFingerprint = normalizeConnectedServiceAccessTokenFingerprint(input.credentialFingerprint);
+        if (
+            claimedSources
+            && credentialFingerprint
+            && input.verifyCredentialFingerprint
+            && snapshot.accountSubject.kind === 'providerSubject'
+        ) {
+            const matches = await Promise.all(claimedSources.map(async (source) =>
+                await input.verifyCredentialFingerprint!({
+                    serviceId: source.serviceId,
+                    profileId: source.profileId,
+                    providerAccountId: snapshot.accountSubject.kind === 'providerSubject'
+                        ? snapshot.accountSubject.id
+                        : '',
+                    credentialFingerprint,
+                }),
+            ));
+            if (matches.every((matchesCurrentCredential) => matchesCurrentCredential === true)) {
+                const authoritativeSources = input.resolveAuthoritativeSource
+                    ? await Promise.all(claimedSources.map(async (source) =>
+                        await input.resolveAuthoritativeSource!(source),
+                    ))
+                    : claimedSources;
+                if (authoritativeSources.every(
+                    (source): source is ConnectedServiceUsageSourceV1 => source !== null,
+                )) {
+                    qualifiedSources = authoritativeSources;
+                } else {
+                    sourceQualificationMismatch = true;
+                }
+            } else {
+                sourceQualificationMismatch = true;
+            }
+        } else {
+            sourceQualificationMismatch = true;
         }
     }
 
+    // A credential-qualified source claim that does not match current authority must not
+    // advance the canonical account record. Source links are durable and resolve the record's
+    // latest snapshot, so storing this observation as "display-only" would silently make stale
+    // evidence actionful through an older valid link.
+    if (sourceQualificationMismatch) {
+        return {
+            status: 'credential_fingerprint_mismatch',
+            recordId: snapshot.recordId,
+            persisted: false,
+        };
+    }
+
+    const observation: ProviderAccountUsageObservation = {
+        ...(qualifiedSources ? { sources: qualifiedSources } : {}),
+    };
+
+    let persisted = false;
+    if (input.persistence) {
+        await input.persistence.recordInBandSnapshot(
+            snapshot,
+            qualifiedSources ? { sources: qualifiedSources } : undefined,
+        );
+        persisted = true;
+    }
+
+    const recorded = input.store.recordSnapshot(snapshot, observation);
+
     if (persisted) {
-        try {
+        void Promise.resolve().then(async () => {
             await input.publishRecordId?.({
                 sessionId: input.sessionId,
                 recordId: recorded.recordId,
             });
-        } catch {
+        }).catch(() => {
             // Session metadata refs are a best-effort projection over the canonical persisted record.
-        }
+        });
     }
 
-    return { status: 'recorded', recordId: recorded.recordId, persisted };
+    return {
+        status: recorded.status,
+        recordId: recorded.recordId,
+        persisted,
+    };
 }
 
 export async function recordProviderAccountUsageAdoptionForSession(input: Readonly<{
     getChildren: () => ReadonlyArray<TrackedSessionLike | unknown>;
-    store: Pick<ProviderAccountUsageStore, 'applyAdoption' | 'resolveRecordId'>;
+    store: Pick<ProviderAccountUsageStore, 'prepareAdoption'>;
     persistence: Pick<ProviderAccountUsagePersistenceScheduler, 'recordInBandSnapshot'> | null;
     publishRecordId?: (input: Readonly<{ sessionId: string; recordId: string }>) => Promise<void>;
     sessionId: string;
@@ -97,31 +166,41 @@ export async function recordProviderAccountUsageAdoptionForSession(input: Readon
     const tracked = findTrackedSession(input.getChildren(), input.sessionId);
     if (!tracked) return { status: 'session_not_found' };
     const adoption = ProviderAccountUsageAdoptionV1Schema.parse(input.adoption);
-    const applied = input.store.applyAdoption(adoption);
-    let persisted = false;
-    const snapshot = input.store.resolveRecordId(applied.toRecordId);
-    if (snapshot && input.persistence) {
-        try {
-            await input.persistence.recordInBandSnapshot(snapshot);
-            persisted = true;
-        } catch {
-            persisted = false;
-        }
+    const prepared = input.store.prepareAdoption(adoption);
+    if (prepared.status === 'already_adopted') {
+        const applied = prepared.commit();
+        return {
+            status: applied.status,
+            fromRecordId: applied.fromRecordId,
+            toRecordId: applied.toRecordId,
+            persisted: true,
+        };
     }
-    if (persisted) {
-        try {
-            await input.publishRecordId?.({
-                sessionId: input.sessionId,
-                recordId: applied.toRecordId,
-            });
-        } catch {
-            // Usage display metadata is a best-effort projection over the canonical persisted record.
-        }
+    if (!prepared.snapshot) {
+        throw new Error('Provider account usage adoption canonical snapshot unavailable');
+    }
+    if (!input.persistence) {
+        throw new Error('Provider account usage adoption persistence unavailable');
+    }
+    await input.persistence.recordInBandSnapshot(
+        prepared.snapshot,
+        prepared.observation.sources?.length
+            ? { sources: prepared.observation.sources }
+            : undefined,
+    );
+    const applied = prepared.commit();
+    try {
+        await input.publishRecordId?.({
+            sessionId: input.sessionId,
+            recordId: applied.toRecordId,
+        });
+    } catch {
+        // Usage display metadata is a best-effort projection over the canonical persisted record.
     }
     return {
         status: applied.status,
         fromRecordId: applied.fromRecordId,
         toRecordId: applied.toRecordId,
-        persisted,
+        persisted: true,
     };
 }

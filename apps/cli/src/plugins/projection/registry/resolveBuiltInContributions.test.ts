@@ -12,13 +12,11 @@ vi.mock('@/cli/runBackendSessionCliCommand', () => ({
 }));
 
 import {
-  AGENT_PROVIDER_IDS,
   AGENT_IDS,
-  getAllBackendDefinitionContracts,
-  getAllProviderDefinitionContracts,
+  getAllAgentDefinitionContracts,
   getAgentCliRuntimeSpec,
 } from '@happier-dev/agents';
-import { BackendSurfaceOperationCatalogV1, buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 import * as generatedBundledPlugins from './sources/generatedBundledPlugins';
@@ -27,24 +25,14 @@ function readResolverSource(): string {
   return readFileSync(new URL('./resolveBuiltInContributions.ts', import.meta.url), 'utf8');
 }
 
-function readGeneratedArray(name: string): readonly unknown[] {
-  const value = (generatedBundledPlugins as Record<string, unknown>)[name];
-  expect(Array.isArray(value)).toBe(true);
-  return value as readonly unknown[];
-}
-
-function readGeneratedSourceSpecKinds(name: string): readonly unknown[] {
-  const entries = readGeneratedArray(name);
-  expect(entries.length).toBeGreaterThan(0);
-  return entries.map((entry) => (entry as { sourceSpec?: { kind?: unknown } }).sourceSpec?.kind);
-}
-
 describe('resolveBuiltInContributions', () => {
   it('stays a thin reader without host backend or executable plugin imports', () => {
     const resolverSource = readResolverSource();
 
     expect(resolverSource).toMatch(/generatedBundledPlugins/);
-    expect(resolverSource).toMatch(/BUNDLED_FIRST_PARTY_AGENT_CATALOG_ENTRY_HOOKS/);
+    expect(resolverSource).toMatch(/BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS/);
+    expect(resolverSource).toMatch(/BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS/);
+    expect(resolverSource).not.toMatch(/BUNDLED_FIRST_PARTY_PLUGIN_MANIFEST_BINDINGS/);
     expect(resolverSource).not.toMatch(/@\/backends\//);
     expect(resolverSource).not.toMatch(/\.\/bundled\/catalogEntries/);
     expect(resolverSource).not.toMatch(/\bBUILT_IN_AGENT_CATALOG_ENTRIES\b/);
@@ -69,71 +57,182 @@ describe('resolveBuiltInContributions', () => {
     expect(generatedBundledPlugins).not.toHaveProperty('BUNDLED_FIRST_PARTY_CATALOG_ENTRIES');
   });
 
-    it('assembles built-in providers and backends into separate contribution tables', async () => {
-        const contributes = resolveBuiltInContributions();
-    const backendDefinitionIds = getAllBackendDefinitionContracts().map((entry) => entry.id).slice().sort();
-    const providerDefinitionIds = getAllProviderDefinitionContracts().map((entry) => entry.id).slice().sort();
-    const generatedProviderIds = readGeneratedArray('BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS')
-      .map((entry) => (entry as { id?: unknown }).id)
-      .slice()
-      .sort();
-    const generatedBackendIds = readGeneratedArray('BUNDLED_FIRST_PARTY_AGENT_RUNTIME_CONTRIBUTIONS')
-      .map((entry) => (entry as { id?: unknown }).id)
-      .slice()
-      .sort();
-    const generatedPluginBackendIds = readGeneratedArray('BUNDLED_FIRST_PARTY_PLUGIN_AGENT_RUNTIME_CONTRIBUTIONS')
-      .map((entry) => (entry as { id?: unknown }).id)
-      .slice()
-      .sort();
-    const expectedBackendIds = [...backendDefinitionIds, ...generatedPluginBackendIds].slice().sort();
+  it('keeps generated bundled metadata free of behavior declarations', () => {
+    const forbiddenBehaviorExports = [
+      'BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS',
+      'BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_PROVIDER_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_MCP_DISCOVERY_PROVIDER_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_AGENT_RUNTIME_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_PLUGIN_AGENT_RUNTIME_CONTRIBUTIONS',
+      'BUNDLED_FIRST_PARTY_EXECUTION_RUN_PROFILE_CONTRIBUTIONS',
+    ] as const;
 
-    expect(contributes.agents.map((entry) => entry.id).slice().sort()).toEqual(providerDefinitionIds);
-    expect(contributes.agentRuntimes.map((entry) => entry.id).slice().sort()).toEqual(expectedBackendIds);
-    expect(contributes.agents.map((entry) => entry.id).slice().sort()).toEqual(generatedProviderIds);
-    expect(generatedBackendIds).toEqual(backendDefinitionIds);
-    expect((contributes.catalogEntries ?? []).map((entry) => entry.id)).toEqual([]);
-    expect(contributes.agents.map((entry) => entry.id).slice().sort()).toEqual([...AGENT_PROVIDER_IDS].slice().sort());
-    expect(contributes.agents.map((entry) => entry.id).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
-    expect(contributes.agentRuntimes.find((entry) => entry.id === 'antigravity')?.runtimeOwner).toEqual({
-      selectedOwner: 'plugin_engine',
-      acceptedBy: '2026-06-19-antigravity-runtime-unification',
+    for (const exportName of forbiddenBehaviorExports) {
+      expect(generatedBundledPlugins).not.toHaveProperty(exportName);
+    }
+    for (const metadata of generatedBundledPlugins.BUNDLED_FIRST_PARTY_PLUGIN_METADATA) {
+      expect(metadata).not.toHaveProperty('activationEvents');
+    }
+  });
+
+  it('projects manifest-owned MCP discovery providers into the built-in contribution registry', () => {
+    const contributes = resolveBuiltInContributions();
+
+    expect(contributes.mcpDiscoveryProviders?.map((entry) => ({
+      pluginId: entry.pluginId,
+      id: entry.definition.id,
+      agentId: entry.definition.metadata?.agentId,
+    }))).toEqual([
+      {
+        pluginId: 'happier.agent.claude',
+        id: 'config',
+        agentId: 'claude',
+      },
+      {
+        pluginId: 'happier.agent.codex',
+        id: 'config',
+        agentId: 'codex',
+      },
+      {
+        pluginId: 'happier.agent.opencode',
+        id: 'config',
+        agentId: 'opencode',
+      },
+    ]);
+  });
+
+  it('projects built-in Provider-domain contributions with canonical owner identity', () => {
+    const contributes = resolveBuiltInContributions();
+
+    expect(contributes.providers.map((entry) => ({
+      pluginId: entry.pluginId,
+      localId: entry.identity.localId,
+      providerId: entry.definition.id,
+    }))).toEqual(expect.arrayContaining([
+      { pluginId: 'happier.provider.deepseek', localId: 'deepseek', providerId: 'deepseek' },
+      { pluginId: 'happier.provider.lmstudio', localId: 'lmstudio', providerId: 'lmstudio' },
+      { pluginId: 'happier.provider.ollama', localId: 'ollama', providerId: 'ollama' },
+      { pluginId: 'happier.provider.openai', localId: 'openai', providerId: 'openai' },
+      { pluginId: 'happier.provider.openrouter', localId: 'openrouter', providerId: 'openrouter' },
+      { pluginId: 'happier.provider.zai', localId: 'zai', providerId: 'zai' },
+    ]));
+
+    const cliProxyApi = contributes.providers.find((entry) => (
+      entry.identity.pluginId === 'happier.provider.cliproxyapi'
+      && entry.identity.localId === 'cliproxyapi'
+    ));
+    expect(cliProxyApi).toMatchObject({
+      provenance: 'first_party',
+      source: { kind: 'bundled' },
+      managed: {
+        managedEndpoint: {
+          protocols: ['openai-chat', 'openai-responses', 'anthropic'],
+        },
+        connectedAccounts: [{
+          purpose: 'openai-upstream',
+          materializationKinds: ['httpHeaders'],
+        }, {
+          purpose: 'anthropic-upstream',
+          materializationKinds: ['httpHeaders'],
+        }],
+        requestAuthUses: [{
+          purpose: 'openai-upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://chatgpt.com',
+            headerNames: ['authorization', 'chatgpt-account-id'],
+          },
+        }, {
+          purpose: 'anthropic-upstream',
+          materialization: {
+            kind: 'httpHeaders',
+            origin: 'https://api.anthropic.com',
+            headerNames: ['authorization'],
+          },
+        }],
+      },
+      managedRuntimeAdapter: {
+        v: 1,
+        prepare: expect.any(Function),
+        inspectRecovery: expect.any(Function),
+        verifyRecoveryHealth: expect.any(Function),
+        resolveAgentEndpoint: expect.any(Function),
+      },
     });
+    expect(generatedBundledPlugins.BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES)
+      .toContain('@happier-dev/plugins-cliproxyapi');
+  });
 
-    for (const provider of contributes.agents) {
-      expect(provider.definition).toEqual(
-        expect.objectContaining({
-          kindVersion: 1,
-          id: provider.id,
-        }),
-      );
-      expect(provider.catalogEntry?.id).toBe(provider.id);
-      expect(provider.catalogEntry?.cliSubcommand).toBe(provider.id);
-      expect(provider.catalogEntry).not.toHaveProperty('getRuntimeCore');
+  it('projects each canonical built-in Agent exactly once with first-party rich catalog facts', () => {
+    const contributes = resolveBuiltInContributions();
+
+    for (const agentId of AGENT_IDS) {
+      const matches = contributes.agents.filter((entry) => entry.id === agentId);
+      expect(matches).toHaveLength(1);
+      expect(matches[0]?.richDefinition).toMatchObject({
+        provenance: 'first_party',
+        definition: { id: agentId },
+      });
     }
 
-    const opencodeProvider = contributes.agents.find((provider) => provider.id === 'opencode');
-    expect(opencodeProvider?.catalogEntry?.getManagedServerShutdownCleanup).toBeTypeOf('function');
-    expect(opencodeProvider?.catalogEntry?.getProviderAttachOps).toBeTypeOf('function');
-    expect(opencodeProvider?.catalogEntry?.resolveSessionRuntimePreferences).toBeTypeOf('function');
-    expect(opencodeProvider?.catalogEntry?.getSessionHandoffProviderBundleRecordExtractor).toBeTypeOf('function');
-    const opencodeRecordExtractor = await opencodeProvider?.catalogEntry?.getSessionHandoffProviderBundleRecordExtractor?.();
+    expect(contributes.agents.find((entry) => entry.id === 'codex')?.richDefinition).toMatchObject({
+      provenance: 'first_party',
+      definition: {
+        capabilities: { surfaces: ['terminal', 'externalSessions'] },
+      },
+    });
+  });
+
+    it('assembles built-in Agents without a parallel runtime contribution table', async () => {
+        const contributes = resolveBuiltInContributions();
+    const agentDefinitionIds = getAllAgentDefinitionContracts().map((entry) => entry.id).slice().sort();
+
+    expect(contributes.agents.map((entry) => entry.id).slice().sort()).toEqual(agentDefinitionIds);
+    expect(contributes).not.toHaveProperty('agentRuntimes');
+    expect((contributes.catalogEntries ?? []).map((entry) => entry.id)).toEqual([]);
+    expect(contributes.agents.map((entry) => entry.id).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
+    expect(contributes.agents.map((entry) => entry.id).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
+
+    for (const agent of contributes.agents) {
+      expect(agent.definition).toEqual(
+        expect.objectContaining({
+          kindVersion: 1,
+          id: agent.id,
+        }),
+      );
+      expect(agent.catalogEntry?.id).toBe(agent.id);
+      expect(agent.catalogEntry?.cliSubcommand).toBe(agent.id);
+      expect(agent.catalogEntry).not.toHaveProperty('getRuntimeCore');
+    }
+
+    const opencodeAgent = contributes.agents.find((agent) => agent.id === 'opencode');
+    expect(opencodeAgent?.catalogEntry?.getManagedServerShutdownCleanup).toBeTypeOf('function');
+    expect(opencodeAgent?.catalogEntry?.getProviderAttachOps).toBeTypeOf('function');
+    expect(opencodeAgent?.catalogEntry?.resolveSessionRuntimePreferences).toBeTypeOf('function');
+    expect(opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor).toBeTypeOf('function');
+    const opencodeRecordExtractor = await opencodeAgent?.catalogEntry?.getSessionHandoffAgentBundleRecordExtractor?.();
     expect(opencodeRecordExtractor?.({
-      providerId: 'opencode',
+      agentId: 'opencode',
       remoteSessionId: 'oc-session-1',
       exportJsonBase64: Buffer.from(JSON.stringify({ id: 'oc-session-1' }), 'utf8').toString('base64'),
     })).toEqual([{ id: 'oc-session-1' }]);
 
-    const claudeProvider = contributes.agents.find((provider) => provider.id === 'claude');
-    expect(claudeProvider?.catalogEntry?.getConnectedServicesMaterializer).toBeTypeOf('function');
-    expect(claudeProvider?.catalogEntry?.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
-    expect(claudeProvider?.catalogEntry?.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
-    expect(claudeProvider?.catalogEntry?.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
+    const claudeAgent = contributes.agents.find((agent) => agent.id === 'claude');
+    expect(claudeAgent?.catalogEntry?.getConnectedServicesMaterializer).toBeTypeOf('function');
+    expect(claudeAgent?.catalogEntry?.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
+    expect(claudeAgent?.catalogEntry?.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
+    expect(claudeAgent?.catalogEntry?.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
 
-    const qwenProvider = contributes.agents.find((provider) => provider.id === 'qwen');
-    expect(qwenProvider?.catalogEntry?.getCliCommandHandler).toBeTypeOf('function');
+    const qwenAgent = contributes.agents.find((agent) => agent.id === 'qwen');
+    expect(qwenAgent?.catalogEntry?.getCliCommandHandler).toBeTypeOf('function');
 
-    const kimiProvider = contributes.agents.find((provider) => provider.id === 'kimi');
-    const resolveKimiSessionPreferences = kimiProvider?.catalogEntry?.resolveSessionRuntimePreferences;
+    const kimiAgent = contributes.agents.find((agent) => agent.id === 'kimi');
+    const resolveKimiSessionPreferences = kimiAgent?.catalogEntry?.resolveSessionRuntimePreferences;
     expect(resolveKimiSessionPreferences).toBeTypeOf('function');
     expect(await resolveKimiSessionPreferences?.({
       settings: { kimiAcpPythonSelector: 'poll' },
@@ -146,18 +245,6 @@ describe('resolveBuiltInContributions', () => {
       startedBy: 'terminal',
     })).toEqual({ environmentVariables: { HAPPIER_KIMI_ACP_SELECTOR: 'auto' } });
 
-    for (const backend of contributes.agentRuntimes) {
-      expect(backend.definition).toEqual(
-        expect.objectContaining({
-          kindVersion: 1,
-          id: backend.id,
-          agentId: backend.agentId,
-        }),
-      );
-      expect(backend).not.toHaveProperty('getRuntimeCore');
-    }
-
-    expect(contributes.activationTargets).toEqual(readGeneratedArray('BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS'));
     const activationTargets = contributes.activationTargets;
     expect(activationTargets).toBeDefined();
     if (!activationTargets) {
@@ -178,17 +265,17 @@ describe('resolveBuiltInContributions', () => {
             ]),
         );
 
-        expect(activationEventsByPluginId.get('happier.agent.codex')).toEqual(['onAgent:codex']);
-        expect(activationEventsByPluginId.get('happier.scm.hosting.github')).toEqual(['onScmProvider:scm.github']);
-        expect(activationEventsByPluginId.get('happier.scm.backend.git')).toEqual(['onScmProvider:git']);
-        expect(activationEventsByPluginId.get('happier.review.coderabbit')).toEqual(['onReviewProvider:coderabbit']);
+        expect(activationEventsByPluginId.get('happier.agent.codex')).toEqual([]);
+        expect(activationEventsByPluginId.get('happier.scm.hosting.github')).toEqual([]);
+        expect(activationEventsByPluginId.get('happier.scm.backend.git')).toEqual([]);
+        expect(activationEventsByPluginId.get('happier.review.coderabbit')).toEqual([]);
     });
 
     it('projects Codex connected-service runtime control hooks from the plugin contribution', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-codex-runtime-contribution-'));
         try {
             const contributes = resolveBuiltInContributions();
-            const codexProvider = contributes.agents.find((provider) => provider.id === 'codex');
+            const codexAgent = contributes.agents.find((agent) => agent.id === 'codex');
             const codexOauthRecord = buildConnectedServiceCredentialRecord({
                 now: 1,
                 serviceId: 'openai-codex',
@@ -216,28 +303,28 @@ describe('resolveBuiltInContributions', () => {
                 },
             });
 
-            expect(codexProvider?.catalogEntry?.getConnectedServicesMaterializer).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.materializeConnectedServiceRuntimeAuthSelection).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.verifyResumeReachable).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.resolveConnectedServiceCandidatePersistedSessionFile).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.getSessionGoalControlAdapter).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.getSessionCatalogControlAdapter).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.getSessionUsageLimitRecoveryControlAdapter).toBeTypeOf('function');
-            expect(codexProvider?.catalogEntry?.getVendorResumeSupport).toBeTypeOf('function');
-            const codexVendorResumeSupport = await codexProvider?.catalogEntry?.getVendorResumeSupport?.();
+            expect(codexAgent?.catalogEntry?.getConnectedServicesMaterializer).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry?.getConnectedServiceStateSharingDescriptor).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry?.getConnectedServiceRuntimeAuthAdapter).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry?.materializeConnectedServiceRuntimeAuthSelection).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry?.resolveConnectedServiceSwitchContinuity).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry?.verifyResumeReachable).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry?.resolveConnectedServiceCandidatePersistedSessionFile).toBeTypeOf('function');
+            expect(codexAgent?.catalogEntry).not.toHaveProperty('getSessionGoalControlAdapter');
+            expect(codexAgent?.catalogEntry).not.toHaveProperty('getSessionCatalogControlAdapter');
+            expect(codexAgent?.catalogEntry).not.toHaveProperty('getSessionUsageLimitRecoveryControlAdapter');
+            expect(codexAgent?.catalogEntry?.getVendorResumeSupport).toBeTypeOf('function');
+            const codexVendorResumeSupport = await codexAgent?.catalogEntry?.getVendorResumeSupport?.();
             expect(codexVendorResumeSupport?.({ codexBackendMode: 'appServer' })).toBe(true);
     const supportsRawCodexVendorResumeInput = codexVendorResumeSupport as
         | ((params: Readonly<{ codexBackendMode?: unknown }>) => boolean)
         | undefined;
     expect(supportsRawCodexVendorResumeInput?.({ codexBackendMode: 'unknown' })).toBe(false);
-    expect(codexProvider?.catalogEntry?.checklists?.['resume.codex']).toEqual([
+    expect(codexAgent?.catalogEntry?.checklists?.['resume.codex']).toEqual([
         { id: 'cli.codex', params: { includeLoginStatus: true } },
     ]);
 
-    const materializer = await codexProvider?.catalogEntry?.getConnectedServicesMaterializer?.();
+    const materializer = await codexAgent?.catalogEntry?.getConnectedServicesMaterializer?.();
             const oauthResult = await materializer?.({
                 materializationKey: 'mat-1',
                 activeServerDir: root,
@@ -284,8 +371,7 @@ describe('resolveBuiltInContributions', () => {
                     'const args = process.argv.slice(2);',
                     'fs.writeFileSync(process.env.CAPTURE_PATH, JSON.stringify({ args }), "utf8");',
                     'if (args[0] === "login" && args[1] === "status") {',
-                    '  setTimeout(() => process.exit(0), 1600);',
-                    '  return;',
+                    '  process.exit(0);',
                     '}',
                     'process.exit(2);',
                 ].join('\n'),
@@ -317,8 +403,8 @@ describe('resolveBuiltInContributions', () => {
             delete process.env.OPENAI_API_KEY;
 
             const contributes = resolveBuiltInContributions();
-            const codexProvider = contributes.agents.find((provider) => provider.id === 'codex');
-            const spec = await codexProvider?.catalogEntry?.getCliAuthSpec?.();
+            const codexAgent = contributes.agents.find((agent) => agent.id === 'codex');
+            const spec = await codexAgent?.catalogEntry?.getCliAuthSpec?.();
 
             expect(spec?.binaryNames).toEqual(['codex']);
             await expect(spec?.detectAuthStatus?.({ resolvedPath: scriptPath })).resolves.toMatchObject({
@@ -342,10 +428,11 @@ describe('resolveBuiltInContributions', () => {
 
     it('projects Codex runtime facts from the bundled plugin-authored agent definition', () => {
         const contributes = resolveBuiltInContributions();
-        const codexProvider = contributes.agents.find((provider) => provider.id === 'codex');
+        const codexAgent = contributes.agents.find((agent) => agent.id === 'codex');
         const hostRuntimeSpec = getAgentCliRuntimeSpec('codex');
 
-        expect(codexProvider?.runtimeSpec).toEqual(expect.objectContaining({
+        expect(codexAgent?.catalogEntry).not.toHaveProperty('runtimeActivityApplicability');
+        expect(codexAgent?.runtimeSpec).toEqual(expect.objectContaining({
           id: 'codex',
           title: 'OpenAI Codex CLI',
           binaryName: 'codex',
@@ -357,29 +444,18 @@ describe('resolveBuiltInContributions', () => {
           manualInstallKind: 'command',
           manualInstallRecipes: null,
         }));
-        expect(codexProvider?.runtimeSpec).toEqual(hostRuntimeSpec);
+        expect(codexAgent?.runtimeSpec).toEqual(hostRuntimeSpec);
     });
 
-    it('projects OpenCode plugin-owned backend surface declarations onto the bundled backend contribution', () => {
+    it('projects OpenCode runtime ownership through the canonical Agent catalog', () => {
         const contributes = resolveBuiltInContributions();
-        const opencodeProvider = contributes.agents.find((provider) => provider.id === 'opencode');
-        const opencodeBackend = contributes.agentRuntimes.find((backend) => backend.id === 'opencode');
-        const operations = (opencodeBackend?.surfaceHandlers ?? [])
-          .map((handler) => [handler.kind, handler.operation])
-          .sort();
-        const catalog = BackendSurfaceOperationCatalogV1;
-
-        expect(operations).toEqual(expect.arrayContaining([
-          ['externalSession', catalog.externalSession.resolveLinkIdentity],
-          ['externalSession', catalog.externalSession.resolveLinkedIdentity],
-          ['externalSession', catalog.externalSession.resolveSource],
-          ['externalSession', catalog.externalSession.listCandidates],
-          ['externalSession', catalog.externalSession.resolveTakeoverLaunch],
-          ['handoff', catalog.handoff.exportBundle],
-          ['handoff', catalog.handoff.importBundle],
-          ['fork', catalog.fork.resolveReplayChildLaunch],
-        ]));
-        expect(opencodeProvider?.runtimeSpec).toMatchObject({
+        const opencodeAgent = contributes.agents.find((agent) => agent.id === 'opencode');
+        expect(opencodeAgent?.catalogEntry).not.toHaveProperty('runtimeActivityApplicability');
+        expect(opencodeAgent?.richDefinition).toMatchObject({
+          provenance: 'first_party',
+          definition: { id: 'opencode' },
+        });
+        expect(opencodeAgent?.runtimeSpec).toMatchObject({
           id: 'opencode',
           managedInstall: {
             kind: 'managed_package',
@@ -392,146 +468,121 @@ describe('resolveBuiltInContributions', () => {
         });
     });
 
-    it('projects bundled SCM hosting providers from generated built-in plugin metadata', () => {
+    it('projects bundled SCM hosting providers from canonical manifests', () => {
         const contributes = resolveBuiltInContributions();
 
         expect((contributes.scmHostingProviders ?? []).map((provider) => [
             provider.id,
             provider.pluginId,
             provider.definition.kind,
-            provider.definition.baseUrl,
+            provider.definition.capabilities,
         ]).sort()).toEqual([
-            ['scm.azure-devops', 'happier.scm.hosting.azure-devops', 'azure-devops', 'https://dev.azure.com'],
-            ['scm.bitbucket', 'happier.scm.hosting.bitbucket', 'bitbucket', 'https://bitbucket.org'],
-            ['scm.github', 'happier.scm.hosting.github', 'github', 'https://github.com'],
-            ['scm.gitlab', 'happier.scm.hosting.gitlab', 'gitlab', 'https://gitlab.com'],
+            ['azure-devops', 'happier.scm.hosting.azure-devops', 'azure-devops', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
+            ['bitbucket', 'happier.scm.hosting.bitbucket', 'bitbucket', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
+            ['github', 'happier.scm.hosting.github', 'github', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
+            ['gitlab', 'happier.scm.hosting.gitlab', 'gitlab', ['detect', 'clone', 'fetch', 'push', 'pullRequest']],
         ]);
     });
 
-    it('projects bundled SCM backend and managed dependency contributions from generated metadata', () => {
+    it('projects bundled connected-account descriptors exactly once with qualified identities', () => {
         const contributes = resolveBuiltInContributions();
-        const generatedScmBackends = readGeneratedArray('BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS');
-        const generatedInstallables = readGeneratedArray('BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS');
+        const descriptors = contributes.connectedAccountDescriptors ?? [];
 
-        expect(contributes.scmBackends).toEqual(generatedScmBackends);
-        expect(contributes.managedDependencies).toEqual(expect.arrayContaining(Array.from(generatedInstallables)));
+        expect(descriptors.map((descriptor) => [
+            descriptor.pluginId,
+            descriptor.definition.id,
+            descriptor.definition.authentication.defaultModeId,
+            descriptor.definition.authentication.modes.map(({ id, kind }) => [id, kind]),
+        ])).toEqual(expect.arrayContaining([
+            ['happier.agent.codex', 'openai-codex', 'oauth', [['oauth', 'oauthAuthorizationCode']]],
+            ['happier.agent.claude', 'anthropic', 'api-key', [['api-key', 'manual']]],
+            ['happier.voice.openai', 'openai', 'api-key', [['api-key', 'manual']]],
+        ]));
+        expect(descriptors.filter((descriptor) =>
+            descriptor.pluginId === 'happier.agent.codex'
+            && descriptor.definition.id === 'openai-codex'
+        )).toHaveLength(1);
+    });
+
+    it('projects bundled SCM backend and managed dependency contributions from canonical manifests', () => {
+        const contributes = resolveBuiltInContributions();
         expect((contributes.scmBackends ?? []).map((backend) => [
             backend.id,
             backend.pluginId,
-            backend.definition.installableDependencies,
+            backend.definition.kind,
         ])).toEqual(expect.arrayContaining([
             [
                 'git',
                 'happier.scm.backend.git',
-                ['dep.git'],
+                'git',
             ],
             [
                 'sapling',
                 'happier.scm.backend.sapling',
-                ['dep.sapling'],
+                'sapling',
             ],
         ]));
-        const gitBackend = contributes.scmBackends?.find((backend) => backend.id === 'git');
-        expect(gitBackend?.definition.capabilities.hosting).toEqual(expect.objectContaining({
-            pullRequestCheckout: { support: 'supported' },
-            pullRequestPrepareWorktree: { support: 'supported' },
-            pullRequestRunStacked: { support: 'supported' },
-        }));
         expect((contributes.managedDependencies ?? []).map((installable) => [
             installable.pluginId,
-            installable.definition.key,
-            installable.definition.capabilityId,
-            installable.definition.defaultPolicy.autoInstallWhenNeeded,
+            installable.definition.id,
         ])).toEqual(expect.arrayContaining([
             [
                 'happier.scm.backend.git',
-                'dep.git',
-                'dep.git',
-                false,
+                'git-cli',
             ],
             [
                 'happier.scm.backend.sapling',
-                'dep.sapling',
-                'dep.sapling',
-                false,
+                'sapling-cli',
             ],
         ]));
     });
 
-    it('publishes a runtime kind for every built-in backend contribution', () => {
+    it('does not publish a parallel runtime registry for canonical built-in Agents', () => {
         const contributes = resolveBuiltInContributions();
-        const generatedPluginRuntimeKinds = readGeneratedArray('BUNDLED_FIRST_PARTY_PLUGIN_AGENT_RUNTIME_CONTRIBUTIONS')
-          .map((backend) => [
-            (backend as { id?: unknown }).id,
-            (backend as { runtimeKind?: unknown }).runtimeKind,
-          ]);
-
-    expect(contributes.agentRuntimes.map((backend) => [backend.id, backend.runtimeKind]).sort()).toEqual([
-      ['auggie', 'native'],
-      ['claude', 'native'],
-      ['coderabbit', 'native'],
-      ['codex', 'appServer'],
-      ['copilot', 'native'],
-      ['cursor', 'native'],
-      ['deepsec', 'native'],
-      ['gemini', 'native'],
-      ['kilo', 'native'],
-      ['kimi', 'native'],
-      ['kiro', 'native'],
-      ['ohMyPi', 'native'],
-      ['opencode', 'server'],
-      ['pi', 'native'],
-      ['qwen', 'native'],
-      ...generatedPluginRuntimeKinds,
-    ].sort());
+    expect(contributes).not.toHaveProperty('agentRuntimes');
+    expect(contributes.agents.map((agent) => agent.id).sort()).toEqual([...AGENT_IDS].sort());
   });
 
-  it('does not project host-local runtimeCore hooks from static built-in backend contributions', () => {
+  it('does not project host-local runtimeCore hooks onto canonical built-in Agents', () => {
     const contributes = resolveBuiltInContributions();
 
-    for (const backend of contributes.agentRuntimes) {
-      expect(backend).not.toHaveProperty('getRuntimeCore');
+    for (const agent of contributes.agents) {
+      expect(agent).not.toHaveProperty('getRuntimeCore');
     }
   });
 
   it('projects bundled first-party source specs with protocol-visible bundled provenance', () => {
     const contributes = resolveBuiltInContributions();
-    const qwenProvider = contributes.agents.find((provider) => provider.id === 'qwen');
-    const qwenBackend = contributes.agentRuntimes.find((backend) => backend.id === 'qwen');
+    const qwenAgent = contributes.agents.find((agent) => agent.id === 'qwen');
     const qwenActivationTarget = contributes.activationTargets?.find((target) => target.pluginId === 'happier.agent.qwen');
 
-    expect(qwenProvider?.sourceSpec?.kind).toBe('bundled');
-    expect(qwenBackend?.sourceSpec?.kind).toBe('bundled');
+    expect(qwenAgent?.sourceSpec?.kind).toBe('bundled');
     expect(qwenActivationTarget?.sourceSpec?.kind).toBe('bundled');
   });
 
-  it('emits bundled source specs for every generated first-party contribution family', () => {
-    const contributionFamilies = [
-      'BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_AGENT_RUNTIME_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_PLUGIN_AGENT_RUNTIME_CONTRIBUTIONS',
-      'BUNDLED_FIRST_PARTY_EXECUTION_RUN_PROFILE_CONTRIBUTIONS',
+  it('emits bundled source specs for every manifest-projected first-party family', () => {
+    const contributes = resolveBuiltInContributions();
+    const families = [
+      contributes.agents,
+      contributes.scmHostingProviders ?? [],
+      contributes.scmBackends ?? [],
+      (contributes.managedDependencies ?? []).filter((entry) => entry.pluginId !== 'happier.core'),
     ];
 
-    for (const family of contributionFamilies) {
-      const kinds = readGeneratedSourceSpecKinds(family);
-      expect(kinds).toEqual(kinds.map(() => 'bundled'));
+    for (const family of families) {
+      expect(family.length).toBeGreaterThan(0);
+      expect(family.every((entry) => entry.sourceSpec?.kind === 'bundled')).toBe(true);
     }
   });
 
   it('projects Qwen through bundled plugin metadata and routes its command through the common backend session launcher', async () => {
     runBackendSessionCliCommandMock.mockClear();
     const contributes = resolveBuiltInContributions();
-    const qwenProvider = contributes.agents.find((provider) => provider.id === 'qwen');
-    const qwenBackend = contributes.agentRuntimes.find((backend) => backend.id === 'qwen');
+    const qwenAgent = contributes.agents.find((agent) => agent.id === 'qwen');
     const qwenActivationTarget = contributes.activationTargets?.find((target) => target.pluginId === 'happier.agent.qwen');
-    const handler = await qwenProvider?.catalogEntry?.getCliCommandHandler?.();
+    const handler = await qwenAgent?.catalogEntry?.getCliCommandHandler?.();
 
-    expect(qwenProvider).toMatchObject({
+    expect(qwenAgent).toMatchObject({
       id: 'qwen',
       provenance: 'first_party',
       pluginId: 'happier.agent.qwen',
@@ -559,22 +610,6 @@ describe('resolveBuiltInContributions', () => {
         manualInstallKind: 'command',
       },
     });
-    expect(qwenBackend).toMatchObject({
-      id: 'qwen',
-      agentId: 'qwen',
-      provenance: 'first_party',
-      pluginId: 'happier.agent.qwen',
-      manifestPath: 'bundled:happier.agent.qwen',
-      daemonEntryPath: '@happier-dev/plugins-qwen',
-      runtimeKind: 'native',
-      sourceSpec: {
-        kind: 'bundled',
-        locator: '@happier-dev/plugins-qwen',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-      },
-    });
-    expect(qwenBackend).not.toHaveProperty('getRuntimeCore');
     expect(qwenActivationTarget).toMatchObject({
       pluginId: 'happier.agent.qwen',
       manifestPath: 'bundled:happier.agent.qwen',
@@ -613,13 +648,12 @@ describe('resolveBuiltInContributions', () => {
     await chmod(scriptPath, 0o755);
 
     const contributes = resolveBuiltInContributions();
-    const kiroProvider = contributes.agents.find((provider) => provider.id === 'kiro');
-    const kiroBackend = contributes.agentRuntimes.find((backend) => backend.id === 'kiro');
+    const kiroAgent = contributes.agents.find((agent) => agent.id === 'kiro');
     const kiroActivationTarget = contributes.activationTargets?.find((target) => target.pluginId === 'happier.agent.kiro');
-    const handler = await kiroProvider?.catalogEntry?.getCliCommandHandler?.();
-    const authSpec = await kiroProvider?.catalogEntry?.getCliAuthSpec?.();
+    const handler = await kiroAgent?.catalogEntry?.getCliCommandHandler?.();
+    const authSpec = await kiroAgent?.catalogEntry?.getCliAuthSpec?.();
 
-    expect(kiroProvider).toMatchObject({
+    expect(kiroAgent).toMatchObject({
       id: 'kiro',
       provenance: 'first_party',
       pluginId: 'happier.agent.kiro',
@@ -647,22 +681,6 @@ describe('resolveBuiltInContributions', () => {
         vendorResumeSupport: 'experimental',
       },
     });
-    expect(kiroBackend).toMatchObject({
-      id: 'kiro',
-      agentId: 'kiro',
-      provenance: 'first_party',
-      pluginId: 'happier.agent.kiro',
-      manifestPath: 'bundled:happier.agent.kiro',
-      daemonEntryPath: '@happier-dev/plugins-kiro',
-      runtimeKind: 'native',
-      sourceSpec: {
-        kind: 'bundled',
-        locator: '@happier-dev/plugins-kiro',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-      },
-    });
-    expect(kiroBackend).not.toHaveProperty('getRuntimeCore');
     expect(kiroActivationTarget).toMatchObject({
       pluginId: 'happier.agent.kiro',
       manifestPath: 'bundled:happier.agent.kiro',
@@ -700,8 +718,8 @@ describe('resolveBuiltInContributions', () => {
   it('projects Codex CLI session command descriptors from the plugin runtime contribution', async () => {
     runBackendSessionCliCommandMock.mockClear();
     const contributes = resolveBuiltInContributions();
-    const codexProvider = contributes.agents.find((provider) => provider.id === 'codex');
-    const handler = await codexProvider?.catalogEntry?.getCliCommandHandler?.();
+    const codexAgent = contributes.agents.find((agent) => agent.id === 'codex');
+    const handler = await codexAgent?.catalogEntry?.getCliCommandHandler?.();
 
     expect(handler).toBeTypeOf('function');
     await handler?.({
@@ -739,8 +757,8 @@ describe('resolveBuiltInContributions', () => {
   it('projects Claude CLI session command descriptors from the plugin runtime contribution', async () => {
     runBackendSessionCliCommandMock.mockClear();
     const contributes = resolveBuiltInContributions();
-    const claudeProvider = contributes.agents.find((provider) => provider.id === 'claude');
-    const handler = await claudeProvider?.catalogEntry?.getCliCommandHandler?.();
+    const claudeAgent = contributes.agents.find((agent) => agent.id === 'claude');
+    const handler = await claudeAgent?.catalogEntry?.getCliCommandHandler?.();
 
     expect(handler).toBeTypeOf('function');
     await handler?.({
@@ -780,11 +798,11 @@ describe('resolveBuiltInContributions', () => {
     });
   });
 
-  it('projects OpenCode provider-native info command prefixes from the plugin runtime contribution', async () => {
+  it('projects OpenCode Agent-native info command prefixes from the plugin runtime contribution', async () => {
     runBackendSessionCliCommandMock.mockClear();
     const contributes = resolveBuiltInContributions();
-    const opencodeProvider = contributes.agents.find((provider) => provider.id === 'opencode');
-    const handler = await opencodeProvider?.catalogEntry?.getCliCommandHandler?.();
+    const opencodeAgent = contributes.agents.find((agent) => agent.id === 'opencode');
+    const handler = await opencodeAgent?.catalogEntry?.getCliCommandHandler?.();
 
     expect(handler).toBeTypeOf('function');
     await handler?.({
@@ -800,11 +818,11 @@ describe('resolveBuiltInContributions', () => {
     }));
   });
 
-  it('projects Antigravity provider-native model info command prefix from the plugin runtime contribution', async () => {
+  it('projects Antigravity Agent-native model info command prefix from the plugin runtime contribution', async () => {
     runBackendSessionCliCommandMock.mockClear();
     const contributes = resolveBuiltInContributions();
-    const antigravityProvider = contributes.agents.find((provider) => provider.id === 'antigravity');
-    const handler = await antigravityProvider?.catalogEntry?.getCliCommandHandler?.();
+    const antigravityAgent = contributes.agents.find((agent) => agent.id === 'antigravity');
+    const handler = await antigravityAgent?.catalogEntry?.getCliCommandHandler?.();
 
     expect(handler).toBeTypeOf('function');
     await handler?.({
@@ -847,12 +865,11 @@ describe('resolveBuiltInContributions', () => {
   }) => {
     runBackendSessionCliCommandMock.mockClear();
     const contributes = resolveBuiltInContributions();
-    const provider = contributes.agents.find((entry) => entry.id === agentId);
-    const backend = contributes.agentRuntimes.find((entry) => entry.id === agentId);
+    const agent = contributes.agents.find((entry) => entry.id === agentId);
     const activationTarget = contributes.activationTargets?.find((target) => target.pluginId === pluginId);
-    const handler = await provider?.catalogEntry?.getCliCommandHandler?.();
+    const handler = await agent?.catalogEntry?.getCliCommandHandler?.();
 
-    expect(provider).toMatchObject({
+    expect(agent).toMatchObject({
       id: agentId,
       provenance: 'first_party',
       pluginId,
@@ -874,16 +891,6 @@ describe('resolveBuiltInContributions', () => {
         manualInstallKind: 'command',
       },
     });
-    expect(backend).toMatchObject({
-      id: agentId,
-      agentId: agentId,
-      provenance: 'first_party',
-      pluginId,
-      manifestPath: `bundled:${pluginId}`,
-      daemonEntryPath: packageName,
-      runtimeKind: 'native',
-    });
-    expect(backend).not.toHaveProperty('getRuntimeCore');
     expect(activationTarget).toMatchObject({
       pluginId,
       manifestPath: `bundled:${pluginId}`,
@@ -898,31 +905,31 @@ describe('resolveBuiltInContributions', () => {
 
     expect(runBackendSessionCliCommandMock).toHaveBeenCalledWith(expect.objectContaining({
       backendIdForSessionRuntime: agentId,
+      runtimeAuthorityAgentId: agentId,
       agentIdForAccountSettings: agentId,
     }));
   });
 
   it('projects Kilo preflight and Copilot auth hooks from plugin runtime contributions', async () => {
     const contributes = resolveBuiltInContributions();
-    const kiloProvider = contributes.agents.find((entry) => entry.id === 'kilo');
-    const copilotProvider = contributes.agents.find((entry) => entry.id === 'copilot');
+    const kiloAgent = contributes.agents.find((entry) => entry.id === 'kilo');
+    const copilotAgent = contributes.agents.find((entry) => entry.id === 'copilot');
 
-    await expect(kiloProvider?.catalogEntry?.getPreflightSessionControlsProbeAdapter?.()).resolves.toMatchObject({
+    await expect(kiloAgent?.catalogEntry?.getPreflightSessionControlsProbeAdapter?.()).resolves.toMatchObject({
       failureCacheStrategy: 'cooldown',
       cliModelsCommandArgs: ['models'],
     });
 
-    const copilotAuthSpec = await copilotProvider?.catalogEntry?.getCliAuthSpec?.();
+    const copilotAuthSpec = await copilotAgent?.catalogEntry?.getCliAuthSpec?.();
     expect(copilotAuthSpec?.detectAuthStatus).toBeTypeOf('function');
   });
 
   it('projects Pi through bundled plugin metadata without ACP or MCP ownership', () => {
     const contributes = resolveBuiltInContributions();
-    const piProvider = contributes.agents.find((provider) => provider.id === 'pi');
-    const piBackend = contributes.agentRuntimes.find((backend) => backend.id === 'pi');
+    const piAgent = contributes.agents.find((agent) => agent.id === 'pi');
     const piActivationTarget = contributes.activationTargets?.find((target) => target.pluginId === 'happier.agent.pi');
 
-    expect(piProvider).toMatchObject({
+    expect(piAgent).toMatchObject({
       id: 'pi',
       provenance: 'first_party',
       pluginId: 'happier.agent.pi',
@@ -950,25 +957,10 @@ describe('resolveBuiltInContributions', () => {
         manualInstallKind: 'command',
       },
     });
-    expect(piBackend).toMatchObject({
-      id: 'pi',
-      agentId: 'pi',
-      provenance: 'first_party',
-      pluginId: 'happier.agent.pi',
-      manifestPath: 'bundled:happier.agent.pi',
-      daemonEntryPath: '@happier-dev/plugins-pi',
-      runtimeKind: 'native',
-      sourceSpec: {
-        kind: 'bundled',
-        locator: '@happier-dev/plugins-pi',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-      },
-    });
-    expect(piBackend).not.toHaveProperty('getRuntimeCore');
-    expect(piBackend).not.toHaveProperty('acpDefinition');
-    expect(piBackend).not.toHaveProperty('mcpDefinition');
-    expect(piProvider?.catalogEntry?.getPreflightSessionControlsProbeAdapter).toBeTypeOf('function');
+    expect(piAgent).not.toHaveProperty('getRuntimeCore');
+    expect(piAgent).not.toHaveProperty('acpDefinition');
+    expect(piAgent).not.toHaveProperty('mcpDefinition');
+    expect(piAgent?.catalogEntry?.getPreflightSessionControlsProbeAdapter).toBeTypeOf('function');
     expect(piActivationTarget).toMatchObject({
       pluginId: 'happier.agent.pi',
       manifestPath: 'bundled:happier.agent.pi',
@@ -982,29 +974,29 @@ describe('resolveBuiltInContributions', () => {
     });
   });
 
-  it('projects structured output recovery facts onto built-in backend contributions', () => {
+  it('projects canonical runtime facts onto built-in Agent contributions', () => {
     const contributes = resolveBuiltInContributions();
-    const codexBackend = contributes.agentRuntimes.find((backend) => backend.id === 'codex');
-    const piBackend = contributes.agentRuntimes.find((backend) => backend.id === 'pi');
+    const codexAgent = contributes.agents.find((agent) => agent.id === 'codex');
+    const piAgent = contributes.agents.find((agent) => agent.id === 'pi');
 
-    expect(codexBackend?.capabilities?.executionRun?.structuredOutputRecovery).toEqual({
-      delegate: 'loose-deliverables-with-single-fallback',
+    expect(codexAgent?.richDefinition).toMatchObject({
+      provenance: 'first_party',
+      definition: { id: 'codex', runtime: { kind: 'custom' } },
     });
-    expect(piBackend?.capabilities?.executionRun?.structuredOutputRecovery).toEqual({
-      plan: 'loose-sections',
-      delegate: 'loose-deliverables',
+    expect(piAgent?.richDefinition).toMatchObject({
+      provenance: 'first_party',
+      definition: { id: 'pi', runtime: { kind: 'custom' } },
     });
   });
 
-  it('projects OhMyPi file-follow consumer surfaces through bundled plugin metadata', () => {
+  it('projects OhMyPi through its manifest-local identity and canonical Agent owner', () => {
     const contributes = resolveBuiltInContributions();
-    const ohMyPiProvider = contributes.agents.find((provider) => provider.id === 'ohMyPi');
-    const ohMyPiBackend = contributes.agentRuntimes.find((backend) => backend.id === 'ohMyPi');
+    const ohMyPiAgent = contributes.agents.find((agent) => agent.id === 'ohMyPi');
     const ohMyPiActivationTarget = contributes.activationTargets?.find(
       (target) => target.pluginId === 'happier.agent.ohmypi',
     );
 
-    expect(ohMyPiProvider).toMatchObject({
+    expect(ohMyPiAgent).toMatchObject({
       id: 'ohMyPi',
       provenance: 'first_party',
       pluginId: 'happier.agent.ohmypi',
@@ -1032,38 +1024,6 @@ describe('resolveBuiltInContributions', () => {
         manualInstallKind: 'vendor_recipe',
       },
     });
-    expect(ohMyPiBackend).toMatchObject({
-      id: 'ohMyPi',
-      agentId: 'ohMyPi',
-      provenance: 'first_party',
-      pluginId: 'happier.agent.ohmypi',
-      manifestPath: 'bundled:happier.agent.ohmypi',
-      daemonEntryPath: '@happier-dev/plugins-ohmypi',
-      runtimeKind: 'native',
-      sourceSpec: {
-        kind: 'bundled',
-        locator: '@happier-dev/plugins-ohmypi',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-      },
-    });
-    expect((ohMyPiBackend?.surfaceHandlers ?? []).map((handler) => [
-      handler.kind,
-      handler.operation,
-      handler.handler.exportName,
-    ])).toEqual([
-      ['terminalRuntime', 'resolveTranscriptBinding', 'resolveOhMyPiTerminalRuntimeTranscriptBinding'],
-      ['externalSession', 'resolveSource', 'resolveOhMyPiExternalSessionSource'],
-      ['externalSession', 'listCandidates', 'listOhMyPiExternalSessionCandidates'],
-      ['externalSession', 'getActivity', 'getOhMyPiExternalSessionActivity'],
-      ['externalSession', 'pageTranscript', 'pageOhMyPiExternalSessionTranscript'],
-      ['externalSession', 'readAfterTranscript', 'readOhMyPiExternalSessionAfterTranscript'],
-      ['externalSession', 'resolveFollowTranscriptPath', 'resolveOhMyPiExternalSessionFollowTranscriptPath'],
-      ['externalSession', 'acquireFollowLease', 'acquireOhMyPiExternalSessionFollowLease'],
-      ['externalSession', 'resolveLinkIdentity', 'resolveOhMyPiExternalSessionLinkIdentity'],
-      ['externalSession', 'resolveLinkedIdentity', 'resolveLinkedOhMyPiExternalSessionIdentity'],
-      ['externalSession', 'resolveTakeoverLaunch', 'resolveOhMyPiExternalSessionTakeoverLaunch'],
-    ]);
     expect(ohMyPiActivationTarget).toMatchObject({
       pluginId: 'happier.agent.ohmypi',
       manifestPath: 'bundled:happier.agent.ohmypi',

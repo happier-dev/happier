@@ -1,34 +1,41 @@
 import { randomBytes as nodeRandomBytes } from 'node:crypto';
 import {
   type SpawnSessionOptions,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import {
   readCanonicalSpawnRuntimeSelectionFromCompatIngress,
   readSpawnRuntimeDescriptorV1,
 } from '@/rpc/handlers/spawnRuntimeSelection';
-import {
-  resolveCanonicalCodexBackendMode,
-  resolveCanonicalCodexBackendModeFromCompatInput,
-} from '@happier-dev/plugins-codex/agent/lifecycle/backendMode';
 import type { TerminalMode, TerminalSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import {
+  BackendTargetRefSchema,
   BackendTargetRefV2Schema,
   ConnectedServiceMaterializationIdentityV1Schema,
+  PluginContributionIdentityV1Schema,
   openAccountScopedBlobCiphertext,
+  readBackendTargetRefV2,
   RuntimeDescriptorV1Schema,
-  normalizeBackendTargetRefV2InputToV2,
   sealAccountScopedBlobCiphertext,
   SessionMcpSelectionV1Schema,
+  SessionModelSelectionV1Schema,
+  SessionProviderBindingMetadataV1Schema,
+  buildBackendTargetKeyV2,
+  writePersistedBackendTargetRefV2,
+  writeRuntimeDescriptorV1ForPersistence,
   type AccountScopedCryptoMaterial,
+  type BackendTargetRefV1,
+  type BackendTargetRefV2,
+  type BackendTargetRefV2Input,
 } from '@happier-dev/protocol';
 import * as z from 'zod';
 import {
   resolveConcreteBackendTargetRefV2,
   resolveConcreteCompatBackendTargetRefs,
+  type ResolvedConcreteBackendTargetRefs,
 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY } from '@/agent/runtime/sessionConnectedServiceMaterializationIdentityEnv';
 
-const TERMINAL_MODES = ['plain', 'tmux', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
+const TERMINAL_MODES = ['plain', 'tmux', 'zellij', 'windows_terminal', 'windows_console'] as const satisfies readonly TerminalMode[];
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = [
   'CLAUDE_CONFIG_DIR',
   'CODEX_HOME',
@@ -95,6 +102,7 @@ function pickSafeRespawnEnvironmentVariables(value: unknown): Record<string, str
 export function buildTrackedSessionRespawnEnvironmentVariables(params: Readonly<{
   expandedEnvironmentVariables: unknown;
   extraEnvForChild: unknown;
+  excludedEnvironmentVariableKeys?: readonly string[];
 }>): Record<string, string> | undefined {
   const expandedEnvironmentVariables = pickPersistedEnvironmentVariables(params.expandedEnvironmentVariables) ?? {};
   const safeExtraEnvForChild = pickSafeRespawnEnvironmentVariables(params.extraEnvForChild) ?? {};
@@ -102,6 +110,14 @@ export function buildTrackedSessionRespawnEnvironmentVariables(params: Readonly<
     ...expandedEnvironmentVariables,
     ...safeExtraEnvForChild,
   };
+  const excluded = new Set(
+    (params.excludedEnvironmentVariableKeys ?? []).map((key) => key.toLowerCase()),
+  );
+  for (const key of Object.keys(merged)) {
+    if (excluded.has(key.toLowerCase())) {
+      delete merged[key];
+    }
+  }
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
@@ -139,13 +155,108 @@ function openRespawnEnvironmentVariables(params: Readonly<{
   return parsed.success ? parsed.data : null;
 }
 
+/**
+ * Normalizes an already-owned marker's sealed respawn environment. Callers
+ * must prove the live process/marker ownership relationship before invoking
+ * this write-side helper. Canonical ciphertext is returned byte-for-byte so a
+ * later daemon recovery does not rotate its nonce; only the bounded historical
+ * tag-6 alias is resealed under canonical tag 5.
+ */
+export function normalizeOwnedMarkerRespawnEnvironmentCiphertext(
+  params: Readonly<{
+    sealedEnvironmentVariables: z.infer<
+      typeof SealedRespawnEnvironmentVariablesSchema
+    >;
+    encryptionMaterial: RespawnDescriptorEncryptionMaterial;
+    randomBytes?: (length: number) => Uint8Array;
+  }>,
+): z.infer<typeof SealedRespawnEnvironmentVariablesSchema> | null {
+  const opened = openAccountScopedBlobCiphertext({
+    kind: 'session_respawn_environment',
+    material: params.encryptionMaterial,
+    ciphertext:
+      params.sealedEnvironmentVariables.ciphertext,
+  });
+  if (!opened) return null;
+  const environmentVariables =
+    z.record(z.string(), z.string()).safeParse(opened.value);
+  if (!environmentVariables.success) return null;
+  if (opened.kindTag === 'canonical') {
+    return params.sealedEnvironmentVariables;
+  }
+  if (opened.kindTag !== 'historical_alias') return null;
+  return {
+    format: 'account_scoped_v1',
+    ciphertext: sealAccountScopedBlobCiphertext({
+      kind: 'session_respawn_environment',
+      material: params.encryptionMaterial,
+      payload: environmentVariables.data,
+      randomBytes:
+        params.randomBytes ?? nodeRandomBytes,
+    }),
+  };
+}
+
+function areBackendTargetRefV1Equal(left: BackendTargetRefV1, right: BackendTargetRefV1): boolean {
+  if (left.kind === 'builtInAgent') {
+    return right.kind === 'builtInAgent' && left.agentId === right.agentId;
+  }
+  return right.kind === 'configuredAcpBackend' && left.backendId === right.backendId;
+}
+
+/**
+ * Supported V1 readers validate the legacy target field but preserve unknown fields. Keep a
+ * canonical V2 shadow only when the V1 projection would lose target identity. Remove this adapter
+ * after released/predecessor V1 respawn takeover and rollback support has closed.
+ */
+function resolveNativeV1BackendTargetV2Shadow(
+  refs: ResolvedConcreteBackendTargetRefs,
+): BackendTargetRefV2 | undefined {
+  const legacyRoundTrip = resolveConcreteCompatBackendTargetRefs(refs.backendTarget);
+  if (!legacyRoundTrip
+    || buildBackendTargetKeyV2(legacyRoundTrip.backendTargetV2) !== buildBackendTargetKeyV2(refs.backendTargetV2)) {
+    return refs.backendTargetV2;
+  }
+  return undefined;
+}
+
 function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
   }
 
   const candidate = value as Record<string, unknown>;
-  const normalizedBackendTarget = normalizeBackendTargetRefV2InputToV2(candidate.backendTarget);
+  const parsedAgentIdentity = PluginContributionIdentityV1Schema.safeParse(candidate.agentIdentity);
+  const agentIdentityTarget = parsedAgentIdentity.success
+    ? readBackendTargetRefV2({
+        kind: 'agent',
+        identity: parsedAgentIdentity.data,
+      })
+    : null;
+  if (candidate.agentIdentity !== undefined && !agentIdentityTarget) {
+    return undefined;
+  }
+  const legacyBackendTargetRefs = resolveConcreteCompatBackendTargetRefs(
+    candidate.backendTarget as never,
+  );
+  const agentIdentityTargetRefs = agentIdentityTarget
+    ? resolveConcreteCompatBackendTargetRefs(agentIdentityTarget)
+    : null;
+  if (agentIdentityTargetRefs && legacyBackendTargetRefs
+    && buildBackendTargetKeyV2(agentIdentityTargetRefs.backendTargetV2)
+      !== buildBackendTargetKeyV2(legacyBackendTargetRefs.backendTargetV2)) {
+    return undefined;
+  }
+  const normalizedBackendTargetRefs = agentIdentityTargetRefs ?? legacyBackendTargetRefs;
+  const normalizedBackendTargetV2Shadow = resolveConcreteBackendTargetRefV2(
+    candidate.backendTargetV2 as never,
+  );
+  const normalizedBackendTargetV2 = candidate.version === 1 && normalizedBackendTargetV2Shadow
+    ? normalizedBackendTargetV2Shadow
+    : normalizedBackendTargetRefs?.backendTargetV2 ?? null;
+  const persistedBackendTarget = candidate.version === 1
+    ? normalizedBackendTargetRefs?.backendTarget
+    : normalizedBackendTargetV2;
   const {
     runtimeDescriptorV1,
     codexBackendMode: canonicalCodexBackendMode,
@@ -158,29 +269,72 @@ function canonicalizeSessionRunnerRespawnDescriptorIngress(value: unknown): unkn
   const resolvedCanonicalCodexBackendMode = canonicalCodexBackendMode
     ?? (candidate.experimentalCodexResume === true ? 'acp' : undefined);
   const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(candidate.environmentVariables);
+  const hasCanonicalModelSelection = candidate.modelSelection !== undefined;
+  const parsedSelection = SessionModelSelectionV1Schema.safeParse(candidate.modelSelection);
+  const normalizedParsedSelection = parsedSelection.success
+    ? (() => {
+        try {
+          const selectionTarget = readBackendTargetRefV2(
+            parsedSelection.data.ref.agentTargetKey as BackendTargetRefV2Input,
+          );
+          return SessionModelSelectionV1Schema.parse({
+            ...parsedSelection.data,
+            ref: {
+              ...parsedSelection.data.ref,
+              agentTargetKey: buildBackendTargetKeyV2(selectionTarget),
+            },
+          });
+        } catch {
+          return parsedSelection.data;
+        }
+      })()
+    : null;
+  const legacyModelId = normalizeOptionalString(candidate.modelId);
+  const modelSelection = normalizedParsedSelection
+    ? normalizedParsedSelection
+    : !hasCanonicalModelSelection && legacyModelId && normalizedBackendTargetV2
+      ? SessionModelSelectionV1Schema.parse({
+        v: 1,
+        updatedAt: typeof candidate.modelUpdatedAt === 'number' && Number.isFinite(candidate.modelUpdatedAt)
+          ? candidate.modelUpdatedAt
+          : 0,
+        ref: {
+          agentTargetKey: buildBackendTargetKeyV2(normalizedBackendTargetV2),
+          providerConnectionId: null,
+          modelId: legacyModelId,
+        },
+      })
+      : undefined;
   const {
     experimentalCodexAcp: _legacyExperimentalCodexAcp,
     experimentalCodexResume: _legacyExperimentalCodexResume,
     agentRuntimeDescriptorV1: _legacyAgentRuntimeDescriptorV1,
+    agentIdentity: _persistedAgentIdentity,
     ...rest
   } = candidate;
 
   return {
     ...rest,
-    ...(normalizedBackendTarget ? { backendTarget: normalizedBackendTarget } : {}),
+    ...(persistedBackendTarget ? { backendTarget: persistedBackendTarget } : {}),
+    ...(normalizedBackendTargetV2Shadow ? { backendTargetV2: normalizedBackendTargetV2Shadow } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
     ...(resolvedCanonicalCodexBackendMode ? { codexBackendMode: resolvedCanonicalCodexBackendMode } : {}),
     ...(safeEnvironmentVariables ? { environmentVariables: safeEnvironmentVariables } : {}),
+    ...(modelSelection ? { modelSelection } : {}),
   };
 }
 
-export const SessionRunnerRespawnDescriptorV1Schema = z
+export const SessionRunnerRespawnDescriptorSchema = z
   .preprocess(canonicalizeSessionRunnerRespawnDescriptorIngress, z
   .object({
-    version: z.literal(1),
+    version: z.union([z.literal(1), z.literal(2)]),
     directory: z.string(),
-    backendTarget: z.preprocess(normalizeBackendTargetRefV2InputToV2, BackendTargetRefV2Schema).optional(),
+    backendTarget: z.union([BackendTargetRefSchema, BackendTargetRefV2Schema]).optional(),
+    backendTargetV2: BackendTargetRefV2Schema.optional(),
     resume: z.string().optional(),
+    vendorResumeId: z.string().optional(),
+    existingSessionId: z.string().optional(),
+    spawnNonce: z.string().optional(),
     transcriptStorage: z.enum(['persisted', 'direct']).optional(),
     terminal: TerminalSpawnOptionsSchema.optional(),
     windowsRemoteSessionLaunchMode: z.enum(['hidden', 'windows_terminal', 'console']).optional(),
@@ -191,8 +345,10 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     permissionModeUpdatedAt: z.number().int().optional(),
     agentModeId: z.string().optional(),
     agentModeUpdatedAt: z.number().int().optional(),
+    modelSelection: SessionModelSelectionV1Schema.optional(),
     modelId: z.string().optional(),
     modelUpdatedAt: z.number().int().optional(),
+    providerBindingMetadataV1: SessionProviderBindingMetadataV1Schema.optional(),
     sessionConfigOptionOverrides: z.unknown().optional(),
     environmentVariables: z.record(z.string(), z.string()).optional(),
     sealedEnvironmentVariables: SealedRespawnEnvironmentVariablesSchema.optional(),
@@ -202,9 +358,143 @@ export const SessionRunnerRespawnDescriptorV1Schema = z
     runtimeDescriptorV1: RuntimeDescriptorV1Schema.optional(),
     codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
   })
-  .passthrough());
+  .passthrough().superRefine((value, ctx) => {
+    const backendTargetRefs = value.backendTarget
+      ? resolveConcreteCompatBackendTargetRefs(value.backendTarget)
+      : null;
+    const backendTargetV2ShadowRefs = value.backendTargetV2
+      ? resolveConcreteCompatBackendTargetRefs(value.backendTargetV2)
+      : null;
+    if (value.backendTargetV2) {
+      if (value.version !== 1) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['backendTargetV2'],
+          message: 'Canonical backend target shadow is reserved for native descriptor V1 compatibility',
+        });
+      }
+      if (!backendTargetRefs) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['backendTarget'],
+          message: 'Canonical backend target shadow requires a legacy backend target carrier',
+        });
+      } else if (!backendTargetV2ShadowRefs
+        || !areBackendTargetRefV1Equal(backendTargetRefs.backendTarget, backendTargetV2ShadowRefs.backendTarget)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['backendTargetV2'],
+          message: 'Canonical backend target shadow must project to the legacy backend target carrier',
+        });
+      }
+    }
+    const semanticBackendTargetRefs = value.version === 1 && backendTargetV2ShadowRefs
+      ? backendTargetV2ShadowRefs
+      : backendTargetRefs;
+    if (value.modelSelection && (!semanticBackendTargetRefs
+      || value.modelSelection.ref.agentTargetKey !== buildBackendTargetKeyV2(semanticBackendTargetRefs.backendTargetV2))) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['modelSelection', 'ref', 'agentTargetKey'],
+        message: 'Model selection agent target must match backendTarget',
+      });
+    }
+    const providerConnectionId = value.modelSelection?.ref.providerConnectionId ?? null;
+    const hasProviderContinuity = providerConnectionId !== null || value.providerBindingMetadataV1 !== undefined;
+    if (value.version === 1 && hasProviderContinuity) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['version'],
+        message: 'Provider-bound respawn continuity requires descriptor version 2',
+      });
+    }
+    if (value.version === 2 && !hasProviderContinuity) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['version'],
+        message: 'Respawn descriptor version 2 is reserved for Provider-bound continuity',
+      });
+    }
+    if (value.providerBindingMetadataV1) {
+      if (!providerConnectionId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['providerBindingMetadataV1'],
+          message: 'Provider binding continuity requires a Provider-bound model selection',
+        });
+      } else if (value.providerBindingMetadataV1.connectionId !== providerConnectionId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['providerBindingMetadataV1', 'connectionId'],
+          message: 'Provider binding continuity must match the selected Provider connection',
+        });
+      }
+    } else if (providerConnectionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['providerBindingMetadataV1'],
+        message: 'Provider-bound model selection requires binding continuity metadata',
+      });
+    }
+  }));
 
-export type SessionRunnerRespawnDescriptorV1 = z.infer<typeof SessionRunnerRespawnDescriptorV1Schema>;
+export type SessionRunnerRespawnDescriptor = z.infer<typeof SessionRunnerRespawnDescriptorSchema>;
+
+/**
+ * Compatibility alias retained for existing internal imports while descriptor
+ * V1 (native/predecessor) and V2 (Provider-bound) coexist at the same owner.
+ */
+export const SessionRunnerRespawnDescriptorV1Schema = SessionRunnerRespawnDescriptorSchema;
+export type SessionRunnerRespawnDescriptorV1 = SessionRunnerRespawnDescriptor;
+
+export function writeSessionRunnerRespawnDescriptorForPersistence(
+  descriptor: SessionRunnerRespawnDescriptorV1,
+): Readonly<Record<string, unknown>> {
+  const parsed = SessionRunnerRespawnDescriptorV1Schema.parse(descriptor);
+  const semanticBackendTarget = parsed.version === 1 && parsed.backendTargetV2
+    ? parsed.backendTargetV2
+    : parsed.backendTarget;
+  const runtimeBackendTarget = semanticBackendTarget
+    ? resolveConcreteCompatBackendTargetRefs(semanticBackendTarget)?.backendTargetV2 ?? null
+    : null;
+  const persistedBackendTarget = runtimeBackendTarget
+    ? writePersistedBackendTargetRefV2(runtimeBackendTarget)
+    : null;
+  const persistedRuntimeDescriptor = parsed.runtimeDescriptorV1
+    ? writeRuntimeDescriptorV1ForPersistence(parsed.runtimeDescriptorV1)
+    : undefined;
+  const persistedModelSelection = parsed.modelSelection && runtimeBackendTarget
+    ? {
+        ...parsed.modelSelection,
+        ref: {
+          ...parsed.modelSelection.ref,
+          agentTargetKey: buildBackendTargetKeyV2(runtimeBackendTarget),
+        },
+      }
+    : parsed.modelSelection;
+
+  if (persistedBackendTarget?.kind !== 'agent') {
+    return {
+      ...parsed,
+      ...(persistedRuntimeDescriptor ? { runtimeDescriptorV1: persistedRuntimeDescriptor } : {}),
+      ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+    };
+  }
+
+  const {
+    backendTarget: _legacyBackendTarget,
+    backendTargetV2: _legacyBackendTargetV2,
+    runtimeDescriptorV1: _runtimeDescriptor,
+    modelSelection: _modelSelection,
+    ...rest
+  } = parsed;
+  return {
+    ...rest,
+    agentIdentity: persistedBackendTarget.identity,
+    ...(persistedModelSelection ? { modelSelection: persistedModelSelection } : {}),
+    ...(persistedRuntimeDescriptor ? { runtimeDescriptorV1: persistedRuntimeDescriptor } : {}),
+  };
+}
 
 function normalizeOptionalString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
@@ -217,33 +507,59 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
   options?: Readonly<{
     encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
     randomBytes?: (length: number) => Uint8Array;
+    vendorResumeId?: string;
   }>,
 ): SessionRunnerRespawnDescriptorV1 | null {
   const directory = normalizeOptionalString(spawnOptions.directory);
   if (!directory) return null;
   const resume = normalizeOptionalString(spawnOptions.resume);
+  const vendorResumeId = normalizeOptionalString(options?.vendorResumeId);
+  const existingSessionId = normalizeOptionalString(spawnOptions.existingSessionId);
+  const spawnNonce = normalizeOptionalString(spawnOptions.spawnNonce);
   const transcriptStorage = spawnOptions.transcriptStorage === 'direct' ? 'direct' : undefined;
   const canonicalBackendTarget = resolveConcreteBackendTargetRefV2(spawnOptions.backendTarget);
-  const backendTarget = canonicalBackendTarget ?? undefined;
+  const backendTargetRefs = canonicalBackendTarget
+    ? resolveConcreteCompatBackendTargetRefs(canonicalBackendTarget)
+    : null;
   const safeEnvironmentVariables = pickSafeRespawnEnvironmentVariables(spawnOptions.environmentVariables);
   const persistedEnvironmentVariables = pickPersistedEnvironmentVariables(spawnOptions.environmentVariables);
-  const canonicalCodexBackendMode = resolveCanonicalCodexBackendModeFromCompatInput({
+  const {
+    codexBackendMode: canonicalCodexBackendMode,
+  } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
     codexBackendMode: spawnOptions.codexBackendMode,
     experimentalCodexAcp: spawnOptions.experimentalCodexAcp,
     runtimeDescriptorV1: spawnOptions.runtimeDescriptorV1,
   });
   const runtimeDescriptorV1 = readSpawnRuntimeDescriptorV1(spawnOptions);
+  const selectedProviderConnectionId = spawnOptions.modelSelection?.ref.providerConnectionId ?? null;
+  const backendTarget = selectedProviderConnectionId
+    ? backendTargetRefs?.backendTargetV2
+    : backendTargetRefs?.backendTarget;
+  const backendTargetV2Shadow = !selectedProviderConnectionId && backendTargetRefs
+    ? resolveNativeV1BackendTargetV2Shadow(backendTargetRefs)
+    : undefined;
+  if ((spawnOptions.providerBindingMetadataV1 && !selectedProviderConnectionId)
+    || (!spawnOptions.providerBindingMetadataV1 && selectedProviderConnectionId)
+    || (spawnOptions.providerBindingMetadataV1
+      && selectedProviderConnectionId
+      && spawnOptions.providerBindingMetadataV1.connectionId !== selectedProviderConnectionId)) {
+    return null;
+  }
   const sealedEnvironmentVariables = sealRespawnEnvironmentVariables({
     environmentVariables: persistedEnvironmentVariables,
     encryptionMaterial: options?.encryptionMaterial,
     randomBytes: options?.randomBytes,
   });
 
-  const descriptor: SessionRunnerRespawnDescriptorV1 = {
-    version: 1,
+  const descriptor: SessionRunnerRespawnDescriptor = {
+    version: selectedProviderConnectionId ? 2 : 1,
     directory,
     ...(backendTarget ? { backendTarget } : {}),
+    ...(backendTargetV2Shadow ? { backendTargetV2: backendTargetV2Shadow } : {}),
     ...(resume ? { resume } : {}),
+    ...(vendorResumeId ? { vendorResumeId } : {}),
+    ...(existingSessionId ? { existingSessionId } : {}),
+    ...(spawnNonce ? { spawnNonce } : {}),
     ...(transcriptStorage ? { transcriptStorage } : {}),
     ...(spawnOptions.terminal ? { terminal: spawnOptions.terminal } : {}),
     ...(spawnOptions.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: spawnOptions.windowsRemoteSessionLaunchMode } : {}),
@@ -254,8 +570,17 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
     ...(typeof spawnOptions.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: spawnOptions.permissionModeUpdatedAt } : {}),
     ...(typeof spawnOptions.agentModeId === 'string' ? { agentModeId: spawnOptions.agentModeId } : {}),
     ...(typeof spawnOptions.agentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: spawnOptions.agentModeUpdatedAt } : {}),
-    ...(typeof spawnOptions.modelId === 'string' ? { modelId: spawnOptions.modelId } : {}),
-    ...(typeof spawnOptions.modelUpdatedAt === 'number' ? { modelUpdatedAt: spawnOptions.modelUpdatedAt } : {}),
+    ...(spawnOptions.modelSelection ? { modelSelection: spawnOptions.modelSelection } : {}),
+    ...(spawnOptions.modelSelection?.ref.providerConnectionId === null
+      ? {
+          modelId: spawnOptions.modelSelection.ref.modelId,
+          modelUpdatedAt: spawnOptions.modelSelection.updatedAt,
+        }
+      : {}),
+    ...(spawnOptions.providerBindingMetadataV1
+      && selectedProviderConnectionId
+      ? { providerBindingMetadataV1: spawnOptions.providerBindingMetadataV1 }
+      : {}),
     ...(spawnOptions.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: spawnOptions.sessionConfigOptionOverrides } : {}),
     ...(safeEnvironmentVariables ? { environmentVariables: safeEnvironmentVariables } : {}),
     ...(sealedEnvironmentVariables ? { sealedEnvironmentVariables } : {}),
@@ -278,7 +603,9 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
     encryptionMaterial?: RespawnDescriptorEncryptionMaterial;
   }>,
 ): SpawnSessionOptions {
-  const canonicalCodexBackendMode = resolveCanonicalCodexBackendMode({
+  const {
+    codexBackendMode: canonicalCodexBackendMode,
+  } = readCanonicalSpawnRuntimeSelectionFromCompatIngress({
     codexBackendMode: descriptor.codexBackendMode,
     runtimeDescriptorV1: descriptor.runtimeDescriptorV1,
   });
@@ -289,11 +616,19 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
       })
     : null;
   const environmentVariables = openedEnvironmentVariables ?? descriptor.environmentVariables;
+  const persistedBackendTarget = descriptor.version === 1 && descriptor.backendTargetV2
+    ? descriptor.backendTargetV2
+    : descriptor.backendTarget;
+  const backendTarget = persistedBackendTarget
+    ? resolveConcreteCompatBackendTargetRefs(persistedBackendTarget)?.backendTargetV2
+    : null;
 
   return {
     directory: descriptor.directory,
-    ...(descriptor.backendTarget ? { backendTarget: descriptor.backendTarget } : {}),
+    ...(backendTarget ? { backendTarget } : {}),
     ...(typeof descriptor.resume === 'string' ? { resume: descriptor.resume } : {}),
+    ...(typeof descriptor.existingSessionId === 'string' ? { existingSessionId: descriptor.existingSessionId } : {}),
+    ...(typeof descriptor.spawnNonce === 'string' ? { spawnNonce: descriptor.spawnNonce } : {}),
     ...(descriptor.transcriptStorage === 'direct' ? { transcriptStorage: 'direct' } : {}),
     ...(descriptor.terminal ? { terminal: descriptor.terminal } : {}),
     ...(descriptor.windowsRemoteSessionLaunchMode ? { windowsRemoteSessionLaunchMode: descriptor.windowsRemoteSessionLaunchMode } : {}),
@@ -304,8 +639,10 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
     ...(typeof descriptor.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: descriptor.permissionModeUpdatedAt } : {}),
     ...(typeof descriptor.agentModeId === 'string' ? { agentModeId: descriptor.agentModeId } : {}),
     ...(typeof descriptor.agentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: descriptor.agentModeUpdatedAt } : {}),
-    ...(typeof descriptor.modelId === 'string' ? { modelId: descriptor.modelId } : {}),
-    ...(typeof descriptor.modelUpdatedAt === 'number' ? { modelUpdatedAt: descriptor.modelUpdatedAt } : {}),
+    ...(descriptor.modelSelection ? { modelSelection: descriptor.modelSelection } : {}),
+    ...(descriptor.providerBindingMetadataV1
+      ? { providerBindingMetadataV1: descriptor.providerBindingMetadataV1 }
+      : {}),
     ...(descriptor.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: descriptor.sessionConfigOptionOverrides as any } : {}),
     ...(environmentVariables ? { environmentVariables } : {}),
     ...(descriptor.connectedServices ? { connectedServices: descriptor.connectedServices } : {}),

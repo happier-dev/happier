@@ -1,29 +1,139 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { basename, join } from 'node:path';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import * as tar from 'tar';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { CapabilitiesDescribeResponse, CapabilitiesInvokeResponse } from '@/capabilities/types';
+import type { CapabilitiesDescribeResponse } from '@/capabilities/types';
 import { reloadConfiguration } from '@/configuration';
-import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/plugins/testkit/marketplaceCatalog';
-import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
+import { SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import { bundlePluginDaemonRuntime } from '@/plugins/authoring/bundleDaemonRuntime';
+import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import { createMarketplaceSourceRegistryStore } from '@/plugins/store/marketplace/sources/store';
+import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 
 import { createCliCapabilitiesService } from './capabilities';
 
+const loadMarketplaceIndexSourceMock = vi.hoisted(() => vi.fn());
+const decideDaemonPluginChangeMock = vi.hoisted(() => vi.fn());
+const requestDaemonPluginChangeMock = vi.hoisted(() => vi.fn());
+const ensureDaemonRunningMock = vi.hoisted(() => vi.fn(async () => undefined));
+const promptConfirmYesNoMock = vi.hoisted(() => vi.fn());
+
+function createMarketplaceSnapshot(params: Readonly<{
+    source: Readonly<{
+        id: string;
+        title: string;
+        sourceUrl: string;
+        kind: 'curated' | 'community-npm';
+    }>;
+}>) {
+    return {
+        source: params.source,
+        freshness: { state: 'fresh' as const, fetchedAtMs: Date.now() },
+        entries: [{
+            pluginId: SAMPLE_PLUGIN_ID,
+            publisher: { id: 'acme', displayName: 'Acme' },
+            display: { title: 'Acme Sample', description: 'Reviewed sample plugin' },
+            distribution: {
+                kind: 'npm' as const,
+                registryOrigin: 'https://registry.npmjs.org',
+                packageName: '@acme/sample',
+                version: '1.0.0',
+                integrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}`,
+            },
+            manifestDigest: `sha256:${'a'.repeat(64)}`,
+            compatibility: { happier: '>=1.0.0', platforms: ['darwin' as const] },
+            summary: {
+                contributions: ['actions'],
+                requiredHostAccess: [],
+                optionalHostAccess: [],
+                executableRealms: ['daemon' as const],
+            },
+            review: params.source.kind === 'curated'
+                ? { status: 'approved' as const, reviewedAt: '2026-07-22T00:00:00.000Z' }
+                : { status: 'unreviewed' as const, reviewedAt: null },
+            categories: ['actions'],
+            media: [],
+            updatePolicy: params.source.kind === 'curated' ? 'curated-auto' as const : 'manual' as const,
+            links: {},
+        }],
+        diagnostics: [],
+    };
+}
+
+async function writeManagedRuntimeFixture(homeDir: string): Promise<void> {
+    const binDir = join(homeDir, 'tools', 'js-runtime', 'current', 'bin');
+    const runtimeDir = join(homeDir, 'tools', 'js-runtime', 'current', 'runtime');
+    const wrapperPath = join(binDir, process.platform === 'win32' ? 'happier-js-runtime.cmd' : 'happier-js-runtime');
+    const runtimePath = process.platform === 'win32'
+        ? join(runtimeDir, 'node.exe')
+        : join(runtimeDir, 'bin', 'node');
+    await mkdir(binDir, { recursive: true });
+    await mkdir(join(runtimePath, '..'), { recursive: true });
+    if (process.platform === 'win32') {
+        await copyFile(process.execPath, runtimePath);
+        await writeFile(wrapperPath, '@echo off\r\n"%~dp0..\\runtime\\node.exe" %*\r\n', 'utf8');
+    } else {
+        await symlink(process.execPath, runtimePath);
+        await writeFile(wrapperPath, '#!/bin/sh\nexec "${0%/*}/../runtime/bin/node" "$@"\n', 'utf8');
+        await chmod(wrapperPath, 0o755);
+    }
+}
+
+async function linkPluginAuthorDependency(
+    projectRoot: string,
+    packageName: string,
+    source: string,
+): Promise<void> {
+    const destination = join(projectRoot, 'node_modules', ...packageName.split('/'));
+    await mkdir(join(destination, '..'), { recursive: true });
+    await symlink(source, destination, process.platform === 'win32' ? 'junction' : 'dir');
+}
+
+async function copyNativeTypeScriptAuthorDependency(projectRoot: string): Promise<void> {
+    const sourceScope = fileURLToPath(new URL('../../../../../node_modules/@typescript', import.meta.url));
+    const destinationScope = join(projectRoot, 'node_modules', '@typescript');
+    await mkdir(destinationScope, { recursive: true });
+    const installedPackages = (await readdir(sourceScope))
+        .filter((name) => name === 'native' || name.startsWith('typescript-'));
+    for (const name of installedPackages) {
+        await cp(join(sourceScope, name), join(destinationScope, name), { recursive: true });
+    }
+}
+
+// Boundary fixtures only: remote marketplace retrieval and daemon/process/user interaction.
+// The in-process exact-install and user-change owners remain real in this suite.
+vi.mock('@/plugins/store/marketplace/indexSourceLoader', () => ({
+    loadMarketplaceIndexSource: (...args: unknown[]) => loadMarketplaceIndexSourceMock(...args),
+}));
+vi.mock('@/daemon/controlClient', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/daemon/controlClient')>()),
+    decideDaemonPluginChange: (...args: unknown[]) => decideDaemonPluginChangeMock(...args),
+    requestDaemonPluginChange: (...args: unknown[]) => requestDaemonPluginChangeMock(...args),
+}));
+vi.mock('@/daemon/ensureDaemon', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/daemon/ensureDaemon')>()),
+    ensureDaemonRunningForSessionCommand: () => ensureDaemonRunningMock(),
+}));
+vi.mock('@/terminal/prompts/promptConfirmYesNo', () => ({
+    promptConfirmYesNo: (...args: unknown[]) => promptConfirmYesNoMock(...args),
+}));
+
 describe('createCliCapabilitiesService installable dependencies', () => {
     afterEach(() => {
-        vi.doUnmock('@/backends/catalog');
+        vi.doUnmock('@/agent/catalog/registry');
         vi.resetModules();
     });
 
     it('describes Codex ACP from installable contributions when the backend has no local capability hook', async () => {
         vi.resetModules();
-        vi.doMock('@/backends/catalog', async (importOriginal) => {
-            const actual = await importOriginal<typeof import('@/backends/catalog')>();
+        vi.doMock('@/agent/catalog/registry', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('@/agent/catalog/registry')>();
             return {
                 ...actual,
                 AGENTS: {
@@ -61,6 +171,7 @@ describe('createCliCapabilitiesService installable dependencies', () => {
             reloadConfiguration();
         }
     });
+
 });
 
 describe('createCliCapabilitiesService dep.gh', () => {
@@ -116,93 +227,517 @@ describe('createCliCapabilitiesService dep.az', () => {
 });
 
 describe('createCliCapabilitiesService tool.plugins', () => {
-    it('describes and invokes reload through the canonical plugin capability', async () => {
-        const home = await createTempDir('happier-cli-capabilities-plugins-reload-');
-        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
-        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
-        reloadConfiguration();
+    afterEach(() => {
+        loadMarketplaceIndexSourceMock.mockReset();
+        decideDaemonPluginChangeMock.mockReset();
+        requestDaemonPluginChangeMock.mockReset();
+        ensureDaemonRunningMock.mockClear();
+        promptConfirmYesNoMock.mockReset();
+    });
 
-        const sourceParent = await mkdtemp(join(tmpdir(), 'happier-cli-capabilities-plugin-source-'));
-        const sourceRoot = join(sourceParent, 'sample-plugin');
-        await materializeSamplePluginFixture(sourceRoot);
-        const archivePath = join(home, `${SAMPLE_PLUGIN_ID}.tar.gz`);
-        await tar.c({
-            gzip: true,
-            file: archivePath,
-            cwd: sourceParent,
-            portable: true,
-        }, [basename(sourceRoot)]);
-        const catalogPath = join(home, 'catalog.json');
-        await writeFile(
-            catalogPath,
-            JSON.stringify(createMarketplaceCatalogDocument({
-                sourceUrl: catalogPath,
-                title: 'Curated plugins',
-                description: 'Descriptor-only plugin discovery',
-                entries: [
-                    createMarketplaceCatalogEntry({
-                        pluginId: SAMPLE_PLUGIN_ID,
-                        title: 'Sample Plugin',
-                        description: 'Descriptor-only plugin discovery',
-                        sourceUrl: `${catalogPath}#${SAMPLE_PLUGIN_ID}`,
-                        packageUrl: archivePath,
-                        categories: ['plugins'],
-                    }),
-                ],
-            }), null, 2),
-            'utf8',
-        );
+    it('returns desired and applied generation from the canonical daemon catalog in capability detect', async () => {
+        const currentEntry = {
+            pluginId: 'acme.current',
+            desiredGeneration: 'generation-2',
+            appliedGeneration: 'generation-2',
+            title: 'Current',
+            description: null,
+            version: '2.0.0',
+            enabled: true,
+            source: {
+                kind: 'path',
+                locator: '/plugins/acme.current',
+                trustPolicy: 'local_trusted',
+                installPolicy: 'link',
+                resolvedPath: '/plugins/acme.current',
+                manifestPath: '/plugins/acme.current/.happier-plugin/plugin.json',
+            },
+            install: { mode: 'link', manifestVersion: '2.0.0' },
+            compatibility: { status: 'compatible', diagnostics: [] },
+            manifestPath: '/plugins/acme.current/.happier-plugin/plugin.json',
+            manifestDigest: null,
+            manifest: null,
+            contributionIntrospection: {
+                version: 1,
+                generation: 2,
+                contributions: [],
+                diagnostics: [],
+            },
+            diagnostics: [],
+        } satisfies PluginCatalogEntry;
+        const service = await createCliCapabilitiesService({
+            readPluginCatalog: async () => Object.freeze([currentEntry]),
+        });
+
+        await expect(service.detect({
+            requests: [{ id: 'tool.plugins' }],
+        })).resolves.toMatchObject({
+            results: {
+                'tool.plugins': {
+                    ok: true,
+                    data: {
+                        installedPlugins: [{
+                            pluginId: 'acme.current',
+                            desiredGeneration: 'generation-2',
+                            appliedGeneration: 'generation-2',
+                        }],
+                    },
+                },
+            },
+        });
+    });
+
+    it('keeps a generic curated install prepare-only even if a downstream adapter reports a commit', async () => {
+        const home = await createTempDir('happier-cli-capabilities-curated-install-');
+        const sourceUrl = 'https://marketplace.example.test/catalog.json';
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_MARKETPLACE_CURATED_SOURCE_URL']);
+        envScope.patch({
+            HAPPIER_HOME_DIR: home,
+            HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: sourceUrl,
+        });
+        reloadConfiguration();
+        loadMarketplaceIndexSourceMock.mockImplementation(async ({ source }) => createMarketplaceSnapshot({ source }));
+        requestDaemonPluginChangeMock.mockResolvedValue({
+            kind: 'committed',
+            pluginId: SAMPLE_PLUGIN_ID,
+            desiredGeneration: 'generation-1',
+            appliedGeneration: 'generation-1',
+            pendingSurfaces: [],
+        });
 
         try {
+            const sourceId = (await createMarketplaceSourceRegistryStore({ happyHomeDir: home }).read()).sources[0]!.id;
             const service = await createCliCapabilitiesService();
-            const described = service.describe() as CapabilitiesDescribeResponse;
-
-            expect(described.capabilities.find((capability) => capability.id === 'tool.plugins')).toMatchObject({
-                methods: expect.objectContaining({
-                    install: expect.any(Object),
-                    update: expect.any(Object),
-                    enable: expect.any(Object),
-                    disable: expect.any(Object),
-                    reload: expect.any(Object),
-                }),
-            });
-
-            const installResult = await service.invoke({
+            const installResponse = await service.invoke({
                 id: 'tool.plugins',
                 method: 'install',
                 params: {
-                    sourceUrl: catalogPath,
+                    sourceId,
                     pluginId: SAMPLE_PLUGIN_ID,
+                    approval: 'approved-by-client',
+                    version: '9.9.9',
+                    integrity: 'sha512-client-supplied',
                 },
-            }) as CapabilitiesInvokeResponse;
+            });
+            expect(installResponse).toMatchObject({
+                ok: false,
+                error: {
+                    code: 'plugin_install_human_decision_required',
+                },
+            });
 
-            expect(installResult.ok).toBe(true);
-            if (!installResult.ok) return;
-
-            const reloaded = await service.invoke({
-                id: 'tool.plugins',
-                method: 'reload',
-                params: {
+            expect(requestDaemonPluginChangeMock).toHaveBeenCalledWith(expect.objectContaining({
+                kind: 'installNpm',
+                expectedMarketplaceListing: expect.objectContaining({
+                    source: { id: sourceId, kind: 'curated', sourceUrl },
                     pluginId: SAMPLE_PLUGIN_ID,
-                },
-            }) as CapabilitiesInvokeResponse;
-
-            expect(reloaded.ok).toBe(true);
-            if (!reloaded.ok) return;
-            expect(reloaded.result).toMatchObject({
-                action: 'reload',
-                pluginId: SAMPLE_PLUGIN_ID,
-                reload: {
-                    ok: expect.any(Boolean),
-                    attemptedGeneration: expect.any(Number),
-                    affectedPluginIds: [SAMPLE_PLUGIN_ID],
-                },
+                    version: '1.0.0',
+                }),
+            }));
+            expect(requestDaemonPluginChangeMock.mock.calls[0]?.[0]).not.toMatchObject({
+                selector: '9.9.9',
+                integrity: 'sha512-client-supplied',
             });
         } finally {
             envScope.restore();
             reloadConfiguration();
             await removeTempDir(home);
-            await rm(sourceParent, { recursive: true, force: true });
+        }
+    });
+
+    it('returns the staged community package review for an explicit UI decision', async () => {
+        const review = {
+            pluginId: SAMPLE_PLUGIN_ID,
+            displayName: 'Community sample',
+            version: '1.0.0',
+            source: {
+                kind: 'npm' as const,
+                locator: 'https://registry.npmjs.org/@acme/sample/-/sample-1.0.0.tgz',
+                integrity: `sha512-${Buffer.alloc(64, 1).toString('base64')}`,
+            },
+            executableRealms: ['daemon' as const],
+            requiredHostAccess: [],
+            optionalHostAccess: [],
+        };
+        const home = await createTempDir('happier-cli-capabilities-community-install-');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR']);
+        envScope.patch({ HAPPIER_HOME_DIR: home });
+        reloadConfiguration();
+        loadMarketplaceIndexSourceMock.mockImplementation(async ({ source }) => createMarketplaceSnapshot({ source }));
+        requestDaemonPluginChangeMock.mockResolvedValue({
+            kind: 'reviewRequired',
+            pendingChangeId: 'pending-community',
+            review,
+        });
+
+        try {
+            const service = await createCliCapabilitiesService();
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'install',
+                params: { sourceId: 'marketplace:community-npm', pluginId: SAMPLE_PLUGIN_ID },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'install',
+                    pluginId: SAMPLE_PLUGIN_ID,
+                    change: { kind: 'reviewRequired', pendingChangeId: 'pending-community', review },
+                },
+            });
+            expect(promptConfirmYesNoMock).not.toHaveBeenCalled();
+            expect(decideDaemonPluginChangeMock).not.toHaveBeenCalled();
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await removeTempDir(home);
+        }
+    });
+
+    it('rejects the hidden install decision method without contacting the daemon decision command', async () => {
+        decideDaemonPluginChangeMock.mockResolvedValue({
+            kind: 'committed',
+            pluginId: SAMPLE_PLUGIN_ID,
+            desiredGeneration: 'generation-1',
+            appliedGeneration: 'generation-1',
+            pendingSurfaces: [],
+        });
+        const service = await createCliCapabilitiesService();
+
+        await expect(service.invoke({
+            id: 'tool.plugins',
+            method: 'decideInstall',
+            params: {
+                pendingChangeId: 'pending-community',
+                decision: 'installAndTrust',
+                optionalSelections: [{ accessId: 'sessions', selected: false }],
+            },
+        })).resolves.toEqual({
+            ok: false,
+            error: {
+                message: 'Unsupported method: decideInstall',
+                code: 'unsupported-method',
+            },
+        });
+        expect(decideDaemonPluginChangeMock).not.toHaveBeenCalled();
+    });
+
+    it('exposes private lifecycle methods through the canonical daemon change owner without restoring reload or source-url mutation', async () => {
+        const home = await createTempDir('happier-cli-capabilities-plugin-lifecycle-');
+        const sourceUrl = 'https://marketplace.example.test/catalog.json';
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_MARKETPLACE_CURATED_SOURCE_URL']);
+        envScope.patch({
+            HAPPIER_HOME_DIR: home,
+            HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: sourceUrl,
+        });
+        reloadConfiguration();
+        const review = {
+            pluginId: SAMPLE_PLUGIN_ID,
+            displayName: 'Sample plugin',
+            version: '1.0.0',
+            source: { kind: 'npm' as const, locator: '@acme/sample@1.0.0' },
+            executableRealms: ['daemon' as const],
+            requiredHostAccess: [],
+            optionalHostAccess: [],
+        };
+        loadMarketplaceIndexSourceMock.mockImplementation(async ({ source }) => createMarketplaceSnapshot({ source }));
+        requestDaemonPluginChangeMock.mockImplementation(async (request: Readonly<{ kind: string; pluginId?: string }>) => (
+            request.kind === 'installNpm'
+                ? { kind: 'reviewRequired', pendingChangeId: 'pending-update', review }
+                : {
+                    kind: 'committed',
+                    pluginId: request.pluginId ?? SAMPLE_PLUGIN_ID,
+                    desiredGeneration: request.kind === 'uninstall' || request.kind === 'forgetTrust'
+                        ? null
+                        : 'generation-1',
+                    appliedGeneration: request.kind === 'uninstall' || request.kind === 'forgetTrust'
+                        ? null
+                        : 'generation-1',
+                    pendingSurfaces: [],
+                }
+        ));
+
+        try {
+            const sourceId = (await createMarketplaceSourceRegistryStore({ happyHomeDir: home }).read()).sources[0]!.id;
+            const service = await createCliCapabilitiesService();
+            const described = service.describe() as CapabilitiesDescribeResponse;
+            const plugins = described.capabilities.find((capability) => capability.id === 'tool.plugins');
+
+            expect(plugins?.methods).not.toHaveProperty('reload');
+            expect(plugins?.methods).toEqual(expect.objectContaining({
+                update: expect.any(Object),
+                rollback: expect.any(Object),
+                uninstall: expect.any(Object),
+                forgetTrust: expect.any(Object),
+            }));
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'reload',
+                params: { pluginId: SAMPLE_PLUGIN_ID },
+            })).resolves.toMatchObject({
+                ok: false,
+                error: { code: 'unsupported-method' },
+            });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'update',
+                params: {
+                    pluginId: SAMPLE_PLUGIN_ID,
+                    sourceId,
+                    sourceUrl: 'https://untrusted.invalid/catalog.json',
+                },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'update',
+                    pluginId: SAMPLE_PLUGIN_ID,
+                    change: {
+                        kind: 'reviewRequired',
+                        pendingChangeId: 'pending-update',
+                        review,
+                    },
+                },
+            });
+            expect(requestDaemonPluginChangeMock).toHaveBeenNthCalledWith(1, expect.objectContaining({
+                kind: 'installNpm',
+                expectedMarketplaceListing: expect.objectContaining({
+                    source: { id: sourceId, kind: 'curated', sourceUrl },
+                    pluginId: SAMPLE_PLUGIN_ID,
+                }),
+            }));
+            expect(JSON.stringify(requestDaemonPluginChangeMock.mock.calls[0]?.[0])).not.toContain('untrusted.invalid');
+
+            for (const method of ['rollback', 'uninstall', 'forgetTrust'] as const) {
+                await expect(service.invoke({
+                    id: 'tool.plugins',
+                    method,
+                    params: { pluginId: SAMPLE_PLUGIN_ID },
+                })).resolves.toMatchObject({
+                    ok: true,
+                    result: {
+                        action: method,
+                        pluginId: SAMPLE_PLUGIN_ID,
+                        change: { kind: 'committed', pluginId: SAMPLE_PLUGIN_ID },
+                    },
+                });
+            }
+            expect(requestDaemonPluginChangeMock.mock.calls.slice(1, 4).map(([request]) => request)).toEqual([
+                { kind: 'rollback', pluginId: SAMPLE_PLUGIN_ID },
+                { kind: 'uninstall', pluginId: SAMPLE_PLUGIN_ID },
+                { kind: 'forgetTrust', pluginId: SAMPLE_PLUGIN_ID },
+            ]);
+
+            requestDaemonPluginChangeMock.mockResolvedValueOnce({
+                kind: 'unavailable',
+                code: 'daemon_unavailable',
+            });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'update',
+                params: { sourceId, pluginId: SAMPLE_PLUGIN_ID },
+            })).resolves.toMatchObject({
+                ok: false,
+                error: { code: 'outcomeUnknown' },
+            });
+
+            requestDaemonPluginChangeMock.mockResolvedValueOnce({
+                kind: 'committed',
+                pluginId: SAMPLE_PLUGIN_ID,
+                desiredGeneration: 'generation-2',
+                appliedGeneration: 'generation-2',
+                pendingSurfaces: [],
+            });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'update',
+                params: { sourceId, pluginId: SAMPLE_PLUGIN_ID },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'update',
+                    pluginId: SAMPLE_PLUGIN_ID,
+                    change: {
+                        kind: 'committed',
+                        desiredGeneration: 'generation-2',
+                        appliedGeneration: 'generation-2',
+                    },
+                },
+            });
+
+            requestDaemonPluginChangeMock.mockResolvedValueOnce({
+                kind: 'reviewRequired',
+                pendingChangeId: 'pending-unexpected',
+                review,
+            });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'uninstall',
+                params: { pluginId: SAMPLE_PLUGIN_ID },
+            })).resolves.toMatchObject({
+                ok: false,
+                error: { code: 'reviewRequired' },
+            });
+
+            requestDaemonPluginChangeMock.mockResolvedValueOnce({
+                kind: 'unavailable',
+                code: 'daemon_unavailable',
+            });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'forgetTrust',
+                params: { pluginId: SAMPLE_PLUGIN_ID },
+            })).resolves.toMatchObject({
+                ok: false,
+                error: { code: 'outcomeUnknown' },
+            });
+
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'update',
+                params: { sourceId, pluginId: '   ' },
+            })).resolves.toMatchObject({ ok: false, error: { code: 'plugin-not-found' } });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'update',
+                params: { sourceId: '   ', pluginId: SAMPLE_PLUGIN_ID },
+            })).resolves.toMatchObject({ ok: false, error: { code: 'plugin_source_missing' } });
+
+            expect(promptConfirmYesNoMock).not.toHaveBeenCalled();
+            expect(decideDaemonPluginChangeMock).not.toHaveBeenCalled();
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await removeTempDir(home);
+        }
+    });
+
+    it('projects only approved development sources and runs test and pack against the daemon-re-read source root', async () => {
+        const home = await createTempDir('happier-cli-capabilities-plugin-development-');
+        const parent = await mkdtemp(join(tmpdir(), 'happier-plugin-development-source-'));
+        const pluginRoot = join(parent, 'plugin');
+        const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
+        envScope.patch({ HAPPIER_HOME_DIR: home, PATH: '' });
+        reloadConfiguration();
+        try {
+            const scaffold = await scaffoldLocalPlugin({
+                targetDir: pluginRoot,
+                pluginId: 'acme.development-actions',
+                displayName: 'Development Actions',
+                pluginSdkVersion: '0.1.0-development-actions.test',
+            });
+            expect(scaffold.ok).toBe(true);
+            if (!scaffold.ok) return;
+            await copyNativeTypeScriptAuthorDependency(pluginRoot);
+            await linkPluginAuthorDependency(
+                pluginRoot,
+                '@happier-dev/plugin-sdk',
+                fileURLToPath(new URL('../../../../../packages/plugin-sdk', import.meta.url)),
+            );
+            await linkPluginAuthorDependency(
+                pluginRoot,
+                '@types/node',
+                fileURLToPath(new URL('../../../../../node_modules/@types/node', import.meta.url)),
+            );
+            await bundlePluginDaemonRuntime(pluginRoot);
+            await writeManagedRuntimeFixture(home);
+            await createPluginStateStore({ happyHomeDir: home }).write({
+                t: 'happier_plugin_state_v1',
+                schemaVersion: 1,
+                plugins: {
+                    'acme.development-actions': {
+                        source: {
+                            kind: 'path',
+                            locator: pluginRoot,
+                            resolvedPath: pluginRoot,
+                            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+                            trustPolicy: 'prompt',
+                            installPolicy: 'link',
+                            devWatch: true,
+                        },
+                        compatibility: { status: 'compatible', diagnostics: [] },
+                        install: { mode: 'link', manifestVersion: '0.1.0' },
+                        state: { enabled: true },
+                    },
+                },
+            });
+
+            const service = await createCliCapabilitiesService();
+            const described = service.describe() as CapabilitiesDescribeResponse;
+            expect(described.capabilities.find((capability) => capability.id === 'tool.plugins')).toMatchObject({
+                methods: expect.objectContaining({
+                    create: expect.any(Object),
+                    test: expect.any(Object),
+                    pack: expect.any(Object),
+                }),
+            });
+            await expect(service.detect({
+                requests: [{ id: 'tool.plugins' }],
+            })).resolves.toMatchObject({
+                results: {
+                    'tool.plugins': {
+                        ok: true,
+                        data: {
+                            developmentActions: { create: true },
+                            developmentSources: [{
+                                pluginId: 'acme.development-actions',
+                                sourceRootPath: pluginRoot,
+                                watch: { state: 'configured' },
+                                reload: { state: 'clear', diagnostics: [] },
+                                actions: { test: true, pack: true },
+                            }],
+                        },
+                    },
+                },
+            });
+
+            const createdRoot = join(parent, 'created-plugin');
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'create',
+                params: {
+                    targetDir: createdRoot,
+                    pluginId: 'acme.created-from-settings',
+                    displayName: 'Created from Settings',
+                },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'create',
+                    pluginId: 'acme.created-from-settings',
+                    sourceRootPath: createdRoot,
+                    manifestPath: join(createdRoot, '.happier-plugin', 'plugin.json'),
+                },
+            });
+            await expect(readFile(join(createdRoot, '.happier-plugin', 'plugin.json'), 'utf8')).resolves.toContain('acme.created-from-settings');
+
+            const testResult = await service.invoke({
+                id: 'tool.plugins',
+                method: 'test',
+                params: { pluginId: 'acme.development-actions', sourceRootPath: '/client/must-not-own-source' },
+            });
+            expect(
+                testResult,
+                testResult.ok ? undefined : testResult.error.message,
+            ).toMatchObject({
+                ok: true,
+                result: { action: 'test', pluginId: 'acme.development-actions' },
+            });
+            await expect(service.invoke({
+                id: 'tool.plugins',
+                method: 'pack',
+                params: { pluginId: 'acme.development-actions', sourceRootPath: '/client/must-not-own-source' },
+            })).resolves.toMatchObject({
+                ok: true,
+                result: {
+                    action: 'pack',
+                    pluginId: 'acme.development-actions',
+                    archivePath: expect.stringMatching(/\.tgz$/u),
+                },
+            });
+        } finally {
+            envScope.restore();
+            reloadConfiguration();
+            await rm(parent, { recursive: true, force: true });
+            await removeTempDir(home);
         }
     });
 });

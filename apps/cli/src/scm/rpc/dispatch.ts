@@ -3,9 +3,12 @@ import { resolve } from 'path';
 import { createScmCapabilities, type ScmBackendPreference } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
-import { resolveScmBackendRegistry } from '@/scm/scmBackendCatalog';
-import type { ScmBackendRegistry } from '@/scm/registry';
-import type { ScmBackendSelection } from '@/scm/registry';
+import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
+import {
+    resolveScmBackendById,
+    type ScmBackendRegistry,
+    type ScmBackendSelection,
+} from '@/scm/registry';
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
 import { createNonRepositorySnapshot, resolveCwd, resolveTildePath } from '@/scm/runtime';
 import type { ScmBackendContext } from '@/scm/types';
@@ -73,8 +76,10 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
         selection: ScmBackendSelection;
     }) => Promise<TResponse>;
     registry?: ScmBackendRegistry;
+    signal?: AbortSignal;
 }): Promise<TResponse> {
     try {
+        if (input.signal?.aborted) throw new Error('SCM operation was aborted');
         const normalizedWorkingDirectory = resolveTildePath(input.workingDirectory);
         const cwdResult = resolveCwd(
             input.request.cwd,
@@ -85,32 +90,41 @@ export async function runScmRoute<TRequest extends ScmRequestBase, TResponse ext
             return invalidPathResponse<TResponse>(cwdResult.error);
         }
 
-        const registry = await resolveScmBackendRegistry(input.registry);
-        const resolved = await resolveScmSelection({
-            workingDirectory: normalizedWorkingDirectory,
-            cwd: cwdResult.cwd,
-            backendPreference: input.request.backendPreference,
-            registry,
-        });
-        if (!resolved) {
-            return await input.onNonRepository({
-                cwd: cwdResult.cwd,
+        return await runWithScmBackendRegistryLease(input.registry, async (registry) => {
+            if (input.signal?.aborted) throw new Error('SCM operation was aborted');
+            const resolved = await resolveScmSelection({
                 workingDirectory: normalizedWorkingDirectory,
+                cwd: cwdResult.cwd,
+                backendPreference: input.request.backendPreference,
+                registry,
             });
-        }
-        if (
-            input.request.backendPreference?.kind === 'prefer'
-            && resolved.selection.backend.id !== input.request.backendPreference.backendId
-        ) {
-            return backendUnavailableResponse<TResponse>({
-                requestedBackendId: input.request.backendPreference.backendId,
-                selectedBackendId: resolved.selection.backend.id,
-            });
-        }
+            if (input.signal?.aborted) throw new Error('SCM operation was aborted');
+            if (!resolved) {
+                return await input.onNonRepository({
+                    cwd: cwdResult.cwd,
+                    workingDirectory: normalizedWorkingDirectory,
+                });
+            }
+            if (
+                input.request.backendPreference?.kind === 'prefer'
+                && resolveScmBackendById(
+                    registry.listBackends(),
+                    input.request.backendPreference.backendId,
+                )?.id !== resolved.selection.backend.id
+            ) {
+                return backendUnavailableResponse<TResponse>({
+                    requestedBackendId: input.request.backendPreference.backendId,
+                    selectedBackendId: resolved.selection.backend.id,
+                });
+            }
 
-        return await input.runWithBackend({
-            context: resolved.context,
-            selection: resolved.selection,
+            return await input.runWithBackend({
+                context: Object.freeze({
+                    ...resolved.context,
+                    ...(input.signal ? { signal: input.signal } : {}),
+                }),
+                selection: resolved.selection,
+            });
         });
     } catch (error) {
         return fallbackError<TResponse>(error);

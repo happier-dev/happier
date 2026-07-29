@@ -1,0 +1,260 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.packed-voice",
+  "version": "1.0.0",
+  "displayName": "Packed Voice Fixture",
+  "description": "Dependency-closed external Voice provider fixture",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "entrypoints": {
+    "daemon": "./dist/daemon.js"
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "voice-provider-api",
+        "capability": "network",
+        "reason": "Read, provision, and authenticate a bounded Voice session",
+        "scope": {
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://voice.example.test"
+            }
+          ],
+          "methods": ["GET", "POST", "PATCH"]
+        }
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "voiceProviders": [
+      {
+        "id": "conversation",
+        "title": "Packed Conversation",
+        "kind": "conversation",
+        "roles": ["conversation_stt", "conversation_tts", "realtime_conversation", "turn_control"],
+        "platforms": ["web"],
+        "capabilities": {
+          "readiness": { "requirements": ["credential"] },
+          "turn": { "cancelResponse": true, "bargeIn": false }
+        },
+        "settings": {
+          "schemaVersion": 2,
+          "fields": [
+            {
+              "id": "profile",
+              "title": "Voice profile",
+              "description": "Provider-owned profile used for bounded provisioning",
+              "schema": {
+                "type": "string",
+                "enum": ["balanced", "expressive"]
+              },
+              "default": "balanced",
+              "presentation": {
+                "control": "select",
+                "options": [
+                  { "value": "balanced", "title": "Balanced" },
+                  { "value": "expressive", "title": "Expressive" }
+                ]
+              }
+            },
+            {
+              "id": "enableProvisioning",
+              "title": "Provision selected voice",
+              "description": "Apply the selected profile through the approved provider mutation",
+              "schema": {
+                "type": "boolean"
+              },
+              "default": true,
+              "presentation": {
+                "control": "switch"
+              }
+            }
+          ]
+        },
+        "accountMediation": {
+          "credentialSlots": [
+            {
+              "id": "api_key",
+              "scope": "account"
+            }
+          ],
+          "operations": [
+            {
+              "id": "list-voices",
+              "purpose": "voice.catalog.voices",
+              "credentialSlotId": "api_key",
+              "effect": "read",
+              "request": {
+                "origin": "https://voice.example.test",
+                "pathTemplate": "/v1/voices",
+                "queryTemplate": [],
+                "headerTemplate": [],
+                "bodyTemplate": { "kind": "none" },
+                "method": "GET",
+                "credential": {
+                  "kind": "httpHeader",
+                  "name": "authorization",
+                  "format": "bearer"
+                },
+                "redirect": "error",
+                "maxBodyBytes": 0,
+                "contentTypes": []
+              },
+              "parameters": {
+                "schema": {
+                  "type": "object",
+                  "properties": {},
+                  "additionalProperties": false
+                },
+                "mapping": []
+              },
+              "response": {
+                "maxBytes": 2097152,
+                "contentTypes": ["application/json"]
+              }
+            },
+            {
+              "id": "provision-voice",
+              "purpose": "voice.provision.selected",
+              "credentialSlotId": "api_key",
+              "effect": "mutation",
+              "request": {
+                "origin": "https://voice.example.test",
+                "pathTemplate": "/v1/voices/{voiceId}",
+                "queryTemplate": [],
+                "headerTemplate": [
+                  { "name": "content-type", "value": "application/json" }
+                ],
+                "bodyTemplate": { "kind": "json", "value": {} },
+                "method": "PATCH",
+                "credential": {
+                  "kind": "httpHeader",
+                  "name": "authorization",
+                  "format": "bearer"
+                },
+                "redirect": "error",
+                "maxBodyBytes": 4096,
+                "contentTypes": ["application/json"]
+              },
+              "parameters": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "voiceId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "body": {
+                      "type": "object",
+                      "properties": {
+                        "profile": {
+                          "type": "string",
+                          "enum": ["balanced", "expressive"]
+                        }
+                      },
+                      "required": ["profile"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["voiceId", "body"],
+                  "additionalProperties": false
+                },
+                "mapping": [
+                  {
+                    "parameter": "voiceId",
+                    "target": {
+                      "kind": "path",
+                      "placeholder": "voiceId",
+                      "encoding": "uri_component"
+                    }
+                  },
+                  {
+                    "parameter": "body",
+                    "target": { "kind": "body", "pointer": "" }
+                  }
+                ]
+              },
+              "response": {
+                "maxBytes": 32768,
+                "contentTypes": ["application/json"]
+              }
+            },
+            {
+              "id": "client-auth",
+              "purpose": "voice.client-auth",
+              "credentialSlotId": "api_key",
+              "effect": "read",
+              "request": {
+                "origin": "https://voice.example.test",
+                "pathTemplate": "/v1/session",
+                "queryTemplate": [],
+                "headerTemplate": [
+                  { "name": "content-type", "value": "application/json" }
+                ],
+                "bodyTemplate": { "kind": "json", "value": {} },
+                "method": "POST",
+                "credential": {
+                  "kind": "httpHeader",
+                  "name": "authorization",
+                  "format": "bearer"
+                },
+                "redirect": "error",
+                "maxBodyBytes": 65536,
+                "contentTypes": ["application/json"]
+              },
+              "parameters": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "body": {
+                      "type": "object",
+                      "properties": {
+                        "audience": { "const": "realtime" },
+                        "voiceId": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256
+                        }
+                      },
+                      "required": ["audience", "voiceId"],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": ["body"],
+                  "additionalProperties": false
+                },
+                "mapping": [
+                  { "parameter": "body", "target": { "kind": "body", "pointer": "" } }
+                ]
+              },
+              "response": {
+                "maxBytes": 32768,
+                "contentTypes": ["application/json"]
+              }
+            }
+          ]
+        },
+        "client": {
+          "artifactId": "voice-runtime-web",
+          "modulePath": "./voiceRuntime",
+          "exportName": "activate"
+        }
+      }
+    ]
+  }
+}

@@ -5,16 +5,16 @@ import { captureConsoleText } from '@/testkit/logger/captureOutput';
 import { showAuthHelp } from './auth/help';
 import { showMachineHelp } from './machine/help';
 import { showRelayHelp } from './relay/help';
-import { handleProvidersCommand } from './providers';
+import { handleAgentsCommand } from './agents';
 
 describe('CLI help output standardization', () => {
-  it('renders auth, machine, relay, and providers help pages with shared structure', async () => {
+  it('renders auth, machine, relay, and agents help pages with shared structure', async () => {
     const output = captureConsoleText();
     try {
       showAuthHelp();
       showMachineHelp();
       showRelayHelp();
-      await handleProvidersCommand(['help']);
+      await handleAgentsCommand(['help']);
 
       const text = output.text();
       expect(text).toContain('happier auth');
@@ -28,8 +28,8 @@ describe('CLI help output standardization', () => {
       expect(text).toContain('happier relay access status');
       expect(text).toContain('--ssh-auth agent|keyfile|password');
       expect(text).toContain('--upstream-url <url>');
-      expect(text).toContain('happier providers');
-      expect(text).toContain('Provider CLI helpers');
+      expect(text).toContain('happier agents');
+      expect(text).toContain('Agent CLI helpers');
     } finally {
       output.restore();
     }

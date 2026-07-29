@@ -9,7 +9,6 @@ import {
 
 import type { Metadata } from '@/api/types';
 import { deriveUsageLimitRecoveryTiming } from '@/session/usageLimitRecoveryControls/deriveUsageLimitRecoveryTiming';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ConnectedServiceRuntimeAuthFailureDaemonReport } from '../reportConnectedServiceRuntimeAuthFailureToDaemon';
 import type { ConnectedServiceRuntimeFailureClassification } from '../types';
 
@@ -58,14 +57,8 @@ function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePr
 
 function resolveResumePromptMode(input: Readonly<{
   report: ConnectedServiceRuntimeAuthFailureDaemonReport;
-  existingIntent: MetadataRecord | null;
-  accountSettings: unknown;
 }>): SessionUsageLimitRecoveryResumePromptModeV1 {
-  const accountSettings = readRecord(input.accountSettings);
-  const usageLimitRecoverySettings = readRecord(accountSettings?.usageLimitRecoverySettingsV1);
   return readResumePromptMode(input.report.resumePromptMode)
-    ?? readResumePromptMode(input.existingIntent?.resumePromptMode)
-    ?? readResumePromptMode(usageLimitRecoverySettings?.resumePromptMode)
     ?? 'standard';
 }
 
@@ -268,7 +261,6 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
   report: ConnectedServiceRuntimeAuthFailureDaemonReport;
   classification: ConnectedServiceRuntimeFailureClassification;
   nowMs?: () => number;
-  readAccountSettings?: () => unknown;
 }>): ((metadata: Metadata) => Metadata) | null {
   if (input.classification.kind !== 'usage_limit') return null;
 
@@ -308,6 +300,9 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
       armedAtMs,
       nowMs: now,
     });
+    const runtimeAuthRecoveryAttemptId = readString(recoveryRecord?.attemptId)
+      ?? readString(input.report.recoveryReceipt?.attemptId)
+      ?? current?.runtimeAuthRecoveryAttemptId;
 
     return {
       ...nextMetadataBase,
@@ -316,13 +311,10 @@ export function buildRuntimeAuthUsageLimitRecoveryMetadataUpdater(input: Readonl
         status: projectedState.status,
         resumePromptMode: resolveResumePromptMode({
           report: input.report,
-          existingIntent,
-          accountSettings: input.readAccountSettings
-            ? input.readAccountSettings()
-            : getActiveAccountSettingsSnapshot()?.settings ?? null,
         }),
         issueFingerprint,
         armedAtMs,
+        ...(runtimeAuthRecoveryAttemptId ? { runtimeAuthRecoveryAttemptId } : {}),
         resetAtMs,
         nextCheckAtMs,
         attemptCount,

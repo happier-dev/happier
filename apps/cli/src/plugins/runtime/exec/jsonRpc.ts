@@ -7,8 +7,8 @@ import type {
     JsonRpcNotificationHandlerV1,
     JsonRpcRequestHandlerV1,
     JsonRpcRequestOptionsV1,
-} from '@happier-dev/plugin-sdk';
-import { createJsonlRequestCorrelator } from '@happier-dev/plugin-sdk';
+} from './privateContract';
+import { createJsonlRequestCorrelator } from '@/plugins/runtime/jsonlRequestCorrelator';
 
 import { attachJsonlLineReader } from '@/agent/runtime/jsonl/attachJsonlLineReader';
 
@@ -17,6 +17,9 @@ import {
     createPluginExecClientAbortError,
     sanitizeExecDiagnosticText,
 } from './errors';
+import { createPluginProtocolCallbackQueue } from './callbackQueue';
+import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
+import { attachContentLengthFrameReader, encodeContentLengthFrame } from './contentLengthFraming';
 
 type JsonRpcObject = Record<string, unknown>;
 type JsonRpcApplicationError = Error & Readonly<{
@@ -25,21 +28,28 @@ type JsonRpcApplicationError = Error & Readonly<{
     method?: string;
 }>;
 const MAX_JSON_RPC_ERROR_MESSAGE_BYTES = 500;
+const MAX_PENDING_JSON_RPC_REQUESTS = 256;
+const MAX_IN_FLIGHT_JSON_RPC_REQUEST_HANDLERS = 256;
+const MAX_IN_FLIGHT_JSON_RPC_WRITES = 256;
 
 export type CreateJsonRpcProcessClientParams = Readonly<{
     process: ExecProcessHandleV1;
     stdout: NodeJS.ReadableStream;
-    write: (input: string) => Promise<void>;
+    write: (input: string | Uint8Array) => Promise<void>;
+    framing?: 'jsonLines' | 'contentLength';
     encoding?: BufferEncoding;
     maxFrameBytes?: number;
     requestTimeoutMs?: number;
     handlers?: ExecClientHandlersV1['jsonRpc'];
     hooks?: ExecClientHooksV1['jsonRpc'];
     readStderrPreview?: () => string;
+    onFailure?: (error: Error) => void;
+    recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
 }>;
 
 export type JsonRpcProcessClient = Readonly<{
     client: JsonRpcClientV1;
+    subscribeNotification(listener: (message: Readonly<{ method: string; params?: unknown }>) => void | Promise<void>): () => void;
     dispose(error?: Error): void;
     settleExit(error: Error): void;
 }>;
@@ -64,21 +74,61 @@ function createFrameSizeError(maxFrameBytes: number, stderrPreview?: string): Pl
     );
 }
 
-function readJsonRpcIdFromLineStartSample(sample: string): string | number | null {
-    const match = /"id"\s*:\s*(-?\d+|"((?:\\.|[^"\\])*)")/.exec(sample);
-    if (!match) return null;
-    const raw = match[1];
-    if (!raw) return null;
-    if (raw.startsWith('"')) {
-        try {
-            const parsed = JSON.parse(raw) as unknown;
-            return typeof parsed === 'string' ? parsed : null;
-        } catch {
-            return null;
+function readTopLevelJsonRpcIdFromLineStartSample(sample: string): string | number | null {
+    let objectDepth = 0;
+    let arrayDepth = 0;
+    const readStringEnd = (start: number): number => {
+        let escaped = false;
+        for (let index = start + 1; index < sample.length; index += 1) {
+            const char = sample[index];
+            if (escaped) {
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === '"') {
+                return index;
+            }
         }
+        return -1;
+    };
+    for (let index = 0; index < sample.length; index += 1) {
+        const char = sample[index];
+        if (char === '"') {
+            const end = readStringEnd(index);
+            if (end < 0) return null;
+            if (objectDepth === 1 && arrayDepth === 0) {
+                let cursor = end + 1;
+                while (/\s/.test(sample[cursor] ?? '')) cursor += 1;
+                if (sample[cursor] === ':') {
+                    let key: unknown;
+                    try { key = JSON.parse(sample.slice(index, end + 1)); } catch { return null; }
+                    if (key === 'id') {
+                        cursor += 1;
+                        while (/\s/.test(sample[cursor] ?? '')) cursor += 1;
+                        if (sample[cursor] === '"') {
+                            const valueEnd = readStringEnd(cursor);
+                            if (valueEnd < 0) return null;
+                            try {
+                                const value: unknown = JSON.parse(sample.slice(cursor, valueEnd + 1));
+                                return typeof value === 'string' ? value : null;
+                            } catch {
+                                return null;
+                            }
+                        }
+                        const numberMatch = /^-?\d+/.exec(sample.slice(cursor));
+                        if (!numberMatch) return null;
+                        const value = Number(numberMatch[0]);
+                        return Number.isSafeInteger(value) ? value : null;
+                    }
+                }
+            }
+            index = end;
+        } else if (char === '{') objectDepth += 1;
+        else if (char === '}') objectDepth -= 1;
+        else if (char === '[') arrayDepth += 1;
+        else if (char === ']') arrayDepth -= 1;
     }
-    const parsed = Number.parseInt(raw, 10);
-    return Number.isSafeInteger(parsed) ? parsed : null;
+    return null;
 }
 
 function readJsonRpcErrorCode(value: unknown): number | string | undefined {
@@ -134,9 +184,13 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
     const pendingRequestMethods = new Map<string, string>();
     const requestHandlers = new Map<string, JsonRpcRequestHandlerV1>();
     const notificationHandlers = new Map<string, JsonRpcNotificationHandlerV1>();
+    const notificationSubscribers = new Set<(message: Readonly<{ method: string; params?: unknown }>) => void | Promise<void>>();
     const maxFrameBytes = params.maxFrameBytes ?? 1024 * 1024;
     let nextId = 1;
+    let inFlightRequestHandlers = 0;
+    let inFlightWrites = 0;
     let disposedError: Error | null = null;
+    let detachLineReader: () => void = () => undefined;
 
     for (const [method, handler] of Object.entries(params.handlers?.requests ?? {})) {
         requestHandlers.set(method, handler);
@@ -154,12 +208,30 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         if (disposedError) {
             throw disposedError;
         }
-        const nextMessage = await applyJsonRpcMessageHook(message, 'outgoing');
-        if (!nextMessage) {
-            return false;
+        if (inFlightWrites >= MAX_IN_FLIGHT_JSON_RPC_WRITES) {
+            throw new PluginExecClientError(
+                'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
+                'JSON-RPC writes exceeded their bounded concurrency',
+                { stderrPreview: readStderrPreview() },
+            );
         }
-        await params.write(`${JSON.stringify(nextMessage)}\n`);
-        return true;
+        inFlightWrites += 1;
+        try {
+            const nextMessage = await applyJsonRpcMessageHook(message, 'outgoing');
+            if (!nextMessage) {
+                return false;
+            }
+            const encoded = JSON.stringify(nextMessage);
+            if (Buffer.byteLength(encoded, 'utf8') > maxFrameBytes) {
+                throw createFrameSizeError(maxFrameBytes, readStderrPreview());
+            }
+            await params.write(params.framing === 'contentLength'
+                ? encodeContentLengthFrame(new Uint8Array(Buffer.from(encoded, 'utf8')))
+                : `${encoded}\n`);
+            return true;
+        } finally {
+            inFlightWrites -= 1;
+        }
     }
 
     function failClient(error: Error): void {
@@ -170,7 +242,32 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         detachLineReader();
         correlator.close(error);
         pendingRequestMethods.clear();
+        if (
+            !(error instanceof PluginExecClientError)
+            || (error.code !== 'PLUGIN_EXEC_CLIENT_DISPOSED' && error.code !== 'PLUGIN_EXEC_CLIENT_EXITED')
+        ) {
+            try {
+                params.onFailure?.(error);
+            } catch {
+                // Process termination remains owned by the caller boundary.
+            }
+        }
     }
+
+    const notificationDispatchQueue = createPluginProtocolCallbackQueue({
+        ...(params.recordRuntimeLimitMeasurement
+            ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
+            : {}),
+        onFailure(failure) {
+            failClient(new PluginExecClientError(
+                failure.code,
+                failure.code === 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED'
+                    ? 'JSON-RPC notification callback queue exceeded its bounded capacity'
+                    : 'JSON-RPC notification callback failed',
+                { cause: failure.cause, stderrPreview: readStderrPreview() },
+            ));
+        },
+    });
 
     async function handleRequest(message: JsonRpcObject, id: string | number, method: string): Promise<void> {
         const handler = requestHandlers.get(method);
@@ -197,11 +294,26 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
     }
 
     async function handleNotification(message: JsonRpcObject, method: string): Promise<void> {
-        const handler = notificationHandlers.get(method);
-        if (!handler) {
-            return;
+        let firstFailure: unknown;
+        for (const listener of [...notificationSubscribers]) {
+            try {
+                await listener({
+                    method,
+                    ...(Object.prototype.hasOwnProperty.call(message, 'params') ? { params: message.params } : {}),
+                });
+            } catch (error) {
+                firstFailure ??= error;
+            }
         }
-        await handler(message.params, { method });
+        const handler = notificationHandlers.get(method);
+        if (handler) {
+            try {
+                await handler(message.params, { method });
+            } catch (error) {
+                firstFailure ??= error;
+            }
+        }
+        if (firstFailure !== undefined) throw firstFailure;
     }
 
     function normalizeHookDecision(
@@ -266,19 +378,30 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             return;
         }
         if (id !== null) {
-            void handleRequest(jsonMessage, id, method).catch((error) => {
-                failClient(createProtocolError('JSON-RPC request handler dispatch failed', error, readStderrPreview()));
-            });
+            if (inFlightRequestHandlers >= MAX_IN_FLIGHT_JSON_RPC_REQUEST_HANDLERS) {
+                failClient(new PluginExecClientError(
+                    'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
+                    'JSON-RPC child request handlers exceeded their bounded concurrency',
+                    { stderrPreview: readStderrPreview() },
+                ));
+                return;
+            }
+            inFlightRequestHandlers += 1;
+            void handleRequest(jsonMessage, id, method)
+                .catch((error) => {
+                    failClient(createProtocolError('JSON-RPC request handler dispatch failed', error, readStderrPreview()));
+                })
+                .finally(() => {
+                    inFlightRequestHandlers -= 1;
+                });
             return;
         }
-        void handleNotification(jsonMessage, method).catch((error) => {
-            failClient(createProtocolError('JSON-RPC notification handler dispatch failed', error, readStderrPreview()));
-        });
+        await handleNotification(jsonMessage, method);
     }
 
     function rejectOversizedFrame(sample: string, maxBytes: number): void {
         const error = createFrameSizeError(maxBytes, readStderrPreview());
-        const id = readJsonRpcIdFromLineStartSample(sample);
+        const id = readTopLevelJsonRpcIdFromLineStartSample(sample);
         if (id !== null) {
             const requestId = String(id);
             if (pendingRequestMethods.has(requestId)) {
@@ -299,7 +422,15 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             return;
         }
         try {
-            void handleMessage(JSON.parse(line)).catch((error) => {
+            const message: unknown = JSON.parse(line);
+            const isNotification = isObject(message)
+                && readId(message.id) === null
+                && typeof message.method === 'string';
+            if (isNotification) {
+                notificationDispatchQueue.enqueue(Buffer.byteLength(line), () => handleMessage(message));
+                return;
+            }
+            void handleMessage(message).catch((error) => {
                 failClient(createProtocolError('JSON-RPC message hook failed', error, readStderrPreview()));
             });
         } catch (error) {
@@ -307,19 +438,31 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
         }
     }
 
-    const detachLineReader = attachJsonlLineReader(params.stdout, handleLine, {
-        encoding: params.encoding,
-        maxLineBytes: maxFrameBytes,
-        onOversizedLine: rejectOversizedFrame,
-        onError: (error) => {
-            failClient(createProtocolError('JSON-RPC LF reader failed', error, readStderrPreview()));
-        },
-        onTrailingPartialLine: (partialLine) => {
-            if (partialLine.length > 0) {
+    detachLineReader = params.framing === 'contentLength'
+        ? attachContentLengthFrameReader(params.stdout, (frame) => {
+            handleLine(Buffer.from(frame).toString(params.encoding ?? 'utf8'));
+        }, {
+            maxFrameBytes,
+            onError: (error) => {
+                failClient(createProtocolError('JSON-RPC content-length reader failed', error, readStderrPreview()));
+            },
+            onTrailingPartialFrame: () => {
                 failClient(createProtocolError('JSON-RPC stream ended with a trailing partial frame', undefined, readStderrPreview()));
-            }
-        },
-    });
+            },
+        })
+        : attachJsonlLineReader(params.stdout, handleLine, {
+            encoding: params.encoding,
+            maxLineBytes: maxFrameBytes,
+            onOversizedLine: rejectOversizedFrame,
+            onError: (error) => {
+                failClient(createProtocolError('JSON-RPC LF reader failed', error, readStderrPreview()));
+            },
+            onTrailingPartialLine: (partialLine) => {
+                if (partialLine.length > 0) {
+                    failClient(createProtocolError('JSON-RPC stream ended with a trailing partial frame', undefined, readStderrPreview()));
+                }
+            },
+        });
 
     const client: JsonRpcClientV1 = Object.freeze({
         async request<TParams = unknown, TResult = unknown>(
@@ -332,6 +475,13 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             }
             if (options?.signal?.aborted) {
                 throw createPluginExecClientAbortError();
+            }
+            if (pendingRequestMethods.size >= MAX_PENDING_JSON_RPC_REQUESTS) {
+                throw new PluginExecClientError(
+                    'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
+                    'JSON-RPC pending request correlation exceeded its bounded capacity',
+                    { stderrPreview: readStderrPreview() },
+                );
             }
             const id = nextId++;
             const requestTimeoutMs = options?.timeoutMs ?? params.requestTimeoutMs;
@@ -380,8 +530,20 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
                     }
                 }
             });
+            const writeOutcome = writeJson({ jsonrpc: '2.0', id, method, params: requestParams }).then(
+                (wrote) => ({ kind: 'write' as const, wrote }),
+                (error: unknown) => ({ kind: 'writeError' as const, error }),
+            );
+            const requestOutcome = promise.then(
+                (value) => ({ kind: 'request' as const, value }),
+                (error: unknown) => ({ kind: 'requestError' as const, error }),
+            );
+            const firstOutcome = await Promise.race([writeOutcome, requestOutcome]);
+            if (firstOutcome.kind === 'request') return firstOutcome.value;
+            if (firstOutcome.kind === 'requestError') throw firstOutcome.error;
             try {
-                const wrote = await writeJson({ jsonrpc: '2.0', id, method, params: requestParams });
+                if (firstOutcome.kind === 'writeError') throw firstOutcome.error;
+                const wrote = firstOutcome.wrote;
                 if (!wrote) {
                     correlator.reject(
                         requestId,
@@ -403,6 +565,12 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
             method: string,
             handler: JsonRpcRequestHandlerV1<TParams, TResult>,
         ): () => void {
+            if (requestHandlers.has(method)) {
+                throw new PluginExecClientError(
+                    'PLUGIN_EXEC_CLIENT_DUPLICATE_HANDLER',
+                    `A JSON-RPC responder is already registered for '${method}'`,
+                );
+            }
             requestHandlers.set(method, handler as JsonRpcRequestHandlerV1);
             return () => {
                 if (requestHandlers.get(method) === handler) {
@@ -425,6 +593,12 @@ export function createJsonRpcProcessClient(params: CreateJsonRpcProcessClientPar
 
     return Object.freeze({
         client,
+        subscribeNotification(listener) {
+            notificationSubscribers.add(listener);
+            return () => {
+                notificationSubscribers.delete(listener);
+            };
+        },
         dispose(error = new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'Plugin exec client was disposed')) {
             failClient(error);
         },

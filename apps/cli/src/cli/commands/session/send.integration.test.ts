@@ -33,6 +33,7 @@ describe('happier session send (integration)', () => {
   let decryptWithDataKeyFn: ((ciphertext: Uint8Array, dataKey: Uint8Array) => any) | null = null;
   let sessionActive = false;
   let sessionActiveAt = 0;
+  let sessionArchivedAt: number | null = null;
   let sessionMetadataCiphertext = '';
   let sessionAgentStateCiphertext: string | null = null;
   let sessionDataEncryptionKeyBase64 = '';
@@ -41,8 +42,17 @@ describe('happier session send (integration)', () => {
   let transcriptAfterSeqRequests: Array<number | null> = [];
   let transcriptMessages: Array<Record<string, unknown>> = [];
   let lastActiveSessionRpcLocalId: string | null = null;
+  let onActiveSessionRpcLocalId: ((localId: string) => void) | null = null;
   let stageCommittedUserMessageInTranscript = false;
   let stageVisibleMessageByLocalIdDelayMs: number | null = null;
+
+  function recordActiveSessionRpcLocalId(value: unknown): void {
+    const localId = typeof value === 'string' && value.trim().length > 0 ? value : null;
+    lastActiveSessionRpcLocalId = localId;
+    if (localId) {
+      onActiveSessionRpcLocalId?.(localId);
+    }
+  }
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-send-');
@@ -89,6 +99,7 @@ describe('happier session send (integration)', () => {
     );
     sessionActive = false;
     sessionActiveAt = 0;
+    sessionArchivedAt = null;
     sessionMetadataCiphertext = metadataCiphertext;
     sessionAgentStateCiphertext = busyAgentStateCiphertext;
     sessionDataEncryptionKeyBase64 = dataEncryptionKeyBase64;
@@ -97,6 +108,7 @@ describe('happier session send (integration)', () => {
     transcriptAfterSeqRequests = [];
     transcriptMessages = [];
     lastActiveSessionRpcLocalId = null;
+    onActiveSessionRpcLocalId = null;
     stageCommittedUserMessageInTranscript = false;
     stageVisibleMessageByLocalIdDelayMs = null;
 
@@ -115,6 +127,7 @@ describe('happier session send (integration)', () => {
               updatedAt: 2,
               active: sessionActive,
               activeAt: sessionActiveAt,
+              archivedAt: sessionArchivedAt,
               metadata: sessionMetadataCiphertext,
               metadataVersion: 0,
               agentState: sessionAgentStateCiphertext,
@@ -285,7 +298,7 @@ describe('happier session send (integration)', () => {
     reloadConfiguration();
   });
 
-  it('commits an encrypted user message and returns a session_send JSON envelope', async () => {
+  it('fails closed for inactive non-wait sends instead of committing storage-only messages', async () => {
     const { handleSessionCommand } = await import('./index');
 
     const output = captureConsoleJsonOutput();
@@ -303,29 +316,51 @@ describe('happier session send (integration)', () => {
         }),
       });
 
-      const parsed = output.json();
-      if (parsed.ok !== true) {
-        throw new Error(`Unexpected session_send envelope: ${JSON.stringify(parsed)}`);
-      }
-      expect(parsed.kind).toBe('session_send');
-      expect(parsed.data?.sessionId).toBe('sess_integration_send_123');
-      expect(typeof parsed.data?.localId).toBe('string');
-      expect(parsed.data?.waited).toBe(false);
-
-      const last = receivedMessages[receivedMessages.length - 1];
-      expect(last).toMatchObject({
-        role: 'user',
-        content: { type: 'text', text: 'Hello from controller' },
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_send',
+        error: {
+          code: 'session_inactive',
+          message: 'Session is inactive. Resume it before sending a message.',
+        },
       });
-      expect(last?.meta?.sentFrom).toBe('cli');
-      expect(last?.meta?.permissionMode).toBe('safe-yolo');
-      expect(last?.meta?.model).toBe('claude-sonnet-4-0');
+      expect(receivedMessages).toHaveLength(0);
     } finally {
       output.restore();
     }
   });
 
-  it('supports --wait and returns waited=true in JSON mode', async () => {
+  it('fails closed instead of committing a message to an archived session', async () => {
+    sessionArchivedAt = 123;
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      const machineKeySeed = new Uint8Array(32).fill(8);
+      await handleSessionCommand(['send', 'sess_integration_send_123', 'Hello from controller', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(machineKeySeed),
+            machineKey: machineKeySeed,
+          },
+        }),
+      });
+
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_send',
+        error: { code: 'session_archived' },
+      });
+      expect(receivedMessages).toHaveLength(0);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('fails closed for inactive-session --wait sends instead of materializing storage-only messages', async () => {
     const { handleSessionCommand } = await import('./index');
 
     const output = captureConsoleJsonOutput();
@@ -345,21 +380,22 @@ describe('happier session send (integration)', () => {
         }),
       });
 
-      const parsed = output.json();
-      if (parsed.ok !== true) {
-        throw new Error(`Unexpected session_send envelope: ${JSON.stringify(parsed)}`);
-      }
-      expect(parsed.kind).toBe('session_send');
-      expect(parsed.data?.sessionId).toBe('sess_integration_send_123');
-      expect(parsed.data?.waited).toBe(true);
-      expect(process.exitCode).toBe(0);
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_send',
+        error: {
+          code: 'session_inactive',
+          message: 'Session is inactive. Resume it before sending a message.',
+        },
+      });
+      expect(receivedMessages).toHaveLength(0);
     } finally {
       output.restore();
       process.exitCode = prevExitCode;
     }
   });
 
-  it('does not hang waiting for idle when sending to an inactive session that has a pending user turn in the transcript', async () => {
+  it('fails closed for inactive sessions even when a prior user turn is already visible', async () => {
     stageCommittedUserMessageInTranscript = true;
     stageVisibleMessageByLocalIdDelayMs = 50;
 
@@ -381,14 +417,16 @@ describe('happier session send (integration)', () => {
         }),
       });
 
-      const parsed = output.json();
-      if (parsed.ok !== true) {
-        throw new Error(`Unexpected session_send envelope: ${JSON.stringify(parsed)}`);
-      }
-      expect(parsed.kind).toBe('session_send');
-      expect(parsed.data?.waited).toBe(true);
-      expect(transcriptLookupRequests).toBeGreaterThan(0);
-      expect(process.exitCode).toBe(0);
+      expect(output.json()).toMatchObject({
+        ok: false,
+        kind: 'session_send',
+        error: {
+          code: 'session_inactive',
+          message: 'Session is inactive. Resume it before sending a message.',
+        },
+      });
+      expect(receivedMessages).toHaveLength(0);
+      expect(transcriptLookupRequests).toBe(0);
     } finally {
       output.restore();
       process.exitCode = prevExitCode;
@@ -412,7 +450,7 @@ describe('happier session send (integration)', () => {
             decodeBase64(String(data.params ?? ''), 'base64'),
             dek!,
           ) as any;
-          lastActiveSessionRpcLocalId = typeof decrypted?.localId === 'string' ? decrypted.localId : null;
+          recordActiveSessionRpcLocalId(decrypted?.localId);
           cb?.({ ok: true, result: encodeBase64Session(encryptWithDataKey({ ok: true }, dek!), 'base64') });
           return;
         }
@@ -431,31 +469,32 @@ describe('happier session send (integration)', () => {
     process.exitCode = undefined;
     let releaseLookupTimer: NodeJS.Timeout | null = null;
     try {
-      releaseLookupTimer = setTimeout(() => {
-        if (!lastActiveSessionRpcLocalId) return;
-        visibleMessageByLocalId = {
-          id: 'msg-wait-failure-user',
-          seq: 6,
-          localId: lastActiveSessionRpcLocalId,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          content: { t: 'encrypted', c: 'ciphertext' },
-        };
-        transcriptMessages = [
-          {
+      onActiveSessionRpcLocalId = (localId) => {
+        releaseLookupTimer = setTimeout(() => {
+          visibleMessageByLocalId = {
             id: 'msg-wait-failure-user',
             seq: 6,
+            localId,
             createdAt: Date.now(),
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'Hello from controller' },
+            updatedAt: Date.now(),
+            content: { t: 'encrypted', c: 'ciphertext' },
+          };
+          transcriptMessages = [
+            {
+              id: 'msg-wait-failure-user',
+              seq: 6,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'user',
+                  content: { type: 'text', text: 'Hello from controller' },
+                },
               },
             },
-          },
-        ];
-      }, 40);
+          ];
+        }, 40);
+      };
 
       await handleSessionCommand(['send', sessionId, 'Hello from controller', '--wait', '--timeout', '1', '--json'], {
         readCredentialsFn: async () => ({
@@ -589,7 +628,7 @@ describe('happier session send (integration)', () => {
             decodeBase64(String(data.params ?? ''), 'base64'),
             dek!,
           ) as any;
-          lastActiveSessionRpcLocalId = typeof decrypted?.localId === 'string' ? decrypted.localId : null;
+          recordActiveSessionRpcLocalId(decrypted?.localId);
           cb?.({ ok: true, result: encodeBase64Session(encryptWithDataKey({ ok: true }, dek!), 'base64') });
           return;
         }
@@ -599,6 +638,25 @@ describe('happier session send (integration)', () => {
     const waitSocket = createApiSessionSocketStub({
       onConnect: (connectedSocket) => {
         setTimeout(() => {
+          transcriptMessages = [
+            ...transcriptMessages,
+            {
+              id: 'msg-active-wait-complete',
+              seq: 8,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    agentId: 'claude',
+                    data: { type: 'task_complete', id: 'task_send_wait_1' },
+                  },
+                },
+              },
+            },
+          ];
           connectedSocket.trigger('update', {
             id: 'u_task_complete',
             seq: 8,
@@ -618,7 +676,7 @@ describe('happier session send (integration)', () => {
                     role: 'agent',
                     content: {
                       type: 'acp',
-                      provider: 'claude',
+                      agentId: 'claude',
                       data: { type: 'task_complete', id: 'task_send_wait_1' },
                     },
                   },
@@ -634,49 +692,48 @@ describe('happier session send (integration)', () => {
     const output = captureConsoleJsonOutput();
     let releaseLookupTimer: NodeJS.Timeout | null = null;
     try {
-      releaseLookupTimer = setTimeout(() => {
-        if (!lastActiveSessionRpcLocalId) {
-          return;
-        }
-        visibleMessageByLocalId = {
-          id: 'msg-active-wait-1',
-          seq: 7,
-          localId: lastActiveSessionRpcLocalId,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          content: { t: 'encrypted', c: 'ciphertext' },
-        };
-        transcriptMessages = [
-          {
-            id: 'msg-active-wait-user',
-            seq: 6,
-            createdAt: Date.now(),
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'Wait for this prompt' },
-              },
-            },
-          },
-          {
-            id: 'msg-active-wait-started',
+      onActiveSessionRpcLocalId = (localId) => {
+        releaseLookupTimer = setTimeout(() => {
+          visibleMessageByLocalId = {
+            id: 'msg-active-wait-1',
             seq: 7,
+            localId,
             createdAt: Date.now(),
-            content: {
-              t: 'plain',
-              v: {
-                role: 'agent',
-                content: {
-                  type: 'acp',
-                  provider: 'claude',
-                  data: { type: 'task_started', id: 'task_send_wait_1' },
+            updatedAt: Date.now(),
+            content: { t: 'encrypted', c: 'ciphertext' },
+          };
+          transcriptMessages = [
+            {
+              id: 'msg-active-wait-user',
+              seq: 6,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'user',
+                  content: { type: 'text', text: 'Wait for this prompt' },
                 },
               },
             },
-          },
-        ];
-      }, 40);
+            {
+              id: 'msg-active-wait-started',
+              seq: 7,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    agentId: 'claude',
+                    data: { type: 'task_started', id: 'task_send_wait_1' },
+                  },
+                },
+              },
+            },
+          ];
+        }, 40);
+      };
 
       const sendPromise = handleSessionCommand(
         ['send', sessionId, 'Wait for this prompt', '--wait', '--timeout', '1', '--json'],
@@ -708,7 +765,7 @@ describe('happier session send (integration)', () => {
       await sendPromise;
 
       const parsed = output.json();
-      expect(parsed.ok).toBe(true);
+      expect(parsed.ok, JSON.stringify(parsed)).toBe(true);
       expect(parsed.kind).toBe('session_send');
       expect(parsed.data?.waited).toBe(true);
       expect(transcriptLookupRequests).toBeGreaterThan(0);
@@ -742,7 +799,7 @@ describe('happier session send (integration)', () => {
             decodeBase64(String(data.params ?? ''), 'base64'),
             dek!,
           ) as any;
-          lastActiveSessionRpcLocalId = typeof decrypted?.localId === 'string' ? decrypted.localId : null;
+          recordActiveSessionRpcLocalId(decrypted?.localId);
           cb?.({ ok: true, result: encodeBase64Session(encryptWithDataKey({ ok: true }, dek!), 'base64') });
           return;
         }
@@ -771,7 +828,7 @@ describe('happier session send (integration)', () => {
                     role: 'agent',
                     content: {
                       type: 'acp',
-                      provider: 'opencode',
+                      agentId: 'opencode',
                       data: { type: 'task_complete', id: 'task_send_wait_stale_busy_1' },
                     },
                   },
@@ -788,49 +845,48 @@ describe('happier session send (integration)', () => {
     let releaseLookupTimer: NodeJS.Timeout | null = null;
     let transcriptCompletionTimer: NodeJS.Timeout | null = null;
     try {
-      releaseLookupTimer = setTimeout(() => {
-        if (!lastActiveSessionRpcLocalId) {
-          return;
-        }
-        visibleMessageByLocalId = {
-          id: 'msg-active-wait-stale-busy-user',
-          seq: 7,
-          localId: lastActiveSessionRpcLocalId,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          content: { t: 'encrypted', c: 'ciphertext' },
-        };
-        transcriptMessages = [
-          {
+      onActiveSessionRpcLocalId = (localId) => {
+        releaseLookupTimer = setTimeout(() => {
+          visibleMessageByLocalId = {
             id: 'msg-active-wait-stale-busy-user',
-            seq: 6,
-            createdAt: Date.now(),
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'Wait for stale busy reconnect' },
-              },
-            },
-          },
-          {
-            id: 'msg-active-wait-stale-busy-started',
             seq: 7,
+            localId,
             createdAt: Date.now(),
-            content: {
-              t: 'plain',
-              v: {
-                role: 'agent',
-                content: {
-                  type: 'acp',
-                  provider: 'opencode',
-                  data: { type: 'task_started', id: 'task_send_wait_stale_busy_1' },
+            updatedAt: Date.now(),
+            content: { t: 'encrypted', c: 'ciphertext' },
+          };
+          transcriptMessages = [
+            {
+              id: 'msg-active-wait-stale-busy-user',
+              seq: 6,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'user',
+                  content: { type: 'text', text: 'Wait for stale busy reconnect' },
                 },
               },
             },
-          },
-        ];
-      }, 20);
+            {
+              id: 'msg-active-wait-stale-busy-started',
+              seq: 7,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    agentId: 'opencode',
+                    data: { type: 'task_started', id: 'task_send_wait_stale_busy_1' },
+                  },
+                },
+              },
+            },
+          ];
+        }, 20);
+      };
 
       transcriptCompletionTimer = setTimeout(() => {
         transcriptMessages = [
@@ -845,7 +901,7 @@ describe('happier session send (integration)', () => {
                 role: 'agent',
                 content: {
                   type: 'acp',
-                  provider: 'opencode',
+                  agentId: 'opencode',
                   data: { type: 'task_complete', id: 'task_send_wait_stale_busy_1' },
                 },
               },
@@ -881,7 +937,7 @@ describe('happier session send (integration)', () => {
     }
   });
 
-  it('treats a ready event as completion when an active-session prompt materializes without ACP task_complete', async () => {
+  it('treats task completion as completion when an active-session prompt materializes', async () => {
     const { handleSessionCommand } = await import('./index');
     const { encodeBase64: encodeBase64Session, encryptWithDataKey, decodeBase64, decryptWithDataKey } = await import('@/api/encryption');
 
@@ -905,7 +961,7 @@ describe('happier session send (integration)', () => {
             decodeBase64(String(data.params ?? ''), 'base64'),
             dek!,
           ) as any;
-          lastActiveSessionRpcLocalId = typeof decrypted?.localId === 'string' ? decrypted.localId : null;
+          recordActiveSessionRpcLocalId(decrypted?.localId);
           cb?.({ ok: true, result: encodeBase64Session(encryptWithDataKey({ ok: true }, dek!), 'base64') });
           return;
         }
@@ -915,15 +971,34 @@ describe('happier session send (integration)', () => {
     const waitSocket = createApiSessionSocketStub({
       onConnect: (connectedSocket) => {
         setTimeout(() => {
+          transcriptMessages = [
+            ...transcriptMessages,
+            {
+              id: 'msg-active-wait-task-complete',
+              seq: 8,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    agentId: 'codex',
+                    data: { type: 'task_complete', id: 'task_send_wait_1' },
+                  },
+                },
+              },
+            },
+          ];
           connectedSocket.trigger('update', {
-            id: 'u_ready',
+            id: 'u_task_complete',
             seq: 8,
             createdAt: Date.now(),
             body: {
               t: 'new-message',
               sid: sessionId,
               message: {
-                id: 'msg-active-wait-ready',
+                id: 'msg-active-wait-task-complete',
                 seq: 8,
                 localId: null,
                 createdAt: Date.now(),
@@ -933,9 +1008,9 @@ describe('happier session send (integration)', () => {
                   v: {
                     role: 'agent',
                     content: {
-                      id: 'ready_evt_send_wait_1',
-                      type: 'event',
-                      data: { type: 'ready' },
+                      type: 'acp',
+                      agentId: 'codex',
+                      data: { type: 'task_complete', id: 'task_send_wait_1' },
                     },
                   },
                 },
@@ -950,36 +1025,35 @@ describe('happier session send (integration)', () => {
     const output = captureConsoleJsonOutput();
     let releaseLookupTimer: NodeJS.Timeout | null = null;
     try {
-      releaseLookupTimer = setTimeout(() => {
-        if (!lastActiveSessionRpcLocalId) {
-          return;
-        }
-        visibleMessageByLocalId = {
-          id: 'msg-active-ready-user',
-          seq: 7,
-          localId: lastActiveSessionRpcLocalId,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          content: { t: 'encrypted', c: 'ciphertext' },
-        };
-        transcriptMessages = [
-          {
-            id: 'msg-active-ready-transcript-user',
-            seq: 6,
+      onActiveSessionRpcLocalId = (localId) => {
+        releaseLookupTimer = setTimeout(() => {
+          visibleMessageByLocalId = {
+            id: 'msg-active-ready-user',
+            seq: 7,
+            localId,
             createdAt: Date.now(),
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'Wait for ready event' },
+            updatedAt: Date.now(),
+            content: { t: 'encrypted', c: 'ciphertext' },
+          };
+          transcriptMessages = [
+            {
+              id: 'msg-active-ready-transcript-user',
+              seq: 6,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'user',
+                  content: { type: 'text', text: 'Wait for task completion' },
+                },
               },
             },
-          },
-        ];
-      }, 40);
+          ];
+        }, 40);
+      };
 
       const sendPromise = handleSessionCommand(
-        ['send', sessionId, 'Wait for ready event', '--wait', '--timeout', '1', '--json'],
+        ['send', sessionId, 'Wait for task completion', '--wait', '--timeout', '1', '--json'],
         {
           readCredentialsFn: async () => ({
             token: 'token_test',
@@ -1013,7 +1087,7 @@ describe('happier session send (integration)', () => {
     }
   });
 
-  it('ignores older unresolved turns when waiting for the current send to reach ready', async () => {
+  it('ignores older unresolved turns when waiting for the current send to reach task completion', async () => {
     const { handleSessionCommand } = await import('./index');
     const { encodeBase64: encodeBase64Session, encryptWithDataKey, decodeBase64, decryptWithDataKey } = await import('@/api/encryption');
 
@@ -1037,7 +1111,7 @@ describe('happier session send (integration)', () => {
             decodeBase64(String(data.params ?? ''), 'base64'),
             dek!,
           ) as any;
-          lastActiveSessionRpcLocalId = typeof decrypted?.localId === 'string' ? decrypted.localId : null;
+          recordActiveSessionRpcLocalId(decrypted?.localId);
           cb?.({ ok: true, result: encodeBase64Session(encryptWithDataKey({ ok: true }, dek!), 'base64') });
           return;
         }
@@ -1047,15 +1121,34 @@ describe('happier session send (integration)', () => {
     const waitSocket = createApiSessionSocketStub({
       onConnect: (connectedSocket) => {
         setTimeout(() => {
+          transcriptMessages = [
+            ...transcriptMessages,
+            {
+              id: 'msg-current-turn-task-complete',
+              seq: 4,
+              createdAt: Date.now(),
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: {
+                    type: 'acp',
+                    agentId: 'codex',
+                    data: { type: 'task_complete', id: 'task_send_wait_current_turn' },
+                  },
+                },
+              },
+            },
+          ];
           connectedSocket.trigger('update', {
-            id: 'u_ready_current_turn',
+            id: 'u_task_complete_current_turn',
             seq: 4,
             createdAt: Date.now(),
             body: {
               t: 'new-message',
               sid: sessionId,
               message: {
-                id: 'msg-current-turn-ready',
+                id: 'msg-current-turn-task-complete',
                 seq: 4,
                 localId: null,
                 createdAt: Date.now(),
@@ -1065,9 +1158,9 @@ describe('happier session send (integration)', () => {
                   v: {
                     role: 'agent',
                     content: {
-                      id: 'ready_evt_send_wait_current_turn',
-                      type: 'event',
-                      data: { type: 'ready' },
+                      type: 'acp',
+                      agentId: 'codex',
+                      data: { type: 'task_complete', id: 'task_send_wait_current_turn' },
                     },
                   },
                 },
@@ -1082,58 +1175,57 @@ describe('happier session send (integration)', () => {
     const output = captureConsoleJsonOutput();
     let releaseLookupTimer: NodeJS.Timeout | null = null;
     try {
-      releaseLookupTimer = setTimeout(() => {
-        if (!lastActiveSessionRpcLocalId) {
-          return;
-        }
-        visibleMessageByLocalId = {
-          id: 'msg-current-turn-user',
-          seq: 3,
-          localId: lastActiveSessionRpcLocalId,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          content: { t: 'encrypted', c: 'ciphertext' },
-        };
-        transcriptMessages = [
-          {
-            id: 'msg-old-user',
-            seq: 1,
-            createdAt: Date.now() - 2_000,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'Older unresolved prompt' },
-              },
-            },
-          },
-          {
-            id: 'msg-old-agent',
-            seq: 2,
-            createdAt: Date.now() - 1_500,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'agent',
-                content: { type: 'text', text: 'Older assistant reply without lifecycle markers' },
-              },
-            },
-          },
-          {
+      onActiveSessionRpcLocalId = (localId) => {
+        releaseLookupTimer = setTimeout(() => {
+          visibleMessageByLocalId = {
             id: 'msg-current-turn-user',
             seq: 3,
-            localId: lastActiveSessionRpcLocalId,
-            createdAt: Date.now() - 1_000,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'Wait only for the current send' },
+            localId,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            content: { t: 'encrypted', c: 'ciphertext' },
+          };
+          transcriptMessages = [
+            {
+              id: 'msg-old-user',
+              seq: 1,
+              createdAt: Date.now() - 2_000,
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'user',
+                  content: { type: 'text', text: 'Older unresolved prompt' },
+                },
               },
             },
-          },
-        ];
-      }, 40);
+            {
+              id: 'msg-old-agent',
+              seq: 2,
+              createdAt: Date.now() - 1_500,
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'agent',
+                  content: { type: 'text', text: 'Older assistant reply without lifecycle markers' },
+                },
+              },
+            },
+            {
+              id: 'msg-current-turn-user',
+              seq: 3,
+              localId,
+              createdAt: Date.now() - 1_000,
+              content: {
+                t: 'plain',
+                v: {
+                  role: 'user',
+                  content: { type: 'text', text: 'Wait only for the current send' },
+                },
+              },
+            },
+          ];
+        }, 40);
+      };
 
       await handleSessionCommand(
         ['send', sessionId, 'Wait only for the current send', '--wait', '--timeout', '1', '--json'],
@@ -1326,9 +1418,34 @@ describe('happier session send (integration)', () => {
   }, 45_000);
 
   it('supports --permission-mode and --model overrides for a single send', async () => {
+    sessionActive = true;
+    sessionActiveAt = 3;
     const { handleSessionCommand } = await import('./index');
 
     const output = captureConsoleJsonOutput();
+    const rpcSocket = createApiSessionSocketStub();
+    rpcSocket.connect = vi.fn(() => {
+      rpcSocket.trigger('connect_error', new Error('connect_error'));
+      return rpcSocket;
+    });
+    const committedSocket = createApiSessionSocketStub({
+      emit: (event: string, args: unknown[]) => {
+        const [payload, ack] = args as [any, ((answer: any) => void) | undefined];
+        if (event !== 'message') {
+          throw new Error(`Unexpected socket event: ${event}`);
+        }
+        const content = payload?.message;
+        if (content?.t === 'encrypted') {
+          const decrypted = decryptWithDataKeyFn!(
+            decodeBase64Fn!(String(content?.c ?? ''), 'base64'),
+            dek!,
+          );
+          receivedMessages.push(decrypted);
+        }
+        ack?.({ ok: true, id: 'm1', seq: 2, localId: payload?.localId ?? null, didWrite: true });
+      },
+    });
+    bindApiSessionSocketSequenceMock(mockIo, [rpcSocket, committedSocket]);
 
     try {
       const machineKeySeed = new Uint8Array(32).fill(8);

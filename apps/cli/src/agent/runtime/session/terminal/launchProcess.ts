@@ -3,23 +3,23 @@ import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:c
 import { isAbsolute } from 'node:path';
 
 import type {
-    TerminalRuntimeAgentCliExecutableResolutionRequestV1,
-    TerminalRuntimeAgentCliExecutableResolutionV1,
-    TerminalRuntimeProcessExecutableV1,
-    TerminalRuntimeProcessExecutableGrantKindV1,
-    TerminalRuntimeProcessHandleV1,
-    TerminalRuntimeProcessLaunchRequestV1,
-    TerminalRuntimeProcessServiceV1,
-    TerminalRuntimeProcessTerminationV1,
-} from '@happier-dev/agents';
+    HostTerminalAgentCliResolutionRequest,
+    HostTerminalAgentCliResolution,
+    HostTerminalProcessExecutable,
+    HostTerminalProcessExecutableGrantKind,
+    HostTerminalProcessHandle,
+    HostTerminalProcessLaunchRequest,
+    HostTerminalProcessService,
+    HostTerminalProcessTermination,
+} from './contract';
 
 import type { CatalogAgentLookupId } from '@/agent/catalog/types';
 import {
     requireAgentCliLaunchSpec,
     type AgentCliLaunchSpec,
 } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
-import type { PluginExecAgentCliGrantRecord } from '@/plugins/runtime/context/exec/system/tools/definitions';
-import { isDeniedPathOnlyRuntimeName } from '@/plugins/runtime/context/exec/system/tools/runtimeDeny';
+import type { PluginExecAgentCliGrantRecord } from '@/plugins/runtime/exec/system/tools/definitions';
+import { isDeniedPathOnlyRuntimeName } from '@/plugins/runtime/exec/system/tools/runtimeDeny';
 import { killProcessTree as defaultKillProcessTree } from '@/agent/runtime/process/killProcessTree';
 import {
     createManagedChildProcess as defaultCreateManagedChildProcess,
@@ -37,7 +37,7 @@ type SpawnLike = (
 
 export type TerminalRuntimeExecutableGrantVerifier = (
     request: Readonly<{
-        kind: TerminalRuntimeProcessExecutableGrantKindV1;
+        kind: HostTerminalProcessExecutableGrantKind;
         grantId: string;
         executablePath: string;
     }>,
@@ -46,10 +46,10 @@ export type TerminalRuntimeExecutableGrantVerifier = (
 export type TerminalRuntimeExecutableGrantRegistrar = (grant: PluginExecAgentCliGrantRecord) => void;
 
 export type TerminalRuntimeAgentCliLaunchResolver = (
-    request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+    request: HostTerminalAgentCliResolutionRequest,
 ) => AgentCliLaunchSpec | Promise<AgentCliLaunchSpec>;
 
-function mapTerminationEvent(event: TerminationEvent): TerminalRuntimeProcessTerminationV1 {
+function mapTerminationEvent(event: TerminationEvent): HostTerminalProcessTermination {
     if (event.type === 'signaled') {
         return { type: 'signaled', signal: event.signal };
     }
@@ -57,7 +57,7 @@ function mapTerminationEvent(event: TerminationEvent): TerminalRuntimeProcessTer
 }
 
 function assertHostGrantedExecutable(
-    executable: TerminalRuntimeProcessExecutableV1,
+    executable: HostTerminalProcessExecutable,
     verifyExecutableGrant: TerminalRuntimeExecutableGrantVerifier | undefined,
 ): void {
     if (!isAbsolute(executable.path)) {
@@ -110,7 +110,7 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
 }
 
 function buildAgentCliProcessEnv(
-    request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+    request: HostTerminalAgentCliResolutionRequest,
 ): NodeJS.ProcessEnv {
     const processEnv: NodeJS.ProcessEnv = { ...process.env };
     for (const [key, value] of Object.entries(request.env ?? {})) {
@@ -122,7 +122,7 @@ function buildAgentCliProcessEnv(
 }
 
 function resolveDefaultAgentCliLaunch(
-    request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
+    request: HostTerminalAgentCliResolutionRequest,
 ): AgentCliLaunchSpec {
     return requireAgentCliLaunchSpec(request.agentId as CatalogAgentLookupId, {
         processEnv: buildAgentCliProcessEnv(request),
@@ -156,7 +156,7 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
     registerExecutableGrant?: TerminalRuntimeExecutableGrantRegistrar;
     resolveAgentCliLaunch?: TerminalRuntimeAgentCliLaunchResolver;
     now?: () => number;
-}>): TerminalRuntimeProcessServiceV1 {
+}>): HostTerminalProcessService {
     const spawn = deps?.spawn ?? nodeSpawn;
     const createManagedChildProcess = deps?.createManagedChildProcess ?? defaultCreateManagedChildProcess;
     const killProcessTree = deps?.killProcessTree ?? defaultKillProcessTree;
@@ -167,8 +167,8 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
 
     return Object.freeze({
         async resolveAgentCliExecutable(
-            request: TerminalRuntimeAgentCliExecutableResolutionRequestV1,
-        ): Promise<TerminalRuntimeAgentCliExecutableResolutionV1> {
+            request: HostTerminalAgentCliResolutionRequest,
+        ): Promise<HostTerminalAgentCliResolution> {
             assertNotAborted(request.signal);
             if (!registerExecutableGrant) {
                 throw new Error('Terminal runtime agent CLI executable resolution requires a host grant registry');
@@ -207,7 +207,7 @@ export function createTerminalRuntimeProcessService(deps?: Readonly<{
                 resolvedPath: launch.resolvedPath,
             });
         },
-        async launch(request: TerminalRuntimeProcessLaunchRequestV1): Promise<TerminalRuntimeProcessHandleV1> {
+        async launch(request: HostTerminalProcessLaunchRequest): Promise<HostTerminalProcessHandle> {
             assertHostGrantedExecutable(request.executable, verifyExecutableGrant);
             assertNotAborted(request.signal);
 

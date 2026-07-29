@@ -1,84 +1,42 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-
-const {
-  createAcpBackendMock,
-  requireProviderCliLaunchSpecMock,
-} = vi.hoisted(() => ({
-  createAcpBackendMock: vi.fn(),
-  requireProviderCliLaunchSpecMock: vi.fn(),
-}));
-
-vi.mock('@/agent/acp/createAcpBackend', () => ({
-  createAcpBackend: createAcpBackendMock,
-}));
-
-vi.mock('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec', () => ({
-  requireProviderCliLaunchSpec: requireProviderCliLaunchSpecMock,
-}));
+import { describe, expect, it } from 'vitest';
+import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { createConfiguredAcpBackend } from './createConfiguredAcpBackend';
 
 describe('createConfiguredAcpBackend', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it('resolves agent-cli launches against the merged runtime env', () => {
-    requireProviderCliLaunchSpecMock.mockReturnValue({
-      source: 'system',
-      resolvedPath: '/resolved/kiro',
-      command: '/usr/bin/env',
-      args: ['node'],
-    });
-    createAcpBackendMock.mockReturnValue({ kind: 'backend' });
-
-    createConfiguredAcpBackend({
+  it('resolves plugin-contributed system-tool launches through the canonical exec bridge', async () => {
+    const toolDir = await mkdtemp(join(tmpdir(), 'happier-configured-acp-tool-'));
+    const executablePath = join(toolDir, process.platform === 'win32' ? 'acme-tool.cmd' : 'acme-tool');
+    await writeFile(executablePath, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n', 'utf8');
+    if (process.platform !== 'win32') {
+      await chmod(executablePath, 0o755);
+    }
+    const backend = await createConfiguredAcpBackend({
       cwd: '/repo',
-      definition: {
-        backendId: 'custom-backend',
-        source: {
-          kind: 'account_configured',
-        },
-        identity: {
-          backendId: 'custom-backend',
-        },
-        engine: {
-          kind: 'acp',
-        },
-        ux: {
-          title: 'Custom Backend',
-        },
-        transport: {
-          kind: 'stdio',
-          launch: {
-            kind: 'agent-cli',
-            agentId: 'kiro',
-            args: ['--acp'],
-          },
-        },
-        launchEnv: {
-          ACP_HOME: '/custom/home',
-        },
-        capabilities: {
-          supportsResume: true,
-          supportsModes: true,
-          supportsModels: true,
-          supportsConfigOptions: 'unknown',
-          promptImageSupport: 'unknown',
-          supportsToolUse: true,
-          supportsPermissionRequests: true,
-        },
-        mcp: {
-          policy: 'pass_through',
-        },
-        callbacks: {},
-      },
       backend: {
         backendId: 'custom-backend',
+        source: {
+          kind: 'plugin_contributed',
+          pluginId: 'acme.plugin',
+          systemTools: [{
+            id: 'acme-cli',
+            title: 'Acme CLI',
+            executableNames: [executablePath],
+          }],
+        },
         name: 'custom-backend',
         title: 'Custom Backend',
-        command: 'ignored',
-        args: [],
+        command: 'acme-cli',
+        args: ['--acp'],
+        launch: {
+          kind: 'system-tool',
+          toolId: 'acme-cli',
+          purpose: 'Launch ACP backend custom-backend',
+          args: ['--acp'],
+          env: { FROM_LAUNCH: 'yes' },
+        },
         env: {},
         transportProfile: 'generic',
         capabilities: {
@@ -99,62 +57,14 @@ describe('createConfiguredAcpBackend', () => {
       permissionHandler: {} as never,
     });
 
-    expect(requireProviderCliLaunchSpecMock).toHaveBeenCalledWith('kiro', {
-      processEnv: expect.objectContaining({
-        ACP_HOME: '/custom/home',
-        PATH: '/custom/bin',
-      }),
-    });
-  });
-
-  it('fails closed instead of leaking a promise when configured ACP startup callbacks are async', () => {
-    createAcpBackendMock.mockReturnValue({ kind: 'backend' });
-
-    expect(() => createConfiguredAcpBackend({
-      cwd: '/repo',
-      definition: {
-        backendId: 'custom-backend',
-        source: {
-          kind: 'account_configured',
-        },
-        identity: {
-          backendId: 'custom-backend',
-        },
-        engine: {
-          kind: 'acp',
-        },
-        ux: {
-          title: 'Custom Backend',
-        },
-        transport: {
-          kind: 'stdio',
-          launch: {
-            kind: 'executable',
-            command: 'custom-agent',
-            args: ['--acp'],
-          },
-        },
-        launchEnv: {},
-        capabilities: {
-          supportsResume: true,
-          supportsModes: true,
-          supportsModels: true,
-          supportsConfigOptions: 'unknown',
-          promptImageSupport: 'unknown',
-          supportsToolUse: true,
-          supportsPermissionRequests: true,
-        },
-        mcp: {
-          policy: 'pass_through',
-        },
-        callbacks: {
-          argvBuilder: async () => ['--acp'],
-        },
-      },
-      launchEnv: {},
-      mcpServers: {},
-      permissionHandler: {} as never,
-    })).toThrow(/async Tier-2 startup callbacks/);
-    expect(createAcpBackendMock).not.toHaveBeenCalled();
+    const options = (backend as unknown as {
+      options: { command: string; args: readonly string[]; env: Readonly<Record<string, string>> };
+    }).options;
+    expect(options.command).toBe(executablePath);
+    expect(options.args).toEqual(['--acp']);
+    expect(options.env).toEqual(expect.objectContaining({
+      ACP_HOME: '/custom/home',
+      FROM_LAUNCH: 'yes',
+    }));
   });
 });

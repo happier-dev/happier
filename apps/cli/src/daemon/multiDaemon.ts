@@ -11,6 +11,7 @@ import { logger } from '@/ui/logger';
 import { resolveDaemonServiceInstallationSnapshotFromEnv } from '@/daemon/service/cli';
 import { resolveMachineIdForServerFromSettings } from '@/daemon/resolveMachineIdForServerFromSettings';
 import { resolveDaemonStateCandidatePaths } from '@/daemon/ownership/daemonOwnershipPaths';
+import { buildDaemonControlHttpHeaders } from '@/daemon/controlHttp';
 import type { DaemonStartupSource } from '@/daemon/ownership/daemonOwnershipMetadata';
 type NormalizedDaemonState = Readonly<{
   pid: number;
@@ -24,6 +25,7 @@ type NormalizedDaemonState = Readonly<{
 
 type StopDaemonOptions = Readonly<{
   stopSessions?: boolean;
+  transferManagedLocalServices?: boolean;
 }>;
 
 function parseDaemonStateFromJson(value: unknown): NormalizedDaemonState | null {
@@ -283,13 +285,15 @@ async function stopDaemonViaHttpBestEffort(state: NormalizedDaemonState, opts: S
     const rawTimeout = process.env.HAPPIER_DAEMON_HTTP_TIMEOUT;
     const parsedTimeout = typeof rawTimeout === 'string' ? Number.parseInt(rawTimeout, 10) : Number.NaN;
     const timeout = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 10_000;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (state.controlToken) headers['x-happier-daemon-token'] = state.controlToken;
+    const headers = buildDaemonControlHttpHeaders(state.controlToken);
 
     const response = await fetch(`http://127.0.0.1:${state.httpPort}/stop`, {
       method: 'POST',
       headers,
-      body: JSON.stringify(opts.stopSessions ? { stopSessions: true } : {}),
+      body: JSON.stringify({
+        ...(opts.stopSessions ? { stopSessions: true } : {}),
+        ...(opts.transferManagedLocalServices ? { transferManagedLocalServices: true } : {}),
+      }),
       signal: AbortSignal.timeout(timeout),
     });
     return response.ok;

@@ -118,7 +118,7 @@ describe('daemon spawn/stop stress (slow lane)', () => {
     await waitForSessionCount(sessionCount, SESSION_CONSISTENCY_WAIT);
 
     const stopResults = await Promise.all(sessionIds.map((sessionId) => stopDaemonSession(sessionId)));
-    expect(stopResults.every((r) => r), 'Not all sessions reported stopped').toBe(true);
+    expect(stopResults.every((result) => result.status === 'stopped'), 'Not all sessions reported stopped').toBe(true);
     await waitForSessionCount(0, {
       ...SESSION_CONSISTENCY_WAIT,
       label: 'all stress sessions stopped',

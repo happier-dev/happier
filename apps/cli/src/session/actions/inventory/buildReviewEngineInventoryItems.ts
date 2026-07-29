@@ -1,9 +1,9 @@
 import { buildBackendTargetKey, buildBackendTargetKeyV2, type AccountSettings } from '@happier-dev/protocol';
+import { getAgentCliRuntimeSpec, isAgentId } from '@happier-dev/agents';
 
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type {
   ResolvedAgentContribution,
-  ResolvedAgentRuntimeContribution,
 } from '@/plugins/projection/registry/types';
 
 import { isBackendEnabled } from './backendAvailability';
@@ -32,15 +32,12 @@ function readTrimmedString(value: unknown): string {
 }
 
 function readReviewEngineDefinitionField(
-  backend: ResolvedAgentRuntimeContribution,
-  agent: ResolvedAgentContribution | undefined,
+  agent: ResolvedAgentContribution,
   field: 'title' | 'subtitle',
 ): string {
   const definitions: readonly unknown[] = [
-    backend.richDefinition?.definition,
-    backend.definition,
-    agent?.richDefinition?.definition,
-    agent?.definition,
+    agent.richDefinition?.definition,
+    agent.definition,
   ];
   for (const definition of definitions) {
     const value = isRecord(definition) ? readTrimmedString(definition[field]) : '';
@@ -50,30 +47,19 @@ function readReviewEngineDefinitionField(
 }
 
 function readReviewEngineLabel(
-  backend: ResolvedAgentRuntimeContribution,
-  agent: ResolvedAgentContribution | undefined,
+  agent: ResolvedAgentContribution,
 ): string {
-  return readReviewEngineDefinitionField(backend, agent, 'title') || backend.id;
+  const projectedTitle = readReviewEngineDefinitionField(agent, 'title');
+  if (projectedTitle) return projectedTitle;
+  return isAgentId(agent.id)
+    ? getAgentCliRuntimeSpec(agent.id).title
+    : agent.id;
 }
 
 function readReviewEngineDescription(
-  backend: ResolvedAgentRuntimeContribution,
-  agent: ResolvedAgentContribution | undefined,
+  agent: ResolvedAgentContribution,
 ): string | undefined {
-  return readReviewEngineDefinitionField(backend, agent, 'subtitle') || undefined;
-}
-
-function isReviewExecutionRunBackend(backend: ResolvedAgentRuntimeContribution): boolean {
-  const session = backend.capabilities?.session;
-  const executionRun = backend.capabilities?.executionRun;
-  const review = isRecord(executionRun) ? executionRun.review : null;
-  const intents = isRecord(review) && Array.isArray(review.intents) ? review.intents : [];
-
-  return isRecord(session)
-    && session.supported === false
-    && executionRun?.supported !== false
-    && isRecord(review)
-    && intents.includes('review');
+  return readReviewEngineDefinitionField(agent, 'subtitle') || undefined;
 }
 
 export function buildReviewEngineInventoryItems(params: Readonly<{
@@ -85,25 +71,46 @@ export function buildReviewEngineInventoryItems(params: Readonly<{
   const includeDisabled = params.includeDisabled === true;
   const limit = normalizeLimit(params.limit);
   const registry = getResolvedContributionRegistry();
-  const items = registry.agentRuntimes
-    .filter(isReviewExecutionRunBackend)
-    .map((backend) => {
-      const agent = registry.agentDefinitionsById.get(backend.agentId);
-      const description = readReviewEngineDescription(backend, agent);
+  const agentIdByQualifiedIdentity = new Map(
+    [...registry.agentDefinitionsById.values()].flatMap((agent) => (
+      agent.identity
+        ? [[`${agent.identity.pluginId}\0${agent.identity.localId}`, agent.id] as const]
+        : []
+    )),
+  );
+  const reviewAgentIds = new Set(
+    (registry.executionRunProfiles ?? [])
+      .filter((profile) => profile.definition.intent === 'review')
+      .flatMap((profile) => profile.definition.compatibleAgents.flatMap((reference) => {
+        const localId = typeof reference === 'string' ? reference : reference.localId;
+        const pluginId = typeof reference === 'string' ? profile.pluginId : reference.pluginId;
+        const qualifiedAgentId = pluginId
+          ? agentIdByQualifiedIdentity.get(`${pluginId}\0${localId}`)
+          : undefined;
+        if (qualifiedAgentId) return [qualifiedAgentId];
+        return registry.agentDefinitionsById.has(localId) ? [localId] : [];
+      })),
+  );
+  const items = [...reviewAgentIds]
+    .sort()
+    .flatMap((agentId) => {
+      const agent = registry.agentDefinitionsById.get(agentId);
+      if (!agent) return [];
+      const description = readReviewEngineDescription(agent);
       const targetKey = buildBackendTargetKeyV2({
         kind: 'backend',
-        backendId: backend.id,
+        backendId: agent.id,
         sourceKind: 'built_in',
       });
-      const legacyTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: backend.id });
-      return {
-        engineId: backend.id,
-        value: backend.id,
-        label: readReviewEngineLabel(backend, agent),
+      const legacyTargetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId: agent.id });
+      return [{
+        engineId: agent.id,
+        value: agent.id,
+        label: readReviewEngineLabel(agent),
         ...(description ? { description } : {}),
         enabled: isBackendEnabled(accountSettings, [targetKey, legacyTargetKey]),
-        backendId: backend.id,
-      };
+        backendId: agent.id,
+      }];
     })
     .filter((item) => includeDisabled || item.enabled !== false);
 

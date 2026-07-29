@@ -412,7 +412,7 @@ function buildSwitchAttemptEventId(attempt: ConnectedServiceRuntimeSwitchAttempt
 function buildProviderStateSharingDegradedEventId(
   degraded: ConnectedServiceRuntimeStateSharingDegradedSessionEvent,
 ): string {
-  return buildAgentEventLocalId('provider-state-sharing-degraded', [
+  return buildAgentEventLocalId('agent-state-sharing-degraded', [
     degraded.serviceId,
     degraded.requestedStateMode,
     degraded.effectiveStateMode,
@@ -584,7 +584,7 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
       sessionId: params.sessionId,
       eventId,
       data: {
-        type: 'provider-state-sharing-degraded',
+        type: 'agent-state-sharing-degraded',
         serviceId: degraded.serviceId,
         requestedStateMode: degraded.requestedStateMode,
         effectiveStateMode: degraded.effectiveStateMode,

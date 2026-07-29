@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import type { Credentials } from '@/persistence';
 
 vi.mock('@/configuration', () => ({
     configuration: { serverUrl: 'http://example.invalid', apiServerUrl: 'http://example.invalid' },
@@ -10,6 +12,15 @@ vi.mock('@/configuration', () => ({
 import axios from 'axios';
 import { fetchSessionSnapshotUpdateFromServer } from './snapshotSync';
 import { encodeBase64, encrypt } from '../encryption';
+
+const ownerSecret = new Uint8Array(32).fill(7);
+const ownerCredentials: Credentials = {
+  token: 't',
+  encryption: {
+    type: 'legacy',
+    secret: ownerSecret,
+  },
+};
 
 describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     it('preserves unexpected non-auth HTTP statuses as HttpStatusError carriers', async () => {
@@ -95,6 +106,205 @@ describe('snapshotSync.fetchSessionSnapshotUpdateFromServer', () => {
     expect(res.metadata).toBeUndefined();
     expect(res.agentState).toBeUndefined();
     expect(res.pendingQueueState).toEqual({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0 });
+  });
+
+  it('atomically reprojects the exact owner tuple when a remote layout-v1 write arrives', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    const authoritativeMetadata = {
+      path: '/private/remote-owner',
+      host: 'private-host',
+      flavor: 'claude',
+      summary: { text: 'Safe title', updatedAt: 10 },
+    };
+    const authoritativeAgentState = {
+      requests: {
+        privateRequest: {
+          tool: 'private-tool',
+          arguments: { value: 'private-tool-arguments' },
+          createdAt: 1,
+        },
+      },
+    };
+    const tuple = buildSessionMetadataEnvelopeFields({
+      credentials: ownerCredentials,
+      metadata: authoritativeMetadata,
+      agentState: authoritativeAgentState,
+      storedContentMode: 'plain',
+      encryptionKey: ownerSecret,
+      encryptionVariant: 'legacy',
+    });
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 's-layout-contract',
+          encryptionMode: 'plain',
+          metadataLayoutVersion: 1,
+          metadataVersion: 1,
+          metadata: tuple.sharedMetadata.ciphertext,
+          ownerMetadata: tuple.ownerMetadata.ciphertext,
+          agentStateVersion: 1,
+          agentState: tuple.agentState,
+        }),
+      },
+    });
+
+    const res = await fetchSessionSnapshotUpdateFromServer({
+      token: 't',
+      sessionId: 's-layout-contract',
+      credentials: ownerCredentials,
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      currentMetadataLayoutVersion: 0,
+      currentMetadataVersion: 9,
+      currentAgentStateVersion: 8,
+      currentMetadata: {
+        path: '/private/worktree',
+        host: 'private-host',
+        externalSessionV1: {
+          v: 1,
+          agentId: 'codex',
+          machineId: 'private-machine',
+          remoteSessionId: 'private-native-id',
+          source: { kind: 'codexHome', home: 'local' },
+          linkedAtMs: 1,
+        },
+      } as any,
+      currentAgentState: {
+        requests: {
+          privateRequest: {
+            tool: 'private-tool',
+            arguments: { value: 'private-tool-arguments' },
+            createdAt: 1,
+          },
+        },
+      },
+    });
+
+    expect(res).toMatchObject({
+      metadataLayoutVersion: 1,
+      metadataTuple: {
+        metadata: authoritativeMetadata,
+        metadataVersion: 1,
+        ownerMetadataCiphertext: tuple.ownerMetadata.ciphertext,
+        agentState: authoritativeAgentState,
+        agentStateVersion: 1,
+      },
+    });
+    expect(res).not.toHaveProperty('metadata');
+    expect(res).not.toHaveProperty('agentState');
+  });
+
+  it('strictly rejects private fields in layout-v1 shared metadata instead of partially hydrating the owner tuple', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    const ownerTuple = buildSessionMetadataEnvelopeFields({
+      credentials: ownerCredentials,
+      metadata: createTestMetadata({ path: '/owner-path' }),
+      agentState: { controlledByUser: false },
+      storedContentMode: 'plain',
+      encryptionKey: ownerSecret,
+      encryptionVariant: 'legacy',
+    });
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 's-layout-strict',
+          encryptionMode: 'plain',
+          metadataLayoutVersion: 1,
+          metadataVersion: 1,
+          metadata: JSON.stringify({
+            v: 1,
+            summary: { text: 'Safe title', updatedAt: 10 },
+            path: '/must-not-cross-the-shared-envelope',
+          }),
+          ownerMetadata: ownerTuple.ownerMetadata.ciphertext,
+          agentStateVersion: 1,
+          agentState: JSON.stringify({ controlledByUser: false }),
+        }),
+      },
+    });
+
+    await expect(fetchSessionSnapshotUpdateFromServer({
+      token: 't',
+      sessionId: 's-layout-strict',
+      credentials: ownerCredentials,
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      currentMetadataLayoutVersion: 0,
+      currentMetadataVersion: 9,
+      currentAgentStateVersion: 8,
+      currentMetadata: createTestMetadata({ path: '/cached-private-path' }),
+      currentAgentState: { controlledByUser: true },
+    })).rejects.toMatchObject({
+      code: 'metadata_privacy_upgrade_required',
+      retryable: false,
+    });
+  });
+
+  it('fails closed for unsupported future metadata layouts', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 's-layout-future',
+          encryptionMode: 'plain',
+          metadataLayoutVersion: 2,
+          metadataVersion: 100,
+          metadata: JSON.stringify({ path: '/future-private-shape' }),
+          agentStateVersion: 100,
+          agentState: JSON.stringify({ requests: { private: { tool: 'secret' } } }),
+        }),
+      },
+    });
+
+    await expect(fetchSessionSnapshotUpdateFromServer({
+      token: 't',
+      sessionId: 's-layout-future',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      currentMetadataLayoutVersion: 1,
+      currentMetadataVersion: 1,
+      currentAgentStateVersion: 1,
+      currentMetadata: createTestMetadata(),
+      currentAgentState: null,
+    })).rejects.toThrow('Unexpected /v2/sessions response shape');
+  });
+
+  it('does not let a higher legacy version downgrade an established layout-v1 snapshot', async () => {
+    const getSpy = vi.spyOn(axios, 'get');
+    getSpy.mockResolvedValueOnce({
+      status: 200,
+      data: {
+        session: createSessionRecordFixture({
+          id: 's-layout-downgrade',
+          encryptionMode: 'plain',
+          metadataLayoutVersion: 0,
+          metadataVersion: 100,
+          metadata: JSON.stringify({ path: '/stale-legacy-private-path' }),
+          agentStateVersion: 100,
+          agentState: JSON.stringify({ controlledByUser: true }),
+        }),
+      },
+    });
+
+    const res = await fetchSessionSnapshotUpdateFromServer({
+      token: 't',
+      sessionId: 's-layout-downgrade',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      currentMetadataLayoutVersion: 1,
+      currentMetadataVersion: 1,
+      currentAgentStateVersion: 1,
+      currentMetadata: createTestMetadata({ path: '' }),
+      currentAgentState: null,
+    });
+
+    expect(res).not.toHaveProperty('metadataLayoutVersion');
+    expect(res).not.toHaveProperty('metadata');
+    expect(res).not.toHaveProperty('agentState');
+    expect(JSON.stringify(res)).not.toContain('stale-legacy-private-path');
   });
 
   it('returns pending queue state from the authoritative session snapshot', async () => {

@@ -1,0 +1,11 @@
+{
+  "artifact": "scrcpy-server.jar",
+  "status": "pinned_official_upstream_artifact",
+  "upstream": "https://github.com/Genymobile/scrcpy",
+  "upstreamRelease": "https://github.com/Genymobile/scrcpy/releases/tag/v3.2",
+  "artifactUrl": "https://github.com/Genymobile/scrcpy/releases/download/v3.2/scrcpy-server-v3.2",
+  "checksumUrl": "https://github.com/Genymobile/scrcpy/releases/download/v3.2/SHA256SUMS.txt",
+  "license": "Apache-2.0",
+  "version": "3.2",
+  "sha256": "sha256:b920e0ea01936bf2482f4ba2fa985c22c13c621999e3d33b45baa5acfc1ea3d0"
+}

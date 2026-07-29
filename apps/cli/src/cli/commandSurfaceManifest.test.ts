@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { isTmuxAllowedCommand, listRootHelpCommands } from './commandSurfaceManifest';
+import {
+  isTmuxAllowedCommand,
+  listRootHelpCommands,
+  primeProjectedCommandSurfaceEntries,
+} from './commandSurfaceManifest';
 
 const { getResolvedContributionRegistryMock } = vi.hoisted(() => ({
   getResolvedContributionRegistryMock: vi.fn(),
@@ -16,9 +20,11 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
 });
 
 describe('CLI command-surface manifest', () => {
-  it('exposes the current root help command list from static and projected command surfaces', () => {
+  it('exposes the current root help command list from static and projected command surfaces', async () => {
+    await primeProjectedCommandSurfaceEntries();
     const entries = listRootHelpCommands();
-    expect(entries.map((entry) => entry.command)).toEqual([
+    const commands = entries.map((entry) => entry.command);
+    expect(commands.slice(0, 20)).toEqual([
       null,
       'setup',
       'auth',
@@ -26,6 +32,8 @@ describe('CLI command-surface manifest', () => {
       'codex',
       'gemini',
       'connect',
+      'completion',
+      'agents',
       'providers',
       'plugins',
       'notify',
@@ -37,8 +45,11 @@ describe('CLI command-surface manifest', () => {
       'self',
       'self-update',
       'session',
+    ]);
+    expect(new Set(commands.slice(20))).toEqual(new Set([
       'claude',
       'opencode',
+      'antigravity',
       'auggie',
       'qwen',
       'kimi',
@@ -48,7 +59,9 @@ describe('CLI command-surface manifest', () => {
       'ohMyPi',
       'pi',
       'copilot',
-    ]);
+      'coderabbit',
+      'deepsec',
+    ]));
 
     for (const entry of entries) {
       expect(entry.rootHelpLabel).toBeTypeOf('string');
@@ -67,6 +80,10 @@ describe('CLI command-surface manifest', () => {
       rootHelpLabel: 'happier session',
       rootHelpDescription: 'Manage sessions and execution runs',
     });
+    expect(entries.find((entry) => entry.command === 'providers')).toMatchObject({
+      rootHelpLabel: 'happier providers',
+      rootHelpDescription: 'Configure model providers and connections',
+    });
     expect(entries.find((entry) => entry.command === 'opencode')).toMatchObject({
       rootHelpLabel: 'happier opencode',
       rootHelpDescription: 'Start OpenCode CLI',
@@ -81,14 +98,14 @@ describe('CLI command-surface manifest', () => {
     expect(isTmuxAllowedCommand('daemon')).toBe(false);
     expect(isTmuxAllowedCommand('session')).toBe(false);
     expect(isTmuxAllowedCommand('sessions')).toBe(false);
+    expect(isTmuxAllowedCommand('provider')).toBe(false);
     expect(isTmuxAllowedCommand('install')).toBe(false);
   });
 
   it('projects merged provider command entries into the root help surface', async () => {
     getResolvedContributionRegistryMock.mockReturnValue({
-      providers: [],
+      agents: [],
       backends: [],
-      hookRegistrations: [],
       runtimeAdaptersByBackendId: new Map(),
       catalogEntriesById: {
         'acme.ohmypi': {
@@ -97,7 +114,7 @@ describe('CLI command-surface manifest', () => {
           getCliCommandHandler: async () => async () => {},
         },
       },
-      providerDefinitionsById: new Map([
+      agentDefinitionsById: new Map([
         [
           'acme.ohmypi',
           {
@@ -125,6 +142,7 @@ describe('CLI command-surface manifest', () => {
       backendDefinitionsById: new Map(),
       pluginDiagnosticsByPluginId: {},
     });
+    await primeProjectedCommandSurfaceEntries();
 
     const entries = listRootHelpCommands();
     const pluginEntry = entries.find((entry) => entry.command === 'acme.ohmypi');
@@ -136,11 +154,10 @@ describe('CLI command-surface manifest', () => {
     });
   });
 
-  it('uses projected first-party root help metadata for bundled provider commands', () => {
+  it('uses projected first-party root help metadata for bundled provider commands', async () => {
     getResolvedContributionRegistryMock.mockReturnValue({
-      providers: [],
+      agents: [],
       backends: [],
-      hookRegistrations: [],
       runtimeAdaptersByBackendId: new Map(),
       catalogEntriesById: {
         opencode: {
@@ -152,7 +169,7 @@ describe('CLI command-surface manifest', () => {
           allowTmux: false,
         },
       },
-      providerDefinitionsById: new Map([
+      agentDefinitionsById: new Map([
         [
           'opencode',
           {
@@ -180,6 +197,7 @@ describe('CLI command-surface manifest', () => {
       backendDefinitionsById: new Map(),
       pluginDiagnosticsByPluginId: {},
     });
+    await primeProjectedCommandSurfaceEntries();
 
     const entries = listRootHelpCommands().filter((entry) => entry.command === 'opencode');
     expect(entries).toHaveLength(1);

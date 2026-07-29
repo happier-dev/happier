@@ -1,23 +1,26 @@
 import chalk from 'chalk';
 
 import { AGENT_IDS, getAgentCliRuntimeSpec, type AgentId } from '@happier-dev/agents';
-import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
+import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { installPluginFromSource, type PluginInstallKind } from '@/plugins/store/install/source';
-import { removeInstalledPlugin } from '@/plugins/store/install/remove';
-import { createPluginStateStore } from '@/plugins/store/state';
+import { requestUserPluginChange, type UserPluginChangeResult } from '@/plugins/daemon/changeClient';
+import type { PluginChangeRequest } from '@/plugins/daemon/changeContract';
+import { resolveArchiveExpectedIntegrity } from '@/plugins/distribution/archive/integrity';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import type {
-  invokeProviderCliInstall as invokeProviderCliInstallDefault,
-} from '@/packagedRuntime/managedTools/invokeProviderCliInstall';
+  invokeAgentCliInstall as invokeProviderCliInstallDefault,
+} from '@/packagedRuntime/managedTools/invokeAgentCliInstall';
 import type { runDoctorCommand as runDoctorCommandDefault } from '@/ui/doctor';
 
 type ProviderStatusRow = Readonly<{
   id: string;
   title: string;
-  runtimeSpec: ProviderCliRuntimeDescriptor;
+  runtimeSpec: AgentCliRuntimeDescriptor;
 }>;
 
 function usage(providerRows: readonly ProviderStatusRow[] = []): string {
@@ -27,7 +30,7 @@ function usage(providerRows: readonly ProviderStatusRow[] = []): string {
     `${chalk.bold('Usage:')}`,
     '  happier install doctor',
     '  happier install provider <providerId> [--dry-run] [--force]',
-    '  happier install plugin <path|archive-url> [--kind path|archive] [--dry-run] [--force]',
+    '  happier install plugin <path|archive-url|package> [--kind path|archive|npm] [--selector <version>] [--integrity <sha256-SRI>] [--dry-run]',
     '  happier install plugin update <pluginId> [--dry-run]',
     '  happier install plugin remove <pluginId> [--dry-run]',
     '',
@@ -47,10 +50,8 @@ type InstallCliDeps = Readonly<{
   error: (...args: unknown[]) => void;
   exit: (code: number) => never | void;
   runDoctorCommand: typeof runDoctorCommandDefault;
-  invokeProviderCliInstall: typeof invokeProviderCliInstallDefault;
-  publishInstalledManifestProjections?: (params: Readonly<{
-    pluginIds: readonly string[];
-  }>) => Promise<unknown>;
+  invokeAgentCliInstall: typeof invokeProviderCliInstallDefault;
+  isInteractiveTerminal?: () => boolean;
 }>;
 
 async function runDoctorCommandLazy(): Promise<void> {
@@ -61,33 +62,13 @@ async function runDoctorCommandLazy(): Promise<void> {
 async function invokeProviderCliInstallLazy(
   ...args: Parameters<typeof invokeProviderCliInstallDefault>
 ): Promise<Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>> {
-  const { invokeProviderCliInstall } = await import('@/packagedRuntime/managedTools/invokeProviderCliInstall');
-  return await invokeProviderCliInstall(...args);
-}
-
-async function publishInstalledManifestProjectionsLazy(params: Readonly<{
-  pluginIds: readonly string[];
-}>): Promise<unknown> {
-  const { publishInstalledPluginManifestProjectionsToServer } = await import('@/plugins/projection/server/installedManifests');
-  return await publishInstalledPluginManifestProjectionsToServer(params);
-}
-
-async function publishPluginManifestProjectionBestEffort(
-  deps: InstallCliDeps,
-  pluginId: string,
-): Promise<void> {
-  try {
-    await (deps.publishInstalledManifestProjections ?? publishInstalledManifestProjectionsLazy)({
-      pluginIds: [pluginId],
-    });
-  } catch {
-    // Server projection sync is best-effort; the local plugin mutation remains authoritative on this machine.
-  }
+  const { invokeAgentCliInstall } = await import('@/packagedRuntime/managedTools/invokeAgentCliInstall');
+  return await invokeAgentCliInstall(...args);
 }
 
 function readAgentCliRuntimeDescriptor(
-  contribution: ResolvedContributionRegistry['providers'][number],
-): ProviderCliRuntimeDescriptor | null {
+  contribution: ResolvedContributionRegistry['agents'][number],
+): AgentCliRuntimeDescriptor | null {
   return contribution.runtimeSpec ?? null;
 }
 
@@ -107,29 +88,106 @@ function readFlagValue(args: readonly string[], flag: string): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+type PluginInstallSourceKind = 'path' | 'archive' | 'npm';
+
 function parsePluginInstallFlags(args: readonly string[]): Readonly<{
   dryRun: boolean;
-  skipIfInstalled: boolean;
-  sourceKind: PluginInstallKind | null;
+  sourceKind: PluginInstallSourceKind | null;
+  selector: string | null;
+  integrity: string | null;
 }> {
   const sourceKindRaw = readFlagValue(args, '--kind');
-  if (sourceKindRaw !== null && sourceKindRaw !== 'path' && sourceKindRaw !== 'archive') {
+  if (sourceKindRaw !== null && sourceKindRaw !== 'path' && sourceKindRaw !== 'archive' && sourceKindRaw !== 'npm') {
     throw new Error(`Unknown plugin source kind: ${sourceKindRaw}`);
   }
 
   return {
     dryRun: args.includes('--dry-run'),
-    skipIfInstalled: !args.includes('--force'),
-    sourceKind: (sourceKindRaw as PluginInstallKind | null) ?? null,
+    sourceKind: (sourceKindRaw as PluginInstallSourceKind | null) ?? null,
+    selector: readFlagValue(args, '--selector'),
+    integrity: readFlagValue(args, '--integrity'),
   };
+}
+
+function inferPluginInstallSourceKind(locator: string): Exclude<PluginInstallSourceKind, 'npm'> {
+  const path = (() => {
+    try {
+      return new URL(locator).pathname;
+    } catch {
+      return locator;
+    }
+  })().toLowerCase();
+  return ['.tar.gz', '.tgz', '.tar.xz', '.zip'].some((suffix) => path.endsWith(suffix))
+    ? 'archive'
+    : 'path';
+}
+
+async function createPluginInstallRequest(
+  locator: string,
+  sourceKind: PluginInstallSourceKind | null,
+  selector: string | null,
+  integrity: string | null,
+): Promise<PluginChangeRequest> {
+  const kind = sourceKind ?? inferPluginInstallSourceKind(locator);
+  if (kind === 'archive') {
+    const expectedIntegrity = await resolveArchiveExpectedIntegrity({
+      locator,
+      explicitIntegrity: integrity,
+    });
+    return {
+      kind: 'installArchive',
+      locator,
+      ...(expectedIntegrity ? { expectedIntegrity } : {}),
+    };
+  }
+  if (integrity) {
+    throw new Error('--integrity is only valid for archive plugin installs');
+  }
+  if (kind === 'npm') {
+    return {
+      kind: 'installNpm',
+      packageName: locator,
+      ...(selector ? { selector } : {}),
+    };
+  }
+  return { kind: 'installPath', locator, development: false };
+}
+
+function pluginChangeMessage(result: UserPluginChangeResult): string {
+  switch (result.kind) {
+    case 'reviewRequired':
+      return `Plugin installation review is required (pending ${result.pendingChangeId}).`;
+    case 'cancelled':
+      return 'Plugin installation was cancelled.';
+    case 'expired':
+      return 'Plugin installation review expired; run the command again to review the current candidate.';
+    case 'busy':
+      return `Another plugin change is already in progress for ${result.pluginId}.`;
+    case 'unavailable':
+      return `Plugin change is unavailable (${result.code}).`;
+    case 'conflict':
+      return `Plugin facts changed while applying ${result.pluginId}; review the candidate again.`;
+    case 'failed':
+      return result.message ?? `Plugin change failed (${result.code}).`;
+    case 'outcomeUnknown':
+      return `The daemon may have applied the change for ${result.pluginId}; inspect installed plugin state before retrying.`;
+    case 'committed':
+      return `Installed plugin ${result.pluginId}; desired and applied generation ${result.appliedGeneration ?? 'none'}.`;
+  }
+}
+
+function pluginInstallApproval(
+  deps: InstallCliDeps,
+): 'prompt' | 'none' {
+  return (deps.isInteractiveTerminal ?? isInteractiveTerminal)() ? 'prompt' : 'none';
 }
 
 function isAgentId(value: string): value is AgentId {
   return (AGENT_IDS as readonly string[]).includes(value);
 }
 
-function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionRegistry, 'providers'>): ProviderStatusRow[] {
-  return registry.providers
+function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionRegistry, 'agents'>): ProviderStatusRow[] {
+  return registry.agents
     .filter((contribution) => contribution.provenance === 'first_party')
     .map((contribution) => {
       const runtimeSpec = readAgentCliRuntimeDescriptor(contribution);
@@ -146,12 +204,12 @@ function readInstallableBuiltInProviderRows(registry: Pick<ResolvedContributionR
 }
 
 function printProviderInstallResult(
-  providerId: AgentId,
+  agentId: AgentId,
   result: Awaited<ReturnType<typeof invokeProviderCliInstallDefault>>,
   log: InstallCliDeps['log'],
 ): void {
   if (!result.ok) return;
-  const runtimeSpec = getAgentCliRuntimeSpec(providerId);
+  const runtimeSpec = getAgentCliRuntimeSpec(agentId);
   if (result.alreadyInstalled) {
     log(`${runtimeSpec.title} is already installed.`);
   } else if (result.plan.installMode === 'vendor_recipe') {
@@ -185,11 +243,9 @@ async function runPluginInstallCommand(
       return;
     }
 
-    const flags = {
-      dryRun: context.args.slice(4).includes('--dry-run'),
-    };
+    const flags = parsePluginInstallFlags(context.args.slice(4));
 
-    const stateStore = createPluginStateStore();
+    const stateStore = createPluginRegistryStateStore();
     const state = await stateStore.read();
     const record = state.plugins[pluginId];
     if (!record) {
@@ -203,16 +259,15 @@ async function runPluginInstallCommand(
         deps.log(`Dry run: would remove plugin ${pluginId}.`);
         return;
       }
-      const result = await removeInstalledPlugin({
-        happyHomeDir: stateStore.paths.happyHomeDir,
-        pluginId,
+      const result = await requestUserPluginChange({
+        request: { kind: 'uninstall', pluginId },
+        approval: 'none',
       });
-      if (!result.ok) {
-        deps.error(chalk.red('Error:'), result.errorMessage);
+      if (result.kind !== 'committed') {
+        deps.error(chalk.red('Error:'), pluginChangeMessage(result));
         deps.exit(1);
         return;
       }
-      await publishPluginManifestProjectionBestEffort(deps, pluginId);
       deps.log(`Removed plugin ${pluginId}.`);
       return;
     }
@@ -222,61 +277,35 @@ async function runPluginInstallCommand(
       return;
     }
 
-    const result = await installPluginFromSource({
-      happyHomeDir: stateStore.paths.happyHomeDir,
-      locator: record.source.locator,
-      sourceKind: record.source.kind === 'archive' ? 'archive' : 'path',
-      skipIfInstalled: false,
+    const result = await requestUserPluginChange({
+      request: { kind: 'update', pluginId },
+      approval: pluginInstallApproval(deps),
     });
-    if (!result.ok) {
-      deps.error(chalk.red('Error:'), result.errorMessage);
+    if (result.kind !== 'committed') {
+      deps.error(chalk.red('Error:'), pluginChangeMessage(result));
       deps.exit(1);
       return;
     }
-
-    if (result.alreadyInstalled) {
-      await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
-      deps.log(`Plugin ${pluginId} is already installed.`);
-      return;
-    }
-
-    await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
-    deps.log(`Updated plugin ${result.pluginId} from ${result.sourceKind}.`);
+    deps.log(`Updated plugin ${result.pluginId}.`);
     return;
   }
 
   const flags = parsePluginInstallFlags(context.args.slice(3));
-  const result = await installPluginFromSource({
-    happyHomeDir: createPluginStateStore().paths.happyHomeDir,
-    locator: target,
-    sourceKind: flags.sourceKind ?? undefined,
-    skipIfInstalled: flags.skipIfInstalled,
-    dryRun: flags.dryRun,
+  const request = await createPluginInstallRequest(target, flags.sourceKind, flags.selector, flags.integrity);
+  if (flags.dryRun) {
+    deps.log(`Dry run: would request ${request.kind} for ${target}.`);
+    return;
+  }
+  const result = await requestUserPluginChange({
+    request,
+    approval: pluginInstallApproval(deps),
   });
-  if (!result.ok) {
-    deps.error(chalk.red('Error:'), result.errorMessage);
+  if (result.kind !== 'committed') {
+    deps.error(chalk.red('Error:'), pluginChangeMessage(result));
     deps.exit(1);
     return;
   }
-
-  if (flags.dryRun) {
-    deps.log(`Dry run: would install plugin ${result.pluginId} from ${result.sourceKind}.`);
-    return;
-  }
-
-  if (result.alreadyInstalled) {
-    await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
-    deps.log(`Plugin ${result.pluginId} is already installed.`);
-    return;
-  }
-
-  await publishPluginManifestProjectionBestEffort(deps, result.pluginId);
-  if (result.sourceKind === 'archive') {
-    deps.log(`Installed plugin ${result.pluginId} from archive.`);
-    return;
-  }
-
-  deps.log(`Installed plugin ${result.pluginId}.`);
+  deps.log(pluginChangeMessage(result));
 }
 
 export async function runInstallCliCommand(
@@ -288,15 +317,15 @@ export async function runInstallCliCommand(
       process.exitCode = code;
     },
     runDoctorCommand: runDoctorCommandLazy,
-    invokeProviderCliInstall: invokeProviderCliInstallLazy,
-    publishInstalledManifestProjections: publishInstalledManifestProjectionsLazy,
+    invokeAgentCliInstall: invokeProviderCliInstallLazy,
+    isInteractiveTerminal,
   },
 ): Promise<void> {
   try {
     const subcommand = context.args[1] ?? 'help';
     const needsRegistry = subcommand === 'help' || subcommand === '--help' || subcommand === '-h' || subcommand === 'provider';
     const mergedRegistry = needsRegistry
-      ? await resolveMergedContributionRegistry({ happyHomeDir: createPluginStateStore().paths.happyHomeDir })
+      ? await resolveMergedContributionRegistry({ happyHomeDir: resolvePluginStorePaths().happyHomeDir })
       : null;
     const installableProviderRows = mergedRegistry ? readInstallableBuiltInProviderRows(mergedRegistry) : [];
     if (subcommand === 'doctor') {
@@ -308,27 +337,27 @@ export async function runInstallCliCommand(
       return;
     }
     if (subcommand === 'provider') {
-      const providerIdRaw = context.args[2]?.trim() ?? '';
-      if (!providerIdRaw) {
+      const agentIdRaw = context.args[2]?.trim() ?? '';
+      if (!agentIdRaw) {
         deps.error(chalk.red('Error:'), 'Missing provider id.');
         deps.log(usage(installableProviderRows));
         deps.exit(1);
         return;
       }
-      if (providerIdRaw === 'help' || providerIdRaw === '--help' || providerIdRaw === '-h') {
+      if (agentIdRaw === 'help' || agentIdRaw === '--help' || agentIdRaw === '-h') {
         deps.log(usage(installableProviderRows));
         return;
       }
-      if (!isAgentId(providerIdRaw)) {
-        deps.error(chalk.red('Error:'), `Unknown provider id: ${providerIdRaw}`);
+      if (!isAgentId(agentIdRaw)) {
+        deps.error(chalk.red('Error:'), `Unknown provider id: ${agentIdRaw}`);
         deps.log(usage(installableProviderRows));
         deps.exit(1);
         return;
       }
 
       const flags = parseProviderInstallFlags(context.args.slice(3));
-      const result = await deps.invokeProviderCliInstall({
-        agentId: providerIdRaw,
+      const result = await deps.invokeAgentCliInstall({
+        agentId: agentIdRaw,
         params: flags,
         env: process.env,
         nodePlatform: process.platform,
@@ -348,7 +377,7 @@ export async function runInstallCliCommand(
         }
         return;
       }
-      printProviderInstallResult(providerIdRaw, result, deps.log);
+      printProviderInstallResult(agentIdRaw, result, deps.log);
       return;
     }
     if (subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {

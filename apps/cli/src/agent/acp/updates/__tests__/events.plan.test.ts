@@ -36,7 +36,7 @@ describe('handlePlanUpdate (generic ACP plan -> shared TodoWrite checklist)', ()
     expect(emitted[1]).toEqual({ type: 'tool-result', toolName: 'TodoWrite', result: { todos }, callId: ACP_PLAN_TOOL_CALL_ID });
   });
 
-  it('suppresses the generic render when the transport opts out (provider delivers plans elsewhere)', () => {
+  it('does not let a legacy transport option discard a standard ACP plan', () => {
     const transport = { ...new DefaultTransport('cursor-like'), suppressAcpPlanUpdate: () => true } as unknown as TransportHandler;
     const { ctx, emitted } = makeCtx(transport);
     const result = handlePlanUpdate(
@@ -44,7 +44,8 @@ describe('handlePlanUpdate (generic ACP plan -> shared TodoWrite checklist)', ()
       ctx,
     );
     expect(result).toEqual({ handled: true });
-    expect(emitted).toHaveLength(0);
+    expect(emitted).toHaveLength(2);
+    expect(emitted.map((message) => message.type)).toEqual(['tool-call', 'tool-result']);
   });
 
   it('returns not-handled when there is no plan payload', () => {

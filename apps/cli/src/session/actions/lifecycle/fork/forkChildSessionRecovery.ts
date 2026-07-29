@@ -1,6 +1,10 @@
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { archiveSessionByIdBestEffort } from '@/session/services/setSessionArchivedState';
+import type { Credentials } from '@/persistence';
+import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { StopSessionResultSchema } from '@happier-dev/protocol';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { ForkLifecycleRawSession, ForkStopSession } from './forkLifecycleTypes';
 
@@ -32,16 +36,49 @@ export async function fetchForkChildSessionOrThrow(params: Readonly<{
 }
 
 export async function cleanupForkChildBestEffort(
-    stopSession: ForkStopSession,
-    sessionId: string,
+    params: Readonly<{
+        credentials: Credentials;
+        fallbackStopSession: ForkStopSession;
+        sessionId: string;
+    }>,
 ): Promise<void> {
+    const rawSession = await fetchSessionByIdCompat({
+        token: params.credentials.token,
+        sessionId: params.sessionId,
+    }).catch(() => null);
+    const machineId = typeof rawSession?.machineId === 'string'
+        && rawSession.machineId.trim().length > 0
+        && rawSession.machineId === rawSession.machineId.trim()
+        ? rawSession.machineId
+        : null;
+    if (machineId) {
+        try {
+            const stopResult = StopSessionResultSchema.safeParse(
+                await callMachineRpc({
+                    credentials: params.credentials,
+                    machineId,
+                    method: RPC_METHODS.STOP_SESSION,
+                    request: { sessionId: params.sessionId },
+                    authorization: {
+                        kind: 'session.write',
+                        sessionId: params.sessionId,
+                    },
+                }),
+            );
+            if (stopResult.success && stopResult.data.status === 'stopped') {
+                return;
+            }
+        } catch {
+            // Fall back to the daemon-local stop below so a server outage cannot leave a runner alive.
+        }
+    }
     try {
-        await stopSession(sessionId);
+        await params.fallbackStopSession(params.sessionId);
     } catch {
         // Best-effort only: the important part is surfacing the original fork failure.
     }
 }
 
 export async function archiveSessionBestEffort(token: string, sessionId: string): Promise<void> {
-    await archiveSessionByIdBestEffort({ token, sessionId });
+    await archiveSessionOnceInactive({ token, sessionId });
 }

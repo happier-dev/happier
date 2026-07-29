@@ -149,7 +149,7 @@ function resolveCrashedSessionLogKeepPaths(logsDir: string): string[] {
   }
 }
 
-class Logger {
+export class Logger {
   private dangerouslyUnencryptedServerLoggingUrl: string | undefined
   private hasLoggedFileWriteError: boolean = false
   private readonly fileLogLevel: FileLogLevel
@@ -157,6 +157,7 @@ class Logger {
   private readonly infoFileEnabled: boolean
   private readonly warnFileEnabled: boolean
   private readonly fileAppender: BufferedFileAppender
+  private readonly pluginInvocationFileAppender: BufferedFileAppender
 
   constructor(
     public readonly logFilePath = getSessionLogPath()
@@ -168,6 +169,9 @@ class Logger {
     this.fileAppender = new BufferedFileAppender({
       filePath: this.logFilePath,
       onWriteError: (error) => this.handleFileWriteError(error),
+    })
+    this.pluginInvocationFileAppender = new BufferedFileAppender({
+      filePath: this.logFilePath,
     })
     void pruneCurrentProcessLogsBestEffort(this.logFilePath).catch(() => {})
 
@@ -285,7 +289,16 @@ class Logger {
 
   flushSync(): void {
     this.fileAppender.flushSync()
+    this.pluginInvocationFileAppender.flushSync()
     void pruneCurrentProcessLogsBestEffort(this.logFilePath).catch(() => {})
+  }
+
+  appendPluginInvocationLogRecord(record: Readonly<Record<string, unknown>>): void {
+    try {
+      this.pluginInvocationFileAppender.append(`${JSON.stringify(record)}\n`)
+    } catch {
+      // Structured plugin diagnostics must never interfere with plugin work.
+    }
   }
   
   private logToConsole(level: 'debug' | 'error' | 'info' | 'warn', prefix: string, message: string, ...args: unknown[]): void {

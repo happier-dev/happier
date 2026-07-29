@@ -51,7 +51,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       },
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     runtime.beginTurn();
 
@@ -100,7 +100,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     });
     const runtimeEvents = collectRuntimeEvents(runtime);
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     backend.emit({ type: 'status', status: 'running' });
     backend.emit({ type: 'model-output', textDelta: 'hello' });
@@ -114,13 +114,13 @@ describe('createAcpRuntime (turn hooks)', () => {
     const turnStart = runtimeEvents.find((event) => event.kind === 'turn-start');
     expect(turnStart).toEqual(expect.objectContaining({
       kind: 'turn-start',
-      providerTurnId: taskStarted.id,
+      agentTurnId: taskStarted.id,
     }));
     expect(runtimeEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'turn-complete',
         turnId: turnStart?.turnId,
-        providerTurnId: taskStarted.id,
+        agentTurnId: taskStarted.id,
       }),
     ]));
   });
@@ -147,7 +147,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     });
     const runtimeEvents = collectRuntimeEvents(runtime);
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     backend.emit({ type: 'status', status: 'running' });
     const taskStarted = sent.find((message) => message?.type === 'task_started');
@@ -166,7 +166,7 @@ describe('createAcpRuntime (turn hooks)', () => {
         expect.objectContaining({
           kind: 'turn-failed',
           turnId: turnStart?.turnId,
-          providerTurnId: taskStarted.id,
+          agentTurnId: taskStarted.id,
         }),
       ]));
     });
@@ -194,7 +194,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     });
     const runtimeEvents = collectRuntimeEvents(runtime);
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     await runtime.flushTurn();
@@ -222,7 +222,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     await runtime.flushTurn();
@@ -254,7 +254,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     });
     const runtimeEvents = collectRuntimeEvents(runtime);
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     await runtime.sendPrompt('hello');
     await runtime.flushTurn();
@@ -289,7 +289,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     });
     const runtimeEvents = collectRuntimeEvents(runtime);
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     await runtime.sendPrompt('hello');
     await runtime.flushTurn();
@@ -324,7 +324,7 @@ describe('createAcpRuntime (turn hooks)', () => {
     });
     const runtimeEvents = collectRuntimeEvents(runtime);
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     await runtime.sendPrompt('hello');
     await runtime.flushTurn();
@@ -361,7 +361,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       },
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     runtime.beginTurn();
     backend.emit({ type: 'tool-call', toolName: 'think', args: { thinking: 'Hello' }, callId: 't1' });
@@ -394,7 +394,7 @@ describe('createAcpRuntime (turn hooks)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     runtime.beginTurn();
     expect(runtime.isTurnInFlight()).toBe(true);

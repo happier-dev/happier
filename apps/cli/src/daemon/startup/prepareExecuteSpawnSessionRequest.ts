@@ -1,25 +1,27 @@
-import { getVendorResumeSupport, requireCatalogEntry } from '@/backends/catalog';
-import { DEFAULT_CATALOG_AGENT_ID, type CatalogAgentId } from '@/backends/types';
-import {
-    normalizeDaemonInitialPrompt,
-} from '@/agent/runtime/daemonInitialPrompt';
+import { requireCatalogEntry } from '@/agent/catalog/registry';
+import { getVendorResumeSupport } from '@/session/runtime/catalogHooks';
+import { DEFAULT_CATALOG_AGENT_ID, type CatalogAgentId } from '@/agent/catalog/ids';
 import { logger } from '@/ui/logger';
 
 import type {
     SpawnSessionOptions,
     SpawnSessionResult,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import {
     SPAWN_SESSION_ERROR_CODES,
-} from '@/rpc/handlers/registerSessionHandlers';
-import type { ExecuteSpawnSessionRequestParams } from './executeSpawnSessionRequest';
+} from '@/session/shared/spawnSessionContract';
+import {
+    PersistedProviderResumeBindingError,
+    readPersistedProviderResumeState,
+} from '@/providers/lifecycle/readPersistedResumeSelection';
 import { ensureSessionDirectory } from './ensureSessionDirectory';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import { resolveDaemonStartupSourceFromEnv } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { resolveDarwinBackgroundServiceSpawnDirectoryFailure } from '../spawn/resolveDarwinBackgroundServiceSpawnDirectoryFailure';
 import { applyInitialTranscriptAfterSeqToAttachPayload } from '../sessionEncryption/applyInitialTranscriptAfterSeqToAttachPayload';
+import { buildProviderSpawnErrorResult } from '../spawn/buildProviderSpawnErrorResult';
 
 type DaemonVendorResumeSupportHook = Readonly<{
     resolveVendorResumeSupportParams?: (params: Readonly<{
@@ -51,7 +53,6 @@ type BackendIdentitySuccess = Extract<
 
 export type PreparedExecuteSpawnSessionRequest = Readonly<{
     directoryCreated: boolean;
-    normalizedInitialPrompt: string | null;
     normalizedExistingSessionId: string;
     effectiveResume: string;
     effectiveBackendTargetV2: BackendIdentitySuccess['effectiveBackendTargetV2'];
@@ -63,6 +64,7 @@ export type PreparedExecuteSpawnSessionRequest = Readonly<{
         ok: true;
         env: Record<string, string>;
     }>;
+    persistedProviderResumeState: ReturnType<typeof readPersistedProviderResumeState>;
 }> & Pick<
     SpawnSessionOptions,
     | 'directory'
@@ -72,8 +74,7 @@ export type PreparedExecuteSpawnSessionRequest = Readonly<{
     | 'permissionModeUpdatedAt'
     | 'agentModeId'
     | 'agentModeUpdatedAt'
-    | 'modelId'
-    | 'modelUpdatedAt'
+    | 'modelSelection'
 >;
 
 export type PrepareExecuteSpawnSessionRequestInput = Readonly<{
@@ -109,7 +110,6 @@ export async function prepareExecuteSpawnSessionRequest(
         approvedNewDirectoryCreation: options.approvedNewDirectoryCreation,
         backendTarget: options.backendTarget,
         profileId: options.profileId,
-        hasInitialPrompt: typeof options.initialPrompt === 'string' && options.initialPrompt.trim().length > 0,
         hasInitialTranscriptAfterSeq: typeof options.initialTranscriptAfterSeq === 'number',
         hasResume: typeof options.resume === 'string' && options.resume.trim().length > 0,
         windowsRemoteSessionLaunchMode: options.windowsRemoteSessionLaunchMode,
@@ -129,7 +129,7 @@ export async function prepareExecuteSpawnSessionRequest(
     }
 
     const {
-        directory,
+        directory: requestedDirectory,
         sessionId,
         approvedNewDirectoryCreation = true,
         resume,
@@ -138,13 +138,10 @@ export async function prepareExecuteSpawnSessionRequest(
         permissionModeUpdatedAt,
         agentModeId,
         agentModeUpdatedAt,
-        modelId,
-        modelUpdatedAt,
-        initialPrompt,
+        modelSelection,
         backendTarget,
     } = options;
     const normalizedResume = typeof resume === 'string' ? resume.trim() : '';
-    const normalizedInitialPrompt = normalizeDaemonInitialPrompt(initialPrompt);
 
     const backendIdentityResolution = await resolveSpawnBackendIdentity({
         existingSessionId: typeof existingSessionId === 'string' ? existingSessionId : '',
@@ -163,7 +160,34 @@ export async function prepareExecuteSpawnSessionRequest(
         effectiveBackendTargetV2,
         sessionAttachPayload,
         catalogAgentId,
+        ownerMetadata,
+        existingSessionWorkspacePath,
     } = backendIdentityResolution;
+    const directory = existingSessionWorkspacePath ?? requestedDirectory;
+    let persistedProviderResumeState: ReturnType<typeof readPersistedProviderResumeState>;
+    try {
+        const ownerProviderResumeMetadata = ownerMetadata
+            ? {
+                ...(ownerMetadata.runtime?.providerBindingV1
+                    ? { providerBindingV1: ownerMetadata.runtime.providerBindingV1 }
+                    : {}),
+                ...(ownerMetadata.runtime?.modelSelectionIntentV1
+                    ? { modelSelectionIntentV1: ownerMetadata.runtime.modelSelectionIntentV1 }
+                    : {}),
+            }
+            : null;
+        persistedProviderResumeState = readPersistedProviderResumeState(
+            ownerProviderResumeMetadata
+                ?? (
+                    sessionAttachPayload && 'snapshot' in sessionAttachPayload
+                        ? sessionAttachPayload.snapshot?.metadata ?? null
+                        : null
+                ),
+        );
+    } catch (error) {
+        if (!(error instanceof PersistedProviderResumeBindingError)) throw error;
+        return buildProviderSpawnErrorResult(error.providerError);
+    }
     const effectiveSessionAttachPayload = sessionAttachPayload
         ? applyInitialTranscriptAfterSeqToAttachPayload(sessionAttachPayload, options.initialTranscriptAfterSeq)
         : sessionAttachPayload;
@@ -238,10 +262,8 @@ export async function prepareExecuteSpawnSessionRequest(
         permissionModeUpdatedAt,
         agentModeId,
         agentModeUpdatedAt,
-        modelId,
-        modelUpdatedAt,
+        modelSelection: persistedProviderResumeState.selection ?? modelSelection,
         directoryCreated: ensuredDirectory.directoryCreated,
-        normalizedInitialPrompt,
         normalizedExistingSessionId,
         effectiveResume,
         effectiveBackendTargetV2,
@@ -250,5 +272,6 @@ export async function prepareExecuteSpawnSessionRequest(
         catalogAgentIdForConnectedServices,
         daemonSpawnHooks,
         environmentVariablesValidation,
+        persistedProviderResumeState,
     };
 }

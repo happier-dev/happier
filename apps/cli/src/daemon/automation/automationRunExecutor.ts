@@ -2,10 +2,10 @@ import type {
   SpawnSessionErrorCode,
   SpawnSessionOptions,
   SpawnSessionResult,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 
 import { startAutomationLeaseHeartbeat } from './automationLeaseHeartbeat';
-import { enqueueAndMaterializeAutomationPrompt } from './automationPendingQueueClient';
+import { enqueueAutomationPrompt } from './automationPendingQueueClient';
 import { runAutomationAgainstExistingSession } from './automationRunExistingSession';
 import { runAutomationAsNewSession } from './automationRunNewSession';
 import { parseAutomationTemplateExecution, type AutomationTemplateEncryption } from './automationTemplateExecution';
@@ -133,12 +133,7 @@ export async function executeClaimedRun(params: {
       ...template,
       existingSessionId: template.existingSessionId!,
     };
-    const newSessionTemplate = {
-      ...template,
-      ...(typeof template.prompt === 'string' && template.prompt.trim().length > 0
-        ? { initialPrompt: template.prompt }
-        : {}),
-    };
+    const newSessionTemplate = { ...template };
 
     const spawnResult = template.targetType === 'existing_session'
       ? await runAutomationAgainstExistingSession({
@@ -147,11 +142,27 @@ export async function executeClaimedRun(params: {
       })
       : await runAutomationAsNewSession({
         spawnSession,
+        runId: claimed.run.id,
+        firstInputText: template.prompt,
         template: newSessionTemplate,
       });
 
     if (spawnResult.type === 'success') {
-      if (template.targetType === 'existing_session' && typeof template.prompt === 'string' && template.prompt.trim().length > 0) {
+      if (
+        template.targetType === 'existing_session'
+        && typeof template.prompt === 'string'
+        && template.prompt.trim().length > 0
+      ) {
+        const promptSessionId = template.existingSessionId!;
+        if (!promptSessionId) {
+          await claimClient.failRun({
+            runId: claimed.run.id,
+            machineId,
+            errorCode: 'prompt_delivery_failed',
+            errorMessage: 'spawned session id is unavailable for first-turn delivery',
+          });
+          return;
+        }
         const sessionEncryptionMode = template.sessionEncryptionMode === 'plain' ? 'plain' : 'e2ee';
         const sessionEncryptionKeyBase64 = template.sessionEncryptionKeyBase64?.trim() ?? '';
         if (sessionEncryptionMode !== 'plain' && !sessionEncryptionKeyBase64) {
@@ -165,9 +176,9 @@ export async function executeClaimedRun(params: {
         }
 
         try {
-          await enqueueAndMaterializeAutomationPrompt({
+          await enqueueAutomationPrompt({
             token,
-            sessionId: template.existingSessionId!,
+            sessionId: promptSessionId,
             prompt: template.prompt,
             ...(typeof template.displayText === 'string' ? { displayText: template.displayText } : {}),
             sessionEncryptionMode,

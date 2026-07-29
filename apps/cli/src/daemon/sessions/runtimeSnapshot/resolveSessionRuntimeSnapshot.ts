@@ -1,23 +1,34 @@
 import type { Metadata, PermissionMode } from '@/api/types';
 import { isPermissionMode } from '@/api/types';
 import {
-  resolveModelOverrideFromMetadataSnapshot,
+  inferAgentIdFromSessionMetadata,
+  isAgentId,
+  resolveModelSelectionIntentFromSessionMetadata,
+  resolveObservedVendorResumeIdForResume,
+  resolveVendorResumeIdFromSessionMetadata,
+  type AgentId,
+} from '@happier-dev/agents';
+import {
   resolvePermissionIntentFromMetadataSnapshot,
   resolveSessionModeOverrideFromMetadataSnapshot,
 } from '@/agent/runtime/permissions/modeFromMetadata';
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {
   ConnectedServiceBindingsV1Schema,
+  buildBackendTargetKeyV2,
+  type ProviderBoundModelRef,
   type ConnectedServiceMaterializationIdentityV1,
   type ConnectedServiceBindingsV1,
 } from '@happier-dev/protocol';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import {
   readConnectedServiceMaterializationIdentityFromEnvironment,
   readConnectedServiceMaterializationIdentityFromMetadata,
   readConnectedServiceMaterializationIdentityFromSpawnOptions,
 } from '@/daemon/connectedServices/materialization/identity';
+import { readPersistedProviderResumeState } from '@/providers/lifecycle/readPersistedResumeSelection';
 
-type SnapshotValue<T extends string> = Readonly<{ value: T; updatedAt: number }>;
+type SnapshotValue<T> = Readonly<{ value: T; updatedAt: number }>;
 
 export type SessionRuntimeSnapshot = Readonly<{
   sessionId: string | null;
@@ -26,7 +37,7 @@ export type SessionRuntimeSnapshot = Readonly<{
   connectedServiceMaterializationIdentityV1: ConnectedServiceMaterializationIdentityV1 | null;
   permissionMode: SnapshotValue<PermissionMode> | null;
   agentModeId: SnapshotValue<string> | null;
-  modelId: SnapshotValue<string> | null;
+  modelSelection: SnapshotValue<ProviderBoundModelRef | null> | null;
   vendorResumeId: Readonly<{ value: string; updatedAt: number | null }> | null;
 }>;
 
@@ -44,7 +55,7 @@ export type ResolveSessionRuntimeSnapshotResult = Readonly<{
 }>;
 
 type CandidateSource = 'persisted' | 'tracked' | 'incoming';
-type TimestampedCandidate<T extends string> = SnapshotValue<T> & Readonly<{ source: CandidateSource }>;
+type TimestampedCandidate<T> = SnapshotValue<T> & Readonly<{ source: CandidateSource }>;
 type ConnectedServicesCandidate = Readonly<{
   source: CandidateSource;
   value: ConnectedServiceBindingsV1;
@@ -70,6 +81,19 @@ function normalizeFiniteTimestamp(value: unknown): number | null {
 
 function readSessionId(options: SpawnSessionOptions): string | null {
   return normalizeNonEmptyString(options.existingSessionId) ?? normalizeNonEmptyString(options.sessionId);
+}
+
+function readAgentIdFromOptions(options: SpawnSessionOptions | null | undefined): AgentId | null {
+  const target = options?.backendTarget && typeof options.backendTarget === 'object'
+    ? options.backendTarget as Record<string, unknown>
+    : null;
+  const rawAgentId =
+    target?.kind === 'backend'
+      ? target.backendId
+      : target?.kind === 'builtInAgent'
+        ? target.agentId
+        : null;
+  return isAgentId(rawAgentId) ? rawAgentId : null;
 }
 
 function parseConnectedServices(value: unknown): ConnectedServiceBindingsV1 | null {
@@ -126,7 +150,7 @@ function chooseConnectedServicesCandidate(
   return [...valid].sort((left, right) => SOURCE_PRIORITY[right.source] - SOURCE_PRIORITY[left.source])[0];
 }
 
-function chooseTimestamped<T extends string>(
+function chooseTimestamped<T>(
   candidates: ReadonlyArray<TimestampedCandidate<T> | null>,
 ): SnapshotValue<T> | null {
   const valid = candidates.filter((candidate): candidate is TimestampedCandidate<T> => candidate !== null);
@@ -159,8 +183,8 @@ function readPermissionFromMetadata(
 
 function readStringControlFromOptions(
   options: SpawnSessionOptions | null | undefined,
-  valueKey: 'agentModeId' | 'modelId',
-  updatedAtKey: 'agentModeUpdatedAt' | 'modelUpdatedAt',
+  valueKey: 'agentModeId',
+  updatedAtKey: 'agentModeUpdatedAt',
   source: CandidateSource,
 ): TimestampedCandidate<string> | null {
   const value = normalizeNonEmptyString(options?.[valueKey]);
@@ -170,8 +194,8 @@ function readStringControlFromOptions(
 
 function readDirectStringControlFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
-  valueKey: 'agentModeId' | 'modelId',
-  updatedAtKey: 'agentModeUpdatedAt' | 'modelUpdatedAt',
+  valueKey: 'agentModeId',
+  updatedAtKey: 'agentModeUpdatedAt',
 ): TimestampedCandidate<string> | null {
   const value = normalizeNonEmptyString(metadata?.[valueKey]);
   const updatedAt = normalizeFiniteTimestamp(metadata?.[updatedAtKey]);
@@ -190,25 +214,75 @@ function readAgentModeFromMetadata(
   return chosen ? { source: 'persisted', ...chosen } : null;
 }
 
-function readModelFromMetadata(
-  metadata: Record<string, unknown> | null | undefined,
-): TimestampedCandidate<string> | null {
-  const direct = readDirectStringControlFromMetadata(metadata, 'modelId', 'modelUpdatedAt');
-  const resolved = resolveModelOverrideFromMetadataSnapshot({ metadata: metadata as Metadata | null | undefined });
-  const fromOverride = resolved
-    ? { source: 'persisted' as const, value: resolved.modelId, updatedAt: resolved.updatedAt }
+function readModelFromOptions(
+  options: SpawnSessionOptions | null | undefined,
+  source: CandidateSource,
+): TimestampedCandidate<ProviderBoundModelRef | null> | null {
+  return options?.modelSelection
+    ? { source, value: options.modelSelection.ref, updatedAt: options.modelSelection.updatedAt }
     : null;
-  const chosen = chooseTimestamped([direct, fromOverride]);
-  return chosen ? { source: 'persisted', ...chosen } : null;
 }
 
-function chooseVendorResumeId(params: ResolveSessionRuntimeSnapshotParams): SessionRuntimeSnapshot['vendorResumeId'] {
-  const value =
-    normalizeNonEmptyString(params.incomingOptions.resume)
-    ?? normalizeNonEmptyString(params.trackedSpawnOptions?.resume)
-    ?? normalizeNonEmptyString(params.trackedVendorResumeId)
+function resolveModelTargetKey(params: ResolveSessionRuntimeSnapshotParams): string | null {
+  const target = params.incomingOptions.backendTarget
+    ?? params.trackedSpawnOptions?.backendTarget
+    ?? resolveBackendTargetFromSessionMetadata(params.persistedMetadata);
+  return target ? buildBackendTargetKeyV2(target) : null;
+}
+
+function readModelFromMetadata(
+  metadata: Record<string, unknown> | null | undefined,
+  agentTargetKey: string | null,
+): TimestampedCandidate<ProviderBoundModelRef | null> | null {
+  if (!agentTargetKey) return null;
+  const resolved = resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey);
+  return resolved
+    ? { source: 'persisted', value: resolved.selection, updatedAt: resolved.updatedAt }
+    : null;
+}
+
+function chooseExplicitVendorResumeId(params: ResolveSessionRuntimeSnapshotParams): string | null {
+  return normalizeNonEmptyString(params.incomingOptions.resume)
+    ?? normalizeNonEmptyString(params.trackedSpawnOptions?.resume);
+}
+
+function chooseVendorResumeId(
+  params: ResolveSessionRuntimeSnapshotParams,
+  explicitResumeId: string | null,
+): SessionRuntimeSnapshot['vendorResumeId'] {
+  const metadata = params.persistedMetadata ?? null;
+  const agentId =
+    readAgentIdFromOptions(params.incomingOptions)
+    ?? readAgentIdFromOptions(params.trackedSpawnOptions)
+    ?? inferAgentIdFromSessionMetadata(metadata);
+  const metadataVendorResumeId = resolveVendorResumeIdFromSessionMetadata(agentId, metadata);
+  if (explicitResumeId) return { value: explicitResumeId, updatedAt: null };
+
+  const persistedObservedVendorResumeId =
+    normalizeNonEmptyString(metadataVendorResumeId)
     ?? normalizeNonEmptyString(params.persistedVendorResumeId);
-  return value ? { value, updatedAt: null } : null;
+  const trackedObservedVendorResumeId = normalizeNonEmptyString(params.trackedVendorResumeId);
+  if (
+    persistedObservedVendorResumeId
+    && trackedObservedVendorResumeId
+    && persistedObservedVendorResumeId !== trackedObservedVendorResumeId
+    && resolveObservedVendorResumeIdForResume({
+      agentId,
+      metadata,
+      vendorResumeId: trackedObservedVendorResumeId,
+    }) === null
+  ) {
+    return null;
+  }
+  const observedVendorResumeId = persistedObservedVendorResumeId ?? trackedObservedVendorResumeId;
+  const eligibleObservedVendorResumeId = resolveObservedVendorResumeIdForResume({
+    agentId,
+    metadata,
+    vendorResumeId: observedVendorResumeId,
+  });
+  return eligibleObservedVendorResumeId
+    ? { value: eligibleObservedVendorResumeId, updatedAt: null }
+    : null;
 }
 
 function chooseConnectedServiceMaterializationIdentity(
@@ -224,15 +298,15 @@ function chooseConnectedServiceMaterializationIdentity(
 function applySnapshotToSpawnOptions(
   options: SpawnSessionOptions,
   snapshot: SessionRuntimeSnapshot,
+  explicitResumeId: string | null,
 ): SpawnSessionOptions {
   // The snapshot's spawn options are the DURABLE respawn/resume identity (persisted as tracked
   // spawn options and replayed by crash/auth respawns). One-shot delivery fields from a single
   // resume RPC must not survive into it: a stale `initialTranscriptAfterSeq` makes every later
-  // respawn replay already-processed user messages through the explicit startup catch-up, and a
-  // stale `initialPrompt` is equally single-use.
+  // respawn replay already-processed user messages through the explicit startup catch-up.
   const {
     initialTranscriptAfterSeq: _initialTranscriptAfterSeq,
-    initialPrompt: _initialPrompt,
+    executionAuthorization: _executionAuthorization,
     ...durableOptions
   } = options;
   const next: SpawnSessionOptions = { ...durableOptions };
@@ -259,13 +333,24 @@ function applySnapshotToSpawnOptions(
     next.agentModeUpdatedAt = snapshot.agentModeId.updatedAt;
   }
 
-  if (snapshot.modelId) {
-    next.modelId = snapshot.modelId.value;
-    next.modelUpdatedAt = snapshot.modelId.updatedAt;
+  if (snapshot.modelSelection) {
+    if (snapshot.modelSelection.value) {
+      next.modelSelection = {
+        v: 1,
+        ref: snapshot.modelSelection.value,
+        updatedAt: snapshot.modelSelection.updatedAt,
+      };
+    } else {
+      delete next.modelSelection;
+    }
   }
 
-  if (snapshot.vendorResumeId) {
-    next.resume = snapshot.vendorResumeId.value;
+  // Observed provider identity remains snapshot evidence. Only a host-authored Resume may enter
+  // durable tracked options; otherwise a later refresh could mistake derived evidence for intent.
+  if (explicitResumeId) {
+    next.resume = explicitResumeId;
+  } else {
+    delete next.resume;
   }
 
   return next;
@@ -274,6 +359,11 @@ function applySnapshotToSpawnOptions(
 export function resolveSessionRuntimeSnapshot(
   params: ResolveSessionRuntimeSnapshotParams,
 ): ResolveSessionRuntimeSnapshotResult {
+  // Persisted Provider selection and binding are one continuity envelope. Validate
+  // that envelope before any source arbitration so malformed/orphan state cannot
+  // be reinterpreted as native by takeover, respawn, or inactive replay callers.
+  readPersistedProviderResumeState(params.persistedMetadata ?? null);
+
   const connectedServices = chooseConnectedServicesCandidate([
     readConnectedServicesCandidate(
       params.persistedMetadata?.connectedServices,
@@ -292,6 +382,8 @@ export function resolveSessionRuntimeSnapshot(
     ),
   ]);
 
+  const modelTargetKey = resolveModelTargetKey(params);
+  const explicitResumeId = chooseExplicitVendorResumeId(params);
   const snapshot: SessionRuntimeSnapshot = {
     sessionId: readSessionId(params.incomingOptions),
     connectedServices: connectedServices?.value ?? null,
@@ -307,16 +399,16 @@ export function resolveSessionRuntimeSnapshot(
       readStringControlFromOptions(params.trackedSpawnOptions, 'agentModeId', 'agentModeUpdatedAt', 'tracked'),
       readStringControlFromOptions(params.incomingOptions, 'agentModeId', 'agentModeUpdatedAt', 'incoming'),
     ]),
-    modelId: chooseTimestamped([
-      readModelFromMetadata(params.persistedMetadata),
-      readStringControlFromOptions(params.trackedSpawnOptions, 'modelId', 'modelUpdatedAt', 'tracked'),
-      readStringControlFromOptions(params.incomingOptions, 'modelId', 'modelUpdatedAt', 'incoming'),
+    modelSelection: chooseTimestamped([
+      readModelFromMetadata(params.persistedMetadata, modelTargetKey),
+      readModelFromOptions(params.trackedSpawnOptions, 'tracked'),
+      readModelFromOptions(params.incomingOptions, 'incoming'),
     ]),
-    vendorResumeId: chooseVendorResumeId(params),
+    vendorResumeId: chooseVendorResumeId(params, explicitResumeId),
   };
 
   return {
     snapshot,
-    spawnOptions: applySnapshotToSpawnOptions(params.incomingOptions, snapshot),
+    spawnOptions: applySnapshotToSpawnOptions(params.incomingOptions, snapshot, explicitResumeId),
   };
 }

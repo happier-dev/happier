@@ -44,14 +44,11 @@ export function projectStructuredMessages(
             contributionKind: 'structuredMessage',
             descriptorId: contribution.definition.id,
             kind: contribution.definition.kind,
-            payloadSchema: contribution.definition.payloadSchema,
-            renderer: contribution.definition.renderer,
-            display: contribution.definition.display,
-            actions: contribution.definition.actions,
-            visibility: contribution.definition.visibility,
-            featureGate: contribution.definition.featureGate,
-            order: contribution.definition.order,
-            compatibility: contribution.definition.compatibility,
+            title: contribution.definition.title,
+            ...(contribution.definition.description
+                ? { description: contribution.definition.description }
+                : {}),
+            fallback: contribution.definition.fallback,
         });
     }
 }

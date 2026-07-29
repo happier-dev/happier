@@ -32,11 +32,17 @@ async function resolveTmuxSessionName(params: {
   return selectPreferredTmuxSessionName(listResult?.stdout ?? '') ?? TmuxUtilities.DEFAULT_SESSION_NAME;
 }
 
-export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
+export async function startHappyHeadlessInTmux(
+  argv: string[],
+  options: Readonly<{ output?: 'human' | 'silent' }> = {},
+): Promise<void> {
   const argsWithoutTmux = removeFlag(argv, '--tmux');
   const { agent, childArgs } = await resolveHeadlessTmuxAgentLaunchConfig(argsWithoutTmux);
 
   if (!(await isTmuxAvailable())) {
+    if (options.output === 'silent') {
+      throw new Error('tmux is not available on this machine.');
+    }
     console.error(chalk.red('Error:'), 'tmux is not available on this machine.');
     process.exit(1);
   }
@@ -72,10 +78,14 @@ export async function startHappyHeadlessInTmux(argv: string[]): Promise<void> {
   );
 
   if (!result.success) {
+    if (options.output === 'silent') {
+      throw new Error(`Failed to start in tmux: ${result.error ?? 'unknown error'}`);
+    }
     console.error(chalk.red('Error:'), `Failed to start in tmux: ${result.error ?? 'unknown error'}`);
     process.exit(1);
   }
 
+  if (options.output === 'silent') return;
   console.log(chalk.green('✓ Started Happier in tmux'));
   console.log(`  Target: ${tmuxTarget}`);
   if (insideTmux) {

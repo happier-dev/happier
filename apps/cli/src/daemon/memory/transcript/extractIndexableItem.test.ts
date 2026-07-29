@@ -60,6 +60,83 @@ describe('extractMemoryIndexableTranscriptItem', () => {
     }));
   });
 
+  it('excludes realtime conversation finals from coding-model memory', () => {
+    const item = extractMemoryIndexableTranscriptItem({
+      sessionId: 'sess-1',
+      row: {
+        id: 'voice-user-final',
+        seq: 3,
+        createdAt: 1002,
+        messageRole: 'user',
+        content: {
+          t: 'plain',
+          v: {
+            role: 'user',
+            content: { type: 'text', text: 'spoken orchard question' },
+            meta: {
+              happier: {
+                kind: 'conversation_turn.v1',
+                payload: { v: 1 },
+                conversationTurnOriginV1: {
+                  v: 1,
+                  channel: 'realtime_conversation',
+                  modality: 'voice',
+                },
+              },
+            },
+          },
+        },
+      },
+      index: 0,
+      ctx,
+    });
+
+    expect(item).toBeNull();
+  });
+
+  it('fails closed for malformed explicit provenance while preserving explicit Agent text', () => {
+    const extract = (conversationTurnOriginV1: unknown) => extractMemoryIndexableTranscriptItem({
+      sessionId: 'sess-1',
+      row: {
+        id: 'provenance-user',
+        seq: 4,
+        createdAt: 1003,
+        messageRole: 'user',
+        content: {
+          t: 'plain',
+          v: {
+            role: 'user',
+            content: { type: 'text', text: 'ordinary coding request' },
+            meta: {
+              happier: {
+                kind: 'conversation_turn.v1',
+                payload: { v: 1 },
+                conversationTurnOriginV1,
+              },
+            },
+          },
+        },
+      },
+      index: 0,
+      ctx,
+    });
+
+    expect(extract({
+      v: 1,
+      channel: 'realtime_conversation',
+      modality: 'text',
+    })).toBeNull();
+    expect(extract({
+      v: 1,
+      channel: 'agent_thread',
+      modality: 'text',
+    })).toEqual(expect.objectContaining({
+      id: 'provenance-user',
+      role: 'user',
+      text: 'ordinary coding request',
+    }));
+  });
+
   it('excludes tool details, events, memory artifacts, and reasoning by default', () => {
     const rows = [
       { seq: 1, createdAt: 1, content: { t: 'plain', v: { role: 'agent', content: { type: 'codex', data: { type: 'tool-call', name: 'Bash', input: { command: 'echo secret' } } } } } },

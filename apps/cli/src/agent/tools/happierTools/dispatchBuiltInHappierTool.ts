@@ -2,8 +2,9 @@ import { type ActionId, type ActionsSettingsV1, type ApprovalRequestOriginV1, ty
 import {
   getActionToolIdForToolName,
   getEquivalentActionIdForBuiltInTool,
-  isActionAvailableOnToolSurface,
+  isDirectManualToolAvailable,
   isActionDirectToolAvailableOnToolSurface,
+  resolveActionToolCatalogAvailability,
 } from './actionToolCatalog';
 import type { HappierBuiltInToolDispatchResult } from './types';
 import {
@@ -45,7 +46,7 @@ type DispatchDeps = Readonly<{
           options: readonly ResolvedActionOption[];
         }>;
       }>
-    | Readonly<{ ok: false; errorCode: string; error: string }>
+    | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>
     | null
   >;
   isActionEnabled?: (id: ActionId) => boolean;
@@ -73,8 +74,13 @@ function ok(result: unknown): HappierBuiltInToolDispatchResult {
   return { ok: true, result };
 }
 
-function err(errorCode: string, error: string): HappierBuiltInToolDispatchResult {
-  return { ok: false, errorCode, error };
+function err(errorCode: string, error: string, details?: unknown): HappierBuiltInToolDispatchResult {
+  return {
+    ok: false,
+    errorCode,
+    error,
+    ...(details === undefined ? {} : { details }),
+  };
 }
 
 function normalizeChangeTitleResult(result: unknown): HappierBuiltInToolDispatchResult {
@@ -97,51 +103,69 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   toolName: string;
   args: unknown;
   sessionId: string;
-  surface?: 'mcp' | 'cli' | 'session_agent';
+  surface?: 'mcp' | 'cli' | 'agent';
   actionsSettings?: ActionsSettingsV1 | null;
+  getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
   approvalOrigin?: ApprovalRequestOriginV1 | null;
   registry?: import('@/plugins/projection/registry/types').ResolvedContributionRegistry;
+  pluginToolCatalog?: readonly import('@/plugins/runtime/toolCatalog').ProjectedPluginToolCatalogEntry[];
   deps: DispatchDeps;
 }>): Promise<HappierBuiltInToolDispatchResult> {
   const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
-  const surface = params.surface ?? 'session_agent';
-  const actionsSettings = params.actionsSettings ?? null;
+  const surface = params.surface ?? 'agent';
+  const readActionsSettings = () => params.getActionsSettings?.() ?? params.actionsSettings ?? null;
+  const actionsSettings = readActionsSettings();
+  const resolveAvailability = (actionId: ActionId | string) => resolveActionToolCatalogAvailability({
+    actionId,
+    surface,
+    isActionEnabled,
+    actionsSettings,
+    registry: params.registry,
+    pluginToolCatalog: params.pluginToolCatalog,
+  });
+  const actionDisabled = (details: unknown) => err('action_disabled', 'Action is disabled', details);
 
-  const actionBackedActionId = getActionToolIdForToolName(params.toolName, { registry: params.registry });
+  const actionBackedActionId = getActionToolIdForToolName(params.toolName, {
+    registry: params.registry,
+    pluginToolCatalog: params.pluginToolCatalog,
+  });
   if (actionBackedActionId) {
-    const isAvailable = isActionAvailableOnToolSurface({
-      actionId: actionBackedActionId,
-      surface,
-      isActionEnabled,
-      actionsSettings,
-      registry: params.registry,
-    });
-    if (!isAvailable) {
-      return err('action_disabled', 'Action is disabled');
+    const availability = resolveAvailability(actionBackedActionId);
+    if (!availability.available) {
+      return actionDisabled(availability);
     }
-    if (!isActionDirectToolAvailableOnToolSurface({
+    const isDirectToolAvailable = isActionDirectToolAvailableOnToolSurface({
       actionId: actionBackedActionId,
       surface,
       isActionEnabled,
       actionsSettings,
       registry: params.registry,
-    })) {
+      pluginToolCatalog: params.pluginToolCatalog,
+    }) || isDirectManualToolAvailable({
+      toolName: params.toolName,
+      actionId: actionBackedActionId,
+      surface,
+      isActionEnabled,
+      actionsSettings,
+      registry: params.registry,
+      pluginToolCatalog: params.pluginToolCatalog,
+    });
+    if (!isDirectToolAvailable) {
       return err('unknown_tool', `Unknown built-in Happier tool: ${params.toolName}`);
     }
   }
 
-  const gatedManualActionId = actionBackedActionId ? null : getEquivalentActionIdForBuiltInTool(params.toolName, { registry: params.registry });
+  const gatedManualActionId = actionBackedActionId ? null : getEquivalentActionIdForBuiltInTool(params.toolName, {
+    registry: params.registry,
+    pluginToolCatalog: params.pluginToolCatalog,
+  });
   if (
     gatedManualActionId
-    && !isActionAvailableOnToolSurface({
-      actionId: gatedManualActionId,
-      surface,
-      isActionEnabled,
-      actionsSettings,
-      registry: params.registry,
-    })
   ) {
-    return err('action_disabled', 'Action is disabled');
+    const availability = resolveAvailability(gatedManualActionId);
+    if (!availability.available) {
+      return actionDisabled(availability);
+    }
   }
 
   if (params.toolName === 'change_title') {
@@ -162,13 +186,13 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   }
 
   if (params.toolName === 'action_spec_search') {
-    const result = await searchActionSpecsForSurface(params.args, surface, (id) => isActionEnabled(id));
+    const result = await searchActionSpecsForSurface(params.args, surface, (id) => isActionEnabled(id), actionsSettings);
     return result.ok ? ok(result.result) : err(result.errorCode, result.error);
   }
 
   if (params.toolName === 'action_spec_get') {
-    const result = await getActionSpecForSurface(params.args, surface, (id) => isActionEnabled(id));
-    return result.ok ? ok(result.result) : err(result.errorCode, result.error);
+    const result = await getActionSpecForSurface(params.args, surface, (id) => isActionEnabled(id), actionsSettings);
+    return result.ok ? ok(result.result) : err(result.errorCode, result.error, result.details);
   }
 
   if (params.toolName === 'execution_run_start') {
@@ -179,17 +203,11 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
     if (!normalized.ok) return err(normalized.errorCode, normalized.error);
 
     const equivalentActionId = getExecutionRunStartEquivalentActionId(normalized.request);
-    if (
-      equivalentActionId
-      && !isActionAvailableOnToolSurface({
-        actionId: equivalentActionId,
-        surface,
-        isActionEnabled,
-        actionsSettings,
-        registry: params.registry,
-      })
-    ) {
-      return err('action_disabled', 'Action is disabled');
+    if (equivalentActionId) {
+      const availability = resolveAvailability(equivalentActionId);
+      if (!availability.available) {
+        return actionDisabled(availability);
+      }
     }
 
     return await params.deps.executeActionByToolName(
@@ -203,21 +221,16 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   if (params.toolName === 'action_options_resolve') {
     const resolver = params.deps.resolveActionOptions;
     if (!resolver) return err('options_source_not_supported', 'Options source is not supported');
-    const result = await resolveActionOptionsForSurface(params.args, surface, (id) => isActionEnabled(id), resolver);
-    return result.ok ? ok(result.result) : err(result.errorCode, result.error);
+    const result = await resolveActionOptionsForSurface(params.args, surface, (id) => isActionEnabled(id), resolver, actionsSettings);
+    return result.ok ? ok(result.result) : err(result.errorCode, result.error, result.details);
   }
 
   if (params.toolName === 'action_execute') {
     const parsed = actionExecuteToolInputSchema.safeParse(params.args ?? {});
     if (!parsed.success) return err('invalid_action_input', 'Invalid action execute request');
-    if (!isActionAvailableOnToolSurface({
-      actionId: parsed.data.actionId,
-      surface,
-      isActionEnabled,
-      actionsSettings,
-      registry: params.registry,
-    })) {
-      return err('action_disabled', 'Action is disabled');
+    const availability = resolveAvailability(parsed.data.actionId);
+    if (!availability.available) {
+      return actionDisabled(availability);
     }
     return await params.deps.executeActionByToolName(
       'action_execute',

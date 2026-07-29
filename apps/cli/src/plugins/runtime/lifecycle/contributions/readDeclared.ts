@@ -7,7 +7,6 @@ import type {
     PluginCommandContributionV2,
 } from '@happier-dev/protocol';
 
-import type { PluginApiHostLifecycleHandlerDeclaration } from '../../api/types';
 import { isRecord } from '../utils';
 
 /**
@@ -87,28 +86,4 @@ export function readDeclaredSystemToolContributions(value: unknown): readonly Pl
         return Object.freeze([]);
     }
     return Object.freeze(value.systemTools as PluginSystemToolContributionV1[]);
-}
-
-export function readDeclaredLifecycleHandlers(value: unknown): readonly PluginApiHostLifecycleHandlerDeclaration[] {
-    if (!isRecord(value) || !Array.isArray(value.lifecycleHandlers)) {
-        return Object.freeze([]);
-    }
-    return Object.freeze(value.lifecycleHandlers.flatMap((definition) => {
-        const event = String(isRecord(definition) ? definition.event : '');
-        if (!isRecord(definition) || !['activated', 'deactivating', 'deactivated'].includes(event)) {
-            return [];
-        }
-        const id = typeof definition.id === 'string' && definition.id.trim().length > 0
-            ? definition.id.trim()
-            : null;
-        if (id === null) {
-            return [];
-        }
-        return [
-            Object.freeze({
-                id,
-                event: event as PluginApiHostLifecycleHandlerDeclaration['event'],
-            }),
-        ];
-    }));
 }

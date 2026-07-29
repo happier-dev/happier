@@ -1,5 +1,13 @@
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
-import { normalizeSessionControlPermissionModeForBackendTarget } from '@/backends/catalog';
+import {
+  serializeSessionModelSelectionV1,
+  type BackendTargetRefV2,
+  type SessionModelSelectionV1,
+} from '@happier-dev/protocol';
+import {
+  serializeNativeForkSourceV1,
+  type NativeForkSource,
+} from '@/session/shared/spawnSessionContract';
+import { normalizeSessionControlPermissionModeForBackendTarget } from '@/session/backendTargets/permissionModes';
 import { normalizeDaemonBackendTargetV2Input } from './backendTargetRouting';
 
 export function buildHappySessionControlArgs(opts: Readonly<{
@@ -7,17 +15,23 @@ export function buildHappySessionControlArgs(opts: Readonly<{
   permissionModeUpdatedAt?: number;
   agentModeId?: string;
   agentModeUpdatedAt?: number;
-  modelId?: string;
-  modelUpdatedAt?: number;
+  modelSelection?: SessionModelSelectionV1;
   resume?: string;
+  nativeForkSource?: NativeForkSource;
   existingSessionId?: string;
   backendTarget?: BackendTargetRefV2;
 }>): string[] {
   const args: string[] = [];
 
   const resume = typeof opts.resume === 'string' ? opts.resume.trim() : '';
+  if (resume && opts.nativeForkSource) {
+    throw new Error('Native fork source cannot be combined with provider resume');
+  }
   if (resume) {
     args.push('--resume', resume);
+  }
+  if (opts.nativeForkSource) {
+    args.push('--native-fork-source-v1', serializeNativeForkSourceV1(opts.nativeForkSource));
   }
 
   const existingSessionId = typeof opts.existingSessionId === 'string' ? opts.existingSessionId.trim() : '';
@@ -53,9 +67,8 @@ export function buildHappySessionControlArgs(opts: Readonly<{
     }
   }
 
-  const modelId = typeof opts.modelId === 'string' ? opts.modelId.trim() : '';
-  if (modelId && typeof opts.modelUpdatedAt === 'number') {
-    args.push('--model', modelId, '--model-updated-at', `${opts.modelUpdatedAt}`);
+  if (opts.modelSelection) {
+    args.push('--model-selection-v1', serializeSessionModelSelectionV1(opts.modelSelection));
   }
 
   return args;

@@ -2,6 +2,7 @@ import { access, mkdir, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
+import type { ScmBackendRegistry } from '@/scm/registry';
 
 import { resolveWorkspaceRelativePath } from '../workspaceExportPackaging/resolveWorkspaceRelativePath';
 import { applyWorkspaceMetadata } from './applyWorkspaceMetadata';
@@ -81,6 +82,7 @@ export async function promoteStagedWorkspace(params: Readonly<{
     stagingRoot: WorkspaceStagingRoot;
     targetWorkspaceDirectory: string;
     expectedManifest: WorkspaceManifest;
+    scmRegistry?: ScmBackendRegistry;
 }>): Promise<PromoteStagedWorkspaceResult> {
     await assertVerifiedStagingRootMarker(params.stagingRoot);
     await assertTargetWorkspaceDoesNotExist(params.targetWorkspaceDirectory);
@@ -90,6 +92,7 @@ export async function promoteStagedWorkspace(params: Readonly<{
         blobsDirectory: params.stagingRoot.blobsDirectory,
         expectedManifest: params.expectedManifest,
         expectedBlobDigests: collectExpectedBlobDigests(params.expectedManifest),
+        scmRegistry: params.scmRegistry,
     });
     if (!verification.isVerified) {
         throw new Error(`Staged workspace verification failed for ${params.stagingRoot.rootDirectory}`);

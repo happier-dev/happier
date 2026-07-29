@@ -1,5 +1,6 @@
 const PRE_SUBMIT_VERIFY_POLL_INTERVAL_MS = 250;
 const PRE_SUBMIT_VERIFY_TIMEOUT_MS = 15_000;
+const DEFAULT_POST_SUBMIT_SETTLE_MS = 50;
 
 export type TerminalPromptSubmitVerificationPolicy = Readonly<{
   shouldVerifyBeforeSubmit(promptText: string): boolean;
@@ -112,6 +113,14 @@ export async function runTerminalPromptSubmission(params: Readonly<{
   const submitOnce = async (): Promise<TerminalPromptSubmitCommandResult> => normalizeSubmitResult(await params.submitEnter({
     remainingTimeoutMs: params.remainingTimeoutMs?.(),
   }));
+  const postSubmitSettleMs = Math.max(
+    0,
+    Math.trunc(params.submitRetryDelayMs ?? DEFAULT_POST_SUBMIT_SETTLE_MS),
+  );
+  const waitForPostSubmitSettle = async (): Promise<void> => {
+    if (postSubmitSettleMs <= 0) return;
+    await (params.wait ?? defaultWait)(postSubmitSettleMs);
+  };
 
   const submitted = await submitOnce();
   if (submitted === 'timeout') {
@@ -137,6 +146,7 @@ export async function runTerminalPromptSubmission(params: Readonly<{
     return { success: true };
   }
 
+  await waitForPostSubmitSettle();
   let stillPending = false;
   try {
     stillPending = await params.verifyAfterSubmit({
@@ -150,10 +160,7 @@ export async function runTerminalPromptSubmission(params: Readonly<{
     return { success: true };
   }
 
-  const retryDelayMs = Math.max(0, Math.trunc(params.submitRetryDelayMs ?? 0));
-  if (retryDelayMs > 0) {
-    await (params.wait ?? defaultWait)(retryDelayMs);
-  }
+  await waitForPostSubmitSettle();
   const retried = await submitOnce();
   if (retried === 'timeout') {
     return {
@@ -174,6 +181,7 @@ export async function runTerminalPromptSubmission(params: Readonly<{
     };
   }
 
+  await waitForPostSubmitSettle();
   try {
     stillPending = await params.verifyAfterSubmit({
       promptText: params.promptText,

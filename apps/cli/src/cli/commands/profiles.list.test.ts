@@ -28,11 +28,11 @@ describe('happier profiles list --json', () => {
     expect(payload.ok).toBe(true);
     expect(payload.kind).toBe('profiles_list');
     expect(payload.data?.authenticated).toBe(false);
-    expect(payload.data?.profiles).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ id: 'anthropic', isBuiltIn: true }),
-      ]),
-    );
+    const profileIds = (payload.data?.profiles as Array<{ id: string }>).map((profile) => profile.id);
+    expect(profileIds).not.toContain('anthropic');
+    expect(profileIds).not.toContain('codex');
+    expect(profileIds).not.toContain('gemini');
+    expect(profileIds).toEqual(expect.arrayContaining(['deepseek', 'zai', 'openai']));
   });
 
   it('includes custom profiles when authenticated', async () => {

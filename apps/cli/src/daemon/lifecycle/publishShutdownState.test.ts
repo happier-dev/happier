@@ -50,6 +50,10 @@ describe('publishShutdownStateBestEffort', () => {
     });
 
     expect(updateDaemonState).toHaveBeenCalledTimes(1);
+    expect(updateDaemonState).toHaveBeenCalledWith(
+      expect.any(Function),
+      { allowWhileQuiescing: true },
+    );
     expect(shutdown).toHaveBeenCalledTimes(1);
     expect(warn).not.toHaveBeenCalled();
   });

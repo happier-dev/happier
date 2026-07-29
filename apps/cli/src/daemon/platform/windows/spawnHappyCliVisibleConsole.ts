@@ -1,12 +1,26 @@
 import { spawn } from 'node:child_process';
-import { buildPowerShellStartProcessInvocation, parsePowerShellStartProcessPid } from './visibleConsoleSpawn';
+import type { CancelStartupLaunch } from '../../spawn/startupLaunchCancellation';
+import { createExactWindowsProcessCancellation } from './windowsProcessCustody';
+import {
+  buildPowerShellStartProcessInvocation,
+  parsePowerShellStartProcessIdentity,
+} from './visibleConsoleSpawn';
+
+type VisibleWindowsConsoleLaunchResult =
+  | Readonly<{
+      ok: true;
+      pid: number;
+      processStartTimeMs: number;
+      cancel: CancelStartupLaunch;
+    }>
+  | Readonly<{ ok: false; errorMessage: string }>;
 
 export async function startHappySessionInVisibleWindowsConsole(params: {
   filePath: string;
   args: string[];
   workingDirectory: string;
   env: NodeJS.ProcessEnv;
-}): Promise<{ ok: true; pid: number } | { ok: false; errorMessage: string }> {
+}): Promise<VisibleWindowsConsoleLaunchResult> {
   const invocation = buildPowerShellStartProcessInvocation({
     filePath: params.filePath,
     args: params.args,
@@ -15,7 +29,7 @@ export async function startHappySessionInVisibleWindowsConsole(params: {
 
   return await new Promise((resolve) => {
     let settled = false;
-    const safeResolve = (result: { ok: true; pid: number } | { ok: false; errorMessage: string }) => {
+    const safeResolve = (result: VisibleWindowsConsoleLaunchResult) => {
       if (settled) return;
       settled = true;
       resolve(result);
@@ -27,33 +41,62 @@ export async function startHappySessionInVisibleWindowsConsole(params: {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
-
     let stdout = '';
     let stderr = '';
 
     child.stdout?.on('data', (data) => {
-      stdout += Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+      stdout = (
+        stdout
+        + (Buffer.isBuffer(data)
+          ? data.toString('utf8')
+          : String(data))
+      ).slice(-16_384);
     });
     child.stderr?.on('data', (data) => {
-      stderr += Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+      stderr = (
+        stderr
+        + (Buffer.isBuffer(data)
+          ? data.toString('utf8')
+          : String(data))
+      ).slice(-16_384);
     });
 
     child.once('error', (error) => {
-      safeResolve({ ok: false, errorMessage: error instanceof Error ? error.message : 'Failed to spawn PowerShell' });
+      safeResolve({
+        ok: false,
+        errorMessage:
+          error instanceof Error
+            ? error.message
+            : 'Failed to spawn PowerShell',
+      });
     });
 
     child.once('close', (code) => {
       if (code !== 0) {
-        safeResolve({ ok: false, errorMessage: `PowerShell exit ${code}. ${stderr.trim() || stdout.trim()}`.trim() });
+        safeResolve({
+          ok: false,
+          errorMessage:
+            `PowerShell exit ${
+              typeof code === 'number' ? code : 'unknown'
+            }. ${stderr.trim() || stdout.trim()}`.trim(),
+        });
         return;
       }
 
-      const pid = parsePowerShellStartProcessPid(stdout);
-      if (typeof pid !== 'number' || !Number.isInteger(pid) || pid <= 0) {
-        safeResolve({ ok: false, errorMessage: `Failed to parse PID from PowerShell output: ${stdout.trim()}` });
+      const identity = parsePowerShellStartProcessIdentity(stdout);
+      if (!identity) {
+        safeResolve({
+          ok: false,
+          errorMessage:
+            `Failed to parse exact Agent identity from PowerShell output: ${stdout.trim()}`,
+        });
         return;
       }
-      safeResolve({ ok: true, pid });
+      safeResolve({
+        ok: true,
+        ...identity,
+        cancel: createExactWindowsProcessCancellation(identity),
+      });
     });
   });
 }

@@ -5,6 +5,7 @@ import { ExecutionRunSendRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
@@ -19,7 +20,7 @@ export async function cmdSessionRunSend(
   const resume = hasFlag(argv, '--resume');
 
   if (!idOrPrefix || !runId || !message) {
-    throw new Error('Usage: happier session run send <session-id-or-prefix> <run-id> <message> [--resume] [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runSend}`);
   }
 
   const credentials = await deps.readCredentialsFn();

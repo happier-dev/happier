@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, rm, stat, symlink, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -222,24 +222,41 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
     }
   });
 
-  it('strips legacy Claude refresh tokens from retained materialized homes', async () => {
-    const root = await createTempDir('happier-materialized-home-cleanup-refresh-token-strip-');
+  it('applies the injected retained-home sanitizer to each retained materialized home', async () => {
+    const root = await createTempDir('happier-materialized-home-cleanup-retained-sanitizer-');
     try {
       const baseDir = join(root, 'materialized');
-      const materializationKey = 'live-claude-home';
+      const materializationKey = 'live-home';
       const liveRoot = await createIdentityRoot(baseDir, materializationKey, 'claude');
-      const credentialPath = join(liveRoot, 'claude', '.credentials.json');
-      await writeFile(credentialPath, `${JSON.stringify({
-        claudeAiOauth: {
-          accessToken: 'access-placeholder',
-          refreshToken: 'camel-refresh',
-          refresh_token: 'snake-refresh',
-          RT: 'short-refresh',
-          expiresAt: 123,
-          scopes: ['user:inference'],
-        },
-      })}\n`);
+      const retainedKey = 'retained-home';
+      const retainedRoot = await createIdentityRoot(baseDir, retainedKey, 'claude');
 
+      const sanitizedHomeRoots: string[] = [];
+      const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
+        baseDir,
+        nowMs: () => 10_000,
+        orphanTtlMs: 1_000,
+        attemptTtlMs: 1_000,
+        getLiveMaterializationKeys: () => [materializationKey],
+        getRetainedMaterializationKeys: async () => [retainedKey],
+        sanitizeRetainedMaterializedHome: async (homeRootDir) => {
+          sanitizedHomeRoots.push(homeRootDir);
+        },
+      });
+
+      await expect(scheduler.reconcile()).resolves.toEqual([]);
+      expect(sanitizedHomeRoots.sort()).toEqual([liveRoot, retainedRoot].sort());
+    } finally {
+      await removeTempDir(root);
+    }
+  });
+
+  it('never invokes a retained-home sanitizer when none is contributed', async () => {
+    const root = await createTempDir('happier-materialized-home-cleanup-no-sanitizer-');
+    try {
+      const baseDir = join(root, 'materialized');
+      const materializationKey = 'live-home';
+      await createIdentityRoot(baseDir, materializationKey, 'claude');
       const scheduler = new ConnectedServiceMaterializedHomeCleanupScheduler({
         baseDir,
         nowMs: () => 10_000,
@@ -248,16 +265,7 @@ describe('ConnectedServiceMaterializedHomeCleanupScheduler', () => {
         getLiveMaterializationKeys: () => [materializationKey],
         getRetainedMaterializationKeys: async () => [],
       });
-
       await expect(scheduler.reconcile()).resolves.toEqual([]);
-      const rewritten = JSON.parse(await readFile(credentialPath, 'utf8')) as Readonly<Record<string, unknown>>;
-      expect(rewritten).toEqual({
-        claudeAiOauth: {
-          accessToken: 'access-placeholder',
-          expiresAt: 123,
-          scopes: ['user:inference'],
-        },
-      });
     } finally {
       await removeTempDir(root);
     }

@@ -1,4 +1,3 @@
-import type { PluginContextV1, RegisterAgentRuntimeV1 } from '@happier-dev/plugin-sdk';
 import type {
     ResolvedAgentContribution,
     ResolvedAgentRuntimeContribution,
@@ -7,9 +6,8 @@ import type {
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createMissingCliEngineAdapter } from '../createCliRuntimeCore';
 import {
-    collectEngineImplementedBackendSurfaceOperations,
     mergeBackendExecutionSurfaces,
-    resolveBackendExecutionSurfacesFromEngine,
+    resolveBackendExecutionSurfacesFromNativeAgentRuntime,
 } from '../backendEngineSurfaceBindings';
 import { resolvePluginBackendSurfaceHandlers } from '../resolvePluginBackendSurfaceHandlers';
 import {
@@ -23,15 +21,31 @@ import {
 } from './runtimeOwnerResolution';
 import {
     readRuntimeRegistryBackendEngineEntry,
+    resolveEngineRuntimeContribution,
     resolveCatalogExecutionSurfacesForFirstPartyBackend,
-    resolveContributionRuntimeCoreGetter,
     toEngineSelectedSource,
 } from './contributions';
-import { createEngineSurfaceContextResolvers } from './surfaceContext';
 import {
     resolveBackendRuntimeCore,
     shouldNormalizeManifestOnlyAcpBackend,
 } from './runtimeCore';
+import { resolveLeasedAgentRuntime } from './agentRuntimeLease';
+import { createAgentExternalSessionsExecutionSurface } from '../agentExternalSessionsExecutionSurface';
+import type { ResolveEngineRegistryParams } from './types';
+
+function resolveDeclaredAgentSurfaceFamilies(
+    agent: ResolvedAgentContribution,
+): ReadonlySet<'terminalRuntime'> {
+    const definition = agent.richDefinition?.definition;
+    if (!definition || typeof definition !== 'object' || Array.isArray(definition)) return new Set();
+    const capabilities = Reflect.get(definition, 'capabilities');
+    if (!capabilities || typeof capabilities !== 'object' || Array.isArray(capabilities)) return new Set();
+    const surfaces = Reflect.get(capabilities, 'surfaces');
+    if (!Array.isArray(surfaces)) return new Set();
+    const families = new Set<'terminalRuntime'>();
+    if (surfaces.includes('terminal')) families.add('terminalRuntime');
+    return families;
+}
 
 export function resolveFirstPartyCatalogEntryForBackend(params: Readonly<{
     backend: ResolvedAgentRuntimeContribution;
@@ -43,157 +57,150 @@ export function resolveFirstPartyCatalogEntryForBackend(params: Readonly<{
     return params.contributions.catalogEntriesById[params.backend.agentId] ?? null;
 }
 
-function createMissingProviderContribution(params: Readonly<{
-    backend: ResolvedAgentRuntimeContribution;
-}>): ResolvedAgentContribution {
-    return {
-        id: params.backend.agentId,
-        provenance: params.backend.provenance,
-        source: params.backend.source,
-        definition: {
-            kindVersion: 1,
-            id: params.backend.agentId,
-            ownedBackendIds: Object.freeze([]),
-        },
-    };
+function resolveRegisteredAgentAuxiliarySurfaces(
+    engineEntry: Readonly<{
+        pluginId: string;
+        generation: string;
+        retirementSignal: AbortSignal;
+        isCurrent(): boolean;
+        externalSessions?: Parameters<typeof createAgentExternalSessionsExecutionSurface>[0];
+    }> | undefined,
+    agent: ResolvedAgentContribution,
+) {
+    const surfaces = createEmptyBackendExecutionSurfaces();
+    const writerSafety = agent.richDefinition?.definition
+        .surfaces?.externalSession.externalLinkedTakeover?.writerSafety
+        ?? 'unsupported';
+    return engineEntry?.externalSessions
+        ? {
+            ...surfaces,
+            externalSession: createAgentExternalSessionsExecutionSurface(
+                engineEntry.externalSessions,
+                writerSafety,
+            ),
+        }
+        : surfaces;
 }
 
 export async function resolveEngineAdapterResolutionFromRegistry(params: Readonly<{
     backendId: string;
     contributions: ResolvedContributionRegistry;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
-    pluginContext: PluginContextV1;
+    happyHomeDir?: string;
+    nativeAgentRuntimeCarrier?: ResolveEngineRegistryParams['nativeAgentRuntimeCarrier'];
 }>): Promise<EngineAdapterResolution | null> {
-    const backend = params.contributions.agentRuntimeDefinitionsById.get(params.backendId);
+    const backend = resolveEngineRuntimeContribution(params.contributions, params.backendId);
     if (!backend) {
         return null;
     }
 
-    const provider = params.contributions.agentDefinitionsById.get(backend.agentId);
-    if (!provider) {
-        const missingProvider = createMissingProviderContribution({ backend });
-        const catalogEntry = resolveFirstPartyCatalogEntryForBackend({
-            backend,
-            contributions: params.contributions,
-        });
-        const runtimeCoreGetter = resolveContributionRuntimeCoreGetter({
-            backend,
-            catalogEntry,
-        });
-        const engineEntry = params.runtimeRegistry
-            ? readRuntimeRegistryBackendEngineEntry(params.runtimeRegistry, backend.id)
-            : undefined;
-        const runtimeOwner = resolveBackendRuntimeOwner({
-            backend,
-            provider: null,
-            runtimeCoreGetter,
-            engineEntry,
-            manifestOnlyPluginRuntime: shouldNormalizeManifestOnlyAcpBackend(backend),
-        });
-        const executionSurfaces = createEmptyBackendExecutionSurfaces();
-        const engineAdapter = await resolveBackendRuntimeCore({
-            backend,
-            provider: missingProvider,
-            executionSurfaces,
-            runtimeCoreGetter,
-            runtimeOwner,
-            engineEntry,
-            runtimeRegistry: params.runtimeRegistry,
-            pluginContext: params.pluginContext,
-        });
-        return {
-            backendId: backend.id,
-            agentId: backend.agentId,
-            provenance: backend.provenance,
-            selectedSource: toEngineSelectedSource(backend.provenance, undefined),
-            runtimeOwner,
-            backend,
-            provider: missingProvider,
-            engineAdapter: engineAdapter ?? createMissingCliEngineAdapter({ backend }),
-            executionSurfaces,
-            diagnostics: Object.freeze([{
-                code: 'engine_provider_missing',
-                message: `Missing provider contribution '${backend.agentId}' for backend '${backend.id}'`,
-                backendId: backend.id,
-                agentId: backend.agentId,
-                pluginId: backend.pluginId,
-            }]),
-        };
-    }
+    const agent = params.contributions.agentDefinitionsById.get(backend.agentId);
+    if (!agent) return null;
 
     if (backend.provenance === 'first_party') {
         const entry = resolveFirstPartyCatalogEntryForBackend({
             backend,
             contributions: params.contributions,
         });
-        const runtimeCoreGetter = resolveContributionRuntimeCoreGetter({
-            backend,
-            catalogEntry: entry ?? null,
-        });
         const runtimeRegistry = params.runtimeRegistry;
         const engineEntry = runtimeRegistry
-            ? readRuntimeRegistryBackendEngineEntry(runtimeRegistry, backend.id)
+            ? readRuntimeRegistryBackendEngineEntry(runtimeRegistry, backend)
             : undefined;
         const runtimeOwner = resolveBackendRuntimeOwner({
             backend,
-            provider,
-            runtimeCoreGetter,
+            agent,
             engineEntry,
             manifestOnlyPluginRuntime: false,
+            nativeAgentRuntimeCarrier:
+                params.nativeAgentRuntimeCarrier?.descriptor.backendId === backend.id,
         });
         const catalogExecutionSurfaces = await resolveCatalogExecutionSurfacesForFirstPartyBackend({
             backend,
             entry,
         });
-        const canResolvePluginEngineSurfaces = Boolean(
-            runtimeOwner.conflictDiagnostic
-            && engineEntry?.registration
-            && (backend.surfaceHandlers?.length ?? 0) > 0,
-        );
-        const registration = runtimeOwner.selected?.kind === 'plugin_engine' || canResolvePluginEngineSurfaces
-            ? engineEntry?.registration as RegisterAgentRuntimeV1 | undefined
-            : undefined;
-        const pluginEngine = registration ? await registration.create(params.pluginContext) : null;
-        const diagnostics: EngineResolutionDiagnostic[] = runtimeOwner.conflictDiagnostic
-            ? [runtimeOwner.conflictDiagnostic]
-            : [];
-        const engineSurfaces = pluginEngine
-            ? resolveBackendExecutionSurfacesFromEngine({
+        const carriedRuntime = params.nativeAgentRuntimeCarrier?.descriptor.backendId === backend.id
+            ? params.nativeAgentRuntimeCarrier.runtime
+            : null;
+        const leasedRuntime = carriedRuntime ?? (runtimeOwner.selected?.kind === 'plugin_engine'
+            && engineEntry
+            ? await resolveLeasedAgentRuntime({ lease: engineEntry })
+            : null);
+        const diagnostics: EngineResolutionDiagnostic[] = [];
+        const declaredAgentSurfaceFamilies = resolveDeclaredAgentSurfaceFamilies(agent);
+        const engineSurfaces = leasedRuntime
+            ? resolveBackendExecutionSurfacesFromNativeAgentRuntime({
                 backend,
-                engine: pluginEngine,
+                runtime: leasedRuntime,
+                agentId: carriedRuntime
+                    ? params.nativeAgentRuntimeCarrier!.descriptor.agentId
+                    : engineEntry!.agentId,
+                isCurrent: carriedRuntime
+                    ? params.nativeAgentRuntimeCarrier!.isCurrent
+                    : engineEntry!.isCurrent,
+                declaredAgentSurfaceFamilies,
                 diagnostics,
-                ...createEngineSurfaceContextResolvers(params.pluginContext, {
-                    contributions: params.contributions,
-                }),
             })
             : createEmptyBackendExecutionSurfaces();
-        const executionSurfaces = mergeBackendExecutionSurfaces(catalogExecutionSurfaces, engineSurfaces);
-        const engineAdapter = runtimeOwner.conflictDiagnostic
-            ? null
-            : await resolveBackendRuntimeCore({
+        const combinedExecutionSurfaces = mergeBackendExecutionSurfaces(
+            catalogExecutionSurfaces,
+            engineSurfaces,
+        );
+        const registeredAgentSurfaces = resolveRegisteredAgentAuxiliarySurfaces(
+            engineEntry,
+            agent,
+        );
+        const executionSurfaces = {
+            ...combinedExecutionSurfaces,
+            externalSession: registeredAgentSurfaces.externalSession,
+        };
+        const engineAdapter = await resolveBackendRuntimeCore({
                 backend,
-                provider,
+                agent,
                 executionSurfaces,
-                runtimeCoreGetter,
                 runtimeOwner,
                 engineEntry,
                 runtimeRegistry: params.runtimeRegistry,
-                pluginContext: params.pluginContext,
-                pluginEngine,
+                nativeAgentRuntimeVoiceAuthority:
+                    params.nativeAgentRuntimeCarrier?.descriptor.backendId
+                        === backend.id
+                        ? params.nativeAgentRuntimeCarrier
+                            .agentSessionRealtimeVoiceAuthority
+                        : null,
+                ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+                nativeAgentRuntime: leasedRuntime,
+                externalSessionHostOperations:
+                    params.nativeAgentRuntimeCarrier?.descriptor.backendId
+                        === backend.id
+                        ? params.nativeAgentRuntimeCarrier
+                            .externalSessionHostOperations
+                        : null,
+                nativeAgentRuntimeIdentity: params.nativeAgentRuntimeCarrier?.descriptor.backendId === backend.id
+                    ? {
+                        ...params.nativeAgentRuntimeCarrier.descriptor,
+                        ...(params.nativeAgentRuntimeCarrier.retirementSignal
+                            ? {
+                                retirementSignal:
+                                  params.nativeAgentRuntimeCarrier
+                                    .retirementSignal,
+                              }
+                            : {}),
+                        isCurrent: params.nativeAgentRuntimeCarrier.isCurrent,
+                    }
+                    : undefined,
             });
         return {
             backendId: backend.id,
-            agentId: provider.id,
+            agentId: agent.id,
             provenance: backend.provenance,
             selectedSource: runtimeOwner.selected?.kind === 'plugin_engine'
                 ? 'plugin'
                 : toEngineSelectedSource(
                     backend.provenance,
-                    provider.runtimeSpec?.sourcePreferenceDefault,
+                    agent.runtimeSpec?.sourcePreferenceDefault,
                 ),
             runtimeOwner,
             backend,
-            provider,
+            agent,
             engineAdapter: engineAdapter ?? createMissingCliEngineAdapter({ backend }),
             executionSurfaces,
             diagnostics: Object.freeze(diagnostics),
@@ -204,82 +211,78 @@ export async function resolveEngineAdapterResolutionFromRegistry(params: Readonl
     if (!runtimeRegistry) {
         return {
             backendId: backend.id,
-            agentId: provider.id,
+            agentId: agent.id,
             provenance: backend.provenance,
             selectedSource: 'plugin',
             runtimeOwner: createEmptyBackendRuntimeOwnerResolution(backend.id),
             backend,
-            provider,
+            agent,
             engineAdapter: createMissingCliEngineAdapter({ backend }),
             executionSurfaces: createEmptyBackendExecutionSurfaces(),
             diagnostics: Object.freeze([{
                 code: 'engine_backend_missing',
                 message: `No executable runtime registry available for plugin backend '${backend.id}'`,
                 backendId: backend.id,
-                agentId: provider.id,
+                agentId: agent.id,
                 pluginId: backend.pluginId,
             }]),
         };
     }
 
-    const engineEntry = readRuntimeRegistryBackendEngineEntry(runtimeRegistry, backend.id);
-    const runtimeCoreGetter = resolveContributionRuntimeCoreGetter({
-        backend,
-        catalogEntry: null,
-    });
+    const engineEntry = readRuntimeRegistryBackendEngineEntry(runtimeRegistry, backend);
     const runtimeOwner = resolveBackendRuntimeOwner({
         backend,
-        provider,
-        runtimeCoreGetter,
+        agent,
         engineEntry,
         manifestOnlyPluginRuntime: shouldNormalizeManifestOnlyAcpBackend(backend),
     });
-    const registration = runtimeOwner.selected?.kind === 'plugin_engine'
-        ? engineEntry?.registration as RegisterAgentRuntimeV1 | undefined
-        : undefined;
-    const pluginEngine = registration ? await registration.create(params.pluginContext) : null;
-    const engineImplementedBackendSurfaceOperations = pluginEngine
-        ? collectEngineImplementedBackendSurfaceOperations(pluginEngine)
-        : undefined;
-    const engineSurfaceContextResolvers = createEngineSurfaceContextResolvers(params.pluginContext, {
-        contributions: params.contributions,
-    });
-    const pluginResolution = await resolvePluginBackendSurfaceHandlers({
+    const leasedRuntime = runtimeOwner.selected?.kind === 'plugin_engine' && engineEntry
+        ? await resolveLeasedAgentRuntime({ lease: engineEntry })
+        : null;
+    const pluginRuntimeDiagnostics = await resolvePluginBackendSurfaceHandlers({
         backend,
-        provider,
+        agent,
         runtimeRegistry,
-        engineImplementedBackendSurfaceOperations,
-        ...engineSurfaceContextResolvers,
+        hasRegisteredAgentRuntime: engineEntry?.hasPrimaryRuntime === true,
     });
-    const diagnostics = [...pluginResolution.diagnostics];
-    const engineSurfaces = pluginEngine
-        ? resolveBackendExecutionSurfacesFromEngine({
+    const diagnostics = [...pluginRuntimeDiagnostics.diagnostics];
+    const declaredAgentSurfaceFamilies = resolveDeclaredAgentSurfaceFamilies(agent);
+    const engineSurfaces = leasedRuntime
+        ? resolveBackendExecutionSurfacesFromNativeAgentRuntime({
             backend,
-            engine: pluginEngine,
+            runtime: leasedRuntime,
+            agentId: engineEntry!.agentId,
+            isCurrent: engineEntry!.isCurrent,
+            declaredAgentSurfaceFamilies,
             diagnostics,
-            ...engineSurfaceContextResolvers,
         })
         : createEmptyBackendExecutionSurfaces();
-    const executionSurfaces = mergeBackendExecutionSurfaces(pluginResolution.surfaces, engineSurfaces);
+    const registeredAgentSurfaces = resolveRegisteredAgentAuxiliarySurfaces(
+        engineEntry,
+        agent,
+    );
+    const executionSurfaces = {
+        ...engineSurfaces,
+        externalSession: registeredAgentSurfaces.externalSession,
+    };
     const engineAdapter = await resolveBackendRuntimeCore({
         backend,
-        provider,
+        agent,
         executionSurfaces,
-        runtimeCoreGetter,
         runtimeOwner,
         engineEntry,
         runtimeRegistry,
-        pluginContext: params.pluginContext,
-        pluginEngine,
+        ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
+        nativeAgentRuntime: leasedRuntime,
     });
     return {
         backendId: backend.id,
-        agentId: provider.id,
+        agentId: agent.id,
         provenance: backend.provenance,
         selectedSource: 'plugin',
         runtimeOwner,
         backend,
-        provider,
+        agent,
         engineAdapter: engineAdapter ?? createMissingCliEngineAdapter({ backend }),
         executionSurfaces,
         diagnostics: Object.freeze(diagnostics),

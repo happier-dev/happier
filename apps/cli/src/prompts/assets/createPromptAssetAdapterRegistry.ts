@@ -1,12 +1,12 @@
 import type { PromptAssetAdapter } from './types';
-import type { PluginPromptAssetContributionV1 } from '@happier-dev/protocol';
+import type { PluginPromptAssetAdapterDescriptor } from './pluginPromptAssetAdapterDescriptor';
 import { createAgentsSkillPromptAssetAdapter } from './adapters/agentsSkill/createAgentsSkillPromptAssetAdapter';
 import { createSkillMdPromptAssetAdapter } from './adapters/skillMd/createSkillMdPromptAssetAdapter';
 import { createMarkdownDocPromptAssetAdapter } from './adapters/markdownDoc/createMarkdownDocPromptAssetAdapter';
 import { BUNDLED_FIRST_PARTY_PLUGIN_PROMPT_ASSET_DESCRIPTORS } from './generated/pluginDescriptors';
 
 function createPluginPromptAssetAdapter(
-  descriptor: PluginPromptAssetContributionV1,
+  descriptor: PluginPromptAssetAdapterDescriptor,
   params?: Readonly<{
     homedir?: () => string;
     happierHomeDir?: () => string;

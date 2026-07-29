@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 
-import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
+import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchOptions, type HappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
 import { resolveDaemonSessionScopeBaseRelativePath } from './resolveDaemonSessionScopeBaseRelativePath';
 
 function normalizePid(raw: unknown): number | null {
@@ -36,6 +36,7 @@ export async function buildCgroupSelfMigratingHappyCliLaunchSpec(params: Readonl
   daemonPid?: number;
   procfsRootDir?: string;
   cgroupRootDir?: string;
+  launchOptions?: HappyCliSubprocessLaunchOptions;
 }>): Promise<ExecutableLaunchSpec | null> {
   const daemonPid = normalizePid(params.daemonPid) ?? process.pid;
   const procfsRootDir = params.procfsRootDir ?? '/proc';
@@ -50,7 +51,7 @@ export async function buildCgroupSelfMigratingHappyCliLaunchSpec(params: Readonl
     return null;
   }
 
-  const baseLaunchSpec: HappyCliSubprocessLaunchSpec = buildHappyCliSubprocessLaunchSpec(params.args);
+  const baseLaunchSpec: HappyCliSubprocessLaunchSpec = buildHappyCliSubprocessLaunchSpec(params.args, params.launchOptions);
   const appSliceAbsolutePath = join(cgroupRootDir, sessionScopeBaseRelativePath);
 
   return {

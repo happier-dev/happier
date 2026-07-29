@@ -135,6 +135,7 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
       vendorResumeId === 'sess-handoff-direct'
         ? {
             handoffV1: {
+              v: 1,
               providerId: 'claude',
             },
           }
@@ -160,6 +161,61 @@ describe('resolveSpawnBackendIdentity credential precedence', () => {
       catalogAgentId: 'claude',
     });
     expect(loadLocalHandoffMetadataByVendorResumeId).toHaveBeenCalledWith('sess-handoff-direct');
+  });
+
+  it('refuses an existing-session spawn when linked resume identity is unavailable', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 12);
+    resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
+      ok: false,
+      reason: 'linkedResumeIdentityUnavailable',
+    });
+    const loadLocalHandoffMetadataByVendorResumeId = vi.fn(async () => null);
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-linked-stale',
+      resume: 'caller-supplied-stale-id',
+      backendTarget: { kind: 'backend', backendId: 'antigravity', sourceKind: 'built_in' },
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: {
+        type: 'error',
+        errorCode: 'SPAWN_VALIDATION_FAILED',
+      },
+    });
+    expect(loadLocalHandoffMetadataByVendorResumeId).not.toHaveBeenCalled();
+  });
+
+  it('uses the verified linked vendor resume id instead of a caller-supplied resume id', async () => {
+    const liveCredentials = createLegacyCredentials('live-token', 13);
+    resolveExistingSessionAttachContextMock.mockResolvedValueOnce({
+      ok: true,
+      attachPayload: { v: 2, encryptionMode: 'plain' },
+      vendorResumeId: 'verified-linked-id',
+      linkedVendorResumeId: 'verified-linked-id',
+      backendTarget: { kind: 'builtInAgent', agentId: 'antigravity' },
+    });
+
+    const result = await resolveSpawnBackendIdentity({
+      existingSessionId: 'sess-linked-current',
+      resume: 'caller-supplied-stale-id',
+      backendTarget: { kind: 'backend', backendId: 'antigravity', sourceKind: 'built_in' },
+      credentials: liveCredentials,
+      loadLocalHandoffMetadataByVendorResumeId: async () => null,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      effectiveResume: 'verified-linked-id',
+      effectiveBackendTargetV2: {
+        kind: 'backend',
+        backendId: 'antigravity',
+        sourceKind: 'built_in',
+      },
+    });
   });
 
   it('preserves configured ACP backend targets as canonical V2 targets', async () => {

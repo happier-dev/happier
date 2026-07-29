@@ -95,7 +95,9 @@ export type ExecutionRunProfileInvalidOutputRepairPromptParams = Readonly<{
 }>;
 
 export type ExecutionRunProfilePrepareStartParams = Readonly<{
-  request: ExecutionRunStartRequest;
+  request: Omit<ExecutionRunStartRequest, 'backendTarget'> & Readonly<{
+    backendTarget: ExecutionRunStartRequest['backendTarget'] | BackendTargetRefV1;
+  }>;
   cwd: string;
 }>;
 

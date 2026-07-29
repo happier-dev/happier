@@ -3,7 +3,7 @@ import axios from 'axios';
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import type { Credentials } from '@/persistence';
 import { configuration } from '@/configuration';
-import { resolveLoopbackHttpUrl } from '@/api/client/loopbackUrl';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 
@@ -29,7 +29,7 @@ export async function resolveForkCutoffSeqInclusive(params: Readonly<{
   const targetSeqInclusive = Math.max(0, Math.trunc(params.targetSeqInclusive));
   if (targetSeqInclusive <= 0) return { cutoffSeqInclusive: targetSeqInclusive, targetRole: null };
 
-  const serverUrl = resolveLoopbackHttpUrl(configuration.apiServerUrl).replace(/\/+$/, '');
+  const serverUrl = resolveServerHttpBaseUrl();
   const response = await axios.get(`${serverUrl}/v1/sessions/${params.parentSessionId}/messages`, {
     headers: {
       Authorization: `Bearer ${params.credentials.token}`,

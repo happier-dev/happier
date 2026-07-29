@@ -19,26 +19,18 @@ const display = {
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
     return {
         agents: [],
-        agentRuntimes: [],
-        actions: [],
+                actions: [],
         tools: [],
         commands: [],
         resources: [],
-        uiDescriptors: [],
         activationTargets: [],
-        hookRegistrations: [],
-        lifecycleHandlers: [],
         actionsById: new Map(),
         toolsById: new Map(),
         commandsById: new Map(),
         resourcesById: new Map(),
-        uiDescriptorsById: new Map(),
-        lifecycleHandlersById: new Map(),
-        surfaceHandlersByBackendId: new Map(),
-        catalogEntriesById: {},
+                catalogEntriesById: {},
         agentDefinitionsById: new Map(),
-        agentRuntimeDefinitionsById: new Map(),
-        pluginDiagnosticsByPluginId: {},
+                pluginDiagnosticsByPluginId: {},
     };
 }
 

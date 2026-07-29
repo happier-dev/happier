@@ -1,11 +1,22 @@
 import type { SocketRpcCallPayload, SocketRpcCallResponse, SocketRpcRequestPayload, Update } from '../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import {
+  EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1,
+  EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1,
+  MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
+  MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
   MACHINE_LIVE_STREAM_SOCKET_EVENT,
   PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
   TRANSFER_RELAY_V2_SOCKET_EVENT,
-  type ExternalSessionTranscriptDeltaEphemeral,
+  type ExternalSessionTranscriptInvalidationV1,
+  type ExternalSessionOperationSocketCommandV1,
+  type ExternalSessionOperationSocketResponseV1,
+  type ExternalSessionStatusDemandDaemonMessageV1,
   type MachineLiveStreamRelayEnvelopeV1,
+  type MachineSessionTerminalCaptureRequestV1,
+  type MachineSessionTerminalCaptureResponseV1,
+  type MachineSessionTerminalFinalizeRequestV1,
+  type MachineSessionTerminalFinalizeResponseV1,
   type MachineTransferReceiveEnvelope,
   type MachineTransferSendEnvelope,
   type PeerTcpTunnelRelayEnvelope,
@@ -22,6 +33,7 @@ export interface ServerToDaemonEvents {
   [TRANSFER_RELAY_V2_SOCKET_EVENT]: (data: TransferRelayV2SendEnvelope) => void;
   [PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT]: (data: PeerTcpTunnelRelayEnvelope) => void;
   [MACHINE_LIVE_STREAM_SOCKET_EVENT]: (data: MachineLiveStreamRelayEnvelopeV1) => void;
+  [EXTERNAL_SESSION_STATUS_DEMAND_EVENT_V1]: (data: ExternalSessionStatusDemandDaemonMessageV1) => void;
   auth: (data: { success: boolean; user: string }) => void;
   error: (data: { message: string }) => void;
 }
@@ -29,7 +41,19 @@ export interface ServerToDaemonEvents {
 export interface DaemonToServerEvents {
   'machine-alive': (data: { machineId: string; time: number }) => void;
   'session-end': (data: { sid: string; time: number; exit?: any }) => void;
-  'direct-session-transcript-delta': (data: ExternalSessionTranscriptDeltaEphemeral) => void;
+  'external-session-transcript-invalidated': (data: ExternalSessionTranscriptInvalidationV1) => void;
+  [EXTERNAL_SESSION_OPERATION_SOCKET_EVENT_V1]: (
+    data: ExternalSessionOperationSocketCommandV1,
+    cb: (answer: ExternalSessionOperationSocketResponseV1) => void,
+  ) => void;
+  [MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1]: (
+    data: MachineSessionTerminalCaptureRequestV1,
+    cb: (answer: MachineSessionTerminalCaptureResponseV1) => void,
+  ) => void;
+  [MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1]: (
+    data: MachineSessionTerminalFinalizeRequestV1,
+    cb: (answer: MachineSessionTerminalFinalizeResponseV1) => void,
+  ) => void;
 
   'machine-update-metadata': (
     data: { machineId: string; metadata: string; expectedVersion: number },

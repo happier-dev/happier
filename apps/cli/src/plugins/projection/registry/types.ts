@@ -1,22 +1,26 @@
 import type {
     BackendCatalogDefinition,
-    ProviderCatalogDefinition as AgentCatalogDefinition,
     BackendDefinitionContractV1,
-    ProviderDefinitionContractV1 as AgentDefinitionContractV1,
+    AgentDefinitionContractV1,
 } from '@happier-dev/agents';
 import type {
   ActionDefinitionV1,
+  HookCategoryV1,
+  HookExecutionKindV1,
+  HookScopeV1,
   AgentDefinitionV1,
-  BackendDefinitionV1,
+  PluginAgentContributionV2,
+  PluginActionContributionV2,
+  PluginBackendDefinitionV1,
   BackendSurfaceDeclarationV1,
   PluginBackendCapabilitiesV1,
   PluginBrowserActionContributionV1,
   PluginBrowserTargetContributionV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
+  PluginPromptAssetContributionV1,
   PluginExecutionRunProfileContributionV2,
   PluginHostedWebContributionV1,
-  PluginEmbeddedWebBundleContributionV1,
   PluginReactNativeBundleContributionV1,
   PluginSessionHeaderActionDescriptorV1,
   PluginSurfacePlacementDescriptorV1,
@@ -24,26 +28,38 @@ import type {
   PluginMcpServerContributionV1,
   PluginRequestInterceptorContributionV1,
   InstallableDependencyDescriptor,
+  PluginManagedDependencyContributionV2,
   ScmBackendContribution,
   PluginSettingsContributionV2,
   PluginStructuredMessageDescriptorV1,
+  PluginSystemToolContributionV1,
   PluginUiArtifactContributionV1,
   ScmHostingProviderContribution,
   PluginConnectedAccountDescriptorContributionV2,
   PluginEventContributionV1,
   PluginSourceSpecV1,
   PluginContributionIdentityV1,
+  PluginToolContributionV2,
+  PluginCommandContributionV2,
+  ProviderContributionV1,
+  PluginAgentCliMetadata,
   PluginUiTranslationsContributionV1,
-  HookRegistrationV1,
+  PluginUiRendererV2,
+  PluginUiViewV2,
+  PluginUiTranslationBundleV2,
+  VoiceModelPackContributionV1,
+  PluginVoiceProviderContributionV1,
 } from '@happier-dev/protocol';
-import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
-import type {
-    BackendRuntimeOwnerTakeoverMarker,
-    CliRuntimeCoreGetter,
-} from '@/agent/runtime/registry/engineRegistryTypes';
-
+import type { PluginUiArtifactsManifestV1 } from '@happier-dev/protocol/plugins/ui';
+import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import type { PluginContributionIntrospectionCandidate } from '@/plugins/projection/introspection/types';
+import type {
+  ManagedProviderRuntimeAdapterV1,
+  ResolvedFirstPartyManagedProviderFacet,
+} from '@/providers/managed/types';
 
 export type ResolvedContributionProvenance = 'first_party' | 'external';
 
@@ -53,13 +69,47 @@ export type ResolvedContributionSource = Readonly<{
     kind: ResolvedContributionSourceKind;
 }>;
 
+export type PluginLocaleScopedIdentity = Readonly<{
+    pluginId: string;
+    locale: string;
+}>;
+
+export type ResolvedTargetUiContribution<T> = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId: string;
+    pluginVersion?: string;
+    identity: PluginContributionIdentityV1;
+    manifestPath: string;
+    manifestDigest: string;
+    definition: T;
+}>;
+export type ResolvedUiViewV2Contribution = ResolvedTargetUiContribution<PluginUiViewV2>;
+export type ResolvedUiRendererV2Contribution = ResolvedTargetUiContribution<PluginUiRendererV2> & Readonly<{
+    pluginRootPath?: string;
+    generatedUiArtifactsManifest?: PluginUiArtifactsManifestV1;
+}>;
+export type ResolvedUiTranslationBundleV2Contribution = Readonly<
+    Omit<ResolvedTargetUiContribution<PluginUiTranslationBundleV2>, 'identity'> & {
+        localeIdentity: PluginLocaleScopedIdentity;
+    }
+>;
+export type ResolvedVoiceModelPackContribution = ResolvedTargetUiContribution<VoiceModelPackContributionV1> & Readonly<{
+    daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+}>;
+export type ResolvedVoiceProviderContribution = ResolvedTargetUiContribution<PluginVoiceProviderContributionV1> & Readonly<{
+    pluginRootPath?: string;
+    sourceSpec?: PluginSourceSpecV1;
+    generatedUiArtifactsManifest?: PluginUiArtifactsManifestV1;
+}>;
+
 export type ResolvedAgentDefinitionContract = AgentDefinitionContractV1 & Readonly<
     Partial<Omit<AgentDefinitionV1, keyof AgentDefinitionContractV1>>
 >;
 
-export type ResolvedAgentRuntimeDefinitionContract = Omit<BackendDefinitionContractV1, 'providerId'> & Readonly<{
-    agentId: string;
-}>;
+export type ResolvedAgentRuntimeDefinitionContract = BackendDefinitionContractV1;
 
 /**
  * Internal host projection shape.
@@ -78,11 +128,11 @@ export type ResolvedCatalogEntry = Readonly<
 export type ResolvedAgentRichDefinition = Readonly<
     | {
         provenance: 'first_party';
-        definition: AgentCatalogDefinition;
+        definition: PluginAgentContributionV2;
     }
     | {
         provenance: 'external';
-        definition: AgentDefinitionV1;
+        definition: PluginAgentContributionV2;
     }
 >;
 
@@ -93,7 +143,7 @@ export type ResolvedAgentRuntimeRichDefinition = Readonly<
     }
     | {
         provenance: 'external';
-        definition: Omit<BackendDefinitionV1, 'capabilities' | 'surfaceHandlers'> & Readonly<{
+        definition: Omit<PluginBackendDefinitionV1, 'capabilities' | 'surfaceHandlers'> & Readonly<{
             capabilities: PluginBackendCapabilitiesV1;
             surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
         }>;
@@ -102,14 +152,21 @@ export type ResolvedAgentRuntimeRichDefinition = Readonly<
 
 export type ResolvedAgentContribution = Readonly<{
     id: string;
+    /** Stable manifest-qualified identity. This is intentionally independent of runtime generation. */
+    identity?: PluginContributionIdentityV1;
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     definition: ResolvedAgentDefinitionContract;
     richDefinition?: ResolvedAgentRichDefinition;
-    runtimeSpec?: ProviderCliRuntimeDescriptor | null;
+    runtimeSpec?: AgentCliRuntimeDescriptor | null;
+    /** Strict native manifest metadata retained for host-owned auth/login projections. */
+    cliMetadata?: PluginAgentCliMetadata | null;
     catalogEntry?: ResolvedCatalogEntry | null;
     sourceSpec?: PluginSourceSpecV1;
     pluginId?: string;
+    /** Cold-manifest package access declarations used by Agent operation services.
+     * This remains independent of executable activation-target projection. */
+    hostAccess?: CanonicalPluginManifest['hostAccess'];
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
@@ -126,8 +183,6 @@ export type ResolvedAgentRuntimeContribution = Readonly<{
     runtimeKind?: string | null;
     capabilities?: PluginBackendCapabilitiesV1;
     surfaceHandlers?: readonly BackendSurfaceDeclarationV1[];
-    getRuntimeCore?: CliRuntimeCoreGetter;
-    runtimeOwner?: BackendRuntimeOwnerTakeoverMarker;
     sourceSpec?: PluginSourceSpecV1;
     pluginId?: string;
     manifestPath?: string;
@@ -135,6 +190,32 @@ export type ResolvedAgentRuntimeContribution = Readonly<{
     daemonEntryPath?: string | null;
     devDaemonEntryPath?: string | null;
 }>;
+
+type ResolvedProviderContributionBase = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId: string;
+    identity: PluginContributionIdentityV1;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: ProviderContributionV1;
+}>;
+
+export type ResolvedProviderContribution = ResolvedProviderContributionBase & Readonly<
+    | {
+        provenance: 'first_party';
+        managed?: ResolvedFirstPartyManagedProviderFacet;
+        managedRuntimeAdapter?: ManagedProviderRuntimeAdapterV1;
+    }
+    | {
+        provenance: 'external';
+        managed?: never;
+        managedRuntimeAdapter?: never;
+    }
+>;
 
 export type ResolvedActionContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
@@ -145,26 +226,26 @@ export type ResolvedActionContribution = Readonly<{
     daemonEntryPath?: string | null;
     devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
-    definition: ActionDefinitionV1;
+    definition: ResolvedActionDefinition;
 }>;
 
-export type ResolvedToolDefinition = Readonly<{
+/** Canonical V2 action truth retained alongside the legacy ActionSpec shell. */
+export type ResolvedActionDefinition = Readonly<
+    ActionDefinitionV1 & (
+        | Readonly<{
+            dangerLevel: 'safe';
+            confirmation?: never;
+        }>
+        | Readonly<{
+            dangerLevel: Exclude<PluginActionContributionV2['dangerLevel'], 'safe'>;
+            confirmation: NonNullable<PluginActionContributionV2['confirmation']>;
+        }>
+    )
+>;
+
+export type ResolvedToolDefinition = Readonly<PluginToolContributionV2 & {
     kindVersion: 1;
-    id: string;
-    name: string;
-    title: string;
-    description?: string | null;
-    safety: ActionDefinitionV1['safety'];
-    surfaces: Readonly<Record<'cli' | 'mcp' | 'agent', boolean>>;
-    inputSchema?: ActionDefinitionV1['inputSchema'];
-    outputSchema?: ActionDefinitionV1['outputSchema'];
-    inputHints?: ActionDefinitionV1['inputHints'];
-    compatibility?: ActionDefinitionV1['compatibility'];
-    examples?: ActionDefinitionV1['examples'];
-    promptSnippet?: string | null;
-    promptGuidelines?: readonly string[];
     actionId: string;
-    execution?: ActionDefinitionV1['execution'];
 }>;
 
 export type ResolvedToolContribution = Readonly<{
@@ -181,16 +262,8 @@ export type ResolvedToolContribution = Readonly<{
 
 export type ResolvedCommandVisibility = 'default' | 'advanced' | 'internal';
 
-export type ResolvedCommandDefinition = Readonly<{
+export type ResolvedCommandDefinition = Readonly<PluginCommandContributionV2 & {
     kindVersion: 1;
-    id: string;
-    command: string;
-    rootHelpLabel?: string;
-    rootHelpDescription?: string;
-    rootHelpDetail?: string;
-    allowTmux: boolean;
-    visibility?: ResolvedCommandVisibility;
-    featureGate?: string;
     actionId: string;
 }>;
 
@@ -204,27 +277,6 @@ export type ResolvedCommandContribution = Readonly<{
     devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: ResolvedCommandDefinition;
-}>;
-
-export type ResolvedLifecycleHandlerEvent = 'activated' | 'deactivating' | 'deactivated';
-
-export type ResolvedLifecycleHandlerDefinition = Readonly<{
-    kindVersion: 1;
-    id: string;
-    event: ResolvedLifecycleHandlerEvent;
-    priority: number;
-}>;
-
-export type ResolvedLifecycleHandlerContribution = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
-    devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: ResolvedLifecycleHandlerDefinition;
 }>;
 
 export type ResolvedResourceDefinition = Readonly<{
@@ -241,6 +293,7 @@ export type ResolvedResourceContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId?: string;
+    pluginRootPath?: string;
     manifestPath?: string;
     manifestDigest?: string;
     daemonEntryPath?: string | null;
@@ -249,44 +302,17 @@ export type ResolvedResourceContribution = Readonly<{
     definition: ResolvedResourceDefinition;
 }>;
 
-export type ResolvedUiDescriptorField = Readonly<{
-    id: string;
-    kind: string;
-    title: string;
-    description?: string | null;
-    order?: number;
-    groupId?: string | null;
-    featureGate?: string | null;
-    actionId?: string | null;
-    options?: readonly Readonly<{
-        value: string;
-        label: string;
-    }>[];
-}>;
-
-export type ResolvedUiDescriptorDefinition = Readonly<{
-    kindVersion: 1;
-    id: string;
-    surface: string;
-    title: string;
-    description?: string | null;
-    order?: number;
-    tone?: string | null;
-    featureGate?: string | null;
-    helpUrl?: string | null;
-    fields: readonly ResolvedUiDescriptorField[];
-}>;
-
-export type ResolvedUiDescriptorContribution = Readonly<{
+export type ResolvedPromptAssetContribution = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
+    pluginId: string;
+    identity: PluginContributionIdentityV1;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
     devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: ResolvedUiDescriptorDefinition;
+    sourceSpec: PluginSourceSpecV1;
+    definition: PluginPromptAssetContributionV1;
 }>;
 
 export type ResolvedUiTranslationsContribution = Readonly<{
@@ -348,18 +374,6 @@ export type ResolvedHostedWebContribution = Readonly<{
     devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
     definition: PluginHostedWebContributionV1;
-}>;
-
-export type ResolvedEmbeddedWebBundleContribution = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
-    devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    definition: PluginEmbeddedWebBundleContributionV1;
 }>;
 
 export type ResolvedReactNativeBundleContribution = Readonly<{
@@ -509,7 +523,19 @@ export type ResolvedInstallableContribution = Readonly<{
     daemonEntryPath?: string | null;
     devDaemonEntryPath?: string | null;
     sourceSpec?: PluginSourceSpecV1;
-    definition: InstallableDependencyDescriptor;
+    definition: InstallableDependencyDescriptor | PluginManagedDependencyContributionV2;
+}>;
+
+export type ResolvedSystemToolContribution = Readonly<{
+    provenance: ResolvedContributionProvenance;
+    source: ResolvedContributionSource;
+    pluginId?: string;
+    manifestPath?: string;
+    manifestDigest?: string;
+    daemonEntryPath?: string | null;
+    devDaemonEntryPath?: string | null;
+    sourceSpec?: PluginSourceSpecV1;
+    definition: PluginSystemToolContributionV1;
 }>;
 
 export type ResolvedRequestInterceptorContribution = Readonly<{
@@ -564,24 +590,7 @@ export type ResolvedConnectedAccountDescriptorContribution = Readonly<{
     definition: PluginConnectedAccountDescriptorContributionV2;
 }>;
 
-export type ResolvedBackendSurfaceContribution = Readonly<{
-    backendId: string;
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    /**
-     * Stable plugin-facing backend-surface descriptor plus host-local handler
-     * metadata.
-     */
-    definition: BackendSurfaceDeclarationV1;
-    pluginId?: string;
-    manifestPath?: string;
-    manifestDigest?: string;
-    daemonEntryPath?: string | null;
-    devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-}>;
-
-export type ResolvedHookRegistration = Readonly<{
+export type ResolvedActivatedHookRegistration = Readonly<{
     provenance: ResolvedContributionProvenance;
     source: ResolvedContributionSource;
     pluginId: string;
@@ -590,7 +599,29 @@ export type ResolvedHookRegistration = Readonly<{
     daemonEntryPath: string | null;
     devDaemonEntryPath?: string | null;
     sourceSpec: PluginSourceSpecV1;
-    definition: HookRegistrationV1;
+    definition: Readonly<{
+        hookApiVersion: 1;
+        id: string;
+        eventId?: string;
+        category: HookCategoryV1;
+        scope: HookScopeV1;
+        filters?: Readonly<{
+            agentId?: string;
+            runtimeTargetId?: string;
+            sessionId?: string;
+            workspaceId?: string;
+            cwdPrefix?: string;
+            machineId?: string;
+            eventNames?: readonly string[];
+            [key: string]: unknown;
+        }>;
+        executionKind: HookExecutionKindV1;
+        aggregation?: string;
+        failureMode?: string;
+        priority?: number;
+        compatibility?: Readonly<Record<string, unknown>>;
+        metadata?: Readonly<Record<string, unknown>>;
+    }>;
 }>;
 
 export type ResolvedActivationTarget = Readonly<{
@@ -599,27 +630,31 @@ export type ResolvedActivationTarget = Readonly<{
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
-    daemonEntryPath: string;
+    daemonEntryPath: string | null;
     devDaemonEntryPath?: string | null;
     sourceSpec: PluginSourceSpecV1;
     activationEvents?: readonly string[];
+    manifest: CanonicalPluginManifest;
 }>;
 
 export type ResolvedContributionInputs = Readonly<{
+    introspectionContributions?: readonly PluginContributionIntrospectionCandidate[];
+    uiViewsV2?: readonly ResolvedUiViewV2Contribution[];
+    uiRenderersV2?: readonly ResolvedUiRendererV2Contribution[];
+    uiTranslationsV2?: readonly ResolvedUiTranslationBundleV2Contribution[];
     agents?: readonly ResolvedAgentContribution[];
-    agentRuntimes?: readonly ResolvedAgentRuntimeContribution[];
+    providers?: readonly ResolvedProviderContribution[];
     catalogEntries?: readonly ResolvedCatalogEntry[];
     actions?: readonly ResolvedActionContribution[];
     tools?: readonly ResolvedToolContribution[];
     commands?: readonly ResolvedCommandContribution[];
     resources?: readonly ResolvedResourceContribution[];
-    uiDescriptors?: readonly ResolvedUiDescriptorContribution[];
+    promptAssets?: readonly ResolvedPromptAssetContribution[];
     uiTranslations?: readonly ResolvedUiTranslationsContribution[];
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
     sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
     surfacePlacements?: readonly ResolvedSurfacePlacementContribution[];
     hostedWeb?: readonly ResolvedHostedWebContribution[];
-    embeddedWebBundles?: readonly ResolvedEmbeddedWebBundleContribution[];
     reactNativeBundles?: readonly ResolvedReactNativeBundleContribution[];
     uiArtifacts?: readonly ResolvedUiArtifactContribution[];
     browserTargets?: readonly ResolvedBrowserTargetContribution[];
@@ -632,31 +667,35 @@ export type ResolvedContributionInputs = Readonly<{
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     managedDependencies?: readonly ResolvedInstallableContribution[];
+    systemTools?: readonly ResolvedSystemToolContribution[];
     requestInterceptors?: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     scmBackends?: readonly ResolvedScmBackendContribution[];
     connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
+    voiceModelPacks?: readonly ResolvedVoiceModelPackContribution[];
+    voiceProviders?: readonly ResolvedVoiceProviderContribution[];
     activationTargets?: readonly ResolvedActivationTarget[];
-    hookRegistrations?: readonly ResolvedHookRegistration[];
-    lifecycleHandlers?: readonly ResolvedLifecycleHandlerContribution[];
     pluginDiagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
 }>;
 
 export type ResolvedContributionRegistry = Readonly<{
+    introspectionContributions?: readonly PluginContributionIntrospectionCandidate[];
+    uiViewsV2?: readonly ResolvedUiViewV2Contribution[];
+    uiRenderersV2?: readonly ResolvedUiRendererV2Contribution[];
+    uiTranslationsV2?: readonly ResolvedUiTranslationBundleV2Contribution[];
     generationId?: string;
     agents: readonly ResolvedAgentContribution[];
-    agentRuntimes: readonly ResolvedAgentRuntimeContribution[];
+    providers?: readonly ResolvedProviderContribution[];
     actions: readonly ResolvedActionContribution[];
     tools?: readonly ResolvedToolContribution[];
     commands?: readonly ResolvedCommandContribution[];
     resources: readonly ResolvedResourceContribution[];
-    uiDescriptors: readonly ResolvedUiDescriptorContribution[];
+    promptAssets?: readonly ResolvedPromptAssetContribution[];
     uiTranslations?: readonly ResolvedUiTranslationsContribution[];
     structuredMessages?: readonly ResolvedStructuredMessageContribution[];
     sessionHeaderActions?: readonly ResolvedSessionHeaderActionContribution[];
     surfacePlacements?: readonly ResolvedSurfacePlacementContribution[];
     hostedWeb?: readonly ResolvedHostedWebContribution[];
-    embeddedWebBundles?: readonly ResolvedEmbeddedWebBundleContribution[];
     reactNativeBundles?: readonly ResolvedReactNativeBundleContribution[];
     uiArtifacts?: readonly ResolvedUiArtifactContribution[];
     browserTargets?: readonly ResolvedBrowserTargetContribution[];
@@ -669,23 +708,23 @@ export type ResolvedContributionRegistry = Readonly<{
     mcpServers?: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders?: readonly ResolvedMcpDiscoveryProviderContribution[];
     managedDependencies?: readonly ResolvedInstallableContribution[];
+    systemTools?: readonly ResolvedSystemToolContribution[];
     requestInterceptors?: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
     scmBackends?: readonly ResolvedScmBackendContribution[];
     connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
+    voiceModelPacks?: readonly ResolvedVoiceModelPackContribution[];
+    voiceProviders?: readonly ResolvedVoiceProviderContribution[];
     activationTargets: readonly ResolvedActivationTarget[];
-    hookRegistrations: readonly ResolvedHookRegistration[];
-    lifecycleHandlers?: readonly ResolvedLifecycleHandlerContribution[];
     actionsById?: ReadonlyMap<string, ResolvedActionContribution>;
     toolsById?: ReadonlyMap<string, ResolvedToolContribution>;
     commandsById?: ReadonlyMap<string, ResolvedCommandContribution>;
     resourcesById?: ReadonlyMap<string, ResolvedResourceContribution>;
-    uiDescriptorsById?: ReadonlyMap<string, ResolvedUiDescriptorContribution>;
+    promptAssetsById?: ReadonlyMap<string, ResolvedPromptAssetContribution>;
     structuredMessagesById?: ReadonlyMap<string, ResolvedStructuredMessageContribution>;
     sessionHeaderActionsById?: ReadonlyMap<string, ResolvedSessionHeaderActionContribution>;
     surfacePlacementsById?: ReadonlyMap<string, ResolvedSurfacePlacementContribution>;
     hostedWebById?: ReadonlyMap<string, ResolvedHostedWebContribution>;
-    embeddedWebBundlesById?: ReadonlyMap<string, ResolvedEmbeddedWebBundleContribution>;
     reactNativeBundlesById?: ReadonlyMap<string, ResolvedReactNativeBundleContribution>;
     uiArtifactsById?: ReadonlyMap<string, ResolvedUiArtifactContribution>;
     browserTargetsById?: ReadonlyMap<string, ResolvedBrowserTargetContribution>;
@@ -696,13 +735,12 @@ export type ResolvedContributionRegistry = Readonly<{
     eventsById?: ReadonlyMap<string, ResolvedEventContribution>;
     executionRunProfilesById?: ReadonlyMap<string, ResolvedExecutionRunProfileContribution>;
     managedDependenciesByKey?: ReadonlyMap<string, ResolvedInstallableContribution>;
+    systemToolsById?: ReadonlyMap<string, ResolvedSystemToolContribution>;
     scmHostingProvidersById?: ReadonlyMap<string, ResolvedScmHostingProviderContribution>;
     scmBackendsById?: ReadonlyMap<string, ResolvedScmBackendContribution>;
     connectedAccountDescriptorsById?: ReadonlyMap<string, ResolvedConnectedAccountDescriptorContribution>;
-    lifecycleHandlersById?: ReadonlyMap<string, ResolvedLifecycleHandlerContribution>;
-    surfaceHandlersByBackendId: ReadonlyMap<string, readonly ResolvedBackendSurfaceContribution[]>;
     catalogEntriesById: Readonly<Record<string, ResolvedCatalogEntry>>;
     agentDefinitionsById: ReadonlyMap<string, ResolvedAgentContribution>;
-    agentRuntimeDefinitionsById: ReadonlyMap<string, ResolvedAgentRuntimeContribution>;
+    providersByContributionKey?: ReadonlyMap<string, ResolvedProviderContribution>;
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
 }>;

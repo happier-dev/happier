@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
 import { createWorkspaceStagingRoot } from './createWorkspaceStagingRoot';
 import { promoteStagedWorkspace } from './promoteStagedWorkspace';
 
 const tempRoots: string[] = [];
+const scmRegistry = createScmBackendRegistry([]);
 
 async function makeTempDir(prefix: string): Promise<string> {
     const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -107,6 +109,7 @@ describe('promoteStagedWorkspace', () => {
             stagingRoot,
             targetWorkspaceDirectory,
             expectedManifest: fixture.manifest,
+            scmRegistry,
         });
 
         expect(result.targetWorkspaceDirectory).toBe(targetWorkspaceDirectory);
@@ -143,6 +146,7 @@ describe('promoteStagedWorkspace', () => {
             stagingRoot,
             targetWorkspaceDirectory: join(await makeTempDir('workspace-promote-marker-target-'), 'workspace'),
             expectedManifest: fixture.manifest,
+            scmRegistry,
         })).rejects.toThrow(/workspace staging root marker/i);
     });
 
@@ -161,6 +165,7 @@ describe('promoteStagedWorkspace', () => {
             stagingRoot,
             targetWorkspaceDirectory,
             expectedManifest: fixture.manifest,
+            scmRegistry,
         })).rejects.toThrow(/staged workspace verification failed/i);
         await expect(access(targetWorkspaceDirectory)).rejects.toThrow();
     });
@@ -188,6 +193,7 @@ describe('promoteStagedWorkspace', () => {
             stagingRoot,
             targetWorkspaceDirectory,
             expectedManifest: fixture.manifest,
+            scmRegistry,
         })).rejects.toThrow(/target workspace root already exists/i);
         await expect(readFile(join(targetWorkspaceDirectory, 'KEEP.txt'), 'utf8')).resolves.toBe('keep\n');
     });

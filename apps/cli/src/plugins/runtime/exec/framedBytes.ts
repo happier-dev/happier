@@ -2,12 +2,15 @@ import type {
     ExecProcessHandleV1,
     FramedBytesClientV1,
     FramedBytesListenerV1,
-} from '@happier-dev/plugin-sdk';
+} from './privateContract';
 
 import {
     PluginExecClientError,
     createPluginExecClientAbortError,
 } from './errors';
+import { createPluginProtocolCallbackQueue } from './callbackQueue';
+import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
+import { attachContentLengthFrameReader, encodeContentLengthFrame } from './contentLengthFraming';
 
 type ByteReadableStream = NodeJS.ReadableStream & Readonly<{
     pause?: () => unknown;
@@ -18,8 +21,10 @@ export type CreateFramedBytesProcessClientParams = Readonly<{
     process: ExecProcessHandleV1;
     stdout: NodeJS.ReadableStream;
     write: (input: Uint8Array) => Promise<void>;
+    framing?: 'lengthPrefix' | 'contentLength';
     maxFrameBytes?: number;
     readStderrPreview?: () => string;
+    recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
 }>;
 
 export type FramedBytesProcessClient = Readonly<{
@@ -63,9 +68,9 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
     let disposedError: Error | null = null;
     let closedSettled = false;
     let buffer = Buffer.alloc(0);
-    let deliveryQueue = Promise.resolve();
     let resolveClosed: () => void = () => undefined;
     let rejectClosed: (error: Error) => void = () => undefined;
+    let detachContentLengthReader: () => void = () => undefined;
 
     const closed = new Promise<void>((resolve, reject) => {
         resolveClosed = resolve;
@@ -87,6 +92,7 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
         stdout.off('end', onEnd);
         stdout.off('close', onEnd);
         stdout.off('error', onError);
+        detachContentLengthReader();
         buffer = Buffer.alloc(0);
         if (error) {
             disposedError = error;
@@ -104,26 +110,43 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
         settleClosed(error);
     }
 
+    const deliveryQueue = createPluginProtocolCallbackQueue({
+        ...(params.recordRuntimeLimitMeasurement
+            ? { recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement }
+            : {}),
+        onFailure(failure) {
+            failClient(new PluginExecClientError(
+                failure.code,
+                failure.code === 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED'
+                    ? 'Framed-bytes callback queue exceeded its bounded capacity'
+                    : 'Framed-bytes subscriber failed',
+                { cause: failure.cause, stderrPreview: readStderrPreview() },
+            ));
+        },
+    });
+
     async function deliverFrame(frame: Uint8Array): Promise<void> {
         if (subscribers.size === 0) {
             return;
         }
         stdout.pause?.();
         try {
+            let firstFailure: unknown;
             for (const listener of [...subscribers]) {
-                await listener(Uint8Array.from(frame));
+                try {
+                    await listener(Uint8Array.from(frame));
+                } catch (error) {
+                    firstFailure ??= error;
+                }
             }
+            if (firstFailure !== undefined) throw firstFailure;
         } finally {
             stdout.resume?.();
         }
     }
 
     function enqueueFrame(frame: Uint8Array): void {
-        deliveryQueue = deliveryQueue
-            .then(() => deliverFrame(frame))
-            .catch((error) => {
-                failClient(createProtocolError('Framed-bytes subscriber failed', error, readStderrPreview()));
-            });
+        deliveryQueue.enqueue(frame.byteLength, () => deliverFrame(frame));
     }
 
     function processBuffer(): void {
@@ -169,10 +192,20 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
         failClient(createProtocolError('Framed-bytes stream failed', error, readStderrPreview()));
     }
 
-    stdout.on('data', onData);
-    stdout.on('end', onEnd);
-    stdout.on('close', onEnd);
-    stdout.on('error', onError);
+    if (params.framing === 'contentLength') {
+        detachContentLengthReader = attachContentLengthFrameReader(params.stdout, (frame) => {
+            enqueueFrame(frame);
+        }, {
+            maxFrameBytes,
+            onError: (error) => failClient(createProtocolError('Framed-bytes content-length reader failed', error, readStderrPreview())),
+            onTrailingPartialFrame: () => failClient(createProtocolError('Framed-bytes stream ended with a trailing partial frame', undefined, readStderrPreview())),
+        });
+    } else {
+        stdout.on('data', onData);
+        stdout.on('end', onEnd);
+        stdout.on('close', onEnd);
+        stdout.on('error', onError);
+    }
 
     const client: FramedBytesClientV1 = Object.freeze({
         closed,
@@ -192,7 +225,9 @@ export function createFramedBytesProcessClient(params: CreateFramedBytesProcessC
             if (frame.byteLength > maxFrameBytes) {
                 throw createProtocolError('Framed-bytes frame exceeded the configured size limit', undefined, readStderrPreview());
             }
-            await params.write(encodeFrame(frame));
+            await params.write(params.framing === 'contentLength'
+                ? encodeContentLengthFrame(frame)
+                : encodeFrame(frame));
         },
     });
 

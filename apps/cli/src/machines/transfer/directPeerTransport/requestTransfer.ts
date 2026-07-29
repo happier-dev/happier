@@ -11,6 +11,7 @@ import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR } from '../inMemoryTransferSizeLimi
 import { estimateJsonUtf8BytesBounded } from '@/transfers/shared/estimateJsonUtf8BytesBounded';
 
 import {
+  isSafeDirectTransferEndpointCandidate,
   TransferChunkEnvelopeSchema,
   TransferEndpointCandidateSchema,
   type TransferEndpointCandidate,
@@ -65,10 +66,15 @@ function createInvalidDirectPeerTransferResponseError(transferId: string): Error
   return new Error(`Invalid direct peer transfer response for ${transferId}`);
 }
 
+function createDirectPeerTransferCommitmentMismatchError(transferId: string): Error {
+  return new Error(`Direct peer transfer commitment mismatch for ${transferId}`);
+}
+
 export function isDirectPeerTransferProtocolError(error: unknown): boolean {
   return error instanceof Error && (
     error.message.startsWith('Invalid direct peer transfer response for ')
     || error.message.startsWith('Direct peer transfer manifest mismatch for ')
+    || error.message.startsWith('Direct peer transfer commitment mismatch for ')
   );
 }
 
@@ -414,7 +420,7 @@ function serializeDirectPeerOpenRequestBodyToBytes(params: Readonly<{
   openBody: unknown;
   estimatedBytes: number;
   maxBodyBytes: number;
-}>): Uint8Array {
+}>): Uint8Array<ArrayBuffer> {
   const maxBodyBytes = Math.max(0, Math.floor(params.maxBodyBytes));
   const estimatedBytes = Math.max(0, Math.floor(params.estimatedBytes));
   const initialCapacity = Math.min(Math.max(256, estimatedBytes), maxBodyBytes);
@@ -487,7 +493,7 @@ function createDirectPeerOpenRequestBodyStream(params: Readonly<{ openBody: unkn
 }
 
 type DirectPeerOpenRequestBodyTransmission =
-  | Readonly<{ kind: 'bytes'; body: Uint8Array }>
+  | Readonly<{ kind: 'bytes'; body: Uint8Array<ArrayBuffer> }>
   | Readonly<{ kind: 'stream'; body: () => ReadableStream<Uint8Array> }>;
 
 function createDirectPeerOpenRequestBodyTransmission(params: Readonly<{
@@ -517,6 +523,8 @@ function createDirectPeerOpenRequestBodyTransmission(params: Readonly<{
 async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   transferId: string;
   endpointCandidates: readonly TransferEndpointCandidate[];
+  expectedSizeBytes?: number;
+  expectedManifestHash?: string;
   openBody?: unknown;
   fetchFn?: typeof fetch;
   now?: () => number;
@@ -524,11 +532,36 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   maxInMemoryPayloadBytes: number;
   onChunk: (chunk: Buffer) => Promise<void> | void;
   onFinish: (manifestHash: string) => Promise<TPayload>;
-  onAbort?: () => Promise<void> | void;
+  onAbort?: (terminal: boolean) => Promise<void> | void;
 }>): Promise<TPayload> {
   if (!Number.isFinite(params.maxInMemoryPayloadBytes) || params.maxInMemoryPayloadBytes <= 0) {
     throw new Error(`Invalid direct peer maxInMemoryPayloadBytes: ${String(params.maxInMemoryPayloadBytes)}`);
   }
+  const expectedSizeBytes = params.expectedSizeBytes;
+  const expectedManifestHash = params.expectedManifestHash;
+  const hasExpectedSizeBytes = expectedSizeBytes !== undefined;
+  const hasExpectedManifestHash = expectedManifestHash !== undefined;
+  if (
+    hasExpectedSizeBytes !== hasExpectedManifestHash
+    || (
+      hasExpectedSizeBytes
+      && (
+        !Number.isSafeInteger(expectedSizeBytes)
+        || expectedSizeBytes < 0
+        || typeof expectedManifestHash !== 'string'
+        || expectedManifestHash.length === 0
+      )
+    )
+  ) {
+    throw createDirectPeerTransferCommitmentMismatchError(params.transferId);
+  }
+  const expectedCommitment =
+    typeof expectedSizeBytes === 'number' && typeof expectedManifestHash === 'string'
+    ? {
+      sizeBytes: expectedSizeBytes,
+      manifestHash: expectedManifestHash,
+    }
+    : null;
   const fetchFn = params.fetchFn ?? fetch;
   const now = params.now ?? Date.now;
   const expirySkewMs = readDirectPeerExpirySkewMs();
@@ -548,6 +581,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
   let lastError: Error | null = null;
 
   for (const candidate of params.endpointCandidates) {
+    if (!isSafeDirectTransferEndpointCandidate(candidate)) continue;
     const parsedCandidate = TransferEndpointCandidateSchema.safeParse(candidate);
     if (!parsedCandidate.success) continue;
     if (parsedCandidate.data.expiresAt + expirySkewMs < now()) continue;
@@ -575,6 +609,7 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
     }
 
     for (let attempt = 0; attempt < DIRECT_PEER_REQUEST_RETRY_ATTEMPTS; attempt += 1) {
+      let receivedSizeBytes = 0;
       try {
         const openRequestInit: RequestInit & { duplex?: 'half' } = {
           method: 'POST',
@@ -608,6 +643,18 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
         json = null;
         if (!parsed.success || parsed.data.transferId !== params.transferId) {
           throw createInvalidDirectPeerTransferResponseError(params.transferId);
+        }
+        if (
+          expectedCommitment
+          && (
+            (
+              parsed.data.sizeBytes !== undefined
+              && parsed.data.sizeBytes !== expectedCommitment.sizeBytes
+            )
+            || parsed.data.manifestHash !== expectedCommitment.manifestHash
+          )
+        ) {
+          throw createDirectPeerTransferCommitmentMismatchError(params.transferId);
         }
         if (parsed.data.totalChunks > readDirectPeerMaxTotalChunks()) {
           throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
@@ -662,18 +709,42 @@ async function requestDirectPeerTransfer<TPayload>(params: Readonly<{
           ) {
             throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${params.maxInMemoryPayloadBytes}`);
           }
-          await params.onChunk(decryptEncryptedTransferChunkEnvelope({
+          const chunk = decryptEncryptedTransferChunkEnvelope({
             transferId: params.transferId,
             sequence,
             payloadBase64,
             encryptedDataKeyEnvelopeBase64,
             recipientSecretKeySeed: recipientKeyPair.recipientSecretKeySeed,
-          }));
+          });
+          const nextReceivedSizeBytes = receivedSizeBytes + chunk.byteLength;
+          if (
+            !Number.isSafeInteger(nextReceivedSizeBytes)
+            || (expectedCommitment && nextReceivedSizeBytes > expectedCommitment.sizeBytes)
+          ) {
+            throw createDirectPeerTransferCommitmentMismatchError(params.transferId);
+          }
+          await params.onChunk(chunk);
+          receivedSizeBytes = nextReceivedSizeBytes;
         }
-        return await params.onFinish(parsed.data.manifestHash);
+        if (expectedCommitment && receivedSizeBytes !== expectedCommitment.sizeBytes) {
+          throw createDirectPeerTransferCommitmentMismatchError(params.transferId);
+        }
+        try {
+          return await params.onFinish(expectedCommitment?.manifestHash ?? parsed.data.manifestHash);
+        } catch (error) {
+          if (
+            expectedCommitment
+            && error instanceof Error
+            && error.message.startsWith('Transfer payload manifest mismatch for ')
+          ) {
+            throw createDirectPeerTransferCommitmentMismatchError(params.transferId);
+          }
+          throw error;
+        }
       } catch (error) {
-        await params.onAbort?.();
-        if (isDirectPeerTransferProtocolError(error)) {
+        const isProtocolError = isDirectPeerTransferProtocolError(error);
+        await params.onAbort?.(isProtocolError);
+        if (isProtocolError) {
           throw error;
         }
         lastError = error instanceof Error ? error : new Error('Direct peer transfer request failed');
@@ -692,6 +763,8 @@ export async function requestDirectPeerTransferToFile(params: Readonly<{
   transferId: string;
   endpointCandidates: readonly TransferEndpointCandidate[];
   destinationPath: string;
+  expectedSizeBytes?: number;
+  expectedManifestHash?: string;
   openBody?: unknown;
   fetchFn?: typeof fetch;
   now?: () => number;
@@ -716,7 +789,13 @@ export async function requestDirectPeerTransferToFile(params: Readonly<{
         await sink.appendChunk(chunk);
       },
       onFinish: async (manifestHash) => await sink.finalize(manifestHash),
-      onAbort: resetForRetry,
+      onAbort: async (terminal) => {
+        if (terminal) {
+          await sink.abort();
+          return;
+        }
+        await resetForRetry();
+      },
     });
   } catch (error) {
     await sink.abort().catch(() => undefined);

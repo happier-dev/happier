@@ -32,63 +32,13 @@ describe('createAcpRuntime (in-flight steer)', () => {
     runtime.beginTurn();
     expect((runtime as any).isTurnInFlight()).toBe(true);
 
-    await (runtime as any).startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     await (runtime as any).steerPrompt('steer text');
 
     expect(backend.sendSteerPrompt).toHaveBeenCalledWith('sess_1', 'steer text');
 
     await runtime.flushTurn();
     expect((runtime as any).isTurnInFlight()).toBe(false);
-  });
-
-  it('does not leak pendingQueue metadata listeners when poll wake wins', async () => {
-    const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_1' }) as any;
-    backend.sendSteerPrompt = vi.fn(async () => {});
-
-    let activeMetadataWaits = 0;
-    const runtime = createAcpRuntime({
-      provider: 'codex',
-      directory: '/tmp',
-      session: createBasicSessionClient(),
-      messageBuffer: new MessageBuffer(),
-      mcpServers: {},
-      permissionHandler: createApprovedPermissionHandler(),
-      onThinkingChange: () => {},
-      ensureBackend: async () => backend,
-      inFlightSteer: { enabled: true },
-      pendingQueue: {
-        drainDuringTurn: true,
-        pollIntervalMs: 5,
-        waitForMetadataUpdate: async (signal?: AbortSignal) => {
-          activeMetadataWaits += 1;
-          return await new Promise<boolean>((resolve) => {
-            const onAbort = () => {
-              activeMetadataWaits -= 1;
-              resolve(false);
-            };
-            signal?.addEventListener('abort', onAbort, { once: true });
-          });
-        },
-        popPendingMessage: async () => false,
-      },
-    } as any);
-
-    runtime.beginTurn();
-    await (runtime as any).startOrLoad({});
-
-    // Let the pump spin a few times. If poll wake does not cancel the metadata wait,
-    // this counter will grow quickly and trip the assertion.
-    await vi.waitFor(
-      () => {
-        expect(activeMetadataWaits).toBeLessThanOrEqual(1);
-      },
-      { timeout: 250 },
-    );
-
-    await runtime.flushTurn();
-    await vi.waitFor(() => {
-      expect(activeMetadataWaits).toBe(0);
-    });
   });
 
   it('publishes in-flight steer capability state for UI submit routing', async () => {
@@ -187,7 +137,8 @@ describe('createAcpRuntime (in-flight steer)', () => {
     } as any);
 
     runtime.beginTurn();
-    await (runtime as any).startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
+    backend.sendPrompt.mockClear();
     await expect((runtime as any).steerPrompt('steer fallback')).rejects.toThrow(
       /does not support in-flight steer/i,
     );

@@ -15,6 +15,7 @@ function makeDetectCliSnapshot(): DetectCliSnapshot {
       codex: makeUnavailableCliEntry(),
       opencode: makeUnavailableCliEntry(),
       gemini: makeUnavailableCliEntry(),
+      grok: makeUnavailableCliEntry(),
       auggie: makeUnavailableCliEntry(),
       qwen: makeUnavailableCliEntry(),
       kimi: makeUnavailableCliEntry(),

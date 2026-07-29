@@ -1,3 +1,5 @@
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
+
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -6,7 +8,10 @@ import {
   resetConnectedServiceRuntimeAuthFailureReportDedupeForTests,
 } from './reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { buildRuntimeAuthRecoveryScheduledResult } from './projection/connectedServiceRuntimeAuthRecoveryProjection';
-import { readRuntimeAuthFailureReportOutboxItems } from './reportOutbox/runtimeAuthFailureReportOutbox';
+import {
+  enqueueRuntimeAuthFailureReportOutboxItem,
+  readRuntimeAuthFailureReportOutboxItems,
+} from './reportOutbox/runtimeAuthFailureReportOutbox';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
 
 const classification = {
@@ -21,6 +26,201 @@ const classification = {
 } satisfies ConnectedServiceRuntimeFailureClassification;
 
 describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
+  it('preserves the daemon stable recovery receipt for exact cancellation projection', async () => {
+    const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      sessionId: 'sess_receipt',
+      classification,
+      notify: vi.fn(async () => ({
+        ok: true,
+        result: { status: 'recovery_action_required' },
+        recoveryReceipt: {
+          reportId: 'runtime-auth-report:receipt-1',
+          attemptId: 'runtime-auth-attempt:receipt-1',
+        },
+      })),
+      createReportId: () => 'runtime-auth-report:receipt-1',
+    });
+
+    expect(report).toMatchObject({
+      recoveryReceipt: {
+        reportId: 'runtime-auth-report:receipt-1',
+        attemptId: 'runtime-auth-attempt:receipt-1',
+      },
+    });
+  });
+
+  it('does not emit a legacy launcher-daemon incarnation from the runner environment', async () => {
+    const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+    const previousGeneration = process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1;
+    process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1 = 'daemon-origin';
+    try {
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'session-generation-bound',
+        classification,
+        notify,
+      });
+
+      expect(notify).toHaveBeenCalledWith(expect.not.objectContaining({
+        originDaemonExecutionGenerationV1: expect.anything(),
+      }), expect.anything());
+    } finally {
+      if (previousGeneration === undefined) {
+        delete process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1;
+      } else {
+        process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1 = previousGeneration;
+      }
+    }
+  });
+
+  it('coalesces the same provider failure independently of legacy daemon environment changes', async () => {
+    const notify = vi.fn(async () => ({ ok: true, result: { status: 'noop' } }));
+    process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1 = 'daemon-old';
+    await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      sessionId: 'session-generation-dedupe',
+      classification,
+      notify,
+      nowMs: () => 1_000,
+    });
+    process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1 = 'daemon-current';
+    await reportConnectedServiceRuntimeAuthFailureToDaemon({
+      sessionId: 'session-generation-dedupe',
+      classification,
+      notify,
+      nowMs: () => 1_001,
+    });
+
+    expect(notify).toHaveBeenCalledOnce();
+    delete process.env.HAPPIER_DAEMON_EXECUTION_GENERATION_V1;
+  });
+
+  it('does not fork durable report identity across daemon replacement', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-generation-rejection-');
+    try {
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'session-generation-rejection',
+        classification,
+        notify: async () => {
+          throw new Error('current daemon delivery was ambiguous');
+        },
+        reportOutboxDir: outboxDir,
+        nowMs: () => 2_000,
+      });
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'session-generation-rejection',
+        classification,
+        notify: async () => ({
+          ok: true,
+          result: { status: 'noop' },
+        }),
+        reportOutboxDir: outboxDir,
+        nowMs: () => 2_001,
+      });
+
+      const items = await readRuntimeAuthFailureReportOutboxItems({ outboxDir });
+      expect(items).toHaveLength(1);
+      expect(items[0]).toMatchObject({
+        sessionId: 'session-generation-rejection',
+      });
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('reuses a crash-staged report id while ignoring a legacy launcher-daemon field', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-crash-staged-report-');
+    const notify = vi.fn(async () => ({ ok: true, result: { status: 'credential_refreshed', restartRequested: true } }));
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          reportId: 'runtime-auth-report:before-client-crash',
+          originDaemonExecutionGenerationV1: 'legacy-launcher-daemon',
+          sessionId: 'sess_crash_staged',
+          switchesThisTurn: 0,
+          classification,
+        },
+        nowMs: () => 1_000,
+      });
+
+      await reportConnectedServiceRuntimeAuthFailureToDaemon({
+        reportOutboxDir: outboxDir,
+        sessionId: 'sess_crash_staged',
+        switchesThisTurn: 0,
+        classification,
+        notify,
+        nowMs: () => 2_000,
+      });
+
+      expect(notify).toHaveBeenCalledWith(expect.objectContaining({
+        reportId: 'runtime-auth-report:before-client-crash',
+      }), expect.anything());
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('does not remove a successor queued while direct delivery is in flight', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-direct-successor-');
+    let releaseNotify!: () => void;
+    const notifyReleased = new Promise<void>((resolve) => {
+      releaseNotify = resolve;
+    });
+    let markNotifyStarted!: () => void;
+    const notifyStarted = new Promise<void>((resolve) => {
+      markNotifyStarted = resolve;
+    });
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'session-direct-successor',
+          switchesThisTurn: 1,
+          classification,
+        },
+        nowMs: () => 2_000,
+      });
+
+      const direct = reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'session-direct-successor',
+        switchesThisTurn: 1,
+        classification,
+        notify: async () => {
+          markNotifyStarted();
+          await notifyReleased;
+          return {
+            ok: true,
+            result: { status: 'credential_refreshed', restartRequested: true },
+          };
+        },
+        reportOutboxDir: outboxDir,
+        nowMs: () => 2_001,
+      });
+      await notifyStarted;
+
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'session-direct-successor',
+          switchesThisTurn: 2,
+          classification,
+        },
+        nowMs: () => 2_002,
+      });
+
+      releaseNotify();
+      await expect(direct).resolves.toMatchObject({ handled: true });
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toEqual([
+        expect.objectContaining({
+          sessionId: 'session-direct-successor',
+          switchesThisTurn: 2,
+        }),
+      ]);
+    } finally {
+      releaseNotify?.();
+      await removeTempDir(outboxDir);
+    }
+  });
   beforeEach(() => {
     resetConnectedServiceRuntimeAuthFailureReportDedupeForTests();
   });
@@ -84,6 +284,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
         notify,
         nowMs: () => 1_050,
       });
+      await vi.waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
       resolveNotify({ ok: true, result: { status: 'noop' } });
       const [first, second] = await Promise.all([firstPromise, secondPromise]);
 
@@ -375,6 +576,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     });
 
     expect(notify).toHaveBeenCalledWith({
+      reportId: expect.stringMatching(/^runtime-auth-report:/),
       sessionId: 'sess_1',
       switchesThisTurn: 2,
       classification,
@@ -476,6 +678,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     });
 
     expect(notify).toHaveBeenCalledWith({
+      reportId: expect.stringMatching(/^runtime-auth-report:/),
       sessionId: 'sess_custom_resume',
       switchesThisTurn: 2,
       classification,
@@ -503,6 +706,7 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     });
 
     expect(notify).toHaveBeenCalledWith({
+      reportId: expect.stringMatching(/^runtime-auth-report:/),
       sessionId: 'sess_malformed_resume',
       switchesThisTurn: 1,
       classification,
@@ -592,6 +796,43 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
           rateLimits: null,
         },
       });
+      expect(scheduleOutboxDrain).toHaveBeenCalledOnce();
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('retains custody when initial outbox staging and daemon notification both fail', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-double-failure-');
+    const scheduleOutboxDrain = vi.fn();
+    try {
+      await removeTempDir(outboxDir);
+      await writeFile(outboxDir, 'temporarily unavailable', 'utf8');
+
+      await expect(reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_double_failure',
+        switchesThisTurn: 2,
+        classification,
+        notify: vi.fn(async () => {
+          await unlink(outboxDir);
+          await mkdir(outboxDir);
+          throw new Error('daemon unavailable');
+        }),
+        logger: { debug: vi.fn() },
+        reportOutboxDir: outboxDir,
+        scheduleOutboxDrain,
+        nowMs: () => 1_700_000_000_000,
+      })).resolves.toMatchObject({
+        handled: false,
+        report: null,
+      });
+
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toEqual([
+        expect.objectContaining({
+          sessionId: 'sess_double_failure',
+          switchesThisTurn: 2,
+        }),
+      ]);
       expect(scheduleOutboxDrain).toHaveBeenCalledOnce();
     } finally {
       await removeTempDir(outboxDir);
@@ -688,8 +929,9 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
     }
   });
 
-  it('does not enqueue when daemon returns an accepted report that is not a local-control error', async () => {
+  it('retains custody when presentation is handled without a matching recovery receipt', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-accepted-');
+    const scheduleOutboxDrain = vi.fn();
     try {
       await expect(reportConnectedServiceRuntimeAuthFailureToDaemon({
         sessionId: 'sess_1',
@@ -699,8 +941,38 @@ describe('reportConnectedServiceRuntimeAuthFailureToDaemon', () => {
           result: { status: 'credential_refreshed', restartRequested: true },
         })),
         reportOutboxDir: outboxDir,
+        scheduleOutboxDrain,
       })).resolves.toMatchObject({
         handled: true,
+      });
+
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toHaveLength(1);
+      expect(scheduleOutboxDrain).toHaveBeenCalledTimes(1);
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('removes custody only when daemon returns the exact staged report receipt', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-receipted-');
+    const reportId = 'runtime-auth-report:matching-receipt';
+    try {
+      await expect(reportConnectedServiceRuntimeAuthFailureToDaemon({
+        sessionId: 'sess_1',
+        classification,
+        createReportId: () => reportId,
+        notify: vi.fn(async () => ({
+          ok: true,
+          recoveryReceipt: {
+            reportId,
+            attemptId: 'runtime-auth-attempt:matching-receipt',
+          },
+          result: { status: 'credential_refreshed', restartRequested: true },
+        })),
+        reportOutboxDir: outboxDir,
+      })).resolves.toMatchObject({
+        handled: true,
+        recoveryReceipt: { reportId },
       });
 
       await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toEqual([]);

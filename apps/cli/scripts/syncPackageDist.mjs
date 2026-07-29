@@ -5,6 +5,36 @@ import { withOptionalCliSharedDepsBuildLockSync } from './optionalWorkspaceBundl
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WRITE_FS_OPTION_NAMES = ['cpSync', 'mkdirSync', 'renameSync', 'rmSync'];
+const WINDOWS_TRANSIENT_RENAME_CODES = new Set(['EACCES', 'EBUSY', 'EPERM']);
+
+function waitSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.max(0, ms));
+}
+
+function renameForPublicationSync(from, to, {
+  platform,
+  rename,
+  wait,
+  maxRetries,
+}) {
+  let retry = 0;
+  while (true) {
+    try {
+      rename(from, to);
+      return;
+    } catch (error) {
+      if (
+        platform !== 'win32'
+        || !WINDOWS_TRANSIENT_RENAME_CODES.has(error?.code)
+        || retry >= maxRetries
+      ) {
+        throw error;
+      }
+      wait(Math.min(25 * (2 ** retry), 400));
+      retry += 1;
+    }
+  }
+}
 
 export function resolveCliPackageRoot(scriptDir = __dirname) {
   return resolve(scriptDir, '..');
@@ -31,6 +61,8 @@ export function syncPackageDist(options = {}) {
     lockPollIntervalMs: options.lockPollIntervalMs,
     lockStaleAfterMs: options.lockStaleAfterMs,
     skipLock: options.skipLock,
+    env: options.env,
+    heldLockValue: options.heldLockValue,
   });
 }
 
@@ -86,6 +118,15 @@ export function atomicPromoteDirectorySync(options = {}) {
   const rename = options.renameSync ?? renameSync;
   const remove = options.rmSync ?? rmSync;
   const removeSourceOnFailure = options.removeSourceOnFailure !== false;
+  const platform = options.platform ?? process.platform;
+  const wait = options.waitSync ?? waitSync;
+  const maxRenameRetries = options.maxRenameRetries ?? 8;
+  const promote = (from, to) => renameForPublicationSync(from, to, {
+    platform,
+    rename,
+    wait,
+    maxRetries: maxRenameRetries,
+  });
 
   if (!sourceDir || !targetDir || sourceDir === targetDir) {
     throw new Error('[atomic-promote] source and target directories must be distinct');
@@ -100,10 +141,10 @@ export function atomicPromoteDirectorySync(options = {}) {
   let movedExistingDir = false;
   try {
     if (exists(targetDir)) {
-      rename(targetDir, backupDir);
+      promote(targetDir, backupDir);
       movedExistingDir = true;
     }
-    rename(sourceDir, targetDir);
+    promote(sourceDir, targetDir);
     if (movedExistingDir) {
       remove(backupDir, { recursive: true, force: true });
     }
@@ -112,7 +153,7 @@ export function atomicPromoteDirectorySync(options = {}) {
       remove(sourceDir, { recursive: true, force: true });
     }
     if (movedExistingDir && exists(backupDir) && !exists(targetDir)) {
-      rename(backupDir, targetDir);
+      promote(backupDir, targetDir);
     }
     throw error;
   }

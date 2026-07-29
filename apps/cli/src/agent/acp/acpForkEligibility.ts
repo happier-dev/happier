@@ -1,45 +1,36 @@
 import {
   AGENTS_CORE,
-  type AgentId,
 } from '@happier-dev/agents';
-import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
-
-import { AGENTS } from '@/backends/catalog';
-import { hasCatalogAcpBackendOwner } from './catalog/owner';
+import {
+  readLinkedExternalSessionV1FromMetadata,
+  readRuntimeDescriptorV1FromMetadata,
+} from '@happier-dev/protocol';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function readProviderIdFromMetadataEntry(metadata: Record<string, unknown>, key: string): string | null {
+function readAgentIdFromMetadataEntry(metadata: Record<string, unknown>, key: string): string | null {
   const entry = metadata[key];
   if (!isRecord(entry)) return null;
-  const provider = entry.provider;
-  return typeof provider === 'string' ? provider : null;
+  // legacy `provider` state-record read-compat (pre-rename persisted metadata)
+  const agentId = entry.agentId ?? entry.provider;
+  return typeof agentId === 'string' ? agentId : null;
 }
 
-function resolveAcpRuntimeDescriptorEligibility(metadata: Record<string, unknown>, providerId: string): boolean | null {
+function resolveAcpRuntimeDescriptorEligibility(metadata: Record<string, unknown>, agentId: string): boolean | null {
   const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
-  if (!descriptor || descriptor.providerId !== providerId) return null;
-  const provider = isRecord(descriptor.provider) ? descriptor.provider : null;
-  const backendMode = typeof provider?.backendMode === 'string' ? provider.backendMode.trim() : '';
+  if (!descriptor || descriptor.agentId !== agentId) return null;
+  const agentRuntime = isRecord(descriptor.agent) ? descriptor.agent : null;
+  const backendMode = typeof agentRuntime?.backendMode === 'string' ? agentRuntime.backendMode.trim() : '';
   if (!backendMode) return null;
   return backendMode === 'acp';
 }
 
-function isCatalogDeclaredAcpOnlyProvider(providerId: string): boolean {
-  const entry = (AGENTS as Readonly<Record<string, {
-    getAcpBackendFactory?: unknown;
-    getAcpRuntimeDefinitionBridge?: unknown;
-    vendorResumeSupport?: string;
-  }>>)[providerId];
-  const provider = (AGENTS_CORE as Readonly<Record<string, { sessionStorage?: { direct?: boolean }; tools?: { delivery?: string } }>>)[providerId];
-  if (hasCatalogAcpBackendOwner(entry) && entry.vendorResumeSupport !== 'unsupported') {
-    return provider?.sessionStorage?.direct === false;
-  }
-
-  if (provider?.tools?.delivery === 'shell_bridge') return true;
-  if (provider?.tools?.delivery === 'native_mcp') return provider.sessionStorage?.direct === false;
+function isCatalogDeclaredAcpOnlyAgent(agentId: string): boolean {
+  const agent = (AGENTS_CORE as Readonly<Record<string, { sessionStorage?: { direct?: boolean }; tools?: { delivery?: string } }>>)[agentId];
+  if (agent?.tools?.delivery === 'shell_bridge') return true;
+  if (agent?.tools?.delivery === 'native_mcp') return agent.sessionStorage?.direct === false;
   return false;
 }
 
@@ -59,24 +50,15 @@ function readBackendModeEligibility(value: unknown): boolean | null {
   return backendMode === 'acp';
 }
 
-function readProviderKeyedBackendModeEligibility(
+function readAgentKeyedBackendModeEligibility(
   metadata: Record<string, unknown>,
-  providerId: string,
+  agentId: string,
 ): boolean | null {
-  return readBackendModeEligibility(metadata[`${providerId}BackendMode`]);
+  return readBackendModeEligibility(metadata[`${agentId}BackendMode`]);
 }
 
-function readProviderScopedBackendModeEligibility(
-  metadata: Record<string, unknown>,
-  providerId: string,
-): boolean | null {
-  const metadataProviderId = typeof metadata.providerId === 'string' ? metadata.providerId.trim() : '';
-  if (metadataProviderId && metadataProviderId !== providerId) return null;
-  return readProviderKeyedBackendModeEligibility(metadata, providerId);
-}
-
-function resolveLegacyRuntimeBackendModeEligibility(metadata: Record<string, unknown>, providerId: string): boolean | null {
-  const legacyRuntimeDescriptorRaw = metadata[`${providerId}RuntimeDescriptorV1`];
+function resolveLegacyRuntimeBackendModeEligibility(metadata: Record<string, unknown>, agentId: string): boolean | null {
+  const legacyRuntimeDescriptorRaw = metadata[`${agentId}RuntimeDescriptorV1`];
   const legacyRuntimeDescriptor = isRecord(legacyRuntimeDescriptorRaw)
     ? legacyRuntimeDescriptorRaw
     : null;
@@ -90,46 +72,40 @@ function resolveLegacyRuntimeBackendModeEligibility(metadata: Record<string, unk
   );
   if (affinityEligibility !== null) return affinityEligibility;
 
-  const topLevelEligibility = readProviderKeyedBackendModeEligibility(metadata, providerId);
+  const topLevelEligibility = readAgentKeyedBackendModeEligibility(metadata, agentId);
   if (topLevelEligibility !== null) return topLevelEligibility;
 
-  const directSession = isRecord(metadata.directSessionV1) ? metadata.directSessionV1 : null;
-  const directSessionEligibility = directSession
-    ? readProviderScopedBackendModeEligibility(directSession, providerId)
-    : null;
-  if (directSessionEligibility !== null) return directSessionEligibility;
-
-  const externalSession = isRecord(metadata.externalSessionV1) ? metadata.externalSessionV1 : null;
-  const externalSessionEligibility = externalSession
-    ? readProviderScopedBackendModeEligibility(externalSession, providerId)
-    : null;
-  if (externalSessionEligibility !== null) return externalSessionEligibility;
+  const externalSessionLink = readLinkedExternalSessionV1FromMetadata(metadata);
+  if (externalSessionLink?.agentId === agentId) {
+    const externalSessionEligibility = readAgentKeyedBackendModeEligibility(externalSessionLink, agentId);
+    if (externalSessionEligibility !== null) return externalSessionEligibility;
+  }
 
   return null;
 }
 
-export function isAcpForkEligibleForProvider(params: Readonly<{ providerId: string; metadata: unknown }>): boolean {
-  const providerId = params.providerId.trim();
-  if (!providerId) return false;
+export function isAcpForkEligibleForAgent(params: Readonly<{ agentId: string; metadata: unknown }>): boolean {
+  const agentId = params.agentId.trim();
+  if (!agentId) return false;
 
   if (!isRecord(params.metadata)) return false;
   const metadata = params.metadata;
 
-  // Catalog-declared shell-bridge providers are ACP-only in the current product model.
-  if (isCatalogDeclaredAcpOnlyProvider(providerId)) return true;
+  // Catalog-declared shell-bridge agents are ACP-only in the current product model.
+  if (isCatalogDeclaredAcpOnlyAgent(agentId)) return true;
 
-  const runtimeDescriptorEligibility = resolveAcpRuntimeDescriptorEligibility(metadata, providerId);
+  const runtimeDescriptorEligibility = resolveAcpRuntimeDescriptorEligibility(metadata, agentId);
   if (runtimeDescriptorEligibility !== null) return runtimeDescriptorEligibility;
 
-  const legacyRuntimeBackendModeEligibility = resolveLegacyRuntimeBackendModeEligibility(metadata, providerId);
+  const legacyRuntimeBackendModeEligibility = resolveLegacyRuntimeBackendModeEligibility(metadata, agentId);
   if (legacyRuntimeBackendModeEligibility !== null) return legacyRuntimeBackendModeEligibility;
 
   const eligible = (
-    readProviderIdFromMetadataEntry(metadata, 'acpTransportV1') === providerId ||
-    readProviderIdFromMetadataEntry(metadata, 'acpSessionModesV1') === providerId ||
-    readProviderIdFromMetadataEntry(metadata, 'acpSessionModelsV1') === providerId ||
-    readProviderIdFromMetadataEntry(metadata, 'acpConfigOptionsV1') === providerId ||
-    readProviderIdFromMetadataEntry(metadata, 'acpHistoryImportV1') === providerId
+    readAgentIdFromMetadataEntry(metadata, 'acpTransportV1') === agentId ||
+    readAgentIdFromMetadataEntry(metadata, 'acpSessionModesV1') === agentId ||
+    readAgentIdFromMetadataEntry(metadata, 'acpSessionModelsV1') === agentId ||
+    readAgentIdFromMetadataEntry(metadata, 'acpConfigOptionsV1') === agentId ||
+    readAgentIdFromMetadataEntry(metadata, 'acpHistoryImportV1') === agentId
   );
 
   if (eligible) return true;

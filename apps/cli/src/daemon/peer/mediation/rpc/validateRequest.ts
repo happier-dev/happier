@@ -1,6 +1,7 @@
 import {
     PEER_MEDIATION_RECEIPTS,
     PeerMachineRpcDirectRequestV1Schema,
+    PeerMachineRpcDirectRequestV2Schema,
     createPeerMachineRpcRequestHashV1,
     isMachineRpcDirectRoutePolicy,
     resolveMachineRpcRoutePolicy,
@@ -8,12 +9,16 @@ import {
     type PeerFlowKindV1,
     type PeerMachineRpcDirectFallbackReasonCodeV1,
     type PeerMachineRpcDirectRequestV1,
+    type PeerMachineRpcDirectRequestV2,
     type PeerMachineRpcDirectResponseV1,
+    type PeerMachineRpcDirectResponseV2,
     type SignedDirectRouteGrantV1,
+    type SignedDirectRouteGrantV2,
 } from '@happier-dev/protocol';
 
 import {
     verifyDirectRouteGrantV1,
+    verifyDirectRouteGrantV2,
     verifyPeerRouteNonceV1,
     type DirectRouteGrantTrustRoot,
 } from '../verifyDirectRouteGrantV1';
@@ -27,21 +32,26 @@ export type PeerMachineRpcDirectExpectedBinding = Readonly<{
     flowKind: PeerFlowKindV1;
     routeKind: DirectPeerRouteKindV1;
     endpointFingerprint: string;
-    accountPublicKey: string;
+    accountPublicKey?: string;
 }>;
+
+type PeerMachineRpcDirectRequest = PeerMachineRpcDirectRequestV1 | PeerMachineRpcDirectRequestV2;
+type PeerMachineRpcDirectResponse = PeerMachineRpcDirectResponseV1 | PeerMachineRpcDirectResponseV2;
+type PeerMachineRpcDirectFailureResponse = Extract<PeerMachineRpcDirectResponse, { ok: false }>;
+type DirectRouteGrantPayload = SignedDirectRouteGrantV1['payload'] | SignedDirectRouteGrantV2['payload'];
 
 export type PeerMachineRpcDirectValidationResult =
     | Readonly<{
         ok: true;
-        request: PeerMachineRpcDirectRequestV1;
-        grant: SignedDirectRouteGrantV1['payload'];
+        request: PeerMachineRpcDirectRequest;
+        grant: DirectRouteGrantPayload;
         releaseCallLimit: () => void;
         commandReceiptRequired: boolean;
     }>
     | Readonly<{
         ok: false;
-        response: PeerMachineRpcDirectResponseV1;
-        grant?: SignedDirectRouteGrantV1['payload'];
+        response: PeerMachineRpcDirectFailureResponse;
+        grant?: DirectRouteGrantPayload;
     }>;
 
 export type ValidatePeerMachineRpcDirectRequestOptions = Readonly<{
@@ -57,18 +67,19 @@ export type ValidatePeerMachineRpcDirectRequestOptions = Readonly<{
 }>;
 
 function fallback(input: Readonly<{
+    version: 1 | 2;
     requestId: string;
     method: string;
     reasonCode: PeerMachineRpcDirectFallbackReasonCodeV1;
-}>): PeerMachineRpcDirectResponseV1 {
-    return {
-        v: 1,
-        ok: false,
+}>): PeerMachineRpcDirectFailureResponse {
+    const response = {
+        ok: false as const,
         receipt: PEER_MEDIATION_RECEIPTS.rpcFellBackToServer,
         requestId: input.requestId,
         method: input.method,
         reasonCode: input.reasonCode,
     };
+    return input.version === 2 ? { v: 2, ...response } : { v: 1, ...response };
 }
 
 function mapGrantFailureReason(reasonCode: string): PeerMachineRpcDirectFallbackReasonCodeV1 {
@@ -83,6 +94,13 @@ function mapGrantFailureReason(reasonCode: string): PeerMachineRpcDirectFallback
             return 'endpoint_mismatch';
         case 'grant_invalid':
             return 'grant_invalid';
+        case 'proof_bad_signature':
+            return 'nonce_bad_signature';
+        case 'proof_grant_digest_mismatch':
+            return 'nonce_binding_mismatch';
+        case 'proof_invalid':
+        case 'proof_grant_invalid':
+            return 'nonce_invalid';
         default:
             return 'grant_scope_mismatch';
     }
@@ -99,7 +117,7 @@ function quarantineKey(input: Readonly<{
 }
 
 function validateCommandReceipt(input: Readonly<{
-    request: PeerMachineRpcDirectRequestV1;
+    request: PeerMachineRpcDirectRequest;
     grantId: string;
     grantExpiresAtMs: number;
     replayKeyCache: PeerMachineRpcReplayKeyCache;
@@ -130,24 +148,29 @@ function validateCommandReceipt(input: Readonly<{
 export function validatePeerMachineRpcDirectRequest(
     options: ValidatePeerMachineRpcDirectRequestOptions,
 ): PeerMachineRpcDirectValidationResult {
-    const parsed = PeerMachineRpcDirectRequestV1Schema.safeParse(options.body);
-    if (!parsed.success) {
+    const parsedV2 = PeerMachineRpcDirectRequestV2Schema.safeParse(options.body);
+    const parsedV1 = parsedV2.success ? null : PeerMachineRpcDirectRequestV1Schema.safeParse(options.body);
+    if (!parsedV2.success && !parsedV1?.success) {
         return {
             ok: false,
             response: fallback({
                 requestId: 'unknown',
                 method: 'unknown',
+                version: 1,
                 reasonCode: 'invalid_request',
             }),
         };
     }
-    const request = parsed.data;
+    const request: PeerMachineRpcDirectRequest = parsedV2.success
+      ? parsedV2.data
+      : PeerMachineRpcDirectRequestV1Schema.parse(options.body);
     if (request.flowKind !== 'machine_rpc') {
         return {
             ok: false,
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: 'grant_scope_mismatch',
             }),
         };
@@ -162,12 +185,29 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: 'quarantined',
             }),
         };
     }
 
-    const grantVerification = verifyDirectRouteGrantV1({
+    const grantVerification = request.v === 2
+      ? verifyDirectRouteGrantV2({
+        grant: request.grant,
+        proof: request.proof,
+        trustRoots: options.trustRoots,
+        nowMs: options.nowMs,
+        expected: {
+            accountId: options.expected.accountId,
+            machineId: options.expected.machineId,
+            flowKind: 'machine_rpc',
+            routeKind: options.expected.routeKind,
+            endpointFingerprint: options.expected.endpointFingerprint,
+        },
+        revokedGrantIds: options.revokedGrantIds,
+        revokedGrantFamilyIds: options.revokedGrantFamilyIds,
+      })
+      : verifyDirectRouteGrantV1({
         grant: request.grant,
         trustRoots: options.trustRoots,
         nowMs: options.nowMs,
@@ -180,7 +220,7 @@ export function validatePeerMachineRpcDirectRequest(
         },
         revokedGrantIds: options.revokedGrantIds,
         revokedGrantFamilyIds: options.revokedGrantFamilyIds,
-    });
+      });
     if (!grantVerification.valid) {
         options.quarantine.recordVerificationFailure(qKey);
         return {
@@ -188,12 +228,14 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: mapGrantFailureReason(grantVerification.reasonCode),
             }),
         };
     }
 
-    const nonceVerification = verifyPeerRouteNonceV1({
+    const nonceVerification = request.v === 1 && options.expected.accountPublicKey
+      ? verifyPeerRouteNonceV1({
         proof: request.nonceProof,
         accountPublicKey: options.expected.accountPublicKey,
         expected: {
@@ -202,7 +244,10 @@ export function validatePeerMachineRpcDirectRequest(
             flowKind: grantVerification.payload.flowKind,
             endpointFingerprint: grantVerification.payload.endpointFingerprint,
         },
-    });
+      })
+      : request.v === 1
+        ? { valid: false as const, reasonCode: 'nonce_invalid' as const }
+        : { valid: true as const };
     if (!nonceVerification.valid) {
         options.quarantine.recordVerificationFailure(qKey);
         const reasonCode = options.quarantine.isQuarantined(qKey)
@@ -214,6 +259,7 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode,
             }),
         };
@@ -227,6 +273,7 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: 'grant_scope_mismatch',
             }),
         };
@@ -239,6 +286,7 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: 'endpoint_mismatch',
             }),
         };
@@ -252,6 +300,7 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: 'method_unclassified',
             }),
         };
@@ -263,6 +312,7 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: 'server_required',
             }),
         };
@@ -276,6 +326,7 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: 'method_not_allowed_by_grant',
             }),
         };
@@ -295,6 +346,7 @@ export function validatePeerMachineRpcDirectRequest(
                 response: fallback({
                     requestId: request.requestId,
                     method: request.method,
+                    version: request.v,
                     reasonCode: receiptFailure,
                 }),
             };
@@ -320,6 +372,7 @@ export function validatePeerMachineRpcDirectRequest(
             response: fallback({
                 requestId: request.requestId,
                 method: request.method,
+                version: request.v,
                 reasonCode: acquired.reasonCode,
             }),
         };

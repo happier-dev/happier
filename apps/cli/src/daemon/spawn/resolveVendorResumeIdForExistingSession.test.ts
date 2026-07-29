@@ -6,6 +6,29 @@ import { encryptStoredSessionPayload, resolveSessionEncryptionContextFromCredent
 import { resolveVendorResumeIdForExistingSession } from './resolveVendorResumeIdForExistingSession';
 
 describe('resolveVendorResumeIdForExistingSession', () => {
+  it('requires Claude transcript continuity proof for a derived resume id', () => {
+    const rawSession = {
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({ flavor: 'claude', claudeSessionId: 'claude-session-1' }),
+      dataEncryptionKey: null,
+    };
+
+    expect(resolveVendorResumeIdForExistingSession({ agent: 'claude', credentials: null, rawSession })).toBeNull();
+
+    expect(resolveVendorResumeIdForExistingSession({
+      agent: 'claude',
+      credentials: null,
+      rawSession: {
+        ...rawSession,
+        metadata: JSON.stringify({
+          flavor: 'claude',
+          claudeSessionId: 'claude-session-1',
+          claudeTranscriptPath: '/tmp/claude-session-1.jsonl',
+        }),
+      },
+    })).toBe('claude-session-1');
+  });
+
   it('extracts vendor resume id for plaintext sessions without credentials', () => {
     const rawSession = {
       encryptionMode: 'plain',
@@ -48,7 +71,7 @@ describe('resolveVendorResumeIdForExistingSession', () => {
         flavor: 'customAcp',
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: { backendMode: 'appServer', providerSessionId: 'vendor-compat-1' },
         },
         codexSessionId: 'vendor-compat-1',

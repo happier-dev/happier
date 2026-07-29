@@ -1,10 +1,6 @@
 import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 
 import type { Metadata } from '@/api/types';
-import {
-  HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
-  normalizeDaemonInitialPrompt,
-} from '@/agent/runtime/daemonInitialPrompt';
 
 const INITIAL_PROMPT_TITLE_MAX_CHARS = 80;
 
@@ -26,7 +22,7 @@ function truncateTitleSeed(value: string): string {
 }
 
 export function deriveInitialPromptTitleSeed(value: unknown): string | null {
-  const prompt = normalizeDaemonInitialPrompt(value);
+  const prompt = typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
   if (!prompt) return null;
   const firstLine = prompt
     .split(/\r?\n/g)
@@ -34,16 +30,6 @@ export function deriveInitialPromptTitleSeed(value: unknown): string | null {
     .find((line) => line.length > 0);
   if (!firstLine) return null;
   return truncateTitleSeed(firstLine);
-}
-
-export function resolveInitialPromptTitleSeed(params: Readonly<{
-  environmentVariables?: Readonly<Record<string, string>> | null;
-  processEnv?: NodeJS.ProcessEnv;
-}>): string | null {
-  return deriveInitialPromptTitleSeed(
-    params.environmentVariables?.[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]
-      ?? (params.processEnv ?? process.env)[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY],
-  );
 }
 
 export function applyInitialPromptTitleSeedToMetadata<TMetadata extends Metadata>(

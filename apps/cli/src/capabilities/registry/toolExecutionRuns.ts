@@ -7,18 +7,24 @@ import {
   resolveAgentRuntimeControlSurfaceForSession,
 } from '@happier-dev/agents';
 import {
-  ExecutionRunIntentSchema,
-  type ExecutionRunIntent,
 } from '@happier-dev/protocol';
 import {
   buildExecutionRunProfileCatalog,
   listExecutionRunProfileContributionDescriptors,
   listExecutionRunSupportedIntents,
+  type ExecutionRunProfileContributionCatalogInput,
 } from '../../agent/executionRuns/profiles/intentRegistry';
-import { hasCatalogAcpBackendOwner } from '../../agent/acp/catalog/owner';
 import { resolveCliEngineRegistry } from '../../agent/runtime/registry/engineRegistry';
-import type { ResolvedAgentRuntimeContribution } from '../../plugins/projection/registry/types';
+import type { ResolvedAgentContribution } from '../../plugins/projection/registry/types';
+import { readAgentExecutionRunCapabilities } from '../../plugins/projection/registry/agentContributionDefinition';
 import { resolveProviderSessionRuntimePreferences } from '../../session/runtime/catalogHooks';
+import {
+  evaluateContributionAvailability,
+  resolveInvocationContributionPolicyFacts,
+} from '../../plugins/runtime/policy/evaluate';
+import {
+  listEngineRuntimeContributionIds,
+} from '../../agent/runtime/registry/engineRegistry/contributions';
 
 function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): boolean {
   const clis = context?.cliSnapshot?.clis;
@@ -30,59 +36,12 @@ function isCliAvailable(context: CapabilitiesDetectContext, agentId: string): bo
   return entry?.available === true;
 }
 
-function hasExecutionRunCatalogOwner(entry: Readonly<{
-  getAcpBackendFactory?: unknown;
-  getAcpRuntimeDefinitionBridge?: unknown;
-  getRuntimeCore?: unknown;
-}> | null | undefined): boolean {
-  return hasCatalogAcpBackendOwner(entry) || typeof entry?.getRuntimeCore === 'function';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function resolveBackendExecutionRunIntents(params: Readonly<{
-  backendContribution?: ResolvedAgentRuntimeContribution;
-  defaultIntents: readonly ExecutionRunIntent[];
-}>): readonly ExecutionRunIntent[] {
-  const executionRun = params.backendContribution?.capabilities?.executionRun;
-  if (executionRun?.supported === false) return Object.freeze([]);
-
-  const defaultIntentSet = new Set(params.defaultIntents);
-  const review = isRecord(executionRun) ? executionRun.review : null;
-  const declaredIntents = isRecord(review) && Array.isArray(review.intents)
-    ? review.intents
-    : null;
-  if (!declaredIntents) {
-    return params.defaultIntents;
-  }
-
-  const resolved = declaredIntents
-    .map((intent) => ExecutionRunIntentSchema.safeParse(intent))
-    .filter((parsed): parsed is { success: true; data: ExecutionRunIntent } => (
-      parsed.success && defaultIntentSet.has(parsed.data)
-    ))
-    .map((parsed) => parsed.data);
-
-  return Object.freeze(Array.from(new Set(resolved)));
-}
-
 function resolveExecutionRunBackendAvailability(params: Readonly<{
   context: CapabilitiesDetectContext;
   backendId: string;
   isKnownBuiltInAgentId: boolean;
-  entry: Readonly<{
-    getAcpBackendFactory?: unknown;
-    getAcpRuntimeDefinitionBridge?: unknown;
-    getRuntimeCore?: unknown;
-  }> | null | undefined;
-  backendContribution?: ResolvedAgentRuntimeContribution;
+  agentContribution?: ResolvedAgentContribution;
 }>): boolean {
-  if (params.backendContribution?.capabilities?.executionRun?.supported === false) {
-    return false;
-  }
-
   if (params.backendId === 'customAcp') {
     // Compatibility backend id used as the UI "configured ACP" entrypoint.
     return true;
@@ -94,7 +53,9 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
     return true;
   }
 
-  if (hasExecutionRunCatalogOwner(params.entry) || typeof params.backendContribution?.getRuntimeCore === 'function') {
+  if (readAgentExecutionRunCapabilities(
+    params.agentContribution?.richDefinition?.definition,
+  )) {
     return true;
   }
 
@@ -103,7 +64,7 @@ function resolveExecutionRunBackendAvailability(params: Readonly<{
 
 export const executionRunsCapability: Capability = {
   descriptor: { id: 'tool.executionRuns', kind: 'tool', title: 'Execution runs' },
-  detect: async ({ context }) => {
+  detect: async ({ context, request }) => {
     const gate = resolveCliFeatureDecision({ featureId: 'execution.runs', env: process.env });
     if (gate.state !== 'enabled') {
       return {
@@ -119,13 +80,39 @@ export const executionRunsCapability: Capability = {
 
     const cliEngineRegistry = await resolveCliEngineRegistry();
     const executionRunProfileCatalog = buildExecutionRunProfileCatalog(
-      (cliEngineRegistry.contributions.executionRunProfiles ?? []).map((profile) => profile.definition),
+      (cliEngineRegistry.contributions.executionRunProfiles ?? []).flatMap<ExecutionRunProfileContributionCatalogInput>((profile) =>
+        profile.pluginId ? [{ pluginId: profile.pluginId, definition: profile.definition }] : [profile.definition]),
     );
-    const executionRunProfiles = listExecutionRunProfileContributionDescriptors(executionRunProfileCatalog);
+    const sessionId = typeof request.params?.sessionId === 'string' ? request.params.sessionId.trim() : '';
+    const executionRunProfiles = listExecutionRunProfileContributionDescriptors(executionRunProfileCatalog)
+      .flatMap((profile) => {
+        const compatibleAgentIds = profile.compatibleAgents.map((reference) => (
+          typeof reference === 'string' ? reference : reference.localId
+        ));
+        const decision = profile.availability
+          ? evaluateContributionAvailability({
+              availability: profile.availability,
+              facts: resolveInvocationContributionPolicyFacts({
+                ...(sessionId ? { sessionId } : {}),
+                facts: {
+                  ...(compatibleAgentIds[0] ? { 'session.agentId': compatibleAgentIds[0] } : {}),
+                },
+              }),
+            })
+          : { outcome: 'visible' as const, code: 'plugin_contribution_visible' };
+        if (decision.outcome === 'hidden') return [];
+        return [{
+          ...profile,
+          compatibleAgents: compatibleAgentIds,
+          generationId: cliEngineRegistry.contributions.generationId ?? null,
+          available: decision.outcome === 'visible',
+          ...(decision.outcome === 'visible' ? {} : { unavailableCode: decision.code }),
+        }];
+      });
     const intents = voiceAgentEnabled
       ? listExecutionRunSupportedIntents()
       : listExecutionRunSupportedIntents().filter((intent) => intent !== 'voice_agent');
-    const contributedBackendIds = Array.from(cliEngineRegistry.contributions.agentRuntimeDefinitionsById.keys());
+    const contributedBackendIds = listEngineRuntimeContributionIds(cliEngineRegistry.contributions);
     const catalogBackendIds = Object.keys(cliEngineRegistry.contributions.catalogEntriesById);
     const knownBuiltInAgentIds = AGENT_IDS;
     const backendIds = Array.from(new Set([
@@ -157,21 +144,19 @@ export const executionRunsCapability: Capability = {
 
     const backends = Object.fromEntries(
       backendIds.map((backendId) => {
-        const backendContribution = cliEngineRegistry.contributions.agentRuntimeDefinitionsById.get(backendId);
-        const entry = cliEngineRegistry.contributions.catalogEntriesById[backendId];
+        const agentContribution = cliEngineRegistry.contributions.agentDefinitionsById.get(backendId);
         const isKnownBuiltInAgentId = isAgentId(backendId);
         const available = resolveExecutionRunBackendAvailability({
           context,
           backendId,
           isKnownBuiltInAgentId,
-          entry,
-          backendContribution,
+          agentContribution,
         });
         return [
           backendId,
           {
             available,
-            intents: resolveBackendExecutionRunIntents({ backendContribution, defaultIntents: intents }),
+            intents,
             supportsVendorResume: supportsVendorResumeByBackend[backendId] === true,
           },
         ] as const;

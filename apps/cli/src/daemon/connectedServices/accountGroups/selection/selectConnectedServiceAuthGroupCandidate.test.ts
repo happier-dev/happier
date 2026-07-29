@@ -6,6 +6,7 @@ import {
   DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
   hasConnectedServiceAuthGroupCandidateEvidenceForSwitchReason,
   isConnectedServiceAuthGroupSoftSwitchCandidateMeaningfullyBetter,
+  resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence,
   selectConnectedServiceAuthGroupCandidate,
   type ConnectedServiceAuthGroupMemberRuntimeState,
 } from './selectConnectedServiceAuthGroupCandidate';
@@ -32,6 +33,64 @@ describe('DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1', () => {
     expect(DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1).toEqual(
       ConnectedServiceAuthGroupPolicyV1Schema.parse({}),
     );
+  });
+});
+
+describe('resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence burn projection', () => {
+  const softPolicy = { ...basePolicy, softSwitchRemainingPercent: 20 };
+  function activeStates(remainingPercent: number): Map<string, ConnectedServiceAuthGroupMemberRuntimeState> {
+    return new Map<string, ConnectedServiceAuthGroupMemberRuntimeState>([
+      ['active', { quotaSnapshot: { capturedAtMs: 900, effectiveMeterId: 'weekly', effectiveRemainingPercent: remainingPercent } }],
+    ]);
+  }
+
+  it('preempts a soft-switch when a fast burn projects below threshold within the horizon', () => {
+    // remaining 30% (above 20% threshold), burning 0.02%/ms over a 1000ms horizon → projected 10% ≤ 20%.
+    const evidence = resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: softPolicy,
+      memberStatesByProfileId: activeStates(30),
+      nowMs: 1_000,
+      quotaFreshnessMs: 60_000,
+      burnProjection: { remainingPercentPerMs: 0.02, horizonMs: 1_000 },
+    });
+    expect(evidence).toEqual({ status: 'at_or_below_threshold', remainingPercent: 30, thresholdPercent: 20, projected: true });
+  });
+
+  it('stays above threshold when the burn is too slow to cross within the horizon', () => {
+    const evidence = resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: softPolicy,
+      memberStatesByProfileId: activeStates(30),
+      nowMs: 1_000,
+      quotaFreshnessMs: 60_000,
+      burnProjection: { remainingPercentPerMs: 0.001, horizonMs: 1_000 },
+    });
+    expect(evidence).toEqual({ status: 'above_threshold', remainingPercent: 30, thresholdPercent: 20 });
+  });
+
+  it('stays above threshold with no burn signal (fails closed on reset/flat)', () => {
+    const evidence = resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: softPolicy,
+      memberStatesByProfileId: activeStates(30),
+      nowMs: 1_000,
+      quotaFreshnessMs: 60_000,
+      burnProjection: null,
+    });
+    expect(evidence).toEqual({ status: 'above_threshold', remainingPercent: 30, thresholdPercent: 20 });
+  });
+
+  it('reports at_or_below_threshold without a projected flag when already under threshold', () => {
+    const evidence = resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence({
+      activeProfileId: 'active',
+      policy: softPolicy,
+      memberStatesByProfileId: activeStates(15),
+      nowMs: 1_000,
+      quotaFreshnessMs: 60_000,
+      burnProjection: { remainingPercentPerMs: 0.02, horizonMs: 1_000 },
+    });
+    expect(evidence).toEqual({ status: 'at_or_below_threshold', remainingPercent: 15, thresholdPercent: 20 });
   });
 });
 
@@ -100,7 +159,18 @@ describe('selectConnectedServiceAuthGroupCandidate', () => {
         providerResetsAtMs: 500,
         lastFailureKind: 'usage_limit',
         lastObservedAtMs: 400,
-        quotaSnapshot: { capturedAtMs: 900, effectiveMeterId: 'weekly', effectiveRemainingPercent: 60 },
+        quotaSnapshot: {
+          capturedAtMs: 900,
+          effectiveMeterId: 'weekly',
+          effectiveRemainingPercent: 60,
+          meters: [{
+            meterId: 'weekly',
+            limitCategory: 'usage_limit',
+            remainingPct: 60,
+            resetAtMs: null,
+            providerLimitId: 'weekly',
+          }],
+        },
       }],
       ['backup', { quotaSnapshot: { capturedAtMs: 900, effectiveMeterId: 'weekly', effectiveRemainingPercent: 80 } }],
       ['other', { quotaSnapshot: { capturedAtMs: 900, effectiveMeterId: 'weekly', effectiveRemainingPercent: 90 } }],
@@ -606,6 +676,13 @@ describe('selectConnectedServiceAuthGroupCandidate', () => {
             capturedAtMs: 900,
             effectiveMeterId: 'weekly',
             effectiveRemainingPercent: 75,
+            meters: [{
+              meterId: 'weekly',
+              limitCategory: 'usage_limit',
+              remainingPct: 75,
+              resetAtMs: null,
+              providerLimitId: 'weekly',
+            }],
           },
         }],
         ['fallback', {
@@ -621,6 +698,45 @@ describe('selectConnectedServiceAuthGroupCandidate', () => {
     expect(result.selected?.profileId).toBe('was-blocked');
     expect(result.excluded).not.toContainEqual(expect.objectContaining({
       profileId: 'was-blocked',
+    }));
+  });
+
+  it('does not use generic headroom to erase an exact usage-limit failure without a matching usage meter', () => {
+    const result = selectConnectedServiceAuthGroupCandidate({
+      nowMs: 1_000,
+      quotaFreshnessMs: 60_000,
+      activeProfileId: 'active',
+      policy: { ...basePolicy, strategy: 'priority', cooldownMs: 500 },
+      members: [
+        member('reported-exhausted', 1, 1),
+        member('fallback', 2, 2),
+      ],
+      memberStatesByProfileId: new Map([
+        ['reported-exhausted', {
+          quotaExhaustedUntilMs: 10_000,
+          lastFailureKind: 'usage_limit',
+          lastObservedAtMs: 500,
+          providerResetsAtMs: 10_000,
+          quotaSnapshot: {
+            capturedAtMs: 900,
+            effectiveMeterId: 'generic',
+            effectiveRemainingPercent: 99,
+          },
+        }],
+        ['fallback', {
+          quotaSnapshot: {
+            capturedAtMs: 900,
+            effectiveMeterId: 'weekly',
+            effectiveRemainingPercent: 50,
+          },
+        }],
+      ]),
+    });
+
+    expect(result.selected?.profileId).toBe('fallback');
+    expect(result.excluded).toContainEqual(expect.objectContaining({
+      profileId: 'reported-exhausted',
+      reason: 'quota_exhausted',
     }));
   });
 
@@ -782,7 +898,7 @@ describe('selectConnectedServiceAuthGroupCandidate', () => {
     ]));
   });
 
-  it('clears stale auth and capacity blockers when newer positive quota evidence proves the profile usable', () => {
+  it('does not make auth- or capacity-blocked profiles selectable from quota headroom alone', () => {
     const result = selectConnectedServiceAuthGroupCandidate({
       nowMs: 10_000,
       quotaFreshnessMs: 60_000,
@@ -822,10 +938,11 @@ describe('selectConnectedServiceAuthGroupCandidate', () => {
       ]),
     });
 
-    expect(result.selected?.profileId).toBe('stale-auth-blocked');
-    expect(result.excluded).not.toEqual(expect.arrayContaining([
-      expect.objectContaining({ profileId: 'stale-auth-blocked' }),
-    ]));
+    expect(result.selected?.profileId).toBe('lower-headroom');
+    expect(result.excluded).toContainEqual(expect.objectContaining({
+      profileId: 'stale-auth-blocked',
+      reason: 'auth_invalid',
+    }));
   });
 
   it('excludes reconnect-required credential health from automatic selection', () => {

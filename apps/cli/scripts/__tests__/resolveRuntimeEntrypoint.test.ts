@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
 import {
@@ -10,18 +11,12 @@ import {
   resolveValidRuntimeEntrypoint,
 } from '../../bin/_resolveRuntimeEntrypoint.mjs';
 
-function writeBuildManifest(dir: string, fingerprint: string) {
+function writeBuildManifest(dir: string) {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, '.build-manifest.json'),
-    `${JSON.stringify({
-      fingerprint,
-      builtAt: '2026-07-09T00:00:00.000Z',
-      fileCount: 1,
-      toolVersion: '1',
-    })}\n`,
-    'utf8',
-  );
+  cliDistBuildManifest.writeCliDistBuildManifest(join(dir, 'index.mjs'), {
+    outputDir: dir,
+    builtAt: '2026-07-09T00:00:00.000Z',
+  });
 }
 
 describe('resolveRuntimeEntrypoint', () => {
@@ -33,7 +28,7 @@ describe('resolveRuntimeEntrypoint', () => {
     mkdirSync(packageDistDir, { recursive: true });
     writeFileSync(join(distDir, 'index.mjs'), 'export const source = "uncommitted";\n', 'utf8');
     writeFileSync(join(packageDistDir, 'index.mjs'), 'export const source = "committed";\n', 'utf8');
-    writeBuildManifest(packageDistDir, '0123456789abcdef');
+    writeBuildManifest(packageDistDir);
 
     expect(resolveValidRuntimeEntrypoint(root, 'index.mjs')).toEqual(join(packageDistDir, 'index.mjs'));
   });
@@ -44,7 +39,10 @@ describe('resolveRuntimeEntrypoint', () => {
     const entrypoint = join(distDir, 'mcp', 'bridges', 'remote.mjs');
     mkdirSync(join(distDir, 'mcp', 'bridges'), { recursive: true });
     writeFileSync(entrypoint, 'export const ready = true;\n', 'utf8');
-    writeBuildManifest(distDir, 'fedcba9876543210');
+    cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+      outputDir: distDir,
+      builtAt: '2026-07-09T00:00:00.000Z',
+    });
 
     expect(resolveValidRuntimeEntrypoint(root, join('mcp', 'bridges', 'remote.mjs'))).toEqual(entrypoint);
   });

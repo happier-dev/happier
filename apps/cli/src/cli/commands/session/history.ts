@@ -4,6 +4,7 @@ import type { Credentials } from '@/persistence';
 import { readIntFlagValue, readFlagValue, hasFlag } from '@/cli/commands/shared/argvFlags';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { normalizeTranscriptHistoryResult } from '@/session/services/transcript/transcriptHistoryRows';
 import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
@@ -15,12 +16,12 @@ export async function cmdSessionHistory(
 
   const idOrPrefix = String(argv[1] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session history <session-id-or-prefix> [--limit <n>] [--format <compact|raw>] [--json]');
+    throw new Error('Usage: happier session history <session-id-or-prefix> [--limit <n>] [--format <compact|raw>] [--raw] [--json]');
   }
 
   const limitRaw = readIntFlagValue(argv, '--limit');
   const limit = typeof limitRaw === 'number' && Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 250) : 50;
-  const format = (readFlagValue(argv, '--format') ?? 'compact').trim();
+  const format = hasFlag(argv, '--raw') ? 'raw' : (readFlagValue(argv, '--format') ?? 'compact').trim();
   const includeMeta = hasFlag(argv, '--include-meta');
   const includeStructuredPayload = hasFlag(argv, '--include-structured-payload');
 
@@ -37,11 +38,16 @@ export async function cmdSessionHistory(
   const normalizedFormat = format === 'raw' ? 'raw' : 'compact';
   const executor = createCliActionExecutorFromCredentials({ credentials });
   const actionRes = await executor.execute(
-    'session.history.get',
+    'session.transcript.get',
     {
       sessionId: idOrPrefix,
-      limit,
-      format: normalizedFormat,
+      limit: Math.min(limit, 100),
+      scope: 'all',
+      includeTools: true,
+      includeReasoning: true,
+      includeEvents: true,
+      includeRaw: true,
+      maxRawPayloadChars: 32768,
       ...(includeMeta ? { includeMeta: true } : {}),
       ...(includeStructuredPayload ? { includeStructuredPayload: true } : {}),
     },
@@ -64,11 +70,14 @@ export async function cmdSessionHistory(
     throw new Error(normalized.errorCode);
   }
 
-  const result = normalized.data as any;
-  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_history', json, result })) {
+  if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_history', json, result: normalized.data })) {
     return;
   }
 
+  const result = normalizeTranscriptHistoryResult(normalized.data, normalizedFormat, {
+    includeMeta,
+    includeStructuredPayload,
+  });
   if (json) {
     printJsonEnvelope({
       ok: true,

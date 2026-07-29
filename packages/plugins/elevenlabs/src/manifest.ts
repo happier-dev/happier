@@ -256,7 +256,7 @@ export const PLUGIN_MANIFEST = Object.freeze({
             request: {
               origin: 'https://api.elevenlabs.io',
               pathTemplate: '/v1/convai/tools',
-              queryTemplate: [],
+              queryTemplate: [{ name: 'page_size', value: '100' }],
               headerTemplate: [{ name: 'accept', value: 'application/json' }],
               bodyTemplate: { kind: 'none' },
               method: 'GET',
@@ -266,8 +266,14 @@ export const PLUGIN_MANIFEST = Object.freeze({
               contentTypes: [],
             },
             parameters: {
-              schema: { type: 'object', properties: {}, additionalProperties: false },
-              mapping: [],
+              schema: {
+                type: 'object',
+                properties: {
+                  cursor: { type: 'string', minLength: 1, maxLength: 512 },
+                },
+                additionalProperties: false,
+              },
+              mapping: [{ parameter: 'cursor', target: { kind: 'query', name: 'cursor' } }],
             },
             response: { maxBytes: 2097152, contentTypes: ['application/json'] },
           },

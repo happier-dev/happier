@@ -21,6 +21,8 @@ import {
   readActiveServerFromSettingsFile,
   resolveServerSelection,
 } from './configuration/serverSelection'
+import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from './daemon/spawn/sessionWebhookTimeoutPolicy'
+import { FILES_TRANSFER_CHUNK_CONFIG_MAX_BYTES } from './configuration/fileTransferLimits'
 
 export const DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS = 100_000_000;
 export const DEFAULT_EXECUTION_RUN_WAIT_MCP_TIMEOUT_GRACE_MS = 60_000;
@@ -53,7 +55,29 @@ export function resolveWorkspaceReplicationJobStatusHeartbeatIntervalMs(): numbe
 export function isDaemonProcessArgv(args: readonly string[]): boolean {
   if (args.length < 2) return false
   if (args[0] !== 'daemon') return false
-  return args[1] === 'start' || args[1] === 'start-sync'
+  return args[1] === 'start'
+    || args[1] === 'start-sync'
+    || args[1] === 'plugin-packed-test-host'
+}
+
+function normalizeDaemonProcessInheritedEnv(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  isDaemonProcess: boolean;
+}>): void {
+  if (!params.isDaemonProcess) return;
+
+  const hasStackContext =
+    Boolean(String(params.env.HAPPIER_STACK_STACK ?? '').trim()) ||
+    Boolean(String(params.env.HAPPIER_STACK_ENV_FILE ?? '').trim()) ||
+    Boolean(String(params.env.HAPPIER_STACK_REPO_DIR ?? '').trim());
+  if (hasStackContext) {
+    params.env.HAPPIER_STACK_PROCESS_KIND = 'daemon';
+    return;
+  }
+
+  if (String(params.env.HAPPIER_STACK_PROCESS_KIND ?? '').trim() === 'session') {
+    delete params.env.HAPPIER_STACK_PROCESS_KIND;
+  }
 }
 
 class Configuration {
@@ -90,6 +114,9 @@ class Configuration {
   // briefly for the runner to exit so we don't strand the session stopped due to idempotency.
   public readonly daemonSpawnExistingSessionWaitForExitMs: number
   public readonly daemonSpawnExistingSessionWaitForExitPollIntervalMs: number
+  // Plugin daemon-spawn hook dispatch budget. Spawn prerequisites must fail closed before the
+  // caller's broader spawn RPC budget is exhausted.
+  public readonly daemonSpawnHookDispatchTimeoutMs: number
   // Stop coordination: after requesting a tracked session stop, wait briefly for exit observation
   // so server-side active=false can be published before callers continue with archive/delete flows.
   public readonly daemonStopSessionWaitForExitMs: number
@@ -126,12 +153,8 @@ class Configuration {
   public readonly sessionKeepAliveIdleMs: number
   public readonly sessionKeepAliveThinkingMs: number
 
-  // Pending queue V2: idle wake polling (ensures queued prompts are materialized even if socket wakeups are missed).
-  public readonly pendingQueueIdleWakePollIntervalMs: number
   public readonly pendingQueueStateReconcileThrottleMs: number
-  public readonly sessionSocketStaleSafetyIntervalMs: number
   public readonly promptLoopUserMessageSeqWaitTimeoutMs: number
-  public readonly promptLoopUserMessageSeqWaitPollMs: number
 
   // Codex app-server terminal notification settle time (allows slightly late item notifications to land before flushing).
   public readonly codexAppServerTurnCompletionSettleMs: number
@@ -241,6 +264,10 @@ class Configuration {
     // Check if we're running as daemon based on process args
     const args = normalizeCliArgv(process.argv.slice(2))
     this.isDaemonProcess = isDaemonProcessArgv(args)
+    normalizeDaemonProcessInheritedEnv({
+      env: process.env,
+      isDaemonProcess: this.isDaemonProcess,
+    })
     this.publicReleaseRing = resolveManagedCliReleaseChannelSync({ processEnv: process.env, argv: process.argv }).ringId
 
     // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
@@ -257,6 +284,10 @@ class Configuration {
     const envActiveServerIdRaw = (process.env.HAPPIER_ACTIVE_SERVER_ID ?? '').toString().trim();
     const envActiveServerId = isServerIdFilesystemSafe(envActiveServerIdRaw)
       ? envActiveServerIdRaw
+      : null;
+    const daemonLifecycleScopeIdRaw = (process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID ?? '').toString().trim();
+    const daemonLifecycleScopeId = isServerIdFilesystemSafe(daemonLifecycleScopeIdRaw)
+      ? daemonLifecycleScopeIdRaw
       : null;
     const persisted = readActiveServerFromSettingsFile(this.settingsFile);
     const resolved = resolveServerSelection({
@@ -280,8 +311,11 @@ class Configuration {
     this.legacyPrivateKeyFile = join(this.happyHomeDir, 'access.key')
     this.privateKeyFile = join(this.activeServerDir, 'access.key')
     this.installationIdentityFile = join(this.happyHomeDir, 'installation-identity.json')
-    this.daemonStateFile = join(this.activeServerDir, CANONICAL_DAEMON_STATE_BASENAME)
-    this.daemonLockFile = join(this.activeServerDir, `${CANONICAL_DAEMON_STATE_BASENAME}.lock`)
+    const daemonLifecycleDir = daemonLifecycleScopeId
+      ? join(this.serversDir, daemonLifecycleScopeId)
+      : this.activeServerDir
+    this.daemonStateFile = join(daemonLifecycleDir, CANONICAL_DAEMON_STATE_BASENAME)
+    this.daemonLockFile = join(daemonLifecycleDir, `${CANONICAL_DAEMON_STATE_BASENAME}.lock`)
 
     const attachMaxAgeRaw = String(process.env.HAPPIER_SESSION_ATTACH_FILE_MAX_AGE_MS ?? '').trim();
     const attachMaxAgeMs = Number.parseInt(attachMaxAgeRaw, 10);
@@ -317,6 +351,10 @@ class Configuration {
     this.daemonSpawnExistingSessionWaitForExitPollIntervalMs = resolveIntEnvWithBounds(
       'HAPPIER_DAEMON_SPAWN_EXISTING_SESSION_WAIT_FOR_EXIT_POLL_INTERVAL_MS',
       { min: 10, max: 2_000, default: 50 },
+    );
+    this.daemonSpawnHookDispatchTimeoutMs = resolveIntEnvWithBounds(
+      'HAPPIER_DAEMON_SPAWN_HOOK_DISPATCH_TIMEOUT_MS',
+      { min: 1_000, max: 600_000, default: DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS },
     );
     // Default: 15s. Set to 0 to disable waiting.
     this.daemonStopSessionWaitForExitMs = resolveIntEnvWithBounds(
@@ -356,7 +394,7 @@ class Configuration {
 
     // Default: 256KB. Defensive min: 1KB; max: 5MB.
     this.filesTransferChunkBytes = resolveIntEnvWithBounds('HAPPIER_FILES_TRANSFER_CHUNK_BYTES', {
-      min: 1024, max: 5_000_000, default: 256_000,
+      min: 1024, max: FILES_TRANSFER_CHUNK_CONFIG_MAX_BYTES, default: 256_000,
     });
 
     // Default: 10 minutes. Defensive min: 1s; max: 60 minutes.
@@ -465,34 +503,14 @@ class Configuration {
       min: 500, default: 2_000,
     });
 
-    const pendingWakeRaw = String(process.env.HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS ?? '').trim();
-    const pendingWakeMs = Number.parseInt(pendingWakeRaw, 10);
-    // Default: slow defensive wake only. Real pending queue wakeups should arrive
-    // via server pending-changed updates and reconnect catch-up.
-    this.pendingQueueIdleWakePollIntervalMs =
-      pendingWakeRaw === '0'
-        ? 0
-        : (Number.isFinite(pendingWakeMs) && pendingWakeMs >= 50
-            ? Math.min(pendingWakeMs, 60_000)
-            : 30_000);
-
     this.pendingQueueStateReconcileThrottleMs = resolveIntEnvWithBounds(
       'HAPPIER_PENDING_QUEUE_STATE_RECONCILE_THROTTLE_MS',
       { min: 1_000, max: 60_000, default: 15_000 },
     );
 
-    this.sessionSocketStaleSafetyIntervalMs = resolveIntEnvWithBounds(
-      'HAPPIER_SESSION_SOCKET_STALE_SAFETY_INTERVAL_MS',
-      { min: 1_000, max: 10 * 60_000, default: 30_000 },
-    );
-
     this.promptLoopUserMessageSeqWaitTimeoutMs = resolveIntEnvWithBounds(
       'HAPPIER_PROMPT_LOOP_USER_MESSAGE_SEQ_WAIT_TIMEOUT_MS',
       { min: 0, max: 10_000, default: 1_000 },
-    );
-    this.promptLoopUserMessageSeqWaitPollMs = resolveIntEnvWithBounds(
-      'HAPPIER_PROMPT_LOOP_USER_MESSAGE_SEQ_WAIT_POLL_MS',
-      { min: 1, max: 1_000, default: 20 },
     );
 
     this.codexAppServerTurnCompletionSettleMs = resolveIntEnvWithBounds(

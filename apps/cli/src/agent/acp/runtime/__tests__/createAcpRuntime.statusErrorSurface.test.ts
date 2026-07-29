@@ -33,7 +33,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({ type: 'status', status: 'error', detail: 'Model not found.' } satisfies AgentMessage);
@@ -85,7 +85,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
       runtimeEvents.push(RuntimeEventV1Schema.parse(message));
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({
@@ -106,12 +106,9 @@ describe('createAcpRuntime (status error surfacing)', () => {
       resetAtMs: 123_000,
       retryAfterMs: 5_000,
       providerLimitId: 'free_tier_limit',
-      connectedService: {
-        serviceId: 'openai',
-        profileId: null,
-        groupId: null,
-      },
+      recoverability: 'wait',
     });
+    expect(lastRuntimeIssue?.usageLimit?.connectedService).toBeUndefined();
     expect(onRuntimeAuthFailure).toHaveBeenCalledWith(expect.objectContaining({
       activeSessionId: 'sess_main',
       classification: expect.objectContaining({
@@ -121,7 +118,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
     }));
   });
 
-  it('projects runtime-auth apply failures into a typed recovery decision', async () => {
+  it('keeps asynchronous runtime-auth recovery results out of the canonical turn failure', async () => {
     const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_main' });
 
     const runtimeEvents: RuntimeEventV1[] = [];
@@ -175,7 +172,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
       runtimeEvents.push(RuntimeEventV1Schema.parse(message));
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({
@@ -192,13 +189,13 @@ describe('createAcpRuntime (status error surfacing)', () => {
     const turnFailed = runtimeEvents.find((event) => event.kind === 'turn-failed');
     expect(turnFailed?.issue.usageLimit).toMatchObject({
       recoverability: 'switch_account',
-      recoveryDecision: 'manual_intervention',
       connectedService: {
         serviceId: 'openai',
         profileId: 'primary',
         groupId: 'main',
       },
     });
+    expect(turnFailed?.issue.usageLimit).not.toHaveProperty('recoveryDecision');
   });
 
   it('flushes pending permission requests when status:error aborts the turn', async () => {
@@ -221,7 +218,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({ type: 'status', status: 'error', detail: 'Model not found.' } satisfies AgentMessage);
@@ -255,7 +252,7 @@ describe('createAcpRuntime (status error surfacing)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({

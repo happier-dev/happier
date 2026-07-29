@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { isPermissionMode } from '@/api/types';
@@ -7,9 +6,14 @@ import { createReplaySeededSession } from '@/session/replay/createReplaySeededSe
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import { archiveSessionByIdBestEffort } from '@/session/services/setSessionArchivedState';
-import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
-import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol';
+import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+import type { BackendTargetRefV2Input, LlmTaskRunnerConfigV1, SessionModelSelectionV1 } from '@happier-dev/protocol';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
+import {
+    createStableSpawnNonce,
+    isAmbiguousSpawnSessionFailure,
+    normalizeSpawnNonce,
+} from '@/session/shared/spawnNonce';
 
 export type RunReplaySummaryForDialogFn = typeof import('@/session/replay/summary/runReplaySummaryForDialog').runReplaySummaryForDialog;
 
@@ -28,8 +32,8 @@ export type ContinueSessionWithReplayParams = Readonly<{
     approvedNewDirectoryCreation?: boolean;
     permissionMode?: string;
     permissionModeUpdatedAt?: number;
-    modelId?: string;
-    modelUpdatedAt?: number;
+    modelSelection?: SessionModelSelectionV1;
+    spawnNonce?: string;
     replay: ContinueWithReplayReplayParams;
 }>;
 
@@ -64,8 +68,8 @@ export async function continueSessionWithReplay(
         approvedNewDirectoryCreation,
         permissionMode,
         permissionModeUpdatedAt,
-        modelId,
-        modelUpdatedAt,
+        modelSelection,
+        spawnNonce,
         replay,
   } = params;
 
@@ -125,6 +129,20 @@ export async function continueSessionWithReplay(
         };
     }
 
+    const replaySpawnNonce = normalizeSpawnNonce(spawnNonce) ?? createStableSpawnNonce('session.continue_with_replay', {
+        directory,
+        backendTarget: resolvedBackend.backendTargetV2,
+        previousSessionId: replay.previousSessionId,
+        sourceCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
+        strategy: replayStrategy,
+        recentMessagesCount: replay.recentMessagesCount ?? 250,
+        maxSeedChars: typeof replay.maxSeedChars === 'number' ? replay.maxSeedChars : configuration.replaySeedMaxChars,
+        seedMode: replay.seedMode ?? null,
+        summaryRunner: replay.summaryRunner ?? null,
+        permissionMode: typeof permissionMode === 'string' ? permissionMode : null,
+        modelSelection: modelSelection ?? null,
+    });
+
     logger.debug('[SESSION REPLAY] Continuing session with replay', {
         directory,
         backendTargetV2: resolvedBackend.backendTargetV2,
@@ -142,7 +160,7 @@ export async function continueSessionWithReplay(
                 credentials,
                 directory,
                 flavor: resolvedBackend.replayFlavor,
-                tag: `replay:${replay.previousSessionId}:${resolvedSeed.sourceCutoffSeqInclusive}:${randomUUID()}`,
+                tag: replaySpawnNonce,
                 metadata: {
                     forkV1: {
                         v: 1,
@@ -150,7 +168,7 @@ export async function continueSessionWithReplay(
                         parentCutoffSeqInclusive: resolvedSeed.sourceCutoffSeqInclusive,
                         createdAtMs: nowMs,
                         strategy: 'replay',
-                        providerHint: { providerId: resolvedBackend.providerHintProviderId },
+                        agentHint: { agentId: resolvedBackend.agentHintAgentId },
                     },
                     replaySeedV1: {
                         v: 1,
@@ -188,7 +206,6 @@ export async function continueSessionWithReplay(
         };
     }
 
-    const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId : undefined;
     const normalizedPermissionMode =
         typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
     const normalizedPermissionModeUpdatedAt =
@@ -198,17 +215,19 @@ export async function continueSessionWithReplay(
         directory,
         backendTarget: resolvedBackend.backendTargetV2,
         approvedNewDirectoryCreation,
+        spawnNonce: replaySpawnNonce,
         existingSessionId: created.sessionId,
         permissionMode: normalizedPermissionMode,
         permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
-        modelId: normalizedModelId,
-        modelUpdatedAt: typeof modelUpdatedAt === 'number' ? modelUpdatedAt : undefined,
+        modelSelection,
     } satisfies SpawnSessionOptions);
 
     if (result.type === 'success') {
         return { type: 'success', sessionId: created.sessionId };
     }
 
-    await archiveSessionBestEffort(credentials.token, created.sessionId);
+    if (!isAmbiguousSpawnSessionFailure(result)) {
+        await archiveSessionBestEffort(credentials.token, created.sessionId);
+    }
     return result;
 }

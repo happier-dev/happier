@@ -263,8 +263,8 @@ export class ConnectedServiceTemporaryThrottleRetryScheduler {
     return this.#scheduler.read(sessionId);
   }
 
-  hydrate(): ReadonlyArray<ConnectedServiceTemporaryThrottleRetryIntent> {
-    return this.#scheduler.hydrate();
+  hydrate(options: Readonly<{ schedule?: boolean }> = {}): ReadonlyArray<ConnectedServiceTemporaryThrottleRetryIntent> {
+    return this.#scheduler.hydrate(options);
   }
 
   wake(input: Readonly<{ sessionId: string; reason: 'timer' | 'manual' }>): Promise<Readonly<{ status: string }>> {

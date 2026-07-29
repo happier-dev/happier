@@ -1,7 +1,9 @@
-import type {
-  DaemonVoiceInferenceAudioOutput,
-  DaemonVoiceInferenceModelStatus,
-  ModelPackManifest,
+import {
+  assertPackIdFilesystemSafe,
+  type DaemonVoiceInferenceModelStatus,
+  type ModelPackManifest,
+  type VoiceModelPackRuntimeV1,
+  type VoiceModelPackSupportArtifactV1,
 } from '@happier-dev/protocol';
 
 import type { VoiceInferenceRuntime } from './voiceInferenceRuntimeTypes';
@@ -17,6 +19,8 @@ export type WarmRuntimeHandle = Readonly<{
   runtime: VoiceInferenceRuntime;
   packDir: string;
   manifest: ModelPackManifest;
+  runtimeDescriptor?: VoiceModelPackRuntimeV1 | null;
+  supportArtifacts?: readonly VoiceModelPackSupportArtifactV1[];
 }>;
 
 export function normalizePackId(packId: string | null | undefined): string | null {
@@ -27,21 +31,10 @@ export function normalizePackId(packId: string | null | undefined): string | nul
   return normalized.length > 0 ? normalized : null;
 }
 
-const VOICE_INFERENCE_PACK_ID_FILESYSTEM_SAFE_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
-const VOICE_INFERENCE_PACK_ID_MAX_LENGTH = 256;
-
 export function assertVoiceInferencePackIdFilesystemSafe(packId: string): string {
-  const normalized = packId.trim();
-  if (
-    normalized.length === 0
-    || normalized.length > VOICE_INFERENCE_PACK_ID_MAX_LENGTH
-    || normalized === '.'
-    || normalized === '..'
-    || !VOICE_INFERENCE_PACK_ID_FILESYSTEM_SAFE_RE.test(normalized)
-  ) {
-    throw createVoiceInferenceError('internal_error', 'voice_inference_invalid_pack_id');
-  }
-  return normalized;
+  return assertPackIdFilesystemSafe(packId, () =>
+    createVoiceInferenceError('internal_error', 'voice_inference_invalid_pack_id'),
+  );
 }
 
 export function createVoiceInferenceError(code: string, message = `voice_inference_${code}`): Error {
@@ -72,17 +65,6 @@ export function isVoiceInferenceWavMimeType(inputMimeType: string): boolean {
 
 export function isVoiceInferenceModelKind(value: string | null | undefined): value is DaemonVoiceInferenceModelStatus['kind'] {
   return value === 'tts_sherpa' || value === 'stt_sherpa';
-}
-
-export function resolveVoiceInferenceOutputExtension(output: DaemonVoiceInferenceAudioOutput): string {
-  switch (output.codec) {
-    case 'wav':
-      return 'wav';
-    case 'opus':
-      return 'opus';
-    default:
-      return 'mp3';
-  }
 }
 
 export function shouldPreserveHealthyDiagnostics(error: unknown): boolean {

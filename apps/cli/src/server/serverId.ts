@@ -1,3 +1,5 @@
+import { createServerUrlComparableKey } from '@happier-dev/protocol';
+
 const SERVER_ID_SAFE_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 export function isServerIdFilesystemSafe(raw: string): boolean {
@@ -34,4 +36,27 @@ export function deriveServerIdFromName(raw: string): string {
   }
 
   return id;
+}
+
+function normalizeServerUrlForId(url: string): string {
+  return String(url ?? '').trim().replace(/\/+$/, '');
+}
+
+export function deriveServerIdFromUrl(url: string): string {
+  const raw = normalizeServerUrlForId(url);
+  if (!raw) return 'env_0';
+  const value = (() => {
+    try {
+      return createServerUrlComparableKey(raw) || raw;
+    } catch {
+      return raw;
+    }
+  })();
+
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `env_${(hash >>> 0).toString(16)}`;
 }

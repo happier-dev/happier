@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
 import { createWorkspaceStagingRoot } from './createWorkspaceStagingRoot';
 import type { StagedWorkspaceDirectory } from './stageWorkspaceDirectory';
@@ -13,6 +14,7 @@ import type { StagedWorkspaceFileBlob } from './stageWorkspaceFileBlob';
 import type { StagedWorkspaceSymlink } from './stageWorkspaceSymlink';
 
 const tempRoots: string[] = [];
+const scmRegistry = createScmBackendRegistry([]);
 
 async function makeTempDir(prefix: string): Promise<string> {
     const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -76,6 +78,7 @@ describe('stageWorkspaceEntries', () => {
         const result = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
+            scmRegistry,
             blobProvider: {
                 getBlobFilePath: (digest: string) => (digest === fixture.digest ? fixture.filePath : null),
             },
@@ -99,6 +102,7 @@ describe('stageWorkspaceEntries', () => {
         await expect(stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
+            scmRegistry,
             blobProvider: {
                 getBlobFilePath: () => null,
             },
@@ -135,6 +139,7 @@ describe('stageWorkspaceEntries', () => {
         const result = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest,
+            scmRegistry,
             blobProvider: {
                 getBlobFilePath: (digest: string) => (digest === expectedDigest ? filePath : null),
             },
@@ -161,6 +166,7 @@ describe('stageWorkspaceEntries', () => {
         const result = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
+            scmRegistry,
             blobProvider,
         });
 
@@ -180,6 +186,7 @@ describe('stageWorkspaceEntries', () => {
         await expect(stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
+            scmRegistry,
         })).rejects.toThrow(/blobProvider/i);
 
         await expect(access(join(stagingRoot.workspaceDirectory, 'docs'))).rejects.toThrow();
@@ -197,6 +204,7 @@ describe('stageWorkspaceEntries', () => {
         const result = await stageWorkspaceEntries({
             stagingRoot,
             expectedManifest: fixture.manifest,
+            scmRegistry,
             blobProvider: {
                 getBlobFilePath: (digest: string) => (digest === fixture.digest ? fixture.filePath : null),
             },

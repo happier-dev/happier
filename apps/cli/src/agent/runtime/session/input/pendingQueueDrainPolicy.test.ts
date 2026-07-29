@@ -7,7 +7,6 @@ import {
 import {
   PENDING_QUEUE_DRAIN_ALL_MAX_POP_PER_WAKE,
   PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE,
-  resolveSessionPendingActiveTurnDeliveryPolicy,
   resolvePendingQueueRuntimeActivityDeferral,
   resolveSessionPendingQueueDeliveryTiming,
   resolveSessionPendingQueueDrainMode,
@@ -17,16 +16,6 @@ import {
 } from './pendingQueueDrainPolicy';
 
 describe('pendingQueueDrainPolicy', () => {
-  it('allows active-turn delivery unless the user explicitly chose server-pending busy sends', () => {
-    expect(resolveSessionPendingActiveTurnDeliveryPolicy(null)).toBe('allow_live_delivery');
-    expect(resolveSessionPendingActiveTurnDeliveryPolicy({})).toBe('allow_live_delivery');
-    expect(resolveSessionPendingActiveTurnDeliveryPolicy({
-      sessionBusySteerSendPolicy: 'steer_immediately',
-    })).toBe('allow_live_delivery');
-    expect(resolveSessionPendingActiveTurnDeliveryPolicy({
-      sessionBusySteerSendPolicy: 'server_pending',
-    })).toBeUndefined();
-  });
 
   it('resolves pending queue drain mode and max pop per wake from account settings', () => {
     expect(resolveSessionPendingQueueDrainMode({ sessionPendingQueueDrainMode: 'drain_all' } as AccountSettings)).toBe('drain_all');
@@ -47,53 +36,28 @@ describe('pendingQueueDrainPolicy', () => {
 
   it('derives runtime-idle pending drain state from the shared runtime activity projection contract', () => {
     const activity = {
+      runtimeActivityState: 'active' as const,
       runtimeActivityActiveCount: 1,
       runtimeActivityObservedAt: 500,
-      runtimeActivityExpiresAt: 2_000,
-      runtimeActivitySourceClass: 'provider_detached_task' as const,
+      runtimeActivityRevision: 2,
     };
 
     expect(runtimeIdleForPendingDrain(activity, 1_000)).toBe(false);
     expect(runtimeIdleForPendingDrain({
       ...activity,
-      runtimeActivityExpiresAt: 1_000,
+      runtimeActivityState: 'idle' as const,
+      runtimeActivityActiveCount: 0,
+      runtimeActivityRevision: 3,
     }, 1_000)).toBe(true);
-    expect(runtimeIdleForPendingDrain({
-      ...activity,
-      runtimeActivityExpiresAt: null,
-    }, 1_000)).toBe(true);
-    expect(runtimeIdleForPendingDrain({
-      ...activity,
-      runtimeActivityExpiresAt: Number.NaN,
-    }, 1_000)).toBe(true);
-    expect(runtimeIdleForPendingDrain({
-      ...activity,
-      runtimeActivityExpiresAt: 1_000,
-    }, 2_000)).toBe(true);
-  });
-
-  it('keeps expiry as the fail-open guard when the session client is the owning runner', () => {
-    const expiredActivity = {
-      runtimeActivityActiveCount: 1,
-      runtimeActivityObservedAt: 500,
-      runtimeActivityExpiresAt: 999,
-      runtimeActivitySourceClass: 'provider_detached_task' as const,
-    };
-
-    expect(runtimeIdleForPendingDrain(expiredActivity, 1_000)).toBe(true);
-    expect(shouldDeferPendingQueueDrainForRuntimeActivity({
-      settings: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } as AccountSettings,
-      activity: expiredActivity,
-      nowMs: 1_000,
-    })).toBe(false);
+    expect(runtimeIdleForPendingDrain({ ...activity, runtimeActivityState: 'unknown' as const, runtimeActivityActiveCount: 0 }, 99_000)).toBe(false);
   });
 
   it('only defers queued delivery for after-runtime-idle timing with non-idle runtime activity', () => {
     const activity = {
+      runtimeActivityState: 'active' as const,
       runtimeActivityActiveCount: 1,
       runtimeActivityObservedAt: 500,
-      runtimeActivityExpiresAt: 2_000,
-      runtimeActivitySourceClass: 'provider_detached_task' as const,
+      runtimeActivityRevision: 2,
     };
 
     expect(shouldDeferPendingQueueDrainForRuntimeActivity({
@@ -111,11 +75,16 @@ describe('pendingQueueDrainPolicy', () => {
       settings: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } as AccountSettings,
       activity,
       nowMs: 1_000,
-    })).toEqual({ defer: true, runtimeActivityExpiresAt: 2_000 });
+    })).toEqual({ defer: true });
     expect(resolvePendingQueueRuntimeActivityDeferral({
       settings: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } as AccountSettings,
-      activity,
+      activity: {
+        runtimeActivityState: 'idle',
+        runtimeActivityActiveCount: 0,
+        runtimeActivityObservedAt: 2_000,
+        runtimeActivityRevision: 3,
+      },
       nowMs: 2_000,
-    })).toEqual({ defer: false, runtimeActivityExpiresAt: null });
+    })).toEqual({ defer: false });
   });
 });

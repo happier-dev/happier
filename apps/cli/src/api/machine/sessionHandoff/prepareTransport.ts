@@ -2,7 +2,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import { join } from 'node:path';
 
-import { configuration } from '@/configuration';
 import type {
   SessionHandoffMetadataV2,
   SessionHandoffPrepareTargetRequest,
@@ -23,11 +22,11 @@ import {
 } from '../../../machines/transfer/serverRoutedTransport';
 import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';
 import type { TransferPayloadSource } from '../../../machines/transfer/transferPayloadSource';
-import { readSessionHandoffProviderBundleFile } from '../../../session/handoff/providerBundle/file';
+import { readSessionHandoffAgentBundleFile } from '../../../session/handoff/agentBundle/file';
 import {
-  buildSessionHandoffProviderBundleTransferId,
-} from '../../../session/handoff/providerBundle/transferPublication';
-import type { SessionHandoffProviderBundle } from '../../../session/handoff/types';
+  buildSessionHandoffAgentBundleTransferId,
+} from '../../../session/handoff/agentBundle/transferPublication';
+import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
 import {
   type SessionHandoffWorkspaceReplicationMetadata,
 } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
@@ -47,6 +46,8 @@ export type SessionHandoffDirectPeerTransferHandle = Readonly<{
     transferId: string;
     endpointCandidates: readonly TransferEndpointCandidate[];
     destinationPath: string;
+    expectedSizeBytes?: number;
+    expectedManifestHash?: string;
     openBody?: unknown;
     timeoutMs?: number;
   }>) => Promise<Readonly<{ destinationPath: string }>>;
@@ -77,6 +78,8 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
   transferId: string;
   endpointCandidates: readonly TransferEndpointCandidate[];
   destinationPath: string;
+  expectedSizeBytes?: number;
+  expectedManifestHash?: string;
   timeoutMs?: number;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle;
   invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
@@ -90,6 +93,12 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
       transferId: params.transferId,
       endpointCandidates: params.endpointCandidates,
       destinationPath: params.destinationPath,
+      ...(typeof params.expectedSizeBytes === 'number'
+        ? { expectedSizeBytes: params.expectedSizeBytes }
+        : {}),
+      ...(typeof params.expectedManifestHash === 'string'
+        ? { expectedManifestHash: params.expectedManifestHash }
+        : {}),
       ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
     });
   }
@@ -105,6 +114,12 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
         transferId: params.transferId,
         endpointCandidates: params.endpointCandidates,
         destinationPath: params.destinationPath,
+        ...(typeof params.expectedSizeBytes === 'number'
+          ? { expectedSizeBytes: params.expectedSizeBytes }
+          : {}),
+        ...(typeof params.expectedManifestHash === 'string'
+          ? { expectedManifestHash: params.expectedManifestHash }
+          : {}),
         ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
         maxAttempts,
         retryDelayMs: 250,
@@ -133,17 +148,15 @@ async function requestDirectPeerPayloadFileWithWorkspaceRetry(params: Readonly<{
   throw new Error(directPeerTransferUnavailable().error);
 }
 
-async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
+async function requestServerRoutedPrepareAgentBundle(params: Readonly<{
   transferId: string;
   sourceMachineId: string;
   machineTransferChannel: MachineTransferChannel;
-}>): Promise<SessionHandoffProviderBundle> {
+  transferTimeoutMs?: number;
+}>): Promise<SessionHandoffAgentBundle> {
   const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-provider-server-routed-'));
   const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
-  const timeoutMs =
-    typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
-      ? configuration.filesTransferSessionTtlMs
-      : undefined;
+  const timeoutMs = params.transferTimeoutMs;
   const openBody =
     typeof timeoutMs === 'number'
       ? {
@@ -161,28 +174,30 @@ async function requestServerRoutedPrepareProviderBundle(params: Readonly<{
       ...(openBody ? { openBody } : {}),
       ...(timeoutMs ? { timeoutMs } : {}),
     });
-    return await readSessionHandoffProviderBundleFile(payloadFilePath);
+    return await readSessionHandoffAgentBundleFile(payloadFilePath);
   } finally {
     await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => undefined);
   }
 }
 
-export async function resolvePrepareProviderBundle(params: Readonly<{
+export async function resolvePrepareAgentBundle(params: Readonly<{
   request: SessionHandoffPrepareTargetRequest;
   actualTransportStrategy: SessionHandoffPrepareTargetRequest['negotiatedTransportStrategy'];
   handoffMetadataV2?: SessionHandoffMetadataV2;
   machineTransferChannel?: MachineTransferChannel;
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
   transferRouteCache?: ReturnType<typeof createMachineTransferRouteCache>;
+  transferTimeoutMs?: number;
   invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
-}>): Promise<SessionHandoffProviderBundle | undefined> {
-  const transferPublication = params.handoffMetadataV2?.providerBundleTransferPublication;
+}>): Promise<SessionHandoffAgentBundle | undefined> {
+  const transferPublication = params.handoffMetadataV2?.agentBundleTransferPublication;
   if (!transferPublication) {
     if (params.actualTransportStrategy === 'server_routed_stream' && params.machineTransferChannel) {
-      return await requestServerRoutedPrepareProviderBundle({
-        transferId: buildSessionHandoffProviderBundleTransferId(params.request.handoffId),
+      return await requestServerRoutedPrepareAgentBundle({
+        transferId: buildSessionHandoffAgentBundleTransferId(params.request.handoffId),
         sourceMachineId: params.request.sourceMachineId,
         machineTransferChannel: params.machineTransferChannel,
+        transferTimeoutMs: params.transferTimeoutMs,
       });
     }
     return undefined;
@@ -191,24 +206,26 @@ export async function resolvePrepareProviderBundle(params: Readonly<{
   const allowServerRoutedFallback = params.request.allowServerRoutedFallback !== false;
   const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
 
-  const providerBundle =
+  const agentBundle =
     params.actualTransportStrategy === 'server_routed_stream' && params.machineTransferChannel
-      ? await requestServerRoutedPrepareProviderBundle({
+      ? await requestServerRoutedPrepareAgentBundle({
         transferId: transferPublication.transferId,
         sourceMachineId: params.request.sourceMachineId,
         machineTransferChannel: params.machineTransferChannel,
+        transferTimeoutMs: params.transferTimeoutMs,
       })
       : params.actualTransportStrategy === 'direct_peer'
         && transferEndpointCandidates
         && (params.request.workspaceTransfer?.enabled === true || params.directPeerTransfer?.requestPayloadFile)
-        ? await (async (): Promise<SessionHandoffProviderBundle> => {
+        ? await (async (): Promise<SessionHandoffAgentBundle> => {
           const endpointCandidates = transferEndpointCandidates.filter((candidate) => candidate.expiresAt >= Date.now());
           if (endpointCandidates.length === 0) {
             if (canFallbackToServerRouted && params.machineTransferChannel) {
-              return await requestServerRoutedPrepareProviderBundle({
+              return await requestServerRoutedPrepareAgentBundle({
                 transferId: transferPublication.transferId,
                 sourceMachineId: params.request.sourceMachineId,
                 machineTransferChannel: params.machineTransferChannel,
+                transferTimeoutMs: params.transferTimeoutMs,
               });
             }
             throw new Error(directPeerTransferUnavailable().error);
@@ -225,18 +242,16 @@ export async function resolvePrepareProviderBundle(params: Readonly<{
           });
           if (cachedRoute?.status === 'unavailable' && params.request.workspaceTransfer?.enabled !== true) {
             if (canFallbackToServerRouted && params.machineTransferChannel) {
-              return await requestServerRoutedPrepareProviderBundle({
+              return await requestServerRoutedPrepareAgentBundle({
                 transferId: transferPublication.transferId,
                 sourceMachineId: params.request.sourceMachineId,
                 machineTransferChannel: params.machineTransferChannel,
+                transferTimeoutMs: params.transferTimeoutMs,
               });
             }
             throw new Error(directPeerTransferUnavailable().error);
           }
-          const timeoutMs =
-            typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
-              ? configuration.filesTransferSessionTtlMs
-              : undefined;
+          const timeoutMs = params.transferTimeoutMs;
           const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-provider-direct-peer-'));
           const payloadFilePath = join(temporaryDirectory, 'provider-bundle.json');
           try {
@@ -246,6 +261,8 @@ export async function resolvePrepareProviderBundle(params: Readonly<{
                 transferId: transferPublication.transferId,
                 endpointCandidates,
                 destinationPath: payloadFilePath,
+                expectedSizeBytes: transferPublication.sizeBytes,
+                expectedManifestHash: transferPublication.manifestHash,
                 ...(typeof timeoutMs === 'number' ? { timeoutMs } : {}),
                 directPeerTransfer: params.directPeerTransfer!,
                 invalidateDirectPeerRouteCacheForHandoffMachines: params.invalidateDirectPeerRouteCacheForHandoffMachines,
@@ -254,7 +271,7 @@ export async function resolvePrepareProviderBundle(params: Readonly<{
                 remoteMachineId: params.request.sourceMachineId,
                 endpointCandidates,
               });
-              return await readSessionHandoffProviderBundleFile(payloadFilePath);
+              return await readSessionHandoffAgentBundleFile(payloadFilePath);
             } catch (error) {
               if (isSessionHandoffDirectPeerProtocolError(error)) {
                 throw error;
@@ -267,10 +284,11 @@ export async function resolvePrepareProviderBundle(params: Readonly<{
                 error instanceof Error ? error.message : 'Direct peer transfer failed',
               );
               if (canFallbackToServerRouted && params.machineTransferChannel) {
-                return await requestServerRoutedPrepareProviderBundle({
+                return await requestServerRoutedPrepareAgentBundle({
                   transferId: transferPublication.transferId,
                   sourceMachineId: params.request.sourceMachineId,
                   machineTransferChannel: params.machineTransferChannel,
+                  transferTimeoutMs: params.transferTimeoutMs,
                 });
               }
               throw new Error(directPeerTransferUnavailable().error);
@@ -281,11 +299,11 @@ export async function resolvePrepareProviderBundle(params: Readonly<{
         })()
         : undefined;
 
-  if (!providerBundle) {
+  if (!agentBundle) {
     return undefined;
   }
 
-  return providerBundle;
+  return agentBundle;
 }
 
 export async function resolvePrepareWorkspaceReplicationMetadata(params: Readonly<{
@@ -295,6 +313,7 @@ export async function resolvePrepareWorkspaceReplicationMetadata(params: Readonl
   handoffMetadataV2?: SessionHandoffMetadataV2;
   machineTransferChannel?: MachineTransferChannel;
   directPeerTransfer?: SessionHandoffDirectPeerTransferHandle;
+  transferTimeoutMs?: number;
   invalidateDirectPeerRouteCacheForHandoffMachines?: (machineIds: readonly (string | undefined)[]) => void;
 }>): Promise<SessionHandoffWorkspaceReplicationMetadata | undefined> {
   if (params.workspaceTransfer?.enabled !== true) {
@@ -317,10 +336,7 @@ export async function resolvePrepareWorkspaceReplicationMetadata(params: Readonl
         const temporaryDirectory = await mkdtemp(join(os.tmpdir(), 'happier-session-handoff-manifest-server-routed-'));
         const payloadFilePath = join(temporaryDirectory, 'workspace-manifest.txt');
         try {
-          const timeoutMs =
-            typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
-              ? configuration.filesTransferSessionTtlMs
-              : undefined;
+          const timeoutMs = params.transferTimeoutMs;
           const openBody =
             typeof timeoutMs === 'number'
               ? {
@@ -361,10 +377,7 @@ export async function resolvePrepareWorkspaceReplicationMetadata(params: Readonl
           const filteredEndpointCandidates = endpointCandidates.filter((candidate) => candidate.expiresAt >= Date.now());
           const allowServerRoutedFallback = params.request.allowServerRoutedFallback !== false;
           const canFallbackToServerRouted = allowServerRoutedFallback && params.machineTransferChannel !== undefined;
-          const timeoutMs =
-            typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
-              ? configuration.filesTransferSessionTtlMs
-              : undefined;
+          const timeoutMs = params.transferTimeoutMs;
           if (params.request.workspaceTransfer?.enabled === true) {
             params.invalidateDirectPeerRouteCacheForHandoffMachines?.([
               params.request.sourceMachineId,

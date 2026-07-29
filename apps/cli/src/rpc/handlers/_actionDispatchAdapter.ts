@@ -3,11 +3,15 @@ import type { createCliActionExecutor } from '@/session/actions/createCliActionE
 
 type CliActionExecutorParams = Parameters<typeof createCliActionExecutor>[0];
 
+export type RpcActionExecutorContext = ActionExecutorContext & Readonly<{
+    signal?: AbortSignal;
+}>;
+
 export type RpcActionExecutor = Readonly<{
     execute: (
         actionId: ActionId,
         input: unknown,
-        context?: ActionExecutorContext,
+        context?: RpcActionExecutorContext,
     ) => Promise<ActionExecuteResult>;
 }>;
 
@@ -16,6 +20,7 @@ export type RpcActionDispatchRequest = Readonly<{
     input: unknown;
     defaultSessionId?: string | null;
     serverId?: string | null;
+    signal?: AbortSignal;
     executor?: RpcActionExecutor;
     executorParams?: CliActionExecutorParams;
 }>;
@@ -29,14 +34,15 @@ function normalizeOptionalString(value: string | null | undefined): string | und
 }
 
 export function buildActionExecutorContextForRpc(
-    params: Pick<RpcActionDispatchRequest, 'defaultSessionId' | 'serverId'>,
-): ActionExecutorContext {
+    params: Pick<RpcActionDispatchRequest, 'defaultSessionId' | 'serverId' | 'signal'>,
+): RpcActionExecutorContext {
     const defaultSessionId = normalizeOptionalString(params.defaultSessionId);
     const serverId = normalizeOptionalString(params.serverId);
 
     return {
         ...(defaultSessionId ? { defaultSessionId } : {}),
         ...(serverId ? { serverId } : {}),
+        ...(params.signal ? { signal: params.signal } : {}),
         surface: 'rpc',
     };
 }

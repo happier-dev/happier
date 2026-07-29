@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -12,9 +12,8 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { reloadConfiguration } from '@/configuration';
 import { createMarketplaceCatalogDocument, createMarketplaceCatalogEntry } from '@/plugins/testkit/marketplaceCatalog';
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
-import { createPluginStateStore } from '@/plugins/store/state';
 
-import { installMarketplacePlugin, readRemoteMarketplaceCatalog } from './catalog';
+import { readRemoteMarketplaceCatalog } from './catalog';
 
 async function createArchivedSamplePluginFixture(rootName = `sample-plugin-${randomUUID()}`): Promise<Readonly<{
   pluginSourceRoot: string;
@@ -22,15 +21,21 @@ async function createArchivedSamplePluginFixture(rootName = `sample-plugin-${ran
   archivePath: string;
 }>> {
   const pluginSourceRoot = await mkdtemp(join(tmpdir(), 'happier-marketplace-source-'));
-  const archiveRoot = join(pluginSourceRoot, rootName);
+  const archiveRoot = join(pluginSourceRoot, 'package');
   await materializeSamplePluginFixture(archiveRoot);
+  await writeFile(join(archiveRoot, 'package.json'), JSON.stringify({
+    name: '@acme/sample-plugin',
+    version: '1.0.0',
+    keywords: ['happier-plugin'],
+    happier: { manifest: '.happier-plugin/plugin.json' },
+  }), 'utf8');
   const archivePath = join(pluginSourceRoot, `${rootName}.tar.gz`);
   await tar.c({
     gzip: true,
     file: archivePath,
     cwd: pluginSourceRoot,
     portable: true,
-  }, [rootName]);
+  }, ['package']);
   return {
     pluginSourceRoot,
     pluginRoot: archiveRoot,
@@ -320,7 +325,7 @@ describe('readRemoteMarketplaceCatalog', () => {
     }
   });
 
-  it('reuses the protocol marketplace descriptor shape and maps package archives into trusted install sources', async () => {
+  it('parses a protocol marketplace archive without granting trust locally', async () => {
     const home = await createTempDir('happier-plugin-marketplace-');
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_PLUGIN_REMOTE_ARCHIVE_MAX_BYTES']);
     envScope.patch({
@@ -405,44 +410,6 @@ describe('readRemoteMarketplaceCatalog', () => {
         diagnostics: [],
       });
 
-      const unapprovedInstallResult = await installMarketplacePlugin({
-        sourceUrl: catalogUrl,
-        pluginId: SAMPLE_PLUGIN_ID,
-        happyHomeDir: home,
-        skipIfInstalled: true,
-      });
-
-      expect(unapprovedInstallResult.ok).toBe(false);
-      if (unapprovedInstallResult.ok) return;
-      expect(unapprovedInstallResult.diagnostics).toEqual([
-        expect.objectContaining({
-          code: 'plugin_trust_approval_required',
-        }),
-      ]);
-
-      const stateAfterUnapprovedInstall = await createPluginStateStore({ happyHomeDir: home }).read();
-      expect(stateAfterUnapprovedInstall.plugins[SAMPLE_PLUGIN_ID]).toBeUndefined();
-
-      const installResult = await installMarketplacePlugin({
-        sourceUrl: catalogUrl,
-        pluginId: SAMPLE_PLUGIN_ID,
-        happyHomeDir: home,
-        skipIfInstalled: true,
-        trustExecutable: true,
-      });
-
-      expect(installResult.ok).toBe(true);
-      if (!installResult.ok) return;
-      const stateStore = createPluginStateStore({ happyHomeDir: home });
-      const state = await stateStore.read();
-      expect(state.plugins[SAMPLE_PLUGIN_ID]).toMatchObject({
-        source: {
-          kind: 'archive',
-          locator: expectedArchiveUrl,
-          trustPolicy: 'local_trusted',
-          installPolicy: 'managed_install',
-        },
-      });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
       envScope.restore();
@@ -452,89 +419,7 @@ describe('readRemoteMarketplaceCatalog', () => {
     }
   });
 
-  it('fails closed when a marketplace descriptor digest does not match the installed manifest digest', async () => {
-    const home = await createTempDir('happier-plugin-marketplace-');
-    const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_PLUGIN_REMOTE_ARCHIVE_MAX_BYTES']);
-    envScope.patch({
-      HAPPIER_HOME_DIR: home,
-      PATH: process.env.PATH ?? '',
-      HAPPIER_PLUGIN_REMOTE_ARCHIVE_MAX_BYTES: '1048576',
-    });
-    reloadConfiguration();
-
-    const { pluginSourceRoot, archivePath } = await createArchivedSamplePluginFixture();
-    const archiveBytes = await readFile(archivePath);
-
-    const server = createServer((req, res) => {
-      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
-      if (url.pathname === '/catalog.json') {
-        res.writeHead(200, { 'content-type': 'application/json' });
-        res.end(JSON.stringify(createMarketplaceCatalogDocument({
-          sourceUrl: `${url.origin}/catalog.json`,
-          title: 'Curated Marketplace',
-          description: 'Digest mismatch feed',
-          entries: [
-            createMarketplaceCatalogEntry({
-              pluginId: SAMPLE_PLUGIN_ID,
-              title: 'Acme Sample',
-              description: 'Sample plugin from the marketplace',
-              sourceUrl: `${url.origin}/entries/acme.sample.json`,
-              packageUrl: `${url.origin}/plugins/acme.sample.tar.gz`,
-              digest: 'sha256:descriptor-mismatch',
-            }),
-          ],
-        })));
-        return;
-      }
-
-      if (url.pathname === '/plugins/acme.sample.tar.gz') {
-        res.writeHead(200, { 'content-type': 'application/gzip' });
-        res.end(archiveBytes);
-        return;
-      }
-
-      res.writeHead(404);
-      res.end('not found');
-    });
-
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
-    const address = server.address();
-    if (!address || typeof address === 'string') {
-      throw new Error('Failed to bind marketplace test server');
-    }
-    const catalogUrl = `http://127.0.0.1:${address.port}/catalog.json`;
-
-    try {
-      const installResult = await installMarketplacePlugin({
-        sourceUrl: catalogUrl,
-        pluginId: SAMPLE_PLUGIN_ID,
-        happyHomeDir: home,
-        skipIfInstalled: true,
-        trustExecutable: true,
-      });
-
-      expect(installResult.ok).toBe(false);
-      if (installResult.ok) return;
-      expect(installResult.diagnostics).toEqual([
-        expect.objectContaining({
-          code: 'plugin_manifest_semantic_invalid',
-          message: expect.stringContaining('digest'),
-        }),
-      ]);
-
-      const stateStore = createPluginStateStore({ happyHomeDir: home });
-      const state = await stateStore.read();
-      expect(state.plugins[SAMPLE_PLUGIN_ID]).toBeUndefined();
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
-      envScope.restore();
-      reloadConfiguration();
-      await removeTempDir(home);
-      await rm(pluginSourceRoot, { recursive: true, force: true });
-    }
-  });
-
-  it('resolves relative archive locators against catalog origin and preserves remote trust provenance on install', async () => {
+  it('resolves relative archive locators during catalog parsing', async () => {
     const home = await createTempDir('happier-plugin-marketplace-');
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH', 'HAPPIER_PLUGIN_REMOTE_ARCHIVE_MAX_BYTES']);
     envScope.patch({
@@ -603,26 +488,6 @@ describe('readRemoteMarketplaceCatalog', () => {
         },
       });
 
-      const installResult = await installMarketplacePlugin({
-        sourceUrl: catalogUrl,
-        pluginId: SAMPLE_PLUGIN_ID,
-        happyHomeDir: home,
-        skipIfInstalled: true,
-        trustExecutable: true,
-      });
-
-      expect(installResult.ok).toBe(true);
-      if (!installResult.ok) return;
-      const stateStore = createPluginStateStore({ happyHomeDir: home });
-      const state = await stateStore.read();
-      expect(state.plugins[SAMPLE_PLUGIN_ID]).toMatchObject({
-        source: {
-          kind: 'archive',
-          locator: expectedArchiveUrl,
-          trustPolicy: 'local_trusted',
-          installPolicy: 'managed_install',
-        },
-      });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
       envScope.restore();
@@ -761,17 +626,7 @@ describe('readRemoteMarketplaceCatalog', () => {
         pluginId: SAMPLE_PLUGIN_ID,
         installable: false,
       });
-
-      const installResult = await installMarketplacePlugin({
-        sourceUrl: catalogUrl,
-        pluginId: SAMPLE_PLUGIN_ID,
-        happyHomeDir: home,
-        skipIfInstalled: true,
-      });
-
-      expect(installResult.ok).toBe(false);
-      if (installResult.ok) return;
-      expect(installResult.diagnostics).toEqual(
+      expect(catalogResult.catalog.entries[0]?.diagnostics).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             code: 'plugin_source_kind_unsupported',
@@ -843,14 +698,6 @@ describe('readRemoteMarketplaceCatalog', () => {
           }),
         ]),
       );
-
-      const installResult = await installMarketplacePlugin({
-        sourceUrl: catalogUrl,
-        pluginId: SAMPLE_PLUGIN_ID,
-        happyHomeDir: home,
-        skipIfInstalled: true,
-      });
-      expect(installResult.ok).toBe(false);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve())).catch(() => undefined);
       envScope.restore();

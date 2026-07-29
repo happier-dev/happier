@@ -5,6 +5,7 @@ import { ExecutionRunTurnStreamReadRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { readExecutionRunStream } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
@@ -20,9 +21,7 @@ export async function cmdSessionRunStreamRead(
   const maxEvents = readIntFlagValue(argv, '--max-events') ?? readIntFlagValue(argv, '--maxEvents');
 
   if (!idOrPrefix || !runId || !streamId || cursor === null) {
-    throw new Error(
-      'Usage: happier session run stream-read <session-id-or-prefix> <run-id> <stream-id> --cursor <n> [--max-events <n>] [--json]',
-    );
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStreamRead}`);
   }
 
   const credentials = await deps.readCredentialsFn();

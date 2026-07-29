@@ -429,6 +429,7 @@ describe('createCliActionInventoryDeps', () => {
             groupId: 'team',
             label: 'Team Pool',
             activeProfileId: 'work',
+            memberProfileIds: ['work'],
             generation: 4,
             enabledMemberCount: 1,
             autoSwitch: false,

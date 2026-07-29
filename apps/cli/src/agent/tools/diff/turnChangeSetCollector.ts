@@ -10,7 +10,7 @@ type FileMetadata = Readonly<{
     changeKind?: FileChangeKind;
     binary?: boolean;
     provider?: string;
-    providerTurnId?: string | null;
+    agentTurnId?: string | null;
     providerMessageId?: string | null;
     description?: string | null;
 }>;
@@ -99,7 +99,7 @@ export class TurnChangeSetCollector {
             source?: ChangeEvidenceSource;
             confidence?: ChangeConfidence;
             provider?: string;
-            providerTurnId?: string | null;
+            agentTurnId?: string | null;
             providerMessageId?: string | null;
             description?: string;
         }>>;
@@ -114,7 +114,7 @@ export class TurnChangeSetCollector {
                 changeKind: file.changeKind,
                 binary: file.binary,
                 provider: file.provider,
-                providerTurnId: file.providerTurnId ?? null,
+                agentTurnId: file.agentTurnId ?? null,
                 providerMessageId: file.providerMessageId ?? null,
                 description: file.description ?? null,
             });
@@ -269,7 +269,7 @@ export class TurnChangeSetCollector {
                     source: metadata?.source ?? 'provider_tool',
                     confidence: metadata?.confidence ?? 'strong',
                     provider: metadata?.provider ?? this.provider,
-                    providerTurnId: metadata?.providerTurnId ?? null,
+                    agentTurnId: metadata?.agentTurnId ?? null,
                     providerMessageId: metadata?.providerMessageId ?? null,
                     description: metadata?.description ?? null,
                 });

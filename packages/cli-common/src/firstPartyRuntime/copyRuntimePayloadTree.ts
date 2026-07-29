@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { copyFile, cp, lstat, mkdir, readdir, rename, rm } from 'node:fs/promises';
+import { copyFile, cp, lstat, mkdir, open, readdir, readlink, rename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
 import { copyDirectoryTreePreservingSymlinks } from './copyDirectoryTreePreservingSymlinks.js';
@@ -9,6 +9,18 @@ export { toWindowsExtendedLengthPathForFs } from './runtimeFsPath.js';
 
 const BACKUP_CLEANUP_MAX_ATTEMPTS = 6;
 const BACKUP_CLEANUP_RETRY_DELAY_MS = 25;
+const PAYLOAD_COMPARISON_BUFFER_SIZE = 64 * 1024;
+
+export class FirstPartyVersionIdConflictError extends Error {
+  readonly code = 'FIRST_PARTY_VERSION_ID_CONFLICT';
+  readonly destinationPath: string;
+
+  constructor(destinationPath: string) {
+    super(`Refusing to replace immutable first-party payload version at '${destinationPath}' with different bytes.`);
+    this.name = 'FirstPartyVersionIdConflictError';
+    this.destinationPath = destinationPath;
+  }
+}
 
 function shouldSkipPayloadPath(pathLike: string): boolean {
   const segments = pathLike.split(/[\\/]/).filter(Boolean);
@@ -29,6 +41,99 @@ async function copyDirectoryContentsRecursively(sourceDir: string, destinationDi
     sourceDir,
     destinationDir,
     shouldSkipRelativePath: shouldSkipPayloadPath,
+  });
+}
+
+async function fileContentsMatch(params: Readonly<{
+  leftPath: string;
+  rightPath: string;
+  size: number;
+}>): Promise<boolean> {
+  const leftHandle = await open(toRuntimeFsPath(params.leftPath), 'r');
+  let rightHandle: Awaited<ReturnType<typeof open>> | null = null;
+  try {
+    rightHandle = await open(toRuntimeFsPath(params.rightPath), 'r');
+    const leftBuffer = Buffer.allocUnsafe(PAYLOAD_COMPARISON_BUFFER_SIZE);
+    const rightBuffer = Buffer.allocUnsafe(PAYLOAD_COMPARISON_BUFFER_SIZE);
+    let position = 0;
+    while (position < params.size) {
+      const bytesToRead = Math.min(PAYLOAD_COMPARISON_BUFFER_SIZE, params.size - position);
+      const [leftRead, rightRead] = await Promise.all([
+        leftHandle.read(leftBuffer, 0, bytesToRead, position),
+        rightHandle.read(rightBuffer, 0, bytesToRead, position),
+      ]);
+      if (
+        leftRead.bytesRead !== bytesToRead
+        || rightRead.bytesRead !== bytesToRead
+        || !leftBuffer.subarray(0, bytesToRead).equals(rightBuffer.subarray(0, bytesToRead))
+      ) {
+        return false;
+      }
+      position += bytesToRead;
+    }
+    return true;
+  } finally {
+    await Promise.allSettled([
+      leftHandle.close(),
+      ...(rightHandle ? [rightHandle.close()] : []),
+    ]);
+  }
+}
+
+async function runtimePayloadTreesMatch(leftPath: string, rightPath: string): Promise<boolean> {
+  const [leftStats, rightStats] = await Promise.all([
+    lstat(toRuntimeFsPath(leftPath)),
+    lstat(toRuntimeFsPath(rightPath)),
+  ]);
+
+  if (leftStats.isSymbolicLink() || rightStats.isSymbolicLink()) {
+    if (!leftStats.isSymbolicLink() || !rightStats.isSymbolicLink()) {
+      return false;
+    }
+    const [leftTarget, rightTarget] = await Promise.all([
+      readlink(toRuntimeFsPath(leftPath)),
+      readlink(toRuntimeFsPath(rightPath)),
+    ]);
+    return leftTarget === rightTarget;
+  }
+
+  if (leftStats.isDirectory() || rightStats.isDirectory()) {
+    if (!leftStats.isDirectory() || !rightStats.isDirectory()) {
+      return false;
+    }
+    const [leftNames, rightNames] = await Promise.all([
+      readdir(toRuntimeFsPath(leftPath)),
+      readdir(toRuntimeFsPath(rightPath)),
+    ]);
+    leftNames.sort();
+    rightNames.sort();
+    if (
+      leftNames.length !== rightNames.length
+      || leftNames.some((name, index) => name !== rightNames[index])
+    ) {
+      return false;
+    }
+    for (const name of leftNames) {
+      if (!await runtimePayloadTreesMatch(join(leftPath, name), join(rightPath, name))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  if (!leftStats.isFile() || !rightStats.isFile()) {
+    return false;
+  }
+  if (
+    leftStats.size !== rightStats.size
+    || (process.platform !== 'win32' && (leftStats.mode & 0o111) !== (rightStats.mode & 0o111))
+  ) {
+    return false;
+  }
+  return await fileContentsMatch({
+    leftPath,
+    rightPath,
+    size: leftStats.size,
   });
 }
 
@@ -124,6 +229,7 @@ export async function replaceRuntimePayloadTree(params: Readonly<{
   destinationPath: string;
   consumeSourcePath?: boolean;
   sourcePathAlreadyFiltered?: boolean;
+  existingDestinationPolicy?: 'replace' | 'require-identical';
   onTempReady?: (tempPath: string) => Promise<void> | void;
 }>): Promise<void> {
   const destinationPath = params.destinationPath;
@@ -167,6 +273,14 @@ export async function replaceRuntimePayloadTree(params: Readonly<{
     }
 
     await params.onTempReady?.(tempPath);
+
+    if (destinationExists && params.existingDestinationPolicy === 'require-identical') {
+      if (!await runtimePayloadTreesMatch(destinationPath, tempPath)) {
+        throw new FirstPartyVersionIdConflictError(destinationPath);
+      }
+      await rm(toRuntimeFsPath(tempPath), { recursive: true, force: true });
+      return;
+    }
 
     if (destinationExists) {
       await rename(toRuntimeFsPath(destinationPath), toRuntimeFsPath(backupPath));

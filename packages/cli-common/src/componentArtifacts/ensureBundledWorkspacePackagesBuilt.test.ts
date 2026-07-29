@@ -35,17 +35,7 @@ describe('ensureBundledWorkspacePackagesBuilt', () => {
             writeFileSync(join(workspaceSrc, 'dist', 'index.js'), 'export {};\n', 'utf8');
             writeFileSync(join(workspaceSrc, 'dist', 'index.d.ts'), 'export {};\n', 'utf8');
 
-            const calls: Array<{ cmd: string; args: string[]; cwd?: string }> = [];
-            const runCommand = async (cmd: string, args: string[], options?: { cwd?: string }) => {
-                calls.push({ cmd, args, cwd: options?.cwd });
-                if (args[0] === 'workspace' && args[1] === '@happier-dev/cli-common' && args[2] === 'build') {
-                    await new Promise((resolve) => setTimeout(resolve, 0));
-                    const distDir = join(workspaceSrc, 'dist', 'firstPartyRuntime');
-                    mkdirSync(distDir, { recursive: true });
-                    writeFileSync(join(distDir, 'index.js'), 'export {};\n', 'utf8');
-                    writeFileSync(join(distDir, 'listInstalledVersionIdsNewestFirst.js'), 'export {};\n', 'utf8');
-                }
-            };
+            const calls: string[][] = [];
 
             await ensureBundledWorkspacePackagesBuilt({
                 repoRoot,
@@ -55,17 +45,18 @@ describe('ensureBundledWorkspacePackagesBuilt', () => {
                         srcDir: workspaceSrc,
                     },
                 ],
-                yarn: { cmd: 'yarn', args: [] },
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                runCommand: runCommand as any,
+                ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => {
+                    calls.push(packageNames);
+                    const distDir = join(workspaceSrc, 'dist', 'firstPartyRuntime');
+                    mkdirSync(distDir, { recursive: true });
+                    writeFileSync(join(distDir, 'index.js'), 'export {};\n', 'utf8');
+                    writeFileSync(join(distDir, 'listInstalledVersionIdsNewestFirst.js'), 'export {};\n', 'utf8');
+                    return { ok: true, built: packageNames, skipped: [] };
+                },
             });
 
             expect(calls).toEqual([
-                {
-                    cmd: 'yarn',
-                    args: ['workspace', '@happier-dev/cli-common', 'build'],
-                    cwd: repoRoot,
-                },
+                ['@happier-dev/cli-common'],
             ]);
         } finally {
             rmSync(repoRoot, { recursive: true, force: true });
@@ -98,10 +89,7 @@ describe('ensureBundledWorkspacePackagesBuilt', () => {
             writeFileSync(join(distDir, 'index.js'), 'export {};\n', 'utf8');
             writeFileSync(join(distDir, 'index.d.ts'), 'export {};\n', 'utf8');
 
-            const calls: Array<{ cmd: string; args: string[]; cwd?: string }> = [];
-            const runCommand = (cmd: string, args: string[], options?: { cwd?: string }) => {
-                calls.push({ cmd, args, cwd: options?.cwd });
-            };
+            const calls: string[][] = [];
 
             await ensureBundledWorkspacePackagesBuilt({
                 repoRoot,
@@ -111,12 +99,13 @@ describe('ensureBundledWorkspacePackagesBuilt', () => {
                         srcDir: workspaceSrc,
                     },
                 ],
-                yarn: { cmd: 'yarn', args: [] },
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                runCommand: runCommand as any,
+                ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => {
+                    calls.push(packageNames);
+                    return { ok: true, built: [], skipped: [] };
+                },
             });
 
-            expect(calls).toEqual([]);
+            expect(calls).toEqual([['@happier-dev/protocol']]);
         } finally {
             rmSync(repoRoot, { recursive: true, force: true });
         }

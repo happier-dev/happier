@@ -57,10 +57,10 @@ describe('createExecutionRunRuntime configured ACP registry convergence', () => 
         const createExecutionRunBackend = vi.fn(() => runtime);
         resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
             backendId: 'review-bot',
-            providerId: 'review-bot',
+            agentId: 'review-bot',
             source: 'plugin',
-            backend: { id: 'review-bot', providerId: 'review-bot' },
-            provider: { id: 'review-bot' },
+            backend: { id: 'review-bot', agentId: 'review-bot' },
+            agent: { id: 'review-bot' },
             engineAdapter: {
                 runtimeCore: {
                     createExecutionRunBackend,

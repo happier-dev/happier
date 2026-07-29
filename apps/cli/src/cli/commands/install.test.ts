@@ -1,16 +1,27 @@
 import { createServer } from 'node:http';
-import { access, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import * as tar from 'tar';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { reloadConfiguration } from '@/configuration';
-import { createPluginStateStore } from '@/plugins/store/state';
+import { configuration, reloadConfiguration } from '@/configuration';
+import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
+import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
+import { packLocalPlugin } from '@/plugins/packaging/pack';
+import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
+import {
+  createPluginReloadController,
+  type PluginReloadController,
+} from '@/plugins/runtime/reload/controller';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
+import { readPluginRegistryCommitRecord } from '@/plugins/store/registry/commitRecord';
+import { readInstallationStateRevision } from '@/plugins/store/registry/generationStore';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { installPluginFromSource } from '@/plugins/store/install/source';
+import { inspectPluginSource } from '@/plugins/store/install/source';
+import { waitForCondition } from '@/testkit/async/waitFor';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { materializeSamplePluginFixture } from '@/plugins/testkit/samplePackage';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -21,6 +32,28 @@ const { resolveMergedContributionRegistryMock } = vi.hoisted(() => ({
   resolveMergedContributionRegistryMock: vi.fn(),
 }));
 
+const daemonBoundary = vi.hoisted(() => ({
+  ensureRunning: vi.fn(async () => undefined),
+  requestChange: vi.fn(),
+  decideChange: vi.fn(),
+}));
+const promptBoundary = vi.hoisted(() => ({
+  confirm: vi.fn(),
+}));
+
+vi.mock('@/daemon/ensureDaemon', () => ({
+  ensureDaemonRunningForSessionCommand: daemonBoundary.ensureRunning,
+}));
+
+vi.mock('@/daemon/controlClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
+  requestDaemonPluginChange: daemonBoundary.requestChange,
+  decideDaemonPluginChange: daemonBoundary.decideChange,
+}));
+vi.mock('@/terminal/prompts/promptConfirmYesNo', () => ({
+  promptConfirmYesNo: promptBoundary.confirm,
+}));
+
 vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/plugins/projection/registry/createResolvedContributionRegistry')>();
   return {
@@ -28,6 +61,65 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', asyn
     resolveMergedContributionRegistry: resolveMergedContributionRegistryMock,
   };
 });
+
+let activePluginChangeService: DaemonPluginChangeService | null = null;
+let activePluginReloadController: PluginReloadController | null = null;
+const INSTALL_COMMAND_TEST_DAEMON_ID = 'install-command-test';
+
+async function waitForGenerationHealthObservation(
+  pluginId: string,
+  immutableGenerationId: string,
+): Promise<void> {
+  const paths = resolvePluginStorePaths({ happyHomeDir: configuration.happyHomeDir });
+  await waitForCondition(async () => {
+    const commit = await readPluginRegistryCommitRecord(paths);
+    if (commit?.pluginGenerations[pluginId]?.immutableGenerationId !== immutableGenerationId) {
+      return false;
+    }
+    const revision = await readInstallationStateRevision({
+      paths,
+      reference: commit.installationState,
+    });
+    if (
+      revision.health[immutableGenerationId]?.observation?.daemonInstanceId
+      !== INSTALL_COMMAND_TEST_DAEMON_ID
+    ) {
+      return false;
+    }
+    const stateEntries = await readdir(paths.stateDir);
+    return !stateEntries.some((entry) => (
+      entry.startsWith('plugin-registry-commit.v1.lock')
+    ));
+  }, {
+    timeoutMs: 5_000,
+    intervalMs: 10,
+    label: `plugin generation ${immutableGenerationId} health observation`,
+  });
+}
+
+function createPluginChangeService(): DaemonPluginChangeService {
+  const connectedAccounts: StablePluginConnectedAccountsOwner = Object.freeze({
+    getBinding: vi.fn(async () => null),
+    requestSelection: vi.fn(async () => {
+      throw new Error('Unexpected connected-account selection during plugin install command test');
+    }),
+    materialize: vi.fn(async () => {
+      throw new Error('Unexpected connected-account materialization during plugin install command test');
+    }),
+    watch: vi.fn(() => Object.freeze({ dispose() {} })),
+  });
+  activePluginReloadController = createPluginReloadController({
+    happyHomeDir: configuration.happyHomeDir,
+  });
+  return createDaemonPluginRuntimeOwner({
+    happyHomeDir: configuration.happyHomeDir,
+    reloadController: activePluginReloadController,
+    staleCandidateCleanup: 'disabled',
+    daemonInstanceId: INSTALL_COMMAND_TEST_DAEMON_ID,
+    daemonUptimeMs: () => 0,
+    connectedAccounts,
+  }).changeService;
+}
 
 function makeContext(args: string[]): CommandContext {
   return {
@@ -47,22 +139,29 @@ async function createArchivedSamplePluginFixture(rootName = 'sample-plugin'): Pr
   const pluginSourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-'));
   const archiveRoot = join(pluginSourceRoot, rootName);
   await materializeSamplePluginFixture(archiveRoot);
+  await writeFile(join(archiveRoot, 'package.json'), JSON.stringify({
+    name: '@acme/sample',
+    version: '1.0.0',
+    keywords: ['happier-plugin'],
+    happier: { manifest: '.happier-plugin/plugin.json' },
+    files: ['.happier-plugin', 'daemon.mjs'],
+  }), 'utf8');
   const archivePath = join(pluginSourceRoot, `${rootName}.tar.gz`);
 
   const rebuildArchive = async (): Promise<void> => {
     await rm(archivePath, { force: true });
-    await tar.c({
-      gzip: true,
-      file: archivePath,
-      cwd: pluginSourceRoot,
-      portable: true,
-    }, [rootName]);
+    await rm(`${archivePath}.sha256`, { force: true });
+    const packed = await packLocalPlugin({ locator: archiveRoot, outPath: archivePath });
+    if (!packed.ok) throw new Error(packed.diagnostics.map((diagnostic) => diagnostic.message).join('\n'));
   };
 
   const rewriteManifestVersion = async (version: string): Promise<void> => {
     const manifestPath = join(archiveRoot, '.happier-plugin', 'plugin.json');
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8')) as { version: string };
     await writeFile(manifestPath, JSON.stringify({ ...manifest, version }, null, 2));
+    const packageJsonPath = join(archiveRoot, 'package.json');
+    const packageJson = JSON.parse(await readFile(packageJsonPath, 'utf8')) as { version: string };
+    await writeFile(packageJsonPath, JSON.stringify({ ...packageJson, version }, null, 2));
   };
 
   await rebuildArchive();
@@ -77,14 +176,36 @@ async function createArchivedSamplePluginFixture(rootName = 'sample-plugin'): Pr
 
 describe('runInstallCliCommand', () => {
   beforeEach(() => {
+    activePluginChangeService = null;
+    activePluginReloadController = null;
+    daemonBoundary.ensureRunning.mockClear();
+    daemonBoundary.requestChange.mockReset();
+    daemonBoundary.decideChange.mockReset();
+    promptBoundary.confirm.mockReset();
+    promptBoundary.confirm.mockResolvedValue(true);
+    daemonBoundary.requestChange.mockImplementation(async (request) => {
+      activePluginChangeService ??= createPluginChangeService();
+      return await activePluginChangeService.requestPluginChange(request);
+    });
+    daemonBoundary.decideChange.mockImplementation(async (decision) => {
+      if (!activePluginChangeService) throw new Error('Plugin change decision arrived before its request');
+      const result = await activePluginChangeService.decidePluginChange(decision);
+      if (result.kind === 'committed' && result.desiredGeneration) {
+        await waitForGenerationHealthObservation(result.pluginId, result.desiredGeneration);
+      }
+      return result;
+    });
     resolveMergedContributionRegistryMock.mockReset();
     resolveMergedContributionRegistryMock.mockResolvedValue({
-      providers: [
+      agents: [
         {
           id: 'claude',
-          source: 'built-in',
+          provenance: 'first_party',
+          source: { kind: 'bundled' },
           definition: {
+            kindVersion: 1,
             id: 'claude',
+            ownedBackendIds: [],
           },
           runtimeSpec: {
             kindVersion: 1,
@@ -104,14 +225,18 @@ describe('runInstallCliCommand', () => {
           catalogEntry: null,
         },
       ],
-      backends: [],
-      hookRegistrations: [],
       runtimeAdaptersByBackendId: new Map(),
       catalogEntriesById: {},
-      providerDefinitionsById: new Map(),
-      backendDefinitionsById: new Map(),
-      pluginDiagnosticsByPluginId: {},
+      agentDefinitionsById: new Map(),
+            pluginDiagnosticsByPluginId: {},
     });
+  });
+
+  afterEach(async () => {
+    await activePluginChangeService?.shutdown();
+    await activePluginReloadController?.shutdown();
+    activePluginChangeService = null;
+    activePluginReloadController = null;
   });
 
   it('prints usage for help requests', async () => {
@@ -122,11 +247,11 @@ describe('runInstallCliCommand', () => {
       error: vi.fn(),
       exit: vi.fn() as never,
       runDoctorCommand: vi.fn(),
-      invokeProviderCliInstall: vi.fn(),
+      invokeAgentCliInstall: vi.fn(),
     });
 
     expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install provider <providerId>'));
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install plugin <path|archive-url>'));
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install plugin <path|archive-url|package>'));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install doctor'));
     expect(log).toHaveBeenCalledWith(expect.stringContaining('happier install plugin update <pluginId>'));
   });
@@ -140,7 +265,7 @@ describe('runInstallCliCommand', () => {
       error,
       exit: vi.fn() as never,
       runDoctorCommand: vi.fn(),
-      invokeProviderCliInstall: vi.fn(),
+      invokeAgentCliInstall: vi.fn(),
     });
 
     expect(error).not.toHaveBeenCalled();
@@ -149,7 +274,7 @@ describe('runInstallCliCommand', () => {
 
   it('invokes provider installs in dry-run mode and prints the plan', async () => {
     const log = vi.fn();
-    const invokeProviderCliInstall = vi.fn().mockResolvedValue({
+    const invokeAgentCliInstall = vi.fn().mockResolvedValue({
       ok: true,
       alreadyInstalled: false,
       logPath: '/tmp/codex-install.log',
@@ -175,10 +300,10 @@ describe('runInstallCliCommand', () => {
       error: vi.fn(),
       exit: vi.fn() as never,
       runDoctorCommand: vi.fn(),
-      invokeProviderCliInstall,
+      invokeAgentCliInstall,
     });
 
-    expect(invokeProviderCliInstall).toHaveBeenCalledWith({
+    expect(invokeAgentCliInstall).toHaveBeenCalledWith({
       agentId: 'codex',
       params: { dryRun: true, skipIfInstalled: true },
       env: process.env,
@@ -189,7 +314,7 @@ describe('runInstallCliCommand', () => {
   });
 
   it('passes force installs through as skipIfInstalled false', async () => {
-    const invokeProviderCliInstall = vi.fn().mockResolvedValue({
+    const invokeAgentCliInstall = vi.fn().mockResolvedValue({
       ok: true,
       alreadyInstalled: false,
       logPath: null,
@@ -215,10 +340,10 @@ describe('runInstallCliCommand', () => {
       error: vi.fn(),
       exit: vi.fn() as never,
       runDoctorCommand: vi.fn(),
-      invokeProviderCliInstall,
+      invokeAgentCliInstall,
     });
 
-    expect(invokeProviderCliInstall).toHaveBeenCalledWith(
+    expect(invokeAgentCliInstall).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: 'gemini',
         params: { dryRun: false, skipIfInstalled: false },
@@ -227,7 +352,7 @@ describe('runInstallCliCommand', () => {
   });
 
   it('defaults vendor recipe execution for explicit provider installs', async () => {
-    const invokeProviderCliInstall = vi.fn().mockResolvedValue({
+    const invokeAgentCliInstall = vi.fn().mockResolvedValue({
       ok: true,
       alreadyInstalled: false,
       logPath: null,
@@ -249,10 +374,10 @@ describe('runInstallCliCommand', () => {
       error: vi.fn(),
       exit: vi.fn() as never,
       runDoctorCommand: vi.fn(),
-      invokeProviderCliInstall,
+      invokeAgentCliInstall,
     });
 
-    expect(invokeProviderCliInstall).toHaveBeenCalledWith(
+    expect(invokeAgentCliInstall).toHaveBeenCalledWith(
       expect.objectContaining({
         agentId: 'claude',
         params: { dryRun: false, skipIfInstalled: true },
@@ -269,7 +394,7 @@ describe('runInstallCliCommand', () => {
       error,
       exit,
       runDoctorCommand: vi.fn(),
-      invokeProviderCliInstall: vi.fn(),
+      invokeAgentCliInstall: vi.fn(),
     });
 
     expect(error).toHaveBeenCalledWith(
@@ -288,7 +413,7 @@ describe('runInstallCliCommand', () => {
       error,
       exit,
       runDoctorCommand: vi.fn(),
-      invokeProviderCliInstall: vi.fn().mockRejectedValue(new Error('network stalled')),
+      invokeAgentCliInstall: vi.fn().mockRejectedValue(new Error('network stalled')),
     });
 
     expect(error).toHaveBeenCalledWith(expect.any(String), 'network stalled');
@@ -302,17 +427,24 @@ describe('runInstallCliCommand', () => {
     reloadConfiguration();
 
     const { pluginSourceRoot, archivePath } = await createArchivedSamplePluginFixture();
-
     try {
-      await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']));
+      await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']), {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: vi.fn(),
+        runDoctorCommand: vi.fn(),
+        invokeAgentCliInstall: vi.fn(),
+        isInteractiveTerminal: () => true,
+      });
 
       const store = createPluginStateStore({ happyHomeDir: home });
       const state = await store.read();
+      const canonicalArchivePath = await realpath(archivePath);
       expect(Object.keys(state.plugins)).toEqual(['acme.sample']);
       expect(state.plugins['acme.sample']).toMatchObject({
         source: {
           kind: 'archive',
-          locator: archivePath,
+          locator: canonicalArchivePath,
         },
         install: {
           mode: 'managed_install',
@@ -324,10 +456,19 @@ describe('runInstallCliCommand', () => {
       expect(loaded.loadedPlugins[0]).toMatchObject({
         sourceSpec: {
           kind: 'archive',
-          locator: archivePath,
+          locator: canonicalArchivePath,
           installPolicy: 'managed_install',
         },
       });
+      expect(daemonBoundary.requestChange).toHaveBeenCalledWith({
+        kind: 'installArchive',
+        locator: archivePath,
+        expectedIntegrity: expect.stringMatching(/^sha256-[A-Za-z0-9+/]{43}=$/u),
+      });
+      expect(daemonBoundary.decideChange).toHaveBeenCalledWith(expect.objectContaining({
+        decision: 'installAndTrust',
+        actorEvidence: expect.objectContaining({ kind: 'authenticatedLocalUser' }),
+      }));
     } finally {
       envScope.restore();
       reloadConfiguration();
@@ -366,7 +507,14 @@ describe('runInstallCliCommand', () => {
     const archiveUrl = `http://127.0.0.1:${address.port}/plugins/acme.sample.tar.gz?download=1`;
 
     try {
-      await runInstallCliCommand(makeContext(['install', 'plugin', archiveUrl]));
+      await runInstallCliCommand(makeContext(['install', 'plugin', archiveUrl]), {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: vi.fn(),
+        runDoctorCommand: vi.fn(),
+        invokeAgentCliInstall: vi.fn(),
+        isInteractiveTerminal: () => true,
+      });
 
       const store = createPluginStateStore({ happyHomeDir: home });
       const state = await store.read();
@@ -410,11 +558,25 @@ describe('runInstallCliCommand', () => {
     const { pluginSourceRoot, archivePath, rewriteManifestVersion, rebuildArchive } = await createArchivedSamplePluginFixture();
 
     try {
-      await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']));
+      await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']), {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: vi.fn(),
+        runDoctorCommand: vi.fn(),
+        invokeAgentCliInstall: vi.fn(),
+        isInteractiveTerminal: () => true,
+      });
       await rewriteManifestVersion('2.0.0');
       await rebuildArchive();
 
-      await runInstallCliCommand(makeContext(['install', 'plugin', 'update', 'acme.sample']));
+      await runInstallCliCommand(makeContext(['install', 'plugin', 'update', 'acme.sample']), {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: vi.fn(),
+        runDoctorCommand: vi.fn(),
+        invokeAgentCliInstall: vi.fn(),
+        isInteractiveTerminal: () => true,
+      });
 
       const store = createPluginStateStore({ happyHomeDir: home });
       const state = await store.read();
@@ -426,6 +588,7 @@ describe('runInstallCliCommand', () => {
       });
 
       const loaded = await loadInstalledPlugins({ happyHomeDir: home });
+      const canonicalArchivePath = await realpath(archivePath);
       expect(loaded.loadedPlugins).toHaveLength(1);
       expect(loaded.loadedPlugins[0]).toMatchObject({
         manifest: {
@@ -434,7 +597,7 @@ describe('runInstallCliCommand', () => {
         },
         sourceSpec: {
           kind: 'archive',
-          locator: archivePath,
+          locator: canonicalArchivePath,
           installPolicy: 'managed_install',
         },
       });
@@ -455,14 +618,20 @@ describe('runInstallCliCommand', () => {
     const { pluginSourceRoot, archivePath } = await createArchivedSamplePluginFixture();
 
     try {
-      await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']));
+      await runInstallCliCommand(makeContext(['install', 'plugin', archivePath, '--kind', 'archive']), {
+        log: vi.fn(),
+        error: vi.fn(),
+        exit: vi.fn(),
+        runDoctorCommand: vi.fn(),
+        invokeAgentCliInstall: vi.fn(),
+        isInteractiveTerminal: () => true,
+      });
 
       const storeBefore = createPluginStateStore({ happyHomeDir: home });
       const stateBefore = await storeBefore.read();
       const installedPath = stateBefore.plugins['acme.sample']?.install.installedPath;
       expect(typeof installedPath).toBe('string');
 
-      const publishInstalledManifestProjections = vi.fn(async () => undefined);
       await runInstallCliCommand(makeContext(['install', 'plugin', 'remove', 'acme.sample']), {
         log: console.log,
         error: console.error,
@@ -470,8 +639,7 @@ describe('runInstallCliCommand', () => {
           process.exitCode = code;
         },
         runDoctorCommand: vi.fn(),
-        invokeProviderCliInstall: vi.fn(),
-        publishInstalledManifestProjections,
+        invokeAgentCliInstall: vi.fn(),
       });
 
       const storeAfter = createPluginStateStore({ happyHomeDir: home });
@@ -480,9 +648,7 @@ describe('runInstallCliCommand', () => {
 
       const loaded = await loadInstalledPlugins({ happyHomeDir: home });
       expect(loaded.loadedPlugins).toEqual([]);
-      expect(publishInstalledManifestProjections).toHaveBeenCalledWith({
-        pluginIds: ['acme.sample'],
-      });
+      expect(daemonBoundary.requestChange).toHaveBeenLastCalledWith({ kind: 'uninstall', pluginId: 'acme.sample' });
       if (installedPath) {
         await expect(access(installedPath)).rejects.toMatchObject({
           code: 'ENOENT',
@@ -506,7 +672,7 @@ describe('runInstallCliCommand', () => {
     await writeFile(corruptArchivePath, 'not a real archive', 'utf8');
 
     try {
-      const result = await installPluginFromSource({
+      const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: corruptArchivePath,
         sourceKind: 'archive',

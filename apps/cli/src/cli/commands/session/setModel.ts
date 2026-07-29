@@ -3,7 +3,10 @@ import chalk from 'chalk';
 import type { Credentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult } from './shared/normalizeActionExecuteResult';
+import {
+  normalizeActionExecuteResult,
+  unwrapCliActionSuccessPayload,
+} from './shared/normalizeActionExecuteResult';
 import { tryHandleApprovalRequestCreated } from './shared/tryHandleApprovalRequestCreated';
 
 function normalizeModelIdOrThrow(raw: string): string {
@@ -55,6 +58,7 @@ export async function cmdSessionSetModel(
           code: normalized.errorCode,
           ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
           ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+          ...(normalized.details !== undefined ? { details: normalized.details } : {}),
         },
       });
       return;
@@ -62,15 +66,27 @@ export async function cmdSessionSetModel(
     throw new Error(normalized.errorCode);
   }
 
-  const result = normalized.data as any;
+  const result = unwrapCliActionSuccessPayload(normalized.data) as any;
   if (tryHandleApprovalRequestCreated({ envelopeKind: 'session_set_model', json, result })) {
     return;
   }
 
+  const selection = result.activeSelection ?? result.selection ?? null;
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_set_model', data: { sessionId: result.sessionId, modelId: result.modelId ?? modelId, updatedAt: result.updatedAt ?? null } });
+    printJsonEnvelope({
+      ok: true,
+      kind: 'session_set_model',
+      data: {
+        ...result,
+        modelId: selection?.modelId ?? modelId,
+        updatedAt: result.updatedAt ?? null,
+      },
+    });
     return;
   }
 
-  console.log(chalk.green('✓'), `model set for ${result.sessionId}: ${result.modelId ?? modelId}`);
+  console.log(
+    chalk.green('✓'),
+    `model ${result.status ?? 'updated'} for ${result.sessionId}: ${selection?.modelId ?? modelId}`,
+  );
 }

@@ -14,6 +14,44 @@ const baseIssue = {
 } as const;
 
 describe('ConnectedServiceRecoveryPolicy', () => {
+  it('preserves a novel qualified service identity through account-scoped group recovery', () => {
+    const service = {
+      pluginId: 'acme.connected-accounts',
+      localId: 'service/with/path',
+    } as const;
+
+    expect(decideConnectedServiceRecovery({
+      actor: 'automatic',
+      issue: {
+        kind: 'usage_limit',
+        ...baseIssue,
+        serviceId: service,
+        limitCategory: 'usage_limit',
+        quotaScope: 'account',
+      },
+      selection: {
+        kind: 'group',
+        serviceId: service,
+        groupId: 'main',
+        activeProfileId: 'primary',
+      },
+      groupCandidate: {
+        status: 'selected',
+        profileId: 'backup',
+        applyMode: 'restart_rematerialize',
+      },
+    })).toEqual({
+      action: 'switch_account',
+      mode: 'restart_rematerialize',
+      serviceId: service,
+      groupId: 'main',
+      fromProfileId: 'primary',
+      toProfileId: 'backup',
+      reason: 'usage_limit',
+      actor: 'automatic',
+    });
+  });
+
   it('routes temporary throttles to bounded temporary retry recovery', () => {
     expect(decideConnectedServiceRecovery({
       actor: 'automatic',
@@ -59,6 +97,61 @@ describe('ConnectedServiceRecoveryPolicy', () => {
       profileId: 'primary',
       groupId: 'main',
       retryAfterMs: 30_000,
+    });
+  });
+
+  it.each([
+    ['usage_limit', 'unknown'],
+    ['rate_limit', 'provider'],
+    ['rate_limit', 'unknown'],
+    ['capacity', 'provider'],
+  ] as const)(
+    'does not switch accounts for %s evidence with %s scope',
+    (kind, quotaScope) => {
+      expect(decideConnectedServiceRecovery({
+        actor: 'automatic',
+        issue: {
+          kind,
+          ...baseIssue,
+          limitCategory: kind,
+          quotaScope,
+          retryAfterMs: 30_000,
+        },
+        selection: {
+          kind: 'group',
+          serviceId: 'openai-codex',
+          groupId: 'main',
+          activeProfileId: 'primary',
+        },
+      })).toEqual({
+        action: 'temporary_retry',
+        serviceId: 'openai-codex',
+        profileId: 'primary',
+        groupId: 'main',
+        retryAfterMs: 30_000,
+      });
+    },
+  );
+
+  it('keeps unknown evidence diagnostic-only for a group selection', () => {
+    expect(decideConnectedServiceRecovery({
+      actor: 'automatic',
+      issue: {
+        kind: 'unknown',
+        ...baseIssue,
+      },
+      selection: {
+        kind: 'group',
+        serviceId: 'openai-codex',
+        groupId: 'main',
+        activeProfileId: 'primary',
+      },
+    })).toEqual({
+      action: 'connected_service_required',
+      serviceId: 'openai-codex',
+      profileId: 'primary',
+      groupId: 'main',
+      reason: 'unknown',
     });
   });
 
@@ -126,6 +219,7 @@ describe('ConnectedServiceRecoveryPolicy', () => {
       issue: {
         kind: 'usage_limit',
         ...baseIssue,
+        quotaScope: 'account',
       },
       selection: {
         kind: 'group',
@@ -171,7 +265,7 @@ describe('ConnectedServiceRecoveryPolicy', () => {
     });
   });
 
-  it('does not route auth-invalid credential failures through group account switching', () => {
+  it('switches a group away from a member with live auth-invalid evidence', () => {
     expect(decideConnectedServiceRecovery({
       actor: 'automatic',
       issue: {
@@ -193,10 +287,12 @@ describe('ConnectedServiceRecoveryPolicy', () => {
         applyMode: 'restart_rematerialize',
       },
     })).toEqual({
-      action: 'reconnect_required',
+      action: 'switch_account',
+      mode: 'restart_rematerialize',
       serviceId: 'openai-codex',
-      profileId: 'primary',
       groupId: 'main',
+      fromProfileId: 'primary',
+      toProfileId: 'backup',
       reason: 'auth_expired',
       actor: 'automatic',
     });
@@ -261,6 +357,7 @@ describe('ConnectedServiceRecoveryPolicy', () => {
       issue: {
         kind: 'usage_limit',
         ...baseIssue,
+        quotaScope: 'account',
         resetsAtMs: 90_000,
       },
       selection: {
@@ -283,36 +380,13 @@ describe('ConnectedServiceRecoveryPolicy', () => {
     });
   });
 
-  it('returns shared-state-required when provider continuity says restart cannot preserve context for a single profile', () => {
+  it('prefers same-group rotation over provider shared-state recovery actions for switchable group failures', () => {
     expect(decideConnectedServiceRecovery({
       actor: 'automatic',
       issue: {
         kind: 'usage_limit',
         ...baseIssue,
-      },
-      selection: {
-        kind: 'profile',
-        serviceId: 'openai-codex',
-        profileId: 'primary',
-      },
-      providerContinuity: {
-        restart: 'shared_state_required',
-      },
-    })).toEqual({
-      action: 'shared_state_required',
-      serviceId: 'openai-codex',
-      profileId: 'primary',
-      groupId: 'main',
-      reason: 'usage_limit',
-    });
-  });
-
-  it('prefers same-group rotation over provider shared-state hints for switchable group failures', () => {
-    expect(decideConnectedServiceRecovery({
-      actor: 'automatic',
-      issue: {
-        kind: 'usage_limit',
-        ...baseIssue,
+        quotaScope: 'account',
         recoveryAction: { kind: 'provider_state_sharing_required' as const },
       },
       selection: {
@@ -320,9 +394,6 @@ describe('ConnectedServiceRecoveryPolicy', () => {
         serviceId: 'openai-codex',
         groupId: 'main',
         activeProfileId: 'primary',
-      },
-      providerContinuity: {
-        restart: 'shared_state_required',
       },
       groupCandidate: {
         status: 'selected',
@@ -347,6 +418,7 @@ describe('ConnectedServiceRecoveryPolicy', () => {
       issue: {
         kind: 'usage_limit',
         ...baseIssue,
+        quotaScope: 'account',
       },
       selection: {
         kind: 'group',

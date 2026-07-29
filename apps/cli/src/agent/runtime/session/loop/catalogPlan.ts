@@ -10,6 +10,10 @@ import {
   type HostSessionRuntimePlan,
 } from '@/agent/runtime/session/loop/lifecycle';
 import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import {
+  resolveRuntimeActivityApplicability,
+  type RuntimeActivityApplicability,
+} from '@/agent/runtime/session/activity/runtimeActivityApplicability';
 
 type CatalogHostSessionRuntimePlanConfig<TRuntime extends RuntimeTurnOperations> = Omit<
   HostSessionRuntimeConfig,
@@ -27,6 +31,7 @@ export type CatalogHostSessionRuntimeDefaults<TRuntime extends RuntimeTurnOperat
   | 'agentMessageType'
   | 'machineMetadata'
   | 'onAttachMetadataSnapshotMissing'
+  | 'runtimeActivityApplicability'
 > & Readonly<{
   displayName: string;
   backendDisplayName?: string;
@@ -35,12 +40,17 @@ export type CatalogHostSessionRuntimeDefaults<TRuntime extends RuntimeTurnOperat
   waitingForCommandLabel?: string;
   agentMessageType?: HostSessionRuntimeConfig['agentMessageType'];
   attachMetadataLogLabel?: string;
+  runtimeActivityApplicability?: RuntimeActivityApplicability;
 }>;
 
 export function createCatalogHostSessionRuntimeConfig<TRuntime extends RuntimeTurnOperations>(params: Readonly<{
   agentId: string;
   config: CatalogHostSessionRuntimeDefaults<TRuntime>;
 }>): CatalogHostSessionRuntimePlanConfig<TRuntime> {
+  const runtimeActivityApplicabilityDeclarationPresent = Object.prototype.hasOwnProperty.call(
+    params.config,
+    'runtimeActivityApplicability',
+  );
   const {
     displayName,
     backendDisplayName = displayName,
@@ -50,6 +60,7 @@ export function createCatalogHostSessionRuntimeConfig<TRuntime extends RuntimeTu
     agentMessageType = params.agentId,
     checkpointToolProtocol = 'acp',
     attachMetadataLogLabel = params.agentId,
+    runtimeActivityApplicability: runtimeActivityApplicabilityDeclaration,
     ...config
   } = params.config;
 
@@ -61,6 +72,10 @@ export function createCatalogHostSessionRuntimeConfig<TRuntime extends RuntimeTu
     waitingForCommandLabel,
     agentMessageType,
     checkpointToolProtocol,
+    runtimeActivityApplicability: resolveRuntimeActivityApplicability(
+      runtimeActivityApplicabilityDeclaration,
+      { declarationPresent: runtimeActivityApplicabilityDeclarationPresent },
+    ),
     machineMetadata: initialMachineMetadata,
     onAttachMetadataSnapshotMissing: (error) => {
       logger.debug(

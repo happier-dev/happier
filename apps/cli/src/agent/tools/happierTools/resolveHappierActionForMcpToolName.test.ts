@@ -46,7 +46,7 @@ describe('shouldSuppressProviderPermissionForHappierApproval', () => {
       actions: {
         'session.list': {
           disabledSurfaces: [],
-          approvalRequiredSurfaces: ['session_agent'],
+          approvalRequiredSurfaces: ['agent'],
         },
       },
     });
@@ -54,19 +54,19 @@ describe('shouldSuppressProviderPermissionForHappierApproval', () => {
     expect(shouldSuppressProviderPermissionForHappierApproval({
       toolName: 'mcp__happier__session_list',
       input: {},
-      surface: 'session_agent',
+      surface: 'agent',
     })).toEqual({ suppress: true, actionId: 'session.list' });
 
     expect(shouldSuppressProviderPermissionForHappierApproval({
       toolName: 'mcp__happier__session_status_get',
       input: {},
-      surface: 'session_agent',
+      surface: 'agent',
     })).toEqual({ suppress: false, actionId: 'session.status.get' });
 
     expect(shouldSuppressProviderPermissionForHappierApproval({
       toolName: 'mcp__custom__session_list',
       input: {},
-      surface: 'session_agent',
+      surface: 'agent',
     })).toEqual({ suppress: false, actionId: null });
   });
 
@@ -75,7 +75,7 @@ describe('shouldSuppressProviderPermissionForHappierApproval', () => {
       v: 1,
       actions: {
         'approval.request.create': {
-          approvalRequiredSurfaces: ['session_agent'],
+          approvalRequiredSurfaces: ['agent'],
         },
       },
     };
@@ -83,7 +83,7 @@ describe('shouldSuppressProviderPermissionForHappierApproval', () => {
     expect(shouldSuppressProviderPermissionForHappierApproval({
       toolName: 'mcp__happier__approval_request_create',
       input: {},
-      surface: 'session_agent',
+      surface: 'agent',
       accountSettings: {
         actionsSettingsV1: ActionsSettingsV1Schema.parse(rawActionsSettings),
       },

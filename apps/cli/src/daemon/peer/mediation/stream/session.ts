@@ -57,7 +57,7 @@ export function createMachineLiveStreamSession(_input: Readonly<{
             routeKind: startRequest.routeKind,
             targetMachineId: startRequest.targetMachineId,
             startedAtMs: input.nowMs(),
-            expiresAtMs: Math.min(input.nowMs() + startRequest.maxDurationMs, authorization.expiresAtMs),
+            expiresAtMs: input.nowMs() + startRequest.maxDurationMs,
             receipt: {
                 v: 1,
                 id: PEER_MEDIATION_RECEIPTS.streamStarted,

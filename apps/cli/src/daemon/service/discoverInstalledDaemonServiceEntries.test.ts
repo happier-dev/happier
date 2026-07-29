@@ -65,6 +65,53 @@ describe('discoverInstalledDaemonServiceEntries', () => {
     });
   });
 
+  it('keeps explicit pinned service identity separate from the active relay profile id', async () => {
+    await withTempDir('happier-discover-service-entry-pinned-active-profile-', async (homeDir) => {
+      const servicesDir = join(homeDir, '.config', 'systemd', 'user');
+      mkdirSync(servicesDir, { recursive: true });
+      const path = join(servicesDir, 'happier-daemon.service-instance.service');
+      writeFileSync(
+        path,
+        renderSystemdServiceUnit({
+          description: 'Happier Daemon',
+          execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
+          env: {
+            HAPPIER_ACTIVE_SERVER_ID: 'company-profile',
+            HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+            HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
+            HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+          },
+          wantedBy: 'default.target',
+        }),
+        'utf-8',
+      );
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'linux',
+        userHomeDir: homeDir,
+        happierHomeDir: join(homeDir, '.happier'),
+        mode: 'user',
+        serversById: {
+          'company-profile': {
+            name: 'Company profile',
+            serverUrl: 'https://company.example.test',
+          },
+        },
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          serverId: 'service-instance',
+          activeServerId: 'company-profile',
+          name: 'Company profile',
+          relayUrl: 'https://company.example.test',
+          targetMode: 'pinned',
+          path,
+        }),
+      ]);
+    });
+  });
+
   it('ignores invalid darwin launch-agent files that only match by filename', async () => {
     await withTempDir('happier-discover-service-entry-darwin-invalid-', async (homeDir) => {
       const servicesDir = join(homeDir, 'Library', 'LaunchAgents');
@@ -127,6 +174,46 @@ describe('discoverInstalledDaemonServiceEntries', () => {
           happierHomeDir: '/Users/tester/.happier',
           targetMode: 'default-following',
           releaseChannel: 'stable',
+          path,
+        }),
+      ]);
+    });
+  });
+
+  it('uses the canonical launchd parser for XML-escaped service environment values', async () => {
+    await withTempDir('happier-discover-service-entry-darwin-escaped-env-', async (homeDir) => {
+      const servicesDir = join(homeDir, 'Library', 'LaunchAgents');
+      const path = join(servicesDir, 'com.happier.cli.daemon.default.plist');
+      const happierHomeDir = '/Users/tester/Happier & Friends/.happier';
+      mkdirSync(servicesDir, { recursive: true });
+      writeFileSync(
+        path,
+        buildLaunchdPlistXml({
+          label: 'com.happier.cli.daemon.default',
+          programArgs: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
+          env: {
+            HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+            HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+            HAPPIER_HOME_DIR: happierHomeDir,
+            HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+          },
+          stdoutPath: '/tmp/happier-daemon.log',
+          stderrPath: '/tmp/happier-daemon.log',
+        }),
+        'utf-8',
+      );
+
+      const entries = await discoverInstalledDaemonServiceEntries({
+        platform: 'darwin',
+        userHomeDir: homeDir,
+        happierHomeDir: join(homeDir, '.happier'),
+        mode: 'user',
+        serversById: {},
+      });
+
+      expect(entries).toEqual([
+        expect.objectContaining({
+          happierHomeDir,
           path,
         }),
       ]);

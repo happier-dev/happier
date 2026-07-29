@@ -3,10 +3,13 @@ import { parseAndStripTerminalRuntimeFlags, type TerminalRuntimeFlags } from '..
 function isCliEntrypointPath(arg: string): boolean {
     const normalized = String(arg ?? '').trim().replaceAll('\\', '/');
     if (!normalized) return false;
+    const relativeNormalized = normalized.replace(/^\.\//, '');
     return (
         normalized.endsWith('/package-dist/index.mjs') ||
         normalized.endsWith('/dist/index.mjs') ||
-        normalized.endsWith('/apps/cli/src/index.ts')
+        normalized.endsWith('/apps/cli/src/index.ts') ||
+        relativeNormalized === 'src/index.ts' ||
+        relativeNormalized === 'apps/cli/src/index.ts'
     );
 }
 

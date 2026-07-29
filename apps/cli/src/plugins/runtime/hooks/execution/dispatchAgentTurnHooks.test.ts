@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
-import type { ResolvedHookRegistration } from '@/plugins/projection/registry/types';
+import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
 import type { ResolvedPluginHookHandler } from '@/plugins/runtime/types';
+import { logger } from '@/ui/logger';
 
 import { transformAgentRequestThroughRuntimeRegistry } from './dispatchAgentTurnHooks';
 
-function createAgentRequestRegistration(): ResolvedHookRegistration {
+function createAgentRequestRegistration(): ResolvedActivatedHookRegistration {
   return {
     provenance: 'external',
     source: { kind: 'path' },
@@ -26,10 +27,6 @@ function createAgentRequestRegistration(): ResolvedHookRegistration {
       category: 'augmentation',
       scope: 'agent',
       executionKind: 'augment',
-      handler: {
-        target: 'plugin',
-        exportName: 'transform',
-      },
     },
   };
 }
@@ -50,7 +47,6 @@ describe('agent turn hook dispatch bridge', () => {
             manifestPath: registration.manifestPath,
             manifestDigest: registration.manifestDigest,
             daemonEntryPath: registration.daemonEntryPath!,
-            exportName: 'transform',
             registration,
             handler,
           },
@@ -77,7 +73,9 @@ describe('agent turn hook dispatch bridge', () => {
     expect(handler).toHaveBeenCalledWith(expect.objectContaining({
       eventId: 'agent.request.before',
       agentId: 'codex',
-    }), undefined);
+    }), expect.objectContaining({
+      signal: expect.any(AbortSignal),
+    }));
     const envelope = handler.mock.calls[0]?.[0];
     expect(envelope).not.toHaveProperty('providerId');
     expect(envelope).not.toHaveProperty('backendId');
@@ -130,6 +128,42 @@ describe('agent turn hook dispatch bridge', () => {
       expect(settled).toEqual(originalPayload);
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it('does not pass hostile hook-dispatch failures to retained logging', async () => {
+    const privateTranscript = 'private streamed voice transcript that must not enter logs';
+    const hostileFailure = {
+      toJSON: () => ({ privateTranscript }),
+      toString: () => privateTranscript,
+    };
+    const logDebug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const originalPayload = {
+      sessionId: 'session-private-log-safety',
+      agentId: 'codex',
+      runtimeFamily: 'acpSession',
+      method: 'session/prompt',
+      request: {
+        sessionId: 'provider-session-private-log-safety',
+        prompt: [{ type: 'text', text: privateTranscript }],
+      },
+      timestampMs: 1,
+    };
+
+    try {
+      await expect(transformAgentRequestThroughRuntimeRegistry({
+        readHookEventEnvelopeV1,
+        hookHandlersByHookId: new Map(),
+        activateContributionsOnDemand: async () => {
+          throw hostileFailure;
+        },
+      }, originalPayload)).resolves.toEqual(originalPayload);
+
+      expect(logDebug).toHaveBeenCalledWith(
+        '[plugins] Plugin ACP request hook dispatch failed; using prior payload',
+      );
+    } finally {
+      logDebug.mockRestore();
     }
   });
 });

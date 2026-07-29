@@ -16,6 +16,7 @@ import {
   trimBugReportTextToMaxBytes,
   type BugReportArtifactPayload,
   type BugReportEnvironmentPayload,
+  type DoctorSnapshot,
 } from '@happier-dev/protocol';
 
 import packageJson from '../../package.json';
@@ -132,6 +133,7 @@ export async function collectBugReportDiagnosticsArtifacts(
   }
 
   const artifacts: BugReportArtifactPayload[] = [];
+  let capturedDoctorSnapshot: DoctorSnapshot | null | undefined;
   const limits = {
     maxArtifactBytes: input.maxArtifactBytes,
     acceptedKinds: input.acceptedKinds,
@@ -236,6 +238,7 @@ export async function collectBugReportDiagnosticsArtifacts(
     }
     try {
       const machineDiagnostics = await collectBugReportMachineDiagnosticsSnapshotForBugReport();
+      capturedDoctorSnapshot = machineDiagnostics.doctorSnapshot;
       diagnosticsCollection.machineDiagnostics = { status: 'collected' };
 
       if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'daemon')) {
@@ -370,16 +373,20 @@ export async function collectBugReportDiagnosticsArtifacts(
   }, limits);
 
   if (hasAcceptedBugReportArtifactKind(input.acceptedKinds, 'cli')) {
-    try {
-      const snapshot = await buildDoctorSnapshot();
+    if (capturedDoctorSnapshot === undefined) {
+      try {
+        capturedDoctorSnapshot = await buildDoctorSnapshot();
+      } catch {
+        capturedDoctorSnapshot = null;
+      }
+    }
+    if (capturedDoctorSnapshot) {
       pushBugReportArtifact(artifacts, {
         filename: 'doctor-snapshot.json',
         sourceKind: 'cli',
         contentType: 'application/json',
-        content: JSON.stringify(snapshot, null, 2),
+        content: JSON.stringify(capturedDoctorSnapshot, null, 2),
       }, limits);
-    } catch {
-      // Optional artifact; cli-context.json already captures the basics.
     }
   }
 

@@ -7,25 +7,44 @@ import {
 import { describe, expect, it } from 'vitest';
 import type { ProviderAccountUsageAdoptionV1 } from './adoption';
 
-type ProviderAccountUsageStore = Readonly<{
-    recordSnapshot(
-        snapshot: ProviderAccountUsageSnapshotV1,
-        observation?: Readonly<{
-            sources?: readonly ConnectedServiceUsageSourceV1[];
-    }>,
-    ): Readonly<{ status: 'recorded'; recordId: string }>;
-    resolveRecordId(recordId: string): ProviderAccountUsageSnapshotV1 | null;
-    resolveBySource(source: ConnectedServiceUsageSourceV1): ProviderAccountUsageSnapshotV1 | null;
-    listSnapshots(): readonly ProviderAccountUsageSnapshotV1[];
-    applyAdoption(adoption: ProviderAccountUsageAdoptionV1): Readonly<{
+type PreparedAdoption = Readonly<{
+    status: 'adopted' | 'already_adopted';
+    fromRecordId: string;
+    toRecordId: string;
+    snapshot: ProviderAccountUsageSnapshotV1 | null;
+    commit(): Readonly<{
         status: 'adopted' | 'already_adopted';
         fromRecordId: string;
         toRecordId: string;
     }>;
 }>;
 
+type ProviderAccountUsageStore = Readonly<{
+    recordSnapshot(
+        snapshot: ProviderAccountUsageSnapshotV1,
+        observation?: Readonly<{
+            sources?: readonly ConnectedServiceUsageSourceV1[];
+    }>,
+    ): Readonly<{
+        status: 'snapshot_advanced' | 'source_linked' | 'duplicate' | 'older';
+        recordId: string;
+        snapshotAdvanced: boolean;
+        sourceLinked: boolean;
+    }>;
+    resolveRecordId(recordId: string): ProviderAccountUsageSnapshotV1 | null;
+    resolveBySource(source: ConnectedServiceUsageSourceV1): ProviderAccountUsageSnapshotV1 | null;
+    listSnapshots(): readonly ProviderAccountUsageSnapshotV1[];
+    prepareAdoption(adoption: ProviderAccountUsageAdoptionV1): PreparedAdoption;
+}>;
+
 type StoreModule = Readonly<{
     createProviderAccountUsageStore(): ProviderAccountUsageStore;
+    isProviderAccountUsageStoreMutationAccepted(result: Readonly<{
+        status: 'snapshot_advanced' | 'source_linked' | 'duplicate' | 'older';
+        recordId: string;
+        snapshotAdvanced: boolean;
+        sourceLinked: boolean;
+    }>): boolean;
 }>;
 
 async function loadStoreModule(): Promise<StoreModule | null> {
@@ -66,6 +85,24 @@ function createSnapshot(overrides: Partial<ProviderAccountUsageSnapshotV1> = {})
 }
 
 describe('provider account usage store', () => {
+    it('uses the typed status as the only mutation-acceptance authority', async () => {
+        const module = await loadStoreModule();
+        expect(module).not.toBeNull();
+        const recordId = createSnapshot().recordId;
+        expect(module!.isProviderAccountUsageStoreMutationAccepted({
+            status: 'duplicate',
+            recordId,
+            snapshotAdvanced: true,
+            sourceLinked: true,
+        })).toBe(false);
+        expect(module!.isProviderAccountUsageStoreMutationAccepted({
+            status: 'snapshot_advanced',
+            recordId,
+            snapshotAdvanced: false,
+            sourceLinked: false,
+        })).toBe(true);
+    });
+
     it('records one stable provider-subject snapshot and resolves explicit sources without exposing alias lookup', async () => {
         const module = await loadStoreModule();
         expect(module).not.toBeNull();
@@ -81,8 +118,10 @@ describe('provider account usage store', () => {
                 bindingKind: 'profile',
             }],
         })).toEqual({
-            status: 'recorded',
+            status: 'snapshot_advanced',
             recordId: stableSnapshot.recordId,
+            snapshotAdvanced: true,
+            sourceLinked: true,
         });
 
         store.recordSnapshot(createSnapshot({
@@ -156,6 +195,71 @@ describe('provider account usage store', () => {
         })).toBeNull();
     });
 
+    it('classifies effective snapshot revisions, new source edges, duplicates, and older delivery', async () => {
+        const module = await loadStoreModule();
+        expect(module).not.toBeNull();
+        const store = module!.createProviderAccountUsageStore();
+        const sourceA: ConnectedServiceUsageSourceV1 = {
+            serviceId: 'anthropic',
+            profileId: 'work',
+            bindingKind: 'profile',
+        };
+        const sourceB: ConnectedServiceUsageSourceV1 = {
+            serviceId: 'anthropic',
+            profileId: 'work',
+            bindingKind: 'group_member',
+            groupId: 'team',
+            groupGeneration: 7,
+        };
+        const initial = createSnapshot({ fetchedAtMs: 2_000, observedAtMs: 2_000 });
+
+        expect(store.recordSnapshot(initial, { sources: [sourceA] })).toEqual({
+            status: 'snapshot_advanced',
+            recordId: initial.recordId,
+            snapshotAdvanced: true,
+            sourceLinked: true,
+        });
+        expect(store.recordSnapshot(initial, { sources: [sourceA] })).toEqual({
+            status: 'duplicate',
+            recordId: initial.recordId,
+            snapshotAdvanced: false,
+            sourceLinked: false,
+        });
+        expect(store.recordSnapshot(createSnapshot({
+            fetchedAtMs: 1_000,
+            observedAtMs: 1_000,
+            planLabel: 'outdated',
+        }))).toEqual({
+            status: 'older',
+            recordId: initial.recordId,
+            snapshotAdvanced: false,
+            sourceLinked: false,
+        });
+        expect(store.recordSnapshot(createSnapshot({
+            fetchedAtMs: 1_000,
+            observedAtMs: 1_000,
+            planLabel: 'outdated',
+        }), { sources: [sourceB] })).toEqual({
+            status: 'source_linked',
+            recordId: initial.recordId,
+            snapshotAdvanced: false,
+            sourceLinked: true,
+        });
+        expect(store.resolveBySource(sourceB)).toEqual(initial);
+
+        expect(store.recordSnapshot(createSnapshot({
+            fetchedAtMs: 2_000,
+            observedAtMs: 2_000,
+            planLabel: 'Enterprise',
+        }), { sources: [sourceA, sourceB] })).toEqual({
+            status: 'snapshot_advanced',
+            recordId: initial.recordId,
+            snapshotAdvanced: true,
+            sourceLinked: false,
+        });
+        expect(store.resolveRecordId(initial.recordId)?.planLabel).toBe('Enterprise');
+    });
+
     it('adopts provisional records into stable records with a redirect', async () => {
         const module = await loadStoreModule();
         expect(module).not.toBeNull();
@@ -180,8 +284,21 @@ describe('provider account usage store', () => {
             observedAtMs: 2_000,
         };
 
-        expect(store.applyAdoption(adoption)).toEqual({ status: 'adopted', fromRecordId, toRecordId });
-        expect(store.applyAdoption(adoption)).toEqual({ status: 'already_adopted', fromRecordId, toRecordId });
+        const prepared = store.prepareAdoption(adoption);
+        expect(prepared).toEqual(expect.objectContaining({
+            status: 'adopted',
+            fromRecordId,
+            toRecordId,
+            snapshot: expect.objectContaining({
+                recordId: toRecordId,
+                recordKey: stableKey,
+            }),
+        }));
+        expect(store.resolveRecordId(fromRecordId)?.recordId).toBe(fromRecordId);
+        expect(store.resolveRecordId(toRecordId)).toBeNull();
+
+        expect(prepared.commit()).toEqual({ status: 'adopted', fromRecordId, toRecordId });
+        expect(store.prepareAdoption(adoption).commit()).toEqual({ status: 'already_adopted', fromRecordId, toRecordId });
 
         store.recordSnapshot(createSnapshot({
             recordKey: stableKey,
@@ -216,14 +333,14 @@ describe('provider account usage store', () => {
             }],
         });
 
-        store.applyAdoption({
+        store.prepareAdoption({
             providerId: 'claude',
             fromRecordId,
             toRecordId,
             stableRecordKey: stableKey,
             proof: { kind: 'provider_account_id_match' },
             observedAtMs: 2_000,
-        });
+        }).commit();
 
         expect(store.resolveBySource({
             serviceId: 'anthropic',
@@ -256,14 +373,14 @@ describe('provider account usage store', () => {
             fetchedAtMs: 3_000,
         }));
 
-        store.applyAdoption({
+        store.prepareAdoption({
             providerId: 'claude',
             fromRecordId,
             toRecordId,
             stableRecordKey: stableKey,
             proof: { kind: 'provider_account_id_match' },
             observedAtMs: 3_500,
-        });
+        }).commit();
 
         const redirected = store.resolveRecordId(fromRecordId);
         expect(redirected?.recordId).toBe(toRecordId);

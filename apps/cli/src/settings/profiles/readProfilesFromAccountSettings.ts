@@ -2,6 +2,7 @@ import {
   readAiLaunchProfileCollection,
   readProviderSettingsFromAccountSettingsV1,
   resolveVisibleBuiltInAiLaunchProfilesV1,
+  projectHistoricalBuiltInAiLaunchProfileV1,
   getBuiltInBackendProfile,
   isCanonicalProviderSavedSecretIdV1,
   type AIBackendProfile,
@@ -74,10 +75,7 @@ export function readProfilesFromAccountSettings(settings: unknown): AccountSetti
     if (!hasHistoricalEvidence || profiles.some((profile) => profile.id === profileId)) continue;
     const current = getBuiltInBackendProfile(profileId);
     if (!current) continue;
-    const historical = {
-      ...current,
-      environmentVariables: current.environmentVariables.filter((entry) => entry.name !== 'GEMINI_MODEL'),
-    };
+    const historical = projectHistoricalBuiltInAiLaunchProfileV1(current);
     customProfiles.push(historical);
     profiles.push(historical);
   }

@@ -1,98 +1,118 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { registerCapabilitiesHandlers } from './capabilities';
+import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
+
+const mocks = vi.hoisted(() => ({
+  probeConfigOptions: vi.fn(),
+  resolveProbeBackendContext: vi.fn(),
+}));
+
+vi.mock('@/capabilities/probes/agentConfigOptionsProbe', () => ({
+  probeAgentConfigOptionsBestEffort: mocks.probeConfigOptions,
+}));
+
+vi.mock('./capabilitiesProbeContext', () => ({
+  resolveProbeBackendContext: mocks.resolveProbeBackendContext,
+}));
+
+vi.mock('@/agent/catalog/registry', () => ({
+  AGENTS: {
+    codex: { id: 'codex', needsAccountSettingsForProbes: true },
+  },
+}));
+
+function createCall() {
+  return createEncryptedRpcTestClient({
+    scopePrefix: 'machine-test',
+    encryptionKey: new Uint8Array(32).fill(7),
+    logger: () => undefined,
+    registerHandlers: (manager) => registerCapabilitiesHandlers(manager),
+  }).call;
+}
 
 describe('capabilities.invoke(cli.* probeConfigOptions)', () => {
-  it('passes params.cwd through to probeAgentConfigOptionsBestEffort when provided', async () => {
-    vi.resetModules();
+  beforeEach(() => {
+    mocks.probeConfigOptions.mockReset();
+    mocks.resolveProbeBackendContext.mockReset();
+    mocks.resolveProbeBackendContext.mockImplementation(async (params: Record<string, unknown>) => ({
+      backendTarget: params.backendTarget,
+      credentials: null,
+      accountSettings: null,
+    }));
+  });
 
-    const probeSpy = vi.fn(async (_params: any) => ({
+  it('passes params.cwd through to probeAgentConfigOptionsBestEffort when provided', async () => {
+    mocks.probeConfigOptions.mockResolvedValue({
       provider: 'codex',
       configOptions: [],
       source: 'static',
-    }));
-
-    vi.doMock('@/capabilities/probes/agentConfigOptionsProbe', () => ({
-      probeAgentConfigOptionsBestEffort: (params: any) => probeSpy(params),
-    }));
-
-    vi.doMock('@/backends/catalog', () => ({
-      AGENTS: {
-        codex: { id: 'codex', needsAccountSettingsForProbes: true },
-      },
-    }));
-
-    const { registerCapabilitiesHandlers } = await import('./capabilities');
-    const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
-
-    const { call } = createEncryptedRpcTestClient({
-      scopePrefix: 'machine-test',
-      encryptionKey: new Uint8Array(32).fill(7),
-      logger: () => undefined,
-      registerHandlers: (manager) => registerCapabilitiesHandlers(manager),
     });
 
     const cwd = '/tmp/happier-probe-cwd';
-    await call(RPC_METHODS.CAPABILITIES_INVOKE, {
+    await createCall()(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.codex',
       method: 'probeConfigOptions',
       params: { timeoutMs: 1234, cwd },
     });
 
-    expect(probeSpy).toHaveBeenCalledTimes(1);
-    expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({ agentId: 'codex', cwd, timeoutMs: 1234 }));
+    expect(mocks.probeConfigOptions).toHaveBeenCalledTimes(1);
+    expect(mocks.probeConfigOptions).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'codex',
+      cwd,
+      timeoutMs: 1234,
+    }));
   });
 
-  it('loads account settings for cli.codex probes so backend-mode aware config option probing can run', async () => {
-    vi.resetModules();
+  it('supports probeConfigOptions for ACP-backed catalog entries', async () => {
+    mocks.probeConfigOptions.mockResolvedValue({
+      provider: 'codex',
+      configOptions: [{ id: 'reasoning_effort', name: 'Thinking' }],
+      source: 'dynamic',
+    });
 
-    const probeSpy = vi.fn(async (_params: any) => ({
+    const result = await createCall()(RPC_METHODS.CAPABILITIES_INVOKE, {
+      id: 'cli.codex',
+      method: 'probeConfigOptions',
+      params: { timeoutMs: 12_345, cwd: '/tmp/happier-probe-cwd' },
+    });
+
+    expect(result).toEqual({
+      ok: true,
+      result: {
+        provider: 'codex',
+        configOptions: [{ id: 'reasoning_effort', name: 'Thinking' }],
+        source: 'dynamic',
+      },
+    });
+    expect(mocks.probeConfigOptions).toHaveBeenCalledWith(expect.objectContaining({
+      agentId: 'codex',
+      cwd: '/tmp/happier-probe-cwd',
+      timeoutMs: 12_345,
+    }));
+  });
+
+  it('forwards resolved Codex backend-mode settings to config-option probing once', async () => {
+    mocks.probeConfigOptions.mockResolvedValue({
       provider: 'codex',
       configOptions: [],
       source: 'static',
-    }));
-    const readCredentialsMock = vi.fn(async () => ({ token: 'token' }));
-    const bootstrapAccountSettingsContextMock = vi.fn(async () => ({
-      settings: { codexBackendMode: 'appServer' },
-    }));
-
-    vi.doMock('@/capabilities/probes/agentConfigOptionsProbe', () => ({
-      probeAgentConfigOptionsBestEffort: (params: any) => probeSpy(params),
-    }));
-    vi.doMock('@/persistence', () => ({
-      readCredentials: readCredentialsMock,
-    }));
-    vi.doMock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
-      bootstrapAccountSettingsContext: bootstrapAccountSettingsContextMock,
-    }));
-    vi.doMock('@/backends/catalog', () => ({
-      AGENTS: {
-        codex: { id: 'codex', needsAccountSettingsForProbes: true },
-      },
-    }));
-
-    const { registerCapabilitiesHandlers } = await import('./capabilities');
-    const { createEncryptedRpcTestClient } = await import('./encryptedRpc.testkit');
-
-    const { call } = createEncryptedRpcTestClient({
-      scopePrefix: 'machine-test',
-      encryptionKey: new Uint8Array(32).fill(7),
-      logger: () => undefined,
-      registerHandlers: (manager) => registerCapabilitiesHandlers(manager),
+    });
+    mocks.resolveProbeBackendContext.mockResolvedValue({
+      backendTarget: undefined,
+      credentials: { token: 'token' },
+      accountSettings: { codexBackendMode: 'appServer' },
     });
 
-    await call(RPC_METHODS.CAPABILITIES_INVOKE, {
+    await createCall()(RPC_METHODS.CAPABILITIES_INVOKE, {
       id: 'cli.codex',
       method: 'probeConfigOptions',
       params: { cwd: '/tmp/happier-probe-cwd' },
     });
 
-    expect(readCredentialsMock).toHaveBeenCalledTimes(1);
-    expect(bootstrapAccountSettingsContextMock).toHaveBeenCalledWith(expect.objectContaining({
-      credentials: { token: 'token' },
-      mode: 'blocking',
-      refresh: 'auto',
-    }));
-    expect(probeSpy).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mocks.resolveProbeBackendContext).toHaveBeenCalledTimes(1);
+    expect(mocks.probeConfigOptions).toHaveBeenCalledTimes(1);
+    expect(mocks.probeConfigOptions).toHaveBeenCalledWith(expect.objectContaining({
       agentId: 'codex',
       accountSettings: { codexBackendMode: 'appServer' },
       credentials: { token: 'token' },

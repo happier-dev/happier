@@ -11,10 +11,19 @@ vi.mock('@/cli/commandRegistry', () => ({
     uninstall: uninstallHandlerSpy,
   },
   ensureMergedAgentCommandRegistryLoaded: ensureMergedAgentCommandRegistryLoadedSpy,
+  resolvePluginCommandTmuxMode: vi.fn(() => null),
+  findCommandDispatchDescriptor: vi.fn((command: string) => {
+    if (command !== 'uninstall') return null;
+    return {
+      id: 'uninstall',
+      command: 'uninstall',
+      handler: uninstallHandlerSpy,
+    };
+  }),
 }));
 
-vi.mock('@/backends/catalog', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/backends/catalog')>();
+vi.mock('@/agent/catalog/registry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/catalog/registry')>();
   return {
     ...actual,
     requireCatalogEntry: vi.fn(() => ({

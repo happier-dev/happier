@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { SessionHandoffWorkspaceTransfer, WorkspaceManifest } from '@happier-dev/protocol';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import type { SessionHandoffWorkspaceReplicationMetadata } from './metadata';
 import { prepareSessionHandoffWorkspaceTarget } from './adapter';
 
@@ -21,6 +22,8 @@ type RequestDirectPeerBlobPackToFile = WorkspaceReplicationTransfers['requestDir
 type RequestServerRoutedBlobPackToFile = WorkspaceReplicationTransfers['requestServerRoutedBlobPackToFile'];
 type RequestServerRoutedBlobPackInput = Parameters<RequestServerRoutedBlobPackToFile>[0];
 type MachineTransferChannel = RequestServerRoutedBlobPackInput['machineTransferChannel'];
+
+const scmRegistry = createScmBackendRegistry([]);
 
 function sha256DigestOfString(value: string): string {
     return `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -118,6 +121,7 @@ describe('prepareSessionHandoffWorkspaceTarget (direct-peer blob-pack retry)', (
                 sourceMachineId: 'machine_source',
                 targetMachineId: 'machine_target',
                 targetPath: targetWorkspaceRoot,
+                scmRegistry,
                 workspaceTransfer,
                 metadata,
                 directPeerManifestEndpointCandidates: [
@@ -195,6 +199,7 @@ describe('prepareSessionHandoffWorkspaceTarget (direct-peer blob-pack retry)', (
                 sourceMachineId: 'machine_source',
                 targetMachineId: 'machine_target',
                 targetPath: targetWorkspaceRoot,
+                scmRegistry,
                 workspaceTransfer,
                 metadata,
                 allowServerRoutedFallback: true,

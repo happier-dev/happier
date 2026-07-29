@@ -4,9 +4,13 @@ import {
     SESSION_PROVIDER_HOOK_EVENT_ID_V1,
     SessionProviderHookEventPayloadV1Schema,
 } from '@happier-dev/protocol';
+import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime';
+import {
+    AGENT_EXTERNAL_SESSION_HOOK_LIMITS,
+    type StrictJsonValue,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
 import { logger } from '@/ui/logger';
-import { publishHostPluginEvent } from '../../context/events';
 
 export type SessionHookPayload = Record<string, unknown> & Readonly<{
     session_id?: string;
@@ -49,6 +53,7 @@ export type StatuslineHookPayload = Record<string, unknown> & Readonly<{
 export type SessionHookServerHandle = Readonly<{
     port: number;
     stop: () => void;
+    closed: Promise<void>;
 }>;
 
 export type SessionHookEventIdentity = Readonly<{
@@ -56,7 +61,25 @@ export type SessionHookEventIdentity = Readonly<{
     sessionId: string;
 }>;
 
+export const QUALIFIED_EXTERNAL_SESSION_HOOK_PATH =
+    '/hook/qualified-external-session';
+
+export type QualifiedExternalSessionHookRequest = Readonly<{
+    token: string;
+    eventId: string;
+    observedAtMs: number;
+    forwardingStartedAtMs: number;
+    nativePayload: StrictJsonValue;
+    signal: AbortSignal;
+}>;
+
+export type QualifiedExternalSessionHookResponse =
+    | Readonly<{ state: 'admitted'; facts: number }>
+    | Readonly<{ state: 'linked'; sessionId: string; created: boolean }>
+    | Readonly<{ state: 'ignored' | 'rejected' }>;
+
 export type StartSessionHookServerOptions = Readonly<{
+    requestedPort?: number;
     session?: SessionHookEventIdentity | (() => SessionHookEventIdentity | null);
     onSessionHook?: (providerSessionId: string, data: SessionHookPayload) => void | Promise<void>;
     onPermissionHook?: (data: PermissionHookPayload) => unknown | Promise<unknown>;
@@ -66,7 +89,7 @@ export type StartSessionHookServerOptions = Readonly<{
      * swallows consumer errors — a broken consumer must never delay or break the status bar.
      */
     onStatuslineUpdate?: (data: StatuslineHookPayload) => void | Promise<void>;
-    defaultPermissionHookResponse?: (data: PermissionHookPayload) => unknown;
+    defaultPermissionHookResponse?: (data: PermissionHookPayload) => unknown | Promise<unknown>;
     sessionHookSecret?: string;
     permissionHookSecret?: string;
     permissionRequestTimeoutMs?: number | null;
@@ -77,15 +100,37 @@ export type StartSessionHookServerOptions = Readonly<{
      * tools such as AskUserQuestion/ExitPlanMode. Returning a number sets that timeout; returning
      * `undefined` falls back to `permissionRequestTimeoutMs` / the default cap.
      */
-    permissionRequestTimeoutMsForTool?: (toolName: string | null) => number | null | undefined;
+    permissionRequestTimeoutMsForTool?: (
+        toolName: string | null,
+    ) => number | null | undefined | Promise<number | null | undefined>;
     requestReadTimeoutMs?: number;
     publishHostEvent?: (name: string, payload?: unknown) => Promise<void>;
+    onQualifiedExternalSessionHook?: (
+        request: QualifiedExternalSessionHookRequest,
+    ) => Promise<QualifiedExternalSessionHookResponse>;
 }>;
 
 const DEFAULT_PERMISSION_REQUEST_TIMEOUT_MS = 10 * 60 * 1000;
 const HOOK_REQUEST_READ_TIMEOUT_MS = 5_000;
+const PERSISTED_PORT_TAKEOVER_RETRY_DELAY_MS = 100;
+const PERSISTED_PORT_TAKEOVER_MAX_RETRIES = 20;
 const MAX_HOOK_REQUEST_BODY_BYTES = 1024 * 1024;
+const MAX_QUALIFIED_EXTERNAL_SESSION_HOOK_REQUEST_BODY_BYTES =
+    AGENT_EXTERNAL_SESSION_HOOK_LIMITS.maxJsonUtf8Bytes;
 const REDACTED_HOOK_PATH = '[redacted-path]';
+const hookRequestBodyTooLargeErrors = new WeakSet<object>();
+
+function createHookRequestBodyTooLargeError(): Error {
+    const error = new Error('hook request body exceeded maximum size');
+    hookRequestBodyTooLargeErrors.add(error);
+    return error;
+}
+
+function isHookRequestBodyTooLargeError(error: unknown): boolean {
+    return typeof error === 'object'
+        && error !== null
+        && hookRequestBodyTooLargeErrors.has(error);
+}
 
 function readString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -123,16 +168,34 @@ function resolvePermissionRequestTimeoutMs(options: StartSessionHookServerOption
 // wins when it returns a concrete value (number or explicit null); when it returns `undefined`
 // the global/default cap applies. This keeps interactive tools (which return null) honest about
 // having no Happier-imposed timeout while non-interactive tools stay bounded.
-function resolveEffectivePermissionRequestTimeoutMs(
+async function resolveEffectivePermissionRequestTimeoutMs(
     options: StartSessionHookServerOptions,
     toolName: string | null,
-): number | null {
-    const perTool = options.permissionRequestTimeoutMsForTool?.(toolName);
+): Promise<number | null> {
+    let perTool: number | null | undefined;
+    try {
+        perTool = await options.permissionRequestTimeoutMsForTool?.(toolName);
+    } catch {
+        logger.debug('[sessionHookServer] Failed to resolve per-tool permission timeout');
+    }
     if (perTool === null) return null;
     if (typeof perTool === 'number' && Number.isFinite(perTool) && perTool > 0) {
         return perTool;
     }
     return resolvePermissionRequestTimeoutMs(options);
+}
+
+async function resolveDefaultPermissionHookResponse(
+    options: StartSessionHookServerOptions,
+    data: PermissionHookPayload,
+): Promise<unknown> {
+    try {
+        return await options.defaultPermissionHookResponse?.(data)
+            ?? { continue: true, suppressOutput: true };
+    } catch {
+        logger.debug('[sessionHookServer] Failed to resolve default permission response');
+        return { continue: true, suppressOutput: true };
+    }
 }
 
 function resolveHookRequestReadTimeoutMs(options: StartSessionHookServerOptions): number {
@@ -159,14 +222,15 @@ function hasValidHookSecret(req: IncomingMessage, expectedSecret: string): boole
 
 async function readJsonRequestBody<TPayload extends Record<string, unknown>>(
     req: IncomingMessage,
+    maxBytes: number = MAX_HOOK_REQUEST_BODY_BYTES,
 ): Promise<{ bodyLength: number; data: TPayload }> {
     const chunks: Buffer[] = [];
     let bodyLength = 0;
     for await (const chunk of req) {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         bodyLength += buffer.length;
-        if (bodyLength > MAX_HOOK_REQUEST_BODY_BYTES) {
-            throw new Error('hook request body exceeded maximum size');
+        if (bodyLength > maxBytes) {
+            throw createHookRequestBodyTooLargeError();
         }
         chunks.push(buffer);
     }
@@ -181,10 +245,141 @@ async function readJsonRequestBody<TPayload extends Record<string, unknown>>(
         if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
             return { bodyLength, data: parsed as TPayload };
         }
-    } catch (parseError) {
-        logger.debug('[sessionHookServer] Failed to parse hook data as JSON:', parseError);
+    } catch {
+        logger.debug('[sessionHookServer] Failed to parse hook data as JSON');
     }
     return { bodyLength, data: {} as TPayload };
+}
+
+function readQualifiedExternalSessionHookBody(
+    data: Readonly<Record<string, unknown>>,
+): Omit<QualifiedExternalSessionHookRequest, 'token' | 'signal'> | null {
+    const keys = Object.keys(data);
+    if (
+        keys.length !== 4
+        || !keys.every((key) => [
+            'eventId',
+            'observedAtMs',
+            'forwardingStartedAtMs',
+            'nativePayload',
+        ].includes(key))
+        || typeof data.eventId !== 'string'
+        || data.eventId.trim().length === 0
+        || !Number.isSafeInteger(data.observedAtMs)
+        || Number(data.observedAtMs) < 0
+        || !Number.isSafeInteger(data.forwardingStartedAtMs)
+        || Number(data.forwardingStartedAtMs) < 0
+    ) {
+        return null;
+    }
+    const nativePayload = AgentRuntimeJsonValueV1Schema.safeParse(
+        data.nativePayload,
+    );
+    if (!nativePayload.success) return null;
+    return {
+        eventId: data.eventId.trim(),
+        observedAtMs: Number(data.observedAtMs),
+        forwardingStartedAtMs: Number(data.forwardingStartedAtMs),
+        nativePayload: nativePayload.data as StrictJsonValue,
+    };
+}
+
+async function handleQualifiedExternalSessionHook(
+    req: IncomingMessage,
+    res: ServerResponse,
+    options: StartSessionHookServerOptions,
+): Promise<void> {
+    const handler = options.onQualifiedExternalSessionHook;
+    const header = req.headers['x-happier-hook-secret'];
+    const token = readString(Array.isArray(header) ? header[0] : header);
+    if (!handler || !token) {
+        res.writeHead(403).end('forbidden');
+        return;
+    }
+
+    try {
+        const read = await readJsonRequestBody<Record<string, unknown>>(
+            req,
+            MAX_QUALIFIED_EXTERNAL_SESSION_HOOK_REQUEST_BODY_BYTES,
+        );
+        const body = readQualifiedExternalSessionHookBody(read.data);
+        const receivedAtMs = Date.now();
+        if (
+            !body
+            || body.forwardingStartedAtMs > receivedAtMs
+            || body.forwardingStartedAtMs
+                + AGENT_EXTERNAL_SESSION_HOOK_LIMITS.totalHookDeadlineMs
+                <= receivedAtMs
+        ) {
+            res.writeHead(400).end('invalid request');
+            return;
+        }
+
+        const controller = new AbortController();
+        let resolveTerminal!: () => void;
+        const terminal = new Promise<void>((resolve) => {
+            resolveTerminal = resolve;
+        });
+        const abort = () => {
+            if (controller.signal.aborted) return;
+            controller.abort();
+            resolveTerminal();
+        };
+        const onResponseClose = () => {
+            if (!res.writableEnded) abort();
+        };
+        req.once('aborted', abort);
+        res.once('close', onResponseClose);
+        const deadline = setTimeout(
+            abort,
+            Math.max(
+                0,
+                body.forwardingStartedAtMs
+                    + AGENT_EXTERNAL_SESSION_HOOK_LIMITS.totalHookDeadlineMs
+                    - Date.now(),
+            ),
+        );
+        deadline.unref?.();
+        try {
+            const settled = Promise.resolve().then(
+                async () => await handler({
+                    ...body,
+                    token,
+                    signal: controller.signal,
+                }),
+            );
+            const outcome = await Promise.race([
+                settled.then((value) => ({ kind: 'settled' as const, value })),
+                terminal.then(() => ({ kind: 'aborted' as const })),
+            ]);
+            if (
+                outcome.kind === 'aborted'
+                || controller.signal.aborted
+                || res.destroyed
+            ) {
+                return;
+            }
+            if (outcome.value.state === 'rejected') {
+                res.writeHead(403).end('forbidden');
+                return;
+            }
+            res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
+        } finally {
+            clearTimeout(deadline);
+            req.removeListener('aborted', abort);
+            res.removeListener('close', onResponseClose);
+        }
+    } catch (error) {
+        logger.debug(
+            '[sessionHookServer] Qualified External Session hook request failed',
+        );
+        if (!res.headersSent && !res.destroyed) {
+            const status = isHookRequestBodyTooLargeError(error) ? 413 : 400;
+            res.writeHead(status).end(
+                status === 413 ? 'payload too large' : 'invalid request',
+            );
+        }
+    }
 }
 
 async function publishSessionHookEvent(params: Readonly<{
@@ -202,10 +397,7 @@ async function publishSessionHookEvent(params: Readonly<{
         eventName,
         providerPayload: params.data,
     });
-    await (params.options.publishHostEvent ?? publishHostPluginEvent)(
-        SESSION_PROVIDER_HOOK_EVENT_ID_V1,
-        payload,
-    );
+    await params.options.publishHostEvent?.(SESSION_PROVIDER_HOOK_EVENT_ID_V1, payload);
 }
 
 function writeJson(res: ServerResponse, value: unknown): void {
@@ -244,11 +436,13 @@ async function handleSessionHook(
         logger.debug('[sessionHookServer] Received session hook', {
             providerId: resolveSessionIdentity(options)?.providerId ?? null,
             sessionId: resolveSessionIdentity(options)?.sessionId ?? null,
-            providerSessionId,
+            hasProviderSessionId: providerSessionId !== null,
             transcriptPath: redactProviderPath(data.transcript_path ?? data.transcriptPath),
             cwd: redactProviderPath(data.cwd),
-            hookEventName: readHookEventName(data, 'SessionStart'),
-            source: data.source,
+            hasHookEventName:
+                readString(data.hook_event_name) !== null
+                || readString(data.hookEventName) !== null,
+            hasSource: readString(data.source) !== null,
             bodyLength,
         });
 
@@ -256,8 +450,8 @@ async function handleSessionHook(
             await publishSessionHookEvent({ options, providerSessionId, data });
             try {
                 await options.onSessionHook?.(providerSessionId, data);
-            } catch (callbackError) {
-                logger.debug('[sessionHookServer] Session hook callback failed after event publication:', callbackError);
+            } catch {
+                logger.debug('[sessionHookServer] Session hook callback failed after event publication');
             }
         } else {
             logger.debug('[sessionHookServer] Session hook received but no provider session id was found');
@@ -269,9 +463,9 @@ async function handleSessionHook(
     } catch (error) {
         clearTimeout(readTimeout);
         if (readTimedOut) return;
-        logger.debug('[sessionHookServer] Error handling session hook:', error);
+        logger.debug('[sessionHookServer] Error handling session hook');
         if (!res.headersSent) {
-            const status = error instanceof Error && error.message.includes('maximum size') ? 413 : 500;
+            const status = isHookRequestBodyTooLargeError(error) ? 413 : 500;
             res.writeHead(status).end(status === 413 ? 'payload too large' : 'error');
         }
     }
@@ -292,8 +486,8 @@ async function handlePermissionHook(
     // The response timeout is created after the body is read so the per-tool resolver can see
     // the tool name. The read itself is bounded by the separate read timeout below.
     let responseTimeout: ReturnType<typeof setTimeout> | null = null;
-    const armResponseTimeout = (toolName: string | null): void => {
-        const effectiveTimeoutMs = resolveEffectivePermissionRequestTimeoutMs(options, toolName);
+    const armResponseTimeout = async (toolName: string | null): Promise<void> => {
+        const effectiveTimeoutMs = await resolveEffectivePermissionRequestTimeoutMs(options, toolName);
         if (effectiveTimeoutMs === null) return;
         responseTimeout = setTimeout(() => {
             if (!res.headersSent) {
@@ -322,34 +516,42 @@ async function handlePermissionHook(
         if (readTimedOut || res.headersSent) return;
         data = read.data;
 
-        armResponseTimeout(readString(data.tool_name) ?? readString(data.toolName));
+        await armResponseTimeout(readString(data.tool_name) ?? readString(data.toolName));
 
         logger.debug('[sessionHookServer] Received permission hook', {
             providerId: resolveSessionIdentity(options)?.providerId ?? null,
             sessionId: resolveSessionIdentity(options)?.sessionId ?? null,
-            providerSessionId: readProviderSessionId(data),
+            hasProviderSessionId: readProviderSessionId(data) !== null,
             cwd: redactProviderPath(data.cwd),
-            hookEventName: readHookEventName(data, 'PermissionRequest'),
-            permissionMode: data.permission_mode || data.permissionMode,
-            toolName: data.tool_name || data.toolName,
-            toolUseId: data.tool_use_id || data.toolUseId,
+            hasHookEventName:
+                readString(data.hook_event_name) !== null
+                || readString(data.hookEventName) !== null,
+            hasPermissionMode:
+                readString(data.permission_mode) !== null
+                || readString(data.permissionMode) !== null,
+            hasToolName:
+                readString(data.tool_name) !== null
+                || readString(data.toolName) !== null,
+            hasToolUseId:
+                readString(data.tool_use_id) !== null
+                || readString(data.toolUseId) !== null,
             transcriptPath: redactProviderPath(data.transcript_path ?? data.transcriptPath),
             bodyLength: read.bodyLength,
         });
 
         const response = options.onPermissionHook
             ? await options.onPermissionHook(data)
-            : options.defaultPermissionHookResponse?.(data) ?? { continue: true, suppressOutput: true };
+            : await resolveDefaultPermissionHookResponse(options, data);
 
         if (responseTimeout) clearTimeout(responseTimeout);
         if (!res.headersSent) writeJson(res, response);
-    } catch (error) {
+    } catch {
         clearTimeout(readTimeout);
         if (responseTimeout) clearTimeout(responseTimeout);
         if (readTimedOut) return;
-        logger.debug('[sessionHookServer] Error handling permission hook:', error);
+        logger.debug('[sessionHookServer] Error handling permission hook');
         if (!res.headersSent) {
-            writeJson(res, options.defaultPermissionHookResponse?.(data) ?? { continue: true, suppressOutput: true });
+            writeJson(res, await resolveDefaultPermissionHookResponse(options, data));
         }
     }
 }
@@ -398,22 +600,22 @@ async function handleStatuslineHook(
         logger.debug('[sessionHookServer] Received statusline hook', {
             providerId: resolveSessionIdentity(options)?.providerId ?? null,
             sessionId: resolveSessionIdentity(options)?.sessionId ?? null,
-            providerSessionId: readProviderSessionId(data),
+            hasProviderSessionId: readProviderSessionId(data) !== null,
             transcriptPath: redactProviderPath(data.transcript_path),
             bodyLength,
         });
 
         try {
             await options.onStatuslineUpdate?.(data);
-        } catch (callbackError) {
-            logger.debug('[sessionHookServer] Statusline hook consumer failed:', callbackError);
+        } catch {
+            logger.debug('[sessionHookServer] Statusline hook consumer failed');
         }
     } catch (error) {
         clearTimeout(readTimeout);
         if (readTimedOut) return;
-        logger.debug('[sessionHookServer] Error handling statusline hook:', error);
+        logger.debug('[sessionHookServer] Error handling statusline hook');
         if (!res.headersSent) {
-            const status = error instanceof Error && error.message.includes('maximum size') ? 413 : 500;
+            const status = isHookRequestBodyTooLargeError(error) ? 413 : 500;
             res.writeHead(status).end(status === 413 ? 'payload too large' : 'error');
         }
     }
@@ -436,10 +638,17 @@ export async function startSessionHookServer(
                 void handleStatuslineHook(req, res, options);
                 return;
             }
+            if (
+                req.method === 'POST'
+                && req.url === QUALIFIED_EXTERNAL_SESSION_HOOK_PATH
+            ) {
+                void handleQualifiedExternalSessionHook(req, res, options);
+                return;
+            }
             res.writeHead(404).end('not found');
         });
 
-        server.listen(0, '127.0.0.1', () => {
+        server.listen(options.requestedPort ?? 0, '127.0.0.1', () => {
             const address = server.address();
             if (!address || typeof address === 'string') {
                 reject(new Error('Failed to get session hook server address'));
@@ -447,15 +656,21 @@ export async function startSessionHookServer(
             }
             logger.debug(`[sessionHookServer] Started on port ${address.port}`);
             let stopped = false;
+            let resolveClosed!: () => void;
+            const closed = new Promise<void>((resolveClosedPromise) => {
+                resolveClosed = resolveClosedPromise;
+            });
             resolve({
                 port: address.port,
+                closed,
                 stop: () => {
                     if (stopped) return;
                     stopped = true;
                     server.close((error) => {
                         if (error) {
-                            logger.debug('[sessionHookServer] Error stopping server:', error);
+                            logger.debug('[sessionHookServer] Error stopping server');
                         }
+                        resolveClosed();
                     });
                     logger.debug('[sessionHookServer] Stopped');
                 },
@@ -463,8 +678,44 @@ export async function startSessionHookServer(
         });
 
         server.on('error', (error) => {
-            logger.debug('[sessionHookServer] Server error:', error);
+            logger.debug('[sessionHookServer] Server error');
             reject(error);
         });
     });
+}
+
+function isAddressInUseError(error: unknown): boolean {
+    return (error as NodeJS.ErrnoException)?.code === 'EADDRINUSE';
+}
+
+async function waitForPersistedPortRelease(): Promise<void> {
+    await new Promise<void>((resolveDelay) => {
+        setTimeout(resolveDelay, PERSISTED_PORT_TAKEOVER_RETRY_DELAY_MS);
+    });
+}
+
+/**
+ * Allows a bounded predecessor handoff only when a caller deliberately reuses
+ * a persisted port. Ephemeral listeners and all other failures keep the base
+ * server's immediate-failure contract.
+ */
+export async function startSessionHookServerWithPersistedPortTakeover(
+    options: StartSessionHookServerOptions,
+): Promise<SessionHookServerHandle> {
+    let attempt = 0;
+    while (true) {
+        try {
+            return await startSessionHookServer(options);
+        } catch (error) {
+            if (
+                options.requestedPort === undefined
+                || !isAddressInUseError(error)
+                || attempt >= PERSISTED_PORT_TAKEOVER_MAX_RETRIES
+            ) {
+                throw error;
+            }
+            attempt += 1;
+            await waitForPersistedPortRelease();
+        }
+    }
 }

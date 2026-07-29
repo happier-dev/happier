@@ -4,8 +4,7 @@ import type {
   ExecutionRunIoMode,
   ExecutionRunRetentionPolicy,
 } from '@happier-dev/protocol';
-
-import type { PermissionMode } from '@/api/types';
+import type { PermissionIntent } from '@happier-dev/agents';
 
 import { resolveExecutionRunIntentProfile } from '../profiles/intentRegistry';
 import { permissionMode as normalizePermissionMode } from './permissionMode';
@@ -50,7 +49,7 @@ export type ExecutionRunParentSessionPermissionRequestEnvelope = Readonly<{
   sidechainId: string;
   backendId: string;
   runtimeKind: string;
-  permissionMode: PermissionMode;
+  permissionMode: PermissionIntent;
   providerRequestId: string;
   providerMetadata: Readonly<Record<string, unknown>> | null;
   providerPayload: unknown;

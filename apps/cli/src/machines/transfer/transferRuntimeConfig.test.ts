@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { isLoopbackTransferBindHost, resolveMachineTransferRuntimeConfig } from './transferRuntimeConfig';
+import { resolveMachineTransferRuntimeConfig } from './transferRuntimeConfig';
 
 describe('resolveMachineTransferRuntimeConfig', () => {
   afterEach(() => {
@@ -76,6 +76,22 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     });
   });
 
+  it('clamps legacy local bind and advertisement config to the loopback-only runtime posture', () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST = '0.0.0.0';
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '192.168.1.20,10.0.0.8';
+
+    const resolved = resolveMachineTransferRuntimeConfig({
+      networkInterfacesFn: () => ({
+        eth0: [
+          { address: '10.0.0.2', family: 'IPv4', internal: false } as never,
+        ],
+      }),
+    });
+
+    expect(resolved.directPeer.bindHost).toBe('127.0.0.1');
+    expect(resolved.directPeer.advertisedHosts).toEqual(['127.0.0.1']);
+  });
+
   it('reads transfer-specific tailscale serve runtime config from the canonical resolver', () => {
     process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_ENABLED = 'true';
     process.env.HAPPIER_MACHINE_TRANSFER_TAILSCALE_SERVE_PATH = 'machine-transfer';
@@ -92,10 +108,4 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     });
   });
 
-  it('treats localhost as loopback-safe for transfer bind-host posture decisions', () => {
-    expect(isLoopbackTransferBindHost('localhost')).toBe(true);
-    expect(isLoopbackTransferBindHost('  LOCALHOST  ')).toBe(true);
-    expect(isLoopbackTransferBindHost('127.0.0.1')).toBe(true);
-    expect(isLoopbackTransferBindHost('0.0.0.0')).toBe(false);
-  });
 });

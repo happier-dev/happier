@@ -2,7 +2,7 @@ import type {
   FetchRuntimeRequestV1,
   FetchRuntimeResponseV1,
   FetchRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+} from '@/plugins/runtime/exec/privateContract';
 
 function headersToRecord(headers: Headers | undefined): Readonly<Record<string, string>> {
   if (!headers || typeof headers.forEach !== 'function') {
@@ -44,17 +44,24 @@ export function createGlobalFetchRuntime(): FetchRuntimeServiceV1 {
       headers: request.headers,
       body: toFetchBody(request.body),
       signal: request.signal,
+      redirect: request.metadata?.redirect === 'error'
+        ? 'error'
+        : request.metadata?.redirect === 'manual'
+          ? 'manual'
+          : 'follow',
     });
 
-    return Object.freeze({
+    const result = Object.freeze({
       ok: response.ok,
       status: response.status,
       statusText: response.statusText,
+      finalUrl: response.url,
       headers: headersToRecord(response.headers),
       body: null,
       text: async () => await response.text(),
       json: async () => await response.json() as unknown,
       arrayBuffer: async () => await response.arrayBuffer(),
     });
+    return result;
   };
 }

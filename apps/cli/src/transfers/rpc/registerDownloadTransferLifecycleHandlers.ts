@@ -11,6 +11,11 @@ import {
   openDownloadTransferSession,
   readDownloadTransferChunk,
 } from '../core/transferSessionLifecycle';
+import {
+  buildTransferLifecycleDiagnosticFields,
+  classifyTransferFailureForLog,
+  type TransferLifecycleDiagnosticContext,
+} from './transferLifecycleDiagnostics';
 
 type DownloadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getDownloadSession']>>;
 
@@ -33,7 +38,7 @@ type ResolvedDownloadInit<TInitResponse> =
       kind: 'accepted';
       source: DownloadTransferSource;
       recipientPublicKeyBase64?: string;
-      logContext?: Record<string, unknown>;
+      diagnosticContext: TransferLifecycleDiagnosticContext;
     }>;
 
 export function registerDownloadTransferLifecycleHandlers<TInitResponse>(params: Readonly<{
@@ -70,21 +75,22 @@ export function registerDownloadTransferLifecycleHandlers<TInitResponse>(params:
         recipientPublicKeyBase64: resolved.recipientPublicKeyBase64,
       });
 
-      if (resolved.logContext) {
-        logger.debug('Transfer download init:', {
-          downloadId: session.downloadId,
-          sizeBytes: resolved.source.sizeBytes,
-          chunkSizeBytes: session.chunkSizeBytes,
-          ...resolved.logContext,
-        });
-      }
+      logger.debug('[TRANSFER] download lifecycle', {
+        code: 'transfer_download_initialized',
+        sizeBytes: resolved.source.sizeBytes,
+        chunkSizeBytes: session.chunkSizeBytes,
+        ...buildTransferLifecycleDiagnosticFields(resolved.diagnosticContext),
+      });
 
       return params.buildInitSuccessResponse({
         session,
         source: resolved.source,
       });
     } catch (error) {
-      logger.debug('Failed to init download:', error);
+      logger.debug('[TRANSFER] download lifecycle', {
+        code: 'transfer_download_init_failed',
+        failureClass: classifyTransferFailureForLog(error),
+      });
       return params.buildInitErrorResponse(error);
     }
   });

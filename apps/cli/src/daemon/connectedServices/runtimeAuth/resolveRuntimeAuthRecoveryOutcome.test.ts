@@ -7,21 +7,21 @@ import {
 } from './resolveRuntimeAuthRecoveryOutcome';
 
 describe('resolveRuntimeAuthRecoveryProof', () => {
-  it('proves account-adoption-verified from verificationByServiceId', () => {
+  it('keeps exact switch application as progress until a provider-qualified outcome arrives', () => {
     const result = {
       status: 'switch_attempted',
       result: { verificationByServiceId: { 'openai-codex': { status: 'verified' } } },
     };
-    expect(resolveRuntimeAuthRecoveryProof(result)).toBe('account_adoption_verified');
-    expect(isProvenRuntimeAuthRecoverySuccess(result)).toBe(true);
+    expect(resolveRuntimeAuthRecoveryProof(result)).toBeNull();
+    expect(isProvenRuntimeAuthRecoverySuccess(result)).toBe(false);
   });
 
-  it('accepts weakly_verified adoption', () => {
+  it('rejects weakly_verified adoption as provider recovery proof', () => {
     const result = {
       status: 'switch_attempted',
       result: { verificationByServiceId: { 'openai-codex': { status: 'weakly_verified' } } },
     };
-    expect(resolveRuntimeAuthRecoveryProof(result)).toBe('account_adoption_verified');
+    expect(resolveRuntimeAuthRecoveryProof(result)).toBeNull();
   });
 
   it('proves fresh-candidate when fromProfileId differs from activeProfileId', () => {

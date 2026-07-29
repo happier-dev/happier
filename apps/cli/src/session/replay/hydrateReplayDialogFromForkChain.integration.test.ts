@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import {
+  SessionOwnerMetadataV1Schema,
+  sealSessionOwnerMetadataV1,
+} from '@happier-dev/protocol';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -29,6 +33,131 @@ describe('hydrateReplayDialogFromForkChain (integration)', () => {
 
     const { reloadConfiguration } = await import('@/configuration');
     reloadConfiguration();
+  });
+
+  it('hydrates a layout-v1 fork chain from the owner metadata envelope', async () => {
+    const childSessionId = 'sess_layout_v1_child';
+    const parentSessionId = 'sess_layout_v0_parent';
+    const secret = new Uint8Array(32).fill(1);
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      history: {
+        forkV1: {
+          v: 1,
+          parentSessionId,
+          parentCutoffSeqInclusive: 1,
+          createdAtMs: 200,
+          strategy: 'replay',
+        },
+      },
+    });
+    const sessions = new Map([
+      [childSessionId, {
+        id: childSessionId,
+        seq: 1,
+        createdAt: 200,
+        updatedAt: 201,
+        active: false,
+        activeAt: 0,
+        archivedAt: null,
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({ v: 1 }),
+        metadataVersion: 0,
+        ownerMetadata: sealSessionOwnerMetadataV1({
+          material: { type: 'legacy', secret },
+          ownerMetadata,
+          randomBytes: (length) => new Uint8Array(length).fill(7),
+        }),
+        agentState: null,
+        agentStateVersion: 0,
+        pendingCount: 0,
+        pendingVersion: 0,
+        dataEncryptionKey: null,
+        share: null,
+      }],
+      [parentSessionId, {
+        id: parentSessionId,
+        seq: 1,
+        createdAt: 100,
+        updatedAt: 101,
+        active: false,
+        activeAt: 0,
+        archivedAt: null,
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({ flavor: 'claude', path: '/tmp' }),
+        metadataVersion: 0,
+        agentState: null,
+        agentStateVersion: 0,
+        pendingCount: 0,
+        pendingVersion: 0,
+        dataEncryptionKey: null,
+        share: null,
+      }],
+    ]);
+    const messages = new Map([
+      [childSessionId, [{
+        seq: 1,
+        createdAt: 200,
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'child turn' } } },
+      }]],
+      [parentSessionId, [{
+        seq: 1,
+        createdAt: 100,
+        content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'parent turn' } } },
+      }]],
+    ]);
+
+    server = createServer((req, res) => {
+      const url = new URL(req.url ?? '/', `http://${req.headers.host ?? '127.0.0.1'}`);
+      const sessionMatch = /^\/v2\/sessions\/([^/]+)$/u.exec(url.pathname);
+      if (req.method === 'GET' && sessionMatch) {
+        const session = sessions.get(sessionMatch[1]!);
+        res.statusCode = session ? 200 : 404;
+        res.setHeader('content-type', 'application/json');
+        res.end(session ? JSON.stringify({ session }) : undefined);
+        return;
+      }
+
+      const messagesMatch = /^\/v1\/sessions\/([^/]+)\/messages$/u.exec(url.pathname);
+      if (req.method === 'GET' && messagesMatch) {
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ messages: messages.get(messagesMatch[1]!) ?? [] }));
+        return;
+      }
+
+      res.statusCode = 404;
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => {
+      server!.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Failed to resolve server address');
+
+    envScope.patch({
+      HAPPIER_SERVER_URL: `http://127.0.0.1:${address.port}`,
+      HAPPIER_WEBAPP_URL: 'http://127.0.0.1:3000',
+      HAPPIER_HOME_DIR: happyHomeDir,
+    });
+    const { reloadConfiguration } = await import('@/configuration');
+    reloadConfiguration();
+
+    const { hydrateReplayDialogFromForkChain } = await import('./hydrateReplayDialogFromForkChain');
+    const result = await hydrateReplayDialogFromForkChain({
+      credentials: { token: 't', encryption: { type: 'legacy', secret } },
+      startingSessionId: childSessionId,
+      limit: 10,
+      wantSynopsisText: false,
+    });
+
+    expect(result?.dialog.map((item) => item.text)).toEqual([
+      'parent turn',
+      'child turn',
+    ]);
   });
 
   it('discovers session synopsis even when it is outside the first replay page', async () => {

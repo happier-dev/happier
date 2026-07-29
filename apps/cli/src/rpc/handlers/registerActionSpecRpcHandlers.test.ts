@@ -27,14 +27,20 @@ vi.mock('@happier-dev/protocol/actions/actionSpecs', () => ({
 }));
 
 function createRpcHarness() {
-    const handlers = new Map<string, (input: unknown) => Promise<unknown>>();
+    const handlers = new Map<string, (
+        input: unknown,
+        context?: Readonly<{ signal: AbortSignal }>,
+    ) => Promise<unknown>>();
     return {
         handlers,
         rpcHandlerManager: {
             hasHandler(method: string) {
                 return handlers.has(method);
             },
-            registerHandler(method: string, handler: (input: unknown) => Promise<unknown>) {
+            registerHandler(method: string, handler: (
+                input: unknown,
+                context?: Readonly<{ signal: AbortSignal }>,
+            ) => Promise<unknown>) {
                 handlers.set(method, handler);
             },
         },
@@ -42,6 +48,39 @@ function createRpcHarness() {
 }
 
 describe('ActionSpec-derived RPC registrar', () => {
+    it('threads the canonical RPC cancellation signal into Action execution', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+        const execute = vi.fn(async () => ({
+            ok: true as const,
+            result: { ok: true },
+        }));
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor: { execute },
+            actionSpecs: [{
+                id: 'sessions.external.takeover.start',
+                surfaces: { rpc: true },
+                bindings: { rpcMethod: 'daemon.externalSessions.takeover.start' },
+            }],
+        });
+        const controller = new AbortController();
+
+        await handlers.get('daemon.externalSessions.takeover.start')?.(
+            { request: { idempotencyKey: 'takeover-1' } },
+            { signal: controller.signal },
+        );
+
+        expect(execute).toHaveBeenCalledWith(
+            'sessions.external.takeover.start',
+            { request: { idempotencyKey: 'takeover-1' } },
+            {
+                surface: 'rpc',
+                signal: controller.signal,
+            },
+        );
+    });
+
     it('registers scoped ActionSpec RPC rows through the shared dispatch adapter', async () => {
         const module = await import('./registerActionSpecRpcHandlers');
 
@@ -155,6 +194,40 @@ describe('ActionSpec-derived RPC registrar', () => {
             actionId: 'sessions.subagents.inspect',
             input: { sessionId: 'session-1' },
         });
+    });
+
+    it('does not register runtime ActionSpec rows while their rpc surface is disabled', async () => {
+        const module = await import('./registerActionSpecRpcHandlers');
+
+        const actionExecutor: RpcActionExecutor = {
+            execute: async (actionId, input) => ({ ok: true, result: { actionId, input } }),
+        };
+        const { handlers, rpcHandlerManager } = createRpcHarness();
+
+        module.registerActionSpecRpcHandlers({
+            rpcHandlerManager,
+            actionExecutor,
+            scopes: [{
+                id: 'fixture.runtime',
+                methodPrefixes: ['browser.', 'session.'],
+            }],
+            actionIds: ['browser.navigate', 'session.list'],
+            actionSpecs: [
+                {
+                    id: 'browser.navigate',
+                    surfaces: { rpc: false },
+                    bindings: { rpcMethod: 'browser.navigate' },
+                },
+                {
+                    id: 'session.list',
+                    surfaces: { rpc: true },
+                    bindings: { rpcMethod: 'session.list' },
+                },
+            ],
+        });
+
+        expect([...handlers.keys()]).toEqual(['session.list']);
+        expect(handlers.has('browser.navigate')).toBe(false);
     });
 
     it('registers review-comment ActionSpec rows through required generic scopes', async () => {

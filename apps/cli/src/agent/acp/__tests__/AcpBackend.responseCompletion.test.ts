@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { AcpBackend } from '../AcpBackend';
+import type { AgentMessage } from '../../core';
 import type { ToolPattern, TransportHandler } from '@/agent/transport/TransportHandler';
 import { createAcpTestTransportHandler } from '../testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -844,6 +845,7 @@ function writeFakeAcpPendingToolThenSecondPromptAgentScript(params: {
   dir: string;
   lateStaleUpdateDelayMs: number;
   secondPromptAckDelayMs?: number;
+  secondPromptUserEchoDelayMs?: number;
   secondPromptOutputDelayMs?: number;
 }): string {
   const scriptPath = join(params.dir, 'fake-acp-pending-tool-then-second-prompt-agent.mjs');
@@ -853,6 +855,9 @@ function writeFakeAcpPendingToolThenSecondPromptAgentScript(params: {
   const secondPromptAckDelayMs = Number.isFinite(params.secondPromptAckDelayMs)
     ? Math.max(0, Math.trunc(params.secondPromptAckDelayMs ?? 0))
     : 0;
+  const secondPromptUserEchoDelayMs = Number.isFinite(params.secondPromptUserEchoDelayMs)
+    ? Math.max(0, Math.trunc(params.secondPromptUserEchoDelayMs ?? 0))
+    : null;
   const secondPromptOutputDelayMs = Number.isFinite(params.secondPromptOutputDelayMs)
     ? Math.max(1, Math.trunc(params.secondPromptOutputDelayMs ?? 0))
     : 5;
@@ -980,6 +985,19 @@ function writeFakeAcpPendingToolThenSecondPromptAgentScript(params: {
           }
 
           setTimeout(() => ok(id, {}), ${secondPromptAckDelayMs});
+          ${secondPromptUserEchoDelayMs === null ? '' : `setTimeout(() => {
+            send({
+              jsonrpc: '2.0',
+              method: 'session/update',
+              params: {
+                sessionId: 'test-session',
+                update: {
+                  sessionUpdate: 'user_message_chunk',
+                  content: { type: 'text', text: 'second prompt starts before prompt response' },
+                },
+              },
+            });
+          }, ${secondPromptUserEchoDelayMs});`}
           setTimeout(() => {
             send({
               jsonrpc: '2.0',
@@ -1820,16 +1838,22 @@ describe('AcpBackend.waitForResponseComplete', () => {
           }),
         });
         backendForCleanup = backend;
+        const emitted: AgentMessage[] = [];
+        backend.onMessage((message) => emitted.push(message));
 
         const started = await backend.startSession();
-        await backend.sendPrompt(started.sessionId, 'hi');
-
-        const waitForCompletion = backend.waitForResponseComplete(2_000) as Promise<unknown>;
+        emitted.length = 0;
+        const sending = backend.sendPrompt(started.sessionId, 'hi');
         await expect(Promise.race([
-          waitForCompletion.then(() => 'completed' as const),
+          sending.then(() => 'completed' as const),
           new Promise<'timer'>((resolve) => setTimeout(() => resolve('timer'), 250)),
         ])).resolves.toBe('timer');
+        expect(emitted.filter((message) => (
+          message.type === 'status' && message.status === 'idle'
+        ))).toHaveLength(0);
 
+        await expect(sending).resolves.toEqual({ kind: 'accepted_by_prompt_response' });
+        const waitForCompletion = backend.waitForResponseComplete(2_000) as Promise<unknown>;
         await expect(waitForCompletion).resolves.toEqual({ kind: 'completed', stopReason: 'end_turn' });
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
@@ -1989,6 +2013,8 @@ describe('AcpBackend.waitForResponseComplete', () => {
               kind: 'timed_out',
               capMs: 120,
             });
+            expect(toolResults).toHaveLength(1);
+            const priorTurnToolResults = [...toolResults];
 
             await backend.sendPrompt(started.sessionId, 'second prompt starts before stale chunks arrive');
             await expect(backend.waitForResponseComplete(1_000)).resolves.toBeUndefined();
@@ -1996,11 +2022,74 @@ describe('AcpBackend.waitForResponseComplete', () => {
 
             expect(chunks).toEqual(['second turn output']);
             expect(thinkingEvents).toEqual([]);
-            expect(toolResults).toEqual([]);
+            expect(toolResults).toEqual(priorTurnToolResults);
           } finally {
             await backendForCleanup?.dispose().catch(() => {});
           }
         });
+      });
+    });
+  }, 20_000);
+
+  it('admits a post-cancel turn from its user-message boundary before the prompt response', async () => {
+    await withEnvVar('HAPPIER_ACP_TURN_INACTIVITY_TIMEOUT_MS', '300000', async () => {
+      await withTempDir('happier-acp-cancel-next-prompt-user-boundary-', async (dir) => {
+        const scriptPath = writeFakeAcpPendingToolThenSecondPromptAgentScript({
+          dir,
+          lateStaleUpdateDelayMs: 50,
+          secondPromptAckDelayMs: 140,
+          secondPromptUserEchoDelayMs: 90,
+          secondPromptOutputDelayMs: 100,
+        });
+        let backendForCleanup: AcpBackend | undefined;
+
+        try {
+          const backend = new AcpBackend({
+            agentName: 'test',
+            cwd: dir,
+            command: process.execPath,
+            args: [scriptPath],
+            transportHandler: createAcpTestTransportHandler({
+              idleTimeoutMs: 1,
+              promptLivenessTimeoutMs: 500,
+            }),
+          });
+          backendForCleanup = backend;
+
+          const chunks: string[] = [];
+          const thinkingEvents: string[] = [];
+          const toolResults: string[] = [];
+          backend.onMessage((msg) => {
+            if (msg.type === 'model-output' && typeof msg.textDelta === 'string') {
+              chunks.push(msg.textDelta);
+              return;
+            }
+            if (msg.type === 'tool-result') {
+              toolResults.push(JSON.stringify(msg.result));
+              return;
+            }
+            if (msg.type !== 'event' || msg.name !== 'thinking') return;
+            const payload = msg.payload;
+            if (!payload || typeof payload !== 'object') return;
+            const text = (payload as { text?: unknown }).text;
+            if (typeof text === 'string') thinkingEvents.push(text);
+          });
+
+          const started = await backend.startSession();
+          await backend.sendPrompt(started.sessionId, 'first prompt leaves a tool pending');
+          await backend.cancel(started.sessionId);
+
+          await backend.sendPrompt(started.sessionId, 'second prompt starts before prompt response');
+          await expect(backend.waitForResponseComplete(1_000)).resolves.toBeUndefined();
+          await new Promise((resolve) => setTimeout(resolve, 180));
+
+          expect(chunks).toEqual(['second turn output']);
+          expect(thinkingEvents).toEqual([]);
+          expect(toolResults.length).toBeLessThanOrEqual(1);
+          expect(toolResults.join('\n')).not.toContain('late stale tool output from first turn');
+        } finally {
+          await backendForCleanup?.dispose().catch(() => {});
+        }
       });
     });
   }, 20_000);

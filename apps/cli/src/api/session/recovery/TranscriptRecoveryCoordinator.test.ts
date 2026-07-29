@@ -168,7 +168,7 @@ describe('TranscriptRecoveryCoordinator', () => {
     expect(runRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('reports auth and server failures to the supervisor', async () => {
+  it('reports authentication failures but keeps domain failures operation-local', async () => {
     vi.useFakeTimers();
 
     const supervisor = createSupervisor();
@@ -196,14 +196,49 @@ describe('TranscriptRecoveryCoordinator', () => {
     await vi.runAllTimersAsync();
     await expect(serverResult).resolves.toEqual({ type: 'error', reason: 'unhealthy', error: serverError });
 
-    expect(supervisor.reportProbeResult).toHaveBeenNthCalledWith(1, {
+    expect(supervisor.reportProbeResult).toHaveBeenCalledOnce();
+    expect(supervisor.reportProbeResult).toHaveBeenCalledWith({
       status: 'auth_failed',
       statusCode: 401,
       errorMessage: 'expired token',
     });
-    expect(supervisor.reportProbeResult).toHaveBeenNthCalledWith(2, {
-      status: 'retry_later',
-      errorMessage: 'service unavailable',
+  });
+
+  it.each([
+    ['server 5xx', { type: 'unhealthy', reason: 'server_5xx', error: new Error('unavailable') }],
+    ['network', { type: 'unhealthy', reason: 'network', error: Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }) }],
+    ['timeout', { type: 'unhealthy', reason: 'timeout', error: Object.assign(new Error('request timed out'), { code: 'ETIMEDOUT' }) }],
+    ['protocol', { type: 'protocol_error', error: new Error('malformed response') }],
+  ] as const)('keeps %s lookup failures operation-local with keyed backoff', async (_name, outcome) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+
+    const supervisor = createSupervisor();
+    const coordinator = TranscriptRecoveryCoordinator.forServer('http://server.test', {
+      delayMs: 0,
+      errorBackoffBaseMs: 100,
+      errorBackoffMaxMs: 100,
     });
+    const runRequest = vi.fn(async (): Promise<TranscriptLookupOutcome> => outcome);
+
+    const result = coordinator.scheduleByLocalId({
+      sessionId: 'sid',
+      localId: 'local-1',
+      supervisor,
+      runRequest,
+    });
+    await vi.runAllTimersAsync();
+
+    await expect(result).resolves.toMatchObject({ type: 'error' });
+    expect(supervisor.reportProbeResult).not.toHaveBeenCalled();
+    await expect(
+      coordinator.scheduleByLocalId({
+        sessionId: 'sid',
+        localId: 'local-1',
+        supervisor,
+        runRequest,
+      }),
+    ).resolves.toEqual({ type: 'deferred', reason: 'backoff' });
+    expect(runRequest).toHaveBeenCalledTimes(1);
   });
 });

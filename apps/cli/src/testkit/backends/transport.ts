@@ -1,6 +1,6 @@
 import { expect } from 'vitest';
 
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { ToolNameContext } from '@/agent/transport/TransportHandler';
 
 export const DEFAULT_TOOL_NAME_CONTEXT: ToolNameContext = {

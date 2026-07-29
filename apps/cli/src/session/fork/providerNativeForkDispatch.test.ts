@@ -21,7 +21,7 @@ describe('dispatchProviderNativeFork', () => {
       parentMetadata: {
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: { backendMode: 'appServer', providerSessionId: 'codex_parent_1', home: 'connectedService', connectedServiceId: 'openai-codex', connectedServiceProfileId: 'work', homePath: '/tmp/connected-codex-home' },
         },
         codexSessionId: 'codex_parent_1',
@@ -36,7 +36,7 @@ describe('dispatchProviderNativeFork', () => {
       parentMetadata: {
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: {
             backendMode: 'appServer',
             providerSessionId: 'codex_parent_1',
@@ -68,7 +68,7 @@ describe('dispatchProviderNativeFork', () => {
         parentMetadata: {
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             provider: { backendMode: 'mcp', providerSessionId: 'codex_parent_1' },
           },
           codexSessionId: 'codex_parent_1',

@@ -41,7 +41,7 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
     return isExecutionRunWriteLikeToolName(args.toolName) ? { decision: 'denied' } : { decision: 'approved' };
   }
 
-  if (normalizedMode === 'yolo' || normalizedMode === 'bypassPermissions') {
+  if (normalizedMode === 'yolo') {
     return { decision: 'approved_for_session' };
   }
 

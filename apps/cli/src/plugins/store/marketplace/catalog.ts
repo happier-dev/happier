@@ -10,10 +10,23 @@ import {
 import { z } from 'zod';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { installPluginFromSource } from '@/plugins/store/install/source';
 import { fetchRemoteJsonWithLimits } from '@/plugins/discovery/remote/fetch';
-import { createPluginStateStore } from '@/plugins/store/state';
-import type { PluginCatalogContributionSummary } from '@/plugins/projection/catalog/summary';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
+
+type MarketplaceContributionPreview = Readonly<{
+  agents: readonly string[];
+  agentRuntimes: readonly string[];
+  actions: readonly string[];
+  tools: readonly string[];
+  commands: readonly string[];
+  resources: readonly string[];
+  settings: readonly string[];
+  hooks: readonly string[];
+  hostedWeb: readonly string[];
+  reactNativeBundles: readonly string[];
+  uiArtifacts: readonly string[];
+  surfacePlacements: readonly string[];
+}>;
 
 const REMOTE_MARKETPLACE_CACHE_TTL_MS = 5 * 60 * 1000;
 
@@ -46,7 +59,7 @@ export type MarketplaceCatalogEntry = Readonly<{
   manifest: null;
   source: PluginSourceSpecV1 | null;
   manifestDigest: string | null;
-  contributionIds: PluginCatalogContributionSummary;
+  contributionIds: MarketplaceContributionPreview;
   installable: boolean;
   diagnostics: readonly PluginCompatibilityDiagnostic[];
 }>;
@@ -75,24 +88,6 @@ export type RemoteMarketplaceCatalogReadResult =
       ok: false;
       diagnostics: readonly PluginCompatibilityDiagnostic[];
     }>;
-
-export type InstallMarketplacePluginResult =
-  | Readonly<{
-      ok: true;
-      alreadyInstalled: boolean;
-      entry: MarketplaceCatalogEntry;
-    }>
-  | Readonly<{
-      ok: false;
-      diagnostics: readonly PluginCompatibilityDiagnostic[];
-    }>;
-
-function buildMarketplaceTrustApprovalRequiredDiagnostic(entry: MarketplaceCatalogEntry): PluginCompatibilityDiagnostic {
-  return {
-    code: 'plugin_trust_approval_required',
-    message: `Marketplace plugin '${entry.pluginId}' requires explicit executable trust approval before managed install can record local_trusted policy.`,
-  };
-}
 
 function isHttpUrl(locator: string): boolean {
   try {
@@ -127,8 +122,8 @@ function buildMarketplaceCatalogCachePath(params: Readonly<{
   happyHomeDir?: string;
   sourceUrl: string;
 }>): string {
-  const store = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  return resolve(store.paths.cacheDir, 'marketplace', `${hashSourceLocator(params.sourceUrl)}.json`);
+  const paths = resolvePluginStorePaths({ happyHomeDir: params.happyHomeDir });
+  return resolve(paths.cacheDir, 'marketplace', `${hashSourceLocator(params.sourceUrl)}.json`);
 }
 
 async function readMarketplaceCatalogCache(params: Readonly<{
@@ -386,11 +381,9 @@ function buildProtocolMarketplaceEntry(
       tools: [],
       commands: [],
       resources: [],
-      uiDescriptors: [],
       settings: [],
       hooks: [],
       hostedWeb: [],
-      embeddedWebBundles: [],
       reactNativeBundles: [],
       uiArtifacts: [],
       surfacePlacements: [],
@@ -619,187 +612,4 @@ export async function readRemoteMarketplaceCatalog(params: Readonly<{
       ],
     };
   }
-}
-
-export async function readRemoteMarketplaceCatalogEntry(params: Readonly<{
-  sourceUrl: string;
-  pluginId: string;
-  happyHomeDir?: string;
-  cacheMaxAgeMs?: number;
-  forceRefresh?: boolean;
-}>): Promise<Readonly<{
-  ok: true;
-  catalog: RemoteMarketplaceCatalog;
-  entry: MarketplaceCatalogEntry | null;
-  cache: RemoteMarketplaceCatalogCacheState;
-  diagnostics: readonly PluginCompatibilityDiagnostic[];
-}> | Readonly<{
-  ok: false;
-  diagnostics: readonly PluginCompatibilityDiagnostic[];
-}>> {
-  const catalogResult = await readRemoteMarketplaceCatalog(params);
-  if (!catalogResult.ok) {
-    return catalogResult;
-  }
-
-  return {
-    ok: true,
-    catalog: catalogResult.catalog,
-    entry: catalogResult.catalog.entries.find((entry) => entry.pluginId === params.pluginId) ?? null,
-    cache: catalogResult.cache,
-    diagnostics: catalogResult.diagnostics,
-  };
-}
-
-export async function installMarketplacePlugin(params: Readonly<{
-  sourceUrl: string;
-  pluginId: string;
-  happyHomeDir?: string;
-  skipIfInstalled: boolean;
-  dryRun?: boolean;
-  trustExecutable?: boolean;
-}>): Promise<InstallMarketplacePluginResult> {
-  const result = await readRemoteMarketplaceCatalogEntry({
-    sourceUrl: params.sourceUrl,
-    pluginId: params.pluginId,
-    happyHomeDir: params.happyHomeDir,
-  });
-
-  if (!result.ok) {
-    return result;
-  }
-
-  if (!result.entry) {
-    return {
-      ok: false,
-      diagnostics: [
-        {
-          code: 'plugin_manifest_semantic_invalid',
-          message: `Unknown marketplace plugin id: ${params.pluginId}`,
-        },
-      ],
-    };
-  }
-
-  if (!result.entry.source) {
-    return {
-      ok: false,
-      diagnostics: result.entry.diagnostics.length > 0
-        ? result.entry.diagnostics
-        : [
-            {
-              code: 'plugin_source_missing',
-              message: `Marketplace plugin '${result.entry.pluginId}' does not declare an installable source`,
-            },
-          ],
-    };
-  }
-
-  if (!result.entry.installable) {
-    return {
-      ok: false,
-      diagnostics: result.entry.diagnostics.length > 0
-        ? result.entry.diagnostics
-        : diagnoseSourceSupport(result.entry.source, {
-            catalogSourceUrl: params.sourceUrl,
-          }),
-    };
-  }
-
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  const existingRecord = params.skipIfInstalled
-    ? (await stateStore.read()).plugins[result.entry.pluginId] ?? null
-    : null;
-  const sourceForInstall = result.entry.source.trustPolicy === 'prompt' && params.trustExecutable
-    ? {
-        ...result.entry.source,
-        trustPolicy: 'local_trusted' as const,
-      }
-    : result.entry.source;
-  const requiresTrustApproval = !params.dryRun
-    && result.entry.source.trustPolicy === 'prompt'
-    && existingRecord?.source.trustPolicy !== 'local_trusted';
-  if (requiresTrustApproval && !params.trustExecutable) {
-    return {
-      ok: false,
-      diagnostics: [buildMarketplaceTrustApprovalRequiredDiagnostic(result.entry)],
-    };
-  }
-
-  if (result.entry.source.trustPolicy === 'untrusted') {
-    return {
-      ok: false,
-      diagnostics: [
-        {
-          code: 'plugin_untrusted',
-          message: `Marketplace plugin '${result.entry.pluginId}' is marked untrusted and cannot be installed as executable code.`,
-        },
-      ],
-    };
-  }
-
-  const skipIfInstalled = params.skipIfInstalled
-    && !(params.trustExecutable && result.entry.source.trustPolicy === 'prompt' && existingRecord?.source.trustPolicy !== 'local_trusted');
-
-  if (result.entry.source.kind === 'path') {
-    const installed = await installPluginFromSource({
-      happyHomeDir: stateStore.paths.happyHomeDir,
-      locator: sourceForInstall.locator,
-      sourceKind: 'path',
-      sourceSpecOverride: sourceForInstall,
-      skipIfInstalled,
-      dryRun: params.dryRun,
-    });
-    if (!installed.ok) {
-      return {
-        ok: false,
-        diagnostics: [
-          {
-            code: 'plugin_manifest_semantic_invalid',
-            message: installed.errorMessage,
-          },
-        ],
-      };
-    }
-    return {
-      ok: true,
-      alreadyInstalled: installed.alreadyInstalled,
-      entry: result.entry,
-    };
-  }
-
-  if (result.entry.source.kind === 'archive') {
-    const installed = await installPluginFromSource({
-      happyHomeDir: stateStore.paths.happyHomeDir,
-      locator: sourceForInstall.locator,
-      sourceKind: 'archive',
-      sourceSpecOverride: sourceForInstall,
-      expectedManifestDigest: result.entry.manifestDigest,
-      skipIfInstalled,
-      dryRun: params.dryRun,
-    });
-    if (!installed.ok) {
-      return {
-        ok: false,
-        diagnostics: [
-          {
-            code: 'plugin_manifest_semantic_invalid',
-            message: installed.errorMessage,
-          },
-        ],
-      };
-    }
-    return {
-      ok: true,
-      alreadyInstalled: installed.alreadyInstalled,
-      entry: result.entry,
-    };
-  }
-
-  return {
-    ok: false,
-    diagnostics: diagnoseSourceSupport(result.entry.source, {
-      catalogSourceUrl: params.sourceUrl,
-    }),
-  };
 }

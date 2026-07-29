@@ -1,9 +1,23 @@
 import type {
     LocalServiceDeclarationV1,
-    LocalServiceHandleV1,
     LocalServiceRuntimeSnapshotV1,
-    LocalServicesRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+} from '../exec/privateContract';
+
+export type PluginLocalServiceHandle = Readonly<{
+    snapshot(): LocalServiceRuntimeSnapshotV1;
+    stop(): Promise<void>;
+}>;
+
+export type PluginLocalServicesService = Readonly<{
+    declare(declaration: LocalServiceDeclarationV1): Promise<void>;
+    start(id: string): Promise<PluginLocalServiceHandle>;
+    get(id: string): Promise<LocalServiceRuntimeSnapshotV1 | null>;
+}>;
+
+export type {
+    LocalServiceDeclarationV1 as PluginLocalServiceDeclaration,
+    LocalServiceRuntimeSnapshotV1 as PluginLocalServiceRuntimeSnapshot,
+};
 
 export type PluginLocalServicesDaemonBridge = Readonly<{
     declare?(declaration: LocalServiceDeclarationV1): Promise<LocalServiceRuntimeSnapshotV1 | void>;
@@ -62,12 +76,12 @@ function freezeSnapshot(snapshot: LocalServiceRuntimeSnapshotV1): LocalServiceRu
 
 export function createPluginLocalServicesService(
     options: PluginLocalServicesServiceOptions = {},
-): LocalServicesRuntimeServiceV1 {
+): PluginLocalServicesService {
     const declarationsById = new Map<string, LocalServiceDeclarationV1>();
     const snapshotsById = new Map<string, LocalServiceRuntimeSnapshotV1>();
     const daemonBridge = options.daemonBridge ?? null;
 
-    function handleFor(id: string, fallback: LocalServiceRuntimeSnapshotV1): LocalServiceHandleV1 {
+    function handleFor(id: string, fallback: LocalServiceRuntimeSnapshotV1): PluginLocalServiceHandle {
         return Object.freeze({
             snapshot: () => snapshotsById.get(id) ?? fallback,
             stop: async () => {
@@ -89,7 +103,7 @@ export function createPluginLocalServicesService(
                 snapshotsById.set(storedDeclaration.id, freezeSnapshot(bridgeSnapshot));
             }
         },
-        async start(id: string): Promise<LocalServiceHandleV1> {
+        async start(id: string): Promise<PluginLocalServiceHandle> {
             const declaration = declarationsById.get(id);
             if (!declaration) {
                 const snapshot = failedSnapshot(id, DECLARATION_NOT_FOUND_DIAGNOSTIC);

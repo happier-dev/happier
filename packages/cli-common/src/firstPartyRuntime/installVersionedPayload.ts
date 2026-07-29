@@ -4,12 +4,13 @@ import { lstat, rename } from 'node:fs/promises';
 import type { FirstPartyComponentId } from './componentCatalog.js';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { listInstalledVersionIdsNewestFirst } from './listInstalledVersionIdsNewestFirst.js';
-import { promoteVersionedPayload, type FirstPartyPayloadPromotionResult } from './promoteVersionedPayload.js';
+import { promoteVersionedPayloadWithoutLock, type FirstPartyPayloadPromotionResult } from './promoteVersionedPayload.js';
 import { pruneRetainedVersions } from './pruneRetainedVersions.js';
 import { shouldPersistDefaultManagedReleaseChannel, writeDefaultManagedReleaseChannel } from './defaultReleaseChannelState.js';
 import { syncInstalledFirstPartyShims } from './syncInstalledFirstPartyShims.js';
 import { joinPathForPathShape } from '../path/pathShape.js';
 import { resolveFirstPartyInstallLayout, resolveFirstPartyVersionInstallPath, type FirstPartyInstallLayout } from './installLayout.js';
+import { withFirstPartyPayloadMutationLock } from './withFirstPartyPayloadMutationLock.js';
 
 function readErrorCode(error: unknown): string | null {
   if (typeof error !== 'object' || error === null || !('code' in error)) {
@@ -177,7 +178,24 @@ export async function installVersionedPayload(params: Readonly<{
     releaseRing: params.releaseRing,
     processEnv: params.processEnv,
   });
+  return await withFirstPartyPayloadMutationLock({
+    layout,
+    operation: async () => await installVersionedPayloadWithLockHeld(params, layout),
+  });
+}
 
+async function installVersionedPayloadWithLockHeld(
+  params: Readonly<{
+    componentId: FirstPartyComponentId;
+    versionId: string;
+    payloadRoot: string;
+    payloadRootAlreadyFiltered?: boolean;
+    channel?: PublicReleaseRingId;
+    releaseRing?: PublicReleaseRingId;
+    processEnv?: NodeJS.ProcessEnv;
+  }>,
+  layout: FirstPartyInstallLayout,
+): Promise<FirstPartyPayloadPromotionResult> {
   try {
     return await installVersionedPayloadOnce(params);
   } catch (error) {
@@ -207,7 +225,7 @@ async function installVersionedPayloadOnce(params: Readonly<{
   releaseRing?: PublicReleaseRingId;
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<FirstPartyPayloadPromotionResult> {
-  const promotion = await promoteVersionedPayload({
+  const promotion = await promoteVersionedPayloadWithoutLock({
     componentId: params.componentId,
     versionId: params.versionId,
     stagedPayloadPath: params.payloadRoot,

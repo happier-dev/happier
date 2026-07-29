@@ -507,51 +507,50 @@ export function registerServerRoutedTransferResponder(params: Readonly<{
               transferId: envelope.transferId,
               openPayload,
             });
-	          } catch (error) {
-	            if (error instanceof ServerRoutedInvalidOpenRequestError) {
-	              params.machineTransferChannel.sendEnvelope({
-	                targetMachineId: payload.sourceMachineId,
-	                envelope: {
-	                  transferId: envelope.transferId,
-	                  kind: 'abort',
-	                  reason: 'invalid_open_request:open_payload_invalid',
-	                },
-	              });
-	              return;
-	            }
-		            if (error instanceof ServerRoutedAbortTransferError) {
-		              params.machineTransferChannel.sendEnvelope({
-		                targetMachineId: payload.sourceMachineId,
-		                envelope: {
-		                  transferId: envelope.transferId,
-		                  kind: 'abort',
-		                  reason: error.reason,
-		                },
-		              });
-		              return;
-		            }
+          } catch (error) {
+            if (error instanceof ServerRoutedInvalidOpenRequestError) {
+              params.machineTransferChannel.sendEnvelope({
+                targetMachineId: payload.sourceMachineId,
+                envelope: {
+                  transferId: envelope.transferId,
+                  kind: 'abort',
+                  reason: 'invalid_open_request:open_payload_invalid',
+                },
+              });
+              return;
+            }
+            if (error instanceof ServerRoutedAbortTransferError) {
+              params.machineTransferChannel.sendEnvelope({
+                targetMachineId: payload.sourceMachineId,
+                envelope: {
+                  transferId: envelope.transferId,
+                  kind: 'abort',
+                  reason: error.reason,
+                },
+              });
+              return;
+            }
 
-		            const rawMessage = error instanceof Error ? (error.message || error.name) : String(error);
-		            const sanitized = rawMessage.replace(/\s+/gu, ' ').slice(0, 200);
-		            try {
-		              const { logger } = await import('@/utils/logger');
-		              logger.debug('[MACHINE TRANSFER] Unexpected server-routed responder failure', {
-		                transferId: envelope.transferId,
-		                error: sanitized,
-		              });
-		            } catch {
-		              // Best-effort: logging must not interfere with aborting the transfer.
-		            }
-		            params.machineTransferChannel.sendEnvelope({
-		              targetMachineId: payload.sourceMachineId,
-		              envelope: {
-		                transferId: envelope.transferId,
-		                kind: 'abort',
-		                reason: 'internal_error',
-	              },
-	            });
-	            return;
-	          }
+            params.machineTransferChannel.sendEnvelope({
+              targetMachineId: payload.sourceMachineId,
+              envelope: {
+                transferId: envelope.transferId,
+                kind: 'abort',
+                reason: 'internal_error',
+              },
+            });
+
+            try {
+              const { logger } = await import('@/utils/logger');
+              logger.debug('[MACHINE TRANSFER] server-routed responder lifecycle', {
+                code: 'server_routed_transfer_responder_failed',
+                failureClass: error instanceof Error ? 'exception' : 'non_error_throwable',
+              });
+            } catch {
+              // Best-effort: logging must not interfere with aborting the transfer.
+            }
+            return;
+          }
 
           if (!transferPayloadSource) {
             params.machineTransferChannel.sendEnvelope({

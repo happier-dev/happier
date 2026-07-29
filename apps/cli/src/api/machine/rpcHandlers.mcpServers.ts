@@ -237,6 +237,7 @@ export function registerMachineMcpServersRpcHandlers(params: Readonly<{
         const detected = await detectProviderMcpServersImpl({
           directory: parsed.data.directory ?? null,
           providers: parsed.data.providers,
+          env: depsEnv,
         });
 
         const warnings: DaemonMcpServersDetectWarningV1[] = [...detected.warnings];

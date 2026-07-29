@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
@@ -8,11 +8,16 @@ describe('readDaemonState', () => {
     const envKeys = [
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
         'HAPPIER_SERVER_URL',
         'HAPPIER_WEBAPP_URL',
     ] as const;
     let envScope = createEnvKeyScope(envKeys);
+
+    beforeEach(() => {
+        envScope.patch({ HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: undefined });
+    });
 
     afterEach(() => {
         envScope.restore();
@@ -150,6 +155,59 @@ describe('readDaemonState', () => {
             expect(state?.startupSource).toBe('background-service');
             expect(state?.serviceLabel).toBe('com.happier.cli.daemon.default');
             expect(state?.startedWithPublicReleaseChannel).toBe('preview');
+        });
+    });
+
+    it('reads only the explicit daemon lifecycle scope when the endpoint profile differs', async () => {
+        await withTempDir('happier-cli-daemon-state-explicit-lifecycle-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'android-keyboard-qa',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:52753',
+            });
+
+            const [{ configuration }, { readDaemonState }] = await Promise.all([
+                import('./configuration'),
+                import('./persistence'),
+            ]);
+            mkdirSync(dirname(configuration.daemonStateFile), { recursive: true });
+            writeFileSync(configuration.daemonStateFile, JSON.stringify({
+                pid: 744,
+                httpPort: 5173,
+                startedAt: Date.now(),
+                startedWithCliVersion: '0.0.0-scope',
+            }), 'utf-8');
+
+            await expect(readDaemonState()).resolves.toMatchObject({ pid: 744 });
+            expect(configuration.daemonStateFile).toBe(
+                join(homeDir, 'servers', 'stack_repo-current__id_default', 'daemon.state.json'),
+            );
+        });
+    });
+
+    it('does not scan matching endpoint profiles when an explicit lifecycle scope has no state', async () => {
+        await withTempDir('happier-cli-daemon-state-explicit-lifecycle-missing-', async (homeDir) => {
+            vi.resetModules();
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'android-keyboard-qa',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:52753',
+            });
+
+            const { readDaemonState } = await import('./persistence');
+            const decoyPath = join(homeDir, 'servers', 'matching-profile-alias', 'daemon.state.json');
+            mkdirSync(dirname(decoyPath), { recursive: true });
+            writeFileSync(decoyPath, JSON.stringify({
+                pid: process.pid,
+                httpPort: 5173,
+                startedAt: Date.now(),
+                startedWithCliVersion: '0.0.0-decoy',
+            }), 'utf-8');
+
+            await expect(readDaemonState()).resolves.toBeNull();
         });
     });
 
@@ -380,11 +438,16 @@ describe('daemon state canonicalization', () => {
     const envKeys = [
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
         'HAPPIER_SERVER_URL',
         'HAPPIER_WEBAPP_URL',
     ] as const;
     let envScope = createEnvKeyScope(envKeys);
+
+    beforeEach(() => {
+        envScope.patch({ HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: undefined });
+    });
 
     afterEach(() => {
         envScope.restore();

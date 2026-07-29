@@ -17,6 +17,34 @@ type ProviderHandoffLaunchHints = Readonly<{
   resumePlanOptions?: unknown;
 }>;
 
+export type SessionHandoffTypedImportFailureCode =
+  | 'target_identity_conflict'
+  | 'agent_version_unsupported';
+
+export class SessionHandoffTypedImportError extends Error {
+  readonly code: SessionHandoffTypedImportFailureCode;
+
+  constructor(input: Readonly<{
+    code: SessionHandoffTypedImportFailureCode;
+    message?: string;
+    cause?: unknown;
+  }>) {
+    super(input.message ?? input.code, input.cause === undefined ? undefined : { cause: input.cause });
+    this.name = 'SessionHandoffTypedImportError';
+    this.code = input.code;
+  }
+}
+
+function readSessionHandoffTypedImportFailureCode(
+  error: unknown,
+): SessionHandoffTypedImportFailureCode | null {
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as Readonly<{ code?: unknown }>).code;
+  return code === 'target_identity_conflict' || code === 'agent_version_unsupported'
+    ? code
+    : null;
+}
+
 export async function importSessionHandoffAgentBundle(params: Readonly<{
   bundle: SessionHandoffAgentBundle;
   targetPath: string;
@@ -26,11 +54,31 @@ export async function importSessionHandoffAgentBundle(params: Readonly<{
   if (!providerOps) {
     throw new Error(`Unsupported handoff provider: ${params.bundle.agentId}`);
   }
-  const imported = await providerOps.importBundle({
-    bundle: params.bundle,
-    targetDirectory: params.targetPath,
-  });
+  let imported;
+  try {
+    imported = await providerOps.importBundle({
+      bundle: params.bundle,
+      targetDirectory: params.targetPath,
+    });
+  } catch (error) {
+    const code = readSessionHandoffTypedImportFailureCode(error);
+    if (code) {
+      throw new SessionHandoffTypedImportError({
+        code,
+        message: error instanceof Error ? error.message : undefined,
+        cause: error,
+      });
+    }
+    throw error;
+  }
   if (!imported.ok) {
+    const typedCode = readSessionHandoffTypedImportFailureCode(imported);
+    if (typedCode) {
+      throw new SessionHandoffTypedImportError({
+        code: typedCode,
+        message: imported.message,
+      });
+    }
     throw new Error(imported.message ?? `Session handoff import failed: ${imported.code}`);
   }
   const source = ExternalSessionsSourceSchema.parse(imported.value.source);

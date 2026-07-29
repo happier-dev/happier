@@ -1,7 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { PluginUiArtifactRevocationV1 } from '@happier-dev/protocol';
-
-import { createPluginUiArtifactRevocationState } from '@/plugins/install/ui/revocation';
 
 import { resolveReactNativeBundleRuntimeProjection } from './reactNativeRuntime';
 
@@ -68,9 +65,7 @@ describe('React Native runtime projection', () => {
             hostRuntime,
             featureEnabled: true,
             loaderBackendAvailable: true,
-            revokedDigests: new Set(),
             crashDisabled: false,
-            executionTrust: { kind: 'trustedSource', reason: 'local_trusted' } as const,
         })).toMatchObject({
             state: 'loadable',
             diagnostics: [],
@@ -82,21 +77,6 @@ describe('React Native runtime projection', () => {
         });
     });
 
-    it('does not project loadability until executable artifact trust is proven', () => {
-        expect(resolveReactNativeBundleRuntimeProjection({
-            bundle,
-            artifact,
-            hostRuntime,
-            featureEnabled: true,
-            loaderBackendAvailable: true,
-            revokedDigests: new Set(),
-            crashDisabled: false,
-        })).toEqual({
-            state: 'fallback',
-            diagnostics: ['execution_trust_unverified'],
-        });
-    });
-
     it('keeps Re.Pack dependency absence explicit and falls back before loader side effects', () => {
         expect(resolveReactNativeBundleRuntimeProjection({
             bundle,
@@ -104,9 +84,7 @@ describe('React Native runtime projection', () => {
             hostRuntime,
             featureEnabled: true,
             loaderBackendAvailable: false,
-            revokedDigests: new Set(),
             crashDisabled: false,
-            executionTrust: { kind: 'trustedSource', reason: 'local_trusted' } as const,
         })).toMatchObject({
             state: 'fallback',
             diagnostics: ['repack_script_manager_unavailable'],
@@ -129,46 +107,13 @@ describe('React Native runtime projection', () => {
                 'repack_script_manager_unavailable',
                 'repack_script_manager_runtime_not_integrated',
             ],
-            revokedDigests: new Set(),
             crashDisabled: false,
-            executionTrust: { kind: 'trustedSource', reason: 'local_trusted' } as const,
         })).toMatchObject({
             state: 'fallback',
             diagnostics: [
                 'repack_script_manager_unavailable',
                 'repack_script_manager_runtime_not_integrated',
             ],
-        });
-    });
-
-    it('uses non-digest artifact revocation scopes before projecting loadability', () => {
-        const params = {
-            bundle,
-            artifact: {
-                ...artifact,
-                integrity: { ...artifact.integrity, signingKeyId: 'rn-key-1' },
-            },
-            hostRuntime,
-            featureEnabled: true,
-            loaderBackendAvailable: true,
-            revokedDigests: new Set<string>(),
-            revocationState: createPluginUiArtifactRevocationState({
-                revocations: [
-                    {
-                        id: 'revoke-rn-key',
-                        scope: { kind: 'signingKey', signingKeyId: 'rn-key-1' },
-                        reason: 'compromised',
-                        revokedAt: '2026-06-15T00:00:00.000Z',
-                    } satisfies PluginUiArtifactRevocationV1,
-                ],
-            }),
-            crashDisabled: false,
-            executionTrust: { kind: 'trustedSource', reason: 'local_trusted' } as const,
-        };
-
-        expect(resolveReactNativeBundleRuntimeProjection(params)).toEqual({
-            state: 'fallback',
-            diagnostics: ['artifact_revoked'],
         });
     });
 
@@ -188,7 +133,6 @@ describe('React Native runtime projection', () => {
             hostRuntime: devHostRuntime,
             featureEnabled: true,
             loaderBackendAvailable: true,
-            revokedDigests: new Set(),
             crashDisabled: false,
             devHotReloadEnabled: true,
             pluginSource: 'local',
@@ -211,7 +155,6 @@ describe('React Native runtime projection', () => {
             hostRuntime: devHostRuntime,
             featureEnabled: true,
             loaderBackendAvailable: true,
-            revokedDigests: new Set(),
             crashDisabled: false,
             devHotReloadEnabled: false,
             pluginSource: 'local',
@@ -228,7 +171,6 @@ describe('React Native runtime projection', () => {
             hostRuntime: devHostRuntime,
             featureEnabled: true,
             loaderBackendAvailable: true,
-            revokedDigests: new Set(),
             crashDisabled: false,
             devHotReloadEnabled: true,
             pluginSource: 'marketplace',
@@ -245,7 +187,6 @@ describe('React Native runtime projection', () => {
             hostRuntime,
             featureEnabled: true,
             loaderBackendAvailable: true,
-            revokedDigests: new Set(),
             crashDisabled: false,
             devHotReloadEnabled: true,
             pluginSource: 'local',

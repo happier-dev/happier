@@ -190,7 +190,7 @@ describe('commitConnectedServiceAccountSwitchSessionEvent', () => {
       'connected-service-account-switch-deferral-completed:defer_until_turn_boundary:completed_at_boundary',
       'connected-service-account-switch-deferral-superseded:defer_until_idle',
       'connected-service-account-switch-attempt:failed:hot_applied:manual:hot_apply:failed:none:auth_invalid',
-      'provider-state-sharing-degraded:pi:enabled:disabled:state_sharing_unavailable',
+      'agent-state-sharing-degraded:pi:enabled:disabled:state_sharing_unavailable',
       'connected-service-account-switch:anthropic:direct:old-profile:new-profile:manual:restart_resume',
     ]);
   });

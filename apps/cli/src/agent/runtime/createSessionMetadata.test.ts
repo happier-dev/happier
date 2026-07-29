@@ -95,7 +95,7 @@ describe('createSessionMetadata', () => {
         expect((metadata as any).acpSessionModeOverrideV1).toEqual({ v: 1, updatedAt: 123, modeId: 'plan' });
     });
 
-    it('seeds canonical modelSelectionIntentV1 without a legacy dual write', () => {
+    it('seeds canonical Provider model intent without an unrepresentable legacy projection', () => {
         const { metadata } = createMetadata({
             flavor: 'codex',
             machineId: 'machine-1',

@@ -1,35 +1,35 @@
-import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import {
+    listDeclaredPluginContributionFamilies,
+    listPluginContributionIdentities,
+    PluginRuntimeCapabilityFamilyV1Schema,
+} from '@happier-dev/protocol';
 import type {
     PluginPermissionDeclarationV1,
     PluginPermissionCapabilityV1,
     PluginActionContributionV2,
-    ParsedPluginManifestV2,
     ParsedPluginEventContributionV1,
     PluginRequestInterceptorContributionV1,
     PluginRuntimeCapabilityFamilyV1,
     PluginSystemToolContributionV1,
     PluginToolContributionV2,
     PluginCommandContributionV2,
+    PluginHostAccessRequestV2,
 } from '@happier-dev/protocol';
 
 import type { PluginCompatibilityDiagnostic } from '../../../validation/diagnostics/types';
 import { readPluginManifest } from '../../../manifest/read';
-import type { PluginApiHostLifecycleHandlerDeclaration } from '../../api/types';
 import type { PluginDaemonModuleNamespace } from '../../types';
 import { appendDiagnostic } from '../utils';
 import {
-    readDeclaredAgentIds,
-    readDeclaredContributionIds,
     readDeclaredActionContributions,
     readDeclaredToolContributions,
     readDeclaredCommandContributions,
-    readDeclaredNestedContributionIds,
     readDeclaredRequestInterceptorContributions,
     readDeclaredSystemToolContributions,
-    readDeclaredLifecycleHandlers,
     readDeclaredEventContributions,
 } from '../contributions/readDeclared';
 import type { ActivationTarget } from './targets';
+import type { CanonicalPluginManifest } from '../../../manifest/types';
 
 /**
  * Activation policy: the permission/runtime-capability/declared-contribution
@@ -41,7 +41,6 @@ import type { ActivationTarget } from './targets';
 export type ActivationPolicy = Readonly<{
     permissions: readonly PluginPermissionCapabilityV1[];
     permissionDeclarations: readonly PluginPermissionDeclarationV1[];
-    optionalPermissionDeclarations: readonly PluginPermissionDeclarationV1[];
     runtimeCapabilities: readonly PluginRuntimeCapabilityFamilyV1[];
     declaredAgentIds: readonly string[];
     declaredActionIds: readonly string[];
@@ -51,8 +50,6 @@ export type ActivationPolicy = Readonly<{
     declaredCommandIds: readonly string[];
     declaredCommands: readonly PluginCommandContributionV2[];
     declaredHookIds: readonly string[];
-    declaredLifecycleHandlerIds: readonly string[];
-    declaredLifecycleHandlers: readonly PluginApiHostLifecycleHandlerDeclaration[];
     declaredNotificationCategoryIds: readonly string[];
     declaredNotificationChannelIds: readonly string[];
     declaredEventIds: readonly string[];
@@ -66,30 +63,137 @@ export type ActivationPolicy = Readonly<{
     systemTools: readonly PluginSystemToolContributionV1[];
 }>;
 
+export type ProjectedPluginRuntimeAuthority = Readonly<{
+    permissions: readonly PluginPermissionCapabilityV1[];
+    permissionDeclarations: readonly PluginPermissionDeclarationV1[];
+    runtimeCapabilities: readonly PluginRuntimeCapabilityFamilyV1[];
+}>;
+
+function deriveRuntimeCapabilities(manifest: CanonicalPluginManifest): readonly PluginRuntimeCapabilityFamilyV1[] {
+    const hostAccess = [...manifest.hostAccess.required, ...manifest.hostAccess.optional];
+    const capabilities = [
+        ...listDeclaredPluginContributionFamilies(manifest.contributes as unknown as Readonly<Record<string, unknown>>)
+            .flatMap((family) => {
+                const parsed = PluginRuntimeCapabilityFamilyV1Schema.safeParse(
+                    family.split('.')[0],
+                );
+                return parsed.success ? [parsed.data] : [];
+            }),
+        ...(hostAccess.some((request) => request.capability === 'terminal') ? ['terminalHost' as const] : []),
+        ...(hostAccess.some((request) => request.capability === 'sessions' && request.scope.access.includes('control'))
+            ? ['sessionHooks' as const]
+            : []),
+    ];
+    return Object.freeze(capabilities.filter((family, index) => capabilities.indexOf(family) === index));
+}
+
+function adaptHostAccess(manifest: Readonly<{ hostAccess: Readonly<{
+    required: readonly PluginHostAccessRequestV2[];
+}> }>): Readonly<{
+    required: readonly PluginPermissionDeclarationV1[];
+}> {
+    const adapt = (requests: typeof manifest.hostAccess.required): PluginPermissionDeclarationV1[] => requests.flatMap(
+      (request): PluginPermissionDeclarationV1[] => {
+        const reason = typeof request.reason === 'string' ? request.reason : request.reason.fallback;
+        switch (request.capability) {
+          case 'network':
+            return request.scope.targets.flatMap((target) => target.kind === 'fixedOrigin'
+              ? [{ capability: 'network' as const, reason, scope: target.origin }]
+              : []);
+          case 'network.intercept':
+            return request.scope.origins.map((origin) => ({
+              capability: 'network.intercept' as const,
+              reason,
+              scope: origin,
+            }));
+          case 'filesystem':
+            return request.scope.locations.flatMap((location) => request.scope.access.flatMap((access) => {
+              if (access === 'delete') return [];
+              return [{
+                capability: access === 'read' ? 'filesystem.read' as const : 'filesystem.write' as const,
+                reason,
+                scope: location.pathPrefix ?? '*',
+              }];
+            }));
+          case 'process':
+            return [{ capability: 'process.spawn', reason }];
+          case 'environment':
+            return request.scope.keys.map((key) => ({ capability: 'env' as const, reason, scope: key }));
+          case 'terminal':
+            return [{ capability: 'terminal.host.control', reason }];
+          case 'sessions':
+            return [
+                ...(request.scope.access.includes('read')
+                    ? [{ capability: 'events.session.subscribe' as const, reason }]
+                    : []),
+                ...(request.scope.access.includes('control')
+                    ? [{ capability: 'session.hooks.control' as const, reason }]
+                    : []),
+            ];
+          case 'network.client':
+          case 'secrets':
+          case 'connectedAccounts':
+          case 'storage.synced':
+          case 'mcp':
+          case 'browser':
+          case 'clipboard':
+          case 'externalLinks':
+            return [];
+        }
+      },
+    );
+    return { required: Object.freeze(adapt(manifest.hostAccess.required)) };
+}
+
+export function projectPluginRuntimeAuthority(
+    manifest: CanonicalPluginManifest,
+): ProjectedPluginRuntimeAuthority {
+    const access = adaptHostAccess(manifest);
+    return Object.freeze({
+        permissions: Object.freeze(
+            access.required.map((permission) => permission.capability),
+        ),
+        permissionDeclarations: access.required,
+        runtimeCapabilities: deriveRuntimeCapabilities(manifest),
+    });
+}
+
+export function buildActivationPolicy(manifest: CanonicalPluginManifest): ActivationPolicy {
+    const runtimeAuthority = projectPluginRuntimeAuthority(manifest);
+    const identities = listPluginContributionIdentities(manifest.contributes as unknown as Readonly<Record<string, unknown>>);
+    const ids = (family: string) => Object.freeze(identities.filter((identity) => identity.family === family).map((identity) => identity.localId));
+    return Object.freeze({
+        permissions: runtimeAuthority.permissions,
+        permissionDeclarations: runtimeAuthority.permissionDeclarations,
+        runtimeCapabilities: runtimeAuthority.runtimeCapabilities,
+        declaredAgentIds: ids('agents'),
+        declaredActionIds: ids('actions'),
+        declaredActions: readDeclaredActionContributions(manifest.contributes),
+        declaredToolIds: ids('tools'),
+        declaredTools: readDeclaredToolContributions(manifest.contributes),
+        declaredCommandIds: ids('commands'),
+        declaredCommands: readDeclaredCommandContributions(manifest.contributes),
+        declaredHookIds: ids('hooks'),
+        declaredNotificationCategoryIds: ids('notifications'),
+        declaredNotificationChannelIds: ids('notificationChannels'),
+        declaredEventIds: ids('events'),
+        declaredEventDeclarations: readDeclaredEventContributions(manifest.contributes),
+        declaredScmHostingProviderIds: ids('scmHostingProviders'),
+        declaredScmBackendIds: ids('scmBackends'),
+        declaredRequestInterceptorIds: ids('requestInterceptors'),
+        declaredMcpServerIds: ids('mcp.servers'),
+        declaredMcpDiscoveryProviderIds: ids('mcp.discoveryProviders'),
+        declaredRequestInterceptors: readDeclaredRequestInterceptorContributions(manifest.contributes),
+        systemTools: readDeclaredSystemToolContributions(manifest.contributes),
+    });
+}
+
 export function readBundledActivationPolicy(params: Readonly<{
     target: ActivationTarget;
     moduleNamespace: PluginDaemonModuleNamespace;
     diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>;
 }>): ActivationPolicy | null {
-    const raw = (params.moduleNamespace as Record<string, unknown>).PLUGIN_MANIFEST;
-    if (raw === undefined) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.target.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Bundled plugin '${params.target.pluginId}' is missing PLUGIN_MANIFEST export`,
-        });
-        return null;
-    }
-
-    const parsed = PluginManifestV2Schema.safeParse(raw);
-    if (!parsed.success) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.target.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Bundled plugin '${params.target.pluginId}' has an invalid PLUGIN_MANIFEST export`,
-        });
-        return null;
-    }
-
-    const manifest: ParsedPluginManifestV2 = parsed.data;
+    const manifest = params.target.manifest;
     if (manifest.id !== params.target.pluginId) {
         appendDiagnostic(params.diagnosticsByPluginId, params.target.pluginId, {
             code: 'plugin_manifest_semantic_invalid',
@@ -98,33 +202,7 @@ export function readBundledActivationPolicy(params: Readonly<{
         return null;
     }
 
-    return Object.freeze({
-        permissions: Object.freeze(manifest.permissions.required.map((permission) => permission.capability)),
-        permissionDeclarations: Object.freeze([...manifest.permissions.required]),
-        optionalPermissionDeclarations: Object.freeze([...manifest.permissions.optional]),
-        runtimeCapabilities: Object.freeze([...manifest.uses]),
-        declaredAgentIds: readDeclaredAgentIds(manifest.contributes),
-        declaredActionIds: readDeclaredContributionIds(manifest.contributes, 'actions'),
-        declaredActions: readDeclaredActionContributions(manifest.contributes),
-        declaredToolIds: readDeclaredContributionIds(manifest.contributes, 'tools'),
-        declaredTools: readDeclaredToolContributions(manifest.contributes),
-        declaredCommandIds: readDeclaredContributionIds(manifest.contributes, 'commands'),
-        declaredCommands: readDeclaredCommandContributions(manifest.contributes),
-        declaredHookIds: readDeclaredContributionIds(manifest.contributes, 'hooks'),
-        declaredLifecycleHandlerIds: readDeclaredContributionIds(manifest.contributes, 'lifecycleHandlers'),
-        declaredLifecycleHandlers: readDeclaredLifecycleHandlers(manifest.contributes),
-        declaredNotificationCategoryIds: readDeclaredContributionIds(manifest.contributes, 'notifications'),
-        declaredNotificationChannelIds: readDeclaredContributionIds(manifest.contributes, 'notificationChannels'),
-        declaredEventIds: readDeclaredContributionIds(manifest.contributes, 'events'),
-        declaredEventDeclarations: readDeclaredEventContributions(manifest.contributes),
-        declaredScmHostingProviderIds: readDeclaredContributionIds(manifest.contributes, 'scmHostingProviders'),
-        declaredScmBackendIds: readDeclaredContributionIds(manifest.contributes, 'scmBackends'),
-        declaredRequestInterceptorIds: readDeclaredContributionIds(manifest.contributes, 'requestInterceptors'),
-        declaredMcpServerIds: readDeclaredNestedContributionIds(manifest.contributes, 'mcp', 'servers'),
-        declaredMcpDiscoveryProviderIds: readDeclaredNestedContributionIds(manifest.contributes, 'mcp', 'discoveryProviders'),
-        declaredRequestInterceptors: readDeclaredRequestInterceptorContributions(manifest.contributes),
-        systemTools: readDeclaredSystemToolContributions(manifest.contributes),
-    });
+    return buildActivationPolicy(manifest);
 }
 
 export async function resolveActivationPolicy(
@@ -149,33 +227,7 @@ export async function resolveActivationPolicy(
         };
     }
 
-    const policy: ActivationPolicy = Object.freeze({
-        permissions: Object.freeze(manifestResult.manifest.permissions.map((permission) => permission.capability)),
-        permissionDeclarations: Object.freeze([...manifestResult.manifest.permissions]),
-        optionalPermissionDeclarations: Object.freeze([...(manifestResult.manifest.optionalPermissions ?? [])]),
-        runtimeCapabilities: Object.freeze([...manifestResult.manifest.uses]),
-        declaredAgentIds: readDeclaredAgentIds(manifestResult.manifest.contributes),
-        declaredActionIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'actions'),
-        declaredActions: readDeclaredActionContributions(manifestResult.manifest.contributes),
-        declaredToolIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'tools'),
-        declaredTools: readDeclaredToolContributions(manifestResult.manifest.contributes),
-        declaredCommandIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'commands'),
-        declaredCommands: readDeclaredCommandContributions(manifestResult.manifest.contributes),
-        declaredHookIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'hooks'),
-        declaredLifecycleHandlerIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'lifecycleHandlers'),
-        declaredLifecycleHandlers: readDeclaredLifecycleHandlers(manifestResult.manifest.contributes),
-        declaredNotificationCategoryIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notifications'),
-        declaredNotificationChannelIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'notificationChannels'),
-        declaredEventIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'events'),
-        declaredEventDeclarations: readDeclaredEventContributions(manifestResult.manifest.contributes),
-        declaredScmHostingProviderIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'scmHostingProviders'),
-        declaredScmBackendIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'scmBackends'),
-        declaredRequestInterceptorIds: readDeclaredContributionIds(manifestResult.manifest.contributes, 'requestInterceptors'),
-        declaredMcpServerIds: readDeclaredNestedContributionIds(manifestResult.manifest.contributes, 'mcp', 'servers'),
-        declaredMcpDiscoveryProviderIds: readDeclaredNestedContributionIds(manifestResult.manifest.contributes, 'mcp', 'discoveryProviders'),
-        declaredRequestInterceptors: readDeclaredRequestInterceptorContributions(manifestResult.manifest.contributes),
-        systemTools: readDeclaredSystemToolContributions(manifestResult.manifest.contributes),
-    });
+    const policy = buildActivationPolicy(manifestResult.manifest);
     cache.set(target.manifestPath, policy);
     return { ok: true, policy };
 }

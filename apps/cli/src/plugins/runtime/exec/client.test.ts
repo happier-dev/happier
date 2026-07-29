@@ -5,16 +5,17 @@ import { PassThrough } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExecClientSpecV1, ExecJsonRpcClientSpecV1, ExecProcessHandleV1 } from '@happier-dev/plugin-sdk';
+import type { ExecClientSpecV1, ExecJsonRpcClientSpecV1, ExecProcessHandleV1 } from './privateContract';
 import {
     InstallableDependencyDescriptorSchema,
     resolveInstallablesRegistry,
     type InstallableKey,
 } from '@happier-dev/protocol';
 
-import { createPluginExecService } from '../context/exec';
+import { createPluginExecService } from './hostService';
 import { PluginExecClientError } from './errors';
 import { createJsonRpcProcessClient } from './jsonRpc';
+import { encodeContentLengthFrame } from './contentLengthFraming';
 
 const { configurationState } = vi.hoisted(() => ({
     configurationState: {
@@ -124,6 +125,7 @@ type JsonRpcMessageHookFixture = Readonly<{
 function createInMemoryJsonRpcProcess(params?: Readonly<{
     hooks?: JsonRpcMessageHookFixture;
     maxFrameBytes?: number;
+    onFailure?: (error: Error) => void;
 }>) {
     const stdout = new PassThrough();
     const writes: string[] = [];
@@ -142,6 +144,7 @@ function createInMemoryJsonRpcProcess(params?: Readonly<{
         write: process.writeStdin,
         requestTimeoutMs: 25,
         maxFrameBytes: params?.maxFrameBytes,
+        onFailure: params?.onFailure,
         ...(params?.hooks ? { hooks: params.hooks } : {}),
     } as Parameters<typeof createJsonRpcProcessClient>[0] & {
         hooks?: JsonRpcMessageHookFixture;
@@ -222,7 +225,20 @@ describe('A.13p spawned protocol client runtime', () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-managed-installable-exec-'));
         tempDirs.add(homeDir);
         configurationState.happyHomeDir = homeDir;
-        const fixturePath = join(homeDir, process.platform === 'win32' ? 'sidecar.cmd' : 'sidecar');
+        const descriptor = createManagedInstallableDescriptor();
+        const fixtureDirectory = join(
+            homeDir,
+            'tools',
+            descriptor.key,
+            'versions',
+            '1.0.1',
+            'bin',
+        );
+        await mkdir(fixtureDirectory, { recursive: true });
+        const fixturePath = join(
+            fixtureDirectory,
+            process.platform === 'win32' ? 'sidecar.exe' : 'sidecar',
+        );
         await writeFile(
             fixturePath,
             process.platform === 'win32'
@@ -239,7 +255,6 @@ describe('A.13p spawned protocol client runtime', () => {
         if (process.platform !== 'win32') {
             await chmod(fixturePath, 0o755);
         }
-        const descriptor = createManagedInstallableDescriptor();
         await writeManagedInstallableCurrent({
             homeDir,
             installableKey: descriptor.key,
@@ -612,6 +627,53 @@ describe('A.13p spawned protocol client runtime', () => {
         protocol.dispose();
     });
 
+    it('serializes notifications in transport order without blocking server-request responses', async () => {
+        const { stdout, writes, protocol } = createInMemoryJsonRpcProcess();
+        const received: number[] = [];
+        let releaseFirst!: () => void;
+        const firstBlocked = new Promise<void>((resolve) => {
+            releaseFirst = resolve;
+        });
+        protocol.client.registerNotificationHandler('host/status', async (params) => {
+            const sequence = (params as { sequence: number }).sequence;
+            if (sequence === 1) await firstBlocked;
+            received.push(sequence);
+        });
+        protocol.client.registerRequestHandler('host/question', () => ({ accepted: true }));
+
+        stdout.write([
+            '{"jsonrpc":"2.0","method":"host/status","params":{"sequence":1}}',
+            '{"jsonrpc":"2.0","method":"host/status","params":{"sequence":2}}',
+            '{"jsonrpc":"2.0","id":"request-1","method":"host/question","params":{}}',
+            '',
+        ].join('\n'));
+
+        await expect.poll(() => writes.length).toBe(1);
+        expect(JSON.parse(writes[0] ?? '')).toMatchObject({ id: 'request-1', result: { accepted: true } });
+        expect(received).toEqual([]);
+        releaseFirst();
+        await expect.poll(() => received).toEqual([1, 2]);
+        protocol.dispose();
+    });
+
+    it('isolates throwing JSON-RPC notification subscribers from later subscribers', async () => {
+        const { stdout, protocol } = createInMemoryJsonRpcProcess();
+        const received: unknown[] = [];
+        protocol.subscribeNotification(() => {
+            throw new Error('subscriber failed');
+        });
+        protocol.subscribeNotification((message) => {
+            received.push(message);
+        });
+
+        stdout.write('{"jsonrpc":"2.0","method":"host/status","params":{"ready":true}}\n');
+
+        await expect.poll(() => received).toEqual([
+            { method: 'host/status', params: { ready: true } },
+        ]);
+        protocol.dispose();
+    });
+
     it('dispatches child-to-host JSON-RPC requests and writes responses', async () => {
         const { stdout, writes, protocol } = createInMemoryJsonRpcProcess();
         protocol.client.registerRequestHandler('host/question', (params, context) => ({
@@ -628,6 +690,18 @@ describe('A.13p spawned protocol client runtime', () => {
             id: 'child-1',
             result: { accepted: { value: 7 }, requestId: 'child-1' },
         });
+        protocol.dispose();
+    });
+
+    it('rejects a second responder for the same JSON-RPC method before replacement', () => {
+        const { protocol } = createInMemoryJsonRpcProcess();
+        const unregister = protocol.client.registerRequestHandler('host/question', () => ({ first: true }));
+
+        expect(() => protocol.client.registerRequestHandler('host/question', () => ({ second: true }))).toThrowError(
+            expect.objectContaining({ code: 'PLUGIN_EXEC_CLIENT_DUPLICATE_HANDLER' }),
+        );
+        unregister();
+        expect(() => protocol.client.registerRequestHandler('host/question', () => ({ replacement: true }))).not.toThrow();
         protocol.dispose();
     });
 
@@ -661,6 +735,40 @@ describe('A.13p spawned protocol client runtime', () => {
 
         await expect(first).resolves.toEqual({ one: true });
         await expect(second).resolves.toEqual({ two: true });
+        protocol.dispose();
+    });
+
+    it('reads and writes fragmented JSON-RPC content-length frames', async () => {
+        const stdout = new PassThrough();
+        const writes: Uint8Array[] = [];
+        const processHandle: ExecProcessHandleV1 = {
+            pid: 1,
+            exit: new Promise(() => undefined),
+            writeStdin: async () => undefined,
+            kill: () => undefined,
+            dispose: async () => undefined,
+        };
+        const protocol = createJsonRpcProcessClient({
+            process: processHandle,
+            stdout,
+            framing: 'contentLength',
+            maxFrameBytes: 256,
+            write: async (value) => {
+                writes.push(typeof value === 'string' ? new Uint8Array(Buffer.from(value)) : value);
+            },
+        });
+
+        const pending = protocol.client.request('fixture/echo', { value: 3 });
+        await expect.poll(() => writes.length).toBe(1);
+        expect(Buffer.from(writes[0]!).toString('ascii')).toMatch(/^Content-Length: \d+\r\n\r\n/u);
+        const response = encodeContentLengthFrame(new Uint8Array(Buffer.from(
+            '{"jsonrpc":"2.0","id":1,"result":{"value":3}}',
+        )));
+        stdout.write(response.subarray(0, 7));
+        stdout.write(response.subarray(7, 23));
+        stdout.write(response.subarray(23));
+
+        await expect(pending).resolves.toEqual({ value: 3 });
         protocol.dispose();
     });
 
@@ -802,6 +910,68 @@ describe('A.13p spawned protocol client runtime', () => {
         });
     });
 
+    it('bounds unresolved outgoing JSON-RPC request correlation', async () => {
+        const { protocol } = createInMemoryJsonRpcProcess();
+        const pending = Array.from({ length: 256 }, (_, index) => (
+            protocol.client.request(`child/pending-${index}`, {}, { timeoutMs: 10_000 }).catch((error: unknown) => error)
+        ));
+
+        await expect(protocol.client.request('child/overflow', {}, { timeoutMs: 10_000 })).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
+        });
+
+        protocol.dispose();
+        await Promise.all(pending);
+    });
+
+    it('lets request timeout settle while the stdin write remains blocked', async () => {
+        const stdout = new PassThrough();
+        const protocol = createJsonRpcProcessClient({
+            process: {
+                pid: 1,
+                exit: new Promise(() => undefined),
+                writeStdin: async () => await new Promise<void>(() => undefined),
+                kill: () => undefined,
+                dispose: async () => undefined,
+            },
+            stdout,
+            write: async () => await new Promise<void>(() => undefined),
+            requestTimeoutMs: 1,
+        });
+
+        await expect(protocol.client.request('child/blocked-write', {})).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_CLIENT_REQUEST_TIMEOUT',
+        });
+        protocol.dispose();
+    });
+
+    it('bounds concurrent child-to-host JSON-RPC request handlers', async () => {
+        const onFailure = vi.fn();
+        const { stdout, protocol } = createInMemoryJsonRpcProcess({ onFailure });
+        const neverSettles = new Promise<never>(() => undefined);
+        protocol.client.registerRequestHandler('host/hang', () => neverSettles);
+
+        for (let id = 1; id <= 257; id += 1) {
+            stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: `child-${id}`, method: 'host/hang' })}\n`);
+        }
+
+        await vi.waitFor(() => expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({
+            code: 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED',
+        })));
+        protocol.dispose();
+    });
+
+    it('rejects outgoing JSON-RPC frames above maxFrameBytes before writing stdin', async () => {
+        const { writes, protocol } = createInMemoryJsonRpcProcess({ maxFrameBytes: 96 });
+
+        await expect(protocol.client.notify('child/huge', { payload: 'x'.repeat(128) })).rejects.toMatchObject({
+            code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+            message: expect.stringContaining('exceeded the configured size limit'),
+        });
+        expect(writes).toEqual([]);
+        protocol.dispose();
+    });
+
     it('rejects only the matching JSON-RPC request when a response frame exceeds maxFrameBytes before newline', async () => {
         const { stdout, protocol } = createInMemoryJsonRpcProcess({ maxFrameBytes: 64 });
 
@@ -819,6 +989,20 @@ describe('A.13p spawned protocol client runtime', () => {
         stdout.write('{"jsonrpc":"2.0","id":2,"result":{"ok":true}}\n');
 
         await expect(next).resolves.toEqual({ ok: true });
+        protocol.dispose();
+    });
+
+    it('correlates an oversized response only from its top-level id', async () => {
+        const { stdout, protocol } = createInMemoryJsonRpcProcess({ maxFrameBytes: 96 });
+        const first = protocol.client.request('child/first', {}, { timeoutMs: 1_000 });
+        const second = protocol.client.request('child/second', {}, { timeoutMs: 1_000 });
+        stdout.write('{"jsonrpc":"2.0","result":{"id":2},"id":1,"payload":"');
+        stdout.write('x'.repeat(128));
+
+        await expect(first).rejects.toMatchObject({ code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR' });
+        stdout.write('discarded"}\n');
+        stdout.write('{"jsonrpc":"2.0","id":2,"result":{"ok":true}}\n');
+        await expect(second).resolves.toEqual({ ok: true });
         protocol.dispose();
     });
 
@@ -941,8 +1125,11 @@ describe('A.13p spawned protocol client runtime', () => {
             },
         });
         try {
-            await expect(handle.client.writeRecord({ tooLarge: true })).rejects.toMatchObject({
-                code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+            await expect(handle.client.writeRecord({ tooLarge: true })).resolves.toMatchObject({
+                kind: 'rejected_before_write',
+                error: {
+                    code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+                },
             });
         } finally {
             await handle.dispose();
@@ -1103,6 +1290,42 @@ describe('A.13p spawned protocol client runtime', () => {
             signal: null,
             stdout: '',
         });
+    });
+
+    it('replays the sticky terminal result to late exec-client exit subscribers', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const exec = createPluginExecService({ allowedExecutablePaths: [shellPath] });
+        const handle = await exec.spawnClient({
+            launch: { kind: 'binary', executablePath: shellPath, args: ['-c', 'exit 7'] },
+            transport: { kind: 'stdio', framing: { kind: 'strict-lf-json' }, encoding: 'utf8' },
+            protocol: { kind: 'json-rpc-2.0' },
+        });
+        await expect(handle.process.exit).resolves.toMatchObject({ exitCode: 7 });
+        await expect.poll(() => handle.status).toBe('exited');
+
+        const results: unknown[] = [];
+        handle.onExit((result) => results.push(result));
+
+        expect(results).toHaveLength(1);
+        expect(results[0]).toMatchObject({ exitCode: 7 });
+    });
+
+    it('isolates throwing exec-client exit subscribers from later subscribers', async () => {
+        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
+        const exec = createPluginExecService({ allowedExecutablePaths: [shellPath] });
+        const handle = await exec.spawnClient({
+            launch: { kind: 'binary', executablePath: shellPath, args: ['-c', 'sleep 0.05; exit 0'] },
+            transport: { kind: 'stdio', framing: { kind: 'strict-lf-json' }, encoding: 'utf8' },
+            protocol: { kind: 'json-rpc-2.0' },
+        });
+        const results: unknown[] = [];
+        handle.onExit(() => {
+            throw new Error('listener failure');
+        });
+        handle.onExit((result) => results.push(result));
+
+        await expect.poll(() => results.length).toBe(1);
+        expect(results[0]).toMatchObject({ exitCode: 0 });
     });
 
     it('rejects ipc launch specs as explicitly unsupported by the process-backed exec host', async () => {

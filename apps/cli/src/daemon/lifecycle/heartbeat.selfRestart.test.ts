@@ -33,6 +33,7 @@ import { readFileSync } from 'fs';
 
 import { readDaemonState } from '@/persistence';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
+import { spawnSleepyDetachedProcess } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
 
 describe('startDaemonHeartbeatLoop daemon self-restart', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -53,6 +54,14 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     }
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('uses the daemon startup budget for replacement verification by default', async () => {
+    vi.resetModules();
+
+    const { DEFAULT_DAEMON_RESTART_VERIFY_TIMEOUT_MS } = await import('./heartbeat');
+
+    expect(DEFAULT_DAEMON_RESTART_VERIFY_TIMEOUT_MS).toBe(60_000);
   });
 
   it('does not permanently lock the heartbeat loop if reading package.json throws', async () => {
@@ -193,66 +202,88 @@ describe('startDaemonHeartbeatLoop daemon self-restart', () => {
     process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL = '1';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS = '40';
     process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS = '5';
+    const replacement = spawnSleepyDetachedProcess();
 
-    vi.resetModules();
+    try {
+      vi.resetModules();
 
-    let tick: (() => Promise<void>) | undefined;
-    const setIntervalSpy = vi
-      .spyOn(global, 'setInterval')
-      .mockImplementation(((handler: (...args: any[]) => any) => {
-        tick = handler as unknown as () => Promise<void>;
-        return 1 as any;
-      }) as any);
+      let tick: (() => Promise<void>) | undefined;
+      const setIntervalSpy = vi
+        .spyOn(global, 'setInterval')
+        .mockImplementation(((handler: (...args: any[]) => any) => {
+          tick = handler as unknown as () => Promise<void>;
+          return 1 as any;
+        }) as any);
 
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
-    vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
-    vi.mocked(readDaemonState)
-      .mockResolvedValueOnce({
-        pid: process.pid,
-        httpPort: 7001,
-        startedAt: Date.now(),
-        startedWithCliVersion: '1.0.0',
-      })
-      .mockResolvedValue({
-        pid: process.pid + 1000,
-        httpPort: 7002,
-        startedAt: Date.now(),
-        startedWithCliVersion: '2.0.0',
+      vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ version: '2.0.0' }) as any);
+      vi.mocked(spawnDetachedDaemonStartSync).mockResolvedValue({ unref: vi.fn() } as any);
+      vi.mocked(readDaemonState)
+        .mockResolvedValueOnce({
+          pid: process.pid,
+          httpPort: 7001,
+          startedAt: Date.now(),
+          startedWithCliVersion: '1.0.0',
+        })
+        .mockResolvedValue({
+          pid: replacement.pid,
+          httpPort: 7002,
+          startedAt: Date.now(),
+          startedWithCliVersion: '2.0.0',
+          runtimeId: 'runtime-heartbeat-confirmed',
+          controlToken: 'replacement-control-token',
+        });
+      vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url);
+        if (
+          url.hostname === '127.0.0.1'
+          && url.port === '7002'
+          && init?.method === 'POST'
+          && (init.headers as Record<string, string> | undefined)?.['x-happier-daemon-token'] === 'replacement-control-token'
+        ) {
+          return new Response(JSON.stringify({ status: 'ok' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        }
+        return new Response(JSON.stringify({ success: false }), { status: 401 });
+      }));
+
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+      const { startDaemonHeartbeatLoop } = await import('./heartbeat');
+
+      const interval = startDaemonHeartbeatLoop({
+        pidToTrackedSession: new Map(),
+        spawnResourceCleanupByPid: new Map(),
+        sessionAttachCleanupByPid: new Map(),
+        getApiMachineForSessions: () => null,
+        controlPort: 5555,
+        fileState: {
+          pid: process.pid,
+          httpPort: 5555,
+          startedAt: Date.now(),
+          startedWithCliVersion: '1.0.0',
+          runtimeId: 'runtime-heartbeat-confirmed',
+        },
+        currentCliVersion: '1.0.0',
+        requestShutdown: vi.fn(),
       });
 
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+      expect(setIntervalSpy).toHaveBeenCalled();
+      expect(tick).toBeTypeOf('function');
+      await tick!();
 
-    const { startDaemonHeartbeatLoop } = await import('./heartbeat');
+      expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(1);
+      const confirmedSpawnCall = vi.mocked(spawnDetachedDaemonStartSync).mock.calls[0]?.[0] as
+        | { env?: Record<string, string>; startupSource?: string }
+        | undefined;
+      expect(confirmedSpawnCall?.startupSource).toBe('self-restart');
+      expect(confirmedSpawnCall?.env?.HAPPIER_DAEMON_RUNTIME_ID).toBe('runtime-heartbeat-confirmed');
+      expect(exitSpy).toHaveBeenCalledWith(0);
 
-    const interval = startDaemonHeartbeatLoop({
-      pidToTrackedSession: new Map(),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
-      getApiMachineForSessions: () => null,
-      controlPort: 5555,
-      fileState: {
-        pid: process.pid,
-        httpPort: 5555,
-        startedAt: Date.now(),
-        startedWithCliVersion: '1.0.0',
-        runtimeId: 'runtime-heartbeat-confirmed',
-      },
-      currentCliVersion: '1.0.0',
-      requestShutdown: vi.fn(),
-    });
-
-    expect(setIntervalSpy).toHaveBeenCalled();
-    expect(tick).toBeTypeOf('function');
-    await tick!();
-
-    expect(spawnDetachedDaemonStartSync).toHaveBeenCalledTimes(1);
-    const confirmedSpawnCall = vi.mocked(spawnDetachedDaemonStartSync).mock.calls[0]?.[0] as
-      | { env?: Record<string, string>; startupSource?: string }
-      | undefined;
-    expect(confirmedSpawnCall?.startupSource).toBe('self-restart');
-    expect(confirmedSpawnCall?.env?.HAPPIER_DAEMON_RUNTIME_ID).toBe('runtime-heartbeat-confirmed');
-    expect(exitSpy).toHaveBeenCalledWith(0);
-
-    clearInterval(interval);
+      clearInterval(interval);
+    } finally {
+      await replacement.kill();
+    }
   }, 15_000);
 });

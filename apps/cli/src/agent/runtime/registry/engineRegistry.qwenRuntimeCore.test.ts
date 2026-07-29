@@ -14,20 +14,20 @@ const QWEN_PLUGIN_ID = 'happier.agent.qwen';
 
 function createQwenOnlyContributionRegistry(): ResolvedContributionRegistry {
   const builtInContributions = resolveBuiltInContributions();
-  const provider = builtInContributions.agents.find((entry) => entry.id === QWEN_BACKEND_ID);
-  const backend = builtInContributions.agentRuntimes.find((entry) => entry.id === QWEN_BACKEND_ID);
+  const agentContribution = builtInContributions.agents.find((entry) => entry.id === QWEN_BACKEND_ID);
   const activationTargets = builtInContributions.activationTargets?.filter((target) => target.pluginId === QWEN_PLUGIN_ID) ?? [];
 
-  if (!provider || !backend || activationTargets.length !== 1) {
-    throw new Error('Expected generated Qwen provider, backend, and activation target contributions');
+  if (!agentContribution || activationTargets.length !== 1) {
+    throw new Error('Expected generated Qwen Agent and activation target contributions');
   }
 
   return {
-    agents: Object.freeze([provider]),
-    agentRuntimes: Object.freeze([backend]),
-    actions: Object.freeze([]),
+    agents: Object.freeze([agentContribution]),
+        actions: Object.freeze([]),
     resources: Object.freeze([]),
-    uiDescriptors: Object.freeze([]),
+    uiViewsV2: Object.freeze([]),
+    uiRenderersV2: Object.freeze([]),
+    uiTranslationsV2: Object.freeze([]),
     notifications: Object.freeze([]),
     notificationChannels: Object.freeze([]),
     events: Object.freeze([]),
@@ -38,12 +38,9 @@ function createQwenOnlyContributionRegistry(): ResolvedContributionRegistry {
     scmBackends: Object.freeze([]),
     connectedAccountDescriptors: Object.freeze([]),
     activationTargets: Object.freeze(activationTargets),
-    hookRegistrations: Object.freeze([]),
-    surfaceHandlersByBackendId: new Map(),
-    catalogEntriesById: Object.freeze(provider.catalogEntry ? { [provider.catalogEntry.id]: provider.catalogEntry } : {}),
-    agentDefinitionsById: new Map([[provider.id, provider]]),
-    agentRuntimeDefinitionsById: new Map([[backend.id, backend]]),
-    pluginDiagnosticsByPluginId: Object.freeze({}),
+        catalogEntriesById: Object.freeze(agentContribution.catalogEntry ? { [agentContribution.catalogEntry.id]: agentContribution.catalogEntry } : {}),
+    agentDefinitionsById: new Map([[agentContribution.id, agentContribution]]),
+        pluginDiagnosticsByPluginId: Object.freeze({}),
   };
 }
 

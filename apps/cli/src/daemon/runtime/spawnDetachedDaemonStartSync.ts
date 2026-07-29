@@ -107,9 +107,10 @@ export async function spawnDetachedDaemonStartSync(
   options: Readonly<SpawnOptions & { startupSource?: DaemonStartupSource }> = {},
 ): Promise<ChildProcess> {
   const { startupSource, ...spawnOptions } = options;
-  const launchSpec = await resolveDaemonLaunchSpec(['daemon', 'start-sync']);
+  const requestedEnv = spawnOptions.env ?? process.env;
+  const launchSpec = await resolveDaemonLaunchSpec(['daemon', 'start-sync'], requestedEnv);
   const env = {
-    ...(spawnOptions.env ?? process.env),
+    ...requestedEnv,
     ...(launchSpec.env ?? {}),
   };
 

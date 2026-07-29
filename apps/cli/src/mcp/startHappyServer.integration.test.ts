@@ -10,9 +10,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { Metadata } from '@/api/types';
-import type { AgentBackend } from '@/agent/core/AgentBackend';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import { reloadConfiguration } from '@/configuration';
 import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from '@/rpc/handlers/executionRuns';
 import { HAPPIER_MCP_ACTION_SPECS_RESOURCE_URI } from '@/mcp/resources/registerHappierMcpResources';
@@ -60,27 +59,18 @@ function registerExecutionRunHandlers(
   registerExecutionRunHandlersBase(rpc, baseCtx);
 }
 
-function createStaticBackend(responseText: string): AgentBackend & ExecutionRunHostRuntime {
-  const handlers = new Set<(msg: any) => void>();
+function createStaticRuntime(responseText: string): ExecutionRunHostRuntime {
   let fullText = '';
 
-  const backend: AgentBackend = {
-    async startSession() {
-      return { sessionId: 'child_sess_1' };
-    },
-    async sendPrompt(_sessionId, _prompt) {
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId: 'child_sess_1',
+    onSendPrompt() {
       fullText = responseText;
-      for (const h of handlers) h({ type: 'model-output', fullText });
+      runtime.emitMessage({ type: 'model-output', fullText });
     },
-    async cancel() {},
-    onMessage(handler) {
-      handlers.add(handler);
-    },
-    async dispose() {
-      handlers.clear();
-    },
-  };
-  return Object.assign({}, backend, createExecutionRunHostRuntimeFromAgentBackend(backend));
+  });
+  return runtime;
 }
 
 function parseMcpJsonText(result: any): any {
@@ -137,14 +127,14 @@ describe('startHappyServer (MCP integration)', () => {
       sessionId: 'sess_mcp_keepalive_1',
       cwd: process.cwd(),
       parentProvider: 'claude',
-      createBackend: () => createStaticBackend(JSON.stringify({ ok: true })),
+      createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
       sendAcp: () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_keepalive_1',
       rpcHandlerManager,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -213,7 +203,7 @@ describe('startHappyServer (MCP integration)', () => {
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
       actions: {
-        'session.list': { enabled: true, disabledSurfaces: ['session_agent'], disabledPlacements: [] },
+        'session.list': { enabled: true, disabledSurfaces: ['agent'], disabledPlacements: [] },
       },
     });
 
@@ -226,7 +216,7 @@ describe('startHappyServer (MCP integration)', () => {
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_account_tool_names_1',
       rpcHandlerManager,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -235,7 +225,7 @@ describe('startHappyServer (MCP integration)', () => {
         actionsSettingsV1: {
           v: 1,
           actions: {
-            'session.list': { disabledSurfaces: [], toolExposureModes: { session_agent: 'direct' } },
+            'session.list': { disabledSurfaces: [], toolExposureModes: { agent: 'direct' } },
           },
         },
       },
@@ -275,7 +265,7 @@ describe('startHappyServer (MCP integration)', () => {
       cwd: process.cwd(),
       parentProvider: 'claude',
       createBackend: () =>
-        createStaticBackend(
+        createStaticRuntime(
           JSON.stringify({
             findings: [
               { id: 'f1', title: 'Example', severity: 'low', category: 'style', summary: 'One paragraph.' },
@@ -290,7 +280,7 @@ describe('startHappyServer (MCP integration)', () => {
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_1',
       rpcHandlerManager,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -333,6 +323,26 @@ describe('startHappyServer (MCP integration)', () => {
           }),
         ]),
       );
+      const claudeBackendOption = resolvedOptions.options.find((option: any) => option.value === 'backend:claude');
+      expect(claudeBackendOption).toBeTruthy();
+
+      const planRaw = await client.callTool({
+        name: 'action_execute',
+        arguments: {
+          actionId: 'subagents.plan.start',
+          input: {
+            sessionId: fakeClient.sessionId,
+            backendTargetKeys: [claudeBackendOption.value],
+            instructions: 'Plan with the resolved backend option.',
+          },
+        },
+      });
+      const plan = parseMcpJsonText(planRaw);
+      expect(plan.intent).toBe('plan');
+      expect(plan.results?.[0]).toEqual(expect.objectContaining({
+        key: 'backend:claude',
+        ok: true,
+      }));
 
       const startedRaw = await client.callTool({
         name: 'action_execute',
@@ -413,12 +423,12 @@ describe('startHappyServer (MCP integration)', () => {
     const updateMetadata = vi.fn((updater: (current: Metadata) => Metadata) => {
       metadata = updater(metadata);
     });
-    const sendClaudeSessionMessage = vi.fn();
+    const sendProviderMessage = vi.fn();
 
     const fakeClient = {
       sessionId: 'sess_mcp_change_title_1',
       rpcHandlerManager,
-      sendClaudeSessionMessage,
+      sendProviderMessage,
       updateMetadata,
     } satisfies HappyMcpSessionClient;
 
@@ -436,7 +446,7 @@ describe('startHappyServer (MCP integration)', () => {
 
       expect(result.success).toBe(true);
       expect(updateMetadata).toHaveBeenCalled();
-      expect(sendClaudeSessionMessage).not.toHaveBeenCalled();
+      expect(sendProviderMessage).not.toHaveBeenCalled();
       expect((metadata.summary as { text?: string }).text).toBe('QA MCP Title');
     } finally {
       await (client as any)?.close?.();
@@ -459,7 +469,7 @@ describe('startHappyServer (MCP integration)', () => {
           return {};
         }),
       } as any,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -511,7 +521,7 @@ describe('startHappyServer (MCP integration)', () => {
           return {};
         }),
       } as any,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -556,7 +566,7 @@ describe('startHappyServer (MCP integration)', () => {
       rpcHandlerManager: {
         invokeLocal: vi.fn(async () => ({})),
       } as any,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
       getMetadataSnapshot: () => ({
         sessionModesV1: {
@@ -603,7 +613,7 @@ describe('startHappyServer (MCP integration)', () => {
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
       actions: {
-        'review.start': { enabled: true, disabledSurfaces: ['session_agent'], disabledPlacements: [] },
+        'review.start': { enabled: true, disabledSurfaces: ['agent'], disabledPlacements: [] },
       },
     });
 
@@ -617,14 +627,14 @@ describe('startHappyServer (MCP integration)', () => {
       sessionId: 'sess_mcp_disabled_1',
       cwd: process.cwd(),
       parentProvider: 'claude',
-      createBackend: () => createStaticBackend(JSON.stringify({ ok: true })),
+      createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
       sendAcp: () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_disabled_1',
       rpcHandlerManager,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -664,14 +674,14 @@ describe('startHappyServer (MCP integration)', () => {
       sessionId: 'sess_mcp_resources_1',
       cwd: process.cwd(),
       parentProvider: 'claude',
-      createBackend: () => createStaticBackend(JSON.stringify({ ok: true })),
+      createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
       sendAcp: () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_resources_1',
       rpcHandlerManager,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 
@@ -720,14 +730,14 @@ describe('startHappyServer (MCP integration)', () => {
       sessionId: 'sess_mcp_seq_1',
       cwd: process.cwd(),
       parentProvider: 'claude',
-      createBackend: () => createStaticBackend(JSON.stringify({ ok: true })),
+      createBackend: () => createStaticRuntime(JSON.stringify({ ok: true })),
       sendAcp: () => {},
     });
 
     const fakeClient: HappyMcpSessionClient = {
       sessionId: 'sess_mcp_seq_1',
       rpcHandlerManager,
-      sendClaudeSessionMessage: () => {},
+      sendProviderMessage: () => {},
       updateMetadata: () => {},
     };
 

@@ -13,8 +13,9 @@ import {
 
 function providerError(
   code: 'invalid_parameters' | 'credential_unavailable' | 'provider_response_invalid',
+  stage?: ElevenLabsProvisionStage,
 ): Error {
-  return Object.assign(new Error(code), { code });
+  return Object.assign(new Error(code), { code, ...(stage ? { stage } : {}) });
 }
 
 function assertProviderHttpSuccess(status: number): void {
@@ -139,10 +140,76 @@ type ElevenLabsProvisionOperationId =
   | 'create-agent'
   | 'update-agent';
 
+type ElevenLabsProvisionStage =
+  | 'list_agents'
+  | 'list_tools'
+  | 'create_tool'
+  | 'update_tool'
+  | 'create_agent'
+  | 'update_agent';
+
 type ElevenLabsProvisionCall = (
   operationId: ElevenLabsProvisionOperationId,
   parameters: Readonly<Record<string, VoiceRealtimeJsonValue>>,
 ) => Promise<Record<string, unknown>>;
+
+async function callElevenLabsProvisionStage(
+  call: ElevenLabsProvisionCall,
+  stage: ElevenLabsProvisionStage,
+  operationId: ElevenLabsProvisionOperationId,
+  parameters: Readonly<Record<string, VoiceRealtimeJsonValue>>,
+): Promise<Record<string, unknown>> {
+  try {
+    return await call(operationId, parameters);
+  } catch (error) {
+    if (error && typeof error === 'object') {
+      try {
+        Object.assign(error, { stage });
+        throw error;
+      } catch (attributedError) {
+        if (attributedError === error) throw attributedError;
+      }
+    }
+    throw providerError('provider_response_invalid', stage);
+  }
+}
+
+async function listElevenLabsProvisionTools(
+  call: ElevenLabsProvisionCall,
+  desiredNames: ReadonlySet<string>,
+): Promise<readonly unknown[]> {
+  const tools: unknown[] = [];
+  const seenCursors = new Set<string>();
+  let cursor: string | null = null;
+  for (let page = 0; page < 100; page += 1) {
+    const json = await callElevenLabsProvisionStage(
+      call,
+      'list_tools',
+      'tools',
+      cursor ? { cursor } : {},
+    );
+    if (!Array.isArray(json.tools)) {
+      throw providerError('provider_response_invalid', 'list_tools');
+    }
+    for (const entry of json.tools) {
+      if (!entry || typeof entry !== 'object') continue;
+      const toolConfig = (entry as { tool_config?: unknown }).tool_config;
+      if (!toolConfig || typeof toolConfig !== 'object') continue;
+      const record = toolConfig as Readonly<Record<string, unknown>>;
+      if (record.type === 'client' && typeof record.name === 'string' && desiredNames.has(record.name)) {
+        tools.push(entry);
+      }
+    }
+    if (json.has_more !== true) return tools;
+    const nextCursor = stringValue(json.next_cursor, 512);
+    if (!nextCursor || seenCursors.has(nextCursor)) {
+      throw providerError('provider_response_invalid', 'list_tools');
+    }
+    seenCursors.add(nextCursor);
+    cursor = nextCursor;
+  }
+  throw providerError('provider_response_invalid', 'list_tools');
+}
 
 async function runElevenLabsProvision(
   raw: unknown,
@@ -156,7 +223,7 @@ async function runElevenLabsProvision(
       throw providerError('invalid_parameters');
     }
     if (request.kind === 'list') {
-      const json = await call('agents', {});
+      const json = await callElevenLabsProvisionStage(call, 'list_agents', 'agents', {});
       const agents = Array.isArray(json.agents) ? json.agents : [];
       return {
         ok: true,
@@ -168,8 +235,10 @@ async function runElevenLabsProvision(
         }),
       };
     }
-    const toolsJson = await call('tools', {});
-    const existingTools = Array.isArray(toolsJson.tools) ? toolsJson.tools : [];
+    const existingTools = await listElevenLabsProvisionTools(
+      call,
+      new Set(request.tools.map((tool) => tool.name)),
+    );
     const toolIds: string[] = [];
     for (const tool of request.tools) {
       const existing = existingTools.find((entry) => {
@@ -183,17 +252,27 @@ async function runElevenLabsProvision(
         type: 'client', name: tool.name, description: tool.description,
         parameters: normalizeToolParameters(tool.parameters), expects_response: true,
         execution_mode: 'immediate', response_timeout_secs: tool.name === 'spawnSessionPicker' ? 120 : 60,
-        disable_interruptions: false, force_pre_tool_speech: false,
+        interruption_mode: 'allow', pre_tool_speech: 'auto',
         tool_call_sound_behavior: 'auto', tool_error_handling_mode: 'passthrough',
       };
       const existingId = stringValue(existing?.id, 256);
       if (existingId) {
-        await call('update-tool', { toolId: existingId, body: { tool_config: toolConfig } });
+        await callElevenLabsProvisionStage(
+          call,
+          'update_tool',
+          'update-tool',
+          { toolId: existingId, body: { tool_config: toolConfig } },
+        );
         toolIds.push(existingId);
       } else {
-        const created = await call('create-tool', { body: { tool_config: toolConfig } });
+        const created = await callElevenLabsProvisionStage(
+          call,
+          'create_tool',
+          'create-tool',
+          { body: { tool_config: toolConfig } },
+        );
         const id = stringValue(created.id, 256);
-        if (!id) throw providerError('provider_response_invalid');
+        if (!id) throw providerError('provider_response_invalid', 'create_tool');
         toolIds.push(id);
       }
     }
@@ -211,17 +290,25 @@ async function runElevenLabsProvision(
       agent: { prompt: { prompt: request.prompt, tool_ids: toolIds } },
     };
     if (request.kind === 'create') {
-      const created = await call('create-agent', {
-        body: { name: 'Happier Voice', conversation_config: conversationConfig },
-      });
+      const created = await callElevenLabsProvisionStage(
+        call,
+        'create_agent',
+        'create-agent',
+        { body: { name: 'Happier Voice', conversation_config: conversationConfig } },
+      );
       const agentId = stringValue(created.agent_id, 256);
-      if (!agentId) throw providerError('provider_response_invalid');
+      if (!agentId) throw providerError('provider_response_invalid', 'create_agent');
       return { ok: true, agentId };
     }
-    await call('update-agent', {
-      agentId: request.agentId,
-      body: { conversation_config: conversationConfig },
-    });
+    await callElevenLabsProvisionStage(
+      call,
+      'update_agent',
+      'update-agent',
+      {
+        agentId: request.agentId,
+        body: { conversation_config: conversationConfig },
+      },
+    );
     return { ok: true, updated: true };
 }
 

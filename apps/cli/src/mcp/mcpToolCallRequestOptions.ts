@@ -9,6 +9,7 @@ export { DEFAULT_MCP_TOOL_CALL_TIMEOUT_MS } from '@/configuration';
 
 export type McpToolCallRequestOptions = Readonly<{
   timeout: number;
+  signal?: AbortSignal;
 }>;
 
 type McpCallToolClient = Pick<Client, 'callTool'>;
@@ -65,13 +66,17 @@ export async function callMcpToolWithResolvedTimeout(params: Readonly<{
   client: McpCallToolClient;
   toolName: string;
   args: unknown;
+  signal?: AbortSignal;
 }>): ReturnType<Client['callTool']> {
+  const requestOptions = resolveMcpToolCallRequestOptions({
+    toolName: params.toolName,
+    args: params.args,
+  });
   return await params.client.callTool(
     { name: params.toolName, arguments: normalizeMcpToolArguments(params.args) },
     undefined,
-    resolveMcpToolCallRequestOptions({
-      toolName: params.toolName,
-      args: params.args,
-    }),
+    params.signal === undefined
+      ? requestOptions
+      : { ...requestOptions, signal: params.signal },
   );
 }

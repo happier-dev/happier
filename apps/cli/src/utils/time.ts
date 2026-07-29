@@ -14,6 +14,22 @@ export function delayUnref(ms: number): Promise<void> {
     });
 }
 
+export function delayUnrefAbortable(ms: number, abortSignal: AbortSignal): Promise<void> {
+    if (abortSignal.aborted) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+        const onAbort = () => {
+            clearTimeout(timer);
+            resolve();
+        };
+        const timer = setTimeout(() => {
+            abortSignal.removeEventListener('abort', onAbort);
+            resolve();
+        }, ms);
+        timer.unref?.();
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+    });
+}
+
 export function exponentialBackoffDelay(currentFailureCount: number, minDelay: number, maxDelay: number, maxFailureCount: number) {
     const safeMaxFailureCount = Number.isFinite(maxFailureCount) ? Math.max(maxFailureCount, 1) : 50;
     const clampedFailureCount = Math.min(Math.max(currentFailureCount, 0), safeMaxFailureCount);

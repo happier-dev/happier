@@ -15,11 +15,16 @@ export async function runSupervisedRequest<T>(params: Readonly<{
 }>): Promise<T> {
   let requireAuth: boolean;
   let requireOnline: boolean | undefined;
+  // HTTP operation outcomes do not own socket health. Only an explicit readiness probe may
+  // publish connection-wide retry/offline evidence; ordinary requests still report terminal
+  // authentication loss because credentials are shared across transports.
+  let outcomeSupervision: 'connection_health' | 'authentication_only' = 'authentication_only';
 
   if (params.purpose) {
     const policy = gatingPolicyForPurpose(params.purpose);
     requireAuth = params.requireAuth ?? policy.requireAuth;
     requireOnline = params.requireOnline ?? policy.requireOnline;
+    outcomeSupervision = policy.outcomeSupervision;
   } else {
     requireAuth = params.requireAuth !== false;
     requireOnline = params.requireOnline;
@@ -38,6 +43,7 @@ export async function runSupervisedRequest<T>(params: Readonly<{
       statusCode: params.readStatusCode?.(result) ?? null,
       hadAuth: requireAuth,
       scope: probeReportScope,
+      outcomeSupervision,
     });
     return result;
   } catch (error) {
@@ -46,6 +52,7 @@ export async function runSupervisedRequest<T>(params: Readonly<{
       error,
       hadAuth: requireAuth,
       scope: probeReportScope,
+      outcomeSupervision,
     });
     throw error;
   }

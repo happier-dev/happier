@@ -3,41 +3,21 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol';
 import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-
-const commitSessionStoredMessageMock = vi.fn();
-const pageTranscriptMock = vi.fn();
-const resolveTranscriptMediaReadRootsMock = vi.fn<() => Promise<string[]>>(async () => []);
-
-vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>();
-  return {
-    ...actual,
-    commitSessionStoredMessage: (...args: unknown[]) => commitSessionStoredMessageMock(...args),
-  };
-});
-
-vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
-  getSessionHostBridge: () => ({
-    resolveExecutionSurfaces: async () => ({
-      externalSession: {
-        pageTranscript: pageTranscriptMock,
-        resolveTranscriptMediaReadRoots: resolveTranscriptMediaReadRootsMock,
-      },
-    }),
-  }),
-}));
+import {
+  cleanupExternalSessionHistoricalImportStagedMedia,
+  prepareExternalSessionHistoricalImportItem,
+  stageExternalSessionHistoricalImportItem,
+} from './importExternalSessionTranscript';
 
 vi.mock('sharp', () => ({
   default: () => ({
     metadata: async () => ({ width: 1, height: 1 }),
   }),
 }));
-
-let importExternalSessionTranscriptModule: typeof import('./importExternalSessionTranscript');
 
 const pngBytes = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lU6w9wAAAABJRU5ErkJggg==',
@@ -52,12 +32,13 @@ function createLinkedSession(workingDirectory: string): LoadedLinkedExternalSess
     agentId: 'opencode',
     machineId: 'machine-1',
     remoteSessionId: 'provider-session-1',
+    linkGeneration: '1',
     source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: workingDirectory },
     codexBackendMode: null,
   };
 }
 
-function directMediaItem(path: string): Record<string, unknown> {
+function externalSessionMediaItem(path: string): Record<string, unknown> {
   return {
     id: 'provider-media-1',
     role: 'output',
@@ -71,17 +52,127 @@ function directMediaItem(path: string): Record<string, unknown> {
   };
 }
 
-describe('importExternalSessionTranscript', () => {
-  beforeAll(async () => {
-    importExternalSessionTranscriptModule = await import('./importExternalSessionTranscript');
-  }, 60_000);
+const credentials = {
+  token: 'token-1',
+  encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3]) },
+};
 
-  afterEach(() => {
-    vi.clearAllMocks();
-    resolveTranscriptMediaReadRootsMock.mockResolvedValue([]);
+async function preparePlainHistoricalImportItem(params: Readonly<{
+  item: ExternalSessionTranscriptRawMessageV1;
+  workingDirectory: string;
+  sessionId: string;
+  linked?: LoadedLinkedExternalSession;
+  sourceReadRoots?: readonly string[];
+}>): Promise<Readonly<{
+  prepared: Awaited<ReturnType<typeof prepareExternalSessionHistoricalImportItem>>;
+  payload: Record<string, unknown>;
+}>> {
+  const prepared = await prepareExternalSessionHistoricalImportItem({
+    item: params.item,
+    linked: params.linked ?? createLinkedSession(params.workingDirectory),
+    credentials,
+    sessionId: params.sessionId,
+    workingDirectory: params.workingDirectory,
+    sourceReadRoots: params.sourceReadRoots ?? [],
+  });
+  if (prepared.content.t !== 'plain') {
+    throw new Error('expected_plain_historical_import_test_content');
+  }
+  if (
+    !prepared.content.v
+    || typeof prepared.content.v !== 'object'
+    || Array.isArray(prepared.content.v)
+  ) {
+    throw new Error('expected_object_historical_import_test_content');
+  }
+  const meta = (prepared.content.v as Record<string, unknown>).meta as Record<string, unknown>;
+  const envelope = meta.happier as Record<string, unknown>;
+  return {
+    prepared,
+    payload: envelope.payload as Record<string, unknown>,
+  };
+}
+
+describe('external session historical import item preparation', () => {
+  it('replays immutable staged media idempotently and removes its final workspace file on discard', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-staged-import-discard-'));
+    try {
+      const sourcePath = join(workingDirectory, 'source.png');
+      await writeFile(sourcePath, pngBytes);
+      const item: ExternalSessionTranscriptRawMessageV1 = {
+        id: 'discarded-media-item',
+        localId: 'discarded-media-item',
+        createdAtMs: 123,
+        raw: {
+          meta: {
+            happier: {
+              kind: 'session_media.v1',
+              payload: { media: [externalSessionMediaItem(sourcePath)] },
+            },
+          },
+        },
+      };
+      const linked = createLinkedSession(workingDirectory);
+      const credentials = {
+        token: 'token-1',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3]) },
+      };
+      const staged = await stageExternalSessionHistoricalImportItem({
+        item,
+        workingDirectory,
+        sourceReadRoots: [],
+      });
+      await writeFile(sourcePath, Buffer.from('source mutated after capture'));
+      await expect(prepareExternalSessionHistoricalImportItem({
+        item: staged.item,
+        linked,
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory: null,
+        sourceReadRoots: [],
+      })).rejects.toMatchObject({
+        category: 'media',
+      });
+
+      const firstCleanupPaths: string[] = [];
+      const first = await prepareExternalSessionHistoricalImportItem({
+        item: staged.item,
+        linked,
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+        cleanupWorkspaceMediaPaths: firstCleanupPaths,
+      });
+      const secondCleanupPaths: string[] = [];
+      const second = await prepareExternalSessionHistoricalImportItem({
+        item: staged.item,
+        linked,
+        credentials,
+        sessionId: 'sess-managed',
+        workingDirectory,
+        sourceReadRoots: [],
+        cleanupWorkspaceMediaPaths: secondCleanupPaths,
+      });
+      expect(second).toEqual(first);
+      expect(secondCleanupPaths).toEqual(firstCleanupPaths);
+      await expect(readFile(resolve(workingDirectory, firstCleanupPaths[0]!)))
+        .resolves.toEqual(pngBytes);
+
+      await cleanupExternalSessionHistoricalImportStagedMedia({
+        staged,
+        agentId: linked.agentId,
+        remoteSessionId: linked.remoteSessionId,
+        sessionId: 'sess-managed',
+      });
+      await expect(stat(resolve(workingDirectory, firstCleanupPaths[0]!)))
+        .rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
   });
 
-  it('adopts provider-owned direct-session media into managed session storage before committing metadata', async () => {
+  it('adopts provider-owned external-session media into managed session storage before historical import', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-workspace-'));
 
     try {
@@ -95,46 +186,27 @@ describe('importExternalSessionTranscript', () => {
         id: 'direct-item-1',
         localId: 'direct-item-1',
         createdAtMs: 123,
+        messageRole: 'event',
         raw: {
           role: 'agent',
           content: { type: 'output', data: { type: 'message', message: 'generated image' } },
           meta: {
             happier: {
               kind: 'session_media.v1',
-              payload: { media: [directMediaItem(providerImagePath)] },
+              payload: { media: [externalSessionMediaItem(providerImagePath)] },
             },
           },
         },
       };
 
-      pageTranscriptMock.mockResolvedValueOnce({
-        items: [item],
-        nextCursor: null,
-        hasMore: false,
-      });
-      commitSessionStoredMessageMock.mockResolvedValue({
-        didWrite: true,
-        messageId: 'msg-1',
-        seq: 1,
-        createdAt: 123,
-      });
-
-      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
-      await expect(importExternalSessionTranscript({
-        linked: createLinkedSession(workingDirectory),
-        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+      const { prepared, payload } = await preparePlainHistoricalImportItem({
+        item,
+        workingDirectory,
         sessionId: 'sess_direct_import',
-      })).resolves.toEqual({ importedCount: 1 });
-
-      expect(commitSessionStoredMessageMock).toHaveBeenCalledTimes(1);
-      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
-        content: { t: 'plain'; v: Record<string, unknown> };
-      };
-      const committedMeta = committed.content.v.meta as Record<string, unknown>;
-      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
-      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
-      const committedMedia = committedPayload.media as Array<Record<string, unknown>>;
-      const adoptedPath = String(committedMedia[0]?.path ?? '');
+      });
+      expect(prepared.messageRole).toBe('event');
+      const media = payload.media as Array<Record<string, unknown>>;
+      const adoptedPath = String(media[0]?.path ?? '');
 
       expect(adoptedPath).toMatch(/^\.happier\/uploads\/generated\/sess_direct_import\/direct-import:v1:opencode:/);
       expect(adoptedPath).not.toBe(providerImagePath);
@@ -163,45 +235,84 @@ describe('importExternalSessionTranscript', () => {
           meta: {
             happier: {
               kind: 'session_media.v1',
-              payload: { media: [directMediaItem('images/out.png')] },
+              payload: { media: [externalSessionMediaItem('images/out.png')] },
             },
           },
         },
       };
 
-      pageTranscriptMock.mockResolvedValueOnce({
-        items: [item],
-        nextCursor: null,
-        hasMore: false,
-      });
-      commitSessionStoredMessageMock.mockResolvedValue({
-        didWrite: true,
-        messageId: 'msg-1',
-        seq: 1,
-        createdAt: 124,
-      });
-
-      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
-      await expect(importExternalSessionTranscript({
-        linked: createLinkedSession(workingDirectory),
-        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+      const { payload } = await preparePlainHistoricalImportItem({
+        item,
+        workingDirectory,
         sessionId: 'sess_direct_import_relative',
-      })).resolves.toEqual({ importedCount: 1 });
-
-      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
-        content: { t: 'plain'; v: Record<string, unknown> };
-      };
-      const committedMeta = committed.content.v.meta as Record<string, unknown>;
-      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
-      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
-      const committedMedia = committedPayload.media as Array<Record<string, unknown>>;
-      const adoptedPath = String(committedMedia[0]?.path ?? '');
+      });
+      const media = payload.media as Array<Record<string, unknown>>;
+      const adoptedPath = String(media[0]?.path ?? '');
 
       expect(adoptedPath).toMatch(/^\.happier\/uploads\/generated\/sess_direct_import_relative\/direct-import:v1:opencode:/);
       expect(adoptedPath).not.toBe('images/out.png');
       await expect(readFile(resolve(workingDirectory, adoptedPath))).resolves.toEqual(pngBytes);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('uses the persisted takeover working directory when linked session metadata has no usable path', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-takeover-workspace-'));
+    const outsideDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-takeover-outside-'));
+
+    try {
+      await mkdir(join(workingDirectory, '.git', 'info'), { recursive: true });
+      await mkdir(join(workingDirectory, 'images'), { recursive: true });
+      await writeFile(join(workingDirectory, 'images', 'inside.png'), pngBytes);
+      const outsidePath = join(outsideDirectory, 'outside.png');
+      await writeFile(outsidePath, pngBytes);
+
+      const item: ExternalSessionTranscriptRawMessageV1 = {
+        id: 'direct-item-takeover-working-directory',
+        localId: 'direct-item-takeover-working-directory',
+        createdAtMs: 124,
+        raw: {
+          role: 'agent',
+          content: { type: 'output', data: { type: 'message', message: 'takeover media' } },
+          meta: {
+            happier: {
+              kind: 'session_media.v1',
+              payload: {
+                media: [
+                  externalSessionMediaItem('images/inside.png'),
+                  externalSessionMediaItem(outsidePath),
+                ],
+              },
+            },
+          },
+        },
+      };
+
+      const linked = {
+        ...createLinkedSession(workingDirectory),
+        metadata: {},
+        sessionPath: null,
+      };
+      const { payload } = await preparePlainHistoricalImportItem({
+        item,
+        linked,
+        workingDirectory,
+        sessionId: 'sess_direct_import_takeover_working_directory',
+      });
+      const media = payload.media as Array<Record<string, unknown>>;
+      const adoptedPath = String(media[0]?.path ?? '');
+
+      expect(media).toHaveLength(1);
+      expect(adoptedPath).toMatch(/^\.happier\/uploads\/generated\/sess_direct_import_takeover_working_directory\/direct-import:v1:opencode:/);
+      await expect(readFile(resolve(workingDirectory, adoptedPath))).resolves.toEqual(pngBytes);
+      expect(payload.failures).toMatchObject([
+        { index: 1, code: expect.stringMatching(/^unauthorized_/) },
+      ]);
+      await expect(readFile(outsidePath)).resolves.toEqual(pngBytes);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+      await rm(outsideDirectory, { recursive: true, force: true });
     }
   });
 
@@ -213,7 +324,6 @@ describe('importExternalSessionTranscript', () => {
       await mkdir(join(workingDirectory, '.git', 'info'), { recursive: true });
       const providerImagePath = join(providerMediaRoot, 'provider-owned.png');
       await writeFile(providerImagePath, pngBytes);
-      resolveTranscriptMediaReadRootsMock.mockResolvedValueOnce([providerMediaRoot]);
 
       const item: ExternalSessionTranscriptRawMessageV1 = {
         id: 'direct-item-provider-root',
@@ -225,43 +335,24 @@ describe('importExternalSessionTranscript', () => {
           meta: {
             happier: {
               kind: 'session_media.v1',
-              payload: { media: [directMediaItem(providerImagePath)] },
+              payload: { media: [externalSessionMediaItem(providerImagePath)] },
             },
           },
         },
       };
 
-      pageTranscriptMock.mockResolvedValueOnce({
-        items: [item],
-        nextCursor: null,
-        hasMore: false,
-      });
-      commitSessionStoredMessageMock.mockResolvedValue({
-        didWrite: true,
-        messageId: 'msg-1',
-        seq: 1,
-        createdAt: 124,
-      });
-
-      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
-      await expect(importExternalSessionTranscript({
-        linked: createLinkedSession(workingDirectory),
-        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+      const { payload } = await preparePlainHistoricalImportItem({
+        item,
+        workingDirectory,
         sessionId: 'sess_direct_import_provider_root',
-      })).resolves.toEqual({ importedCount: 1 });
-
-      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
-        content: { t: 'plain'; v: Record<string, unknown> };
-      };
-      const committedMeta = committed.content.v.meta as Record<string, unknown>;
-      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
-      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
-      const committedMedia = committedPayload.media as Array<Record<string, unknown>>;
-      const adoptedPath = String(committedMedia[0]?.path ?? '');
+        sourceReadRoots: [providerMediaRoot],
+      });
+      const media = payload.media as Array<Record<string, unknown>>;
+      const adoptedPath = String(media[0]?.path ?? '');
 
       expect(adoptedPath).toMatch(/^\.happier\/uploads\/generated\/sess_direct_import_provider_root\/direct-import:v1:opencode:/);
       expect(adoptedPath).not.toBe(providerImagePath);
-      expect(committedPayload.failures).toBeUndefined();
+      expect(payload.failures).toBeUndefined();
       await expect(readFile(resolve(workingDirectory, adoptedPath))).resolves.toEqual(pngBytes);
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
@@ -269,7 +360,7 @@ describe('importExternalSessionTranscript', () => {
     }
   });
 
-  it('does not adopt direct-session media from absolute or file URI paths outside the working directory', async () => {
+  it('does not adopt external-session media from absolute or file URI paths outside the working directory', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-secure-workspace-'));
     const outsideDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-outside-'));
 
@@ -292,8 +383,8 @@ describe('importExternalSessionTranscript', () => {
               kind: 'session_media.v1',
               payload: {
                 media: [
-                  directMediaItem(outsideAbsolutePath),
-                  directMediaItem(pathToFileURL(outsideFileUriPath).href),
+                  externalSessionMediaItem(outsideAbsolutePath),
+                  externalSessionMediaItem(pathToFileURL(outsideFileUriPath).href),
                 ],
               },
             },
@@ -301,35 +392,14 @@ describe('importExternalSessionTranscript', () => {
         },
       };
 
-      pageTranscriptMock.mockResolvedValueOnce({
-        items: [item],
-        nextCursor: null,
-        hasMore: false,
-      });
-      commitSessionStoredMessageMock.mockResolvedValue({
-        didWrite: true,
-        messageId: 'msg-1',
-        seq: 1,
-        createdAt: 125,
-      });
-
-      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
-      await expect(importExternalSessionTranscript({
-        linked: createLinkedSession(workingDirectory),
-        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+      const { payload } = await preparePlainHistoricalImportItem({
+        item,
+        workingDirectory,
         sessionId: 'sess_direct_import_secure',
-      })).resolves.toEqual({ importedCount: 1 });
+      });
 
-      expect(commitSessionStoredMessageMock).toHaveBeenCalledTimes(1);
-      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
-        content: { t: 'plain'; v: Record<string, unknown> };
-      };
-      const committedMeta = committed.content.v.meta as Record<string, unknown>;
-      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
-      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
-
-      expect(committedPayload.media).toEqual([]);
-      expect(committedPayload.failures).toMatchObject([
+      expect(payload.media).toEqual([]);
+      expect(payload.failures).toMatchObject([
         {
           index: 0,
           code: expect.stringMatching(/^unauthorized_/),
@@ -356,7 +426,7 @@ describe('importExternalSessionTranscript', () => {
     }
   });
 
-  it('preserves unavailable placeholders with safe names for malformed direct-session media entries', async () => {
+  it('preserves unavailable placeholders with safe names for malformed external-session media entries', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-malformed-workspace-'));
 
     try {
@@ -387,7 +457,7 @@ describe('importExternalSessionTranscript', () => {
                   },
                   null,
                   {
-                    ...directMediaItem('https://example.test/provider.png'),
+                    ...externalSessionMediaItem('https://example.test/provider.png'),
                     name: 'provider/<unsafe>:name?.png',
                   },
                 ],
@@ -397,34 +467,14 @@ describe('importExternalSessionTranscript', () => {
         },
       };
 
-      pageTranscriptMock.mockResolvedValueOnce({
-        items: [item],
-        nextCursor: null,
-        hasMore: false,
-      });
-      commitSessionStoredMessageMock.mockResolvedValue({
-        didWrite: true,
-        messageId: 'msg-1',
-        seq: 1,
-        createdAt: 126,
-      });
-
-      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
-      await expect(importExternalSessionTranscript({
-        linked: createLinkedSession(workingDirectory),
-        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+      const { payload } = await preparePlainHistoricalImportItem({
+        item,
+        workingDirectory,
         sessionId: 'sess_direct_import_malformed',
-      })).resolves.toEqual({ importedCount: 1 });
+      });
 
-      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
-        content: { t: 'plain'; v: Record<string, unknown> };
-      };
-      const committedMeta = committed.content.v.meta as Record<string, unknown>;
-      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
-      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
-
-      expect(committedPayload.media).toEqual([]);
-      expect(committedPayload.failures).toMatchObject([
+      expect(payload.media).toEqual([]);
+      expect(payload.failures).toMatchObject([
         {
           index: 0,
           code: 'missing_source_path',
@@ -467,7 +517,7 @@ describe('importExternalSessionTranscript', () => {
               payload: {
                 media: [
                   {
-                    ...directMediaItem(canonicalPath),
+                    ...externalSessionMediaItem(canonicalPath),
                     id: 'safe-canonical',
                     name: 'safe.png',
                     sha256: 'a'.repeat(64),
@@ -481,7 +531,7 @@ describe('importExternalSessionTranscript', () => {
                     displayLabel: 'must not be retained',
                   },
                   {
-                    ...directMediaItem('.happier/uploads/generated/sess_existing/msg-1/unsafe.png'),
+                    ...externalSessionMediaItem('.happier/uploads/generated/sess_existing/msg-1/unsafe.png'),
                     id: 'unsafe-canonical',
                     name: 'data:image/png;base64,AAAA',
                     data: 'inline-bytes',
@@ -494,13 +544,13 @@ describe('importExternalSessionTranscript', () => {
                     },
                   },
                   {
-                    ...directMediaItem('.happier/uploads/generated/sess_existing/msg-1/mismatch.png'),
+                    ...externalSessionMediaItem('.happier/uploads/generated/sess_existing/msg-1/mismatch.png'),
                     id: 'mismatched-category',
                     category: 'attachment',
                     name: 'mismatch.png',
                   },
                   {
-                    ...directMediaItem('.happier/uploads/generated/sess_existing/msg-1/unsafe-identity.png'),
+                    ...externalSessionMediaItem('.happier/uploads/generated/sess_existing/msg-1/unsafe-identity.png'),
                     id: 'aW1hZ2VCeXRlcw==',
                     name: 'https://example.test/provider-name.png',
                     origin: {
@@ -532,35 +582,15 @@ describe('importExternalSessionTranscript', () => {
         },
       };
 
-      pageTranscriptMock.mockResolvedValueOnce({
-        items: [item],
-        nextCursor: null,
-        hasMore: false,
-      });
-      commitSessionStoredMessageMock.mockResolvedValue({
-        didWrite: true,
-        messageId: 'msg-1',
-        seq: 1,
-        createdAt: 127,
-      });
-
-      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
-      await expect(importExternalSessionTranscript({
-        linked: createLinkedSession(workingDirectory),
-        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+      const { payload } = await preparePlainHistoricalImportItem({
+        item,
+        workingDirectory,
         sessionId: 'sess_direct_import_canonical',
-      })).resolves.toEqual({ importedCount: 1 });
+      });
+      const media = payload.media as Array<Record<string, unknown>>;
+      const failures = payload.failures as Array<Record<string, unknown>>;
 
-      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
-        content: { t: 'plain'; v: Record<string, unknown> };
-      };
-      const committedMeta = committed.content.v.meta as Record<string, unknown>;
-      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
-      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
-      const committedMedia = committedPayload.media as Array<Record<string, unknown>>;
-      const committedFailures = committedPayload.failures as Array<Record<string, unknown>>;
-
-      expect(committedMedia).toEqual([
+      expect(media).toEqual([
         {
           id: 'safe-canonical',
           role: 'output',
@@ -574,10 +604,10 @@ describe('importExternalSessionTranscript', () => {
           origin: { source: 'provider-generated', agentId: 'opencode' },
         },
       ]);
-      expect(JSON.stringify(committedPayload)).not.toContain('displayLabel');
-      expect(JSON.stringify(committedPayload)).not.toContain('inline-bytes');
-      expect(JSON.stringify(committedPayload)).not.toContain('file:///tmp/secret.png');
-      expect(committedFailures).toMatchObject([
+      expect(JSON.stringify(payload)).not.toContain('displayLabel');
+      expect(JSON.stringify(payload)).not.toContain('inline-bytes');
+      expect(JSON.stringify(payload)).not.toContain('file:///tmp/secret.png');
+      expect(failures).toMatchObject([
         {
           index: 1,
           code: 'invalid_media_record',
@@ -607,7 +637,7 @@ describe('importExternalSessionTranscript', () => {
     }
   });
 
-  it('sanitizes failure-only direct-session media envelopes', async () => {
+  it('sanitizes failure-only external-session media envelopes', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-import-failure-only-workspace-'));
 
     try {
@@ -648,34 +678,14 @@ describe('importExternalSessionTranscript', () => {
         },
       };
 
-      pageTranscriptMock.mockResolvedValueOnce({
-        items: [item],
-        nextCursor: null,
-        hasMore: false,
-      });
-      commitSessionStoredMessageMock.mockResolvedValue({
-        didWrite: true,
-        messageId: 'msg-1',
-        seq: 1,
-        createdAt: 128,
-      });
-
-      const { importExternalSessionTranscript } = importExternalSessionTranscriptModule;
-      await expect(importExternalSessionTranscript({
-        linked: createLinkedSession(workingDirectory),
-        credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3]) } },
+      const { payload } = await preparePlainHistoricalImportItem({
+        item,
+        workingDirectory,
         sessionId: 'sess_direct_import_failure_only',
-      })).resolves.toEqual({ importedCount: 1 });
+      });
 
-      const committed = commitSessionStoredMessageMock.mock.calls[0]?.[0] as {
-        content: { t: 'plain'; v: Record<string, unknown> };
-      };
-      const committedMeta = committed.content.v.meta as Record<string, unknown>;
-      const committedEnvelope = committedMeta.happier as Record<string, unknown>;
-      const committedPayload = committedEnvelope.payload as Record<string, unknown>;
-
-      expect(committedPayload.media).toEqual([]);
-      expect(committedPayload.failures).toEqual([
+      expect(payload.media).toEqual([]);
+      expect(payload.failures).toEqual([
         {
           index: 0,
           code: 'agent_unavailable',
@@ -687,8 +697,8 @@ describe('importExternalSessionTranscript', () => {
           origin: { source: 'provider-generated', providerFileId: 'safe-provider-file' },
         },
       ]);
-      expect(JSON.stringify(committedPayload)).not.toContain('file:///tmp/secret.png');
-      expect(JSON.stringify(committedPayload)).not.toContain('file:///tmp/agent');
+      expect(JSON.stringify(payload)).not.toContain('file:///tmp/secret.png');
+      expect(JSON.stringify(payload)).not.toContain('file:///tmp/agent');
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }

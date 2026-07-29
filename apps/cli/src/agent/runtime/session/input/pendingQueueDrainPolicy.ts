@@ -9,7 +9,6 @@ import {
   type SessionPendingQueueDeliveryTiming,
   type SessionPendingQueueDrainMode,
 } from '@happier-dev/protocol';
-import type { PendingMaterializationActiveTurnPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
 
 export const PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE = 1;
 export const PENDING_QUEUE_DRAIN_ALL_MAX_POP_PER_WAKE = 25;
@@ -29,14 +28,6 @@ export function resolveSessionPendingQueueMaxPopPerWake(
     : PENDING_QUEUE_ONE_AT_A_TIME_MAX_POP_PER_WAKE;
 }
 
-export function resolveSessionPendingActiveTurnDeliveryPolicy(
-  settings: Readonly<Record<string, unknown>> | null | undefined,
-): PendingMaterializationActiveTurnPolicy | undefined {
-  return settings?.sessionBusySteerSendPolicy === 'server_pending'
-    ? undefined
-    : 'allow_live_delivery';
-}
-
 export function resolveSessionPendingQueueDeliveryTiming(
   settings: Partial<Pick<AccountSettings, 'sessionPendingQueueDeliveryTiming'>> | null | undefined,
 ): SessionPendingQueueDeliveryTiming {
@@ -48,16 +39,13 @@ export type PendingQueueRuntimeActivityProjection = SessionRuntimeActivityProjec
 
 export function runtimeIdleForPendingDrain(
   activity: PendingQueueRuntimeActivityProjection | null | undefined,
-  nowMs: unknown,
+  _nowMs: unknown,
 ): boolean {
-  // The local runner owns wake scheduling, not an infinite activity lease: malformed or elapsed
-  // projection expiry must still fail open so queued delivery cannot be stranded permanently.
-  return isSessionRuntimeActivityProjectionIdleForPendingDrain(activity, nowMs, true);
+  return isSessionRuntimeActivityProjectionIdleForPendingDrain(activity);
 }
 
 export type PendingQueueRuntimeActivityDeferral = Readonly<{
   defer: boolean;
-  runtimeActivityExpiresAt: number | null;
 }>;
 
 export function resolvePendingQueueRuntimeActivityDeferral(params: Readonly<{
@@ -65,22 +53,9 @@ export function resolvePendingQueueRuntimeActivityDeferral(params: Readonly<{
   activity: PendingQueueRuntimeActivityProjection | null | undefined;
   nowMs: unknown;
 }>): PendingQueueRuntimeActivityDeferral {
-  const nowMs = typeof params.nowMs === 'number' && Number.isInteger(params.nowMs) && params.nowMs >= 0
-    ? params.nowMs
-    : null;
-  const expiresAt = typeof params.activity?.runtimeActivityExpiresAt === 'number'
-    && Number.isInteger(params.activity.runtimeActivityExpiresAt)
-    && params.activity.runtimeActivityExpiresAt >= 0
-    ? params.activity.runtimeActivityExpiresAt
-    : null;
   const defer = resolveSessionPendingQueueDeliveryTiming(params.settings) === 'after_runtime_idle'
     && !runtimeIdleForPendingDrain(params.activity, params.nowMs);
-  return {
-    defer,
-    runtimeActivityExpiresAt: defer && nowMs !== null && expiresAt !== null && expiresAt > nowMs
-      ? expiresAt
-      : null,
-  };
+  return { defer };
 }
 
 export function shouldDeferPendingQueueDrainForRuntimeActivity(params: Readonly<{

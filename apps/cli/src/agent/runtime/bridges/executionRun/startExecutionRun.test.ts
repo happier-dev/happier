@@ -18,8 +18,8 @@ type StartExecutionRunArgs = Parameters<typeof startExecutionRun>[0];
 
 const contributionRegistryMock = vi.hoisted(() => ({
   getResolvedContributionRegistry: vi.fn(() => ({
-    agentRuntimeDefinitionsById: new Map(),
-  })),
+    agentDefinitionsById: new Map(),
+      })),
 }));
 
 vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
@@ -68,8 +68,8 @@ function createProvisioningRuntime(): TestExecutionRunHostRuntime {
 describe('startExecutionRun', () => {
   beforeEach(() => {
     contributionRegistryMock.getResolvedContributionRegistry.mockReturnValue({
-      agentRuntimeDefinitionsById: new Map(),
-    });
+      agentDefinitionsById: new Map(),
+          });
   });
 
   it('rejects unsupported review SCM scope before materializing a SubAgentRun tool call', async () => {
@@ -297,7 +297,7 @@ describe('startExecutionRun', () => {
     }
   });
 
-  it('passes backend structured output recovery capabilities into bounded execution start params', async () => {
+  it('uses the applied per-start contribution snapshot for structured output recovery instead of the stale manifest singleton', async () => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
     const voiceAgentManager = new VoiceAgentManager({
@@ -307,15 +307,7 @@ describe('startExecutionRun', () => {
     });
 
     contributionRegistryMock.getResolvedContributionRegistry.mockReturnValue({
-      agentRuntimeDefinitionsById: new Map([[TEST_BACKEND_ID, {
-        capabilities: {
-          executionRun: {
-            structuredOutputRecovery: {
-              plan: 'loose-sections',
-            },
-          },
-        },
-      }]]),
+      agentDefinitionsById: new Map(),
     });
 
     try {
@@ -334,6 +326,9 @@ describe('startExecutionRun', () => {
         parentProvider: TEST_BACKEND_ID,
         sendAcp: () => {},
         streamedTranscriptSession: null,
+        contributions: {
+          agentDefinitionsById: new Map(),
+        },
         createRuntime: () => createProvisioningRuntime(),
         getNowMs: () => 1_700_000_000_000,
         budgetRegistry: null,
@@ -351,9 +346,64 @@ describe('startExecutionRun', () => {
       await vi.waitFor(() => {
         expect(executeBoundedRun).toHaveBeenCalledTimes(1);
       });
-      expect(executeBoundedRun.mock.calls[0]?.[0].params.structuredOutputRecovery).toEqual({
-        plan: 'loose-sections',
+      expect(executeBoundedRun.mock.calls[0]?.[0].params).not.toHaveProperty('structuredOutputRecovery');
+    } finally {
+      await voiceAgentManager.dispose();
+    }
+  });
+
+  it('does not retain structured output recovery after the applied generation disables or uninstalls the Agent', async () => {
+    const runs = new Map<string, ExecutionRunState>();
+    const controllers = new Map<string, ExecutionRunController>();
+    const voiceAgentManager = new VoiceAgentManager({
+      createRuntime: () => {
+        throw new Error('voice runtime should not be used by plan runs');
+      },
+    });
+
+    contributionRegistryMock.getResolvedContributionRegistry.mockReturnValue({
+      agentDefinitionsById: new Map(),
+    });
+
+    try {
+      const executeBoundedRun = vi.fn<StartExecutionRunArgs['executeBoundedRun']>(async () => {});
+      await startExecutionRun({
+        params: {
+          sessionId: 'session_1',
+          intent: 'plan',
+          backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID },
+          instructions: 'Plan the implementation.',
+          permissionMode: 'read_only',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+        parentProvider: TEST_BACKEND_ID,
+        sendAcp: () => {},
+        streamedTranscriptSession: null,
+        contributions: {
+          agentDefinitionsById: new Map(),
+                  },
+        createRuntime: () => createProvisioningRuntime(),
+        getNowMs: () => 1_700_000_000_000,
+        budgetRegistry: null,
+        runs,
+        controllers,
+        enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {},
+        finishRun: () => {},
+        executeBoundedRun,
+        send: async () => ({ ok: true }),
+        voiceAgentManager,
+        getDepthByCallId: () => null,
       });
+
+      await vi.waitFor(() => {
+        expect(executeBoundedRun).toHaveBeenCalledTimes(1);
+      });
+      expect(executeBoundedRun.mock.calls[0]?.[0].params).not.toHaveProperty(
+        'structuredOutputRecovery',
+      );
     } finally {
       await voiceAgentManager.dispose();
     }
@@ -613,6 +663,81 @@ describe('startExecutionRun', () => {
       } else {
         process.env.HAPPIER_EXECUTION_RUN_BACKEND_PROVISION_TIMEOUT_MS = previousTimeout;
       }
+      await voiceAgentManager.dispose();
+    }
+  });
+
+  it('does not let a rejected bounded controller occurrence dispose or delete its successor', async () => {
+    let rejectProvision!: (error: Error) => void;
+    const provisioning = new Promise<never>((_resolve, reject) => {
+      rejectProvision = reject;
+    });
+    const oldRuntime = createTestExecutionRunHostRuntime({
+      onProvisionSession: async () => await provisioning,
+      onSendPrompt: async () => {},
+      onWaitForTurnCompletion: async () => {},
+    });
+    const successorDispose = vi.fn();
+    const successorRuntime = createTestExecutionRunHostRuntime({
+      onSendPrompt: async () => {},
+      onWaitForTurnCompletion: async () => {},
+      onDispose: successorDispose,
+    });
+    const controllers = new Map<string, ExecutionRunController>();
+    const runs = new Map<string, ExecutionRunState>();
+    const finishRun = vi.fn();
+    const voiceAgentManager = new VoiceAgentManager({
+      createRuntime: () => {
+        throw new Error('voice runtime should not be used by bounded delegate runs');
+      },
+    });
+
+    try {
+      const started = await startExecutionRun({
+        params: {
+          sessionId: 'session_1',
+          intent: 'delegate',
+          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          permissionMode: 'workspace_write',
+          retentionPolicy: 'ephemeral',
+          runClass: 'bounded',
+          ioMode: 'request_response',
+        },
+        parentProvider: TEST_BACKEND_ID,
+        sendAcp: () => {},
+        streamedTranscriptSession: null,
+        createRuntime: () => oldRuntime,
+        getNowMs: () => 1_700_000_000_000,
+        budgetRegistry: null,
+        runs,
+        controllers,
+        enqueueMarkerWrite: async () => {},
+        writeActivityMarker: async () => {},
+        finishRun,
+        executeBoundedRun: async () => {},
+        send: async () => ({ ok: true }),
+        voiceAgentManager,
+        getDepthByCallId: () => null,
+      });
+      const oldController = controllers.get(started.runId);
+      if (!oldController || oldController.kind !== 'backend') {
+        throw new Error('expected old backend controller occurrence');
+      }
+      const successorResolveTerminal = vi.fn();
+      const successor = {
+        ...oldController,
+        backend: successorRuntime,
+        resolveTerminal: successorResolveTerminal,
+      } satisfies typeof oldController;
+      controllers.set(started.runId, successor);
+
+      rejectProvision(new Error('old provisioning rejected'));
+      await vi.waitFor(() => expect(finishRun).toHaveBeenCalledOnce());
+
+      expect(controllers.get(started.runId)).toBe(successor);
+      expect(successorDispose).not.toHaveBeenCalled();
+      expect(successorResolveTerminal).not.toHaveBeenCalled();
+    } finally {
       await voiceAgentManager.dispose();
     }
   });

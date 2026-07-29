@@ -7,11 +7,13 @@ import { resolveAppendSystemPromptQueueKeyValue } from '@/agent/runtime/permissi
 import { readPermissionModeUpdatedAtFromMetadataSnapshot } from '@/agent/runtime/permissions/modeStateSync';
 import {
   combinePermissionModeQueuedPrompts,
+  type PermissionModeQueuedPromptMode,
   type PermissionModeQueuedPrompt,
 } from '@/agent/runtime/permissions/queuedPrompt';
 
 export function createPermissionModeQueueState(opts: {
   session: ApiSessionClient;
+  agentTargetKey: string;
   initialPermissionMode: PermissionMode;
   inFlightSteer?: InFlightSteerController | null;
   /**
@@ -22,13 +24,7 @@ export function createPermissionModeQueueState(opts: {
    */
   resolvePermissionModeQueueKey?: (permissionMode: PermissionMode) => string;
 }): {
-  messageQueue: MessageQueue2<{
-    permissionMode: PermissionMode;
-    appendSystemPrompt?: string | null;
-    model?: string;
-    suppressUserEcho?: boolean;
-    providerPromptAlreadyResolved?: boolean;
-  }, PermissionModeQueuedPrompt>;
+  messageQueue: MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>;
   rebindSession: (session: ApiSessionClient) => void;
   getCurrentPermissionMode: () => PermissionMode | undefined;
   setCurrentPermissionMode: (mode: PermissionMode | undefined) => void;
@@ -36,18 +32,12 @@ export function createPermissionModeQueueState(opts: {
   setCurrentPermissionModeUpdatedAt: (updatedAt: number) => void;
 } {
   const resolveQueueKey = opts.resolvePermissionModeQueueKey;
-  const messageQueue = new MessageQueue2<{
-    permissionMode: PermissionMode;
-    appendSystemPrompt?: string | null;
-    model?: string;
-    suppressUserEcho?: boolean;
-    providerPromptAlreadyResolved?: boolean;
-  }, PermissionModeQueuedPrompt>(
+  const messageQueue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
     (mode) =>
       hashObject({
         permissionMode: resolveQueueKey ? resolveQueueKey(mode.permissionMode) : mode.permissionMode,
         appendSystemPrompt: resolveAppendSystemPromptQueueKeyValue(mode),
-        model: typeof mode.model === 'string' ? mode.model : null,
+        modelSelection: mode.modelSelection ?? null,
         suppressUserEcho: mode.suppressUserEcho === true,
         providerPromptAlreadyResolved: mode.providerPromptAlreadyResolved === true,
       }),
@@ -63,6 +53,7 @@ export function createPermissionModeQueueState(opts: {
 
   const binding = registerPermissionModeMessageQueueBinding({
     session: opts.session,
+    agentTargetKey: opts.agentTargetKey,
     queue: messageQueue,
     getCurrentPermissionMode: () => currentPermissionMode,
     setCurrentPermissionMode: (mode) => {

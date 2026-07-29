@@ -14,11 +14,23 @@ import {
 } from '@/daemon/ownership/resolveDaemonTakeoverDecision';
 import { resolveDaemonOwnershipConflictExitCode } from '@/daemon/ownership/resolveDaemonOwnershipConflictExitCode';
 
-export async function ensureDaemonStartupOwnership(params: Readonly<{
-  takeoverRequested: boolean;
-  startupSource: DaemonState['startupSource'];
-  runtimeId: string;
-}>): Promise<Readonly<{ action: 'continue' }> | Readonly<{ action: 'exit' }>> {
+function exitAfterFlushingOwnershipDiagnostic(
+  exitCode: number,
+  exitProcess: (code: number) => never,
+): Readonly<{ action: 'exit' }> {
+  logger.flushSync();
+  exitProcess(exitCode);
+  return { action: 'exit' };
+}
+
+export async function ensureDaemonStartupOwnership(
+  params: Readonly<{
+    takeoverRequested: boolean;
+    startupSource: DaemonState['startupSource'];
+    runtimeId: string;
+  }>,
+  exitProcess: (code: number) => never = (code) => process.exit(code),
+): Promise<Readonly<{ action: 'continue' }> | Readonly<{ action: 'exit' }>> {
   const startupSource = params.startupSource ?? 'unknown';
   const ownership = await evaluateCurrentDaemonOwner();
   const takeoverDecision = resolveDaemonTakeoverDecision({
@@ -35,8 +47,7 @@ export async function ensureDaemonStartupOwnership(params: Readonly<{
       title: error.title,
       lines: error.lines,
     });
-    process.exit(resolveDaemonOwnershipConflictExitCode(startupSource));
-    return { action: 'exit' };
+    return exitAfterFlushingOwnershipDiagnostic(resolveDaemonOwnershipConflictExitCode(startupSource), exitProcess);
   }
 
   const startupServiceConflict = await evaluateDaemonStartupServiceConflict({
@@ -55,8 +66,7 @@ export async function ensureDaemonStartupOwnership(params: Readonly<{
     });
     process.stderr.write(`${message.title}\n`);
     process.stderr.write(`${message.lines.map((line) => `  ${line.trimStart()}`).join('\n')}\n`);
-    process.exit(1);
-    return { action: 'exit' };
+    return exitAfterFlushingOwnershipDiagnostic(1, exitProcess);
   }
 
   if (takeoverDecision.kind === 'manual-owner-takeover' || takeoverDecision.kind === 'manual-owner-replace') {

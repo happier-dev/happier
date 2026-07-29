@@ -127,6 +127,34 @@ describe('marketplace source registry store', () => {
     });
   });
 
+  it('binds, rebinds, and unbinds a persisted source without storing credential material', async () => {
+    const happyHomeDir = mkdtempSync(join(tmpdir(), 'happier-marketplace-registry-'));
+    tempDirs.push(happyHomeDir);
+    envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_MARKETPLACE_CURATED_SOURCE_URL']);
+    envScope.patch({
+      HAPPIER_HOME_DIR: happyHomeDir,
+      HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: 'https://marketplace.example.test/catalog.json',
+    });
+    const store = createMarketplaceSourceRegistryStore({ happyHomeDir });
+
+    await expect(store.upsertSource({
+      sourceUrl: 'https://marketplace.example.test/catalog.json',
+      registryProfileId: 'registry_one',
+    })).resolves.toMatchObject({ registryProfileId: 'registry_one' });
+    await expect(store.upsertSource({
+      sourceUrl: 'https://marketplace.example.test/catalog.json',
+      registryProfileId: 'registry_two',
+    })).resolves.toMatchObject({ registryProfileId: 'registry_two' });
+    await expect(store.upsertSource({
+      sourceUrl: 'https://marketplace.example.test/catalog.json',
+      registryProfileId: null,
+    })).resolves.not.toHaveProperty('registryProfileId');
+
+    const raw = readFileSync(join(happyHomeDir, 'plugins', 'plugins', 'state', 'marketplace-source-registry.v1.json'), 'utf8');
+    expect(raw).not.toContain('Bearer');
+    expect(raw).not.toContain('token');
+  });
+
   it('serializes concurrent transactional updates so marketplace source changes are not lost', async () => {
     const happyHomeDir = mkdtempSync(join(tmpdir(), 'happier-marketplace-registry-'));
     tempDirs.push(happyHomeDir);
@@ -174,5 +202,33 @@ describe('marketplace source registry store', () => {
         expect.objectContaining({ sourceUrl: 'https://marketplace.example.test/beta.json' }),
       ]),
     }));
+  });
+
+  it('rejects introducing or promoting a user-controlled source as curated', async () => {
+    const happyHomeDir = mkdtempSync(join(tmpdir(), 'happier-marketplace-registry-'));
+    tempDirs.push(happyHomeDir);
+    envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_MARKETPLACE_CURATED_SOURCE_URL']);
+    envScope.patch({
+      HAPPIER_HOME_DIR: happyHomeDir,
+      HAPPIER_MARKETPLACE_CURATED_SOURCE_URL: 'https://marketplace.example.test/catalog.json',
+    });
+    const store = createMarketplaceSourceRegistryStore({ happyHomeDir });
+
+    await expect(store.upsertSource({
+      sourceUrl: 'https://evil.example.test/catalog.json',
+      title: 'Not curated',
+      origin: 'curated',
+    })).rejects.toThrow(/curated authority/u);
+
+    const userSource = await store.upsertSource({
+      sourceUrl: 'https://user.example.test/catalog.json',
+      title: 'User source',
+      origin: 'user',
+    });
+    const current = await store.read();
+    await expect(store.write({
+      ...current,
+      sources: current.sources.map((source) => source.id === userSource.id ? { ...source, origin: 'curated' as const } : source),
+    })).rejects.toThrow(/curated authority/u);
   });
 });

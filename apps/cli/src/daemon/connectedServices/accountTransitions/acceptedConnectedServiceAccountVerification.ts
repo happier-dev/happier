@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceCredentialRevisionV1, ConnectedServiceId } from '@happier-dev/protocol';
 
 import type { ConnectedServiceAccountTransitionVerificationResult } from '../runtimeAuth/types';
 
@@ -10,6 +10,9 @@ export type AcceptedConnectedServiceAccountVerification = Readonly<{
   proofStrength?: 'exact' | 'weak' | 'diagnostic';
   source?: string;
   reason?: string;
+  credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+  credentialFingerprint?: string | null;
+  generationApplication?: Extract<ConnectedServiceAccountTransitionVerificationResult, { status: 'verified' }>['generationApplication'];
 }>;
 
 export type AcceptedConnectedServiceAccountVerificationByServiceId =
@@ -56,6 +59,15 @@ export function toAcceptedConnectedServiceAccountVerification(
       : {}),
     ...(preserveExactProofDetails ? { proofStrength: result.proofStrength } : {}),
     ...(preserveExactProofDetails && result.source ? { source: result.source } : {}),
+    ...(preserveExactProofDetails && result.credentialRevision !== undefined
+      ? { credentialRevision: result.credentialRevision }
+      : {}),
+    ...(preserveExactProofDetails && result.credentialFingerprint !== undefined
+      ? { credentialFingerprint: result.credentialFingerprint }
+      : {}),
+    ...(preserveExactProofDetails && result.generationApplication !== undefined
+      ? { generationApplication: result.generationApplication }
+      : {}),
     ...(result.reason ? { reason: result.reason } : {}),
   };
 }

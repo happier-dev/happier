@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { readProcessRunState } from './processRunState';
+import { isPidAliveBySignal, readProcessRunState } from './processRunState';
 
 const spawnedPids: number[] = [];
 
@@ -65,5 +65,19 @@ describe('readProcessRunState (win32 semantics)', () => {
   it('maps alive to servable and not-alive to dead', async () => {
     await expect(readProcessRunState(1234, { platform: 'win32', isPidAlive: () => true })).resolves.toBe('servable');
     await expect(readProcessRunState(1234, { platform: 'win32', isPidAlive: () => false })).resolves.toBe('dead');
+  });
+});
+
+describe('isPidAliveBySignal', () => {
+  it('treats EPERM as present rather than dead', () => {
+    const error = Object.assign(new Error('permission denied'), { code: 'EPERM' });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw error;
+    });
+    try {
+      expect(isPidAliveBySignal(1)).toBe(true);
+    } finally {
+      kill.mockRestore();
+    }
   });
 });

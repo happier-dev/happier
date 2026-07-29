@@ -17,15 +17,15 @@ describe('normalizeLocalServiceScan', () => {
                 },
             ],
             processes: new Map([
-                [400, { pid: 400, ppid: 300, command: 'node ./node_modules/vite/bin/vite.js --token raw-secret', cwd: '/repo/app' }],
-                [300, { pid: 300, ppid: 1, command: 'npm run dev -- --token raw-secret', cwd: '/repo/app' }],
+                [400, { pid: 400, ppid: 300, processStartTimeMs: 1_717_171_717_000, command: 'node ./node_modules/vite/bin/vite.js --token raw-secret', cwd: '/repo/app' }],
+                [300, { pid: 300, ppid: 1, processStartTimeMs: 1_717_171_710_000, command: 'npm run dev -- --token raw-secret', cwd: '/repo/app' }],
             ]),
             workspaces: [{ id: 'workspace-a', path: '/repo' }],
         });
 
         expect(snapshot.entries).toHaveLength(1);
         expect(snapshot.entries[0]).toMatchObject({
-            id: 'machine-a:tcp:loopback:127.0.0.1:5173:pid-400',
+            id: 'machine-a:tcp:loopback:127.0.0.1:5173:pid-400:start-1717171717000',
             source: 'detected',
             state: 'listening',
             confidence: 'high',
@@ -34,6 +34,32 @@ describe('normalizeLocalServiceScan', () => {
             classification: { kind: 'vite', displayName: 'Vite' },
         });
         expect(snapshot.entries[0]?.provenance?.process?.command).not.toContain('raw-secret');
+        expect(snapshot.entries[0]?.provenance?.process?.processStartTimeMs).toBe(1_717_171_717_000);
+    });
+
+    it('treats PID reuse with a different process start-time as a fresh row', () => {
+        const first = normalizeLocalServiceScan({
+            machineId: 'machine-a',
+            now: 1_000,
+            previous: null,
+            listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 400 }],
+            processes: new Map([[400, { pid: 400, ppid: 1, processStartTimeMs: 1_000, command: 'npm run dev', cwd: '/repo' }]]),
+            workspaces: [],
+        });
+
+        const restarted = normalizeLocalServiceScan({
+            machineId: 'machine-a',
+            now: 2_000,
+            previous: first,
+            listeners: [{ address: '127.0.0.1', port: 5173, protocol: 'tcp', pid: 400 }],
+            processes: new Map([[400, { pid: 400, ppid: 1, processStartTimeMs: 2_000, command: 'npm run dev', cwd: '/repo' }]]),
+            workspaces: [],
+        });
+
+        const listening = restarted.entries.find((entry) => entry.state === 'listening');
+        expect(listening?.id).toBe('machine-a:tcp:loopback:127.0.0.1:5173:pid-400:start-2000');
+        expect(listening?.detectedAt).toBe(2_000);
+        expect(first.entries[0]?.id).not.toBe(listening?.id);
     });
 
     it('marks missing previous entries stale during refresh instead of dropping them', () => {

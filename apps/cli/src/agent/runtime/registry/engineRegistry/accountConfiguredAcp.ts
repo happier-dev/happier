@@ -1,9 +1,4 @@
 import { readCredentials } from '@/persistence';
-import type {
-  ResolvedAgentContribution,
-  ResolvedAgentRuntimeContribution,
-  ResolvedContributionRegistry,
-} from '@/plugins/projection/registry/types';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { readAcpCatalogSettingsFromAccountSettings } from '@/agent/acp/catalog/readAcpCatalogSettingsFromAccountSettings';
 import { materializeConfiguredAcpEnvironment } from '@/agent/acp/catalog/configured/materializeEnvironment';
@@ -12,39 +7,26 @@ import {
   createAcpRuntimeCoreFromDefinition,
   normalizeConfiguredAcpDefinition,
 } from '@/agent/acp/runtime/definition';
+import {
+  createEmptyBackendExecutionSurfaces,
+  type EngineAdapterResolution,
+  type EngineResolutionAgent,
+  type EngineResolutionBackend,
+} from '../engineRegistryTypes';
 
-const ACCOUNT_CONFIGURED_ACP_SOURCE = Object.freeze({ kind: 'bundled' as const });
+const ACCOUNT_CONFIGURED_ACP_SOURCE = Object.freeze({ kind: 'configured' as const });
 
-function createAccountConfiguredAcpAgentContribution(
-  agentRuntime: ResolvedAgentRuntimeContribution,
-): ResolvedAgentContribution {
-  return Object.freeze({
-    id: agentRuntime.agentId,
-    provenance: 'first_party',
-    source: ACCOUNT_CONFIGURED_ACP_SOURCE,
-    definition: Object.freeze({
-      kindVersion: 1,
-      id: agentRuntime.agentId,
-      ownedBackendIds: Object.freeze([agentRuntime.id]),
-    }),
-    runtimeSpec: null,
-  });
-}
-
-export async function ingestAccountConfiguredAcpBackends(
-  contributions: ResolvedContributionRegistry,
-): Promise<ResolvedContributionRegistry> {
+export async function resolveAccountConfiguredAcpBackend(
+  backendId: string,
+): Promise<EngineAdapterResolution | null> {
   const settings = getActiveAccountSettingsSnapshot()?.settings;
   if (!settings) {
-    return contributions;
+    return null;
   }
 
   const catalogSettings = readAcpCatalogSettingsFromAccountSettings(settings);
-  const missingBackendIds = catalogSettings.backends
-    .map((backend) => backend.id)
-    .filter((backendId) => !contributions.agentRuntimeDefinitionsById.has(backendId));
-  if (missingBackendIds.length === 0) {
-    return contributions;
+  if (!catalogSettings.backends.some((backend) => backend.id === backendId)) {
+    return null;
   }
 
   const credentials = await readCredentials();
@@ -52,54 +34,68 @@ export async function ingestAccountConfiguredAcpBackends(
     throw new Error('Account-configured ACP backends require credentials to resolve launch environment');
   }
 
-  const agentRuntimeDefinitionsById = new Map(contributions.agentRuntimeDefinitionsById);
-  const agentDefinitionsById = new Map(contributions.agentDefinitionsById);
-  const agentRuntimes: ResolvedAgentRuntimeContribution[] = [...contributions.agentRuntimes];
-  const agents: ResolvedAgentContribution[] = [...contributions.agents];
-
-  for (const backendId of missingBackendIds) {
-    const configuredBackend = resolveConfiguredAcpBackendFromAccountSettings(settings, backendId);
-    if (!configuredBackend || agentRuntimeDefinitionsById.has(configuredBackend.backendId)) {
-      continue;
-    }
-    const launchEnv = materializeConfiguredAcpEnvironment({
-      backend: configuredBackend,
-      accountSettings: settings,
-      credentials,
-    });
-    const definition = normalizeConfiguredAcpDefinition({
-      backend: configuredBackend,
-      launchEnv,
-    });
-    const agentId = `acp:${configuredBackend.backendId}`;
-    const agentRuntimeContribution: ResolvedAgentRuntimeContribution = Object.freeze({
+  const configuredBackend = resolveConfiguredAcpBackendFromAccountSettings(settings, backendId);
+  if (!configuredBackend) {
+    return null;
+  }
+  const launchEnv = materializeConfiguredAcpEnvironment({
+    backend: configuredBackend,
+    accountSettings: settings,
+    credentials,
+  });
+  const definition = normalizeConfiguredAcpDefinition({
+    backend: configuredBackend,
+    launchEnv,
+  });
+  const agentId = `acp:${configuredBackend.backendId}`;
+  const backend: EngineResolutionBackend = Object.freeze({
+    id: configuredBackend.backendId,
+    agentId,
+    provenance: 'configured',
+    source: ACCOUNT_CONFIGURED_ACP_SOURCE,
+    definition: Object.freeze({
+      kindVersion: 1,
       id: configuredBackend.backendId,
       agentId,
-      provenance: 'first_party',
-      source: ACCOUNT_CONFIGURED_ACP_SOURCE,
-      definition: Object.freeze({
-        kindVersion: 1,
-        id: configuredBackend.backendId,
-        agentId,
-      }),
-      runtimeKind: 'acp',
-      surfaceHandlers: Object.freeze([]),
-      getRuntimeCore: async () => () => createAcpRuntimeCoreFromDefinition(definition),
-    });
-    const agentContribution = createAccountConfiguredAcpAgentContribution(agentRuntimeContribution);
-    agentRuntimeDefinitionsById.set(agentRuntimeContribution.id, agentRuntimeContribution);
-    agentRuntimes.push(agentRuntimeContribution);
-    if (!agentDefinitionsById.has(agentContribution.id)) {
-      agentDefinitionsById.set(agentContribution.id, agentContribution);
-      agents.push(agentContribution);
-    }
-  }
+    }),
+    runtimeKind: 'acp',
+    surfaceHandlers: Object.freeze([]),
+  });
+  const agent: EngineResolutionAgent = Object.freeze({
+    id: agentId,
+    provenance: 'configured',
+    source: ACCOUNT_CONFIGURED_ACP_SOURCE,
+    definition: Object.freeze({
+      kindVersion: 1,
+      id: agentId,
+      ownedBackendIds: Object.freeze([configuredBackend.backendId]),
+    }),
+    runtimeSpec: null,
+  });
+  const runtimeOwner = Object.freeze({
+    backendId: configuredBackend.backendId,
+    selected: Object.freeze({
+      kind: 'host_configured' as const,
+      ownerId: configuredBackend.backendId,
+      provenance: 'configured' as const,
+    }),
+    candidates: Object.freeze([Object.freeze({
+      kind: 'host_configured' as const,
+      ownerId: configuredBackend.backendId,
+      provenance: 'configured' as const,
+    })]),
+  });
 
   return Object.freeze({
-    ...contributions,
-    agents: Object.freeze(agents),
-    agentRuntimes: Object.freeze(agentRuntimes),
-    agentDefinitionsById,
-    agentRuntimeDefinitionsById,
+    backendId: configuredBackend.backendId,
+    agentId,
+    provenance: 'configured',
+    selectedSource: 'configured',
+    runtimeOwner,
+    backend,
+    agent,
+    engineAdapter: createAcpRuntimeCoreFromDefinition(definition),
+    executionSurfaces: createEmptyBackendExecutionSurfaces(),
+    diagnostics: Object.freeze([]),
   });
 }

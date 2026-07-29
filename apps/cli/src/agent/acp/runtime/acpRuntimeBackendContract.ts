@@ -1,8 +1,8 @@
 import type {
     AgentMessageHandler,
     SessionId,
-    StartSessionResult,
-} from '@/agent/core';
+} from '@/agent/core/AgentMessage';
+import type { StartSessionResult } from '@/agent/core/AgentTypes';
 
 export type AcpRuntimeTurnCompletedStopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests';
 
@@ -13,12 +13,23 @@ export type AcpRuntimeTurnOutcome =
     | { kind: 'failed'; error: Error }
     | { kind: 'timed_out'; capMs: number };
 
+export type AcpPromptSubmissionResult =
+    | { kind: 'accepted_by_prompt_response' }
+    | { kind: 'accepted_by_correlated_provider_effect' }
+    | { kind: 'rejected_before_effect'; error: Error }
+    | { kind: 'effect_may_have_occurred'; error: Error };
+
 export interface CatalogAcpBackend {
-    startSession(initialPrompt?: string): Promise<StartSessionResult>;
+    startSession(): Promise<StartSessionResult>;
     loadSession?(sessionId: SessionId): Promise<StartSessionResult>;
     loadSessionWithReplayCapture?(sessionId: SessionId): Promise<StartSessionResult & { replay: unknown[] }>;
     forkSession?(params: Readonly<{ sessionId: SessionId; cwd?: string }>): Promise<StartSessionResult>;
-    sendPrompt(sessionId: SessionId, prompt: string): Promise<void>;
+    requestExtension?<Response = unknown, Params = unknown>(
+        method: string,
+        params?: Params,
+        options?: Readonly<{ signal?: AbortSignal; timeoutMs?: number }>,
+    ): Promise<Response>;
+    sendPrompt(sessionId: SessionId, prompt: string): Promise<AcpPromptSubmissionResult>;
     compactContext?(sessionId: SessionId, command: string): Promise<void>;
     sendSteerPrompt?(sessionId: SessionId, prompt: string): Promise<void>;
     cancel(sessionId: SessionId): Promise<void>;

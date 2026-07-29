@@ -5,6 +5,22 @@ function asRecord(value: unknown): UnknownRecord | null {
     return value as UnknownRecord;
 }
 
+function decodeUtf8ByteArray(value: unknown): string | null {
+    if (!Array.isArray(value)) return null;
+    if (!value.every((byte) => Number.isInteger(byte) && byte >= 0 && byte <= 255)) return null;
+    return new TextDecoder().decode(Uint8Array.from(value));
+}
+
+function normalizeTextualProcessFields(record: UnknownRecord): UnknownRecord {
+    const normalized: UnknownRecord = { ...record };
+    for (const field of ['stdout', 'stderr'] as const) {
+        if (typeof normalized[field] === 'string') continue;
+        const decoded = decodeUtf8ByteArray(normalized[field]);
+        if (decoded !== null) normalized[field] = decoded;
+    }
+    return normalized;
+}
+
 function parseGrepLine(line: string): { filePath: string; line?: number; excerpt?: string } | null {
     const trimmed = line.trim();
     if (trimmed.length === 0) return null;
@@ -179,8 +195,34 @@ export function normalizeCodeSearchResult(rawOutput: unknown): UnknownRecord {
     const record = asRecord(rawOutput);
     if (!record) return { value: rawOutput };
 
+    // A provider error is authoritative even when it also includes stale aggregate counters.
+    // Do not reinterpret that payload as a successful aggregate-only search result.
+    const error = record.error;
+    const hasError = record.isError === true
+        || error === true
+        || (typeof error === 'string' && error.trim().length > 0)
+        || (error !== null && typeof error === 'object')
+        || record.status === 'error'
+        || record.status === 'failed';
+    if (hasError) {
+        const normalized: UnknownRecord = { ...record, matches: Array.isArray(record.matches) ? record.matches : [] };
+        delete normalized.matchDetailsUnavailable;
+        delete normalized.detailsUnavailable;
+        return normalized;
+    }
+
     if (Array.isArray((record as any).matches)) {
-        return { matches: (record as any).matches };
+        const matches = (record as any).matches as unknown[];
+        const aggregateCount = [record.totalMatches, record.totalFiles]
+            .find((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
+        const normalized: UnknownRecord = { ...record, matches };
+        delete normalized.matchDetailsUnavailable;
+        if (matches.length === 0 && aggregateCount !== undefined) {
+            normalized.detailsUnavailable = true;
+        } else {
+            delete normalized.detailsUnavailable;
+        }
+        return normalized;
     }
 
     const metadata = asRecord((record as any).metadata);
@@ -212,6 +254,12 @@ export function normalizeCodeSearchResult(rawOutput: unknown): UnknownRecord {
         if (lines.length > 0) return { ...record, matches: lines.map((l) => ({ excerpt: l })) };
     }
 
+    const aggregateCount = [record.totalMatches, record.totalFiles]
+        .find((value) => typeof value === 'number' && Number.isFinite(value) && value > 0);
+    if (aggregateCount !== undefined) {
+        return { ...record, detailsUnavailable: true };
+    }
+
     // Always guarantee a stable schema for the UI/tests, even for error-only outputs.
     return { ...record, matches: [] };
 }
@@ -241,7 +289,8 @@ export function normalizeGrepResult(rawOutput: unknown): UnknownRecord {
         return {};
     }
 
-    const record = asRecord(rawOutput);
+    const rawRecord = asRecord(rawOutput);
+    const record = rawRecord ? normalizeTextualProcessFields(rawRecord) : null;
     if (record) {
         const contentText = coerceTextFromContentBlocks((record as any).content);
         if (contentText && contentText.trim().length > 0) {

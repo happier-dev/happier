@@ -1,9 +1,12 @@
-import { readFileSync } from 'node:fs';
 import { lstat, mkdir, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
-import { isReservedHappierPluginId, PluginIdSchema } from '@happier-dev/protocol';
+import {
+  createPluginManifestJsonSchemaV2,
+  isReservedHappierPluginId,
+  PluginIdSchema,
+} from '@happier-dev/protocol';
+import { valid as isValidSemver } from 'semver';
 
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
@@ -12,12 +15,8 @@ export type PluginScaffoldDiagnostic = Readonly<{
   message: string;
 }>;
 
-// DEC-6: reactNative is the flagship/recommended plugin-UI scaffold mode (also
-// targets web via RN-web federation eventually — a separate spike lane owns that
-// design). embeddedWeb is intentionally NOT scaffoldable: its disposition is
-// undecided (likely retired — redundant with RN-on-web + hostedWeb-on-native),
-// pending another lane's analysis. Do not add an embeddedWeb branch here until
-// that disposition lands.
+// React Native is the flagship/recommended plugin-UI scaffold mode and also
+// targets web through React Native Web.
 export type PluginScaffoldUiMode = 'hostedWeb' | 'reactNative';
 
 export type ScaffoldLocalPluginResult =
@@ -28,6 +27,7 @@ export type ScaffoldLocalPluginResult =
       version: string;
       targetDir: string;
       manifestPath: string;
+      manifestSchemaPath: string;
       packageJsonPath: string;
       sourceEntryPath: string;
       uiEntryPath?: string;
@@ -39,8 +39,29 @@ export type ScaffoldLocalPluginResult =
 
 const DEFAULT_PLUGIN_VERSION = '0.1.0';
 const DEFAULT_HAPPIER_ENGINE_RANGE = '^0.2.0';
-const DEFAULT_PLUGIN_SDK_RANGE = '^0.2.0';
-const LOCAL_PLUGIN_SDK_PACKAGE_DIR = fileURLToPath(new URL('../../../../../packages/plugin-sdk/', import.meta.url));
+const DEFAULT_PLUGIN_SDK_VERSION = '0.1.0';
+const NATIVE_TYPESCRIPT_DEPENDENCY_SPEC = 'npm:typescript@7.0.2';
+const DEFAULT_NODE_TYPES_VERSION = '^22.15.3';
+
+// React Native (web-federation) UI scaffold version matrix. These are the
+// versions the SDK's `defineReactNativeWebViteBuildPreset` + host runtime are
+// validated against (mirrors `packages/plugins/inspector`'s own build target).
+// Pinning `@vitejs/plugin-react@^5` + `vite@^7` avoids the ERESOLVE trap where
+// `@vitejs/plugin-react@6` peer-requires `vite@8` while the SDK preset targets
+// `vite@7`. Keep this table in sync with the docs version matrix
+// (apps/docs/content/docs/plugins/ui/react-native.mdx).
+const DEFAULT_REACT_VERSION = '19.2.0';
+const DEFAULT_REACT_TYPES_VERSION = '19.2.0';
+const DEFAULT_REACT_NATIVE_VERSION = '0.83.4';
+const DEFAULT_REACT_NATIVE_WEB_RANGE = '^0.21.2';
+const DEFAULT_VITE_RANGE = '^7.0.0';
+const DEFAULT_VITE_REACT_PLUGIN_RANGE = '^5.0.0';
+const DEFAULT_VITE_RECORDED_VERSION = '7.0.0';
+const DEFAULT_HOST_UI_API_VERSION = '1.0.0';
+const REACT_NATIVE_WEB_CONTRIBUTION_ID = 'main-native';
+const REACT_NATIVE_WEB_SOURCE_ENTRY = 'ui/renderSurface.tsx';
+const REACT_NATIVE_WEB_BUILD_WORK_ROOT =
+  `dist/ui/react-native-web/${REACT_NATIVE_WEB_CONTRIBUTION_ID}`;
 
 function createDiagnostic(
   code: PluginScaffoldDiagnostic['code'],
@@ -78,19 +99,12 @@ function sanitizePackageName(pluginId: string): string {
   return `happier-plugin-${suffix || 'plugin'}`;
 }
 
-function resolveDefaultPluginSdkDependencySpec(): string {
-  try {
-    const packageJson = JSON.parse(
-      readFileSync(join(LOCAL_PLUGIN_SDK_PACKAGE_DIR, 'package.json'), 'utf8'),
-    ) as { name?: unknown };
-    if (packageJson.name === '@happier-dev/plugin-sdk') {
-      return `file:${LOCAL_PLUGIN_SDK_PACKAGE_DIR}`;
-    }
-  } catch {
-    // Packaged public releases may not run from a monorepo checkout; those can
-    // use the semver package once publication is approved.
+function resolvePluginSdkDependencySpec(value: string | undefined): string {
+  const version = value?.trim() || DEFAULT_PLUGIN_SDK_VERSION;
+  if (isValidSemver(version) !== version) {
+    throw new Error('The plugin SDK dependency must be an exact semver version');
   }
-  return DEFAULT_PLUGIN_SDK_RANGE;
+  return version;
 }
 
 function createManifest(params: Readonly<{
@@ -98,159 +112,40 @@ function createManifest(params: Readonly<{
   displayName: string;
   ui?: PluginScaffoldUiMode;
 }>): unknown {
-  const actionId = `${params.pluginId}.hello`;
-  const toolId = `${params.pluginId}.notes.add`;
-  const settingFieldId = `${params.pluginId}.enabled`;
   const contributes: Record<string, unknown> = {
-    actions: [
-      {
-        id: actionId,
-        title: 'Say hello',
-        description: 'Returns a small structured response from this plugin.',
-        scopes: ['global'],
-        surfaces: ['agent', 'cli', 'mcp'],
-        placement: 'commandPalette',
-        dangerLevel: 'safe',
-        handler: { target: 'plugin', registrationId: actionId },
+    actions: [{
+      id: 'save-note',
+      title: 'Save note',
+      description: 'Returns the supplied note from one minimal plugin action.',
+      scopes: ['global'],
+      surfaces: ['agent', 'cli', 'mcp'],
+      placement: 'commandPalette',
+      dangerLevel: 'safe',
+      inputSchema: {
+        type: 'object', additionalProperties: false,
+        properties: { note: { type: 'string' } }, required: ['note'],
       },
-    ],
-    tools: [
-      {
-        id: toolId,
-        name: `${params.pluginId.replaceAll('.', '_').replaceAll('-', '_')}_notes_add`,
-        title: 'Add note',
-        description: 'Stores a note in plugin-local storage and returns it.',
-        surfaces: ['agent', 'mcp'],
-        inputSchema: {
-          type: 'object',
-          additionalProperties: false,
-          properties: {
-            note: { type: 'string' },
-          },
-          required: ['note'],
-        },
-        handler: { target: 'plugin', registrationId: toolId },
+      resultSchema: {
+        type: 'object', additionalProperties: false,
+        properties: { note: { type: 'string' } }, required: ['note'],
       },
-    ],
-    hooks: [
-      {
-        id: 'session.spawned',
-        category: 'lifecycle',
-        scope: 'session',
-        executionKind: 'observe',
-        handler: { target: 'plugin', exportName: 'handleSessionSpawned' },
-      },
-    ],
-    settings: [
-      {
-        id: `${params.pluginId}.settings`,
-        fields: [
-          {
-            id: settingFieldId,
-            kind: 'settings.field',
-            version: '1',
-            valueSchema: { type: 'boolean' },
-            control: 'switch',
-            displayKey: 'Enabled',
-            descriptionKey: 'Controls whether template actions include the enabled flag.',
-            defaultBooleanValue: true,
-          },
-        ],
-      },
-    ],
-    agents: [
-      {
-        id: params.pluginId,
-        runtime: { kind: 'custom' },
-        capabilities: {
-          executionRun: { supported: false },
-          session: {
-            media: {
-              acceptsImageInput: { supported: false },
-              emitsSessionMedia: { supported: false },
-              nativeImageGeneration: { supported: false },
-            },
-          },
-        },
-        surfaceHandlers: [],
-      },
-    ],
+    }],
   };
 
   if (params.ui === 'hostedWeb') {
-    contributes.hostedWeb = [
-      {
-        id: 'main-web',
-        service: { kind: 'staticAssets', assetRootId: 'hosted-web/main-web' },
-        entry: { routeMode: 'hostOrigin', path: '/' },
-        bridge: { allowedMessages: ['ready'] },
-        sandbox: {
-          scripts: true,
-          sameOrigin: false,
-          popups: false,
-          topNavigation: false,
-          mixedContent: false,
-        },
-        security: {
-          allowedNavigationOrigins: [],
-          allowedCallbackOrigins: [],
-          allowedConnectOrigins: [],
-          csp: {
-            scriptSrc: 'selfOnly',
-            styleSrc: 'selfOnly',
-            imgSrc: 'selfOnly',
-            fontSrc: 'selfOnly',
-            connectSrc: 'selfOnly',
-            allowDataUrls: false,
-            allowBlobUrls: false,
-            allowInlineStyles: false,
-            allowEval: false,
-          },
-          sourceMaps: 'disabled',
-          mixedContent: 'deny',
-        },
-        fallback: { kind: 'unavailable' },
-        display: {
-          titleKey: `${params.pluginId}.mainWeb.title`,
-          descriptionKey: `${params.pluginId}.mainWeb.description`,
-          developerFallback: `${params.displayName} Web`,
-          iconToken: 'preview',
-          tone: 'info',
-        },
-      },
-    ];
+    contributes.ui = {
+      views: [{ id: 'main', placement: 'app.sidePanel', renderer: 'main-web', title: params.displayName }],
+      renderers: [{ id: 'main-web', kind: 'hostedWeb', source: { kind: 'artifact', artifact: 'main-web' }, requiredHostMethods: ['context'] }],
+      translations: [],
+    };
   }
 
   if (params.ui === 'reactNative') {
-    // Scaffolded as a local development hot-reload declaration (no built artifact
-    // yet — `bundle.channel: 'development'` + `policy.allowDevHotReload: true`,
-    // the same carve-out `defineReactNativeRepackBuildPreset` authors reach for).
-    // Swap in `assetPath`/`integrity` (via `defineReactNativeBundleBuildArtifact`)
-    // once you have a real Re.Pack build to ship.
-    contributes.reactNativeBundles = [
-      {
-        id: 'main-native',
-        bundle: { platform: 'ios', channel: 'development' },
-        entry: { modulePath: './renderSurface', exportName: 'renderSurface' },
-        compatibility: {
-          hostUiApiVersion: '1.0.0',
-          reactVersion: '19.0.0',
-          reactNativeVersion: '0.79.0',
-          supportedPlatforms: ['ios'],
-          supportedChannels: ['development'],
-        },
-        hostApi: { minVersion: '1.0.0' },
-        fallback: { kind: 'unavailable' },
-        display: {
-          titleKey: `${params.pluginId}.mainNative.title`,
-          descriptionKey: `${params.pluginId}.mainNative.description`,
-          developerFallback: `${params.displayName} Native`,
-          iconToken: 'preview',
-          tone: 'info',
-        },
-        policy: { allowDevHotReload: true },
-      },
-    ];
+    contributes.ui = {
+      views: [{ id: 'main', placement: 'app.sidePanel', renderer: 'main-native', title: params.displayName }],
+      renderers: [{ id: 'main-native', kind: 'reactNative', artifact: REACT_NATIVE_WEB_CONTRIBUTION_ID, requiredHostMethods: ['context'] }],
+      translations: [],
+    };
   }
 
   return {
@@ -262,16 +157,13 @@ function createManifest(params: Readonly<{
     engines: {
       happier: DEFAULT_HAPPIER_ENGINE_RANGE,
     },
-    uses: ['actions', 'tools', 'hooks', 'settings', 'agents'],
+    runtime: {
+      apiVersion: 1,
+    },
     entrypoints: {
-      main: './dist/index.js',
-      dev: './src/index.ts',
+      daemon: './dist/index.js',
+      development: './src/index.ts',
     },
-    permissions: {
-      required: [],
-      optional: [],
-    },
-    activationEvents: ['startup'],
     contributes,
   };
 }
@@ -279,24 +171,50 @@ function createManifest(params: Readonly<{
 function createPackageJson(params: Readonly<{
   packageName: string;
   displayName: string;
+  pluginSdkVersion: string;
+  ui?: PluginScaffoldUiMode;
 }>): unknown {
+  const scripts: Record<string, string> = {
+    build: 'happier plugins author build .',
+    typecheck: 'happier plugins author typecheck .',
+    test: 'happier plugins test .',
+    'pack:plugin': 'happier plugins pack .',
+  };
+  const dependencies: Record<string, string> = {
+    '@happier-dev/plugin-sdk': params.pluginSdkVersion,
+  };
+  const devDependencies: Record<string, string> = {
+    '@types/node': DEFAULT_NODE_TYPES_VERSION,
+    '@typescript/native': NATIVE_TYPESCRIPT_DEPENDENCY_SPEC,
+  };
+
+  if (params.ui === 'reactNative') {
+    // The React Native surface renders on web through the SDK's
+    // react-native-web Vite federation build; `build:ui` drives the
+    // `happier-plugin-build-ui` bin (shipped by @happier-dev/plugin-sdk) that
+    // reads `pluginUiBuild.mjs` + `vite.config.mjs` and emits the digested
+    // `dist/happier-plugin-ui` artifact tree.
+    scripts['build:ui'] = 'happier-plugin-build-ui --project-root .';
+    dependencies.react = DEFAULT_REACT_VERSION;
+    dependencies['react-dom'] = DEFAULT_REACT_VERSION;
+    dependencies['react-native'] = DEFAULT_REACT_NATIVE_VERSION;
+    dependencies['react-native-web'] = DEFAULT_REACT_NATIVE_WEB_RANGE;
+    devDependencies.vite = DEFAULT_VITE_RANGE;
+    devDependencies['@vitejs/plugin-react'] = DEFAULT_VITE_REACT_PLUGIN_RANGE;
+    devDependencies['@types/react'] = DEFAULT_REACT_TYPES_VERSION;
+  }
+
   return {
     name: params.packageName,
     version: DEFAULT_PLUGIN_VERSION,
-    private: true,
     type: 'module',
     description: `${params.displayName} Happier plugin.`,
-    scripts: {
-      build: 'tsc -p tsconfig.json',
-      typecheck: 'tsc --noEmit -p tsconfig.json',
-      'pack:plugin': 'happier plugins pack .',
-    },
-    dependencies: {
-      '@happier-dev/plugin-sdk': resolveDefaultPluginSdkDependencySpec(),
-    },
-    devDependencies: {
-      typescript: '^5.9.2',
-    },
+    happier: { manifest: '.happier-plugin/plugin.json' },
+    keywords: ['happier-plugin'],
+    files: ['.happier-plugin', 'dist'],
+    scripts,
+    dependencies,
+    devDependencies,
   };
 }
 
@@ -307,6 +225,7 @@ function createTypeScriptConfig(): string {
       module: 'ESNext',
       moduleResolution: 'Bundler',
       lib: ['ES2022', 'DOM'],
+      types: ['node'],
       rootDir: 'src',
       outDir: 'dist',
       declaration: true,
@@ -314,8 +233,9 @@ function createTypeScriptConfig(): string {
       sourceMap: true,
       strict: true,
       skipLibCheck: true,
+      jsx: 'react',
     },
-    include: ['src/**/*.ts'],
+    include: ['src/**/*.ts', 'src/**/*.tsx'],
     exclude: ['node_modules', 'dist', 'src/**/*.test.ts'],
   }, null, 2)}\n`;
 }
@@ -323,127 +243,42 @@ function createTypeScriptConfig(): string {
 function createPluginSource(params: Readonly<{
   pluginId: string;
 }>): string {
-  const actionId = `${params.pluginId}.hello`;
-  const toolId = `${params.pluginId}.notes.add`;
+  void params;
   return [
-    "import type { AgentRuntime, PluginApi, PluginContext } from '@happier-dev/plugin-sdk';",
+    "import type { PluginApi } from '@happier-dev/plugin-sdk';",
+    "import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';",
     '',
-    `const ACTION_ID = ${JSON.stringify(actionId)};`,
-    `const TOOL_ID = ${JSON.stringify(toolId)};`,
+    'export const saveNote: ActionHandler = async (input) => {',
+    "  const note = typeof input === 'object' && input !== null && 'note' in input",
+    "    && typeof input.note === 'string' ? input.note : '';",
+    '  return { note };',
+    '};',
     '',
-    'export function activate(host: PluginApi): void {',
-    '  // Bind the handler for the manifest-declared action id. Metadata such as',
-    '  // title, surfaces, placement, and dangerLevel stays in .happier-plugin/plugin.json.',
-    '  host.registerAction({',
-    '    id: ACTION_ID,',
-    '    handler: async () => ({',
-    '      ok: true,',
-    "      data: { message: 'hello from scaffolded plugin' },",
-    '    }),',
-    '  });',
-    '',
-    '  // Tool handlers receive request.context with plugin-scoped storage, settings,',
-    '  // logger, and events. Use it for plugin-owned state instead of host internals.',
-    '  host.registerTool({',
-    '    id: TOOL_ID,',
-    '    handler: async (request) => {',
-    '      const services = request.context;',
-    "      const note = String((request.input as { note?: unknown }).note ?? '');",
-    "      await services.storage.local.set('latestNote', note);",
-    '      return {',
-    '        ok: true,',
-    "        data: { note: await services.storage.local.get<string>('latestNote') },",
-    '      };',
-    '    },',
-    '  });',
-    '',
-    '  // The manifest declares which hook id calls this handler; registration binds',
-    '  // the exported implementation to the runtime.',
-    '  host.registerHook({',
-    "    hookId: 'session.spawned',",
-    '    handler: handleSessionSpawned,',
-    '  });',
-    '',
-    '  // Agent runtimes receive PluginContext so they can use host services',
-    '  // without importing Happier internals.',
-    '  host.registerAgentRuntime({',
-    `    agentId: ${JSON.stringify(params.pluginId)},`,
-    '    create: createTemplateRuntime,',
-    '  });',
-    '',
-    '  // Dispose handlers run on reload and shutdown; clean up timers, watchers,',
-    '  // sockets, or other resources here.',
-    '  host.onDispose(() => undefined);',
-    '}',
-    '',
-    'export async function handleSessionSpawned(_payload: unknown, context: { logger: PluginContext["logger"] }): Promise<void> {',
-    "  context.logger.debug('scaffolded plugin observed session spawn');",
-    '}',
-    '',
-    'async function createTemplateRuntime(ctx: PluginContext): Promise<AgentRuntime> {',
-    '  // Use scoped plugin storage for durable local state instead of writing',
-    '  // arbitrary files from the runtime.',
-    "  const current = await ctx.storage.local.get<number>('templateRuntimeCreates');",
-    "  await ctx.storage.local.set('templateRuntimeCreates', (current ?? 0) + 1);",
-    '  return {};',
+    'export function activate(api: PluginApi): void {',
+    "  api.actions.register('save-note', saveNote);",
     '}',
     '',
   ].join('\n');
 }
 
-function createCompiledPluginSource(params: Readonly<{
-  pluginId: string;
-}>): string {
-  const actionId = `${params.pluginId}.hello`;
-  const toolId = `${params.pluginId}.notes.add`;
+function createPluginTestSource(): string {
   return [
-    `const ACTION_ID = ${JSON.stringify(actionId)};`,
-    `const TOOL_ID = ${JSON.stringify(toolId)};`,
+    "import assert from 'node:assert/strict';",
+    "import { readFile } from 'node:fs/promises';",
+    "import test from 'node:test';",
     '',
-    'export function activate(host) {',
-    '  host.registerAction({',
-    '    id: ACTION_ID,',
-    '    handler: async () => ({',
-    '      ok: true,',
-    "      data: { message: 'hello from scaffolded plugin' },",
-    '    }),',
-    '  });',
+    "import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';",
     '',
-    '  host.registerTool({',
-    '    id: TOOL_ID,',
-    '    handler: async (request) => {',
-    '      const services = request.context;',
-    "      const note = String(request.input?.note ?? '');",
-    "      await services.storage.local.set('latestNote', note);",
-    '      return {',
-    '        ok: true,',
-    "        data: { note: await services.storage.local.get('latestNote') },",
-    '      };',
-    '    },',
-    '  });',
+    "const manifest = JSON.parse(await readFile(new URL('../.happier-plugin/plugin.json', import.meta.url), 'utf8'));",
+    "const module = await import('../dist/index.js');",
     '',
-    '  host.registerHook({',
-    "    hookId: 'session.spawned',",
-    '    handler: handleSessionSpawned,',
-    '  });',
+    "test('save-note returns the supplied note', async (t) => {",
+    '  const plugin = await createPluginTestkit({ manifest, module });',
+    '  t.after(async () => plugin.dispose());',
     '',
-    '  host.registerAgentRuntime({',
-    `    agentId: ${JSON.stringify(params.pluginId)},`,
-    '    create: createTemplateRuntime,',
-    '  });',
-    '',
-    '  host.onDispose(() => undefined);',
-    '}',
-    '',
-    'export async function handleSessionSpawned(_payload, context) {',
-    "  context.logger.debug('scaffolded plugin observed session spawn');",
-    '}',
-    '',
-    'async function createTemplateRuntime(ctx) {',
-    "  const current = await ctx.storage.local.get('templateRuntimeCreates');",
-    "  await ctx.storage.local.set('templateRuntimeCreates', (current ?? 0) + 1);",
-    '  return {};',
-    '}',
+    "  const result = await plugin.invokeAction('save-note', { note: 'hello' });",
+    "  assert.deepEqual({ ...result }, { note: 'hello' });",
+    '});',
     '',
   ].join('\n');
 }
@@ -457,15 +292,96 @@ function createHostedWebSource(): string {
   ].join('\n');
 }
 
-function createReactNativeSurfaceSource(): string {
+function createReactNativeSurfaceSource(params: Readonly<{ displayName: string }>): string {
   return [
-    '// React Native plugin UI stub. The host calls `renderSurface(context)` and',
-    "// mounts the returned element inside the plugin's React Native surface",
-    '// boundary. Add `react`/`react-native` as dependencies once you replace this',
-    '// with a real component.',
+    '// React Native plugin UI surface. The host calls `renderSurface(context)`',
+    "// and mounts the returned element inside the plugin's React Native surface",
+    '// boundary. The SAME source compiles to native (Re.Pack) and to web',
+    '// (Vite + react-native-web); `renderSurface` is the one bundle-contract',
+    '// export both targets ship. Use the classic JSX runtime (`import * as',
+    "// React`) so `react`/`react-native-web` resolve to the host's shared",
+    '// singletons through the SDK host-runtime-externals Vite plugin.',
+    "import * as React from 'react';",
+    "import { Text, View } from 'react-native';",
+    '',
     'export function renderSurface() {',
-    '  return null;',
+    '  return (',
+    '    <View>',
+    `      <Text>Hello from ${params.displayName}</Text>`,
+    '    </View>',
+    '  );',
     '}',
+    '',
+  ].join('\n');
+}
+
+function createReactNativeViteConfigSource(): string {
+  // Mirrors the canonical build target shape in
+  // `packages/plugins/inspector/vite.config.ts`: the SDK preset owns the
+  // react-native -> react-native-web alias, while this scaffold writes Vite's
+  // intermediate bytes to the same default work root consumed by
+  // `happier-plugin-build-ui`. The builder alone stages the verified final
+  // graph under `dist/happier-plugin-ui`.
+  // `createReactNativeWebVitePlugins()` intercepts the host-runtime
+  // externals (react / react-native-web / hostApiClient) so the built bundle
+  // never inlines them. `@vitejs/plugin-react` runs in CLASSIC mode so the JSX
+  // transform routes through the externalized `react` specifier (the automatic
+  // runtime's `react/jsx-runtime` import is NOT externalized and would inline
+  // React, breaking host singleton sharing).
+  return [
+    "import react from '@vitejs/plugin-react';",
+    "import { defineConfig } from 'vite';",
+    'import {',
+    '  createReactNativeWebVitePlugins,',
+    '  defineReactNativeWebViteBuildPreset,',
+    "} from '@happier-dev/plugin-sdk/ui/build';",
+    '',
+    'export default defineConfig(() => {',
+    '  const preset = defineReactNativeWebViteBuildPreset({',
+    `    contributionId: ${JSON.stringify(REACT_NATIVE_WEB_CONTRIBUTION_ID)},`,
+    `    sourceEntry: ${JSON.stringify(REACT_NATIVE_WEB_SOURCE_ENTRY)},`,
+    `    viteVersion: ${JSON.stringify(DEFAULT_VITE_RECORDED_VERSION)},`,
+    `    hostUiApiVersion: ${JSON.stringify(DEFAULT_HOST_UI_API_VERSION)},`,
+    `    compatibility: { reactVersion: ${JSON.stringify(DEFAULT_REACT_VERSION)}, reactNativeVersion: ${JSON.stringify(DEFAULT_REACT_NATIVE_VERSION)} },`,
+    '  });',
+    '',
+    '  return {',
+    "    plugins: [react({ jsxRuntime: 'classic' }), ...createReactNativeWebVitePlugins()],",
+    '    resolve: {',
+    '      alias: preset.vite.resolve.alias.map((entry) => ({ find: entry.find, replacement: entry.replacement })),',
+    '    },',
+    '    build: {',
+    `      outDir: ${JSON.stringify(REACT_NATIVE_WEB_BUILD_WORK_ROOT)},`,
+    '      minify: false,',
+    '      sourcemap: false,',
+    '      lib: {',
+    "        entry: 'src/' + preset.sourceEntry,",
+    "        formats: ['es'],",
+    "        fileName: () => 'entry.mjs',",
+    '      },',
+    '    },',
+    '  };',
+    '});',
+    '',
+  ].join('\n');
+}
+
+function createReactNativeUiBuildConfigSource(): string {
+  // Consumed by `happier-plugin-build-ui` (the SDK bin). Authors declare only
+  // build targets; the bin owns managed-runtime bundler selection/execution.
+  return [
+    "import { definePluginUiBuildConfig } from '@happier-dev/plugin-sdk/ui/build';",
+    '',
+    'export const pluginUiBuildConfig = definePluginUiBuildConfig({',
+    '  targets: [{',
+    `    rendererId: ${JSON.stringify(REACT_NATIVE_WEB_CONTRIBUTION_ID)},`,
+    `    entry: ${JSON.stringify(REACT_NATIVE_WEB_SOURCE_ENTRY)},`,
+    "    kind: 'reactNative',",
+    "    platforms: ['web'],",
+    '  }],',
+    '});',
+    '',
+    'export default pluginUiBuildConfig;',
     '',
   ].join('\n');
 }
@@ -475,12 +391,25 @@ export async function scaffoldLocalPlugin(params: Readonly<{
   baseDir?: string;
   pluginId: string;
   displayName: string;
+  pluginSdkVersion?: string;
   ui?: PluginScaffoldUiMode;
 }>): Promise<ScaffoldLocalPluginResult> {
   const rawTargetDir = params.targetDir.trim();
   const pluginId = params.pluginId.trim();
   const displayName = params.displayName.trim();
   const ui = params.ui;
+  let pluginSdkVersion: string;
+  try {
+    pluginSdkVersion = resolvePluginSdkDependencySpec(params.pluginSdkVersion);
+  } catch (error) {
+    return {
+      ok: false,
+      diagnostics: [createDiagnostic(
+        'plugin_scaffold_invalid_input',
+        error instanceof Error ? error.message : 'The plugin SDK dependency is invalid',
+      )],
+    };
+  }
 
   if (!rawTargetDir) {
     return {
@@ -525,20 +454,23 @@ export async function scaffoldLocalPlugin(params: Readonly<{
   }
 
   const manifestPath = join(targetDir, '.happier-plugin', 'plugin.json');
+  const manifestSchemaPath = join(targetDir, '.happier-plugin', 'plugin.schema.json');
   const packageJsonPath = join(targetDir, 'package.json');
   const sourceEntryPath = join(targetDir, 'src', 'index.ts');
-  const compiledEntryPath = join(targetDir, 'dist', 'index.js');
+  const testEntryPath = join(targetDir, 'test', 'index.test.mjs');
   const tsconfigPath = join(targetDir, 'tsconfig.json');
   const uiEntryPath = ui === 'hostedWeb'
     ? join(targetDir, 'src', 'ui', 'index.ts')
     : ui === 'reactNative'
-      ? join(targetDir, 'src', 'ui', 'renderSurface.ts')
+      ? join(targetDir, 'src', 'ui', 'renderSurface.tsx')
       : undefined;
+  const viteConfigPath = join(targetDir, 'vite.config.mjs');
+  const uiBuildConfigPath = join(targetDir, 'pluginUiBuild.mjs');
 
   try {
     await mkdir(join(targetDir, '.happier-plugin'), { recursive: true });
     await mkdir(join(targetDir, 'src'), { recursive: true });
-    await mkdir(join(targetDir, 'dist'), { recursive: true });
+    await mkdir(join(targetDir, 'test'), { recursive: true });
     if (uiEntryPath) {
       await mkdir(join(targetDir, 'src', 'ui'), { recursive: true });
     }
@@ -548,8 +480,18 @@ export async function scaffoldLocalPlugin(params: Readonly<{
       'utf8',
     );
     await writeFile(
+      manifestSchemaPath,
+      `${JSON.stringify(createPluginManifestJsonSchemaV2(), null, 2)}\n`,
+      'utf8',
+    );
+    await writeFile(
       packageJsonPath,
-      `${JSON.stringify(createPackageJson({ packageName: sanitizePackageName(pluginId), displayName }), null, 2)}\n`,
+      `${JSON.stringify(createPackageJson({
+        packageName: sanitizePackageName(pluginId),
+        displayName,
+        pluginSdkVersion,
+        ui,
+      }), null, 2)}\n`,
       'utf8',
     );
     await writeFile(
@@ -557,16 +499,14 @@ export async function scaffoldLocalPlugin(params: Readonly<{
       createPluginSource({ pluginId }),
       'utf8',
     );
-    await writeFile(
-      compiledEntryPath,
-      createCompiledPluginSource({ pluginId }),
-      'utf8',
-    );
+    await writeFile(testEntryPath, createPluginTestSource(), 'utf8');
     await writeFile(tsconfigPath, createTypeScriptConfig(), 'utf8');
     if (uiEntryPath && ui === 'hostedWeb') {
       await writeFile(uiEntryPath, createHostedWebSource(), 'utf8');
     } else if (uiEntryPath && ui === 'reactNative') {
-      await writeFile(uiEntryPath, createReactNativeSurfaceSource(), 'utf8');
+      await writeFile(uiEntryPath, createReactNativeSurfaceSource({ displayName }), 'utf8');
+      await writeFile(viteConfigPath, createReactNativeViteConfigSource(), 'utf8');
+      await writeFile(uiBuildConfigPath, createReactNativeUiBuildConfigSource(), 'utf8');
     }
   } catch (error) {
     await rm(targetDir, { recursive: true, force: true }).catch(() => undefined);
@@ -588,6 +528,7 @@ export async function scaffoldLocalPlugin(params: Readonly<{
     version: DEFAULT_PLUGIN_VERSION,
     targetDir,
     manifestPath,
+    manifestSchemaPath,
     packageJsonPath,
     sourceEntryPath,
     ...(uiEntryPath ? { uiEntryPath } : {}),

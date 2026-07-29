@@ -49,6 +49,22 @@ describe('spawnDetachedDaemonStartSync', () => {
     expect(options?.env?.HAPPIER_DAEMON_STARTUP_SOURCE).toBe('manual');
   });
 
+  it('resolves the launch spec from the requested successor environment', async () => {
+    Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'linux' });
+    const successorEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: 'abcdef1234567890',
+    };
+
+    const mod = await import('./spawnDetachedDaemonStartSync');
+    await mod.spawnDetachedDaemonStartSync({ env: successorEnv });
+
+    expect(resolveDaemonLaunchSpecMock).toHaveBeenCalledWith(
+      ['daemon', 'start-sync'],
+      successorEnv,
+    );
+  });
+
   it('uses Win32_Process.Create on Windows so the detached daemon survives parent CLI exit', async () => {
     Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
 

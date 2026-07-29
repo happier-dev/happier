@@ -15,10 +15,12 @@ describe('windowsHostedSessionRuntime', () => {
       agentCommand: 'codex',
       windowName: 'happier',
       now: () => 123,
-      randomHex: () => 'abcd1234',
+      randomHex: () => 'ab'.repeat(16),
     })).toEqual({
       windowId: 'happier',
-      title: 'Happier codex sess_123',
+      title:
+        `Happier codex sess_123 [${'ab'.repeat(16)}]`,
+      launchCorrelation: 'ab'.repeat(16),
     });
   });
 
@@ -27,16 +29,19 @@ describe('windowsHostedSessionRuntime', () => {
       agentCommand: 'claude',
       windowName: 'happier',
       now: () => 42,
-      randomHex: () => 'beefcafe',
+      randomHex: () => 'be'.repeat(16),
     })).toEqual({
       windowId: 'happier',
-      title: 'Happier claude spawn-42-beefcafe',
+      title:
+        `Happier claude spawn-42 [${'be'.repeat(16)}]`,
+      launchCorrelation: 'be'.repeat(16),
     });
   });
 
   it('normalizes Windows Terminal window names', () => {
     expect(normalizeWindowsTerminalWindowName('  happier qa  ')).toBe('happier qa');
     expect(normalizeWindowsTerminalWindowName('')).toBe('happier');
+    expect(normalizeWindowsTerminalWindowName(' NEW ')).toBe('new');
     expect(normalizeWindowsTerminalWindowName('last')).toBe('happier');
     expect(normalizeWindowsTerminalWindowName('-1')).toBe('happier');
   });
@@ -51,6 +56,16 @@ describe('windowsHostedSessionRuntime', () => {
       requested: 'from-settings',
       env: {},
     })).toBe('from-settings');
+
+    expect(resolveWindowsTerminalWindowName({
+      requested: ' new ',
+      env: {},
+    })).toBe('new');
+
+    expect(resolveWindowsTerminalWindowName({
+      requested: 'from-settings',
+      env: { HAPPIER_WINDOWS_TERMINAL_WINDOW_NAME: 'NEW' },
+    })).toBe('new');
   });
 
   it('adds Windows Terminal runtime flags to the base args', () => {
@@ -59,6 +74,8 @@ describe('windowsHostedSessionRuntime', () => {
       actualMode: 'windows_terminal',
       requestedMode: 'windows_terminal',
       windowId: 'happy-codex-sess_123',
+      title: 'Happier codex sess_123',
+      launchCorrelation: 'ab'.repeat(16),
     })).toEqual([
       'codex',
       '--happy-starting-mode',
@@ -69,7 +86,39 @@ describe('windowsHostedSessionRuntime', () => {
       'windows_terminal',
       '--happy-terminal-window-id',
       'happy-codex-sess_123',
+      '--happy-terminal-title',
+      'Happier codex sess_123',
+      '--happy-terminal-launch-correlation',
+      'abababababababababababababababab',
     ]);
+  });
+
+  it('creates a fresh 128-bit launch correlation in argv and the readable tab-title suffix', () => {
+    const first = buildWindowsTerminalWindowIdentity({
+      existingSessionId: 'sess_123',
+      agentCommand: 'codex',
+      windowName: 'happier',
+      randomHex: () => '11'.repeat(16),
+    });
+    const second = buildWindowsTerminalWindowIdentity({
+      existingSessionId: 'sess_123',
+      agentCommand: 'codex',
+      windowName: 'happier',
+      randomHex: () => '22'.repeat(16),
+    });
+
+    expect(first).toEqual({
+      windowId: 'happier',
+      title:
+        `Happier codex sess_123 [${'11'.repeat(16)}]`,
+      launchCorrelation: '11'.repeat(16),
+    });
+    expect(second.title).toBe(
+      `Happier codex sess_123 [${'22'.repeat(16)}]`,
+    );
+    expect(second.title).not.toBe(first.title);
+    expect(second.launchCorrelation).toBe('22'.repeat(16));
+    expect(second.launchCorrelation).not.toBe(first.launchCorrelation);
   });
 
   it('adds console fallback flags when Windows Terminal falls back to console', () => {
@@ -101,7 +150,6 @@ describe('windowsHostedSessionRuntime', () => {
       requested: 'windows_terminal',
       windows: {
         host: 'windows_terminal',
-        pid: 8888,
         windowId: 'happy-codex-sess_123',
         title: 'Happier codex sess_123',
       },

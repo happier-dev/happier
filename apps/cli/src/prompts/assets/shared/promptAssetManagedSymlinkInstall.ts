@@ -1,7 +1,7 @@
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 
-import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/providers';
+import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
 
 import { normalizeMaterializationKeyForPath } from '@/daemon/connectedServices/materialize/normalizeMaterializationKeyForPath';
 

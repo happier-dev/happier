@@ -3,7 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPluginExecSystemToolGrantStore } from '@/plugins/runtime/context/exec/system/tools/grants';
+import { createPluginExecSystemToolGrantStore } from '@/plugins/runtime/exec/system/tools/grants';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import { createTerminalRuntimeProcessService } from './launchProcess';

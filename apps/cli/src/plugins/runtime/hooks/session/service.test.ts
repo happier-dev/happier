@@ -2,16 +2,17 @@ import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   SESSION_PROVIDER_HOOK_EVENT_ID_V1,
   SESSION_PROVIDER_TRANSCRIPT_EVENT_ID_V1,
 } from '@happier-dev/protocol';
 
-import { createPluginTranscriptsService } from '../../context/transcripts';
+import { createPluginTranscriptFileFollowService } from '../../context/transcripts/fileFollow';
 import { createTranscriptFileFollowPathGrantRegistry } from '../../context/transcripts/fileFollowGrants';
-import { createSessionHooksService } from './service';
+import { logger } from '@/ui/logger';
+import { createSessionHooksService, disposeSessionHookArtifactsForSession } from './service';
 
 function hasSessionHooksCapability(capability: string): boolean {
   return capability === 'sessionHooks' || capability === 'session.hooks.control';
@@ -65,6 +66,160 @@ describe('createSessionHooksService', () => {
     for (const disposable of disposables) await disposable.dispose();
     await expect(stat(server.sessionHookSecretFile!)).rejects.toMatchObject({ code: 'ENOENT' });
     await expect(stat(server.permissionHookSecretFile!)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('reclaims one session-scoped hook endpoint with stable secrets across runner services', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    try {
+      const firstService = createSessionHooksService({
+        happyHomeDir,
+        hasCapability: hasSessionHooksCapability,
+      });
+      const first = await firstService.startServer({
+        providerId: 'claude',
+        sessionId: 'happy-session-stable-endpoint',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-stable-endpoint' },
+        sessionHookSecret: 'first-session-secret',
+        permissionHookSecret: 'first-permission-secret',
+      } as Parameters<typeof firstService.startServer>[0] & {
+        lifecycle: { kind: 'session'; sessionId: string };
+      });
+      const firstPort = first.port;
+      const firstSessionSecretFile = first.sessionHookSecretFile!;
+      const firstPermissionSecretFile = first.permissionHookSecretFile!;
+      await first.dispose();
+
+      await expect(readFile(firstSessionSecretFile, 'utf8')).resolves.toBe('first-session-secret');
+      await expect(readFile(firstPermissionSecretFile, 'utf8')).resolves.toBe('first-permission-secret');
+
+      const secondService = createSessionHooksService({
+        happyHomeDir,
+        hasCapability: hasSessionHooksCapability,
+      });
+      const second = await secondService.startServer({
+        providerId: 'claude',
+        sessionId: 'happy-session-stable-endpoint',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-stable-endpoint' },
+        sessionHookSecret: 'replacement-session-secret',
+        permissionHookSecret: 'replacement-permission-secret',
+      } as Parameters<typeof secondService.startServer>[0] & {
+        lifecycle: { kind: 'session'; sessionId: string };
+      });
+
+      expect(second.port).toBe(firstPort);
+      expect(second.sessionHookSecretFile).toBe(firstSessionSecretFile);
+      expect(second.permissionHookSecretFile).toBe(firstPermissionSecretFile);
+      await expect(readFile(second.sessionHookSecretFile!, 'utf8')).resolves.toBe('first-session-secret');
+      await expect(postSessionHook({
+        port: second.port,
+        sessionHookSecret: 'first-session-secret',
+        body: { session_id: 'provider-session-stable' },
+      })).resolves.toEqual({ status: 200, text: 'ok' });
+      await expect(postSessionHook({
+        port: second.port,
+        sessionHookSecret: 'replacement-session-secret',
+        body: { session_id: 'provider-session-stable' },
+      })).resolves.toEqual({ status: 403, text: 'forbidden' });
+
+      await second.dispose();
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('closes a newly bound session-scoped hook server when endpoint persistence fails', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    try {
+      const firstService = createSessionHooksService({
+        happyHomeDir,
+        hasCapability: hasSessionHooksCapability,
+      });
+      const first = await firstService.startServer({
+        providerId: 'claude',
+        sessionId: 'happy-session-endpoint-write-failure',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-endpoint-write-failure' },
+        sessionHookSecret: 'stable-session-secret',
+      } as Parameters<typeof firstService.startServer>[0] & {
+        lifecycle: { kind: 'session'; sessionId: string };
+      });
+      const sessionRoot = dirname(dirname(first.sessionHookSecretFile!));
+      await first.dispose();
+      await rm(join(sessionRoot, 'endpoint.json'), { force: true });
+      await mkdir(join(sessionRoot, 'endpoint.json'));
+
+      const readActiveHandles = Reflect.get(process, '_getActiveHandles') as (() => unknown[]) | undefined;
+      const activeServersBefore = new Set(
+        (readActiveHandles?.() ?? []).filter((handle) => (
+          typeof handle === 'object'
+          && handle !== null
+          && Reflect.get(Reflect.get(handle, 'constructor') ?? {}, 'name') === 'Server'
+        )),
+      );
+      const replacementService = createSessionHooksService({
+        happyHomeDir,
+        hasCapability: hasSessionHooksCapability,
+      });
+
+      await expect(replacementService.startServer({
+        providerId: 'claude',
+        sessionId: 'happy-session-endpoint-write-failure',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-endpoint-write-failure' },
+        sessionHookSecret: 'replacement-session-secret',
+      } as Parameters<typeof replacementService.startServer>[0] & {
+        lifecycle: { kind: 'session'; sessionId: string };
+      })).rejects.toBeDefined();
+
+      const leakedServers = (readActiveHandles?.() ?? []).filter((handle) => (
+        typeof handle === 'object'
+        && handle !== null
+        && Reflect.get(Reflect.get(handle, 'constructor') ?? {}, 'name') === 'Server'
+        && Reflect.get(handle, '_handle') !== null
+        && !activeServersBefore.has(handle)
+      ));
+      expect(leakedServers).toEqual([]);
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('removes retained session-scoped servers, secrets, and plugin files at final session cleanup', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    try {
+      const service = createSessionHooksService({
+        happyHomeDir,
+        hasCapability: hasSessionHooksCapability,
+      });
+      const server = await service.startServer({
+        providerId: 'claude',
+        sessionId: 'happy-session-final-cleanup',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-final-cleanup' },
+        sessionHookSecret: 'session-secret-final-cleanup',
+      } as Parameters<typeof service.startServer>[0] & {
+        lifecycle: { kind: 'session'; sessionId: string };
+      });
+      const pluginDir = await service.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-final-cleanup' },
+        files: [
+          { path: '.claude-plugin/plugin.json', json: { name: 'happier-final-cleanup' } },
+          { path: 'hooks/hooks.json', json: { hooks: {} } },
+        ],
+      });
+      await server.dispose();
+      await service.disposePluginDir(pluginDir);
+      await expect(stat(server.sessionHookSecretFile!)).resolves.toBeDefined();
+      await expect(stat(pluginDir)).resolves.toBeDefined();
+
+      await disposeSessionHookArtifactsForSession({
+        happyHomeDir,
+        sessionId: 'happy-session-final-cleanup',
+      });
+
+      await expect(stat(server.sessionHookSecretFile!)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(pluginDir)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(happyHomeDir, { recursive: true, force: true });
+    }
   });
 
   it('resolves the statusline forwarder asset and forwards statusline payloads to the runtime consumer', async () => {
@@ -227,6 +382,44 @@ describe('createSessionHooksService', () => {
       await expect(readFile(join(pluginDir, 'hooks', 'hooks.json'), 'utf8')).resolves.toContain('PreToolUse');
     } finally {
       if (pluginDir) await rm(pluginDir, { recursive: true, force: true });
+    }
+  });
+
+  it('atomically replaces the complete session-scoped hook plugin file set', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    const service = createSessionHooksService({
+      happyHomeDir,
+      hasCapability: hasSessionHooksCapability,
+    });
+    try {
+      const pluginDir = await service.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-exact-plugin-files' },
+        files: [
+          { path: '.claude-plugin/plugin.json', json: { name: 'happier-exact-v1' } },
+          { path: 'hooks/hooks.json', json: { hooks: { PreToolUse: [] } } },
+          { path: 'obsolete.txt', contents: 'remove me' },
+        ],
+      });
+      await service.createPluginDir({
+        providerId: 'claude',
+        lifecycle: { kind: 'session', sessionId: 'happy-session-exact-plugin-files' },
+        files: [
+          { path: '.claude-plugin/plugin.json', json: { name: 'happier-exact-v2' } },
+          { path: 'hooks/hooks.json', json: { hooks: { UserPromptSubmit: [] } } },
+        ],
+      });
+
+      await expect(readFile(join(pluginDir, '.claude-plugin', 'plugin.json'), 'utf8')).resolves.toContain(
+        'happier-exact-v2',
+      );
+      await expect(stat(join(pluginDir, 'obsolete.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await disposeSessionHookArtifactsForSession({
+        happyHomeDir,
+        sessionId: 'happy-session-exact-plugin-files',
+      });
+      await rm(happyHomeDir, { recursive: true, force: true });
     }
   });
 
@@ -395,8 +588,7 @@ describe('createSessionHooksService', () => {
     await writeFile(transcriptPath, '{"kind":"ready"}\n', 'utf8');
 
     const fileFollowPathGrants = createTranscriptFileFollowPathGrantRegistry();
-    const transcripts = createPluginTranscriptsService({
-      append: async () => undefined,
+    const fileFollow = createPluginTranscriptFileFollowService({
       pluginId: 'acme.sample',
       runtimeId: 'runtime-1',
       readSessionId: () => 'happy-session-grant',
@@ -440,7 +632,7 @@ describe('createSessionHooksService', () => {
       sessionHookSecret: 'trusted-session-hook-secret',
       onSessionHook: async (_providerSessionId, data) => {
         try {
-          const handle = await transcripts.fileFollow.follow({
+          const handle = await fileFollow.follow({
             path: String(data.transcript_path),
             startAt: 'beginning',
             onLine: (line) => {
@@ -482,6 +674,50 @@ describe('createSessionHooksService', () => {
     }
   });
 
+  it('does not pass hostile transcript-grant failures to retained logging', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
+    const privateTranscript = 'private grant transcript that must not enter logs';
+    const hostileFailure = {
+      toJSON: () => ({ privateTranscript }),
+      toString: () => privateTranscript,
+    };
+    const logDebug = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const service = createSessionHooksService({
+      happyHomeDir,
+      hasCapability: hasSessionHooksCapability,
+      grantTranscriptFileFollowPath: async () => {
+        throw hostileFailure;
+      },
+    } as Parameters<typeof createSessionHooksService>[0] & {
+      grantTranscriptFileFollowPath: () => Promise<void>;
+    });
+    const server = await service.startServer({
+      providerId: 'claude',
+      sessionId: 'happy-session-hostile-grant',
+      sessionHookSecret: 'trusted-session-hook-secret',
+      onSessionHook: vi.fn(),
+    });
+
+    try {
+      await expect(postSessionHook({
+        port: server.port,
+        body: {
+          hook_event_name: 'SessionStart',
+          session_id: 'provider-session-hostile-grant',
+          transcript_path: '/tmp/private-provider-transcript.jsonl',
+        },
+        sessionHookSecret: 'trusted-session-hook-secret',
+      })).resolves.toEqual({ status: 200, text: 'ok' });
+
+      expect(logDebug).toHaveBeenCalledWith(
+        '[sessionHookServer] Session hook transcript grant failed',
+      );
+    } finally {
+      server.stop();
+      logDebug.mockRestore();
+    }
+  });
+
   it('does not grant SessionStart transcript paths from unauthenticated hook servers', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-'));
     const transcriptDir = await mkdtemp(join(tmpdir(), 'happier-session-hooks-transcript-'));
@@ -489,8 +725,7 @@ describe('createSessionHooksService', () => {
     await writeFile(transcriptPath, '{"kind":"ready"}\n', 'utf8');
 
     const fileFollowPathGrants = createTranscriptFileFollowPathGrantRegistry();
-    const transcripts = createPluginTranscriptsService({
-      append: async () => undefined,
+    const fileFollow = createPluginTranscriptFileFollowService({
       pluginId: 'acme.sample',
       runtimeId: 'runtime-1',
       readSessionId: () => 'happy-session-untrusted',
@@ -532,7 +767,7 @@ describe('createSessionHooksService', () => {
       sessionId: 'happy-session-untrusted',
       onSessionHook: async (_providerSessionId, data) => {
         try {
-          const handle = await transcripts.fileFollow.follow({
+          const handle = await fileFollow.follow({
             path: String(data.transcript_path),
             startAt: 'beginning',
             onLine: () => undefined,

@@ -1,23 +1,26 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
 import { maybeRefreshLocalBundledWorkspacePackages, prepareRuntimeEntrypoint } from '../../bin/_prepareRuntimeEntrypoint.mjs';
 import { withWorkspaceBundleLock } from '../../../../scripts/workspaces/workspaceBundleLock.mjs';
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 
 const workspaceBundleLockModulePath = fileURLToPath(
   new URL('../../../../scripts/workspaces/workspaceBundleLock.mjs', import.meta.url),
 );
+const cliDistBuildManifestModuleUrl = pathToFileURL(fileURLToPath(
+  new URL('../../../../packages/cli-common/cliDistBuildManifest.cjs', import.meta.url),
+)).href;
 
 function writeBuildManifest(outputDir: string) {
-  writeFileSync(
-    resolve(outputDir, '.build-manifest.json'),
-    `${JSON.stringify({ fingerprint: '0123456789abcdef', builtAt: '2026-07-09T00:00:00.000Z', fileCount: 1, toolVersion: '1' })}\n`,
-    'utf8',
-  );
+  cliDistBuildManifest.writeCliDistBuildManifest(resolve(outputDir, 'index.mjs'), {
+    outputDir,
+    builtAt: '2026-07-09T00:00:00.000Z',
+  });
 }
 
 describe('maybeRefreshLocalBundledWorkspacePackages', () => {
@@ -54,17 +57,21 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
       writeFileSync(
         resolve(scriptsDir, 'build.mjs'),
         [
-          "import { appendFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';",
+          "import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';",
           "import { dirname, join } from 'node:path';",
+          `import cliDistBuildManifest from ${JSON.stringify(cliDistBuildManifestModuleUrl)};`,
           `const eventsPath = ${JSON.stringify(eventsPath)};`,
           `const lockPath = ${JSON.stringify(lockPath)};`,
           `const distDir = ${JSON.stringify(distDir)};`,
-          'export async function buildCliDist() {',
+          'export async function buildCliDist(options = {}) {',
           '  mkdirSync(dirname(eventsPath), { recursive: true });',
-          "  appendFileSync(eventsPath, `build:${existsSync(lockPath)}\\n`, 'utf8');",
+          "  const owner = existsSync(lockPath) ? JSON.parse(readFileSync(lockPath, 'utf8')) : null;",
+          "  const lease = options.heldLockValue ? JSON.parse(options.heldLockValue) : null;",
+          "  const exactLease = owner?.token && lease?.token === owner.token && lease?.v === 1;",
+          "  appendFileSync(eventsPath, `build:${existsSync(lockPath)}:${exactLease}\\n`, 'utf8');",
           '  mkdirSync(distDir, { recursive: true });',
           "  writeFileSync(join(distDir, 'index.mjs'), 'export const ready = true;\\n', 'utf8');",
-          "  writeFileSync(join(distDir, '.build-manifest.json'), JSON.stringify({ fingerprint: '0123456789abcdef', builtAt: '2026-07-09T00:00:00.000Z', fileCount: 1, toolVersion: '1' }) + '\\n', 'utf8');",
+          "  cliDistBuildManifest.writeCliDistBuildManifest(join(distDir, 'index.mjs'), { outputDir: distDir, builtAt: '2026-07-09T00:00:00.000Z' });",
           '}',
           '',
         ].join('\n'),
@@ -77,8 +84,8 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
         lockTimeoutMs: 500,
         lockPollIntervalMs: 10,
         lockStaleAfterMs: 1_000,
-      })).resolves.toBe(resolve(distDir, 'index.mjs'));
-      expect(readFileSync(eventsPath, 'utf8')).toBe('shared:true\nbuild:true\n');
+      })).resolves.toBe(resolve(realpathSync.native(projectRoot), 'dist', 'index.mjs'));
+      expect(readFileSync(eventsPath, 'utf8')).toBe('shared:true\nbuild:true:true\n');
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });
     }
@@ -122,7 +129,7 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
               lockPollIntervalMs: 10,
               lockStaleAfterMs: 1_000,
             }),
-          ).resolves.toBe(packageDistEntrypoint);
+          ).resolves.toBe(resolve(realpathSync.native(projectRoot), 'package-dist', 'index.mjs'));
           expect(existsSync(syncCalledPath)).toBe(false);
         },
         {
@@ -179,7 +186,7 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
               lockPollIntervalMs: 10,
               lockStaleAfterMs: 1_000,
             }),
-          ).resolves.toBe(distEntrypoint);
+          ).resolves.toBe(resolve(realpathSync.native(projectRoot), 'dist', 'index.mjs'));
           expect(existsSync(syncCalledPath)).toBe(false);
         },
         {
@@ -232,7 +239,7 @@ describe('maybeRefreshLocalBundledWorkspacePackages', () => {
           lockPollIntervalMs: 10,
           lockStaleAfterMs: 1_000,
         }),
-      ).resolves.toBe(packageDistEntrypoint);
+      ).resolves.toBe(resolve(realpathSync.native(projectRoot), 'package-dist', 'index.mjs'));
       expect(existsSync(syncCalledPath)).toBe(false);
     } finally {
       rmSync(repoRoot, { recursive: true, force: true });

@@ -2,14 +2,21 @@ import {
     applyObservedProgressToExternalSessionAttentionV1,
     buildExternalSessionAttentionV1,
     buildExternalSessionFollowPolicyV1,
+    buildLinkedExternalSessionMetadataV1,
     readExternalSessionAttentionV1,
     readExternalSessionFollowPolicyV1,
+    readLinkedExternalSessionV1FromMetadata,
+    resolveLinkedExternalSessionMetadataV1,
+    updateLinkedExternalSessionFollowMetadataV1,
+    type ExternalSessionFollowIssueV1,
     type ExternalSessionFollowPolicy,
+    type ExternalSessionFollowStatusV1,
     type ExternalSessionObservedProgress,
 } from '@happier-dev/protocol';
 
 import type { Metadata } from '@/api/types';
-import type { Credentials } from '@/persistence';
+import { readCredentials, type Credentials } from '@/persistence';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 
 export { deriveExternalSessionObservedProgress } from '@happier-dev/protocol';
@@ -20,7 +27,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 function readCurrentFollowPolicy(metadata: Metadata): ExternalSessionFollowPolicy {
-    const externalSession = asRecord(metadata.externalSessionV1);
+    const externalSession = readLinkedExternalSessionV1FromMetadata(metadata);
     return readExternalSessionFollowPolicyV1(externalSession?.followPolicyV1)?.policy ?? 'attached_only';
 }
 
@@ -31,10 +38,17 @@ export function updateMetadataWithExternalSessionFollowPolicy(
         updatedAtMs: number;
     }>,
 ): Metadata {
-    const currentExternalSession = asRecord(metadata.externalSessionV1);
-    if (!currentExternalSession) {
+    const resolved = resolveLinkedExternalSessionMetadataV1(metadata);
+    if (
+        !resolved.ok
+        && resolved.error === 'linked_session_reconciliation_required'
+    ) {
+        throw new Error('linked_session_reconciliation_required');
+    }
+    if (!resolved.ok) {
         return metadata;
     }
+    const currentExternalSession = resolved.linkedSession;
 
     const currentPolicy = readCurrentFollowPolicy(metadata);
     const currentFollowPolicy = asRecord(currentExternalSession.followPolicyV1);
@@ -48,16 +62,27 @@ export function updateMetadataWithExternalSessionFollowPolicy(
         return metadata;
     }
 
-    return {
-        ...metadata,
-        externalSessionV1: {
-            ...currentExternalSession,
-            followPolicyV1: buildExternalSessionFollowPolicyV1({
-                policy: params.policy,
-                updatedAtMs: nextUpdatedAtMs,
-            }),
-        } as Metadata['externalSessionV1'],
-    };
+    return updateLinkedExternalSessionFollowMetadataV1(metadata, {
+        followPolicyV1: buildExternalSessionFollowPolicyV1({
+            policy: params.policy,
+            updatedAtMs: nextUpdatedAtMs,
+        }),
+    }) as Metadata;
+}
+
+export function updateMetadataWithExternalSessionFollowStatus(
+    metadata: Metadata,
+    params: Readonly<{
+        followStatusV1: ExternalSessionFollowStatusV1;
+        lastFollowIssueV1?: ExternalSessionFollowIssueV1;
+    }>,
+): Metadata {
+    return updateLinkedExternalSessionFollowMetadataV1(metadata, {
+        followStatusV1: params.followStatusV1,
+        ...(params.lastFollowIssueV1 === undefined
+            ? {}
+            : { lastFollowIssueV1: params.lastFollowIssueV1 }),
+    }) as Metadata;
 }
 
 export function updateMetadataWithExternalSessionObservedProgress(
@@ -67,7 +92,7 @@ export function updateMetadataWithExternalSessionObservedProgress(
         lastKnownActivityAtMs?: number | null;
     }>,
 ): Metadata {
-    const currentExternalSession = asRecord(metadata.externalSessionV1);
+    const currentExternalSession = readLinkedExternalSessionV1FromMetadata(metadata);
     if (!currentExternalSession) {
         return metadata;
     }
@@ -97,30 +122,17 @@ export function updateMetadataWithExternalSessionObservedProgress(
         return metadata;
     }
 
-    const nextMetadata: Metadata = {
-        ...metadata,
-        externalSessionV1: {
+    const nextMetadata = buildLinkedExternalSessionMetadataV1(metadata, {
             ...currentExternalSession,
             ...(shouldUpdateLastKnownActivityAtMs ? { lastKnownActivityAtMs: nextLastKnownActivityAtMs } : {}),
-        } as Metadata['externalSessionV1'],
+        }) as Metadata;
+    Object.assign(nextMetadata, {
         ...(shouldUpdateAttention && nextAttention
             ? { externalSessionAttentionV1: buildExternalSessionAttentionV1(nextAttention) }
             : {}),
-    };
+    });
 
     return nextMetadata;
-}
-
-// Keep the legacy helper name available for dist snapshot compatibility.
-// Older background-follow modules can still be loaded from cached CLI snapshots.
-export function updateMetadataWithExternalSessionBackgroundFollow(
-    metadata: Metadata,
-    params: Readonly<{
-        observedProgress?: ExternalSessionObservedProgress | null;
-        lastKnownActivityAtMs?: number | null;
-    }>,
-): Metadata {
-    return updateMetadataWithExternalSessionObservedProgress(metadata, params);
 }
 
 export async function updateSessionMetadataWithExternalSessionFollowPolicy(params: Readonly<{
@@ -148,6 +160,62 @@ export async function updateSessionMetadataWithExternalSessionFollowPolicy(param
     });
 }
 
+export async function updateSessionMetadataWithExternalSessionFollowStatus(params: Readonly<{
+    token: string;
+    credentials: Credentials;
+    sessionId: string;
+    rawSession: Readonly<{
+        metadata: string;
+        metadataVersion: number;
+        encryptionMode?: unknown;
+        dataEncryptionKey?: unknown;
+    }>;
+    followStatusV1: ExternalSessionFollowStatusV1;
+    lastFollowIssueV1?: ExternalSessionFollowIssueV1;
+}>): Promise<void> {
+    await updateSessionMetadataWithRetry({
+        token: params.token,
+        credentials: params.credentials,
+        sessionId: params.sessionId,
+        rawSession: params.rawSession,
+        updater: (currentMetadata) => updateMetadataWithExternalSessionFollowStatus(currentMetadata as Metadata, {
+            followStatusV1: params.followStatusV1,
+            ...(params.lastFollowIssueV1 === undefined
+                ? {}
+                : { lastFollowIssueV1: params.lastFollowIssueV1 }),
+        }),
+    });
+}
+
+export async function writeExternalSessionFollowStatus(params: Readonly<{
+    sessionId: string;
+    followStatusV1: ExternalSessionFollowStatusV1;
+    lastFollowIssueV1?: ExternalSessionFollowIssueV1;
+}>): Promise<void> {
+    const credentials = await readCredentials();
+    if (!credentials) {
+        throw new Error('Authentication is unavailable while writing external-session follow status.');
+    }
+    const rawSession = await fetchSessionById({
+        token: credentials.token,
+        sessionId: params.sessionId,
+    });
+    if (!rawSession) {
+        throw new Error('External session was not found while writing follow status.');
+    }
+
+    await updateSessionMetadataWithExternalSessionFollowStatus({
+        token: credentials.token,
+        credentials,
+        sessionId: params.sessionId,
+        rawSession,
+        followStatusV1: params.followStatusV1,
+        ...(params.lastFollowIssueV1 === undefined
+            ? {}
+            : { lastFollowIssueV1: params.lastFollowIssueV1 }),
+    });
+}
+
 export async function updateSessionMetadataWithObservedExternalSessionProgress(params: Readonly<{
     token: string;
     credentials: Credentials;
@@ -171,21 +239,4 @@ export async function updateSessionMetadataWithObservedExternalSessionProgress(p
             lastKnownActivityAtMs: params.lastKnownActivityAtMs ?? null,
         }),
     });
-}
-
-// Keep the legacy async updater export available for cached snapshot callers.
-export async function updateSessionMetadataWithExternalSessionBackgroundFollow(params: Readonly<{
-    token: string;
-    credentials: Credentials;
-    sessionId: string;
-    rawSession: Readonly<{
-        metadata: string;
-        metadataVersion: number;
-        encryptionMode?: unknown;
-        dataEncryptionKey?: unknown;
-    }>;
-    observedProgress?: ExternalSessionObservedProgress | null;
-    lastKnownActivityAtMs?: number | null;
-}>): Promise<void> {
-    await updateSessionMetadataWithObservedExternalSessionProgress(params);
 }

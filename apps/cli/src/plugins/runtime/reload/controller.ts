@@ -1,9 +1,6 @@
-import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
-import {
-    writePluginReloadStateSnapshot,
-} from './state';
-import { publishHostPluginEvent } from '../context/events';
 import { logger } from '@/ui/logger';
+
+import type { ResolvedExecutablePluginRuntimeRegistry } from '../resolveExecutablePluginRuntimeRegistry';
 
 export type PluginRuntimeRegistryLease = Readonly<{
     registry: ResolvedExecutablePluginRuntimeRegistry;
@@ -11,12 +8,19 @@ export type PluginRuntimeRegistryLease = Readonly<{
     release: () => Promise<void>;
 }>;
 
+export type PluginRuntimeRegistryBeforePublish = (
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+    /**
+     * Publish exactly once, synchronously, after durable pre-publication work commits and before
+     * releasing any writer fence. No awaited or fallible work may follow this call.
+     */
+    publish: () => void,
+) => Promise<void>;
+
 export type PluginReloadDiagnostic = Readonly<{
     code: 'plugin_reload_failed';
     message: string;
 }>;
-
-export type PluginReloadRegistryStatus = 'active' | 'last_known_good';
 
 export type PluginReloadResult = Readonly<
     | {
@@ -27,7 +31,7 @@ export type PluginReloadResult = Readonly<
         changedPluginIds: readonly string[];
         affectedPluginIds: readonly string[];
         activeGenerationId: string;
-        registryStatus: PluginReloadRegistryStatus;
+        registryStatus: 'active';
         diagnostics: readonly PluginReloadDiagnostic[];
         diagnosticsByPluginId: ResolvedExecutablePluginRuntimeRegistry['pluginDiagnosticsByPluginId'];
         registry: ResolvedExecutablePluginRuntimeRegistry;
@@ -39,11 +43,11 @@ export type PluginReloadResult = Readonly<
         requestedPluginIds: readonly string[];
         changedPluginIds: readonly string[];
         affectedPluginIds: readonly string[];
-        activeGenerationId: string | null;
+        activeGenerationId: null;
         registryStatus: 'unavailable';
         diagnostics: readonly PluginReloadDiagnostic[];
         diagnosticsByPluginId: ResolvedExecutablePluginRuntimeRegistry['pluginDiagnosticsByPluginId'];
-        registry: ResolvedExecutablePluginRuntimeRegistry | null;
+        registry: null;
     }
 >;
 
@@ -56,116 +60,31 @@ export type PluginReloadState = Readonly<{
 export type PluginReloadListener = (result: PluginReloadResult) => void;
 
 export type PluginReloadController = Readonly<{
-    reload: (params?: Readonly<{ pluginId?: string | null }>) => Promise<PluginReloadResult>;
+    adoptPreparedRuntimeRegistry: (params: Readonly<{
+        registry: ResolvedExecutablePluginRuntimeRegistry;
+        changedPluginIds: readonly string[];
+        durableRevision: number;
+        beforePublish?: PluginRuntimeRegistryBeforePublish;
+    }>) => Promise<PluginReloadResult>;
     acquireRuntimeRegistry: (params?: Readonly<{
         resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
+        beforePublish?: PluginRuntimeRegistryBeforePublish;
     }>) => Promise<PluginRuntimeRegistryLease>;
+    tryAcquireRuntimeRegistry?: () => PluginRuntimeRegistryLease | null;
+    isRuntimeRegistryCurrent: (registry: ResolvedExecutablePluginRuntimeRegistry) => boolean;
     shutdown: (params?: Readonly<{ timeoutMs?: number }>) => Promise<void>;
     getState: () => PluginReloadState;
-    /**
-     * Notified once per settled reload cycle (regardless of trigger: CLI, RPC action,
-     * agent tool, or dev-loop action), after `lastResult`/`activeRegistry` have been
-     * updated. This is the canonical signal that the installed/active plugin set may
-     * have changed — consumers that mirror the installed-plugin set (e.g. the plugin
-     * dev-reload file watcher) should resync from it instead of snapshotting once.
-     */
+    /** Notified after cold initialization or prepared-registry adoption settles. */
     subscribe: (listener: PluginReloadListener) => () => void;
 }>;
-
-function normalizeAffectedPluginIds(pluginId: string | null | undefined): readonly string[] {
-    const normalized = typeof pluginId === 'string' ? pluginId.trim() : '';
-    return Object.freeze(normalized.length > 0 ? [normalized] : []);
-}
-
-type DeferredPluginReloadResult = Readonly<{
-    requestedPluginIds: readonly string[];
-    resolve: (value: PluginReloadResult) => void;
-    reject: (reason?: unknown) => void;
-}>;
-
-type PendingReloadScope = Readonly<{
-    reloadAll: boolean;
-    pluginIds: ReadonlySet<string>;
-}>;
-
-type QueuedReloadBatch = Readonly<{
-    scope: PendingReloadScope;
-    deferreds: readonly DeferredPluginReloadResult[];
-}>;
-
-function createDeferredPluginReloadResult(): Readonly<{
-    promise: Promise<PluginReloadResult>;
-    deferred: Omit<DeferredPluginReloadResult, 'requestedPluginIds'>;
-}> {
-    let resolve!: (value: PluginReloadResult) => void;
-    let reject!: (reason?: unknown) => void;
-    const promise = new Promise<PluginReloadResult>((innerResolve, innerReject) => {
-        resolve = innerResolve;
-        reject = innerReject;
-    });
-    return {
-        promise,
-        deferred: {
-            resolve,
-            reject,
-        },
-    };
-}
-
-function withRequestedPluginIds(
-    result: PluginReloadResult,
-    requestedPluginIds: readonly string[],
-): PluginReloadResult {
-    return {
-        ...result,
-        requestedPluginIds,
-    };
-}
-
-function createPendingReloadScope(affectedPluginIds: readonly string[]): PendingReloadScope {
-    return {
-        reloadAll: affectedPluginIds.length === 0,
-        pluginIds: new Set(affectedPluginIds),
-    };
-}
-
-function mergePendingReloadScope(
-    scope: PendingReloadScope,
-    affectedPluginIds: readonly string[],
-): PendingReloadScope {
-    if (scope.reloadAll || affectedPluginIds.length === 0) {
-        return {
-            reloadAll: true,
-            pluginIds: new Set<string>(),
-        };
-    }
-    return {
-        reloadAll: false,
-        pluginIds: new Set([...scope.pluginIds, ...affectedPluginIds]),
-    };
-}
-
-function materializePendingReloadScope(scope: PendingReloadScope): readonly string[] {
-    return scope.reloadAll ? Object.freeze([]) : Object.freeze([...scope.pluginIds].sort());
-}
-
-function areAffectedPluginIdsEqual(
-    left: readonly string[],
-    right: readonly string[],
-): boolean {
-    if (left.length !== right.length) {
-        return false;
-    }
-    return left.every((value, index) => value === right[index]);
-}
 
 function collectRegistryPluginIds(registry: ResolvedExecutablePluginRuntimeRegistry): readonly string[] {
     const pluginIds = new Set<string>();
     for (const contribution of registry.contributes.agents) {
         if (contribution.pluginId) pluginIds.add(contribution.pluginId);
     }
-    for (const contribution of registry.contributes.agentRuntimes) {
-        if (contribution.pluginId) pluginIds.add(contribution.pluginId);
+    for (const contribution of registry.contributes.providers ?? []) {
+        pluginIds.add(contribution.pluginId);
     }
     for (const contribution of registry.contributes.actions) {
         if (contribution.pluginId) pluginIds.add(contribution.pluginId);
@@ -173,14 +92,8 @@ function collectRegistryPluginIds(registry: ResolvedExecutablePluginRuntimeRegis
     for (const contribution of registry.contributes.resources) {
         if (contribution.pluginId) pluginIds.add(contribution.pluginId);
     }
-    for (const contribution of registry.contributes.uiDescriptors) {
-        if (contribution.pluginId) pluginIds.add(contribution.pluginId);
-    }
     for (const target of registry.contributes.activationTargets) {
         pluginIds.add(target.pluginId);
-    }
-    for (const contribution of registry.contributes.hookRegistrations) {
-        pluginIds.add(contribution.pluginId);
     }
     for (const pluginId of Object.keys(registry.pluginDiagnosticsByPluginId)) {
         pluginIds.add(pluginId);
@@ -188,20 +101,14 @@ function collectRegistryPluginIds(registry: ResolvedExecutablePluginRuntimeRegis
     return Object.freeze([...pluginIds].sort());
 }
 
-function resolveChangedPluginIds(
-    requestedPluginIds: readonly string[],
-    registry: ResolvedExecutablePluginRuntimeRegistry,
-): readonly string[] {
-    return requestedPluginIds.length > 0 ? requestedPluginIds : collectRegistryPluginIds(registry);
+function normalizePluginIds(pluginIds: readonly string[]): readonly string[] {
+    return Object.freeze([...new Set(pluginIds.map((pluginId) => pluginId.trim()).filter(Boolean))].sort());
 }
 
 function resolveActiveGenerationId(
-    registry: ResolvedExecutablePluginRuntimeRegistry | null,
+    registry: ResolvedExecutablePluginRuntimeRegistry,
     generation: number,
-): string | null {
-    if (!registry) {
-        return null;
-    }
+): string {
     return registry.contributes.generationId ?? `reload:${generation}`;
 }
 
@@ -214,24 +121,21 @@ const BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES = new Set([
     'plugin_untrusted',
 ]);
 
-/**
- * Blocking is scoped to the plugins actually targeted by this reload cycle
- * (`scopedPluginIds`, i.e. `changedPluginIds`) — not the whole registry.
- *
- * Intended invariant: a reload that would activate a BROKEN version of the
- * plugin(s) being reloaded must roll back to last-known-good (or fail if no
- * baseline exists) rather than promote breakage. A pre-existing diagnostic on
- * an UNRELATED plugin outside this reload's scope must not poison this reload
- * or prevent a healthy baseline from being established — that unrelated
- * plugin simply stays unactivated with its diagnostic preserved.
- */
-function hasBlockingPluginReloadDiagnostic(
+const TRUST_POLICY_PLUGIN_RELOAD_DIAGNOSTIC_CODES = new Set([
+    'plugin_trust_approval_required',
+    'plugin_untrusted',
+]);
+
+export function hasBlockingPluginReloadDiagnostic(
     registry: ResolvedExecutablePluginRuntimeRegistry,
     scopedPluginIds: readonly string[],
+    options?: Readonly<{ ignoreTrustPolicyDiagnostics?: boolean }>,
 ): boolean {
     return scopedPluginIds.some((pluginId) => (
         (registry.pluginDiagnosticsByPluginId[pluginId] ?? []).some((diagnostic) => (
             BLOCKING_PLUGIN_RELOAD_DIAGNOSTIC_CODES.has(diagnostic.code)
+            && !(options?.ignoreTrustPolicyDiagnostics === true
+                && TRUST_POLICY_PLUGIN_RELOAD_DIAGNOSTIC_CODES.has(diagnostic.code))
         ))
     ));
 }
@@ -247,40 +151,28 @@ function createShutdownError(): Error {
     return new Error('Plugin runtime registry has shut down');
 }
 
-async function publishReloadLifecycleEvent(
-    eventId: 'plugin.reload.before' | 'plugin.reload.after',
-    payload: Record<string, unknown>,
-): Promise<void> {
-    await publishHostPluginEvent(`@happier/lifecycle/${eventId.replaceAll('.', '/')}`, {
-        eventId,
-        ...payload,
-    });
+class ColdInitializationSupersededError extends Error {
+    constructor() {
+        super('Cold plugin runtime registry initialization was superseded by a prepared registry');
+    }
 }
 
 export function createPluginReloadController(params?: Readonly<{
     happyHomeDir?: string;
     resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
     invalidateCaches?: (generation: number) => void;
-    dispatchReloadHookEvent?: (params: Readonly<{
-        runtimeRegistry: Pick<ResolvedExecutablePluginRuntimeRegistry, 'hookHandlersByHookId' | 'readHookEventEnvelopeV1'>;
-        eventId: 'plugin.reload.before' | 'plugin.reload.after';
-        payload: Record<string, unknown>;
-    }>) => Promise<unknown>;
-    publishInstalledManifestProjections?: (params: Readonly<{
-        pluginIds: readonly string[];
-    }>) => Promise<unknown>;
 }>): PluginReloadController {
     let generation = 0;
     let activeRegistry: ResolvedExecutablePluginRuntimeRegistry | null = null;
     let lastResult: PluginReloadResult | null = null;
-    let inFlight: Promise<PluginReloadResult> | null = null;
+    let coldInitializationPromise: Promise<PluginReloadResult> | null = null;
     let shutdownPromise: Promise<void> | null = null;
     let shutdownStarted = false;
+    let highestObservedDurableRevision: number | null = null;
     let shutdownTimeoutMs = normalizeShutdownTimeoutMs(undefined);
-    let activeRequestedPluginIds: readonly string[] = Object.freeze([]);
-    let queuedReloadBatch: QueuedReloadBatch | null = null;
     const outstandingLeaseCounts = new Map<ResolvedExecutablePluginRuntimeRegistry, number>();
     const pendingDisposal = new Set<ResolvedExecutablePluginRuntimeRegistry>();
+    const leaseDrainListeners = new Set<() => void>();
     const reloadListeners = new Set<PluginReloadListener>();
 
     function notifyReloadListeners(result: PluginReloadResult): void {
@@ -288,7 +180,7 @@ export function createPluginReloadController(params?: Readonly<{
             try {
                 listener(result);
             } catch (error) {
-                logger.debug('[PLUGIN RUNTIME] Plugin reload listener threw', error);
+                logger.debug('[PLUGIN RUNTIME] Plugin runtime registry listener threw', error);
             }
         }
     }
@@ -299,10 +191,6 @@ export function createPluginReloadController(params?: Readonly<{
         }
         const { configuration } = await import('../../../configuration');
         return configuration.happyHomeDir;
-    }
-
-    function shouldPersistReloadState(): boolean {
-        return !params?.resolveRuntimeRegistry || typeof params.happyHomeDir === 'string';
     }
 
     function retainRegistryLease(registry: ResolvedExecutablePluginRuntimeRegistry): void {
@@ -317,9 +205,52 @@ export function createPluginReloadController(params?: Readonly<{
                 pendingDisposal.delete(registry);
                 await registry.dispose();
             }
-            return;
+        } else {
+            outstandingLeaseCounts.set(registry, currentCount - 1);
         }
-        outstandingLeaseCounts.set(registry, currentCount - 1);
+        for (const listener of leaseDrainListeners) listener();
+    }
+
+    function createRuntimeRegistryLease(
+        registry: ResolvedExecutablePluginRuntimeRegistry,
+    ): PluginRuntimeRegistryLease {
+        retainRegistryLease(registry);
+        let released = false;
+        return {
+            registry,
+            source: 'active',
+            release: async () => {
+                if (released) return;
+                released = true;
+                await releaseRegistryLease(registry);
+            },
+        };
+    }
+
+    async function waitForRegistryLeasesToDrain(
+        registries: ReadonlySet<ResolvedExecutablePluginRuntimeRegistry>,
+        timeoutMs: number,
+    ): Promise<void> {
+        const drained = () => [...registries].every(
+            (registry) => (outstandingLeaseCounts.get(registry) ?? 0) === 0,
+        );
+        if (drained()) return;
+        let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+        let listener: (() => void) | null = null;
+        await Promise.race([
+            new Promise<void>((resolve) => {
+                listener = () => {
+                    if (drained()) resolve();
+                };
+                leaseDrainListeners.add(listener);
+            }),
+            new Promise<void>((resolve) => {
+                timeoutHandle = setTimeout(resolve, timeoutMs);
+                timeoutHandle.unref?.();
+            }),
+        ]);
+        if (listener) leaseDrainListeners.delete(listener);
+        if (timeoutHandle) clearTimeout(timeoutHandle);
     }
 
     async function disposeRegistryWhenSafe(registry: ResolvedExecutablePluginRuntimeRegistry): Promise<void> {
@@ -328,6 +259,14 @@ export function createPluginReloadController(params?: Readonly<{
             return;
         }
         await registry.dispose();
+    }
+
+    function disposeRegistryWhenSafeInBackground(registry: ResolvedExecutablePluginRuntimeRegistry): void {
+        void disposeRegistryWhenSafe(registry).catch((error: unknown) => {
+            logger.warn('[PLUGIN RUNTIME] Retiring plugin runtime registry cleanup failed', {
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
     }
 
     async function disposeRegistryForShutdown(
@@ -358,9 +297,7 @@ export function createPluginReloadController(params?: Readonly<{
             timeoutHandle.unref?.();
         });
         const result = await Promise.race([disposePromise, timeoutPromise]);
-        if (timeoutHandle) {
-            clearTimeout(timeoutHandle);
-        }
+        if (timeoutHandle) clearTimeout(timeoutHandle);
         if (result === 'timeout') {
             logger.warn('[PLUGIN RUNTIME] Plugin runtime registry disposal timed out during daemon shutdown', {
                 timeoutMs,
@@ -369,6 +306,7 @@ export function createPluginReloadController(params?: Readonly<{
     }
 
     async function resolveRuntimeRegistry(
+        attemptedGeneration: number,
         resolveRuntimeRegistryOverride?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>,
     ): Promise<ResolvedExecutablePluginRuntimeRegistry> {
         const resolver = resolveRuntimeRegistryOverride ?? params?.resolveRuntimeRegistry;
@@ -378,363 +316,281 @@ export function createPluginReloadController(params?: Readonly<{
         const { resolveExecutablePluginRuntimeRegistry } = await import('../resolveExecutablePluginRuntimeRegistry');
         return await resolveExecutablePluginRuntimeRegistry({
             happyHomeDir: await resolveHappyHomeDir(),
+            generation: attemptedGeneration,
         });
     }
 
-    async function emitReloadHook(paramsForEvent: Readonly<{
-        runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
-        eventId: 'plugin.reload.before' | 'plugin.reload.after';
-        payload: Record<string, unknown>;
-    }>): Promise<void> {
-        if (paramsForEvent.eventId === 'plugin.reload.after') {
-            await publishReloadLifecycleEvent(paramsForEvent.eventId, paramsForEvent.payload);
-        }
-        if (!params?.dispatchReloadHookEvent || !paramsForEvent.runtimeRegistry) {
-            return;
-        }
-        try {
-            await params.dispatchReloadHookEvent({
-                runtimeRegistry: paramsForEvent.runtimeRegistry,
-                eventId: paramsForEvent.eventId,
-                payload: paramsForEvent.payload,
-            });
-        } catch {
-            // Reload lifecycle hooks remain best-effort even if the dispatcher fails.
-        }
+    function createActiveResult(
+        registry: ResolvedExecutablePluginRuntimeRegistry,
+        changedPluginIds: readonly string[],
+    ): Extract<PluginReloadResult, { ok: true }> {
+        return {
+            ok: true,
+            generation,
+            attemptedGeneration: generation,
+            requestedPluginIds: changedPluginIds,
+            changedPluginIds,
+            affectedPluginIds: changedPluginIds,
+            activeGenerationId: resolveActiveGenerationId(registry, generation),
+            registryStatus: 'active',
+            diagnostics: Object.freeze([]),
+            diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
+            registry,
+        };
     }
 
-    async function publishInstalledManifestProjections(pluginIds: readonly string[]): Promise<void> {
-        if (!params?.publishInstalledManifestProjections) {
-            return;
-        }
-        try {
-            await params.publishInstalledManifestProjections({ pluginIds });
-        } catch {
-            // Installed-manifest projection sync is best-effort; reload success remains authoritative locally.
-        }
-    }
-
-    async function runReload(
-        affectedPluginIds: readonly string[],
+    async function initializeRuntimeRegistry(
         resolveRuntimeRegistryOverride?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>,
+        beforePublish?: PluginRuntimeRegistryBeforePublish,
     ): Promise<PluginReloadResult> {
         const attemptedGeneration = generation + 1;
-        if (params?.dispatchReloadHookEvent && activeRegistry) {
-            await emitReloadHook({
-                runtimeRegistry: activeRegistry,
-                eventId: 'plugin.reload.before',
-                payload: {
-                    affectedPluginIds,
-                    attemptedGeneration,
-                    currentGeneration: generation,
-                    currentGenerationId: resolveActiveGenerationId(activeRegistry, generation),
-                },
-            });
-        }
+        let registry: ResolvedExecutablePluginRuntimeRegistry;
         try {
-            const registry = await resolveRuntimeRegistry(resolveRuntimeRegistryOverride);
-            if (shutdownStarted) {
-                await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
-                throw createShutdownError();
-            }
-            const changedPluginIds = resolveChangedPluginIds(affectedPluginIds, registry);
-            if (hasBlockingPluginReloadDiagnostic(registry, changedPluginIds)) {
-                if (!activeRegistry) {
-                    lastResult = {
-                        ok: false,
-                        generation,
-                        attemptedGeneration,
-                        requestedPluginIds: affectedPluginIds,
-                        changedPluginIds,
-                        affectedPluginIds: changedPluginIds,
-                        activeGenerationId: null,
-                        registryStatus: 'unavailable',
-                        diagnostics: Object.freeze([
-                            {
-                                code: 'plugin_reload_failed',
-                                message: 'Plugin activation failed and no active last-known-good registry is available',
-                            },
-                        ]),
-                        diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
-                        registry: null,
-                    };
-                    await registry.dispose();
-                    return lastResult;
-                }
-
-                await registry.dispose();
-                lastResult = {
-                    ok: true,
-                    generation,
-                    attemptedGeneration,
-                    requestedPluginIds: affectedPluginIds,
-                    changedPluginIds,
-                    affectedPluginIds: changedPluginIds,
-                    activeGenerationId: resolveActiveGenerationId(activeRegistry, generation) ?? `reload:${generation}`,
-                    registryStatus: 'last_known_good',
-                    diagnostics: Object.freeze([]),
-                    diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
-                    registry: activeRegistry,
-                };
-                await emitReloadHook({
-                    runtimeRegistry: lastResult.registry,
-                    eventId: 'plugin.reload.after',
-                    payload: {
-                        affectedPluginIds: lastResult.affectedPluginIds,
-                        changedPluginIds: lastResult.changedPluginIds,
-                        generation: lastResult.generation,
-                        attemptedGeneration: lastResult.attemptedGeneration,
-                        activeGenerationId: lastResult.activeGenerationId,
-                        registryStatus: lastResult.registryStatus,
-                    },
-                });
-                return lastResult;
-            }
-
-            const previousRegistry = activeRegistry;
-            generation = attemptedGeneration;
-            activeRegistry = registry;
-            params?.invalidateCaches?.(generation);
-            if (previousRegistry && previousRegistry !== registry) {
-                await disposeRegistryWhenSafe(previousRegistry);
-            }
-            if (shutdownStarted) {
-                throw createShutdownError();
-            }
-            lastResult = {
-                ok: true,
-                generation,
-                attemptedGeneration,
-                requestedPluginIds: affectedPluginIds,
-                changedPluginIds,
-                affectedPluginIds: changedPluginIds,
-                activeGenerationId: resolveActiveGenerationId(registry, generation) ?? `reload:${generation}`,
-                registryStatus: 'active',
-                diagnostics: Object.freeze([]),
-                diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
-                registry,
-            };
-            if (shouldPersistReloadState()) {
-                await writePluginReloadStateSnapshot(await resolveHappyHomeDir(), {
-                    t: 'happier_plugin_reload_state_v1',
-                    schemaVersion: 1,
-                    generation,
-                    activeGenerationId: lastResult.activeGenerationId,
-                    changedPluginIds,
-                    updatedAt: Date.now(),
-                });
-            }
-            await publishInstalledManifestProjections(affectedPluginIds);
-            if (shutdownStarted) {
-                throw createShutdownError();
-            }
-            await emitReloadHook({
-                runtimeRegistry: lastResult.registry,
-                eventId: 'plugin.reload.after',
-                payload: {
-                    affectedPluginIds: lastResult.affectedPluginIds,
-                    changedPluginIds: lastResult.changedPluginIds,
-                    generation: lastResult.generation,
-                    attemptedGeneration: lastResult.attemptedGeneration,
-                    activeGenerationId: lastResult.activeGenerationId,
-                    registryStatus: lastResult.registryStatus,
-                },
-            });
-            if (shutdownStarted) {
-                throw createShutdownError();
-            }
-            return lastResult;
+            registry = await resolveRuntimeRegistry(attemptedGeneration, resolveRuntimeRegistryOverride);
         } catch (error) {
-            const diagnostics = Object.freeze([
-                {
-                    code: 'plugin_reload_failed' as const,
-                    message: error instanceof Error ? error.message : 'Plugin reload failed',
-                },
-            ]);
-            if (activeRegistry) {
-                lastResult = {
-                    ok: true,
-                    generation,
-                    attemptedGeneration,
-                    requestedPluginIds: affectedPluginIds,
-                    changedPluginIds: affectedPluginIds,
-                    affectedPluginIds,
-                    activeGenerationId: resolveActiveGenerationId(activeRegistry, generation) ?? `reload:${generation}`,
-                    registryStatus: 'last_known_good',
-                    diagnostics,
-                    diagnosticsByPluginId: Object.freeze({}),
-                    registry: activeRegistry,
-                };
-                await emitReloadHook({
-                    runtimeRegistry: lastResult.registry,
-                    eventId: 'plugin.reload.after',
-                    payload: {
-                        affectedPluginIds: lastResult.affectedPluginIds,
-                        changedPluginIds: lastResult.changedPluginIds,
-                        generation: lastResult.generation,
-                        attemptedGeneration: lastResult.attemptedGeneration,
-                        activeGenerationId: lastResult.activeGenerationId,
-                        registryStatus: lastResult.registryStatus,
-                        diagnostics,
-                    },
-                });
-                return lastResult;
-            }
-
+            const diagnostic = Object.freeze({
+                code: 'plugin_reload_failed' as const,
+                message: error instanceof Error ? error.message : 'Plugin runtime registry initialization failed',
+            });
             lastResult = {
                 ok: false,
                 generation,
                 attemptedGeneration,
-                requestedPluginIds: affectedPluginIds,
-                changedPluginIds: affectedPluginIds,
-                affectedPluginIds,
-                activeGenerationId: resolveActiveGenerationId(activeRegistry, generation),
+                requestedPluginIds: Object.freeze([]),
+                changedPluginIds: Object.freeze([]),
+                affectedPluginIds: Object.freeze([]),
+                activeGenerationId: null,
                 registryStatus: 'unavailable',
-                diagnostics,
+                diagnostics: Object.freeze([diagnostic]),
                 diagnosticsByPluginId: Object.freeze({}),
-                registry: activeRegistry,
+                registry: null,
             };
-            return lastResult;
+            notifyReloadListeners(lastResult);
+            throw error;
         }
+
+        if (shutdownStarted) {
+            await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
+            throw createShutdownError();
+        }
+
+        const changedPluginIds = collectRegistryPluginIds(registry);
+        const isolatedFailurePluginIds = changedPluginIds.filter((pluginId) => (
+            hasBlockingPluginReloadDiagnostic(registry, [pluginId], {
+                ignoreTrustPolicyDiagnostics: true,
+            })
+        ));
+        if (isolatedFailurePluginIds.length > 0) {
+            logger.warn('[PLUGIN RUNTIME] Cold startup isolated unavailable plugin activations', {
+                pluginIds: isolatedFailurePluginIds,
+            });
+        }
+
+        let published = false;
+        const publish = () => {
+            if (published) throw new Error('Plugin runtime registry publication callback was invoked more than once');
+            if (shutdownStarted) throw createShutdownError();
+            if (activeRegistry) throw new ColdInitializationSupersededError();
+            published = true;
+            generation = attemptedGeneration;
+            activeRegistry = registry;
+        };
+        try {
+            if (beforePublish) await beforePublish(registry, publish);
+            else publish();
+        } catch (error) {
+            if (!published) await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
+            if (error instanceof ColdInitializationSupersededError && activeRegistry) {
+                return createActiveResult(activeRegistry, []);
+            }
+            const diagnostic = Object.freeze({
+                code: 'plugin_reload_failed' as const,
+                message: error instanceof Error ? error.message : 'Plugin runtime registry publication failed',
+            });
+            lastResult = {
+                ok: false,
+                generation,
+                attemptedGeneration,
+                requestedPluginIds: Object.freeze([]),
+                changedPluginIds: Object.freeze([]),
+                affectedPluginIds: Object.freeze([]),
+                activeGenerationId: null,
+                registryStatus: 'unavailable',
+                diagnostics: Object.freeze([diagnostic]),
+                diagnosticsByPluginId: registry.pluginDiagnosticsByPluginId,
+                registry: null,
+            };
+            notifyReloadListeners(lastResult);
+            throw error;
+        }
+        if (!published) {
+            await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
+            throw new Error('Plugin runtime registry pre-publication owner returned without publishing');
+        }
+        params?.invalidateCaches?.(generation);
+        lastResult = createActiveResult(registry, changedPluginIds);
+        notifyReloadListeners(lastResult);
+        return lastResult;
     }
 
-    function flushQueuedReloadBatch(): void {
-        const nextBatch = queuedReloadBatch;
-        queuedReloadBatch = null;
-        if (!nextBatch) {
-            return;
-        }
-        startReloadCycle(materializePendingReloadScope(nextBatch.scope), nextBatch.deferreds);
-    }
-
-    function startReloadCycle(
-        affectedPluginIds: readonly string[],
-        deferreds?: readonly DeferredPluginReloadResult[],
+    function getOrStartColdInitialization(
         resolveRuntimeRegistryOverride?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>,
+        beforePublish?: PluginRuntimeRegistryBeforePublish,
     ): Promise<PluginReloadResult> {
-        activeRequestedPluginIds = affectedPluginIds;
-        const cyclePromise = runReload(affectedPluginIds, resolveRuntimeRegistryOverride);
-        inFlight = cyclePromise;
-        if (deferreds && deferreds.length > 0) {
-            void cyclePromise.then(
-                (result) => {
-                    for (const deferred of deferreds) {
-                        deferred.resolve(withRequestedPluginIds(result, deferred.requestedPluginIds));
-                    }
-                },
-                (error) => {
-                    for (const deferred of deferreds) {
-                        deferred.reject(error);
-                    }
-                },
-            );
-        }
-        void cyclePromise.then(
-            (result) => notifyReloadListeners(result),
+        if (coldInitializationPromise) return coldInitializationPromise;
+        const initialization = initializeRuntimeRegistry(
+            resolveRuntimeRegistryOverride,
+            beforePublish,
+        );
+        coldInitializationPromise = initialization;
+        void initialization.then(
             () => {
-                // A rejected reload cycle leaves lastResult unset; nothing to notify.
+                if (coldInitializationPromise === initialization) coldInitializationPromise = null;
+            },
+            () => {
+                if (coldInitializationPromise === initialization) coldInitializationPromise = null;
             },
         );
-        void cyclePromise.finally(() => {
-            if (inFlight === cyclePromise) {
-                inFlight = null;
-            }
-            activeRequestedPluginIds = Object.freeze([]);
-            flushQueuedReloadBatch();
-        });
-        return cyclePromise;
+        return initialization;
     }
 
     return {
-        reload(paramsForReload) {
+        async adoptPreparedRuntimeRegistry(adoption) {
             if (shutdownStarted) {
-                return Promise.reject(createShutdownError());
+                await adoption.registry.dispose();
+                throw createShutdownError();
             }
-            const affectedPluginIds = normalizeAffectedPluginIds(paramsForReload?.pluginId);
-            if (inFlight) {
-                if (areAffectedPluginIdsEqual(affectedPluginIds, activeRequestedPluginIds)) {
-                    return inFlight;
+
+            const changedPluginIds = normalizePluginIds(adoption.changedPluginIds);
+            if (
+                highestObservedDurableRevision !== null
+                && adoption.durableRevision <= highestObservedDurableRevision
+            ) {
+                await adoption.registry.dispose();
+                throw new Error(
+                    `Prepared plugin runtime registry durable revision ${adoption.durableRevision} `
+                    + `is not newer than observed revision ${highestObservedDurableRevision}`,
+                );
+            }
+            // Durable currentness does not roll back while cold initialization or
+            // later publication work is pending or fails.
+            highestObservedDurableRevision = adoption.durableRevision;
+
+            const initialization = coldInitializationPromise;
+            if (initialization) {
+                try {
+                    await initialization;
+                } catch {
+                    // A prepared daemon mutation may recover from failed cold initialization.
                 }
-                const { promise, deferred } = createDeferredPluginReloadResult();
-                queuedReloadBatch = queuedReloadBatch
-                    ? {
-                        scope: mergePendingReloadScope(queuedReloadBatch.scope, affectedPluginIds),
-                        deferreds: [...queuedReloadBatch.deferreds, {
-                            ...deferred,
-                            requestedPluginIds: affectedPluginIds,
-                        }],
-                    }
-                    : {
-                        scope: createPendingReloadScope(affectedPluginIds),
-                        deferreds: [{
-                            ...deferred,
-                            requestedPluginIds: affectedPluginIds,
-                        }],
-                    };
-                return promise;
             }
-            return startReloadCycle(affectedPluginIds);
+            if (shutdownStarted) {
+                await adoption.registry.dispose();
+                throw createShutdownError();
+            }
+
+            const previousRegistry = activeRegistry;
+            let published = false;
+            const publish = () => {
+                if (published) {
+                    throw new Error('Plugin runtime registry publication callback was invoked more than once');
+                }
+                if (shutdownStarted) throw createShutdownError();
+                if (
+                    adoption.durableRevision !== highestObservedDurableRevision
+                ) {
+                    throw new Error(
+                        `Prepared plugin runtime registry durable revision ${adoption.durableRevision} `
+                        + `was superseded by newer durable revision ${highestObservedDurableRevision}`,
+                    );
+                }
+                published = true;
+                generation += 1;
+                activeRegistry = adoption.registry;
+            };
+            try {
+                if (
+                    previousRegistry
+                    && changedPluginIds.length > 0
+                    && !previousRegistry.retirePluginConsumers
+                ) {
+                    throw new Error(
+                        'Active plugin runtime registry cannot retire changed-plugin consumers',
+                    );
+                }
+                // Once the durable revision has passed monotonic arbitration, its
+                // changed predecessor is stale. Fence only those consumers before
+                // any candidate validation or awaited publication work, so every
+                // post-commit failure remains fail-closed without disturbing peers.
+                previousRegistry?.retirePluginConsumers?.(changedPluginIds);
+                if (hasBlockingPluginReloadDiagnostic(adoption.registry, changedPluginIds)) {
+                    throw new Error(
+                        'Prepared plugin runtime registry contains a blocking activation diagnostic',
+                    );
+                }
+                if (adoption.beforePublish) {
+                    await adoption.beforePublish(adoption.registry, publish);
+                } else {
+                    publish();
+                }
+            } catch (error) {
+                if (!published) {
+                    await adoption.registry.dispose();
+                }
+                throw error;
+            }
+            if (!published) {
+                await adoption.registry.dispose();
+                throw new Error('Plugin runtime registry pre-publication owner returned without publishing');
+            }
+            params?.invalidateCaches?.(generation);
+            lastResult = createActiveResult(adoption.registry, changedPluginIds);
+            notifyReloadListeners(lastResult);
+            if (previousRegistry && previousRegistry !== adoption.registry) {
+                disposeRegistryWhenSafeInBackground(previousRegistry);
+            }
+            return lastResult;
         },
         async acquireRuntimeRegistry(leaseParams) {
-            if (shutdownStarted) {
-                throw createShutdownError();
-            }
-            if (activeRegistry) {
-                const leasedRegistry = activeRegistry;
-                retainRegistryLease(leasedRegistry);
-                return {
-                    registry: leasedRegistry,
-                    source: 'active',
-                    release: async () => {
-                        await releaseRegistryLease(leasedRegistry);
-                    },
-                };
-            }
-            const result = await (inFlight ?? startReloadCycle(
-                Object.freeze([]),
-                undefined,
+            if (shutdownStarted) throw createShutdownError();
+
+            if (activeRegistry) return createRuntimeRegistryLease(activeRegistry);
+
+            const result = await getOrStartColdInitialization(
                 leaseParams?.resolveRuntimeRegistry,
-            ));
-            const leasedRegistry = result.registry ?? activeRegistry;
-            if (shutdownStarted) {
-                throw createShutdownError();
-            }
-            if (!result.ok || !leasedRegistry) {
+                leaseParams?.beforePublish,
+            );
+            if (shutdownStarted) throw createShutdownError();
+            if (!result.ok || !activeRegistry) {
                 throw new Error(result.diagnostics[0]?.message ?? 'Plugin runtime registry unavailable');
             }
-            retainRegistryLease(leasedRegistry);
-            return {
-                registry: leasedRegistry,
-                source: 'active',
-                release: async () => {
-                    await releaseRegistryLease(leasedRegistry);
-                },
-            };
+            return createRuntimeRegistryLease(activeRegistry);
+        },
+        tryAcquireRuntimeRegistry() {
+            if (
+                shutdownStarted
+                || !activeRegistry
+            ) return null;
+            return createRuntimeRegistryLease(activeRegistry);
+        },
+        isRuntimeRegistryCurrent(registry) {
+            return (
+                !shutdownStarted
+                && activeRegistry === registry
+            );
         },
         async shutdown(shutdownParams) {
-            if (shutdownPromise) {
-                return await shutdownPromise;
-            }
+            if (shutdownPromise) return await shutdownPromise;
             shutdownPromise = (async () => {
                 shutdownStarted = true;
                 shutdownTimeoutMs = normalizeShutdownTimeoutMs(shutdownParams?.timeoutMs);
-                if (queuedReloadBatch) {
-                    const error = createShutdownError();
-                    for (const deferred of queuedReloadBatch.deferreds) {
-                        deferred.reject(error);
-                    }
-                    queuedReloadBatch = null;
-                }
                 const registriesToDispose = new Set<ResolvedExecutablePluginRuntimeRegistry>();
-                if (activeRegistry) {
-                    registriesToDispose.add(activeRegistry);
-                }
-                for (const registry of pendingDisposal) {
-                    registriesToDispose.add(registry);
-                }
+                if (activeRegistry) registriesToDispose.add(activeRegistry);
+                for (const registry of pendingDisposal) registriesToDispose.add(registry);
                 activeRegistry = null;
-                outstandingLeaseCounts.clear();
                 pendingDisposal.clear();
+                await waitForRegistryLeasesToDrain(registriesToDispose, shutdownTimeoutMs);
+                outstandingLeaseCounts.clear();
                 for (const registry of registriesToDispose) {
                     // eslint-disable-next-line no-await-in-loop
                     await disposeRegistryForShutdown(registry, shutdownTimeoutMs);
@@ -743,11 +599,7 @@ export function createPluginReloadController(params?: Readonly<{
             return await shutdownPromise;
         },
         getState() {
-            return {
-                generation,
-                activeRegistry,
-                lastResult,
-            };
+            return { generation, activeRegistry, lastResult };
         },
         subscribe(listener) {
             reloadListeners.add(listener);

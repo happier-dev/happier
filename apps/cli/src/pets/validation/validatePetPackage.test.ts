@@ -23,7 +23,7 @@ afterEach(() => {
 });
 
 describe('validatePetPackage', () => {
-  it('allows safe child directories whose names start with dots', async () => {
+  it('rejects safe child paths that are outside the canonical manifest asset contract', async () => {
     const root = tempRoot();
     const packagePath = join(root, 'codex-home', 'pets', 'blink');
     const spritesheetDir = join(packagePath, '..sprites');
@@ -43,7 +43,9 @@ describe('validatePetPackage', () => {
 
     const result = await mod.validatePetPackage({ packagePath });
 
-    expect(result.ok).toBe(true);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error('expected noncanonical spritesheet path to be rejected');
+    expect(result.issues.map((issue: { code: string }) => issue.code)).toContain('manifest_invalid_shape');
   });
 
   it('rejects manifests that are symlinks escaping the package root', async () => {

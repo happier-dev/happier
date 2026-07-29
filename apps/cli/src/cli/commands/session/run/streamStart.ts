@@ -5,6 +5,7 @@ import { ExecutionRunTurnStreamStartRequestSchema } from '@happier-dev/protocol'
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { startExecutionRunStream } from '@/session/services/executionRuns';
 
@@ -19,7 +20,7 @@ export async function cmdSessionRunStreamStart(
   const resume = hasFlag(argv, '--resume');
 
   if (!idOrPrefix || !runId || !message) {
-    throw new Error('Usage: happier session run stream-start <session-id-or-prefix> <run-id> <message> [--resume] [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStreamStart}`);
   }
 
   const credentials = await deps.readCredentialsFn();

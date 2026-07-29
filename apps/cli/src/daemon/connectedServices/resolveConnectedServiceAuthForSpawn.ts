@@ -1,12 +1,23 @@
-import type {
-  AccountSettings,
-  ConnectedServiceAuthGroupV1,
-  ConnectedServiceCredentialRecordV1,
-  ConnectedServiceId,
+import {
+  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  type AccountSettings,
+  type BuiltInLegacyConnectedAccountCompatibility,
+  type ConnectedServiceAuthGroupV1,
+  type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceId,
+  type QualifiedConnectedAccountPurposeBindingV1,
 } from '@happier-dev/protocol';
 
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { ApiClient } from '@/api/api';
+import {
+  resolveQualifiedConnectedAccountOperationTransport,
+  resolveQualifiedConnectedAccountPeerClass,
+} from '@/api/client/qualifiedConnectedAccountApi';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import type {
+  SessionSyncPendingInputServerContractResult,
+} from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import type { Credentials } from '@/persistence';
 
 import {
@@ -14,7 +25,10 @@ import {
   type ConnectedServiceBindingSelection,
   type ConnectedServicesBindingsV1,
 } from './parseConnectedServicesBindings';
-import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import {
+  resolveConnectedServiceCredentialResolutions,
+  type ConnectedServiceCredentialResolution,
+} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import {
   ConnectedServiceMaterializationBlockedError,
   materializeConnectedServicesForSpawn,
@@ -26,7 +40,6 @@ import type {
   ConnectedServicesMaterialization,
   ConnectedServicesMaterializationDiagnostic,
 } from './materialization/materializer';
-import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from './accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
   selectConnectedServiceAuthGroupCandidate,
   type ConnectedServiceAuthGroupMemberRuntimeState,
@@ -48,11 +61,12 @@ import {
   type ConnectedServiceCredentialRefreshResult,
 } from './refresh/ConnectedServiceRefreshCoordinator';
 import type {
-  ConnectedServiceRecoverySoftSwitchGuardInput,
-  ConnectedServiceRecoverySoftSwitchGuardResult,
-} from './recovery/connectedServiceRecoverySwitchGuard';
-import { decideConnectedServiceRecovery } from './runtimeAuth/ConnectedServiceRecoveryPolicy';
-
+  ConnectedServicePredictiveSwitchGuardInput,
+  ConnectedServicePredictiveSwitchGuardResult,
+} from './accountGroups/switching/connectedServicePredictiveSwitchGuard';
+import {
+  resolveFirstPartyConnectedAccountServiceId,
+} from './requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 type ConnectedServiceAuthGroupResponse = Readonly<{
   v?: number;
   serviceId?: string;
@@ -68,12 +82,6 @@ type ConnectedServiceAuthGroupApi = Readonly<{
     serviceId: ConnectedServiceId;
     groupId: string;
   }>) => Promise<ConnectedServiceAuthGroupResponse | null>;
-  updateConnectedServiceAuthGroupActiveProfile?: (params: Readonly<{
-    serviceId: ConnectedServiceId;
-    groupId: string;
-    activeProfileId: string;
-    expectedGeneration?: number;
-  }>) => Promise<ConnectedServiceAuthGroupResponse>;
 }>;
 
 type ConnectedServiceProfileStatus =
@@ -81,6 +89,11 @@ type ConnectedServiceProfileStatus =
   | 'refreshing'
   | 'needs_reauth'
   | 'refresh_failed_retryable';
+
+type ConnectedServiceProfileProjection = Readonly<{
+  status: ConnectedServiceProfileStatus;
+  kind?: ConnectedServiceCredentialRecordV1['kind'] | null;
+}>;
 
 type ConnectedServiceProfilesHealthApi = Readonly<{
   listConnectedServiceProfiles?: (params: Readonly<{
@@ -90,6 +103,7 @@ type ConnectedServiceProfilesHealthApi = Readonly<{
     profiles: ReadonlyArray<Readonly<{
       profileId: string;
       status: ConnectedServiceProfileStatus;
+      kind?: ConnectedServiceCredentialRecordV1['kind'] | null;
     }>>;
   }>>;
 }>;
@@ -130,9 +144,9 @@ type ConnectedServiceSpawnCredentialRefreshService = Readonly<{
   }>): Promise<ConnectedServiceCredentialRefreshResult>;
 }>;
 
-type ConnectedServiceRecoverySoftSwitchGuard = (
-  input: ConnectedServiceRecoverySoftSwitchGuardInput,
-) => ConnectedServiceRecoverySoftSwitchGuardResult | Promise<ConnectedServiceRecoverySoftSwitchGuardResult>;
+type ConnectedServicePredictiveSwitchGuard = (
+  input: ConnectedServicePredictiveSwitchGuardInput,
+) => ConnectedServicePredictiveSwitchGuardResult | Promise<ConnectedServicePredictiveSwitchGuardResult>;
 
 const CONNECTED_SERVICE_PROFILE_REAUTH_BLOCK_UNTIL_MS = Number.MAX_SAFE_INTEGER;
 
@@ -179,6 +193,108 @@ export class ConnectedServiceSpawnProfileActionRequiredError extends Error {
   }
 }
 
+export class ConnectedServiceRequestAuthCredentialRevisionRequiredError extends Error {
+  readonly kind = 'request_auth_credential_revision_required' as const;
+  readonly serviceId: ConnectedServiceId;
+
+  constructor(serviceId: ConnectedServiceId) {
+    super(`Connected Account request auth requires a revisioned credential (${serviceId})`);
+    this.name = 'ConnectedServiceRequestAuthCredentialRevisionRequiredError';
+    this.serviceId = serviceId;
+  }
+}
+
+export class ConnectedServiceLegacyUnfencedAuthorityError extends Error {
+  readonly code = 'connected_service_legacy_unfenced_authority_unsupported' as const;
+  readonly operation: 'group' | 'request_auth' | 'materialization';
+
+  constructor(operation: ConnectedServiceLegacyUnfencedAuthorityError['operation']) {
+    super(
+      `Legacy unfenced connected service credentials do not support ${operation}`,
+    );
+    this.name = 'ConnectedServiceLegacyUnfencedAuthorityError';
+    this.operation = operation;
+  }
+}
+
+function supportsLegacyUnfencedOneShotMaterialization(
+  resolutions: ReadonlyMap<
+    ConnectedServiceId,
+    ConnectedServiceCredentialResolution
+  >,
+  snapshot: CliServerFeaturesSnapshot | undefined,
+  serverContract:
+    SessionSyncPendingInputServerContractResult | null | undefined,
+): boolean {
+  return [...resolutions.values()].every((resolution) => {
+    if (resolution.revisionSemantics !== 'legacy_unfenced') return true;
+    const compatibility =
+      BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+        resolution.record.serviceId as keyof
+          typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID
+      ] as BuiltInLegacyConnectedAccountCompatibility | undefined;
+    if (
+      !compatibility
+      || compatibility.authenticationModeByCredentialKind[
+        resolution.record.kind
+      ] === undefined
+    ) {
+      return false;
+    }
+    const authenticationModeCardinality =
+      new Set(
+        Object.values(
+          compatibility.authenticationModeByCredentialKind,
+        ),
+      ).size > 1
+        ? 'multiple' as const
+        : 'single' as const;
+    try {
+      const transport =
+        resolveQualifiedConnectedAccountOperationTransport({
+          snapshot,
+          serverContract,
+          service: compatibility.service,
+          operation: {
+            kind: 'one_shot_materialization',
+            configurationState: 'unconfigured',
+            authenticationModeCardinality,
+          },
+        });
+      return transport.kind === 'legacy'
+        && transport.peerClass === 'exact_v0_2_1'
+        && transport.serviceId === resolution.record.serviceId;
+    } catch {
+      return false;
+    }
+  });
+}
+
+export class ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError extends Error {
+  readonly kind = 'switch_coordinator_unavailable' as const;
+  readonly serviceId: ConnectedServiceId;
+  readonly groupId: string;
+  readonly activeProfileId: string | null;
+  readonly selectedProfileId: string;
+  readonly reason: 'usage_limit' | 'soft_threshold' | 'auth_expired';
+
+  constructor(params: Readonly<{
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    activeProfileId: string | null;
+    selectedProfileId: string;
+    reason: 'usage_limit' | 'soft_threshold' | 'auth_expired';
+  }>) {
+    super(`Connected service auth group switch coordinator unavailable (${params.serviceId}/${params.groupId})`);
+    this.name = 'ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError';
+    this.serviceId = params.serviceId;
+    this.groupId = params.groupId;
+    this.activeProfileId = params.activeProfileId;
+    this.selectedProfileId = params.selectedProfileId;
+    this.reason = params.reason;
+  }
+}
+
 /**
  * Thrown by the spawn-path post-materialization resume reachability RE-VERIFY gate (K1 §2) when the
  * resumed session is genuinely unreachable in the REAL materialized target the vendor will read.
@@ -222,27 +338,161 @@ function readProfileId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
+type ConnectedServiceSpawnSwitchAuthority =
+  | Readonly<{
+      kind: 'authoritative';
+      activeProfileId: string;
+      generation: number;
+    }>
+  | Readonly<{ kind: 'requires_group_reread' }>
+  | Readonly<{ kind: 'none' }>;
+
+function readConnectedServiceSpawnSwitchAuthority(
+  result: Awaited<ReturnType<ConnectedServiceAuthGroupPreTurnSwitchCoordinator['switchBeforeTurn']>>,
+): ConnectedServiceSpawnSwitchAuthority {
+  if (result.status === 'generation_apply_failed' || result.status === 'predictive_apply_unavailable') {
+    return { kind: 'requires_group_reread' };
+  }
+  if (
+    result.status !== 'switched'
+    && result.status !== 'observed_generation'
+    && result.status !== 'superseded_after_apply'
+  ) {
+    return { kind: 'none' };
+  }
+  if (!Number.isInteger(result.generation) || (result.generation as number) < 0) {
+    return { kind: 'requires_group_reread' };
+  }
+  const activeProfileId = readProfileId(result.activeProfileId);
+  if (!activeProfileId) return { kind: 'requires_group_reread' };
+  return { kind: 'authoritative', activeProfileId, generation: result.generation as number };
+}
+
+export class ConnectedServiceSpawnAuthGroupAuthorityError extends Error {
+  readonly kind: 'resolution_unavailable' | 'resolution_failed' | 'group_missing' | 'active_profile_missing';
+  readonly serviceId: ConnectedServiceId;
+  readonly groupId: string;
+
+  constructor(params: Readonly<{
+    kind: ConnectedServiceSpawnAuthGroupAuthorityError['kind'];
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    cause?: unknown;
+  }>) {
+    super(`Connected service auth group authority ${params.kind} (${params.serviceId}/${params.groupId})`);
+    this.name = 'ConnectedServiceSpawnAuthGroupAuthorityError';
+    this.kind = params.kind;
+    this.serviceId = params.serviceId;
+    this.groupId = params.groupId;
+    if (params.cause !== undefined) {
+      (this as Error & { cause?: unknown }).cause = params.cause;
+    }
+  }
+}
+
+async function resolveGroupAfterSpawnSwitchResult(params: Readonly<{
+  group: ConnectedServiceAuthGroupResponse;
+  serviceId: ConnectedServiceId;
+  groupId: string;
+  api: ConnectedServiceAuthGroupApi;
+  result: Awaited<ReturnType<ConnectedServiceAuthGroupPreTurnSwitchCoordinator['switchBeforeTurn']>>;
+}>): Promise<ConnectedServiceAuthGroupResponse | null> {
+  const authority = readConnectedServiceSpawnSwitchAuthority(params.result);
+  if (authority.kind === 'none') return null;
+  if (authority.kind === 'authoritative') {
+    return {
+      ...params.group,
+      activeProfileId: authority.activeProfileId,
+      generation: authority.generation,
+    };
+  }
+  if (typeof params.api.getConnectedServiceAuthGroup !== 'function') {
+    throw new ConnectedServiceSpawnAuthGroupAuthorityError({
+      kind: 'resolution_unavailable',
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+    });
+  }
+  let currentGroup: ConnectedServiceAuthGroupResponse | null;
+  try {
+    currentGroup = await params.api.getConnectedServiceAuthGroup({
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+    });
+  } catch (cause) {
+    throw new ConnectedServiceSpawnAuthGroupAuthorityError({
+      kind: 'resolution_failed',
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+      cause,
+    });
+  }
+  if (!currentGroup) {
+    throw new ConnectedServiceSpawnAuthGroupAuthorityError({
+      kind: 'group_missing',
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+    });
+  }
+  if (!readProfileId(currentGroup.activeProfileId)) {
+    throw new ConnectedServiceSpawnAuthGroupAuthorityError({
+      kind: 'active_profile_missing',
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+    });
+  }
+  return currentGroup;
+}
+
 async function resolveProfileStatusByProfileId(params: Readonly<{
   api: ApiClient;
   serviceId: ConnectedServiceId;
-}>): Promise<ReadonlyMap<string, ConnectedServiceProfileStatus> | null> {
+}>): Promise<ReadonlyMap<string, ConnectedServiceProfileProjection> | null> {
   const api = params.api as ConnectedServiceProfilesHealthApi;
   if (typeof api.listConnectedServiceProfiles !== 'function') return null;
   const result = await api.listConnectedServiceProfiles({ serviceId: params.serviceId });
-  return new Map(result.profiles.map((profile) => [profile.profileId, profile.status]));
+  return new Map(result.profiles.map((profile) => [
+    profile.profileId,
+    {
+      status: profile.status,
+      ...(profile.kind === undefined ? {} : { kind: profile.kind }),
+    },
+  ]));
+}
+
+function isUnsupportedLegacyCredentialProjection(params: Readonly<{
+  serviceId: ConnectedServiceId;
+  profile: ConnectedServiceProfileProjection;
+}>): boolean {
+  if (!params.profile.kind) return false;
+  const compatibility: BuiltInLegacyConnectedAccountCompatibility =
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+      params.serviceId
+    ];
+  return Boolean(
+    compatibility.unsupportedAuthenticationModeByCredentialKind[
+      params.profile.kind
+    ],
+  );
 }
 
 function throwIfProfileRequiresAction(params: Readonly<{
   serviceId: ConnectedServiceId;
   profileId: string;
-  profileStatusByProfileId: ReadonlyMap<string, ConnectedServiceProfileStatus> | null;
+  profileStatusByProfileId: ReadonlyMap<string, ConnectedServiceProfileProjection> | null;
 }>): void {
-  const status = params.profileStatusByProfileId?.get(params.profileId) ?? null;
-  if (status !== 'needs_reauth') return;
+  const profile = params.profileStatusByProfileId?.get(params.profileId) ?? null;
+  if (profile?.status !== 'needs_reauth') return;
+  if (isUnsupportedLegacyCredentialProjection({
+    serviceId: params.serviceId,
+    profile,
+  })) {
+    return;
+  }
   throw new ConnectedServiceSpawnProfileActionRequiredError({
     serviceId: params.serviceId,
     profileId: params.profileId,
-    status,
+    status: profile.status,
   });
 }
 
@@ -329,9 +579,6 @@ function resolveActiveGroupProfileIssueReason(
 function buildSpawnSwitchState(params: Readonly<{
   group: ConnectedServiceAuthGroupV1;
   accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
-  runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
-  nowMs: number;
-  allowPersistedOnly: boolean;
 }>): ConnectedServiceAuthGroupSwitchState | null {
   if (params.accountUsageStore) {
     return buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({
@@ -341,9 +588,7 @@ function buildSpawnSwitchState(params: Readonly<{
       group: params.group,
     });
   }
-  return params.allowPersistedOnly
-    ? buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group: params.group })
-    : null;
+  return buildConnectedServiceAuthGroupSwitchStateFromPersistedMemberState({ group: params.group });
 }
 
 async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
@@ -353,35 +598,26 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   groupId: string;
   api: ConnectedServiceAuthGroupApi;
   accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
-  runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
-  profileStatusByProfileId: ReadonlyMap<string, ConnectedServiceProfileStatus> | null;
+  profileStatusByProfileId: ReadonlyMap<string, ConnectedServiceProfileProjection> | null;
   quotaFreshnessMs: number;
   nowMs: number;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
-  softSwitchRecoveryGuard?: ConnectedServiceRecoverySoftSwitchGuard | null;
+  predictiveSwitchGuard?: ConnectedServicePredictiveSwitchGuard | null;
 }>): Promise<ConnectedServiceAuthGroupResponse> {
-  const hasUnhealthyProfile = [...(params.profileStatusByProfileId?.values() ?? [])]
-    .some((status) => status === 'needs_reauth');
-  if ((!params.accountUsageStore && !params.runtimeQuotaSnapshots && !hasUnhealthyProfile) || !isFullAuthGroup(params.group)) return params.group;
-  if (
-    !params.authGroupSwitchCoordinator
-    && typeof params.api.updateConnectedServiceAuthGroupActiveProfile !== 'function'
-  ) return params.group;
+  if (!isFullAuthGroup(params.group)) return params.group;
 
   const state = buildSpawnSwitchState({
     group: params.group,
     accountUsageStore: params.accountUsageStore,
-    runtimeQuotaSnapshots: params.runtimeQuotaSnapshots,
-    nowMs: params.nowMs,
-    allowPersistedOnly: hasUnhealthyProfile,
   });
   if (!state) return params.group;
   if (!state.policy.autoSwitch) return params.group;
   const memberStatesByProfileId = new Map(state.memberStatesByProfileId);
   const memberStateOverridesByProfileId: ConnectedServiceAuthGroupMemberRuntimeStateOverride[] = [];
   for (const member of state.members) {
-    const status = params.profileStatusByProfileId?.get(member.profileId) ?? null;
+    const status =
+      params.profileStatusByProfileId?.get(member.profileId)?.status ?? null;
     if (status !== 'needs_reauth') continue;
     const existingState = memberStatesByProfileId.get(member.profileId) ?? {};
     const nextState = {
@@ -398,8 +634,8 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
   const activeIssueReason = resolveActiveGroupProfileIssueReason(state, memberStatesByProfileId, params.nowMs);
   if (activeIssueReason === 'soft_threshold' && !params.accountUsageStore) return params.group;
   const currentActiveProfileId = readProfileId(state.activeProfileId);
-  if (params.sessionId && params.softSwitchRecoveryGuard && currentActiveProfileId) {
-    const guardResult = await params.softSwitchRecoveryGuard({
+  if (params.sessionId && params.predictiveSwitchGuard && currentActiveProfileId) {
+    const guardResult = await params.predictiveSwitchGuard({
       sessionId: params.sessionId,
       serviceId: params.serviceId,
       groupId: params.groupId,
@@ -409,48 +645,29 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
     });
     if (guardResult.status === 'suppress') return params.group;
   }
-  if (
-    params.authGroupSwitchCoordinator
-    && resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({
-      activeProfileId: state.activeProfileId,
-      members: state.members,
-      memberStatesByProfileId,
-      policy: state.policy,
-      nowMs: params.nowMs,
-      quotaFreshnessMs: params.quotaFreshnessMs,
-      allowCurrentProfileRetry: true,
-    }).length > 0
-  ) {
-    const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
-      ...(params.sessionId ? { sessionId: params.sessionId } : {}),
-      serviceId: params.serviceId,
-      groupId: params.groupId,
-      reason: activeIssueReason,
-      ...(memberStateOverridesByProfileId.length > 0 ? { memberStateOverridesByProfileId } : {}),
-    });
-    const activeProfileId = readProfileId(switched.activeProfileId);
-    if (activeProfileId) {
-      return {
-        ...params.group,
-        activeProfileId,
-        generation: typeof switched.generation === 'number' && Number.isFinite(switched.generation)
-          ? switched.generation
-          : params.group.generation,
-      };
-    }
-  }
-
-  const selected = selectConnectedServiceAuthGroupCandidate({
-    nowMs: params.nowMs,
-    quotaFreshnessMs: params.quotaFreshnessMs,
+  const needsPreTurnProbe = resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({
     activeProfileId: state.activeProfileId,
-    policy: state.policy,
     members: state.members,
     memberStatesByProfileId,
+    policy: state.policy,
+    nowMs: params.nowMs,
+    quotaFreshnessMs: params.quotaFreshnessMs,
     allowCurrentProfileRetry: true,
-  });
-  const selectedProfileId = selected.selected?.profileId ?? null;
-  if (!selectedProfileId || selectedProfileId === readProfileId(state.activeProfileId)) return params.group;
+  }).length > 0;
+  let selectedProfileId: string | null = null;
+  if (!needsPreTurnProbe || !params.authGroupSwitchCoordinator) {
+    const selected = selectConnectedServiceAuthGroupCandidate({
+      nowMs: params.nowMs,
+      quotaFreshnessMs: params.quotaFreshnessMs,
+      activeProfileId: state.activeProfileId,
+      policy: state.policy,
+      members: state.members,
+      memberStatesByProfileId,
+      allowCurrentProfileRetry: true,
+    });
+    selectedProfileId = selected.selected?.profileId ?? null;
+    if (!selectedProfileId || selectedProfileId === readProfileId(state.activeProfileId)) return params.group;
+  }
 
   if (params.authGroupSwitchCoordinator) {
     const switched = await params.authGroupSwitchCoordinator.switchBeforeTurn({
@@ -460,25 +677,22 @@ async function maybeSelectGroupActiveProfileForSpawn(params: Readonly<{
       reason: activeIssueReason,
       ...(memberStateOverridesByProfileId.length > 0 ? { memberStateOverridesByProfileId } : {}),
     });
-    const activeProfileId = readProfileId(switched.activeProfileId);
-    if (activeProfileId) {
-      return {
-        ...params.group,
-        activeProfileId,
-        generation: typeof switched.generation === 'number' && Number.isFinite(switched.generation)
-          ? switched.generation
-          : params.group.generation,
-      };
-    }
-    return params.group;
+    return await resolveGroupAfterSpawnSwitchResult({
+      group: params.group,
+      serviceId: params.serviceId,
+      groupId: params.groupId,
+      api: params.api,
+      result: switched,
+    }) ?? params.group;
   }
 
-  if (typeof params.api.updateConnectedServiceAuthGroupActiveProfile !== 'function') return params.group;
-  return await params.api.updateConnectedServiceAuthGroupActiveProfile({
+  if (!selectedProfileId) return params.group;
+  throw new ConnectedServiceAuthGroupSwitchCoordinatorUnavailableError({
     serviceId: params.serviceId,
     groupId: params.groupId,
-    activeProfileId: selectedProfileId,
-    expectedGeneration: state.generation,
+    activeProfileId: currentActiveProfileId || null,
+    selectedProfileId,
+    reason: activeIssueReason,
   });
 }
 
@@ -487,12 +701,11 @@ async function resolveCredentialBindings(params: Readonly<{
   api: ApiClient;
   selections: ReadonlyArray<ConnectedServiceBindingSelection>;
   accountUsageStore: AccountUsageStoreForAuthGroupSwitchState | null;
-  runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
   quotaFreshnessMs: number;
   nowMs: number;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
-  softSwitchRecoveryGuard?: ConnectedServiceRecoverySoftSwitchGuard | null;
+  predictiveSwitchGuard?: ConnectedServicePredictiveSwitchGuard | null;
 }>): Promise<Readonly<{
   credentialBindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
   groupSelections: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
@@ -536,13 +749,12 @@ async function resolveCredentialBindings(params: Readonly<{
       groupId: selection.groupId,
       api: groupApi,
       accountUsageStore: params.accountUsageStore,
-      runtimeQuotaSnapshots: params.runtimeQuotaSnapshots,
       profileStatusByProfileId,
       quotaFreshnessMs: params.quotaFreshnessMs,
       nowMs: params.nowMs,
       ...(params.sessionId ? { sessionId: params.sessionId } : {}),
       authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-      softSwitchRecoveryGuard: params.softSwitchRecoveryGuard ?? null,
+      predictiveSwitchGuard: params.predictiveSwitchGuard ?? null,
     });
     const activeProfileId = readProfileId(selectedGroup.activeProfileId);
     if (!activeProfileId) {
@@ -578,52 +790,91 @@ type ConnectedServiceResolvedGroupSelection = Readonly<{
   memberProfileIds: readonly string[];
 }>;
 
-function decideSpawnCredentialFailureRecovery(params: Readonly<{
-  serviceId: ConnectedServiceId;
-  group: ConnectedServiceResolvedGroupSelection;
-  profileId: string;
-}>) {
-  return decideConnectedServiceRecovery({
-    actor: 'automatic',
-    issue: {
-      kind: 'refresh_failed',
-      serviceId: params.serviceId,
-      profileId: params.profileId,
-      groupId: params.group.groupId,
-      resetsAtMs: null,
-      planType: null,
-      rateLimits: null,
-      source: 'provider_runtime_marker',
-    },
-    selection: {
-      kind: 'group',
-      serviceId: params.serviceId,
-      groupId: params.group.groupId,
-      activeProfileId: params.group.activeProfileId,
-    },
-    credentialHealth: {
-      liveEvidence: 'auth_failed',
-    },
-    credentialRefresh: {
-      status: 'not_refreshable',
-    },
-  });
-}
-
 async function maybeRecoverGroupAfterSpawnPreflightRefreshFailure(params: Readonly<{
   error: ConnectedServiceSpawnCredentialRefreshError;
   groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
+  recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
+  credentialResolutionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialResolution>;
+  credentials: Credentials;
+  api: ApiClient;
+  sessionId?: string;
+  authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
 }>): Promise<boolean> {
   if (params.error.kind !== 'reconnect_required') return false;
   const group = params.groupSelections.get(params.error.serviceId);
   if (!group || group.activeProfileId !== params.error.profileId) return false;
-
-  const decision = decideSpawnCredentialFailureRecovery({
+  return applyCanonicalSpawnFailureSwitch({
     serviceId: params.error.serviceId,
-    group,
-    profileId: params.error.profileId,
+    observedProfileId: params.error.profileId,
+    groupSelections: params.groupSelections,
+    recordsByServiceId: params.recordsByServiceId,
+    credentialResolutionsByServiceId: params.credentialResolutionsByServiceId,
+    credentials: params.credentials,
+    api: params.api,
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
   });
-  return decision.action === 'no_op';
+}
+
+async function applyCanonicalSpawnFailureSwitch(params: Readonly<{
+  serviceId: ConnectedServiceId;
+  observedProfileId: string;
+  groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
+  recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
+  credentialResolutionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialResolution>;
+  credentials: Credentials;
+  api: ApiClient;
+  sessionId?: string;
+  authGroupSwitchCoordinator: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
+}>): Promise<boolean> {
+  const group = params.groupSelections.get(params.serviceId);
+  const switchAfterFailure = params.authGroupSwitchCoordinator?.switchAfterClassifiedFailure;
+  if (!group || typeof switchAfterFailure !== 'function') return false;
+
+  const result = await switchAfterFailure.call(params.authGroupSwitchCoordinator, {
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    serviceId: params.serviceId,
+    groupId: group.groupId,
+    reason: 'refresh_failed',
+    observedProfileId: params.observedProfileId,
+  });
+  if (!result) return false;
+  let activeProfileId = readProfileId(result.activeProfileId);
+  let generation = typeof result.generation === 'number' && Number.isFinite(result.generation)
+    ? result.generation
+    : group.generation;
+  if (result.status === 'generation_apply_failed' || result.status === 'predictive_apply_unavailable') {
+    const authoritative = await params.api.getConnectedServiceAuthGroup?.({
+      serviceId: params.serviceId,
+      groupId: group.groupId,
+    });
+    activeProfileId = readProfileId(authoritative?.activeProfileId);
+    generation = typeof authoritative?.generation === 'number' && Number.isFinite(authoritative.generation)
+      ? authoritative.generation
+      : generation;
+  }
+  if (!activeProfileId || activeProfileId === params.observedProfileId) return false;
+
+  const resolved = await resolveConnectedServiceCredentialResolutions({
+    credentials: params.credentials,
+    api: params.api,
+    bindings: [{ serviceId: params.serviceId, profileId: activeProfileId }],
+  });
+  const credential = resolved.get(params.serviceId);
+  if (!credential) return false;
+  if (credential.revisionSemantics !== 'revisioned') {
+    throw new ConnectedServiceLegacyUnfencedAuthorityError(
+      'materialization',
+    );
+  }
+  params.credentialResolutionsByServiceId.set(params.serviceId, credential);
+  params.recordsByServiceId.set(params.serviceId, credential.record);
+  params.groupSelections.set(params.serviceId, {
+    ...group,
+    activeProfileId,
+    generation,
+  });
+  return true;
 }
 
 /**
@@ -657,7 +908,12 @@ export async function persistMaterializationFailureCredentialHealthForSpawn(para
 async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonly<{
   error: ConnectedServiceMaterializationBlockedError;
   groupSelections: Map<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
+  recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
+  credentialResolutionsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialResolution>;
+  credentials: Credentials;
   api: ApiClient;
+  sessionId?: string;
+  authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
   nowMs: number;
 }>): Promise<boolean> {
   const diagnostic = params.error.diagnostics.find((candidate) => {
@@ -677,23 +933,47 @@ async function maybeRecoverGroupAfterSpawnMaterializationFailure(params: Readonl
     nowMs: params.nowMs,
   });
 
-  const decision = decideSpawnCredentialFailureRecovery({
+  return applyCanonicalSpawnFailureSwitch({
     serviceId,
-    group,
-    profileId: group.activeProfileId,
+    observedProfileId: group.activeProfileId,
+    groupSelections: params.groupSelections,
+    recordsByServiceId: params.recordsByServiceId,
+    credentialResolutionsByServiceId: params.credentialResolutionsByServiceId,
+    credentials: params.credentials,
+    api: params.api,
+    ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+    authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
   });
-  return decision.action === 'no_op';
+}
+
+function buildCurrentSpawnCredentialBindings(params: Readonly<{
+  selections: ReadonlyArray<ConnectedServiceBindingSelection>;
+  groupSelections: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
+}>): ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }> {
+  return params.selections.map((selection) => {
+    if (selection.kind === 'profile') {
+      return { serviceId: selection.serviceId, profileId: selection.profileId };
+    }
+    const profileId = params.groupSelections.get(selection.serviceId)?.activeProfileId
+      ?? selection.fallbackProfileId;
+    if (!profileId) {
+      throw new Error(`Connected-service group ${selection.groupId} has no resolved active profile`);
+    }
+    return { serviceId: selection.serviceId, profileId };
+  });
 }
 
 function buildSelectionsByServiceIdForSpawn(params: Readonly<{
   selections: ReadonlyArray<ConnectedServiceBindingSelection>;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
+  credentialResolutionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialResolution>;
   groupSelections: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedGroupSelection>;
 }>): ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection> {
   const selectionsByServiceId = new Map<ConnectedServiceId, ConnectedServiceResolvedSelection>();
 
   for (const selection of params.selections) {
     const record = params.recordsByServiceId.get(selection.serviceId);
+    const credentialRevision = params.credentialResolutionsByServiceId.get(selection.serviceId)?.credentialRevision;
     if (!record) continue;
     if (selection.kind === 'profile') {
       selectionsByServiceId.set(selection.serviceId, {
@@ -701,6 +981,7 @@ function buildSelectionsByServiceIdForSpawn(params: Readonly<{
         serviceId: selection.serviceId,
         profileId: selection.profileId,
         record,
+        ...(credentialRevision ? { credentialRevision } : {}),
       });
       continue;
     }
@@ -714,11 +995,41 @@ function buildSelectionsByServiceIdForSpawn(params: Readonly<{
       fallbackProfileId: group.fallbackProfileId,
       generation: group.generation,
       record,
+      ...(credentialRevision ? { credentialRevision } : {}),
       policy: group.policy,
     });
   }
 
   return selectionsByServiceId;
+}
+
+function assertRequestAuthCredentialRevisions(input: Readonly<{
+  purposeBindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  credentialResolutionsByServiceId: ReadonlyMap<
+    ConnectedServiceId,
+    ConnectedServiceCredentialResolution
+  >;
+}>): void {
+  for (const binding of input.purposeBindings) {
+    const service = binding.target.kind === 'account'
+      ? binding.target.account.service
+      : binding.target.service;
+    const serviceId = resolveFirstPartyConnectedAccountServiceId(service);
+    const resolution = serviceId
+      ? input.credentialResolutionsByServiceId.get(serviceId)
+      : null;
+    if (
+      serviceId
+      && (
+        resolution?.revisionSemantics !== 'revisioned'
+        || !resolution.credentialRevision
+      )
+    ) {
+      throw new ConnectedServiceRequestAuthCredentialRevisionRequiredError(
+        serviceId,
+      );
+    }
+  }
 }
 
 function buildCanonicalConnectedServicesBindingsForSpawn(params: Readonly<{
@@ -742,7 +1053,6 @@ function buildCanonicalConnectedServicesBindingsForSpawn(params: Readonly<{
       source: 'connected',
       selection: 'group',
       groupId: group.groupId,
-      profileId: group.activeProfileId,
     };
   }
 
@@ -768,6 +1078,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
   sessionDirectory: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
+  requestAuthPurposeBindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
   accountSettings: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv: NodeJS.ProcessEnv;
   vendorResumeId: string | null;
@@ -782,6 +1093,7 @@ async function materializeAndVerifyConnectedServiceAuthForSpawn(params: Readonly
     sessionDirectory: params.sessionDirectory,
     recordsByServiceId: params.recordsByServiceId,
     selectionsByServiceId: params.selectionsByServiceId,
+    requestAuthPurposeBindings: params.requestAuthPurposeBindings,
     accountSettings: params.accountSettings,
     processEnv: params.processEnv,
   });
@@ -810,12 +1122,11 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   api: ApiClient;
   allowGroupBindingProfileFallback?: boolean;
   accountUsageStore?: AccountUsageStoreForAuthGroupSwitchState | null;
-  runtimeQuotaSnapshots?: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore | null;
   quotaFreshnessMs?: number;
   nowMs?: () => number;
   sessionId?: string;
   authGroupSwitchCoordinator?: ConnectedServiceAuthGroupPreTurnSwitchCoordinator | null;
-  softSwitchRecoveryGuard?: ConnectedServiceRecoverySoftSwitchGuard | null;
+  predictiveSwitchGuard?: ConnectedServicePredictiveSwitchGuard | null;
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
   credentialRefreshService?: ConnectedServiceSpawnCredentialRefreshService | null;
@@ -837,61 +1148,196 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
    * hard-fail.
    */
   candidatePersistedSessionFile?: string | null;
+  resolveRequestAuthPurposeBindings?: (
+    bindings: ConnectedServicesBindingsV1,
+  ) => readonly QualifiedConnectedAccountPurposeBindingV1[];
+  /**
+   * Allows the ordinary Agent spawn owner to downgrade an exact-old-server
+   * profile selection to its bounded legacy materializer. The resolved
+   * qualified purpose remains unavailable: no request-auth binding or runtime
+   * registration is returned.
+   */
+  allowLegacyUnfencedOneShotMaterialization?: boolean;
+  serverContract?:
+    SessionSyncPendingInputServerContractResult | null;
 }>): Promise<Readonly<{
   env: Record<string, string>;
   cleanupOnFailure: (() => void) | null;
   cleanupOnExit: (() => void) | null;
   connectedServicesBindings: ConnectedServicesBindingsV1;
+  targetMaterializedRoot?: string | null;
   diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
+  ongoingRuntimeRegistrationAllowed?: false;
 }> | null> {
   const selections = parseConnectedServiceBindingSelections(params.connectedServicesBindingsRaw);
   if (selections.length === 0) return null;
   const nowMs = (params.nowMs ?? (() => Date.now()))();
+  let serverFeatures: CliServerFeaturesSnapshot | undefined;
+  try {
+    serverFeatures = await params.api.getServerFeaturesSnapshot?.();
+  } catch {
+    serverFeatures = undefined;
+  }
+  const exactLegacyUnfencedServer =
+    resolveQualifiedConnectedAccountPeerClass(
+      serverFeatures,
+      params.serverContract,
+    ) === 'exact_v0_2_1';
+  if (
+    exactLegacyUnfencedServer
+    && selections.some((selection) => selection.kind === 'group')
+  ) {
+    throw new ConnectedServiceLegacyUnfencedAuthorityError('group');
+  }
 
   const resolvedBindings = await resolveCredentialBindings({
     agentId: params.agentId,
     api: params.api,
     selections,
     accountUsageStore: params.accountUsageStore ?? null,
-    runtimeQuotaSnapshots: params.runtimeQuotaSnapshots ?? null,
     quotaFreshnessMs: params.quotaFreshnessMs ?? 5 * 60_000,
     nowMs,
     ...(params.sessionId ? { sessionId: params.sessionId } : {}),
     authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-    softSwitchRecoveryGuard: params.softSwitchRecoveryGuard ?? null,
+    predictiveSwitchGuard: params.predictiveSwitchGuard ?? null,
   });
 
-  const recordsByServiceId: Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1> =
-    await resolveConnectedServiceCredentials({
+  let credentialResolutionsByServiceId = await resolveConnectedServiceCredentialResolutions({
       credentials: params.credentials,
       api: params.api,
       bindings: resolvedBindings.credentialBindings,
     });
+  const hasLegacyUnfencedCredential = [
+    ...credentialResolutionsByServiceId.values(),
+  ].some((resolution) => resolution.revisionSemantics === 'legacy_unfenced');
+  if (
+    hasLegacyUnfencedCredential
+    && selections.some((selection) => selection.kind === 'group')
+  ) {
+    throw new ConnectedServiceLegacyUnfencedAuthorityError('group');
+  }
+  if (
+    hasLegacyUnfencedCredential
+    && (
+      !exactLegacyUnfencedServer
+      || !supportsLegacyUnfencedOneShotMaterialization(
+        credentialResolutionsByServiceId,
+        serverFeatures,
+        params.serverContract,
+      )
+    )
+  ) {
+    throw new ConnectedServiceLegacyUnfencedAuthorityError(
+      'materialization',
+    );
+  }
+  const recordsByServiceId = new Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>(
+    [...credentialResolutionsByServiceId].map(([serviceId, resolution]) => [serviceId, resolution.record]),
+  );
   const groupSelections = new Map(resolvedBindings.groupSelections);
-  try {
-    await applySpawnPreflightRefresh({
-      recordsByServiceId,
-      credentialBindings: resolvedBindings.credentialBindings,
-      refreshService: params.credentialRefreshService ?? null,
-    });
-  } catch (error) {
-    if (!(error instanceof ConnectedServiceSpawnCredentialRefreshError)) throw error;
-    const recovered = await maybeRecoverGroupAfterSpawnPreflightRefreshFailure({
-      error,
+  const initialConnectedServicesBindings =
+    buildCanonicalConnectedServicesBindingsForSpawn({
+      selections,
       groupSelections,
     });
-    if (!recovered) throw error;
+  const initialRequestAuthPurposeBindings =
+    params.resolveRequestAuthPurposeBindings?.(
+      initialConnectedServicesBindings,
+    ) ?? Object.freeze([]);
+  if (
+    hasLegacyUnfencedCredential
+    && params.allowLegacyUnfencedOneShotMaterialization !== true
+  ) {
+    throw new ConnectedServiceLegacyUnfencedAuthorityError(
+      initialRequestAuthPurposeBindings.length > 0
+        ? 'request_auth'
+        : 'materialization',
+    );
   }
-  const maxMaterializationAttempts = resolveSpawnMaterializationAttemptLimit(groupSelections);
+  const legacyUnfencedRequestAuthPurposeBindings =
+    hasLegacyUnfencedCredential
+    && params.allowLegacyUnfencedOneShotMaterialization === true
+      ? Object.freeze([]) as readonly QualifiedConnectedAccountPurposeBindingV1[]
+      : initialRequestAuthPurposeBindings;
+  const maxPreflightAttempts = hasLegacyUnfencedCredential
+    ? 1
+    : resolveSpawnMaterializationAttemptLimit(groupSelections);
+  for (let attempt = 0; attempt < maxPreflightAttempts; attempt += 1) {
+    const credentialBindings = buildCurrentSpawnCredentialBindings({ selections, groupSelections });
+    try {
+      if (!hasLegacyUnfencedCredential) {
+        await applySpawnPreflightRefresh({
+          recordsByServiceId,
+          credentialBindings,
+          refreshService: params.credentialRefreshService ?? null,
+        });
+      }
+      if (
+        !hasLegacyUnfencedCredential
+        && params.credentialRefreshService
+      ) {
+        const currentResolutions = await resolveConnectedServiceCredentialResolutions({
+          credentials: params.credentials,
+          api: params.api,
+          bindings: credentialBindings,
+        });
+        if (
+          [...currentResolutions.values()].some(
+            (resolution) =>
+              resolution.revisionSemantics !== 'revisioned',
+          )
+        ) {
+          throw new ConnectedServiceLegacyUnfencedAuthorityError(
+            'materialization',
+          );
+        }
+        credentialResolutionsByServiceId = currentResolutions;
+        for (const [serviceId, resolution] of currentResolutions) {
+          recordsByServiceId.set(serviceId, resolution.record);
+        }
+      }
+      break;
+    } catch (error) {
+      if (!(error instanceof ConnectedServiceSpawnCredentialRefreshError)) throw error;
+      if (attempt >= maxPreflightAttempts - 1) throw error;
+      const recovered = await maybeRecoverGroupAfterSpawnPreflightRefreshFailure({
+        error,
+        groupSelections,
+        recordsByServiceId,
+        credentialResolutionsByServiceId,
+        credentials: params.credentials,
+        api: params.api,
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+        authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
+      });
+      if (!recovered) throw error;
+    }
+  }
+  const maxMaterializationAttempts = hasLegacyUnfencedCredential
+    ? 1
+    : resolveSpawnMaterializationAttemptLimit(groupSelections);
   for (let attempt = 0; attempt < maxMaterializationAttempts; attempt += 1) {
     const selectionsByServiceId = buildSelectionsByServiceIdForSpawn({
       selections,
       recordsByServiceId,
+      credentialResolutionsByServiceId,
       groupSelections,
     });
     const connectedServicesBindings = buildCanonicalConnectedServicesBindingsForSpawn({
       selections,
       groupSelections,
+    });
+    const requestAuthPurposeBindings = hasLegacyUnfencedCredential
+      ? legacyUnfencedRequestAuthPurposeBindings
+      : (
+          params.resolveRequestAuthPurposeBindings?.(
+            connectedServicesBindings,
+          ) ?? Object.freeze([])
+        );
+    assertRequestAuthCredentialRevisions({
+      purposeBindings: requestAuthPurposeBindings,
+      credentialResolutionsByServiceId,
     });
 
     try {
@@ -903,6 +1349,7 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
         sessionDirectory: params.sessionDirectory ?? null,
         recordsByServiceId,
         selectionsByServiceId,
+        requestAuthPurposeBindings,
         accountSettings: params.accountSettings ?? null,
         processEnv: params.processEnv ?? process.env,
         vendorResumeId: params.vendorResumeId ?? null,
@@ -913,6 +1360,10 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       return {
         ...materialized,
         connectedServicesBindings,
+        requestAuthPurposeBindings,
+        ...(hasLegacyUnfencedCredential
+          ? { ongoingRuntimeRegistrationAllowed: false as const }
+          : {}),
       };
     } catch (error) {
       if (!(error instanceof ConnectedServiceMaterializationBlockedError)) throw error;
@@ -920,7 +1371,12 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
       const recovered = await maybeRecoverGroupAfterSpawnMaterializationFailure({
         error,
         groupSelections,
+        recordsByServiceId,
+        credentialResolutionsByServiceId,
+        credentials: params.credentials,
         api: params.api,
+        ...(params.sessionId ? { sessionId: params.sessionId } : {}),
+        authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
         nowMs,
       });
       if (!recovered) throw error;

@@ -101,6 +101,7 @@ describe('executeClaimedRun (mcpSelection)', () => {
 
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/tmp/project',
+      spawnNonce: 'automation:run-1',
       backendTarget: {
         kind: 'backend',
         backendId: 'review-bot',

@@ -1,4 +1,30 @@
-import { describe, expect, it } from 'vitest';
+const { activeRuntimeRegistryState } = vi.hoisted(() => ({
+  activeRuntimeRegistryState: {
+    registry: null as import('@/plugins/projection/registry/types').ResolvedContributionRegistry | null,
+  },
+}));
+
+vi.mock('@/plugins/runtime/reload/singleton', () => ({
+  pluginReloadController: {
+    getState: () => ({
+      activeRegistry: activeRuntimeRegistryState.registry
+        ? {
+            contributes: activeRuntimeRegistryState.registry,
+            targetActionInvocations: {
+              evaluateCatalogPolicy: () => ({
+                outcome: 'visible',
+                code: 'plugin_action_available',
+                requiresCurrentIntent: false,
+              }),
+            },
+          }
+        : null,
+    }),
+    isRuntimeRegistryCurrent: () => true,
+  },
+}));
+
+import { describe, expect, it, vi } from 'vitest';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
@@ -9,7 +35,7 @@ describe('createActionToolExecutorBridge', () => {
   it('does not route discoverable-only first-party tools through direct tool names on session agents', async () => {
     const calls: unknown[] = [];
     const bridge = createActionToolExecutorBridge({
-      surface: 'session_agent',
+      surface: 'agent',
       executor: {
         execute: async (actionId, input, ctx) => {
           calls.push({ actionId, input, ctx });
@@ -42,13 +68,13 @@ describe('createActionToolExecutorBridge', () => {
       actions: {
         'session.list': {
           toolExposureModes: {
-            session_agent: 'direct',
+            agent: 'direct',
           },
         },
       },
     });
     const bridge = createActionToolExecutorBridge({
-      surface: 'session_agent',
+      surface: 'agent',
       actionsSettings,
       executor: {
         execute: async (_actionId, _input, ctx) => {
@@ -74,8 +100,198 @@ describe('createActionToolExecutorBridge', () => {
     expect(calls).toEqual([
       expect.objectContaining({
         defaultSessionId: 'sess-1',
-        surface: 'session_agent',
+        surface: 'agent',
         approvalOrigin,
+      }),
+    ]);
+  });
+
+  it('parses JSON-string action_execute input before invoking the action executor', async () => {
+    const calls: unknown[] = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'agent',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return {
+            ok: true,
+            result: { ok: true },
+          };
+        },
+      },
+    });
+
+    const res = await bridge.executeActionByToolName('action_execute', {
+      actionId: 'session.transcript.get',
+      input: '{"sessionId":"sess-2","limit":20,"roles":["user","assistant"]}',
+    }, 'sess-1');
+
+    expect(res).toEqual({
+      ok: true,
+      result: { ok: true },
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'session.transcript.get',
+        input: {
+          sessionId: 'sess-2',
+          limit: 20,
+          roles: ['user', 'assistant'],
+        },
+        ctx: expect.objectContaining({
+          defaultSessionId: 'sess-1',
+          surface: 'agent',
+          actionsSettings: null,
+        }),
+      }),
+    ]);
+  });
+
+  it('preserves structured error details returned by action_execute', async () => {
+    const bridge = createActionToolExecutorBridge({
+      surface: 'agent',
+      executor: {
+        execute: async () => ({
+          ok: false,
+          errorCode: 'permission_escalation_denied',
+          error: 'permission_escalation_denied',
+          details: {
+            reason: 'permission_escalation_denied',
+            surface: 'agent',
+            requestedOrdinal: 3,
+            callerOrdinal: 1,
+          },
+        }),
+      },
+    });
+
+    const res = await bridge.executeActionByToolName('action_execute', {
+      actionId: 'session.spawn_new',
+      input: { permissionMode: 'yolo' },
+    }, 'sess-1');
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'permission_escalation_denied',
+      error: 'permission_escalation_denied',
+      details: {
+        reason: 'permission_escalation_denied',
+        surface: 'agent',
+        requestedOrdinal: 3,
+        callerOrdinal: 1,
+      },
+    });
+  });
+
+  it('uses the default session id as the fallback action_execute input sessionId', async () => {
+    const calls: unknown[] = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'mcp',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return {
+            ok: true,
+            result: { ok: true },
+          };
+        },
+      },
+    });
+
+    const res = await bridge.executeActionByToolName('action_execute', {
+      actionId: 'session.terminalComposer.clear',
+      input: '{}',
+    }, 'sess-1');
+
+    expect(res).toEqual({
+      ok: true,
+      result: { ok: true },
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'session.terminalComposer.clear',
+        input: {
+          sessionId: 'sess-1',
+        },
+        ctx: expect.objectContaining({
+          defaultSessionId: 'sess-1',
+          surface: 'mcp',
+          actionsSettings: null,
+        }),
+      }),
+    ]);
+  });
+
+  it('uses the default session id as the fallback direct action tool input sessionId', async () => {
+    const calls: unknown[] = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'mcp',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return {
+            ok: true,
+            result: { ok: true },
+          };
+        },
+      },
+    });
+
+    const res = await bridge.executeActionByToolName('session_terminal_composer_clear', {}, 'sess-1');
+
+    expect(res).toEqual({
+      ok: true,
+      result: { ok: true },
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'session.terminalComposer.clear',
+        input: {
+          sessionId: 'sess-1',
+        },
+        ctx: expect.objectContaining({
+          defaultSessionId: 'sess-1',
+          surface: 'mcp',
+          actionsSettings: null,
+        }),
+      }),
+    ]);
+  });
+
+  it('preserves explicit direct action tool session ids on external mcp', async () => {
+    const calls: unknown[] = [];
+    const bridge = createActionToolExecutorBridge({
+      surface: 'mcp',
+      executor: {
+        execute: async (actionId, input, ctx) => {
+          calls.push({ actionId, input, ctx });
+          return {
+            ok: true,
+            result: { ok: true },
+          };
+        },
+      },
+    });
+
+    const res = await bridge.executeActionByToolName('session_terminal_composer_clear', {
+      sessionId: 'sess-2',
+    }, 'sess-1');
+
+    expect(res).toEqual({
+      ok: true,
+      result: { ok: true },
+    });
+    expect(calls).toEqual([
+      expect.objectContaining({
+        actionId: 'session.terminalComposer.clear',
+        input: {
+          sessionId: 'sess-2',
+        },
+        ctx: expect.objectContaining({
+          defaultSessionId: 'sess-1',
+          surface: 'mcp',
+          actionsSettings: null,
+        }),
       }),
     ]);
   });
@@ -183,63 +399,95 @@ describe('createActionToolExecutorBridge', () => {
   });
 
   it('routes plugin action-backed tool names through the shared executor without a parallel dispatcher', async () => {
-    const bridge = createActionToolExecutorBridge({
-      surface: 'cli',
-      registry: createResolvedContributionRegistry({
-        providers: [],
-        backends: [],
-        actions: [
-          {
-            provenance: 'external',
-            source: { kind: 'path' },
-            pluginId: 'acme.review.plugin',
-            manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-            manifestDigest: 'sha256:acme-review',
-            daemonEntryPath: '/plugins/acme/review/daemon.mjs',
-            sourceSpec: {
-              kind: 'path',
-              locator: '/plugins/acme/review',
-              trustPolicy: 'local_trusted',
-              installPolicy: 'link',
+    const registry = createResolvedContributionRegistry({
+      agents: [],
+            actions: [
+        {
+          provenance: 'external',
+          source: { kind: 'path' },
+          pluginId: 'acme.review.plugin',
+          manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
+          manifestDigest: 'sha256:acme-review',
+          daemonEntryPath: '/plugins/acme/review/daemon.mjs',
+          sourceSpec: {
+            kind: 'path',
+            locator: '/plugins/acme/review',
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+          },
+          definition: {
+            kindVersion: 1,
+            id: 'review-start',
+            title: 'Acme Review Start',
+            description: 'Start a plugin-defined review workflow',
+            safety: 'safe',
+            dangerLevel: 'safe',
+            placements: [],
+            slash: null,
+            bindings: null,
+            examples: null,
+            surfaces: {
+              ui: false,
+              voice: false,
+              agent: true,
+              mcp: true,
+              cli: true,
+              rpc: false,
+              sdk: false,
             },
-            definition: {
-              kindVersion: 1,
-              id: 'acme.review.start',
-              title: 'Acme Review Start',
-              description: 'Start a plugin-defined review workflow',
-              safety: 'safe',
-              placements: [],
-              slash: null,
-              bindings: {
-                mcpToolName: 'acme_review_start',
-              },
-              examples: null,
-              surfaces: {
-                ui: false,
-                voice: false,
-                session_agent: true,
-                mcp: true,
-                cli: true,
-                rpc: false,
-                sdk: false,
-              },
-              inputHints: null,
-              inputSchema: {
-                type: 'object',
-                properties: {},
-                additionalProperties: true,
-              },
-              execution: {
-                routing: 'plugin',
-                handler: {
-                  target: 'plugin',
-                  exportName: 'startReview',
-                },
+            inputHints: null,
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: true,
+            },
+            execution: {
+              routing: 'plugin',
+              handler: {
+                target: 'plugin',
+                exportName: 'startReview',
               },
             },
           },
-        ],
-      }),
+        },
+      ],
+      tools: [
+        {
+          provenance: 'external',
+          source: { kind: 'path' },
+          pluginId: 'acme.review.plugin',
+          manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
+          manifestDigest: 'sha256:acme-review',
+          daemonEntryPath: '/plugins/acme/review/daemon.mjs',
+          sourceSpec: {
+            kind: 'path',
+            locator: '/plugins/acme/review',
+            trustPolicy: 'local_trusted',
+            installPolicy: 'link',
+          },
+          definition: {
+            kindVersion: 1,
+            id: 'review-tool',
+            name: 'acme_review_start',
+            title: 'Acme Review Start',
+            description: 'Start a plugin-defined review workflow',
+            safety: 'safe',
+            surfaces: ['cli'],
+            inputSchema: {
+              type: 'object',
+              properties: {},
+              additionalProperties: true,
+            },
+            action: 'review-start',
+            actionId: 'acme.review.plugin/review-start',
+          },
+        },
+      ],
+    });
+    activeRuntimeRegistryState.registry = registry;
+    const bridge = createActionToolExecutorBridge({
+      surface: 'cli',
+      registry,
       executor: {
         execute: async (actionId, input, ctx) => ({
           ok: true,
@@ -255,13 +503,41 @@ describe('createActionToolExecutorBridge', () => {
     expect(res).toEqual({
       ok: true,
       result: {
-        actionId: 'acme.review.start',
+        actionId: 'acme.review.plugin/review-start',
         input: { scope: 'diff' },
-        ctx: {
+        ctx: expect.objectContaining({
           defaultSessionId: 'sess-1',
           surface: 'cli',
+          actionsSettings: null,
+        }),
+      },
+    });
+  });
+
+  // CON-4: the in-transcript agent tool dispatch chokepoint MUST tag the executor context with
+  // `surface: 'agent'` by default. The agent approval floor at
+  // `isApprovalRequiredByActionsSettings` only fires on that surface tag — if this chokepoint ever
+  // tagged a different surface, the entire derived danger floor (CON-1/CON-2/CON-3) would be inert.
+  it('defaults the agent dispatch context surface to agent so the danger floor fires (CON-4)', async () => {
+    const calls: { surface?: unknown }[] = [];
+    const bridge = createActionToolExecutorBridge({
+      // surface intentionally omitted — the agent entrypoint default is the chokepoint under test.
+      executor: {
+        execute: async (_actionId, _input, ctx) => {
+          calls.push(ctx as { surface?: unknown });
+          return { ok: true, result: { ok: true } };
         },
       },
     });
+
+    const res = await bridge.executeActionByToolName('action_execute', {
+      actionId: 'browser.automation.click',
+      input: '{}',
+    }, 'sess-1');
+
+    expect(res.ok).toBe(true);
+    expect(calls).toEqual([
+      expect.objectContaining({ surface: 'agent' }),
+    ]);
   });
 });

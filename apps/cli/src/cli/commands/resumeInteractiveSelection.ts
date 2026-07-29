@@ -19,7 +19,7 @@ type FetchSessionsPageFn = (params: {
   hasNext: boolean;
 }>;
 
-type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'providerDefinitionsById' | 'backendDefinitionsById'>;
+type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>;
 
 export type ResumeSelectionFooterHint = Readonly<{
   ineligibleCount: number;

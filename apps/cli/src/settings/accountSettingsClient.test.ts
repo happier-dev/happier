@@ -48,7 +48,7 @@ describe('accountSettingsClient', () => {
     expect(decrypted).toEqual(settings);
   });
 
-  it('decrypts account settings ciphertext for legacy credentials', async () => {
+  it('fails closed on ambiguous untagged legacy settings ciphertext', async () => {
     const secret = new Uint8Array(32).fill(7);
     const settings = { codexBackendMode: 'acp', claudeRemoteAgentSdkEnabled: true };
     const ciphertext = encodeBase64(encrypt(secret, 'legacy', settings));
@@ -58,10 +58,10 @@ describe('accountSettingsClient', () => {
       ciphertext,
     });
 
-    expect(decrypted).toEqual(settings);
+    expect(decrypted).toBeNull();
   });
 
-  it('decrypts account settings ciphertext for dataKey credentials', async () => {
+  it('fails closed on ambiguous untagged dataKey settings ciphertext', async () => {
     const machineKey = new Uint8Array(32).fill(9);
     const settings = { codexBackendMode: 'mcp', claudeRemoteSettingSources: 'none' };
     const ciphertext = encodeBase64(encrypt(machineKey, 'dataKey', settings));
@@ -71,7 +71,23 @@ describe('accountSettingsClient', () => {
       ciphertext,
     });
 
-    expect(decrypted).toEqual(settings);
+    expect(decrypted).toBeNull();
+  });
+
+  it('rejects an untagged automation object authenticated by the shared historical raw key', async () => {
+    const secret = new Uint8Array(32).fill(7);
+    const ciphertext = encodeBase64(encrypt(secret, 'legacy', {
+      name: 'nightly automation',
+      prompt: 'do not interpret this as settings',
+    }));
+
+    await expect(decryptAccountSettingsCiphertext({
+      credentials: {
+        token: 't',
+        encryption: { type: 'legacy', secret },
+      },
+      ciphertext,
+    })).resolves.toBeNull();
   });
 
   it('returns null for invalid ciphertext', async () => {

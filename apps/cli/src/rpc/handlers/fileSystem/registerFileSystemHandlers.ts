@@ -44,6 +44,7 @@ export function registerFileSystemHandlers(
   }>,
 ): Readonly<{
   transferSessionStore: TransferSessionStore;
+  dispose: () => Promise<void>;
 }> {
   const getAdditionalAllowedReadDirs = opts?.getAdditionalAllowedReadDirs;
   const getAdditionalAllowedReadFiles = opts?.getAdditionalAllowedReadFiles;
@@ -112,5 +113,6 @@ export function registerFileSystemHandlers(
 
   return {
     transferSessionStore,
+    dispose: () => transferSessionStore.dispose(),
   };
 }

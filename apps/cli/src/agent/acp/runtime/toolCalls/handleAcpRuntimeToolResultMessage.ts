@@ -2,11 +2,9 @@ import { randomUUID } from 'node:crypto';
 
 import { logger } from '@/ui/logger';
 import type { AgentMessage, McpServerConfig } from '@/agent';
-import type { CatalogAgentId } from '@/backends/types';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { isThinkingToolName } from '@/agent/acp/bridge/thinkingToolCall';
 import { importAcpReplaySidechainV1 } from '@/agent/acp/history/importAcpReplaySidechain';
-import { createCatalogAcpBackend } from '@/agent/acp/createCatalogAcpBackend';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import type { AcpReplayBackend } from '../acpRuntimeBackendContract';
@@ -24,6 +22,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 export function handleAcpRuntimeToolResultMessage(params: {
   provider: string;
+  transcriptProvider: string;
   directory: string;
   session: AcpRuntimeSessionClient;
   messageBuffer: MessageBuffer;
@@ -95,16 +94,8 @@ export function handleAcpRuntimeToolResultMessage(params: {
       : null;
     const remoteSessionId = (metadataSessionId ?? embeddedSessionId)?.trim() || '';
 
-    if (remoteSessionId) {
-      const createReplayBackend = params.createReplayBackend ?? (async () => {
-        const created = await createCatalogAcpBackend(params.provider as CatalogAgentId, {
-          cwd: params.directory,
-          mcpServers: params.mcpServers,
-          permissionHandler: params.permissionHandler,
-        });
-        return created.backend;
-      });
-
+    if (remoteSessionId && params.createReplayBackend) {
+      const createReplayBackend = params.createReplayBackend;
       void (async () => {
         let replayBackend: AcpReplayBackend | null = null;
         let replayImported = false;
@@ -117,7 +108,7 @@ export function handleAcpRuntimeToolResultMessage(params: {
             if (Array.isArray(replay) && replay.length > 0) {
               await importAcpReplaySidechainV1({
                 session: params.session,
-                provider: params.provider,
+                provider: params.transcriptProvider,
                 remoteSessionId,
                 sidechainId: callId,
                 replay: replay as unknown[],
@@ -133,7 +124,7 @@ export function handleAcpRuntimeToolResultMessage(params: {
           if (!replayImported && fallbackSidechainText) {
             try {
               await params.session.sendAgentMessageCommitted(
-                params.provider,
+                params.transcriptProvider,
                 { type: 'message', message: fallbackSidechainText, sidechainId: callId },
                 { localId: randomUUID(), meta: { importedFrom: 'acp-sidechain', remoteSessionId, sidechainId: callId } },
               );

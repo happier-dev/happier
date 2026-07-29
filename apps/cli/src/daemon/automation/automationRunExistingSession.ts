@@ -1,4 +1,4 @@
-import type { SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { mergeSpawnSessionOptions } from '@/rpc/handlers/spawnSessionOptionsContract';
 
 export async function runAutomationAgainstExistingSession(params: {

@@ -1,4 +1,5 @@
 import axios, { type AxiosResponse } from 'axios';
+import { readPendingLocalId } from '@happier-dev/protocol';
 
 import { SessionMessageContentSchema, type Update } from '../types';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
@@ -7,6 +8,18 @@ import {
     isAuthenticationStatus,
     readAuthenticationStatus,
 } from '../client/httpStatusError';
+
+type SessionHistoryReplayProvenance = Readonly<{
+    sourceCreatedAt: number | null;
+    sourceUpdatedAt: number | null;
+}>;
+
+// History classification is local control-plane state. A remote update cannot forge it.
+const sessionHistoryReplayProvenance = new WeakMap<object, SessionHistoryReplayProvenance>();
+
+export function readSessionHistoryReplayProvenance(update: Update): SessionHistoryReplayProvenance | null {
+    return sessionHistoryReplayProvenance.get(update as object) ?? null;
+}
 
 function readCatchUpTimestamp(value: unknown): number | null {
     return typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : null;
@@ -68,13 +81,15 @@ export async function catchUpSessionMessagesAfterSeq(params: {
             if (!parsedContent.success) continue;
 
             const localIdRaw = (msg as any).localId;
-            const localId =
-                typeof localIdRaw === 'string' ? (localIdRaw.trim() || null) : null;
+            const localId = readPendingLocalId(localIdRaw);
             const sidechainIdRaw = (msg as any).sidechainId;
             const sidechainId =
                 typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
             const createdAt = readCatchUpTimestamp((msg as any).createdAt);
             const updatedAt = readCatchUpTimestamp((msg as any).updatedAt) ?? createdAt;
+            const sourceCreatedAt = readCatchUpTimestamp((msg as any).sourceCreatedAt);
+            const sourceUpdatedAt = readCatchUpTimestamp((msg as any).sourceUpdatedAt) ?? sourceCreatedAt;
+            const transcriptObservationProvenance = (msg as any).transcriptObservationProvenance;
 
             const update: Update = {
                 id: `catchup-${id}`,
@@ -91,9 +106,19 @@ export async function catchUpSessionMessagesAfterSeq(params: {
                         content: parsedContent.data,
                         createdAt,
                         updatedAt,
+                        ...(sourceCreatedAt === null ? {} : { sourceCreatedAt }),
+                        ...(sourceUpdatedAt === null ? {} : { sourceUpdatedAt }),
+                        ...(transcriptObservationProvenance === undefined
+                            ? {}
+                            : { transcriptObservationProvenance }),
                     },
                 },
             } as Update;
+
+            sessionHistoryReplayProvenance.set(update as object, {
+                sourceCreatedAt: sourceCreatedAt ?? createdAt,
+                sourceUpdatedAt: sourceUpdatedAt ?? updatedAt,
+            });
 
             params.onUpdate(update);
             cursor = Math.max(cursor, seq);

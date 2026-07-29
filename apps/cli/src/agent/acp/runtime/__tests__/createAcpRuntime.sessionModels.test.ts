@@ -27,7 +27,7 @@ describe('createAcpRuntime (session models)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     const modelsEvent: EventMessage = {
       type: 'event',
@@ -62,7 +62,7 @@ describe('createAcpRuntime (session models)', () => {
     const metadata: Metadata = getMetadata();
     expect(metadata.acpSessionModelsV1).toMatchObject({
       v: 1,
-      provider: 'codex',
+      agentId: 'codex',
       currentModelId: 'model-a',
       availableModels: [
         {
@@ -105,7 +105,7 @@ describe('createAcpRuntime (session models)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     const configEvent: EventMessage = {
       type: 'event',
@@ -131,7 +131,7 @@ describe('createAcpRuntime (session models)', () => {
     const metadata: Metadata = getMetadata();
     expect(metadata.acpSessionModelsV1).toMatchObject({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       currentModelId: 'model-a',
       availableModels: [
         { id: 'model-a', name: 'Model A' },
@@ -159,7 +159,7 @@ describe('createAcpRuntime (session models)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     await runtime.setSessionModel('model-b');
 
     expect(lastSet).toEqual({ sessionId: 'sess_main', modelId: 'model-b' });
@@ -202,7 +202,7 @@ describe('createAcpRuntime (session models)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     await runtime.setSessionModel('model-b');
 
     expect(lastSetConfig).toEqual({ sessionId: 'sess_main', configId: 'model', value: 'model-b' });
@@ -230,7 +230,7 @@ describe('createAcpRuntime (session models)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     await runtime.setSessionModel('model-b');
 
     expect(lastSetConfig).toEqual({ sessionId: 'sess_main', configId: 'model', value: 'model-b' });

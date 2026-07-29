@@ -144,6 +144,9 @@ export class JsonlFollower {
             this.drainQueued = false;
             const outcome = await this.drainInner(source);
             aggregate = mergeDrainOutcome(aggregate, outcome);
+            if (outcome.hadError) {
+                this.drainQueued = false;
+            }
             source = 'queued';
         } while (this.drainQueued && !this.stopped);
         this.scheduleNextPoll(aggregate);
@@ -161,10 +164,10 @@ export class JsonlFollower {
             if (code !== 'ENOENT') {
                 this.onError?.(error);
                 return { ...emptyDrainOutcome(), hadError: true };
-            } else if (this.fileIdentity) {
-                this.resetReadState('missing');
-                return { ...emptyDrainOutcome(), hadReset: true, missingFile: true };
             }
+            // Path absence alone does not prove a transcript discontinuity. Preserve
+            // the cursor/buffer until the path returns; identity/size then proves
+            // whether continuity held or a replaced/truncated reset is required.
             return { ...emptyDrainOutcome(), missingFile: true };
         }
 
@@ -233,19 +236,20 @@ export class JsonlFollower {
         let hadError = false;
         const remainingLines: string[] = [];
         let capReached = false;
-        for (const line of lines) {
+        for (let lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+            const line = lines[lineIndex] ?? '';
             if (this.stopped) {
-                remainingLines.push(line);
-                continue;
+                remainingLines.push(...lines.slice(lineIndex));
+                break;
             }
             if (capReached) {
-                remainingLines.push(line);
-                continue;
+                remainingLines.push(...lines.slice(lineIndex));
+                break;
             }
             if (rowsEmitted >= this.pollPolicy.maxDrainRowsPerTick) {
                 capReached = true;
-                remainingLines.push(line);
-                continue;
+                remainingLines.push(...lines.slice(lineIndex));
+                break;
             }
             try {
                 this.lineCallbackDepth += 1;
@@ -255,6 +259,8 @@ export class JsonlFollower {
             } catch (error) {
                 this.onError?.(error);
                 hadError = true;
+                remainingLines.push(...lines.slice(lineIndex));
+                break;
             } finally {
                 this.lineCallbackDepth -= 1;
             }
@@ -283,9 +289,6 @@ export class JsonlFollower {
         this.offsetBytes = 0;
         this.buffer = '';
         this.decoder = new StringDecoder('utf8');
-        if (reason === 'missing') {
-            this.fileIdentity = null;
-        }
         this.emitMetric({ type: 'file_reset', reason });
     }
 

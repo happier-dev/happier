@@ -10,7 +10,7 @@ import {
 export type HostSubagentActor =
     | Readonly<{ kind: 'host' }>
     | Readonly<{ kind: 'externalRpc' }>
-    | Readonly<{ kind: 'plugin'; pluginId: string }>;
+    | Readonly<{ kind: 'plugin'; pluginId: string; agentId: string }>;
 
 export class HostSubagentStoreError extends Error {
     constructor(
@@ -35,7 +35,7 @@ export type HostSubagentStoreOptions = Readonly<{
     maxSubagentsPerParent?: number;
 }>;
 
-const DEFAULT_MAX_LIST_RESULTS = 100;
+const DEFAULT_MAX_LIST_RESULTS = 256;
 const DEFAULT_MAX_WATCHERS = 32;
 const DEFAULT_WATCH_IDLE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_SUBAGENTS_PER_PARENT = 256;
@@ -56,6 +56,10 @@ export type HostSubagentWatchParams = Readonly<{
     id?: string;
 }>;
 
+export type HostSubagentWatchOptions = Readonly<{
+    onClose?: () => void;
+}>;
+
 export type HostSubagentWatchEvent = Readonly<{
     kind: 'snapshot' | 'changed' | 'removed';
     subagents?: readonly SubagentRefV1[];
@@ -66,7 +70,11 @@ export type HostSubagentWatchEvent = Readonly<{
 export type HostSubagentStore = Readonly<{
     list(params?: HostSubagentListParams): Promise<readonly SubagentRefV1[]>;
     get(params: HostSubagentGetParams): Promise<SubagentRefV1 | null>;
-    watch(params: HostSubagentWatchParams, onEvent: (event: HostSubagentWatchEvent) => void): Readonly<{ unsubscribe(): void }>;
+    watch(
+        params: HostSubagentWatchParams,
+        onEvent: (event: HostSubagentWatchEvent) => void,
+        options?: HostSubagentWatchOptions,
+    ): Readonly<{ unsubscribe(): void }>;
     upsert(params: Readonly<{ actor: HostSubagentActor; input: SubagentRefInputV1 }>): Promise<SubagentRefV1>;
     updateStatus(params: Readonly<{
         actor: HostSubagentActor;
@@ -89,8 +97,14 @@ export type HostSubagentStore = Readonly<{
 type Watcher = {
     params: HostSubagentWatchParams;
     onEvent: (event: HostSubagentWatchEvent) => void;
+    onClose: (() => void) | null;
     idleTimer: ReturnType<typeof setTimeout> | null;
 };
+
+type SubagentOwner = Readonly<
+    | { kind: 'host' }
+    | { kind: 'plugin'; pluginId: string }
+>;
 
 function normalizeOptionalString(value: string | null | undefined): string | null {
     if (typeof value !== 'string') return null;
@@ -110,11 +124,11 @@ function isPluginOwner(actor: HostSubagentActor, ref: SubagentRefInputV1 | Subag
     if (actor.kind === 'host') return true;
     if (actor.kind !== 'plugin') return false;
     if (ref.origin === 'plugin') {
-        const providerId = normalizeOptionalString(ref.providerRef?.providerId);
-        return providerId === null || providerId === actor.pluginId;
+        const agentId = normalizeOptionalString(ref.agentRef?.agentId);
+        return agentId === null || agentId === actor.agentId;
     }
-    if (ref.origin === 'provider') {
-        return normalizeOptionalString(ref.providerRef?.providerId) === actor.pluginId;
+    if (ref.origin === 'agent') {
+        return normalizeOptionalString(ref.agentRef?.agentId) === actor.agentId;
     }
     return false;
 }
@@ -170,6 +184,7 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
     const watchIdleTtlMs = normalizePositiveInteger(options.watchIdleTtlMs, DEFAULT_WATCH_IDLE_TTL_MS);
     const maxSubagentsPerParent = normalizePositiveInteger(options.maxSubagentsPerParent, DEFAULT_MAX_SUBAGENTS_PER_PARENT);
     const refsByKey = new Map<string, SubagentRefV1>();
+    const ownersByKey = new Map<string, SubagentOwner>();
     const watchers = new Set<Watcher>();
     const pendingChangedByKey = new Map<string, SubagentRefV1>();
     let changeFlushScheduled = false;
@@ -183,11 +198,14 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
     );
 
     const deleteWatcher = (watcher: Watcher): void => {
+        if (!watchers.delete(watcher)) {
+            return;
+        }
         if (watcher.idleTimer) {
             clearTimeout(watcher.idleTimer);
             watcher.idleTimer = null;
         }
-        watchers.delete(watcher);
+        watcher.onClose?.();
     };
 
     const refreshWatcherIdleTimer = (watcher: Watcher): void => {
@@ -234,6 +252,16 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
         return ref;
     };
 
+    const assertCanMutateExisting = (actor: HostSubagentActor, key: string): void => {
+        if (actor.kind === 'host') {
+            return;
+        }
+        const owner = ownersByKey.get(key);
+        if (actor.kind !== 'plugin' || owner?.kind !== 'plugin' || owner.pluginId !== actor.pluginId) {
+            throw new HostSubagentStoreError('subagent_write_forbidden');
+        }
+    };
+
     return Object.freeze({
         list,
         async get(params) {
@@ -243,11 +271,16 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
                 : [...refsByKey.values()].find((candidate) => candidate.id === params.id);
             return ref ? cloneRef(ref) : null;
         },
-        watch(params, onEvent) {
+        watch(params, onEvent, watchOptions) {
             if (watchers.size >= maxWatchers) {
                 throw new HostSubagentStoreError('subagent_watch_capacity_exceeded');
             }
-            const watcher: Watcher = { params, onEvent, idleTimer: null };
+            const watcher: Watcher = {
+                params,
+                onEvent,
+                onClose: watchOptions?.onClose ?? null,
+                idleTimer: null,
+            };
             watchers.add(watcher);
             refreshWatcherIdleTimer(watcher);
             void list(params).then((subagents) => {
@@ -266,7 +299,11 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
             const parsed = SubagentRefInputV1Schema.parse(params.input);
             assertCanWrite(params.actor, parsed);
             const now = Date.now();
-            const existing = refsByKey.get(subagentKey(parsed));
+            const key = subagentKey(parsed);
+            const existing = refsByKey.get(key);
+            if (existing) {
+                assertCanMutateExisting(params.actor, key);
+            }
             if (!existing && countRefsForParent(refsByKey, parsed.parentSessionId) >= maxSubagentsPerParent) {
                 throw new HostSubagentStoreError('subagent_capacity_exceeded');
             }
@@ -276,14 +313,19 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
                 status: parsed.status ?? existing?.status ?? 'pending',
                 createdAt: parsed.createdAt ?? existing?.createdAt ?? now,
             });
-            refsByKey.set(subagentKey(next), next);
+            refsByKey.set(key, next);
+            if (!existing) {
+                ownersByKey.set(key, params.actor.kind === 'plugin'
+                    ? Object.freeze({ kind: 'plugin', pluginId: params.actor.pluginId })
+                    : Object.freeze({ kind: 'host' }));
+            }
             notifyChanged(next);
             return cloneRef(next);
         },
         async updateStatus(params) {
             const parentSessionId = requireParentSessionId(normalizeOptionalString(params.parentSessionId));
             const existing = getExisting({ id: params.id, parentSessionId });
-            assertCanWrite(params.actor, existing);
+            assertCanMutateExisting(params.actor, subagentKey(existing));
             const next = cloneRef({
                 ...existing,
                 status: params.status,
@@ -297,7 +339,7 @@ export function createHostSubagentStore(options: HostSubagentStoreOptions = {}):
         async complete(params) {
             const parentSessionId = requireParentSessionId(normalizeOptionalString(params.parentSessionId));
             const existing = getExisting({ id: params.id, parentSessionId });
-            assertCanWrite(params.actor, existing);
+            assertCanMutateExisting(params.actor, subagentKey(existing));
             const next = cloneRef({
                 ...existing,
                 status: params.status ?? 'completed',

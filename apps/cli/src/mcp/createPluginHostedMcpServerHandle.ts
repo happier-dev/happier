@@ -1,6 +1,7 @@
-import type { McpHostedRuntimeEndpointV1, McpServerHandleV1, McpServerSpecV1 } from '@happier-dev/plugin-sdk';
+import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
 
 import { assertMcpRuntimeServerRegistrationSafe } from './hosted/safety';
+import type { HostedMcpRuntimeEndpoint } from './runtimeTypes';
 
 /**
  * Per-runtime registry of active hosted MCP server specs.
@@ -42,8 +43,15 @@ export function createPluginHostedMcpServerRegistry(): PluginHostedMcpServerRegi
 }
 
 export type PluginHostedMcpRuntimeEndpointHandle = Readonly<{
-    endpoint: McpHostedRuntimeEndpointV1;
+    endpoint: HostedMcpRuntimeEndpoint;
     dispose: () => Promise<void> | void;
+}>;
+
+export type PluginHostedMcpServerHandle = Readonly<{
+    id: string;
+    spec: McpServerSpecV1;
+    endpoint?: HostedMcpRuntimeEndpoint;
+    dispose(): Promise<void>;
 }>;
 
 export type StartPluginHostedMcpRuntimeEndpoint = (params: Readonly<{
@@ -57,7 +65,7 @@ function requestsLoopbackHttpExposure(spec: McpServerSpecV1): boolean {
         && spec.transport.exposure.requested === true;
 }
 
-function assertSanitizedHostedEndpoint(endpoint: McpHostedRuntimeEndpointV1): void {
+function assertSanitizedHostedEndpoint(endpoint: HostedMcpRuntimeEndpoint): void {
     if (endpoint.kind !== 'loopbackHttp') {
         throw new Error('Hosted MCP runtime endpoint must be a sanitized loopback endpoint');
     }
@@ -90,7 +98,7 @@ export async function createPluginHostedMcpServerHandle(params: Readonly<{
     spec: McpServerSpecV1;
     registry: PluginHostedMcpServerRegistryV1;
     startRuntimeEndpoint?: StartPluginHostedMcpRuntimeEndpoint;
-}>): Promise<McpServerHandleV1> {
+}>): Promise<PluginHostedMcpServerHandle> {
     assertMcpRuntimeServerRegistrationSafe(params.spec, { pluginId: params.pluginId });
     if (params.registry.has(params.pluginId, params.spec.id)) {
         throw new Error(`Hosted MCP server '${params.spec.id}' is already active for plugin '${params.pluginId}'`);

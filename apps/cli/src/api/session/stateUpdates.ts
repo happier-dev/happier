@@ -4,7 +4,6 @@ import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import type { AgentState, Metadata } from '../types';
 import { decodeBase64, decrypt, encodeBase64, encrypt } from '../encryption';
 import { deriveActivitySummaryFromAgentState } from './deriveActivitySummaryFromAgentState';
-import type { SessionRuntimeActivitySourceClassV1 } from '@happier-dev/protocol';
 
 type AckableSocket = {
     emitWithAck: (event: string, ...args: any[]) => Promise<any>;
@@ -62,8 +61,12 @@ export async function updateSessionMetadataWithAck(opts: {
     setMetadataVersion: (version: number) => void;
     syncSessionSnapshotFromServer: () => Promise<void>;
     handler: (metadata: Metadata) => Metadata;
-}): Promise<void> {
-    await backoff(async () => {
+}): Promise<Readonly<{
+    metadata: Metadata;
+    version: number;
+    ciphertext: string;
+}>> {
+    return await backoff(async () => {
         if (opts.getMetadataVersion() < 0) {
             await opts.syncSessionSnapshotFromServer();
             if (opts.getMetadataVersion() < 0) {
@@ -112,7 +115,11 @@ export async function updateSessionMetadataWithAck(opts: {
             });
             opts.setMetadata(next);
             opts.setMetadataVersion(answer.version);
-            return;
+            return {
+                metadata: next,
+                version: answer.version,
+                ciphertext: String(answer.metadata),
+            };
         }
 
         if (answer.result === 'version-mismatch') {
@@ -154,8 +161,12 @@ export async function updateSessionAgentStateWithAck(opts: {
     setAgentStateVersion: (version: number) => void;
     syncSessionSnapshotFromServer: () => Promise<void>;
     handler: (agentState: AgentState) => AgentState;
-}): Promise<void> {
-    await backoff(async () => {
+}): Promise<Readonly<{
+    agentState: AgentState | null;
+    version: number;
+    ciphertext: string | null;
+}>> {
+    return await backoff(async () => {
         if (opts.getAgentStateVersion() < 0) {
             await opts.syncSessionSnapshotFromServer();
             if (opts.getAgentStateVersion() < 0) {
@@ -194,7 +205,13 @@ export async function updateSessionAgentStateWithAck(opts: {
             opts.setAgentState(next);
             opts.setAgentStateVersion(answer.version);
             logger.debug('Agent state updated', opts.getAgentState());
-            return;
+            return {
+                agentState: next,
+                version: answer.version,
+                ciphertext: typeof answer.agentState === 'string'
+                    ? answer.agentState
+                    : null,
+            };
         }
 
         if (answer.result === 'version-mismatch') {
@@ -222,26 +239,38 @@ export async function updateSessionAgentStateWithAck(opts: {
 export async function updateSessionRuntimeActivityProjectionWithAck(opts: {
     socket: AckableSocket;
     sessionId: string;
+    state: 'active' | 'idle' | 'unknown';
+    runtimeActivityActiveCount: number;
+}): Promise<Readonly<{
+    disposition: 'applied' | 'unchanged';
+    projection: Readonly<{
+    runtimeActivityState: 'active' | 'idle' | 'unknown';
     runtimeActivityActiveCount: number;
     runtimeActivityObservedAt: number | null;
-    runtimeActivityExpiresAt: number | null;
-    runtimeActivitySourceClass: SessionRuntimeActivitySourceClassV1 | null;
-}): Promise<void> {
-    await backoff(async () => {
+    runtimeActivityRevision: number;
+    }>;
+}>> {
+    return await backoff(async () => {
         const answer = await emitSocketWithAck<any>({
             socket: opts.socket,
-            event: 'update-runtime-activity',
+            event: 'runtime-activity-snapshot',
             payload: {
                 sid: opts.sessionId,
+                state: opts.state,
                 runtimeActivityActiveCount: opts.runtimeActivityActiveCount,
-                runtimeActivityObservedAt: opts.runtimeActivityObservedAt,
-                runtimeActivityExpiresAt: opts.runtimeActivityExpiresAt,
-                runtimeActivitySourceClass: opts.runtimeActivitySourceClass,
             },
         });
 
         if (answer.result === 'success') {
-            return;
+            return {
+                disposition: answer.didWrite === true ? 'applied' : 'unchanged',
+                projection: {
+                    runtimeActivityState: answer.runtimeActivityState,
+                    runtimeActivityActiveCount: answer.runtimeActivityActiveCount,
+                    runtimeActivityObservedAt: answer.runtimeActivityObservedAt,
+                    runtimeActivityRevision: answer.runtimeActivityRevision,
+                },
+            };
         }
 
         throw createSessionStateUpdateError(

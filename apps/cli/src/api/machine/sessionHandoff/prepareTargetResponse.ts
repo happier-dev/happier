@@ -1,6 +1,6 @@
 import {
   type SessionHandoffPrepareTargetRequest,
-  type SessionHandoffPrepareTargetResultGetResponse,
+  type SessionHandoffPrepareTargetResultGetSuccessResponse,
   type SessionHandoffStatus,
 } from '@happier-dev/protocol';
 
@@ -21,7 +21,7 @@ type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSou
 export type SessionHandoffPrepareTargetResponse = Readonly<{
   handoffId: string;
   status: SessionHandoffStatus;
-}> | SessionHandoffPrepareTargetResultGetResponse;
+}> | SessionHandoffPrepareTargetResultGetSuccessResponse;
 
 export type SessionHandoffPrepareTargetErrorResponse = Readonly<{
   ok: false;
@@ -41,13 +41,13 @@ export async function resolvePrepareTargetDirectPeerMetadataPreflight(input: Rea
   }
 
   const localSourceExport = await input.sourceExportStore.load(input.request.handoffId);
-  const hasLocalProviderBundle = Boolean(localSourceExport?.providerBundle);
+  const hasLocalAgentBundle = Boolean(localSourceExport?.agentBundle);
   const needsWorkspaceReplicationMetadata = input.request.workspaceTransfer?.enabled === true;
   const hasLocalWorkspaceReplicationMetadata = Boolean(
     localSourceExport?.workspaceManifest && localSourceExport.workspaceSourceRootPath,
   );
 
-  if (!hasLocalProviderBundle || (needsWorkspaceReplicationMetadata && !hasLocalWorkspaceReplicationMetadata)) {
+  if (!hasLocalAgentBundle || (needsWorkspaceReplicationMetadata && !hasLocalWorkspaceReplicationMetadata)) {
     return missingHandoffMetadataV2();
   }
 

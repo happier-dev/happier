@@ -92,18 +92,16 @@ describe('archiveAndCloseRuntimeSession', () => {
       archivedBy: 'cli',
       archiveReason: 'Killed by user',
     });
-    expect(session.sendSessionDeath).toHaveBeenCalledTimes(1);
+    expect(session.sendSessionDeath).not.toHaveBeenCalled();
     expect(session.flush).toHaveBeenCalledTimes(1);
     expect(session.close).toHaveBeenCalledTimes(1);
     expect(postSpy).toHaveBeenCalledTimes(2);
     expect(String(postSpy.mock.calls[1]?.[0])).toContain('/v2/sessions/sess-runtime-1/archive');
     expect(getSpy).toHaveBeenCalledTimes(1);
 
-    const sendDeathOrder = session.sendSessionDeath.mock.invocationCallOrder[0] ?? 0;
     const flushOrder = session.flush.mock.invocationCallOrder[0] ?? 0;
     const closeOrder = session.close.mock.invocationCallOrder[0] ?? 0;
     const archiveOrder = postSpy.mock.invocationCallOrder[0] ?? 0;
-    expect(sendDeathOrder).toBeLessThan(flushOrder);
     expect(flushOrder).toBeLessThan(closeOrder);
     expect(closeOrder).toBeLessThan(archiveOrder);
   });
@@ -140,7 +138,7 @@ describe('archiveAndCloseRuntimeSession', () => {
     expect(elapsedMs).toBeGreaterThanOrEqual(20);
   });
 
-  it('waits for the archive metadata write before sending session death', async () => {
+  it('waits for the archive metadata write before flushing and closing the session', async () => {
     const postSpy = vi.spyOn(axios, 'post');
     postSpy.mockResolvedValueOnce({ status: 200, data: { success: true, archivedAt: 1234 } } as never);
 
@@ -169,11 +167,13 @@ describe('archiveAndCloseRuntimeSession', () => {
     await vi.waitFor(() => {
       expect(session.updateMetadata).toHaveBeenCalledTimes(1);
     });
-    expect(session.sendSessionDeath).not.toHaveBeenCalled();
+    expect(session.flush).not.toHaveBeenCalled();
+    expect(session.close).not.toHaveBeenCalled();
 
     releaseMetadataWrite();
     await archivePromise;
 
-    expect(session.sendSessionDeath).toHaveBeenCalledTimes(1);
+    expect(session.flush).toHaveBeenCalledTimes(1);
+    expect(session.close).toHaveBeenCalledTimes(1);
   });
 });

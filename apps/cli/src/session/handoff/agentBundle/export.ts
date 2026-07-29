@@ -35,16 +35,21 @@ export async function exportSessionHandoffAgentBundle(params: Readonly<{
     throw new Error(`Unsupported handoff provider: ${eligibility.agentId}`);
   }
 
-	  const agentBundle = await providerOps.exportBundle({
-	    sessionId: eligibility.vendorHandoffId,
-	    metadata,
-	    directory: params.activeServerDir,
-	  });
-	  if (!agentBundle.ok) {
-	    throw new Error(agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`);
-	  }
-	  return {
-	    agentBundle: agentBundle.value.bundle as SessionHandoffAgentBundle,
-	    targetPath,
-	  };
+  const {
+    externalSessionOperationV1: _ownerOperation,
+    externalSessionOperationPresentationV1: _operationPresentation,
+    ...agentMetadata
+  } = metadata;
+  const agentBundle = await providerOps.exportBundle({
+    sessionId: eligibility.vendorHandoffId,
+    metadata: agentMetadata,
+    directory: params.activeServerDir,
+  });
+  if (!agentBundle.ok) {
+    throw new Error(agentBundle.message ?? `Session handoff export failed: ${agentBundle.code}`);
+  }
+  return {
+    agentBundle: agentBundle.value.bundle as SessionHandoffAgentBundle,
+    targetPath,
+  };
 }

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -15,7 +16,8 @@ export async function createProbeTempDir(prefix: string): Promise<{ dir: string;
 }
 
 export function resolveAcpSdkEntryFromCwd(cwd: string): string {
-  return resolve(join(cwd, 'node_modules/@agentclientprotocol/sdk/dist/acp.js'));
+  const requireFromHere = createRequire(import.meta.url);
+  return requireFromHere.resolve('@agentclientprotocol/sdk', { paths: [cwd] });
 }
 
 export async function writeExecutableScript(filePath: string, source: string): Promise<void> {
@@ -36,24 +38,19 @@ import { pathToFileURL } from "node:url";
 const sdkPath = ${JSON.stringify(params.sdkEntry)};
 const acp = await import(pathToFileURL(sdkPath).href);
 
-class FakeAgent {
-  connection;
-  constructor(connection) {
-    this.connection = connection;
-  }
-  async initialize() {
-    return { protocolVersion: acp.PROTOCOL_VERSION, agentCapabilities: { loadSession: false } };
-  }
-  async newSession() {
-    return ${params.sessionPayloadSource};
-  }
-  async authenticate() { return {}; }
-  async prompt() { return { stopReason: "end_turn" }; }
-  async cancel() { return {}; }
-}
+const app = acp.agent({ name: "happier-test-agent" })
+  .onRequest("initialize", async () => ({
+    protocolVersion: acp.PROTOCOL_VERSION,
+    agentCapabilities: { loadSession: false },
+  }))
+  .onRequest("session/new", async () => (${params.sessionPayloadSource}))
+  .onRequest("authenticate", async () => ({}))
+  .onRequest("session/prompt", async () => ({ stopReason: "end_turn" }))
+  .onNotification("session/cancel", async () => {});
 
 const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin));
-new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
+const connection = app.connect(stream);
+await connection.closed;
 `;
 
   await writeExecutableScript(agentPath, source);

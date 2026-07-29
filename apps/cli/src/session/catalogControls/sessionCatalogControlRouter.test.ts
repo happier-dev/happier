@@ -1,8 +1,8 @@
-import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 import { routeSessionCatalogControl } from './sessionCatalogControlRouter';
 
 function createCredentials(): Credentials {

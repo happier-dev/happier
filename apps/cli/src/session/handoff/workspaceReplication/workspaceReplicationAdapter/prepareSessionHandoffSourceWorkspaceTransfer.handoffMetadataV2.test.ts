@@ -4,13 +4,31 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SessionHandoffWorkspaceTransfer } from '@happier-dev/protocol';
 
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ScmBackendRegistry } from '@/scm/registry';
+import { resolveDefaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
 import { prepareSessionHandoffSourceWorkspaceTransfer } from './adapter';
 
 const execFile = promisify(execFileCallback);
+let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+let scmRegistry: ScmBackendRegistry;
+
+beforeAll(async () => {
+  runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+    pluginIds: ['happier.scm.backend.git'],
+  });
+  scmRegistry = await resolveDefaultScmBackendRegistry({
+    pluginRuntimeRegistry: runtimeRegistry,
+  });
+});
+
+afterAll(async () => {
+  await runtimeRegistry?.dispose();
+});
 
 async function runGit(cwd: string, args: readonly string[]): Promise<void> {
   await execFile('git', [...args], { cwd });
@@ -43,6 +61,7 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         activeServerDir,
         negotiatedTransportStrategy: 'server_routed_stream',
         workspaceTransfer,
+        scmRegistry,
         sourceRootPath,
       });
 
@@ -78,6 +97,7 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         activeServerDir,
         negotiatedTransportStrategy: 'server_routed_stream',
         workspaceTransfer,
+        scmRegistry,
         sourceRootPath,
       });
 
@@ -123,6 +143,7 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         activeServerDir,
         negotiatedTransportStrategy: 'server_routed_stream',
         workspaceTransfer,
+        scmRegistry,
         sourceRootPath,
         sessionTranscriptRecords: [
           {
@@ -182,6 +203,7 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         activeServerDir,
         negotiatedTransportStrategy: 'direct_peer',
         workspaceTransfer,
+        scmRegistry,
         sourceRootPath,
         agentBundleTransferPublication: {
           transferId: 'provider_bundle_1',
@@ -237,6 +259,7 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
         activeServerDir,
         negotiatedTransportStrategy: 'server_routed_stream',
         workspaceTransfer,
+        scmRegistry,
         sourceRootPath,
       })).rejects.toMatchObject({
         code: 'source_path_unreadable',
@@ -261,6 +284,7 @@ describe('prepareSessionHandoffSourceWorkspaceTransfer (handoffMetadataV2)', () 
           includeIgnoredMode: 'exclude',
           ignoredIncludeGlobs: [],
         },
+        scmRegistry,
         sourceRootPath: '/source',
       });
 

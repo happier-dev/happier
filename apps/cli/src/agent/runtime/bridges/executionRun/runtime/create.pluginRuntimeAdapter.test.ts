@@ -11,7 +11,7 @@ import type {
 const getExecutionRunBackendDescriptorMock = vi.fn();
 const resolveBackendEngineAdapterResolutionMock = vi.fn();
 const requestExecutionRunConnectedServicesMaterializationMock = vi.fn();
-const releaseExecutionRunConnectedServicesMock = vi.fn(async (..._args: unknown[]) => ({ ok: true as const }));
+const releaseExecutionRunConnectedServicesMock = vi.fn(async (..._args: unknown[]) => ({ ok: true as const, released: true }));
 
 vi.mock('@/agent/executionRuns/registry/executionRunBackendRegistry', () => ({
   getExecutionRunBackendDescriptor: (...args: unknown[]) => getExecutionRunBackendDescriptorMock(...args),
@@ -181,17 +181,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'acme.sample.backend',
-      providerId: 'acme.sample.provider',
+      agentId: 'acme.sample.provider',
       provenance: 'external',
       backend: {
         id: 'acme.sample.backend',
-        providerId: 'acme.sample.provider',
+        agentId: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
         runtimeKind: 'native',
         capabilities: { executionRun: true },
       },
-      provider: {
+      agent: {
         id: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
@@ -302,17 +302,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'acme.sample.backend',
-      providerId: 'acme.sample.provider',
+      agentId: 'acme.sample.provider',
       provenance: 'external',
       backend: {
         id: 'acme.sample.backend',
-        providerId: 'acme.sample.provider',
+        agentId: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
         runtimeKind: 'native',
         capabilities: { executionRun: true },
       },
-      provider: {
+      agent: {
         id: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
@@ -407,7 +407,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'acme.sample.backend',
-      providerId: 'acme.sample.provider',
+      agentId: 'acme.sample.provider',
       provenance: 'external',
       runtimeOwner: {
         backendId: 'acme.sample.backend',
@@ -426,13 +426,13 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       },
       backend: {
         id: 'acme.sample.backend',
-        providerId: 'acme.sample.provider',
+        agentId: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
         runtimeKind: 'native',
         capabilities: { executionRun: true },
       },
-      provider: {
+      agent: {
         id: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
@@ -477,7 +477,7 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'acme.sample.backend',
-      providerId: 'acme.sample.provider',
+      agentId: 'acme.sample.provider',
       provenance: 'external',
       runtimeOwner: {
         backendId: 'acme.sample.backend',
@@ -496,13 +496,13 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
       },
       backend: {
         id: 'acme.sample.backend',
-        providerId: 'acme.sample.provider',
+        agentId: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
         runtimeKind: 'native',
         capabilities: { executionRun: true },
       },
-      provider: {
+      agent: {
         id: 'acme.sample.provider',
         provenance: 'external',
         source: { kind: 'path' },
@@ -558,17 +558,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
-	      providerId: 'acme.sample.provider',
+	      agentId: 'acme.sample.provider',
 	      provenance: 'external',
 	      backend: {
 	        id: 'acme.sample.backend',
-	        providerId: 'acme.sample.provider',
+	        agentId: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
 	        runtimeKind: 'native',
 	        capabilities: { executionRun: true },
 	      },
-	      provider: {
+	      agent: {
 	        id: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
@@ -646,17 +646,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
-	      providerId: 'acme.sample.provider',
+	      agentId: 'acme.sample.provider',
 	      provenance: 'external',
 	      backend: {
 	        id: 'acme.sample.backend',
-	        providerId: 'acme.sample.provider',
+	        agentId: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
 	        runtimeKind: 'native',
 	        capabilities: { executionRun: true },
 	      },
-	      provider: {
+	      agent: {
 	        id: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
@@ -707,17 +707,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	    const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
-	      providerId: 'acme.sample.provider',
+	      agentId: 'acme.sample.provider',
 	      provenance: 'external',
 	      backend: {
 	        id: 'acme.sample.backend',
-	        providerId: 'acme.sample.provider',
+	        agentId: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
 	        runtimeKind: 'native',
 	        capabilities: { executionRun: true },
 	      },
-	      provider: {
+	      agent: {
 	        id: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
@@ -802,17 +802,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	    });
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
-	      providerId: 'acme.sample.provider',
+	      agentId: 'acme.sample.provider',
 	      provenance: 'external',
 	      backend: {
 	        id: 'acme.sample.backend',
-	        providerId: 'acme.sample.provider',
+	        agentId: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
 	        runtimeKind: 'native',
 	        capabilities: { executionRun: true },
 	      },
-	      provider: {
+	      agent: {
 	        id: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
@@ -883,17 +883,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 
 	    resolveEngineResolution({
 	      backendId: 'acme.sample.backend',
-	      providerId: 'acme.sample.provider',
+	      agentId: 'acme.sample.provider',
 	      provenance: 'external',
 	      backend: {
 	        id: 'acme.sample.backend',
-	        providerId: 'acme.sample.provider',
+	        agentId: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
 	        runtimeKind: 'native',
 	        capabilities: { executionRun: true },
 	      },
-	      provider: {
+	      agent: {
 	        id: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
@@ -918,17 +918,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	    const createExecutionRunBackendMock = vi.fn(() => createStubRuntimeCoreBackend());
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
-	      providerId: 'acme.sample.provider',
+	      agentId: 'acme.sample.provider',
 	      provenance: 'external',
 	      backend: {
 	        id: 'acme.sample.backend',
-	        providerId: 'acme.sample.provider',
+	        agentId: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
 	        runtimeKind: 'native',
 	        capabilities: { executionRun: true },
 	      },
-	      provider: {
+	      agent: {
 	        id: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
@@ -970,17 +970,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 	    const createExecutionRunBackendMock = vi.fn(() => createStubRuntimeCoreBackend());
 	    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
 	      backendId: 'acme.sample.backend',
-	      providerId: 'acme.sample.provider',
+	      agentId: 'acme.sample.provider',
 	      provenance: 'external',
 	      backend: {
 	        id: 'acme.sample.backend',
-	        providerId: 'acme.sample.provider',
+	        agentId: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
 	        runtimeKind: 'native',
 	        capabilities: { executionRun: true },
 	      },
-	      provider: {
+	      agent: {
 	        id: 'acme.sample.provider',
 	        provenance: 'external',
 	        source: { kind: 'path' },
@@ -1019,9 +1019,26 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
 
   it('merges daemon-materialized connected-services env into the backend isolation env', async () => {
     getExecutionRunBackendDescriptorMock.mockReturnValue(null);
+    const registration = {
+      v: 1 as const,
+      activationId: '11111111-1111-4111-8111-111111111111',
+      runKey: 'run_cs_1',
+      agentId: 'codex',
+      materializationKey: 'run_cs_1',
+      connectedServicesBindings: {
+        v: 1 as const,
+        bindingsByServiceId: {
+          'openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'profile_1' },
+        },
+      },
+      connectedServiceSelectionsEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: '{"v":1}' },
+      sessionDirectory: '/tmp/project',
+      materializedRoot: '/materialized/run_cs_1',
+    };
     requestExecutionRunConnectedServicesMaterializationMock.mockResolvedValue({
       ok: true,
       result: {
+        activationId: registration.activationId,
         env: { CODEX_HOME: '/materialized/run_cs_1/codex-home' },
         connectedServicesBindings: {
           v: 1,
@@ -1029,23 +1046,24 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
             'openai-codex': { source: 'connected', selection: 'profile', profileId: 'profile_1' },
           },
         },
+        registration,
       },
     });
     const runtimeCoreBackend = createStubRuntimeCoreBackend();
     const createExecutionRunBackendMock = vi.fn(() => runtimeCoreBackend);
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'codex',
-      providerId: 'codex',
+      agentId: 'codex',
       provenance: 'built_in',
       backend: {
         id: 'codex',
-        providerId: 'codex',
+        agentId: 'codex',
         provenance: 'built_in',
         source: { kind: 'built_in' },
         runtimeKind: 'acp',
         capabilities: { executionRun: true },
       },
-      provider: {
+      agent: {
         id: 'codex',
         provenance: 'built_in',
         source: { kind: 'built_in' },
@@ -1060,12 +1078,14 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     });
 
     const runtimeModule = await import('./create');
+    const onConnectedServicesRegistration = vi.fn(async () => undefined);
     const runtime = runtimeModule.createExecutionRunRuntime({
       cwd: '/tmp/project',
       runId: 'run_cs_1',
       backendId: 'codex',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
       permissionMode: 'default',
+      onConnectedServicesRegistration,
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -1075,6 +1095,8 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     });
 
     await runtime.provisionSession();
+
+    expect(onConnectedServicesRegistration).toHaveBeenCalledWith(registration);
 
     expect(requestExecutionRunConnectedServicesMaterializationMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1096,7 +1118,10 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     // Run end releases the materialization (unregister + daemon-side cleanup).
     await runtime.dispose();
     expect(releaseExecutionRunConnectedServicesMock).toHaveBeenCalledWith(
-      expect.objectContaining({ runId: 'run_cs_1' }),
+      expect.objectContaining({
+        runId: 'run_cs_1',
+        activationId: registration.activationId,
+      }),
     );
   });
 
@@ -1108,17 +1133,17 @@ describe('createExecutionRunBackend (plugin runtimeCore adapter)', () => {
     const createExecutionRunBackendMock = vi.fn(() => createStubRuntimeCoreBackend());
     resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
       backendId: 'codex',
-      providerId: 'codex',
+      agentId: 'codex',
       provenance: 'built_in',
       backend: {
         id: 'codex',
-        providerId: 'codex',
+        agentId: 'codex',
         provenance: 'built_in',
         source: { kind: 'built_in' },
         runtimeKind: 'acp',
         capabilities: { executionRun: true },
       },
-      provider: {
+      agent: {
         id: 'codex',
         provenance: 'built_in',
         source: { kind: 'built_in' },

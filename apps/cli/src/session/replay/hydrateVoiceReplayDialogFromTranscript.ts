@@ -6,7 +6,14 @@ import type { Credentials } from '@/persistence';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import { decryptTranscriptRows } from '@/session/replay/decryptTranscriptRows';
 import { fetchEncryptedTranscriptMessages } from '@/session/replay/fetchEncryptedTranscriptMessages';
-import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { extractSemanticTranscriptItemFromDecryptedPayload } from '@/session/services/transcript/extractSemanticTranscriptItem';
+import { fetchLatestMemorySynopsisSystemRecord } from '@/session/systemRecords/memory/fetchMemorySystemRecords';
+import {
+  resolveSessionEncryptionContextFromCredentials,
+  resolveSessionStoredContentEncryptionMode,
+  type SessionEncryptionContext,
+  type SessionStoredContentEncryptionMode,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 
 function truncateReplayText(text: string, maxTextChars?: number): string {
   const normalizedMax =
@@ -19,6 +26,22 @@ function truncateReplayText(text: string, maxTextChars?: number): string {
     return text.slice(0, normalizedMax);
   }
   return text.slice(0, normalizedMax - suffix.length) + suffix;
+}
+
+async function tryHydrateSynopsisFromSystemRecord(params: Readonly<{
+  credentials: Credentials;
+  sessionId: string;
+  encryptionMode: SessionStoredContentEncryptionMode;
+  ctx: SessionEncryptionContext;
+}>): Promise<string | null> {
+  const synopsis = await fetchLatestMemorySynopsisSystemRecord({
+    token: params.credentials.token,
+    sessionId: params.sessionId,
+    mode: params.encryptionMode,
+    ...(params.encryptionMode === 'e2ee' ? { ctx: params.ctx } : {}),
+  }).catch(() => null);
+  const text = typeof synopsis?.synopsis === 'string' ? synopsis.synopsis.trim() : '';
+  return text.length > 0 ? text : null;
 }
 
 export async function hydrateVoiceReplayDialogFromTranscript(params: Readonly<{
@@ -48,9 +71,19 @@ export async function hydrateVoiceReplayDialogFromTranscript(params: Readonly<{
   if (!rows) return null;
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, session as any);
+  const encryptionMode = resolveSessionStoredContentEncryptionMode(session as any);
   const decryptedRows = decryptTranscriptRows({ ctx, rows });
   if (decryptedRows.length === 0) {
-    return { dialog: [], sourceCutoffSeqInclusive: sessionSeq, synopsisText: null };
+    return {
+      dialog: [],
+      sourceCutoffSeqInclusive: sessionSeq,
+      synopsisText: await tryHydrateSynopsisFromSystemRecord({
+        credentials: params.credentials,
+        sessionId: params.previousSessionId,
+        encryptionMode,
+        ctx,
+      }),
+    };
   }
 
   const transcriptEpoch = Number.isFinite(params.transcriptEpoch) && params.transcriptEpoch >= 0
@@ -80,7 +113,27 @@ export async function hydrateVoiceReplayDialogFromTranscript(params: Readonly<{
     const parsedTurn = VoiceAgentTurnV1Schema.safeParse(happier.payload);
     if (!parsedTurn.success || parsedTurn.data.epoch !== transcriptEpoch) continue;
 
-    const text = normalizeVoiceAgentTurnTranscriptText((row.content as any)?.text);
+    const extracted = extractSemanticTranscriptItemFromDecryptedPayload({
+      decrypted: {
+        role: row.role,
+        content: row.content,
+      },
+      row: {
+        seq: row.seq,
+        createdAt: row.createdAtMs,
+        messageRole: row.role,
+      },
+      index: dialog.length,
+      options: {
+        mode: 'transcript',
+        transcriptRoles: ['user', 'assistant'],
+        includeTools: false,
+        includeReasoning: false,
+        includeEvents: false,
+        maxTextChars: params.maxTextChars,
+      },
+    });
+    const text = normalizeVoiceAgentTurnTranscriptText(extracted.item?.text);
     if (!text) continue;
 
     dialog.push({
@@ -91,12 +144,18 @@ export async function hydrateVoiceReplayDialogFromTranscript(params: Readonly<{
   }
 
   dialog.sort((left, right) => left.createdAt - right.createdAt);
+  const synopsisFromSystemRecord = await tryHydrateSynopsisFromSystemRecord({
+    credentials: params.credentials,
+    sessionId: params.previousSessionId,
+    encryptionMode,
+    ctx,
+  });
 
   return {
     dialog,
     sourceCutoffSeqInclusive: sessionSeq,
-    synopsisText: typeof bestSynopsis?.synopsis === 'string' && bestSynopsis.synopsis.trim().length > 0
+    synopsisText: synopsisFromSystemRecord ?? (typeof bestSynopsis?.synopsis === 'string' && bestSynopsis.synopsis.trim().length > 0
       ? bestSynopsis.synopsis.trim()
-      : null,
+      : null),
   };
 }

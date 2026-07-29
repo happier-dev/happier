@@ -3,7 +3,14 @@ import axios from 'axios';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveSessionControlSocketAckTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
-import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
+import {
+    ExactSessionTurnEndMutationV1Schema,
+    SessionTurnMutationReceiptV1Schema,
+    isExactSessionTurnMutationPositiveReceiptV1,
+    type ExactSessionTurnEndMutationV1,
+    type SessionTurnMutationDecisionV1,
+    type SessionTurnMutationV1,
+} from '@happier-dev/protocol';
 
 import type { SessionClientDurableMutationSocket } from './sessionClientDurableMutationTypes';
 
@@ -43,13 +50,27 @@ type UnsupportedSessionTurnHttpEvidence = Readonly<{
 type SessionTurnMutationSocketResult =
     | Readonly<{ status: 'delivered' }>
     | Readonly<{ status: 'unsupported'; evidence: UnsupportedSessionTurnSocketEvidence }>
+    | Readonly<{ status: 'exact_non_delivery'; diagnostic: ExactReceiptDiagnostic }>
     | Readonly<{ status: 'failed' }>;
 
 type SessionTurnMutationHttpResult =
     | Readonly<{ status: 'delivered' }>
     | Readonly<{ status: 'unsupported'; evidence: UnsupportedSessionTurnHttpEvidence }>
+    | Readonly<{ status: 'exact_non_delivery'; diagnostic: ExactReceiptDiagnostic }>
     | Readonly<{ status: 'incompatible'; statusCode: 400 | 422 }>
     | Readonly<{ status: 'failed' }>;
+
+type ExactReceiptDiagnostic = Readonly<{
+    classification: 'semantic_non_positive' | 'receipt_mismatch';
+    decision?: SessionTurnMutationDecisionV1;
+}>;
+
+export type ExactSessionTurnMutationNonDeliveryDiagnostic = ExactReceiptDiagnostic & Readonly<{
+    sessionId: string;
+    mutationId: string;
+    turnId: string;
+    observedAt: number;
+}>;
 
 export type UnsupportedSessionTurnMutationDiagnostic = Readonly<{
     reason: 'session_turn_mutation_unsupported';
@@ -70,7 +91,46 @@ export type SessionTurnMutationDeliveryResult =
         diagnostic: UnsupportedSessionTurnMutationDiagnostic;
     }>
     | Readonly<{ delivered: false; reason: 'ignored_lossy' }>
+    | Readonly<{
+        delivered: false;
+        reason: 'exact_session_turn_mutation_not_delivered';
+        diagnostic: ExactSessionTurnMutationNonDeliveryDiagnostic;
+    }>
     | Readonly<{ delivered: false; reason: string }>;
+
+function doesExactReceiptIdentityMatch(
+    mutation: ExactSessionTurnEndMutationV1,
+    receiptValue: unknown,
+): boolean {
+    const receipt = SessionTurnMutationReceiptV1Schema.safeParse(receiptValue);
+    return receipt.success
+        && receipt.data.v === mutation.v
+        && receipt.data.sessionId === mutation.sessionId
+        && receipt.data.mutationId === mutation.mutationId
+        && receipt.data.action === mutation.action
+        && receipt.data.turnId === mutation.turnId
+        && receipt.data.observedAt === mutation.observedAt;
+}
+
+function classifyExactReceipt(
+    mutation: ExactSessionTurnEndMutationV1,
+    receiptValue: unknown,
+): Readonly<{ delivered: true }> | Readonly<{ delivered: false; diagnostic: ExactReceiptDiagnostic }> {
+    if (isExactSessionTurnMutationPositiveReceiptV1(mutation, receiptValue)) {
+        return { delivered: true };
+    }
+    if (doesExactReceiptIdentityMatch(mutation, receiptValue)) {
+        const receipt = SessionTurnMutationReceiptV1Schema.parse(receiptValue);
+        return {
+            delivered: false,
+            diagnostic: {
+                classification: 'semantic_non_positive',
+                decision: receipt.decision,
+            },
+        };
+    }
+    return { delivered: false, diagnostic: { classification: 'receipt_mismatch' } };
+}
 
 function readHttpErrorStatus(error: unknown): number | null {
     if (!error || typeof error !== 'object') return null;
@@ -109,6 +169,7 @@ function buildUnsupportedDiagnostic(params: Readonly<{
 async function trySocketSessionTurnMutation(params: Readonly<{
     socket: SessionClientDurableMutationSocket;
     mutation: SessionTurnMutationV1;
+    exactMutation?: ExactSessionTurnEndMutationV1;
 }>): Promise<SessionTurnMutationSocketResult> {
     if (params.socket.connected === false) return { status: 'unsupported', evidence: { transport: 'socket', evidence: 'unavailable' } };
     try {
@@ -117,6 +178,24 @@ async function trySocketSessionTurnMutation(params: Readonly<{
             return { status: 'unsupported', evidence: { transport: 'socket', evidence: 'unavailable' } };
         }
         const ack = await socket.emitWithAck('session-turn-mutation', params.mutation);
+        if (params.exactMutation) {
+            if (isUnsupportedAck(ack)) {
+                const code = readUnsupportedAckCode(ack);
+                return {
+                    status: 'unsupported',
+                    evidence: {
+                        transport: 'socket',
+                        evidence: 'unsupported_ack',
+                        ...(code ? { code } : {}),
+                    },
+                };
+            }
+            const record = ack && typeof ack === 'object' ? ack as Record<string, unknown> : null;
+            const classified = classifyExactReceipt(params.exactMutation, record?.receipt);
+            return classified.delivered
+                ? { status: 'delivered' }
+                : { status: 'exact_non_delivery', diagnostic: classified.diagnostic };
+        }
         if (isSuccessAck(ack)) return { status: 'delivered' };
         if (isUnsupportedAck(ack)) {
             const code = readUnsupportedAckCode(ack);
@@ -140,6 +219,7 @@ async function tryHttpSessionTurnMutation(params: Readonly<{
     token: string;
     mutation: SessionTurnMutationV1;
     serverUrl: string;
+    exactMutation?: ExactSessionTurnEndMutationV1;
 }>): Promise<SessionTurnMutationHttpResult> {
     try {
         const response = await axios.post(
@@ -154,6 +234,12 @@ async function tryHttpSessionTurnMutation(params: Readonly<{
             },
         );
         const data = response?.data as Record<string, unknown> | undefined;
+        if (params.exactMutation) {
+            const classified = classifyExactReceipt(params.exactMutation, data?.receipt);
+            return classified.delivered
+                ? { status: 'delivered' }
+                : { status: 'exact_non_delivery', diagnostic: classified.diagnostic };
+        }
         if (data && (data.ok === false || data.result === 'error')) return { status: 'failed' };
         return { status: 'delivered' };
     } catch (error) {
@@ -173,8 +259,10 @@ export async function deliverSessionTurnMutation(params: Readonly<{
     mutation: SessionTurnMutationV1;
 }>): Promise<SessionTurnMutationDeliveryResult> {
     const serverUrl = resolveServerHttpBaseUrl();
+    const parsedExactMutation = ExactSessionTurnEndMutationV1Schema.safeParse(params.mutation);
+    const exactMutation = parsedExactMutation.success ? parsedExactMutation.data : undefined;
     const socketResult = params.socket?.connected === true
-        ? await trySocketSessionTurnMutation({ socket: params.socket, mutation: params.mutation })
+        ? await trySocketSessionTurnMutation({ socket: params.socket, mutation: params.mutation, exactMutation })
         : { status: 'failed' as const };
     if (socketResult.status === 'delivered') return { delivered: true, path: 'socket' };
 
@@ -182,6 +270,7 @@ export async function deliverSessionTurnMutation(params: Readonly<{
         token: params.token,
         mutation: params.mutation,
         serverUrl,
+        exactMutation,
     });
     if (httpResult.status === 'delivered') return { delivered: true, path: 'http' };
     if (socketResult.status === 'unsupported' && httpResult.status === 'unsupported') {
@@ -201,6 +290,24 @@ export async function deliverSessionTurnMutation(params: Readonly<{
     }
     if (httpResult.status === 'incompatible') {
         return { delivered: false, reason: `incompatible_session_turn_mutation_http_${httpResult.statusCode}` };
+    }
+    if (exactMutation) {
+        const exactNonDelivery = httpResult.status === 'exact_non_delivery'
+            ? httpResult.diagnostic
+            : socketResult.status === 'exact_non_delivery'
+                ? socketResult.diagnostic
+                : { classification: 'receipt_mismatch' as const };
+        return {
+            delivered: false,
+            reason: 'exact_session_turn_mutation_not_delivered',
+            diagnostic: {
+                ...exactNonDelivery,
+                sessionId: exactMutation.sessionId,
+                mutationId: exactMutation.mutationId,
+                turnId: exactMutation.turnId,
+                observedAt: exactMutation.observedAt,
+            },
+        };
     }
     return { delivered: false, reason: 'session_turn_mutation_transport_unavailable' };
 }

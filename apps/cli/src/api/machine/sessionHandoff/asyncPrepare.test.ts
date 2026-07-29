@@ -17,10 +17,9 @@ function createDeferred<T>() {
 }
 
 describe('rpcHandlers (session handoff async prepare)', () => {
-  it('uses a durable lease so only one daemon instance restarts a persisted non-terminal prepare-target job (no double-import across processes)', async () => {
+  it('lets two daemon clients converge on one passive interrupted prepare-target hydration', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-lease-liveness-'));
     const targetPath = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-lease-target-'));
-
     const continueImportSession = createDeferred<void>();
 
     try {
@@ -67,6 +66,15 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           },
           recoveryActions: [],
         },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine_source',
+          targetMachineId: 'machine_target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+        },
       });
 
       const { registerMachineSessionHandoffRpcHandlers } = await import('./handlers');
@@ -82,7 +90,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           destinationPath: string;
         }>) => {
           await writeFile(input.destinationPath, JSON.stringify({
-            providerId: 'claude',
+            agentId: 'claude',
             remoteSessionId: 'claude_session_source',
             transcriptBase64: 'e30K',
           }));
@@ -163,7 +171,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
         handoffMetadataV2: {
-          providerBundleTransferPublication: {
+          agentBundleTransferPublication: {
             transferId: 'session-handoff:handoff_lease_1:provider-bundle',
             sizeBytes: 123,
             manifestHash: 'hash',
@@ -181,27 +189,18 @@ describe('rpcHandlers (session handoff async prepare)', () => {
 
       expect(ackA).toMatchObject({
         handoffId,
-        status: { handoffId, jobId, status: 'pending' },
+        status: { handoffId, jobId, status: 'awaiting_user_resume' },
       });
       expect(ackB).toMatchObject({
         handoffId,
-        status: { handoffId, jobId, status: 'pending' },
+        status: { handoffId, jobId, status: 'awaiting_user_resume' },
       });
 
-      // Without a durable lease, both daemon instances can start the import concurrently.
-      await vi.waitFor(() => {
-        expect(importSessionBundleA.mock.calls.length + importSessionBundleB.mock.calls.length).toBe(1);
-      });
-      await new Promise((resolve) => setTimeout(resolve, 25));
-      expect(importSessionBundleA.mock.calls.length + importSessionBundleB.mock.calls.length).toBe(1);
-
-      continueImportSession.resolve();
-
-      await vi.waitFor(async () => {
-        await expect(resultGetA!({ handoffId })).resolves.toMatchObject({
-          handoffId,
-          status: { handoffId, status: 'ready_for_cutover' },
-        });
+      expect(importSessionBundleA).not.toHaveBeenCalled();
+      expect(importSessionBundleB).not.toHaveBeenCalled();
+      await expect(resultGetA!({ handoffId })).resolves.toMatchObject({
+        ok: false,
+        errorCode: 'awaiting_user_resume',
       });
     } finally {
       vi.resetModules();
@@ -210,7 +209,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
     }
   });
 
-  it('restarts a persisted non-terminal prepare-target job when called again after daemon restart (no hanging pending job with missing runner)', async () => {
+  it('does not treat duplicate prepare-target calls as Resume after daemon restart', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-restart-liveness-'));
     const targetPath = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-restart-target-'));
 
@@ -299,7 +298,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         }>) => {
           // Provide a minimal provider bundle file for the prepare job.
           await writeFile(input.destinationPath, JSON.stringify({
-            providerId: 'claude',
+            agentId: 'claude',
             remoteSessionId: 'claude_session_source',
             transcriptBase64: 'e30K',
           }));
@@ -352,7 +351,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
         handoffMetadataV2: {
-          providerBundleTransferPublication: {
+          agentBundleTransferPublication: {
             transferId: 'session-handoff:handoff_restart_1:provider-bundle',
             sizeBytes: 123,
             manifestHash: 'hash',
@@ -363,7 +362,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         },
       } as const;
 
-      // Simulate duplicate PREPARE_TARGET calls after a daemon restart: only one runner should be started.
+      // Duplicate PREPARE_TARGET is inspection-only for an interrupted target job; it is never Resume.
       const [prepareAck, prepareAck2] = await Promise.all([
         prepare!(preparePayload),
         prepare!(preparePayload),
@@ -374,7 +373,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         status: {
           handoffId,
           jobId,
-          status: 'pending',
+          status: 'reconciliation_required',
           phase: 'staging_target',
         },
       });
@@ -383,7 +382,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         status: {
           handoffId,
           jobId,
-          status: 'pending',
+          status: 'reconciliation_required',
           phase: 'staging_target',
         },
       });
@@ -392,29 +391,20 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         status: {
           handoffId,
           jobId,
-          status: 'pending',
+          status: 'reconciliation_required',
           phase: 'staging_target',
         },
       });
 
-      expect(importSessionBundle).toHaveBeenCalledTimes(1);
+      expect(importSessionBundle).not.toHaveBeenCalled();
 
       const persisted = await prepareJobStore.read(jobId);
-      expect(persisted?.status.status).toBe('pending');
+      expect(persisted?.status.status).toBe('reconciliation_required');
       expect(persisted?.lastErrorMessage).toBeUndefined();
 
-      continueImportSession.resolve();
-
-      await vi.waitFor(async () => {
-        await expect(resultGet!({ handoffId })).resolves.toMatchObject({
-          handoffId,
-          status: {
-            handoffId,
-            status: 'ready_for_cutover',
-            phase: 'staging_target',
-          },
-          remoteSessionId: 'claude_session_target',
-        });
+      await expect(resultGet!({ handoffId })).resolves.toMatchObject({
+        ok: false,
+        errorCode: 'reconciliation_required',
       });
     } finally {
       vi.resetModules();
@@ -423,10 +413,9 @@ describe('rpcHandlers (session handoff async prepare)', () => {
     }
   });
 
-  it('restarts a persisted non-terminal prepare-target job when callers keep polling result-get after daemon restart (no hanging pending job requiring a second PREPARE_TARGET call)', async () => {
+  it('keeps result/status polling passive and resumes an interrupted prepare-target job only through the revision-bound action', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-resume-from-result-get-'));
     const targetPath = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-resume-from-result-get-target-'));
-
     const continueImportSession = createDeferred<void>();
 
     try {
@@ -442,7 +431,10 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         };
       });
 
-      const { createSessionHandoffPrepareTargetJobStore } = await import(
+      const {
+        createSessionHandoffPrepareTargetJobStore,
+        recoverSessionHandoffPrepareTargetJobsAfterRestart,
+      } = await import(
         '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore'
       );
       const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
@@ -450,9 +442,22 @@ describe('rpcHandlers (session handoff async prepare)', () => {
       const nowMs = Date.now();
       const handoffId = 'handoff_result_get_restart_1';
       const jobId = 'prepare_result_get_restart_1';
+      const jobPath = join(
+        activeServerDir,
+        'session-handoff',
+        'prepare-target-jobs',
+        `${jobId}.json`,
+      );
 
-      // Simulate a daemon crash: the prepare-target durable record exists, but there is no in-memory runner.
-      await prepareJobStore.write({
+      // Provenance-shaped remote-dev V1 record: a daemon crashed after persisting the
+      // Provider-era publication field but before its in-memory prepare runner completed.
+      await mkdir(join(
+        activeServerDir,
+        'session-handoff',
+        'prepare-target-jobs',
+      ), { recursive: true });
+      await writeFile(jobPath, JSON.stringify({
+        schemaVersion: 1,
         jobId,
         handoffId,
         createdAtMs: nowMs - 60_000,
@@ -475,7 +480,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           },
           recoveryActions: [],
         },
-        // Persist enough input to restart the job when only result-get/status polling continues.
+        // Persist enough input for the daemon recovery owner to expose explicit Resume.
         prepareTargetRequest: {
           handoffId,
           sourceMachineId: 'machine_source',
@@ -495,7 +500,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
             },
           },
         },
-      });
+      }), 'utf8');
 
       const { registerMachineSessionHandoffRpcHandlers } = await import('./handlers');
 
@@ -549,15 +554,87 @@ describe('rpcHandlers (session handoff async prepare)', () => {
 
       const resultGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET);
       const statusGet = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET);
+      const resume = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME);
       expect(resultGet).toBeDefined();
       expect(statusGet).toBeDefined();
+      expect(resume).toBeDefined();
 
-      await expect(resultGet!({ handoffId })).resolves.toMatchObject({ ok: false, errorCode: 'not_found' });
+      const interruptedBytesBeforePassiveReads = await readFile(jobPath);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await expect(resultGet!({ handoffId })).resolves.toEqual({
+          ok: false,
+          errorCode: 'not_found',
+        });
+        await expect(statusGet!({ handoffId })).resolves.toMatchObject({
+          handoffId,
+          status: { handoffId, jobId, status: 'pending' },
+        });
+      }
+      expect(await readFile(jobPath)).toEqual(interruptedBytesBeforePassiveReads);
+      expect(importSessionBundle).not.toHaveBeenCalled();
 
-      await vi.waitFor(() => {
-        expect(importSessionBundle).toHaveBeenCalledTimes(1);
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: nowMs + 1,
       });
+      const recoveredBytesBeforePassiveReads = await readFile(jobPath);
+      const recoveredRecord = JSON.parse(recoveredBytesBeforePassiveReads.toString('utf8'));
+      expect(recoveredRecord).toMatchObject({
+        prepareTargetRequest: {
+          handoffMetadataV2: {
+            agentBundleTransferPublication: {
+              transferId: `session-handoff:${handoffId}:provider-bundle`,
+            },
+          },
+        },
+      });
+      expect(recoveredRecord.prepareTargetRequest.handoffMetadataV2).not.toHaveProperty(
+        'providerBundleTransferPublication',
+      );
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await expect(resultGet!({ handoffId })).resolves.toMatchObject({
+          ok: false,
+          errorCode: 'awaiting_user_resume',
+        });
+        await expect(statusGet!({ handoffId })).resolves.toMatchObject({
+          handoffId,
+          transitionRevision: 0,
+          status: { handoffId, jobId, status: 'awaiting_user_resume' },
+        });
+      }
+      expect(await readFile(jobPath)).toEqual(recoveredBytesBeforePassiveReads);
+      expect(importSessionBundle).not.toHaveBeenCalled();
 
+      const resumeRequest = {
+        handoffId,
+        jobId,
+        expectedRevision: 0,
+        attemptId: 'attempt-result-get-restart-1',
+      };
+      await expect(resume!(resumeRequest)).resolves.toMatchObject({
+        ok: true,
+        handoffId,
+        jobId,
+        transitionRevision: 1,
+      });
+      await vi.waitFor(() => expect(importSessionBundle).toHaveBeenCalledTimes(1));
+      await expect(resume!(resumeRequest)).resolves.toMatchObject({ ok: true });
+      expect(importSessionBundle).toHaveBeenCalledTimes(1);
+      await expect(resume!({
+        ...resumeRequest,
+        attemptId: 'conflicting-attempt',
+      })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'attempt_conflict' },
+      });
+      await expect(resume!({
+        ...resumeRequest,
+        expectedRevision: 99,
+      })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'stale_revision' },
+      });
+      expect(importSessionBundle).toHaveBeenCalledTimes(1);
       continueImportSession.resolve();
 
       await vi.waitFor(async () => {
@@ -643,7 +720,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
         handoffMetadataV2: {
-          providerBundleTransferPublication: {
+          agentBundleTransferPublication: {
             transferId: 'session-handoff:handoff_stranded_restart_1:provider-bundle',
             sizeBytes: 123,
             manifestHash: 'hash',
@@ -672,7 +749,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
     }
   });
 
-  it('restarts a persisted non-terminal prepare-target job when the current daemon lease is present but the runner marker is missing', async () => {
+  it('does not infer Resume from a duplicate prepare-target call when the persisted semantic request is missing', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-missing-runner-'));
     const targetPath = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-missing-runner-target-'));
 
@@ -781,7 +858,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
             destinationPath: string;
           }>) => {
             await writeFile(input.destinationPath, JSON.stringify({
-              providerId: 'claude',
+              agentId: 'claude',
               remoteSessionId: 'claude_session_source',
               transcriptBase64: 'e30K',
             }));
@@ -805,7 +882,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         sourceSessionStorageMode: 'persisted',
         targetPath: '/repo',
         handoffMetadataV2: {
-          providerBundleTransferPublication: {
+          agentBundleTransferPublication: {
             transferId: 'session-handoff:handoff_missing_runner_1:provider-bundle',
             sizeBytes: 123,
             manifestHash: 'hash',
@@ -821,28 +898,19 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         status: {
           handoffId,
           jobId,
-          status: 'pending',
+          status: 'reconciliation_required',
           phase: 'staging_target',
           progress: {
             current: {
-              phaseDetail: 'resuming_after_restart',
+              phaseDetail: 'daemon_restart_reconciliation_required',
             },
           },
         },
       });
-      expect(importSessionBundle).toHaveBeenCalledTimes(1);
-      continueImportSession.resolve();
-
-      await vi.waitFor(async () => {
-        await expect(resultGet!({ handoffId })).resolves.toMatchObject({
-          handoffId,
-          status: {
-            handoffId,
-            status: 'ready_for_cutover',
-            phase: 'staging_target',
-          },
-          remoteSessionId: 'claude_session_target',
-        });
+      expect(importSessionBundle).not.toHaveBeenCalled();
+      await expect(resultGet!({ handoffId })).resolves.toMatchObject({
+        ok: false,
+        errorCode: 'reconciliation_required',
       });
     } finally {
       vi.resetModules();
@@ -851,7 +919,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
     }
   });
 
-  it('marks a stranded pending prepare-target job awaiting_recovery on status_get after daemon restart', async () => {
+  it('lets daemon recovery mark a stranded pending prepare-target job reconciliation_required when its semantic request is missing', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-status-recovery-'));
 
     try {
@@ -867,7 +935,10 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         };
       });
 
-      const { createSessionHandoffPrepareTargetJobStore } = await import(
+      const {
+        createSessionHandoffPrepareTargetJobStore,
+        recoverSessionHandoffPrepareTargetJobsAfterRestart,
+      } = await import(
         '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore'
       );
       const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
@@ -898,6 +969,10 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           recoveryActions: [],
         },
       });
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: Date.now(),
+      });
 
       const { registerMachineSessionHandoffRpcHandlers } = await import('./handlers');
       const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -920,18 +995,18 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         status: {
           handoffId,
           jobId,
-          status: 'awaiting_recovery',
+          status: 'reconciliation_required',
           phase: 'staging_target',
           progress: {
             current: {
-              phaseDetail: 'daemon_restart_missing_runner',
+              phaseDetail: 'daemon_restart_reconciliation_required',
             },
           },
         },
       });
       await expect(resultGet!({ handoffId })).resolves.toMatchObject({
         ok: false,
-        errorCode: 'awaiting_recovery',
+        errorCode: 'reconciliation_required',
       });
     } finally {
       vi.resetModules();
@@ -939,7 +1014,7 @@ describe('rpcHandlers (session handoff async prepare)', () => {
     }
   });
 
-  it('marks a stranded in_progress prepare-target job awaiting_recovery on status_get after daemon restart', async () => {
+  it('lets daemon recovery mark a stranded in_progress prepare-target job reconciliation_required when its semantic request is missing', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-status-recovery-in-progress-'));
 
     try {
@@ -955,7 +1030,10 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         };
       });
 
-      const { createSessionHandoffPrepareTargetJobStore } = await import(
+      const {
+        createSessionHandoffPrepareTargetJobStore,
+        recoverSessionHandoffPrepareTargetJobsAfterRestart,
+      } = await import(
         '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore'
       );
       const prepareJobStore = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
@@ -987,6 +1065,10 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           recoveryActions: [],
         },
       });
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: Date.now(),
+      });
 
       const { registerMachineSessionHandoffRpcHandlers } = await import('./handlers');
       const registered = new Map<string, (params: unknown) => Promise<any>>();
@@ -1009,18 +1091,18 @@ describe('rpcHandlers (session handoff async prepare)', () => {
         status: {
           handoffId,
           jobId,
-          status: 'awaiting_recovery',
+          status: 'reconciliation_required',
           phase: 'staging_target',
           progress: {
             current: {
-              phaseDetail: 'daemon_restart_missing_runner',
+              phaseDetail: 'daemon_restart_reconciliation_required',
             },
           },
         },
       });
       await expect(resultGet!({ handoffId })).resolves.toMatchObject({
         ok: false,
-        errorCode: 'awaiting_recovery',
+        errorCode: 'reconciliation_required',
       });
     } finally {
       vi.resetModules();
@@ -1075,8 +1157,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           claudeSessionId: 'claude_session_source',
         }),
         exportSessionBundle: async () => ({
-          providerBundle: {
-            providerId: 'claude' as const,
+          agentBundle: {
+            agentId: 'claude' as const,
             remoteSessionId: 'claude_session_source',
             transcriptBase64: 'e30K',
           },
@@ -1209,8 +1291,8 @@ describe('rpcHandlers (session handoff async prepare)', () => {
           claudeSessionId: 'claude_session_source',
         }),
         exportSessionBundle: async () => ({
-          providerBundle: {
-            providerId: 'claude' as const,
+          agentBundle: {
+            agentId: 'claude' as const,
             remoteSessionId: 'claude_session_source',
             transcriptBase64: 'e30K',
           },

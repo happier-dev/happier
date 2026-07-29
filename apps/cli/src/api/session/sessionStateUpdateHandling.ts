@@ -34,14 +34,15 @@ function tryDecodeSessionStateValue<T>(params: {
 function hasRuntimeActivityProjectionFields(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
     const record = value as Record<string, unknown>;
-    return 'runtimeActivityActiveCount' in record
-        || 'runtimeActivityExpiresAt' in record;
+    return 'runtimeActivityState' in record
+        || 'runtimeActivityRevision' in record;
 }
 
 export function handleSessionStateUpdate(params: {
     update: Update;
     updateSource: 'session-scoped' | 'user-scoped';
     sessionId: string;
+    metadataLayoutVersion?: number;
     sessionEncryptionMode: 'e2ee' | 'plain';
     metadata: Metadata | null;
     metadataVersion: number;
@@ -51,6 +52,7 @@ export function handleSessionStateUpdate(params: {
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     onMetadataUpdated: () => void;
+    onMetadataEnvelopeTupleInvalidated?: () => void;
     onPendingChangedDrainTrigger?: (state: KnownPendingQueueState) => void;
     onWarning: (message: string) => void;
 }): {
@@ -106,6 +108,38 @@ export function handleSessionStateUpdate(params: {
             };
         }
 
+        if (
+            params.metadataLayoutVersion === 1
+            && (
+                Object.prototype.hasOwnProperty.call(body, 'metadata')
+                || Object.prototype.hasOwnProperty.call(body, 'ownerMetadata')
+                || Object.prototype.hasOwnProperty.call(body, 'agentState')
+            )
+        ) {
+            // A shared-only socket projection is not an owner compatibility view.
+            // Keep the exact local owner tuple intact until the canonical by-id
+            // reader can atomically replace all three envelopes.
+            params.onMetadataEnvelopeTupleInvalidated?.();
+            return {
+                handled: true,
+                metadata: params.metadata,
+                metadataVersion: params.metadataVersion,
+                agentState: params.agentState,
+                agentStateVersion: params.agentStateVersion,
+                pendingWakeSeq: params.pendingWakeSeq,
+                ...(hasRuntimeActivityProjectionFields(body)
+                    ? {
+                        runtimeActivityProjection: {
+                            runtimeActivityState: body.runtimeActivityState,
+                            runtimeActivityActiveCount: body.runtimeActivityActiveCount,
+                            runtimeActivityObservedAt: body.runtimeActivityObservedAt,
+                            runtimeActivityRevision: body.runtimeActivityRevision,
+                        },
+                    }
+                    : {}),
+            };
+        }
+
         let metadata = params.metadata;
         let metadataVersion = params.metadataVersion;
         let agentState = params.agentState;
@@ -148,10 +182,10 @@ export function handleSessionStateUpdate(params: {
             ...(hasRuntimeActivityProjectionFields(body)
                 ? {
                     runtimeActivityProjection: {
+                        runtimeActivityState: body.runtimeActivityState,
                         runtimeActivityActiveCount: body.runtimeActivityActiveCount,
                         runtimeActivityObservedAt: body.runtimeActivityObservedAt,
-                        runtimeActivityExpiresAt: body.runtimeActivityExpiresAt,
-                        runtimeActivitySourceClass: body.runtimeActivitySourceClass,
+                        runtimeActivityRevision: body.runtimeActivityRevision,
                     },
                 }
                 : {}),

@@ -6,7 +6,6 @@ import {
   normalizeConnectedServiceRuntimeAuthRecoveryProjection,
 } from './connectedServiceRuntimeAuthRecoveryProjection';
 import {
-  connectedServiceRuntimeAuthRecoveryCanOwnTurnFailure,
   projectConnectedServiceRuntimeAuthRecoveryReport,
 } from './connectedServiceRuntimeAuthRecoverySessionEvent';
 import type { ConnectedServiceRuntimeFailureClassification } from '../types';
@@ -23,59 +22,6 @@ const classification = {
 } satisfies ConnectedServiceRuntimeFailureClassification;
 
 describe('connected service runtime auth recovery projection', () => {
-  it('lets nonterminal retryable recovery own the turn failure surface', () => {
-    const scheduled = buildRuntimeAuthRecoveryScheduledResult({
-      classification,
-      recovery: {
-        status: 'scheduled',
-        retryable: true,
-        attemptCount: 1,
-        maxAttempts: 3,
-        nextRetryAtMs: 4567,
-      },
-    });
-    const projection = normalizeConnectedServiceRuntimeAuthRecoveryProjection({
-      report: { ok: true, result: scheduled },
-      statusNote: {
-        code: 'recovery_retry_scheduled',
-        message: 'retry scheduled',
-      },
-    });
-
-    expect(connectedServiceRuntimeAuthRecoveryCanOwnTurnFailure({
-      handled: true,
-      report: { ok: true, result: scheduled },
-      statusCode: 'recovery_retry_scheduled',
-      statusMessage: 'retry scheduled',
-      uxDiagnostic: scheduled.uxDiagnostic,
-      projection,
-    })).toBe(true);
-  });
-
-  it('does not let terminal recovery own the turn failure surface', () => {
-    expect(connectedServiceRuntimeAuthRecoveryCanOwnTurnFailure({
-      handled: true,
-      report: {
-        ok: true,
-        result: {
-          status: 'recovery_action_required',
-          action: {
-            kind: 'reconnect_profile',
-            profileId: 'primary',
-          },
-        },
-      },
-      statusCode: 'recovery_action_reconnect_profile',
-      statusMessage: 'profile needs reconnect',
-      projection: {
-        handled: true,
-        statusCode: 'recovery_action_reconnect_profile',
-        statusMessage: 'profile needs reconnect',
-        terminal: true,
-      },
-    })).toBe(false);
-  });
-
   it('builds a typed retry-scheduled transcript event with runtime-auth diagnostics', () => {
     const result = buildRuntimeAuthRecoveryScheduledResult({
       classification,
@@ -350,5 +296,47 @@ describe('connected service runtime auth recovery projection', () => {
       usageLimitMetadataCommitted: true,
       emitted: true,
     });
+  });
+
+  it('does not let a provider become a second metadata writer after the daemon handled recovery', () => {
+    const commitUsageLimitRecoveryMetadata = vi.fn();
+    const report = {
+      handled: true,
+      report: {
+        ok: true,
+        result: {
+          status: 'switch_attempted',
+          result: { status: 'no_eligible_member' },
+        },
+      },
+      statusCode: 'switch_attempted_no_eligible_member',
+      statusMessage: 'waiting for group recovery',
+      projection: {
+        handled: true,
+        statusCode: 'switch_attempted_no_eligible_member',
+        statusMessage: 'waiting for group recovery',
+        terminal: true,
+        transcriptEvent: {},
+      },
+    } as const;
+
+    const result = projectConnectedServiceRuntimeAuthRecoveryReport({
+      report: report as never,
+      classification: {
+        kind: 'usage_limit',
+        serviceId: 'openai-codex',
+        profileId: 'primary',
+        groupId: 'codex-main',
+        resetsAtMs: 1_700_000_060_000,
+        retryAfterMs: null,
+        planType: null,
+        rateLimits: null,
+        source: 'structured_provider_error',
+      },
+      commitUsageLimitRecoveryMetadata,
+    } as never);
+
+    expect(commitUsageLimitRecoveryMetadata).not.toHaveBeenCalled();
+    expect(result.usageLimitMetadataCommitted).toBe(false);
   });
 });

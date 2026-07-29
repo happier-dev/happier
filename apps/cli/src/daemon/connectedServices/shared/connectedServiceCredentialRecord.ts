@@ -4,6 +4,22 @@ export type ConnectedServiceOauthCredentialRecord = ConnectedServiceCredentialRe
 export type ConnectedServiceOauthCredentialRecordWithExpiry = ConnectedServiceOauthCredentialRecord & { expiresAt: number };
 export type ConnectedServiceTokenCredentialRecord = ConnectedServiceCredentialRecordV1 & { kind: 'token' };
 
+/**
+ * Read the provider-owned account id (chatgpt/anthropic account subject) from a credential record,
+ * regardless of credential kind. Returns null when the record carries no provider account id.
+ */
+export function readConnectedServiceCredentialProviderAccountId(
+  record: ConnectedServiceCredentialRecordV1,
+): string | null {
+  const value = record.kind === 'oauth'
+    ? record.oauth.providerAccountId
+    : record.kind === 'token'
+      ? record.token.providerAccountId
+      : null;
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  return trimmed ? trimmed : null;
+}
+
 export function requireConnectedServiceOauthCredentialRecord(
   record: ConnectedServiceCredentialRecordV1,
 ): ConnectedServiceOauthCredentialRecord {

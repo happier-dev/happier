@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
   getResolvedContributionRegistry: () => ({
-    providerDefinitionsById: new Map([
+    agentDefinitionsById: new Map([
       ['plugin-target', { definition: { id: 'plugin-target', auth: { connectedServiceCompatibility: ['openai'] } } }],
       ['opencode', { definition: { id: 'opencode', core: { connectedServices: { supportedServiceIds: ['openai'] } } } }],
     ]),
@@ -11,14 +11,6 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () =
         id: 'plugin-target',
         cliSubcommand: 'plugin-target',
         vendorResumeSupport: 'unsupported',
-        getCloudConnectTarget: async () => ({
-          id: 'plugin-target',
-          displayName: 'Plugin Target',
-          vendorDisplayName: 'Plugin Target',
-          vendorKey: 'openai',
-          status: 'wired',
-          authenticate: async () => ({}),
-        }),
       },
       opencode: {
         id: 'opencode',
@@ -40,7 +32,7 @@ describe('resolveConnectTargetServiceIds', () => {
     expect(resolveConnectTargetServiceIds('plugin-target')).toEqual(['openai']);
   });
 
-  it('returns no service ids when the target is not connect-enabled', () => {
-    expect(resolveConnectTargetServiceIds('opencode')).toEqual([]);
+  it('does not require the retired cloud-connect catalog hook', () => {
+    expect(resolveConnectTargetServiceIds('opencode')).toEqual(['openai']);
   });
 });

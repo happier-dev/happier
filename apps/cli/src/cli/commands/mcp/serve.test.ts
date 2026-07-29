@@ -42,8 +42,61 @@ describe('happier mcp serve (env hardening)', () => {
         honorAccountSettingsModeEnv: false,
       }));
       expect(deps.ensureMachineIdForCredentials).toHaveBeenCalledWith(credentials);
-      expect(deps.createExternalMcpServer).toHaveBeenCalledWith({ credentials, defaultSessionId: 'sess-1' });
+      expect(deps.createExternalMcpServer).toHaveBeenCalledWith({
+        credentials,
+        defaultSessionId: 'sess-1',
+        pluginToolCatalog: [],
+      });
       expect(deps.connectMcpStdio).toHaveBeenCalledWith(expect.objectContaining({ connect }));
+    } finally {
+      disableMcpStdioConsolePatch();
+    }
+  });
+
+  it('passes the daemon-projected tool catalog to the external MCP server', async () => {
+    const credentials = {
+      token: 't',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+    };
+    const pluginTool = {
+      toolId: 'acme.review.plugin/review-tool',
+      actionId: 'acme.review.plugin/review-start',
+      name: 'acme_review_start',
+      title: 'Acme Review Start',
+      description: 'Start a review',
+      inputSchema: { type: 'object' as const },
+      surfaces: ['mcp' as const],
+    };
+    const createExternalMcpServer = vi.fn(() => ({
+      mcp: { connect: vi.fn(async () => {}) },
+      toolNames: [],
+    }) as any);
+    const deps: McpCommandDeps = {
+      readCredentials: async () => credentials,
+      bootstrapAccountSettingsContext: vi.fn(async () => ({ settings: {} }) as any),
+      updateAccountSettingsV2WithRetry: vi.fn(async () => ({ version: 1 }) as any),
+      ensureMachineIdForCredentials: vi.fn(async () => ({ machineId: 'machine-1' })),
+      detectProviderMcpServers: vi.fn(async () => ({ ok: true, servers: [] }) as any),
+      probeMcpStdioServerTools: vi.fn(async () => ({ ok: true, toolNames: [] }) as any),
+      randomUUID: () => 'id',
+      nowMs: () => 1,
+      readDaemonPluginCatalog: vi.fn(async () => ({
+        kind: 'available' as const,
+        plugins: [],
+        tools: [pluginTool],
+      })),
+      createExternalMcpServer,
+      connectMcpStdio: vi.fn(async () => {}),
+    };
+
+    try {
+      await runMcpServeCommand(['serve'], deps);
+
+      expect(createExternalMcpServer).toHaveBeenCalledWith({
+        credentials,
+        defaultSessionId: null,
+        pluginToolCatalog: [pluginTool],
+      });
     } finally {
       disableMcpStdioConsolePatch();
     }

@@ -8,20 +8,10 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc,
 }));
 
-import type { HostRuntimeControlResultV1 } from '@happier-dev/agents';
-import { createResolvedSessionRuntimeControlTransport } from './transport';
-
-type SessionConnectedServiceAuthControls = Readonly<{
-  applyConnectedServiceAuthGeneration: (
-    input: Readonly<Record<string, unknown>>,
-  ) => Promise<HostRuntimeControlResultV1<unknown>>;
-  readConnectedServiceRuntimeIdentity: (
-    input: Readonly<Record<string, unknown>>,
-  ) => Promise<HostRuntimeControlResultV1<unknown>>;
-}>;
+import { createResolvedSessionConnectedServiceAuthTransport } from './transport';
 
 function createTransport() {
-  return createResolvedSessionRuntimeControlTransport({
+  return createResolvedSessionConnectedServiceAuthTransport({
     token: 'token-1',
     sessionId: 's1',
     mode: 'plain',
@@ -29,10 +19,10 @@ function createTransport() {
       encryptionKey: new Uint8Array(32),
       encryptionVariant: 'dataKey',
     },
-  }) as ReturnType<typeof createResolvedSessionRuntimeControlTransport> & SessionConnectedServiceAuthControls;
+  });
 }
 
-describe('createResolvedSessionRuntimeControlTransport', () => {
+describe('createResolvedSessionConnectedServiceAuthTransport', () => {
   beforeEach(() => {
     callSessionRpc.mockReset();
   });

@@ -80,6 +80,18 @@ describe('classifyDaemonServerWorkError', () => {
     });
   });
 
+  it('classifies connected-service state-sharing lock contention as retryable dependency unavailability', () => {
+    expect(classifyDaemonServerWorkError({
+      code: 'state_sharing_lock_unavailable',
+      retryAfterMs: 250,
+      message: 'Connected service state-sharing lock is unavailable',
+    })).toMatchObject({
+      kind: 'dependency_unavailable',
+      retryable: true,
+      retryAfterMs: 250,
+    });
+  });
+
   it('treats wrapped timeout messages without preserved codes as retryable timeouts', () => {
     expect(classifyDaemonServerWorkError(
       new Error('Failed to get account encryption mode: timeout of 5000ms exceeded'),

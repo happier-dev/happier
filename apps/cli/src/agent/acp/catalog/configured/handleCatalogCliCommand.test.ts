@@ -35,6 +35,7 @@ describe('handleConfiguredAcpCatalogCliCommand', () => {
       loadAccountSettings: true,
       resolveExtraOptions: expect.any(Function),
     }));
+    expect(callArg).not.toHaveProperty('runtimeAuthorityAgentId');
     expect(callArg && 'loadRun' in callArg).toBe(false);
     expect(callArg?.resolveExtraOptions?.(['--backend', 'custom-backend'])).toEqual({
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'custom-backend' },

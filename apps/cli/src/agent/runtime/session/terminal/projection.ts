@@ -8,12 +8,11 @@ import {
     type HostSubagentStore,
 } from '@/session/subagents/hostSubagentStore';
 import type {
-    TerminalRuntimeControlProjectionV1,
-    TerminalRuntimeProjectionHostServiceV1,
-    TerminalRuntimeProviderSessionProjectionV1,
-    TerminalRuntimeSubagentProjectionV1,
-    TerminalRuntimeTranscriptBindingHostServiceV1,
-} from '@happier-dev/agents';
+    HostTerminalControlProjection,
+    HostTerminalProjectionService,
+    HostTerminalProviderSessionProjection,
+    HostTerminalSubagentProjection,
+} from './contract';
 import type { SubagentStatusV1 } from '@happier-dev/protocol';
 
 type TerminalProjectionSession = Readonly<{
@@ -25,7 +24,6 @@ type TerminalProjectionSession = Readonly<{
 
 type CreateTerminalRuntimeProjectionHostServiceParams = Readonly<{
     session: TerminalProjectionSession;
-    transcripts: TerminalRuntimeTranscriptBindingHostServiceV1;
     subagents?: HostSubagentStore;
     subagentActor?: HostSubagentActor;
     logPrefix?: string;
@@ -50,7 +48,7 @@ function normalizeCompletionStatus(
 
 function publishSwitchEvent(
     session: TerminalProjectionSession,
-    projection: TerminalRuntimeControlProjectionV1,
+    projection: HostTerminalControlProjection,
 ): void {
     if (projection.target !== 'local' && projection.target !== 'remote') {
         return;
@@ -60,7 +58,7 @@ function publishSwitchEvent(
 
 function publishAgentControlState(
     session: TerminalProjectionSession,
-    projection: TerminalRuntimeControlProjectionV1,
+    projection: HostTerminalControlProjection,
     logPrefix: string,
 ): void {
     if (projection.target !== 'local' && projection.target !== 'remote') {
@@ -79,7 +77,7 @@ function publishAgentControlState(
 
 async function publishProviderSessionId(
     session: TerminalProjectionSession,
-    projection: TerminalRuntimeProviderSessionProjectionV1,
+    projection: HostTerminalProviderSessionProjection,
 ): Promise<boolean> {
     const providerSessionId = normalizeText(projection.providerSessionId);
     const metadataKey = normalizeText(projection.metadataKey);
@@ -104,7 +102,7 @@ async function publishSubagentStarted(
         parentSessionId: string;
         subagents: HostSubagentStore;
         actor: HostSubagentActor;
-        projection: TerminalRuntimeSubagentProjectionV1;
+        projection: HostTerminalSubagentProjection;
     }>,
 ): Promise<void> {
     const subagentId = normalizeText(params.projection.subagentId);
@@ -147,13 +145,12 @@ async function publishSubagentStarted(
 
 export function createTerminalRuntimeProjectionHostService(
     params: CreateTerminalRuntimeProjectionHostServiceParams,
-): TerminalRuntimeProjectionHostServiceV1 {
+): HostTerminalProjectionService {
     const subagents = params.subagents ?? hostSubagentStore;
     const actor = params.subagentActor ?? Object.freeze({ kind: 'host' as const });
     const logPrefix = params.logPrefix ?? '[terminal-runtime]';
 
     return Object.freeze({
-        openDirectTranscriptMirror: params.transcripts.openDirectMirror,
         publishControlState: (projection) => {
             publishSwitchEvent(params.session, projection);
             publishAgentControlState(params.session, projection, logPrefix);

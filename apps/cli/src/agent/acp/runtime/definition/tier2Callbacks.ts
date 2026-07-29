@@ -1,9 +1,15 @@
-import type { AcpTier2PermissionDecisionResultV1 } from '@happier-dev/plugin-sdk';
+import type {
+  SessionPermissionFollowUpPromptIntentV1,
+  SessionPermissionPersistAllowRuleV1,
+} from '@happier-dev/agents';
 
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
 import { logger } from '@/ui/logger';
 
-import type { AcpRuntimeDefinitionV1 } from './_types';
+import type {
+  AcpRuntimeDefinition,
+  HostAcpTier2PermissionDecisionResult,
+} from './_types';
 
 export type AcpTier2CallbackName =
   | 'argvBuilder'
@@ -51,7 +57,7 @@ export function mapMaybePromise<T, U>(
 }
 
 function callbackError(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   callback: AcpTier2CallbackName;
   message: string;
   cause?: unknown;
@@ -71,7 +77,7 @@ function errorMessage(error: unknown): string {
 }
 
 function invokeStartupCallback<T>(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   callback: AcpTier2CallbackName;
   invoke: () => MaybePromise<T>;
 }>): MaybePromise<T> {
@@ -101,7 +107,7 @@ function invokeStartupCallback<T>(params: Readonly<{
 }
 
 function validateStringArray(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   callback: 'argvBuilder';
   value: unknown;
 }>): readonly string[] {
@@ -133,7 +139,7 @@ function validateStringArray(params: Readonly<{
 }
 
 function validateStringRecord(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   callback: 'envBuilder';
   value: unknown;
 }>): Readonly<Record<string, string>> {
@@ -162,7 +168,7 @@ function validateStringRecord(params: Readonly<{
 }
 
 export function resolveAcpTier2Argv(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   baseArgs: readonly string[];
   cwd: string;
   env: Readonly<Record<string, string>>;
@@ -191,7 +197,7 @@ export function resolveAcpTier2Argv(params: Readonly<{
 }
 
 export function resolveAcpTier2Env(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   cwd: string;
   env: Readonly<Record<string, string>>;
   permissionMode?: string;
@@ -221,7 +227,7 @@ export function resolveAcpTier2Env(params: Readonly<{
 }
 
 export function runAcpTier2Preflight(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   cwd: string;
 }>): MaybePromise<void> {
   const callback = params.definition.callbacks.preflight;
@@ -235,7 +241,7 @@ export function runAcpTier2Preflight(params: Readonly<{
   });
 }
 
-function isPermissionDecision(value: unknown): value is AcpTier2PermissionDecisionResultV1 {
+function isPermissionDecision(value: unknown): value is HostAcpTier2PermissionDecisionResult {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return false;
   }
@@ -247,8 +253,45 @@ function isPermissionDecision(value: unknown): value is AcpTier2PermissionDecisi
   return rationale === undefined || typeof rationale === 'string';
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizePermissionFollowUpPrompt(
+  value: unknown,
+): SessionPermissionFollowUpPromptIntentV1 | undefined {
+  if (!isRecord(value) || typeof value.prompt !== 'string') {
+    return undefined;
+  }
+  const delivery = value.delivery;
+  if (delivery !== 'nextTurn' && delivery !== 'followUp') {
+    return undefined;
+  }
+  return {
+    prompt: value.prompt,
+    delivery,
+  };
+}
+
+function normalizePermissionPersistAllowRule(
+  value: unknown,
+): SessionPermissionPersistAllowRuleV1 | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const scope = value.scope;
+  if (scope !== 'session' && scope !== 'workspace' && scope !== 'account') {
+    return undefined;
+  }
+  const toolName = value.toolName;
+  return {
+    scope,
+    ...(typeof toolName === 'string' ? { toolName } : {}),
+  };
+}
+
 function createPermissionCallbackError(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   message: string;
   cause?: unknown;
 }>): AcpTier2CallbackError {
@@ -271,19 +314,23 @@ function reportPermissionDecisionError(error: AcpTier2CallbackError): void {
 }
 
 function mapPermissionDecisionToHandlerResult(
-  decision: AcpTier2PermissionDecisionResultV1,
+  decision: HostAcpTier2PermissionDecisionResult,
 ): NonNullable<ReturnType<NonNullable<AcpPermissionHandler['getImmediateDecision']>>> | null {
   if (decision.kind === 'defer') {
     return null;
   }
+  const followUpPrompt = normalizePermissionFollowUpPrompt(decision.followUpPrompt);
+  const persistAllowRule = normalizePermissionPersistAllowRule(decision.persistAllowRule);
   return {
     decision: decision.kind === 'allow' ? 'approved' : 'denied',
     ...(decision.rationale ? { rationale: decision.rationale } : {}),
+    ...(followUpPrompt ? { followUpPrompt } : {}),
+    ...(persistAllowRule ? { persistAllowRule } : {}),
   };
 }
 
 export function composeAcpTier2PermissionHandler(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   permissionHandler?: AcpPermissionHandler;
 }>): AcpPermissionHandler | undefined {
   const callback = params.definition.callbacks.permissionDecision;
@@ -291,13 +338,13 @@ export function composeAcpTier2PermissionHandler(params: Readonly<{
     return params.permissionHandler;
   }
 
-  const cachedDecisions = new Map<string, MaybePromise<AcpTier2PermissionDecisionResultV1>>();
+  const cachedDecisions = new Map<string, MaybePromise<HostAcpTier2PermissionDecisionResult>>();
 
   const evaluateDecision = (
     toolCallId: string,
     toolName: string,
     input: unknown,
-  ): MaybePromise<AcpTier2PermissionDecisionResultV1> => {
+  ): MaybePromise<HostAcpTier2PermissionDecisionResult> => {
     const cached = cachedDecisions.get(toolCallId);
     if (cached) {
       return cached;
@@ -306,7 +353,7 @@ export function composeAcpTier2PermissionHandler(params: Readonly<{
     const evaluated = (() => {
       try {
         const result = callback({ toolCallId, toolName, input });
-        const normalize = (value: unknown): AcpTier2PermissionDecisionResultV1 => {
+        const normalize = (value: unknown): HostAcpTier2PermissionDecisionResult => {
           if (isPermissionDecision(value)) {
             return value;
           }
@@ -356,18 +403,29 @@ export function composeAcpTier2PermissionHandler(params: Readonly<{
       }
       return null;
     },
-    getImmediateDecision(toolCallId, toolName, input) {
+    getImmediateDecision(toolCallId, toolName, input, context) {
+      if (context?.origin === 'host_acp_fs_write') {
+        return fallbackHandler?.getImmediateDecision?.(toolCallId, toolName, input, context) ?? null;
+      }
       const decision = evaluateDecision(toolCallId, toolName, input);
       if (isPromiseLike(decision)) {
-        return fallbackHandler?.getImmediateDecision?.(toolCallId, toolName, input) ?? null;
+        return fallbackHandler?.getImmediateDecision?.(toolCallId, toolName, input, context) ?? null;
       }
       const callbackResult = mapPermissionDecisionToHandlerResult(decision);
       if (callbackResult) {
         return callbackResult;
       }
-      return fallbackHandler?.getImmediateDecision?.(toolCallId, toolName, input) ?? null;
+      return fallbackHandler?.getImmediateDecision?.(toolCallId, toolName, input, context) ?? null;
     },
-    async handleToolCall(toolCallId, toolName, input) {
+    async handleToolCall(toolCallId, toolName, input, context) {
+      if (context?.origin === 'host_acp_fs_write') {
+        return fallbackHandler
+          ? await fallbackHandler.handleToolCall(toolCallId, toolName, input, context)
+          : {
+              decision: 'denied',
+              rationale: 'host ACP filesystem writes require a fallback permission handler',
+            };
+      }
       try {
         const decision = await evaluateDecision(toolCallId, toolName, input);
         const callbackResult = mapPermissionDecisionToHandlerResult(decision);
@@ -375,7 +433,7 @@ export function composeAcpTier2PermissionHandler(params: Readonly<{
           return callbackResult;
         }
         if (fallbackHandler) {
-          return await fallbackHandler.handleToolCall(toolCallId, toolName, input);
+          return await fallbackHandler.handleToolCall(toolCallId, toolName, input, context);
         }
         return {
           decision: 'denied',

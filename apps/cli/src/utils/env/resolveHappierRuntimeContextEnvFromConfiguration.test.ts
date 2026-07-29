@@ -6,6 +6,7 @@ import { createTempDirSync, removeTempDirSync } from '@/testkit/fs/tempDir';
 const ENV_KEYS = [
   'HAPPIER_HOME_DIR',
   'HAPPIER_ACTIVE_SERVER_ID',
+  'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
   'HAPPIER_SERVER_URL',
   'HAPPIER_LOCAL_SERVER_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
@@ -31,6 +32,7 @@ describe('resolveHappierRuntimeContextEnvFromConfiguration', () => {
     envScope.patch({
       HAPPIER_HOME_DIR: home,
       HAPPIER_ACTIVE_SERVER_ID: 'preview',
+      HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
       // public != server -> split local/public stack
       HAPPIER_PUBLIC_SERVER_URL: 'https://public.happier.example',
       HAPPIER_SERVER_URL: 'http://127.0.0.1:48999',
@@ -50,6 +52,7 @@ describe('resolveHappierRuntimeContextEnvFromConfiguration', () => {
     expect(env.HAPPIER_HOME_DIR).toBe(home);
     // A resolved server URL is always present.
     expect(env.HAPPIER_SERVER_URL).toBeTruthy();
+    expect(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID).toBe('stack_repo-current__id_default');
 
     // Only allowed, non-secret context keys are emitted.
     for (const key of Object.keys(env)) {

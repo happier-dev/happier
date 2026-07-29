@@ -2,10 +2,14 @@ import type {
   BridgeLifecycleHookEventIdV1,
   HookEventEnvelopeV1,
   HookScopeV1,
+  PluginHookPayloadMapV1,
 } from '@happier-dev/protocol';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import {
+  acquireAuthoritativePluginRuntimeRegistryLease,
+  createEphemeralPluginRuntimeRegistryLease,
+} from '@/plugins/runtime/reload/runtimeLease';
 
 import {
   dispatchPluginHookEvent,
@@ -21,14 +25,11 @@ type DispatchBridgeLifecycleHookEventDeps = Readonly<{
   nowMs?: () => number;
 }>;
 
-export type BridgeLifecycleHookDispatchEvent = Readonly<{
-  eventId: BridgeLifecycleHookEventIdV1;
+type BridgeLifecycleHookDispatchMetadata = Readonly<{
   scope?: HookScopeV1;
   happySessionId?: string;
-  providerSessionId?: string;
+  agentSessionId?: string;
   agentId?: string;
-  providerId?: string;
-  backendId?: string;
   backendTarget?: string;
   machineId?: string;
   workspaceId?: string;
@@ -36,8 +37,14 @@ export type BridgeLifecycleHookDispatchEvent = Readonly<{
   turnId?: string;
   toolCallId?: string;
   timestampMs?: number;
-  payload: Record<string, unknown>;
 }>;
+
+export type BridgeLifecycleHookDispatchEvent = {
+  [THookId in BridgeLifecycleHookEventIdV1]: Readonly<BridgeLifecycleHookDispatchMetadata & {
+    eventId: THookId;
+    payload: Omit<PluginHookPayloadMapV1[THookId], 'timestampMs'> & Readonly<{ timestampMs?: number }>;
+  }>;
+}[BridgeLifecycleHookEventIdV1];
 
 export async function dispatchBridgeLifecycleHookEvent(
   params: Readonly<{
@@ -46,36 +53,26 @@ export async function dispatchBridgeLifecycleHookEvent(
   }>,
   deps: DispatchBridgeLifecycleHookEventDeps = {},
 ): Promise<DispatchPluginHookEventResultV1> {
-  const resolveRuntimeRegistry = deps.resolveRuntimeRegistry
-    ?? (async ({ happyHomeDir }: Readonly<{ happyHomeDir: string }>) => {
-      const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
-      return await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
-    });
   const dispatchEvent = deps.dispatchEvent ?? dispatchPluginHookEvent;
   const nowMs = deps.nowMs ?? (() => Date.now());
 
   const lease = deps.resolveRuntimeRegistry
     ? await (async () => {
-      const registry = await resolveRuntimeRegistry({ happyHomeDir: params.happyHomeDir });
-      return {
-        registry,
-        release: async () => {
-          await registry.dispose();
-        },
-      };
+      const registry = await deps.resolveRuntimeRegistry!({ happyHomeDir: params.happyHomeDir });
+      return createEphemeralPluginRuntimeRegistryLease(registry);
     })()
     : await acquireAuthoritativePluginRuntimeRegistryLease({
       happyHomeDir: params.happyHomeDir,
-      resolveRuntimeRegistry: async () => await resolveRuntimeRegistry({ happyHomeDir: params.happyHomeDir }),
     });
   try {
+    const timestampMs = typeof params.event.timestampMs === 'number' ? params.event.timestampMs : nowMs();
     const event: HookEventEnvelopeV1 = {
       hookVersion: 1,
       eventId: params.event.eventId,
       category: 'lifecycle',
       scope: params.event.scope ?? 'session',
       ...(params.event.happySessionId ? { happySessionId: params.event.happySessionId } : {}),
-      ...(params.event.providerSessionId ? { providerSessionId: params.event.providerSessionId } : {}),
+      ...(params.event.agentSessionId ? { agentSessionId: params.event.agentSessionId } : {}),
       ...(params.event.agentId ? { agentId: params.event.agentId } : {}),
       ...(params.event.backendTarget ? { backendTarget: params.event.backendTarget } : {}),
       ...(params.event.machineId ? { machineId: params.event.machineId } : {}),
@@ -83,8 +80,11 @@ export async function dispatchBridgeLifecycleHookEvent(
       ...(params.event.cwd ? { cwd: params.event.cwd } : {}),
       ...(params.event.turnId ? { turnId: params.event.turnId } : {}),
       ...(params.event.toolCallId ? { toolCallId: params.event.toolCallId } : {}),
-      timestampMs: typeof params.event.timestampMs === 'number' ? params.event.timestampMs : nowMs(),
-      payload: params.event.payload,
+      timestampMs,
+      payload: {
+        ...params.event.payload,
+        timestampMs,
+      },
     };
 
     return await dispatchEvent({

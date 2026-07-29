@@ -7,8 +7,12 @@ export type PluginStorePaths = Readonly<{
   happyHomeDir: string;
   rootDir: string;
   stateDir: string;
-  stateFilePath: string;
+  registryCurrentFilePath: string;
+  registryCommitLockFilePath: string;
+  stateRevisionsDir: string;
+  generationsDir: string;
   marketplaceSourceRegistryFilePath: string;
+  npmRegistryProfilesFilePath: string;
   installedDir: string;
   cacheDir: string;
   logsDir: string;
@@ -28,8 +32,12 @@ export function resolvePluginStorePaths(params?: Readonly<{ happyHomeDir?: strin
     happyHomeDir,
     rootDir,
     stateDir,
-    stateFilePath: join(stateDir, 'plugin-state.v1.json'),
+    registryCurrentFilePath: join(stateDir, 'plugin-registry-current.v1.json'),
+    registryCommitLockFilePath: join(stateDir, 'plugin-registry-commit.v1.lock'),
+    stateRevisionsDir: join(rootDir, 'state-revisions'),
+    generationsDir: join(rootDir, 'generations'),
     marketplaceSourceRegistryFilePath: join(stateDir, 'marketplace-source-registry.v1.json'),
+    npmRegistryProfilesFilePath: join(stateDir, 'npm-registry-profiles.v1.json'),
     installedDir: join(rootDir, 'installed'),
     cacheDir: join(rootDir, 'cache'),
     logsDir: join(rootDir, 'logs'),
@@ -44,6 +52,8 @@ export async function ensurePluginStoreDirectories(params?: Readonly<{ happyHome
   const paths = resolvePluginStorePaths(params);
   await Promise.all([
     mkdir(paths.stateDir, { recursive: true }),
+    mkdir(paths.stateRevisionsDir, { recursive: true }),
+    mkdir(paths.generationsDir, { recursive: true }),
     mkdir(paths.installedDir, { recursive: true }),
     mkdir(paths.cacheDir, { recursive: true }),
     mkdir(paths.logsDir, { recursive: true }),

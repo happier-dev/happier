@@ -1,13 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtempSync, realpathSync, writeFileSync } from 'fs';
 import { tmpdir, homedir } from 'os';
 import { join, relative } from 'path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+
 import { createTestRpcManager, runGit as git } from './testRpcHarness';
 
 describe('scm RPC handlers (workingDirectory tilde)', () => {
+    let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+
+    beforeAll(async () => {
+        runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
+            resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
+                pluginIds: ['happier.scm.backend.git'],
+            }),
+        });
+    });
+
+    afterAll(async () => {
+        await runtimeRegistryLease?.release();
+        runtimeRegistryLease = null;
+        await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+    });
+
     it('expands ~ workingDirectory for repository detection when request.cwd is omitted', async () => {
         const originalHome = process.env.HOME;
         const originalUserProfile = process.env.USERPROFILE;
@@ -30,7 +50,7 @@ describe('scm RPC handlers (workingDirectory tilde)', () => {
 
             const result = await call<any, {}>(RPC_METHODS.SCM_STATUS_SNAPSHOT, {});
 
-            expect(result.success).toBe(true);
+            expect(result.success, JSON.stringify(result)).toBe(true);
             expect(result.snapshot.repo.isRepo).toBe(true);
             expect(realpathSync(result.snapshot.repo.rootPath)).toBe(realpathSync(workspace));
         } finally {
@@ -70,7 +90,7 @@ describe('scm RPC handlers (workingDirectory tilde)', () => {
                 cwd: workspace,
             });
 
-            expect(result.success).toBe(true);
+            expect(result.success, JSON.stringify(result)).toBe(true);
             expect(result.snapshot.repo.isRepo).toBe(true);
             expect(realpathSync(result.snapshot.repo.rootPath)).toBe(realpathSync(workspace));
         } finally {

@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { KOKORO_DEFAULT_TTS_PACK_ID } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
@@ -117,7 +118,7 @@ describe('voiceInferenceWorker install integrity', () => {
     }
 
     it('persists the installed manifest content hash instead of the manifest URL', async () => {
-        const packId = 'kokoro-tts-en-v1';
+        const packId = KOKORO_DEFAULT_TTS_PACK_ID;
         const servedPack: ServedPack = {
             version: '2026-04-17',
             declaredModelBytes: Buffer.from('model-v1'),
@@ -137,8 +138,8 @@ describe('voiceInferenceWorker install integrity', () => {
                 warmModel: async () => {},
                 synthesizeTts: async () => ({
                     bytes: Buffer.from('unused'),
-                    output: { codec: 'mp3', mimeType: 'audio/mpeg' },
-                    name: 'unused.mp3',
+                    output: { codec: 'wav', mimeType: 'audio/wav' },
+                    name: 'unused.wav',
                 }),
                 transcribeAudio: async () => ({
                     text: 'unused',
@@ -161,7 +162,7 @@ describe('voiceInferenceWorker install integrity', () => {
     });
 
     it('keeps the previous installed pack on disk when a reinstall fails verification', async () => {
-        const packId = 'kokoro-tts-en-v1';
+        const packId = KOKORO_DEFAULT_TTS_PACK_ID;
         let servedPack: ServedPack = {
             version: '2026-04-17',
             declaredModelBytes: Buffer.from('model-v1'),
@@ -181,8 +182,8 @@ describe('voiceInferenceWorker install integrity', () => {
                 warmModel: async () => {},
                 synthesizeTts: async () => ({
                     bytes: Buffer.from('unused'),
-                    output: { codec: 'mp3', mimeType: 'audio/mpeg' },
-                    name: 'unused.mp3',
+                    output: { codec: 'wav', mimeType: 'audio/wav' },
+                    name: 'unused.wav',
                 }),
                 transcribeAudio: async () => ({
                     text: 'unused',
@@ -216,6 +217,24 @@ describe('voiceInferenceWorker install integrity', () => {
             manifestHash: originalManifestHash,
             lastError: 'model_pack_sha256_mismatch',
         });
+
+        await expect(worker.getModelsStatus([packId])).resolves.toEqual([
+            expect.objectContaining({
+                packId,
+                version: '2026-04-17',
+                installState: 'installed',
+                lastError: 'model_pack_sha256_mismatch',
+            }),
+        ]);
+
+        await worker.removeModel(packId);
+        await expect(worker.getModelsStatus([packId])).resolves.toEqual([
+            expect.objectContaining({
+                packId,
+                installState: 'not_installed',
+                lastError: null,
+            }),
+        ]);
 
         await worker.stop();
     });

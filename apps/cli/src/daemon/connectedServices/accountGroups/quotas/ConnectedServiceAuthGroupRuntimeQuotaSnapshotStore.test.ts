@@ -10,6 +10,7 @@ function quotaSnapshot(input: Readonly<{
   profileId: string;
   fetchedAt: number;
   utilizationPct: number;
+  resetAtMs?: number | null;
 }>) {
   return {
     v: 1 as const,
@@ -27,7 +28,7 @@ function quotaSnapshot(input: Readonly<{
         limit: null,
         unit: 'unknown' as const,
         utilizationPct: input.utilizationPct,
-        resetsAt: null,
+        resetsAt: input.resetAtMs ?? null,
         status: 'ok' as const,
         details: {},
       },
@@ -377,5 +378,98 @@ describe('ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore', () => {
       groupId: 'main',
       capturedAtMs: 2_500,
     }).get('primary')?.quotaSnapshot?.effectiveRemainingPercent).toBe(85);
+  });
+
+  it('reports a positive recent burn velocity from the two most recent decreasing snapshots', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    // remaining 80% at t=1000, remaining 40% at t=2000 → burn 40% over 1000ms = 0.04 %/ms.
+    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20 }) });
+    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 60 }) });
+
+    const burn = store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' });
+    expect(burn?.remainingPercentPerMs).toBeCloseTo(0.04, 6);
+    expect(burn?.observedAtMs).toBe(2_000);
+  });
+
+  it('returns null burn when remaining% is flat or replenishes (reset), failing closed', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    // remaining 40% at t=1000, remaining 90% at t=2000 → replenish (reset), not a burn.
+    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 60 }) });
+    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 10 }) });
+
+    expect(store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' })).toBeNull();
+  });
+
+  it('returns null burn until at least two distinct-time observations exist', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20 }) });
+    expect(store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' })).toBeNull();
+    // A duplicate/stale fetchedAt must not poison the delta with a zero time window.
+    store.recordSnapshot({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 60 }) });
+    expect(store.getRecentBurn({ serviceId: 'openai-codex', groupId: 'main', profileId: 'primary' })).toBeNull();
+  });
+
+  it('requires burn to match the current generation, canonical snapshot, and bounded horizon', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    store.recordSnapshot({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20 }),
+    });
+    store.recordSnapshot({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 60 }),
+    });
+    const currentQuotaSnapshot = store.buildMemberStates({
+      serviceId: 'openai-codex', groupId: 'main', capturedAtMs: 2_000,
+    }).get('primary')?.quotaSnapshot;
+
+    expect(store.getRecentBurn({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      nowMs: 2_000,
+      maxAgeMs: 1_000,
+      currentQuotaSnapshot,
+    })).not.toBeNull();
+    expect(store.getRecentBurn({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 4,
+      nowMs: 2_000,
+      maxAgeMs: 1_000,
+      currentQuotaSnapshot,
+    })).toBeNull();
+    expect(store.getRecentBurn({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      nowMs: 3_001,
+      maxAgeMs: 1_000,
+      currentQuotaSnapshot,
+    })).toBeNull();
+    expect(store.getRecentBurn({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      nowMs: 2_001,
+      maxAgeMs: 1_000,
+      currentQuotaSnapshot: currentQuotaSnapshot
+        ? { ...currentQuotaSnapshot, capturedAtMs: currentQuotaSnapshot.capturedAtMs + 1 }
+        : currentQuotaSnapshot,
+    })).toBeNull();
+  });
+
+  it('rejects burn evidence after its quota window has elapsed even when the last sample is fresh', () => {
+    const store = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
+    store.recordSnapshot({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 1_000, utilizationPct: 20, resetAtMs: 2_500 }),
+    });
+    store.recordSnapshot({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      snapshot: quotaSnapshot({ profileId: 'primary', fetchedAt: 2_000, utilizationPct: 60, resetAtMs: 2_500 }),
+    });
+    const currentQuotaSnapshot = store.buildMemberStates({
+      serviceId: 'openai-codex', groupId: 'main', capturedAtMs: 2_000,
+    }).get('primary')?.quotaSnapshot;
+
+    expect(store.getRecentBurn({
+      serviceId: 'openai-codex', groupId: 'main', profileId: 'primary', groupGeneration: 3,
+      nowMs: 2_500,
+      maxAgeMs: 10_000,
+      currentQuotaSnapshot,
+    })).toBeNull();
   });
 });

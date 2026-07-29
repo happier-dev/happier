@@ -5,11 +5,15 @@ const DEFAULT_SESSION_CONTROL_TIMEOUT_MS = 15_000;
 
 type AcpRuntimeSessionControlBackend = Readonly<{
   setSessionMode?: (sessionId: string, modeId: string) => Promise<void>;
-  setSessionModel?: (sessionId: string, modelId: string) => Promise<void>;
+  setSessionModel?: (
+    sessionId: string,
+    modelId: string,
+    requestMeta?: Readonly<Record<string, unknown>>,
+  ) => Promise<void>;
   setSessionConfigOption?: (
     sessionId: string,
     configId: string,
-    value: string | number | boolean | null
+    value: string,
   ) => Promise<unknown>;
 }>;
 
@@ -69,6 +73,7 @@ export async function applyAcpRuntimeSessionMode(
 export async function applyAcpRuntimeSessionModel(
   context: AcpRuntimeSessionControlContext,
   modelId: string,
+  requestMeta?: Readonly<Record<string, unknown>>,
 ): Promise<void> {
   const normalizedModelId = typeof modelId === 'string' ? modelId.trim() : '';
   if (!normalizedModelId) return;
@@ -93,7 +98,7 @@ export async function applyAcpRuntimeSessionModel(
 
     const outcome = await Promise.race([
       backend
-        .setSessionModel(sessionId, normalizedModelId)
+        .setSessionModel(sessionId, normalizedModelId, requestMeta)
         .then(() => ({ ok: true as const }))
         .catch((error) => ({ ok: false as const, error })),
       timeoutPromise,
@@ -103,7 +108,7 @@ export async function applyAcpRuntimeSessionModel(
     const error = outcome.error;
     // Some ACP agents may not support `session/set_model` but may expose an equivalent
     // `model` config option. Fall back best-effort; callers already treat this as non-fatal.
-    if (!backend.setSessionConfigOption) throw error;
+    if (requestMeta || !backend.setSessionConfigOption) throw error;
 
     try {
       await backend.setSessionConfigOption(sessionId, modelConfigOptionId, normalizedModelId);

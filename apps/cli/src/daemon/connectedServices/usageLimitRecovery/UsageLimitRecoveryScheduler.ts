@@ -11,11 +11,21 @@ import {
   USAGE_LIMIT_CHECK_NOW_RATE_LIMITED_CODE,
 } from '@/session/usageLimitRecoveryControls/usageLimitCheckNowRateLimiter';
 import {
+  hasSameUsageLimitRecoveryIdentity,
+  mergeUsageLimitRecoveryIntent,
+  mergeUsageLimitRecoveryRearm,
+  mergeUsageLimitRecoverySchedule,
+} from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
+import {
   recordConnectedServiceDaemonRestartDiagnostic,
   type ConnectedServiceDaemonRestartDiagnosticRecorder,
 } from '../sessionAuthSwitch/requestConnectedServiceSessionRestartSignal';
-import { DurableBackoffRecoveryScheduler } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
-import type { DurableRecoveryGateResult } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
+import {
+  DurableBackoffRecoveryScheduler,
+  type DurableBackoffRecoveryStore,
+  type DurableRecoveryGateResult,
+} from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
+import { deterministicStringify } from '@/utils/deterministicJson';
 
 export const RUNTIME_USAGE_LIMIT_RECOVERY_FIELD = SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID;
 export const METADATA_SESSION_USAGE_LIMIT_RECOVERY_V1_KEY = SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY;
@@ -39,13 +49,10 @@ type RecoveryResult =
     details?: Readonly<Record<string, unknown>>;
   }>;
 
-export type UsageLimitRecoveryIntentStore = Readonly<{
-  read(sessionId: string): UsageLimitRecoveryIntent | unknown | null;
-  readAll?: () => ReadonlyArray<readonly [sessionId: string, value: unknown]>;
-  write(sessionId: string, intent: UsageLimitRecoveryIntent): Promise<void> | void;
-  remove?: (sessionId: string) => Promise<void> | void;
-  prune?: (predicate: (entry: Readonly<{ sessionId: string; value: unknown }>) => boolean) => Promise<ReadonlyArray<string>> | ReadonlyArray<string>;
-}>;
+export type UsageLimitRecoveryCancelExactResult =
+  | Readonly<{ status: 'cancelled'; intent: UsageLimitRecoveryIntent }>
+  | Readonly<{ status: 'superseded'; intent: UsageLimitRecoveryIntent }>
+  | Readonly<{ status: 'missing' }>;
 
 function isUsageLimitRecoveryIntent(value: unknown): value is UsageLimitRecoveryIntent {
   return SessionUsageLimitRecoveryV1Schema.safeParse(value).success;
@@ -92,35 +99,13 @@ function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePr
  * takes the earlier of the two next-check times. A genuinely different fingerprint (or no
  * prior intent) starts fresh.
  */
-function mergeUsageLimitRecoveryRearm(
-  previous: UsageLimitRecoveryIntent | null,
-  next: UsageLimitRecoveryIntent,
-): UsageLimitRecoveryIntent {
-  if (!previous) return next;
-  if (previous.issueFingerprint !== next.issueFingerprint) return next;
-  if (previous.status === 'cancelled' || previous.status === 'exhausted') return previous;
-  const mergedNextCheckAtMs = previous.nextCheckAtMs === null || previous.nextCheckAtMs === undefined
-    ? next.nextCheckAtMs
-    : next.nextCheckAtMs === null || next.nextCheckAtMs === undefined
-      ? previous.nextCheckAtMs
-      : Math.min(previous.nextCheckAtMs, next.nextCheckAtMs);
-  return {
-    ...next,
-    status: previous.status,
-    attemptCount: previous.attemptCount,
-    nextCheckAtMs: mergedNextCheckAtMs,
-    lastProbeError: previous.lastProbeError,
-    maxAttempts: Math.min(previous.maxAttempts, next.maxAttempts),
-  };
-}
-
 export class UsageLimitRecoveryScheduler {
   private readonly checkNowRateLimiter: UsageLimitCheckNowRateLimiter;
   private readonly scheduler: DurableBackoffRecoveryScheduler<UsageLimitRecoveryIntent>;
 
   constructor(private readonly deps: Readonly<{
     nowMs: () => number;
-    store?: UsageLimitRecoveryIntentStore;
+    store?: DurableBackoffRecoveryStore<UsageLimitRecoveryIntent>;
     recover?: (intent: UsageLimitRecoveryIntent, context: Readonly<{ sessionId: string }>) => Promise<RecoveryResult>;
     resume?: (intent: UsageLimitRecoveryIntent) => Promise<void>;
     recordRestartDiagnostic?: ConnectedServiceDaemonRestartDiagnosticRecorder;
@@ -140,6 +125,10 @@ export class UsageLimitRecoveryScheduler {
       nowMs: deps.nowMs,
       store: deps.store,
       normalizeIntent: (value) => isUsageLimitRecoveryIntent(value) ? value : null,
+      isSameIntentVersion: (left, right) => (
+        hasSameUsageLimitRecoveryIdentity(left, right)
+        && deterministicStringify(left) === deterministicStringify(right)
+      ),
       getStatus: (intent) => (
         intent.status === 'waiting'
         || intent.status === 'checking'
@@ -188,11 +177,34 @@ export class UsageLimitRecoveryScheduler {
     return this.scheduler.hydrate();
   }
 
-  upsert(input: Readonly<{
+  /** Reconstructs persisted state without scheduling or executing recovery. */
+  hydratePassive(): ReadonlyArray<UsageLimitRecoveryIntent> {
+    return this.scheduler.hydrate({ schedule: false });
+  }
+
+  load(input: Readonly<{
     sessionId: string;
     intent: UsageLimitRecoveryIntent;
   }>): UsageLimitRecoveryIntent {
     return this.scheduler.load(input);
+  }
+
+  async upsert(input: Readonly<{
+    sessionId: string;
+    intent: UsageLimitRecoveryIntent;
+  }>): Promise<UsageLimitRecoveryIntent> {
+    return await this.scheduler.upsert(input);
+  }
+
+  async upsertScheduled(input: Readonly<{
+    sessionId: string;
+    intent: UsageLimitRecoveryIntent;
+  }>): Promise<UsageLimitRecoveryIntent> {
+    return await this.scheduler.upsertMerged({
+      sessionId: input.sessionId,
+      intent: input.intent,
+      merge: mergeUsageLimitRecoverySchedule,
+    });
   }
 
   async enable(input: Readonly<{
@@ -233,6 +245,41 @@ export class UsageLimitRecoveryScheduler {
 
   async cancel(input: Readonly<{ sessionId: string }>): Promise<UsageLimitRecoveryIntent | null> {
     return await this.scheduler.cancel(input);
+  }
+
+  async cancelExact(input: Readonly<{
+    sessionId: string;
+    issueFingerprint: string;
+    armedAtMs: number;
+    runtimeAuthRecoveryAttemptId?: string;
+  }>): Promise<UsageLimitRecoveryCancelExactResult> {
+    return await this.scheduler.transact<UsageLimitRecoveryCancelExactResult>({
+      sessionId: input.sessionId,
+      transaction: (current) => {
+        if (!current) {
+          return { intent: null, result: { status: 'missing' as const } };
+        }
+        if (!hasSameUsageLimitRecoveryIdentity(current, input)) {
+          return {
+            intent: current,
+            result: { status: 'superseded' as const, intent: current },
+          };
+        }
+        const cancelled = mergeUsageLimitRecoveryIntent(current, {
+          ...current,
+          status: 'cancelled',
+          nextCheckAtMs: null,
+        }) ?? {
+          ...current,
+          status: 'cancelled' as const,
+          nextCheckAtMs: null,
+        };
+        return {
+          intent: cancelled,
+          result: { status: 'cancelled' as const, intent: cancelled },
+        };
+      },
+    });
   }
 
   async checkNow(input: Readonly<{ sessionId: string }>): Promise<Readonly<{

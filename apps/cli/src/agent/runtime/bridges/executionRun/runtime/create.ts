@@ -9,11 +9,13 @@ import {
     type BackendTargetRefV2,
     type BackendTargetRefV2Input,
     type ConnectedServiceBindingsV1,
+    type ExecutionRunConnectedServicesLaunchV1,
 } from '@happier-dev/protocol';
 
 import type {
     ExecutionRunHostRuntime,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import type { ResolvedCliEngineRegistry } from '@/agent/runtime/registry/engineRegistryTypes';
 import {
     buildExecutionRunRuntimeIdentityPublication,
     withExecutionRunRuntimeIdentityPublication,
@@ -120,16 +122,20 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
     connectedServicesDefaultServiceIds?: readonly string[];
     start?: Readonly<{ intentInput?: unknown; retentionPolicy?: string; intent?: string }> | null;
     happyHomeDir?: string | null;
+    engineRegistry?: ResolvedCliEngineRegistry;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
+    onConnectedServicesRegistration?: (registration: ExecutionRunConnectedServicesLaunchV1) => void | Promise<void>;
 }>): LazyExecutionRunRuntimeShellConfig {
     let resolvedBackendPromise: Promise<ExecutionRunHostRuntime> | null = null;
 
     const resolveBackend = async (): Promise<ExecutionRunHostRuntime> => {
         if (resolvedBackendPromise) return await resolvedBackendPromise;
         resolvedBackendPromise = (async () => {
-            const engineResolution = await resolveBackendEngineAdapterResolution(opts.backendId, {
-                happyHomeDir: opts.happyHomeDir ?? configuration.happyHomeDir,
-            });
+            const engineResolution = opts.engineRegistry
+                ? await opts.engineRegistry.resolveForBackendId(opts.backendId)
+                : await resolveBackendEngineAdapterResolution(opts.backendId, {
+                    happyHomeDir: opts.happyHomeDir ?? configuration.happyHomeDir,
+                });
             if (engineResolution) {
                 throwIfPluginRuntimeStartBlocked(engineResolution);
             }
@@ -158,6 +164,14 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     : {}),
                 cwd: opts.cwd,
             });
+            if (connectedServicesEnv && opts.onConnectedServicesRegistration) {
+                try {
+                    await opts.onConnectedServicesRegistration(connectedServicesEnv.registration);
+                } catch (error) {
+                    await connectedServicesEnv.cleanup().catch(() => {});
+                    throw error;
+                }
+            }
             const pluginIsolationBundle = engineResolution.runtimeOwner?.selected?.kind === 'plugin_engine'
                 ? resolveExecutionRunPluginIsolationBundle(opts)
                 : null;
@@ -228,7 +242,9 @@ export function createExecutionRunRuntime(opts: Readonly<{
     connectedServicesDefaultServiceIds?: readonly string[];
     start?: Readonly<{ intentInput?: unknown; retentionPolicy?: string; intent?: string }> | null;
     happyHomeDir?: string | null;
+    engineRegistry?: ResolvedCliEngineRegistry;
     parentSessionStateTarget?: ExecutionRunSessionStateTarget | null;
+    onConnectedServicesRegistration?: (registration: ExecutionRunConnectedServicesLaunchV1) => void | Promise<void>;
 }>): ExecutionRunHostRuntime {
     const resolvedBackendTarget = resolveExecutionRunCompatBackendTarget(opts.backendTarget);
     const backendId = String(opts.backendId ?? '').trim();
@@ -277,7 +293,11 @@ export function createExecutionRunRuntime(opts: Readonly<{
                 : {}),
             start: opts.start ?? null,
             happyHomeDir: opts.happyHomeDir ?? null,
+            ...(opts.engineRegistry ? { engineRegistry: opts.engineRegistry } : {}),
             parentSessionStateTarget: opts.parentSessionStateTarget ?? null,
+            ...(opts.onConnectedServicesRegistration
+                ? { onConnectedServicesRegistration: opts.onConnectedServicesRegistration }
+                : {}),
         });
     return createLazyExecutionRunHostRuntime(runtimeShellConfig);
 }

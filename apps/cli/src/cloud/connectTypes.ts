@@ -1,11 +1,11 @@
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { CloudConnectTargetStatus, CloudVendorKey } from '@happier-dev/agents';
 import type {
   CloudAuthCredentialWriteInputV1,
   CloudAuthCredentialWriteResultV1,
   CloudConnectAuthenticateOptionsV1,
   CloudConnectAuthenticateResultV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 export type {
   CloudAuthCallbackCreateInputV1,
@@ -29,7 +29,7 @@ export type {
   CloudConnectAuthenticateResultV1,
   CloudCustomAuthenticatorContextV1,
   CloudCustomAuthenticatorV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/cloud/auth';
 
 export type { CloudConnectTargetStatus, CloudVendorKey };
 

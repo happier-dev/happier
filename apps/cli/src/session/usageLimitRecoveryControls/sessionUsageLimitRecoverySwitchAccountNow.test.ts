@@ -15,7 +15,7 @@ function createUsageLimitIssue(
     code: 'usage_limit',
     source: 'usage_limit',
     occurredAt: 1_000,
-    provider: 'codex',
+    agentId: 'codex',
     usageLimit: {
       v: 1,
       resetAtMs: 10_000,

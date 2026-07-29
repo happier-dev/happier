@@ -7,23 +7,18 @@ import {
 } from './hostRuntime';
 
 describe('plugin UI projection host runtime', () => {
-    it('keeps Re.Pack loader readiness false when the client runtime package is absent', () => {
+    it('uses host-reported ScriptManager readiness without consulting the daemon package graph', () => {
         expect(resolveReactNativeRepackLoaderBackendAvailability({
-            isRepackClientPackageResolvable: () => false,
             installedArtifactLoaderAvailable: true,
+            scriptManagerRuntimeIntegrated: true,
         })).toEqual({
-            available: false,
-            diagnostics: [
-                'repack_script_manager_unavailable',
-                'repack_script_manager_package_missing',
-            ],
-            unavailableReason: '@callstack/repack/client is not installed in this checkout',
+            available: true,
+            diagnostics: [],
         });
     });
 
-    it('does not report loader readiness from Re.Pack package presence alone', () => {
+    it('does not report loader readiness from installed-artifact loader availability alone', () => {
         expect(resolveReactNativeRepackLoaderBackendAvailability({
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: false,
         })).toEqual({
             available: false,
@@ -31,13 +26,12 @@ describe('plugin UI projection host runtime', () => {
                 'repack_script_manager_unavailable',
                 'repack_script_manager_installed_artifact_loader_unavailable',
             ],
-            unavailableReason: 'Re.Pack ScriptManager is installed, but the host installed-artifact module loader is not wired',
+            unavailableReason: 'The native host installed-artifact module loader is not wired',
         });
     });
 
     it('does not report loader readiness until the native ScriptManager runtime is explicitly integrated', () => {
         expect(resolveReactNativeRepackLoaderBackendAvailability({
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: true,
         })).toEqual({
             available: false,
@@ -52,7 +46,6 @@ describe('plugin UI projection host runtime', () => {
     it('projects host runtime loader availability only from proven Re.Pack loadability', () => {
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: true,
             scriptManagerRuntimeIntegrated: true,
             reactNativeHostRuntime: {
@@ -63,7 +56,6 @@ describe('plugin UI projection host runtime', () => {
 
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: false,
         }).reactNativeBundles?.loaderBackendAvailable).toBe(false);
     });
@@ -71,7 +63,6 @@ describe('plugin UI projection host runtime', () => {
     it('does not report loader readiness until the active native runtime identity is known', () => {
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: true,
             scriptManagerRuntimeIntegrated: true,
         }).reactNativeBundles).toMatchObject({
@@ -83,16 +74,48 @@ describe('plugin UI projection host runtime', () => {
         });
     });
 
+    it('uses explicit web loader readiness without consulting native Re.Pack availability', () => {
+        expect(resolvePluginUiProjectionHostRuntime({
+            hostAppVersion: '2.0.0',
+            reactNativeWebLoaderCapability: {
+                integrated: true,
+                installedArtifactLoaderAvailable: true,
+            },
+        }).reactNativeBundles).toMatchObject({
+            loaderBackendAvailable: true,
+            hostRuntime: { platform: 'web', channel: 'internal' },
+        });
+
+        expect(resolvePluginUiProjectionHostRuntime({
+            hostAppVersion: '2.0.0',
+            reactNativeWebLoaderCapability: {
+                integrated: true,
+                installedArtifactLoaderAvailable: false,
+            },
+        }).reactNativeBundles).toMatchObject({
+            loaderBackendAvailable: false,
+            loaderBackendDiagnostics: [
+                'react_native_web_loader_unavailable',
+                'react_native_web_installed_artifact_loader_unavailable',
+            ],
+        });
+        expect(resolvePluginUiProjectionHostRuntime({
+            hostAppVersion: '2.0.0',
+            reactNativeWebLoaderCapability: {
+                integrated: false,
+                installedArtifactLoaderAvailable: false,
+            },
+        }).reactNativeBundles?.loaderBackendAvailable).toBe(false);
+    });
+
     it('does not enable React Native bundles without the canonical feature decision being enabled', () => {
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: true,
         }).reactNativeBundles?.featureEnabled).toBe(false);
 
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: true,
             reactNativeBundlesFeatureDecision: createFeatureDecision({
                 featureId: 'plugins.ui.reactNativeBundles',
@@ -104,93 +127,6 @@ describe('plugin UI projection host runtime', () => {
                 scope: { scopeKind: 'runtime' },
             }),
         }).reactNativeBundles?.featureEnabled).toBe(true);
-    });
-
-    it('does not enable embedded web bundles without the canonical feature decision being enabled', () => {
-        expect(resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-        }).embeddedWebBundles?.featureEnabled).toBe(false);
-        expect(resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-        }).embeddedWebBundles?.csp).toEqual({
-            supportsSameOriginModuleUrl: false,
-            allowsBlobModuleImport: false,
-        });
-        expect(resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-        }).embeddedWebBundles?.loaderBackendAvailable).toBe(false);
-    });
-
-    it('does not synthesize the embedded-web CSP capability from the feature flag', () => {
-        // Even with the family feature enabled, with no real deployment-CSP
-        // signal the CSP capability must default fail-closed (NOT
-        // allowsBlobModuleImport:true) — the old fail-open shortcut is removed.
-        const enabledNoProbe = resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-            embeddedWebBundlesFeatureDecision: createFeatureDecision({
-                featureId: 'plugins.ui.embeddedWebBundles',
-                state: 'enabled',
-                blockedBy: null,
-                blockerCode: 'none',
-                diagnostics: [],
-                evaluatedAt: 0,
-                scope: { scopeKind: 'runtime' },
-            }),
-        });
-        expect(enabledNoProbe.embeddedWebBundles).toMatchObject({
-            featureEnabled: true,
-            loaderBackendAvailable: true,
-            csp: {
-                supportsSameOriginModuleUrl: false,
-                allowsBlobModuleImport: false,
-            },
-        });
-    });
-
-    it('derives the embedded-web CSP capability from the deployment probe signal', () => {
-        const probed = resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-            embeddedWebBundlesFeatureDecision: createFeatureDecision({
-                featureId: 'plugins.ui.embeddedWebBundles',
-                state: 'enabled',
-                blockedBy: null,
-                blockerCode: 'none',
-                diagnostics: [],
-                evaluatedAt: 0,
-                scope: { scopeKind: 'runtime' },
-            }),
-            deploymentCspCapability: {
-                supportsSameOriginModuleUrl: true,
-                allowsBlobModuleImport: true,
-            },
-        });
-        expect(probed.embeddedWebBundles?.csp).toEqual({
-            supportsSameOriginModuleUrl: true,
-            allowsBlobModuleImport: true,
-        });
-
-        // A strict deployment that forbids blob keeps the bit fail-closed even
-        // though the same-origin bit is allowed.
-        const strict = resolvePluginUiProjectionHostRuntime({
-            hostAppVersion: '2.0.0',
-            embeddedWebBundlesFeatureDecision: createFeatureDecision({
-                featureId: 'plugins.ui.embeddedWebBundles',
-                state: 'enabled',
-                blockedBy: null,
-                blockerCode: 'none',
-                diagnostics: [],
-                evaluatedAt: 0,
-                scope: { scopeKind: 'runtime' },
-            }),
-            deploymentCspCapability: {
-                supportsSameOriginModuleUrl: true,
-                allowsBlobModuleImport: false,
-            },
-        });
-        expect(strict.embeddedWebBundles?.csp).toEqual({
-            supportsSameOriginModuleUrl: true,
-            allowsBlobModuleImport: false,
-        });
     });
 
     it('reports structured-message feature enablement from the canonical feature decision', () => {
@@ -234,7 +170,6 @@ describe('plugin UI projection host runtime', () => {
     it('threads daemon-owned React Native crash-disabled contribution ids into the host runtime context', () => {
         expect(resolvePluginUiProjectionHostRuntime({
             hostAppVersion: '2.0.0',
-            isRepackClientPackageResolvable: () => true,
             installedArtifactLoaderAvailable: true,
             reactNativeBundlesFeatureDecision: createFeatureDecision({
                 featureId: 'plugins.ui.reactNativeBundles',

@@ -1,18 +1,29 @@
-import axios from 'axios';
-
 import { isAuthenticationError } from '@/api/client/httpStatusError';
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { MessageAckResponseSchema } from '@/api/types';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
+import {
+    SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
+    SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+    SessionTranscriptObservationAckV1Schema,
+    SessionTranscriptObservationCapabilityAckV1Schema,
+    SessionTranscriptObservationProvenanceV1Schema,
+    MessageAckResponseSchema,
+} from '@happier-dev/protocol';
+import type { SessionSyncPendingInputServerContractMode } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 
 import type {
+    PersistedTranscriptMessageAppendMutationV1,
     SessionClientDurableMutationSocket,
     TranscriptMessageAppendMutationV1,
 } from './sessionClientDurableMutationTypes';
 
 export type TranscriptMessageMutationDeliveryResult =
-    | Readonly<{ delivered: true; path: 'socket' | 'http'; ack?: TranscriptMessageMutationDeliveryAck }>
-    | Readonly<{ delivered: false; reason: 'transcript_message_transport_unavailable'; httpStatus?: number }>;
+    | Readonly<{ delivered: true; path: 'socket'; ack?: TranscriptMessageMutationDeliveryAck }>
+    | Readonly<{
+        delivered: false;
+        reason:
+            | 'transcript_message_provenance_missing_or_invalid'
+            | 'transcript_message_transport_unavailable';
+    }>;
 
 export type TranscriptMessageMutationDeliveryAck = Readonly<{
     id: string;
@@ -22,16 +33,6 @@ export type TranscriptMessageMutationDeliveryAck = Readonly<{
     didUpdate?: boolean;
 }>;
 
-function readHttpErrorStatus(error: unknown): number | undefined {
-    if (!error || typeof error !== 'object') return undefined;
-    const directStatus = (error as { status?: unknown }).status;
-    if (typeof directStatus === 'number') return directStatus;
-    const response = (error as { response?: unknown }).response;
-    if (!response || typeof response !== 'object') return undefined;
-    const status = (response as { status?: unknown }).status;
-    return typeof status === 'number' ? status : undefined;
-}
-
 async function trySocketTranscriptMutation(params: Readonly<{
     socket: SessionClientDurableMutationSocket;
     mutation: TranscriptMessageAppendMutationV1;
@@ -40,6 +41,57 @@ async function trySocketTranscriptMutation(params: Readonly<{
     try {
         const socket = params.socket.timeout?.(10_000) ?? params.socket;
         if (typeof socket.emitWithAck !== 'function') return null;
+        const capabilityRaw = await emitSocketWithAck({
+            socket,
+            event: SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
+            payload: { v: 1, sessionId: params.mutation.sessionId },
+        });
+        const capability = SessionTranscriptObservationCapabilityAckV1Schema.safeParse(capabilityRaw);
+        if (!capability.success || capability.data.ok !== true) return null;
+        const raw = await emitSocketWithAck({
+            socket,
+            event: SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+            payload: {
+                v: 1,
+                sessionId: params.mutation.sessionId,
+                localId: params.mutation.localId,
+                sidechainId: params.mutation.sidechainId ?? null,
+                ...(params.mutation.messageRole ? { messageRole: params.mutation.messageRole } : {}),
+                content: params.mutation.content,
+                createdAt: params.mutation.createdAt,
+                updatedAt: params.mutation.updatedAt,
+                provenance: params.mutation.provenance,
+                ...(params.mutation.sessionEventType ? { sessionEventType: params.mutation.sessionEventType } : {}),
+            },
+        });
+        const parsed = SessionTranscriptObservationAckV1Schema.safeParse(raw);
+        if (!parsed.success || parsed.data.ok !== true) return null;
+        return {
+            id: parsed.data.id,
+            seq: parsed.data.seq,
+            localId: parsed.data.localId,
+            didWrite: parsed.data.didWrite,
+            ...(typeof parsed.data.didUpdate === 'boolean' ? { didUpdate: parsed.data.didUpdate } : {}),
+        };
+    } catch (error) {
+        if (isAuthenticationError(error)) throw error;
+        return null;
+    }
+}
+
+/**
+ * Exact CLI/server-v0.2.1 transcript transport from
+ * b1d15a8a9c241737d1ca9b167459901e6259173a and
+ * 4913c1e533c872a0712ba1c25b3104fd470aacc2. Remove it when 0.2.1 leaves the
+ * supported predecessor window.
+ */
+async function tryReleasedServerV021TranscriptMutation(params: Readonly<{
+    socket: SessionClientDurableMutationSocket;
+    mutation: TranscriptMessageAppendMutationV1;
+}>): Promise<TranscriptMessageMutationDeliveryAck | null> {
+    if (params.socket.connected !== true) return null;
+    try {
+        const socket = params.socket.timeout?.(10_000) ?? params.socket;
         const raw = await emitSocketWithAck({
             socket,
             event: 'message',
@@ -50,7 +102,6 @@ async function trySocketTranscriptMutation(params: Readonly<{
                 echoToSender: true,
                 sidechainId: params.mutation.sidechainId ?? null,
                 ...(params.mutation.messageRole ? { messageRole: params.mutation.messageRole } : {}),
-                ...(params.mutation.sessionEventType ? { sessionEventType: params.mutation.sessionEventType } : {}),
             },
         });
         const parsed = MessageAckResponseSchema.safeParse(raw);
@@ -59,8 +110,7 @@ async function trySocketTranscriptMutation(params: Readonly<{
             id: parsed.data.id,
             seq: parsed.data.seq,
             localId: parsed.data.localId,
-            ...(typeof parsed.data.didWrite === 'boolean' ? { didWrite: parsed.data.didWrite } : {}),
-            ...(typeof parsed.data.didUpdate === 'boolean' ? { didUpdate: parsed.data.didUpdate } : {}),
+            didWrite: parsed.data.didWrite,
         };
     } catch (error) {
         if (isAuthenticationError(error)) throw error;
@@ -68,96 +118,31 @@ async function trySocketTranscriptMutation(params: Readonly<{
     }
 }
 
-function readHttpTranscriptMutationAck(data: unknown): TranscriptMessageMutationDeliveryAck | undefined {
-    if (!data || typeof data !== 'object') return undefined;
-    const message = (data as { message?: unknown }).message;
-    if (!message || typeof message !== 'object') return undefined;
-    const record = message as Record<string, unknown>;
-    if (typeof record.id !== 'string') return undefined;
-    if (typeof record.seq !== 'number' || !Number.isSafeInteger(record.seq) || record.seq < 0) return undefined;
-    const localId = typeof record.localId === 'string' ? record.localId : null;
-    return {
-        id: record.id,
-        seq: record.seq,
-        localId,
-        ...('didWrite' in data && typeof (data as { didWrite?: unknown }).didWrite === 'boolean'
-            ? { didWrite: (data as { didWrite: boolean }).didWrite }
-            : {}),
-        ...('didUpdate' in data && typeof (data as { didUpdate?: unknown }).didUpdate === 'boolean'
-            ? { didUpdate: (data as { didUpdate: boolean }).didUpdate }
-            : {}),
-    };
-}
-
-async function tryHttpTranscriptMutation(params: Readonly<{
-    token: string;
-    mutation: TranscriptMessageAppendMutationV1;
-    serverUrl: string;
-}>): Promise<TranscriptMessageMutationDeliveryResult> {
-    try {
-        const body = typeof params.mutation.content === 'string'
-            ? {
-                ciphertext: params.mutation.content,
-                localId: params.mutation.localId,
-                sidechainId: params.mutation.sidechainId ?? null,
-                ...(params.mutation.messageRole ? { messageRole: params.mutation.messageRole } : {}),
-                ...(params.mutation.sessionEventType ? { sessionEventType: params.mutation.sessionEventType } : {}),
-            }
-            : {
-                content: params.mutation.content,
-                localId: params.mutation.localId,
-                sidechainId: params.mutation.sidechainId ?? null,
-                ...(params.mutation.messageRole ? { messageRole: params.mutation.messageRole } : {}),
-                ...(params.mutation.sessionEventType ? { sessionEventType: params.mutation.sessionEventType } : {}),
-            };
-        const response = await axios.post(
-            `${params.serverUrl}/v2/sessions/${encodeURIComponent(params.mutation.sessionId)}/messages`,
-            body,
-            {
-                headers: {
-                    Authorization: `Bearer ${params.token}`,
-                    'Content-Type': 'application/json',
-                    'Idempotency-Key': params.mutation.localId,
-                },
-                timeout: 10_000,
-            },
-        );
-        const data = response?.data as Record<string, unknown> | undefined;
-        if (data && (data.ok === false || data.result === 'error')) {
-            return { delivered: false, reason: 'transcript_message_transport_unavailable' };
-        }
-        return {
-            delivered: true,
-            path: 'http',
-            ack: readHttpTranscriptMutationAck(data),
-        };
-    } catch (error) {
-        if (isAuthenticationError(error)) throw error;
-        return {
-            delivered: false,
-            reason: 'transcript_message_transport_unavailable',
-            httpStatus: readHttpErrorStatus(error),
-        };
-    }
-}
-
 export async function deliverTranscriptMessageMutation(params: Readonly<{
     token: string;
     socket: SessionClientDurableMutationSocket | null;
-    mutation: TranscriptMessageAppendMutationV1;
+    serverContractMode?: SessionSyncPendingInputServerContractMode;
+    mutation: PersistedTranscriptMessageAppendMutationV1;
 }>): Promise<TranscriptMessageMutationDeliveryResult> {
+    const parsedProvenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(params.mutation.provenance);
+    if (!parsedProvenance.success) {
+        return { delivered: false, reason: 'transcript_message_provenance_missing_or_invalid' };
+    }
+    const mutation: TranscriptMessageAppendMutationV1 = {
+        ...params.mutation,
+        provenance: parsedProvenance.data,
+    };
+    if (params.serverContractMode === 'released_server_v0_2_1') {
+        const releasedAck = params.socket
+            ? await tryReleasedServerV021TranscriptMutation({ socket: params.socket, mutation })
+            : null;
+        return releasedAck
+            ? { delivered: true, path: 'socket', ack: releasedAck }
+            : { delivered: false, reason: 'transcript_message_transport_unavailable' };
+    }
     const socketAck = params.socket
-        ? await trySocketTranscriptMutation({
-            socket: params.socket,
-            mutation: params.mutation,
-        })
+        ? await trySocketTranscriptMutation({ socket: params.socket, mutation })
         : null;
     if (socketAck) return { delivered: true, path: 'socket', ack: socketAck };
-
-    const serverUrl = resolveServerHttpBaseUrl();
-    return await tryHttpTranscriptMutation({
-        token: params.token,
-        mutation: params.mutation,
-        serverUrl,
-    });
+    return { delivered: false, reason: 'transcript_message_transport_unavailable' };
 }

@@ -30,27 +30,23 @@ describe('stateUpdates (plaintext sessions)', () => {
     const emitWithAck = vi.fn(async (_event: string, payload: any) => ({
       result: 'success',
       didWrite: true,
+      runtimeActivityState: payload.state,
       runtimeActivityActiveCount: payload.runtimeActivityActiveCount,
-      runtimeActivityObservedAt: payload.runtimeActivityObservedAt,
-      runtimeActivityExpiresAt: payload.runtimeActivityExpiresAt,
-      runtimeActivitySourceClass: payload.runtimeActivitySourceClass,
+      runtimeActivityObservedAt: 1_000,
+      runtimeActivityRevision: 1,
     }));
 
     await updateSessionRuntimeActivityProjectionWithAck({
       socket: { emitWithAck },
       sessionId: 's1',
+      state: 'active',
       runtimeActivityActiveCount: 1,
-      runtimeActivityObservedAt: 1_000,
-      runtimeActivityExpiresAt: 2_000,
-      runtimeActivitySourceClass: 'provider_detached_task',
     });
 
-    expect(emitWithAck).toHaveBeenCalledWith('update-runtime-activity', {
+    expect(emitWithAck).toHaveBeenCalledWith('runtime-activity-snapshot', {
       sid: 's1',
+      state: 'active',
       runtimeActivityActiveCount: 1,
-      runtimeActivityObservedAt: 1_000,
-      runtimeActivityExpiresAt: 2_000,
-      runtimeActivitySourceClass: 'provider_detached_task',
     });
     const [, payload] = emitWithAck.mock.calls[0]!;
     expect(payload).not.toHaveProperty('thinking');
@@ -72,10 +68,8 @@ describe('stateUpdates (plaintext sessions)', () => {
     await expect(updateSessionRuntimeActivityProjectionWithAck({
       socket,
       sessionId: 's1',
+      state: 'active',
       runtimeActivityActiveCount: 1,
-      runtimeActivityObservedAt: 1_000,
-      runtimeActivityExpiresAt: 2_000,
-      runtimeActivitySourceClass: 'provider_detached_task',
     })).rejects.toMatchObject({
       code: 'runtime_activity_update_failed',
       retryable: true,

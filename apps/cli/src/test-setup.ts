@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 
 import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs'
+import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs'
 import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 
 export type CliTestBuildMode = 'shared-only' | 'full'
@@ -32,13 +33,25 @@ function resolveCliProjectRoot(): string {
   return resolve(__dirname, '..')
 }
 
+function resolveRepoRoot(projectRoot: string): string {
+  let dir = resolve(projectRoot)
+  for (let index = 0; index < 5; index += 1) {
+    if (existsSync(join(dir, 'package.json')) && existsSync(join(dir, 'yarn.lock'))) {
+      return dir
+    }
+    const parent = resolve(dir, '..')
+    if (parent === dir) break
+    dir = parent
+  }
+  return resolve(projectRoot, '..', '..')
+}
+
 function resolveDistEntrypointPath(projectRoot: string): string {
   return join(projectRoot, 'dist', 'index.mjs')
 }
 
 function resolveBuildLockPath(projectRoot: string): string {
-  const hash = createHash('sha256').update(projectRoot).digest('hex').slice(0, 12)
-  return join(tmpdir(), `happier-cli-vitest-build-lock-${hash}`)
+  return join(resolveRepoRoot(projectRoot), '.project', 'tmp', 'cli-dist-build.lock')
 }
 
 function resolveSharedDepsLockPath(projectRoot: string): string {
@@ -87,16 +100,17 @@ function resolveBundledProtocolReadyMarkers(projectRoot: string): string[] {
   )
 
   return [
-    join(protocolDistDir, 'sessionFork.js'),
+    join(protocolDistDir, 'sessions', 'fork.js'),
     join(protocolDistDir, 'features', 'payload', 'isRecord.js'),
     ...runtimeDependencyMarkers,
   ]
 }
 
-function spawnYarnSync(args: readonly string[], cwd: string) {
+function spawnYarnSync(args: readonly string[], cwd: string, env = process.env) {
   const invocation = resolveYarnCommandInvocation(args)
   return spawnSync(invocation.command, invocation.args, {
     cwd,
+    env,
     stdio: 'pipe',
     encoding: 'utf8',
     ...(invocation.windowsVerbatimArguments
@@ -113,8 +127,12 @@ async function ensureSharedDepsBuiltOnce(projectRoot: string): Promise<void> {
     lockLabel: 'CLI shared deps build',
     // The shared-deps build already validates the full workspace bundle set. For test setup,
     // we only need a concrete completion signal that is stable under concurrent rebuilds.
-    runBuild: () => {
-      const buildResult = spawnYarnSync(['-s', 'build:shared'], projectRoot)
+    runBuild: ({ heldLockValue }) => {
+      const buildResult = spawnYarnSync(
+        ['-s', 'build:shared'],
+        projectRoot,
+        createWorkspaceChildBuildEnv({ heldLockValue }),
+      )
 
       if (buildResult.error) {
         throw new Error(`CLI test globalSetup failed to run build:shared: ${buildResult.error.message}`)
@@ -142,8 +160,12 @@ async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
     lockPath: resolveBuildLockPath(projectRoot),
     markerPaths: [distEntrypoint],
     lockLabel: 'CLI dist build',
-    runBuild: () => {
-      const buildResult = spawnYarnSync(['build'], projectRoot)
+    runBuild: ({ heldLockValue }) => {
+      const buildResult = spawnYarnSync(
+        ['build'],
+        projectRoot,
+        createWorkspaceChildBuildEnv({ heldLockValue }),
+      )
 
       if (buildResult.error) {
         throw new Error(`CLI test globalSetup failed to run build: ${buildResult.error.message}`)

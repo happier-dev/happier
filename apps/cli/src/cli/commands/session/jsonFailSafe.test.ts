@@ -1,22 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
-const { mockAxiosGet } = vi.hoisted(() => ({
-  mockAxiosGet: vi.fn(),
+const { createCliActionExecutorFromCredentials, execute } = vi.hoisted(() => ({
+  createCliActionExecutorFromCredentials: vi.fn(),
+  execute: vi.fn(),
 }));
 
-vi.mock('axios', async () => {
-  return {
-    default: {
-      get: mockAxiosGet,
-      post: vi.fn(),
-    },
-  };
+vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => {
+  return { createCliActionExecutorFromCredentials };
 });
 
 describe('happier session --json fail-safe', () => {
   it('prints a session_list error envelope (server_unreachable) on unexpected network errors', async () => {
-    mockAxiosGet.mockImplementation(() => {
+    createCliActionExecutorFromCredentials.mockReturnValue({ execute });
+    execute.mockImplementation(() => {
       const err: any = new Error('connect ECONNREFUSED 127.0.0.1:1');
       err.code = 'ECONNREFUSED';
       throw err;

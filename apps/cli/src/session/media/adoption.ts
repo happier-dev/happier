@@ -1,4 +1,7 @@
+import { createHash } from 'node:crypto';
+
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
+import { configuration } from '@/configuration';
 import {
   SessionMediaFailureV1Schema,
   SessionMediaItemV1Schema,
@@ -18,8 +21,15 @@ import {
   sanitizeSessionMediaFailureName,
   sanitizeSessionMediaIdentifier,
 } from './names';
+import { prepareSource } from './source';
+import {
+  extensionForSessionMediaMimeType,
+  sessionMediaKindForMimeType,
+  type SupportedSessionMediaMimeType,
+} from './mime';
 
 const SESSION_MEDIA_ENVELOPE_KIND = 'session_media.v1';
+const HISTORICAL_IMPORT_STAGED_MEDIA_KIND = 'external_session_staged_media.v1';
 const FORBIDDEN_DURABLE_MEDIA_KEYS = new Set([
   'data',
   'base64',
@@ -74,7 +84,7 @@ function readMediaOrigin(value: unknown): SessionMediaOrigin {
   const agentId = sanitizeSessionMediaIdentifier(readString(record?.agentId));
   const toolCallId = sanitizeSessionMediaIdentifier(readString(record?.toolCallId));
   const generationId = sanitizeSessionMediaIdentifier(readString(record?.generationId));
-  const providerEventId = sanitizeSessionMediaIdentifier(readString(record?.providerEventId));
+  const agentEventId = sanitizeSessionMediaIdentifier(readString(record?.agentEventId));
   const providerFileId = sanitizeSessionMediaIdentifier(readString(record?.providerFileId));
   const normalizedSource =
     source === 'user-upload'
@@ -91,7 +101,7 @@ function readMediaOrigin(value: unknown): SessionMediaOrigin {
     ...(agentId ? { agentId } : {}),
     ...(toolCallId ? { toolCallId } : {}),
     ...(generationId ? { generationId } : {}),
-    ...(providerEventId ? { providerEventId } : {}),
+    ...(agentEventId ? { agentEventId } : {}),
     ...(providerFileId ? { providerFileId } : {}),
   };
 }
@@ -175,7 +185,7 @@ function selectSessionMediaFailureFields(failure: SessionMediaFailureV1): Sessio
       ...(failure.origin.agentId ? { agentId: failure.origin.agentId } : {}),
       ...(failure.origin.toolCallId ? { toolCallId: failure.origin.toolCallId } : {}),
       ...(failure.origin.generationId ? { generationId: failure.origin.generationId } : {}),
-      ...(failure.origin.providerEventId ? { providerEventId: failure.origin.providerEventId } : {}),
+      ...(failure.origin.agentEventId ? { agentEventId: failure.origin.agentEventId } : {}),
       ...(failure.origin.providerFileId ? { providerFileId: failure.origin.providerFileId } : {}),
     },
     ...(failure.createdAtMs !== undefined ? { createdAtMs: failure.createdAtMs } : {}),
@@ -222,14 +232,14 @@ function sanitizeDurableSessionMediaItem(mediaRecord: Record<string, unknown>): 
     id: item.id,
     role: item.role,
     category: item.category,
-    mediaKind: 'image',
+    mediaKind: item.mediaKind,
     mimeType: item.mimeType,
     name: item.name,
     path: item.path,
     sizeBytes: item.sizeBytes,
     ...(item.sha256 ? { sha256: item.sha256 } : {}),
-    ...(item.width !== undefined ? { width: item.width } : {}),
-    ...(item.height !== undefined ? { height: item.height } : {}),
+    ...(item.mediaKind === 'image' && item.width !== undefined ? { width: item.width } : {}),
+    ...(item.mediaKind === 'image' && item.height !== undefined ? { height: item.height } : {}),
     ...(item.createdAtMs !== undefined ? { createdAtMs: item.createdAtMs } : {}),
     origin: readMediaOrigin(item.origin),
   };
@@ -241,6 +251,8 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
   messageLocalId: string;
   workingDirectory: string;
   sourceReadRoots?: readonly string[];
+  onCreatedWorkspacePath?: (path: string) => void;
+  onAdoptedStagedWorkspacePath?: (path: string) => void;
 }>): Promise<unknown> {
   const envelope = asRecord(params.envelope);
   if (!envelope || envelope.kind !== SESSION_MEDIA_ENVELOPE_KIND) return params.envelope;
@@ -261,6 +273,42 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
     const mediaRecord = asRecord(mediaValue);
     if (!mediaRecord) {
       failures.push(buildUnavailableMediaFailure({ index, mediaRecord: null, code: 'malformed_media_record' }));
+      continue;
+    }
+
+    const stagedSource = asRecord(mediaRecord.stagedSource);
+    if (
+      stagedSource?.kind === HISTORICAL_IMPORT_STAGED_MEDIA_KIND
+      && typeof stagedSource.data === 'string'
+      && typeof stagedSource.mimeType === 'string'
+    ) {
+      const category = readMediaCategory(mediaRecord.category);
+      const result = await persistSessionMedia({
+        workingDirectory: params.workingDirectory,
+        pathAllowanceRegistry,
+        input: {
+          sessionId: params.sessionId,
+          messageLocalId: params.messageLocalId,
+          role: readMediaRole(mediaRecord.role),
+          category,
+          source: {
+            kind: 'base64',
+            data: stagedSource.data,
+            mimeType: stagedSource.mimeType,
+            ...(readString(stagedSource.fileNameHint)
+              ? { fileNameHint: readString(stagedSource.fileNameHint)! }
+              : {}),
+          },
+          origin: readMediaOrigin(mediaRecord.origin),
+        },
+      });
+      if (result.success) {
+        adoptedMedia.push(result.item);
+        if (result.created) params.onCreatedWorkspacePath?.(result.item.path);
+        params.onAdoptedStagedWorkspacePath?.(result.item.path);
+      } else {
+        failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: result.code }));
+      }
       continue;
     }
 
@@ -319,6 +367,7 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
 
     if (result.success) {
       adoptedMedia.push(result.item);
+      if (result.created) params.onCreatedWorkspacePath?.(result.item.path);
     } else {
       failures.push(buildUnavailableMediaFailure({ index, mediaRecord, code: result.code }));
     }
@@ -348,12 +397,239 @@ async function adoptSessionMediaEnvelope(params: Readonly<{
   };
 }
 
+async function stageSessionMediaEnvelope(params: Readonly<{
+  envelope: unknown;
+  workingDirectory: string;
+  sourceReadRoots?: readonly string[];
+}>): Promise<unknown> {
+  const envelope = asRecord(params.envelope);
+  if (!envelope || envelope.kind !== SESSION_MEDIA_ENVELOPE_KIND) return params.envelope;
+  const payload = asRecord(envelope.payload);
+  const media = Array.isArray(payload?.media) ? payload.media : [];
+  if (media.length === 0) return params.envelope;
+
+  const sourceAccessRoots = [
+    params.workingDirectory,
+    ...(params.sourceReadRoots ?? []).filter((root) => typeof root === 'string' && root.trim().length > 0),
+  ];
+  const stagedMedia: unknown[] = [];
+  for (const mediaValue of media) {
+    const mediaRecord = asRecord(mediaValue);
+    if (!mediaRecord) {
+      stagedMedia.push(mediaValue);
+      continue;
+    }
+    const path = readString(mediaRecord.path);
+    const category = readMediaCategory(mediaRecord.category);
+    if (
+      !path
+      || isDurableSessionMediaWorkspacePath(path, category)
+      || isCanonicalSessionMediaWorkspacePath(path)
+      || /^https?:\/\//iu.test(path)
+      || /^data:/iu.test(path)
+    ) {
+      stagedMedia.push(mediaValue);
+      continue;
+    }
+    const prepared = await prepareSource({
+      source: path.startsWith('file://')
+        ? {
+            kind: 'local-uri',
+            uri: path,
+            ...(readString(mediaRecord.mimeType) ? { mimeType: readString(mediaRecord.mimeType)! } : {}),
+            ...(readString(mediaRecord.name) ? { fileNameHint: readString(mediaRecord.name)! } : {}),
+          }
+        : {
+            kind: 'local-file',
+            path,
+            ...(readString(mediaRecord.mimeType) ? { mimeType: readString(mediaRecord.mimeType)! } : {}),
+            ...(readString(mediaRecord.name) ? { fileNameHint: readString(mediaRecord.name)! } : {}),
+          },
+      workingDirectory: params.workingDirectory,
+      accessPolicy: { kind: 'restrictedRoots', roots: sourceAccessRoots },
+      maxBytes: configuration.filesUploadMaxFileBytes,
+      suggestedName: readString(mediaRecord.name) ?? undefined,
+    });
+    if (!('kind' in prepared)) {
+      throw new Error(prepared.code);
+    }
+    const {
+      path: _sourcePath,
+      stagedSource: _existingStagedSource,
+      ...mediaWithoutSource
+    } = mediaRecord;
+    stagedMedia.push({
+      ...mediaWithoutSource,
+      stagedSource: {
+        kind: HISTORICAL_IMPORT_STAGED_MEDIA_KIND,
+        data: prepared.bytes.toString('base64'),
+        mimeType: prepared.mimeType,
+        ...(prepared.suggestedName
+          ? { fileNameHint: prepared.suggestedName }
+          : {}),
+      },
+    });
+  }
+
+  return {
+    ...envelope,
+    payload: {
+      ...payload,
+      media: stagedMedia,
+    },
+  };
+}
+
+export async function stageSessionMediaMetadataForHistoricalImport(params: Readonly<{
+  raw: Record<string, unknown>;
+  workingDirectory: string | null;
+  sourceReadRoots?: readonly string[];
+}>): Promise<Record<string, unknown>> {
+  const meta = asRecord(params.raw.meta);
+  if (!meta) return params.raw;
+  if (!params.workingDirectory) {
+    const hasMedia = [meta.happier, meta.happierMedia].some((value) => {
+      const envelope = asRecord(value);
+      const payload = asRecord(envelope?.payload);
+      return envelope?.kind === SESSION_MEDIA_ENVELOPE_KIND
+        && Array.isArray(payload?.media)
+        && payload.media.length > 0;
+    });
+    if (hasMedia) {
+      throw new Error('historical_import_media_working_directory_unavailable');
+    }
+    return params.raw;
+  }
+  const nextMeta: Record<string, unknown> = { ...meta };
+  const primary = await stageSessionMediaEnvelope({
+    envelope: nextMeta.happier,
+    workingDirectory: params.workingDirectory,
+    sourceReadRoots: params.sourceReadRoots,
+  });
+  const secondary = await stageSessionMediaEnvelope({
+    envelope: nextMeta.happierMedia,
+    workingDirectory: params.workingDirectory,
+    sourceReadRoots: params.sourceReadRoots,
+  });
+  if (primary === undefined) {
+    delete nextMeta.happier;
+  } else {
+    nextMeta.happier = primary;
+  }
+  if (secondary === undefined) {
+    delete nextMeta.happierMedia;
+  } else {
+    nextMeta.happierMedia = secondary;
+  }
+  return { ...params.raw, meta: nextMeta };
+}
+
+export function countStagedSessionMediaMetadata(raw: Record<string, unknown>): number {
+  const meta = asRecord(raw.meta);
+  if (!meta) return 0;
+  let count = 0;
+  for (const value of [meta.happier, meta.happierMedia]) {
+    const envelope = asRecord(value);
+    const payload = asRecord(envelope?.payload);
+    const media = Array.isArray(payload?.media) ? payload.media : [];
+    for (const mediaValue of media) {
+      const stagedSource = asRecord(asRecord(mediaValue)?.stagedSource);
+      if (stagedSource?.kind === HISTORICAL_IMPORT_STAGED_MEDIA_KIND) count += 1;
+    }
+  }
+  return count;
+}
+
+function projectStagedEnvelopeForValidation(params: Readonly<{
+  envelope: unknown;
+  sessionId: string;
+  messageLocalId: string;
+}>): unknown {
+  const envelope = asRecord(params.envelope);
+  if (!envelope || envelope.kind !== SESSION_MEDIA_ENVELOPE_KIND) return params.envelope;
+  const payload = asRecord(envelope.payload);
+  const media = Array.isArray(payload?.media) ? payload.media : [];
+  return {
+    ...envelope,
+    payload: {
+      ...payload,
+      media: media.map((mediaValue) => {
+        const mediaRecord = asRecord(mediaValue);
+        const stagedSource = asRecord(mediaRecord?.stagedSource);
+        if (
+          !mediaRecord
+          || stagedSource?.kind !== HISTORICAL_IMPORT_STAGED_MEDIA_KIND
+          || typeof stagedSource.data !== 'string'
+          || typeof stagedSource.mimeType !== 'string'
+        ) {
+          return mediaValue;
+        }
+        const bytes = Buffer.from(stagedSource.data, 'base64');
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        const category = readMediaCategory(mediaRecord.category);
+        const transferCategory = category === 'attachment'
+          ? 'messages'
+          : category === 'tool-artifact'
+            ? 'artifacts'
+            : 'generated';
+        const mimeType = stagedSource.mimeType as SupportedSessionMediaMimeType;
+        const extension = extensionForSessionMediaMimeType(mimeType);
+        const conservativeFileName = `${'x'.repeat(220)}${extension}`;
+        return {
+          id: sha256.slice(0, 16),
+          role: readMediaRole(mediaRecord.role),
+          category,
+          mediaKind: sessionMediaKindForMimeType(mimeType),
+          mimeType,
+          // Validation must never undercount the publish-time socket item. Persisted names are
+          // capped at 200 characters plus hash/collision suffix; this private projection stays
+          // deliberately longer and includes the largest JSON-width image dimensions.
+          name: conservativeFileName,
+          path: `.happier/uploads/${transferCategory}/${params.sessionId}/${params.messageLocalId}/${sha256.slice(0, 12)}-${conservativeFileName}`,
+          sizeBytes: bytes.byteLength,
+          sha256,
+          width: Number.MAX_SAFE_INTEGER,
+          height: Number.MAX_SAFE_INTEGER,
+          origin: readMediaOrigin(mediaRecord.origin),
+        };
+      }),
+    },
+  };
+}
+
+export function projectSessionMediaMetadataForHistoricalImportValidation(params: Readonly<{
+  raw: Record<string, unknown>;
+  sessionId: string;
+  messageLocalId: string;
+}>): Record<string, unknown> {
+  const meta = asRecord(params.raw.meta);
+  if (!meta) return params.raw;
+  return {
+    ...params.raw,
+    meta: {
+      ...meta,
+      happier: projectStagedEnvelopeForValidation({
+        envelope: meta.happier,
+        sessionId: params.sessionId,
+        messageLocalId: params.messageLocalId,
+      }),
+      happierMedia: projectStagedEnvelopeForValidation({
+        envelope: meta.happierMedia,
+        sessionId: params.sessionId,
+        messageLocalId: params.messageLocalId,
+      }),
+    },
+  };
+}
+
 export async function adoptSessionMediaMetadataForManagedSession(params: Readonly<{
   raw: Record<string, unknown>;
   sessionId: string;
   messageLocalId: string;
   workingDirectory: string | null;
   sourceReadRoots?: readonly string[];
+  onCreatedWorkspacePath?: (path: string) => void;
+  onAdoptedStagedWorkspacePath?: (path: string) => void;
 }>): Promise<Record<string, unknown>> {
   if (!params.workingDirectory) return params.raw;
   const meta = asRecord(params.raw.meta);
@@ -366,6 +642,8 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     messageLocalId: params.messageLocalId,
     workingDirectory: params.workingDirectory,
     sourceReadRoots: params.sourceReadRoots,
+    onCreatedWorkspacePath: params.onCreatedWorkspacePath,
+    onAdoptedStagedWorkspacePath: params.onAdoptedStagedWorkspacePath,
   });
   const secondary = await adoptSessionMediaEnvelope({
     envelope: nextMeta.happierMedia,
@@ -373,6 +651,8 @@ export async function adoptSessionMediaMetadataForManagedSession(params: Readonl
     messageLocalId: params.messageLocalId,
     workingDirectory: params.workingDirectory,
     sourceReadRoots: params.sourceReadRoots,
+    onCreatedWorkspacePath: params.onCreatedWorkspacePath,
+    onAdoptedStagedWorkspacePath: params.onAdoptedStagedWorkspacePath,
   });
 
   if (primary === undefined) {

@@ -1,11 +1,163 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { primeAgentStateForUi, reportSessionToDaemonIfRunning } from '@/agent/runtime/startupSideEffects';
+import {
+  admitPersistedTakeoverBeforeRuntime,
+  primeAgentStateForUi,
+  reportPersistedTakeoverRuntimeBound,
+  reportSessionToDaemonIfRunning,
+} from '@/agent/runtime/startupSideEffects';
 import type { Metadata } from '@/api/types';
 
 const metadataStub = {} as Metadata;
 
 describe('startup side effects: daemon session reporting retry', () => {
+  it('requires one exact daemon acknowledgement for persisted-takeover admission', async () => {
+    const notifyDaemonSessionStartedFn = vi.fn(async () => ({ status: 'ok' as const }));
+
+    await admitPersistedTakeoverBeforeRuntime({
+      sessionId: 'session-takeover',
+      metadata: { startedBy: 'daemon' } as Metadata,
+      correlation: {
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      },
+    }, {
+      notifyDaemonSessionStartedFn,
+      reportAttemptTimeoutMs: 1_234,
+    });
+
+    expect(notifyDaemonSessionStartedFn).toHaveBeenCalledWith(
+      'session-takeover',
+      { startedBy: 'daemon' },
+      {
+        timeoutMs: 1_234,
+        persistedTakeoverAdmission: {
+          operationId: 'operation-1',
+          attemptId: 'attempt-1',
+          phase: 'admit',
+        },
+      },
+    );
+  });
+
+  it('reports runtime_bound through the same exact private request', async () => {
+    const notifyDaemonSessionStartedFn = vi.fn(async () => ({ status: 'ok' as const }));
+
+    await reportPersistedTakeoverRuntimeBound({
+      sessionId: 'session-takeover',
+      metadata: { startedBy: 'daemon' } as Metadata,
+      correlation: {
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      },
+    }, {
+      notifyDaemonSessionStartedFn,
+      reportAttemptTimeoutMs: 1_234,
+    });
+
+    expect(notifyDaemonSessionStartedFn).toHaveBeenCalledWith(
+      'session-takeover',
+      { startedBy: 'daemon' },
+      {
+        timeoutMs: 1_234,
+        persistedTakeoverAdmission: {
+          operationId: 'operation-1',
+          attemptId: 'attempt-1',
+          phase: 'runtime_bound',
+        },
+      },
+    );
+  });
+
+  it('retries one ambiguous runtime_bound response with the exact same attempt', async () => {
+    const notifyDaemonSessionStartedFn = vi.fn()
+      .mockResolvedValueOnce({
+        error: 'Request failed: /session-started, response ended before acknowledgement',
+      })
+      .mockResolvedValueOnce({ status: 'ok' as const });
+    const report = {
+      sessionId: 'session-takeover',
+      metadata: { startedBy: 'daemon' } as Metadata,
+      correlation: {
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      },
+    };
+
+    await reportPersistedTakeoverRuntimeBound(report, {
+      notifyDaemonSessionStartedFn,
+      reportAttemptTimeoutMs: 1_234,
+    });
+
+    expect(notifyDaemonSessionStartedFn).toHaveBeenCalledTimes(2);
+    expect(notifyDaemonSessionStartedFn).toHaveBeenNthCalledWith(
+      1,
+      'session-takeover',
+      { startedBy: 'daemon' },
+      {
+        timeoutMs: 1_234,
+        persistedTakeoverAdmission: {
+          operationId: 'operation-1',
+          attemptId: 'attempt-1',
+          phase: 'runtime_bound',
+        },
+      },
+    );
+    expect(notifyDaemonSessionStartedFn).toHaveBeenNthCalledWith(
+      2,
+      'session-takeover',
+      { startedBy: 'daemon' },
+      {
+        timeoutMs: 1_234,
+        persistedTakeoverAdmission: {
+          operationId: 'operation-1',
+          attemptId: 'attempt-1',
+          phase: 'runtime_bound',
+        },
+      },
+    );
+  });
+
+  it('fails runtime_bound closed after one bounded identical retry', async () => {
+    const notifyDaemonSessionStartedFn = vi.fn(async () => ({
+      error: 'Request failed: /session-started, response ended before acknowledgement',
+    }));
+
+    await expect(reportPersistedTakeoverRuntimeBound({
+      sessionId: 'session-takeover',
+      metadata: { startedBy: 'daemon' } as Metadata,
+      correlation: {
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      },
+    }, {
+      notifyDaemonSessionStartedFn,
+      reportAttemptTimeoutMs: 1_234,
+    })).rejects.toMatchObject({
+      code: 'persisted_takeover_admission_ambiguous',
+    });
+
+    expect(notifyDaemonSessionStartedFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails persisted-takeover admission closed on a 503 or ambiguous response', async () => {
+    await expect(admitPersistedTakeoverBeforeRuntime({
+      sessionId: 'session-takeover',
+      metadata: { startedBy: 'daemon' } as Metadata,
+      correlation: {
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      },
+    }, {
+      notifyDaemonSessionStartedFn: async () => ({
+        error: 'Request failed: /session-started, HTTP 503',
+        errorCode: 'persisted_takeover_admission_failed',
+      }),
+    })).rejects.toMatchObject({
+      code: 'persisted_takeover_admission_failed',
+    });
+  });
+
   it('does not emit unhandledRejection when priming agent state fails', async () => {
     const onUnhandled = vi.fn();
     process.on('unhandledRejection', onUnhandled);
@@ -79,7 +231,7 @@ describe('startup side effects: daemon session reporting retry', () => {
   });
 
   it('uses a bounded HTTP timeout per daemon-report attempt', async () => {
-    const observedTimeouts: Array<number | undefined> = [];
+    const observedTimeouts: Array<number | null | undefined> = [];
 
     await reportSessionToDaemonIfRunning(
       { sessionId: 'session-3', metadata: metadataStub },
@@ -158,5 +310,47 @@ describe('startup side effects: daemon session reporting retry', () => {
       if (previousAutostart === undefined) delete process.env.HAPPIER_SESSION_AUTOSTART_DAEMON;
       else process.env.HAPPIER_SESSION_AUTOSTART_DAEMON = previousAutostart;
     }
+  });
+
+  it('throws after bounded retries when daemon readiness acknowledgement is required', async () => {
+    let calls = 0;
+    let now = 0;
+
+    await expect(reportSessionToDaemonIfRunning(
+      {
+        sessionId: 'session-required-readiness',
+        metadata: { startedBy: 'daemon' } as Metadata,
+        requireDaemonAck: true,
+      },
+      {
+        notifyDaemonSessionStartedFn: async () => {
+          calls++;
+          return { error: 'Request failed with status code 503' };
+        },
+        sleepFn: async (ms) => {
+          now += ms;
+        },
+        nowFn: () => now,
+        retryTimeoutMs: 200,
+        retryIntervalMs: 100,
+      },
+    )).rejects.toThrow('Daemon session readiness was not acknowledged');
+
+    expect(calls).toBe(3);
+  });
+
+  it('keeps terminal and attach-style daemon reporting best effort by default', async () => {
+    await expect(reportSessionToDaemonIfRunning(
+      {
+        sessionId: 'session-best-effort',
+        metadata: { startedBy: 'terminal' } as Metadata,
+      },
+      {
+        notifyDaemonSessionStartedFn: async () => {
+          throw new Error('non-transient observer failure');
+        },
+        retryTimeoutMs: 0,
+      },
+    )).resolves.toBeUndefined();
   });
 });

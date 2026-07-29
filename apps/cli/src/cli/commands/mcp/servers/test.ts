@@ -20,6 +20,7 @@ export async function cmdMcpServersTest(
   deps: McpCommandDeps,
   opts: Readonly<{ json: boolean }>,
 ): Promise<void> {
+  const commandEnv = deps.env ?? process.env;
   const credentials = await deps.readCredentials();
   if (!credentials) {
     if (opts.json) {
@@ -63,7 +64,7 @@ export async function cmdMcpServersTest(
       savedSecretsById,
       settingsSecretsKey,
       settingsSecretsReadKeys,
-      processEnv: process.env,
+      processEnv: commandEnv,
       tmpDir: null,
       strictMode: true,
     });
@@ -71,7 +72,7 @@ export async function cmdMcpServersTest(
     const config = materialized.mcpServers[server.name];
     if (!config) throw new Error('materialize_missing_config');
 
-    const tools = await deps.probeMcpStdioServerTools({ config, baseEnv: process.env });
+    const tools = await deps.probeMcpStdioServerTools({ config, baseEnv: commandEnv });
     const toolNames = tools.map((t) => t.name);
     const durationMs = Math.max(0, deps.nowMs() - startedAt);
 

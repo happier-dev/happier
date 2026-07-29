@@ -45,7 +45,7 @@ describe('resolveJunctionFreeCurrentPath', () => {
     }
   });
 
-  it('does not treat path-shaped marker contents as a version id', async () => {
+  it('rejects path-shaped marker contents instead of resolving outside versions', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-junction-free-current-unsafe-'));
     const env = { ...process.env, HAPPIER_HOME_DIR: homeDir };
     const layout = resolveFirstPartyInstallLayout({
@@ -58,7 +58,9 @@ describe('resolveJunctionFreeCurrentPath', () => {
       await mkdir(layout.installRoot, { recursive: true });
       await writeFile(join(layout.installRoot, 'current.version'), '..\\outside\n', 'utf8');
 
-      expect(resolveJunctionFreeCurrentPath(layout)).toBe(layout.currentPath);
+      expect(() => resolveJunctionFreeCurrentPath(layout)).toThrow(
+        expect.objectContaining({ code: 'FIRST_PARTY_VERSION_ID_INVALID' }),
+      );
     } finally {
       await rm(homeDir, { recursive: true, force: true });
     }

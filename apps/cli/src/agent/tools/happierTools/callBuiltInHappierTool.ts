@@ -5,6 +5,7 @@ import { createActionToolExecutorBridge } from './createActionToolExecutorBridge
 import { createChangeTitleToolHandler } from './createChangeTitleToolHandler';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 
 export async function callBuiltInHappierTool(params: Readonly<{
   credentials: Credentials;
@@ -44,11 +45,19 @@ export async function callBuiltInHappierTool(params: Readonly<{
     rawSession,
   });
   const actionsSettings = readActionsSettingsFromEnv();
+  const daemonCatalog = await readDaemonPluginCatalog().catch(() => ({
+    kind: 'unavailable' as const,
+    code: 'daemon_unavailable',
+  }));
+  const pluginToolCatalog = daemonCatalog.kind === 'available'
+    ? daemonCatalog.tools
+    : Object.freeze([]);
   const actionToolBridge = createActionToolExecutorBridge({
     executor,
     isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'cli' }),
     surface: 'cli',
     actionsSettings,
+    pluginToolCatalog,
   });
 
   return await dispatchBuiltInHappierTool({
@@ -57,6 +66,7 @@ export async function callBuiltInHappierTool(params: Readonly<{
     sessionId,
     surface: 'cli',
     actionsSettings,
+    pluginToolCatalog,
     deps: {
       changeTitle: createChangeTitleToolHandler({ executor, surface: 'cli' }),
       executeActionByToolName: actionToolBridge.executeActionByToolName,

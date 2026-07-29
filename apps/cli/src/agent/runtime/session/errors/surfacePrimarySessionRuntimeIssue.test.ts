@@ -20,7 +20,7 @@ describe('surfacePrimarySessionRuntimeIssue', () => {
       scope: 'primary_session',
       status: 'failed',
       source: 'agent_status_error',
-      provider: 'gemini',
+      agentId: 'gemini',
       occurredAt: 100,
     });
     expect(JSON.stringify(issue)).not.toContain('sk-123');

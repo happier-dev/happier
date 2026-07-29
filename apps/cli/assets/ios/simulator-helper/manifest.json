@@ -1,0 +1,14 @@
+{
+  "artifact": "happier-ios-simulator-helper",
+  "status": "blocked_missing_signed_notarized_helper",
+  "signature": "developer_id_notarized_required",
+  "helperDistribution": "development-build",
+  "version": "0.0.0-unavailable",
+  "sha256": null,
+  "evidence": {
+    "signingIdentity": null,
+    "notarizationSubmissionId": null,
+    "stapled": false,
+    "builtAt": null
+  }
+}

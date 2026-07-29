@@ -11,7 +11,6 @@ export {
   pickSessionRuntimeLocalMetadata,
   type SessionRuntimeLocalMetadata,
 } from './metadata/local';
-export { createProviderSessionIdentityPublisher } from './publication/providerSession';
 export {
   resolveSessionRuntimeIdentityFallback,
   type SessionRuntimeIdentityFallbackResult,

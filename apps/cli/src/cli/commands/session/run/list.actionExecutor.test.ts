@@ -2,18 +2,60 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { captureConsoleJsonOutput } from '@/testkit/logger/captureOutput';
 
-const execute = vi.fn();
-const createCliActionExecutorFromCredentials = vi.fn(() => ({ execute }));
+const resolveSessionTransportContext = vi.fn();
+const listExecutionRuns = vi.fn();
+const createCliActionExecutorFromCredentials = vi.fn(() => {
+  throw new Error('session run list should not use the action executor');
+});
 
 vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
   createCliActionExecutorFromCredentials,
 }));
 
-describe('happier session run list (action executor)', () => {
-  it('routes through ActionExecutor with the expected action id and args', async () => {
-    execute.mockResolvedValueOnce({
+vi.mock('@/session/services/resolveSessionTransportContext', () => ({
+  resolveSessionTransportContext,
+}));
+
+vi.mock('@/session/services/executionRuns', () => ({
+  listExecutionRuns,
+}));
+
+describe('happier session run list', () => {
+  it('routes read-only list requests directly through the session read service', async () => {
+    const ctx = {
+      encryptionKey: new Uint8Array([1, 2, 3, 4]),
+      encryptionVariant: 'legacy',
+    } as const;
+    resolveSessionTransportContext.mockResolvedValueOnce({
       ok: true,
-      result: { ok: true, runs: [] },
+      sessionId: 'sess-1',
+      rawSession: {
+        id: 'sess-1',
+        active: false,
+        metadata: {},
+      },
+      ctx,
+      mode: 'plain',
+    });
+    listExecutionRuns.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        runs: [
+          {
+            runId: 'run-1',
+            callId: 'call-1',
+            sidechainId: 'call-1',
+            intent: 'review',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+            permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral',
+            runClass: 'bounded',
+            ioMode: 'request_response',
+            status: 'running',
+            startedAtMs: 1,
+          },
+        ],
+      },
     });
 
     const { handleSessionCommand } = await import('../handleSessionCommand');
@@ -30,21 +72,34 @@ describe('happier session run list (action executor)', () => {
         },
       );
 
-      expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
-      expect(execute).toHaveBeenCalledWith(
-        'execution.run.list',
-        {
-          sessionId: 'sess-1',
-          backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      expect(resolveSessionTransportContext).toHaveBeenCalledWith({
+        credentials: {
+          token: 'token_test',
+          encryption: { type: 'legacy', secret: expect.any(Uint8Array) },
+        },
+        idOrPrefix: 'sess-1',
+      });
+      expect(listExecutionRuns).toHaveBeenCalledWith({
+        token: 'token_test',
+        sessionId: 'sess-1',
+        mode: 'plain',
+        ctx,
+        request: {
+          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
           status: 'running',
           limit: 5,
         },
-        { surface: 'cli', defaultSessionId: null },
-      );
+        skipLiveRpc: true,
+      });
+      expect(createCliActionExecutorFromCredentials).not.toHaveBeenCalled();
 
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
         kind: 'session_run_list',
+        data: expect.objectContaining({
+          sessionId: 'sess-1',
+          runs: [expect.objectContaining({ runId: 'run-1' })],
+        }),
       }));
     } finally {
       output.restore();

@@ -170,6 +170,18 @@ export function evaluatePredictiveSoftSwitchPolicy(input: Readonly<{
   return { status: 'allow' };
 }
 
+/**
+ * Shared-group providers are daemon-authoritative and cannot answer a per-runtime identity
+ * probe. Unknown or partial capabilities stay conservative and require live proof.
+ */
+export function runtimeAuthApplyRequiresLiveIdentityProbe(
+  capability: ConnectedServiceRuntimeAuthApplyCapability | null | undefined,
+): boolean {
+  const directLiveHotAuth = capability?.directLiveHotAuth;
+  if (!directLiveHotAuth || typeof directLiveHotAuth !== 'object') return true;
+  return directLiveHotAuth.requiresExactRuntimeIdentity === true;
+}
+
 export function evaluatePredictiveSoftSwitchSessionApplyPolicy(input: Readonly<{
   reason: PredictiveSoftSwitchReason;
   sessionId?: string | null;

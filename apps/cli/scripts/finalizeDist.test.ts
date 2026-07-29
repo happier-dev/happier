@@ -53,6 +53,26 @@ describe('finalizeDist', () => {
     }
   });
 
+  it('leaves the previous dist in place when the staged executable entrypoint is blank', () => {
+    const packageRoot = createTempDirSync('happier-cli-finalize-dist-empty-entrypoint-');
+    try {
+      const stagingDir = join(packageRoot, 'dist.staging.empty');
+      const distDir = join(packageRoot, 'dist');
+      mkdirSync(stagingDir, { recursive: true });
+      mkdirSync(distDir, { recursive: true });
+      writeFileSync(join(stagingDir, 'index.mjs'), '', 'utf8');
+      writeFileSync(join(stagingDir, 'lib.mjs'), 'export const library = true;\n', 'utf8');
+      writeFileSync(join(distDir, 'index.mjs'), 'export const previous = true;\n', 'utf8');
+
+      expect(() => finalizeDist({ packageRoot, stagingDir })).toThrow(/empty_entrypoint/);
+
+      expect(readFileSync(join(distDir, 'index.mjs'), 'utf8')).toBe('export const previous = true;\n');
+      expect(existsSync(join(distDir, '.build-manifest.json'))).toBe(false);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('does not promote staged output when dist changed after the build started', () => {
     const packageRoot = createTempDirSync('happier-cli-finalize-dist-current-guard-');
     try {

@@ -47,6 +47,7 @@ function group(activeProfileId: string, generation: number): ConnectedServiceAut
         },
         activeProfileId,
         generation,
+        runtimeStateRevision: 0,
         state: { v: 1 },
         members: [
             {
@@ -78,6 +79,45 @@ function group(activeProfileId: string, generation: number): ConnectedServiceAut
 }
 
 describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
+    it('preserves exact provider-adoption evidence for immutable generation recipients', async () => {
+        const exactVerification = {
+            status: 'verified' as const,
+            proofStrength: 'exact' as const,
+            source: 'codex_app_server',
+            providerAccountId: 'acct-backup',
+        };
+        const coordinator = createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator({
+            api: {
+                getConnectedServiceAuthGroup: vi.fn(async () => group('backup', 7)),
+                updateConnectedServiceAuthGroupActiveProfile: vi.fn(),
+            },
+            runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+            quotaFreshnessMs: 60_000,
+            nowMs: () => 1_000,
+            restartSession: vi.fn(async () => ({
+                ok: true as const,
+                action: 'hot_applied' as const,
+                providerApplication: 'applied' as const,
+                verificationByServiceId: { 'openai-codex': exactVerification },
+            })),
+        });
+
+        await expect(coordinator.applyCommittedGeneration({
+            sessionId: 'session-1',
+            serviceId: 'openai-codex',
+            groupId: 'main',
+            activeProfileId: 'backup',
+            generation: 7,
+            reason: 'manual',
+        })).resolves.toMatchObject({
+            status: 'observed_generation',
+            activeProfileId: 'backup',
+            generation: 7,
+            providerApplication: 'applied',
+            verificationByServiceId: { 'openai-codex': exactVerification },
+        });
+    });
+
     it('probes stale group quota snapshots before quota-driven soft-threshold switching', async () => {
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
         runtimeQuotaSnapshots.recordSnapshot({
@@ -135,20 +175,13 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
         }));
     });
 
-    it('hydrates persisted group quota snapshots before probing for quota-driven switching', async () => {
+    it('keeps the current profile when probing produces no fresh candidate quota snapshot', async () => {
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
         runtimeQuotaSnapshots.recordSnapshot({
             serviceId: 'openai-codex',
             groupId: 'main',
             profileId: 'primary',
             snapshot: quotaSnapshot('primary', 5),
-        });
-        const hydratePersistedQuotaSnapshotsForGroup = vi.fn(async () => {
-            runtimeQuotaSnapshots.recordProfileSnapshot({
-                serviceId: 'openai-codex',
-                profileId: 'backup',
-                snapshot: quotaSnapshot('backup', 80),
-            });
         });
         const probeGroupQuotaSnapshots = vi.fn(async () => {});
         const api = {
@@ -164,7 +197,6 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
             nowMs: () => 1_000,
             restartSession,
             quotaCoordinator: {
-                hydratePersistedQuotaSnapshotsForGroup,
                 probeGroupQuotaSnapshots,
             },
         });
@@ -175,15 +207,16 @@ describe('createQuotaDrivenConnectedServiceAuthGroupSwitchCoordinator', () => {
             groupId: 'main',
             reason: 'soft_threshold',
         })).resolves.toMatchObject({
-            status: 'switched',
-            activeProfileId: 'backup',
-            generation: 2,
+            status: 'observed_generation',
+            activeProfileId: 'primary',
+            generation: 1,
         });
-        expect(hydratePersistedQuotaSnapshotsForGroup).toHaveBeenCalledWith({
+        expect(probeGroupQuotaSnapshots).toHaveBeenCalledWith({
             serviceId: 'openai-codex',
             groupId: 'main',
-            profileIds: ['primary', 'backup'],
+            profileIds: ['backup'],
+            reason: 'soft_threshold',
         });
-        expect(probeGroupQuotaSnapshots).not.toHaveBeenCalled();
+        expect(restartSession).not.toHaveBeenCalled();
     });
 });

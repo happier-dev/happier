@@ -2,7 +2,7 @@ import { appendFile, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createPluginDisposableRegistry } from '@/plugins/runtime/lifecycle/disposables';
 
@@ -400,6 +400,58 @@ describe('createPluginTranscriptFileFollowService', () => {
                 { line: '{"one":1}', sourcePath, sequence: 1 },
                 { line: 'not-json', sourcePath, sequence: 2 },
             ]);
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('redrives a rejected plugin line through the unchanged live follow handle', async () => {
+        const root = await createTempRoot('happier-plugin-file-follow-rejected-line-');
+        const filePath = join(root, 'session.jsonl');
+        await writeFile(filePath, '{"seq":1}\n{"seq":2}\n{"seq":3}\n', 'utf8');
+        const attempts: Array<Readonly<{ line: string; sequence: number }>> = [];
+        const acknowledged: string[] = [];
+        const errors: unknown[] = [];
+        let rejectSecond = true;
+        const service = createPluginTranscriptFileFollowService({
+            allowedPathRoots: [root],
+            watchFile: () => () => undefined,
+            policy: {
+                activeBurstPollIntervalMs: 25,
+                activeFallbackPollIntervalMs: 25,
+                idleFallbackPollIntervalMs: 25,
+            },
+        });
+
+        try {
+            const handle = await service.follow({
+                path: filePath,
+                startAt: 'beginning',
+                onLine: async ({ line, sequence }) => {
+                    attempts.push({ line, sequence });
+                    if (line === '{"seq":2}' && rejectSecond) {
+                        rejectSecond = false;
+                        throw new Error('transient plugin delivery rejection');
+                    }
+                    acknowledged.push(line);
+                },
+                onError: (error) => {
+                    errors.push(error);
+                },
+            });
+
+            await vi.waitFor(() => {
+                expect(acknowledged).toEqual(['{"seq":1}', '{"seq":2}', '{"seq":3}']);
+            });
+            await handle.close();
+
+            expect(attempts).toEqual([
+                { line: '{"seq":1}', sequence: 1 },
+                { line: '{"seq":2}', sequence: 2 },
+                { line: '{"seq":2}', sequence: 3 },
+                { line: '{"seq":3}', sequence: 4 },
+            ]);
+            expect(errors).toHaveLength(1);
         } finally {
             await rm(root, { recursive: true, force: true });
         }

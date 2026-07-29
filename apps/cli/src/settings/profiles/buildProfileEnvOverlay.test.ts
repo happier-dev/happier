@@ -54,14 +54,16 @@ describe('buildProfileEnvOverlay', () => {
         defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: { 'agent:claude': true },
         createdAt: 1, updatedAt: 1,
       },
-      accountSettings: {},
-      credentials: makeCredentials(),
       processEnv: {},
       promptSecretFn: async () => { throw new Error('must not prompt'); },
-      startedBy: 'terminal',
       reservedEnvironmentVariableNames: new Set(),
+      requiredSecretRequirementNamesMissingBinding: new Set(),
     });
-    expect(result).toEqual({ profileId: 'slim', envOverlayExpanded: { TEAM_FLAG: 'on' }, permissionModeSeed: 'acceptEdits' });
+    expect(result).toEqual({
+      envOverlayRaw: { TEAM_FLAG: '${TEAM_FLAG_SOURCE:-on}' },
+      foregroundSatisfiedSecretRequirementNames: [],
+      permissionModeSeed: 'acceptEdits',
+    });
   });
   it('exports buildProfileEnvOverlay', async () => {
     await expect(import('./buildProfileEnvOverlay.js')).resolves.toMatchObject({
@@ -79,9 +81,9 @@ describe('buildProfileEnvOverlay', () => {
         defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
         createdAt: 1, updatedAt: 1,
       },
-      accountSettings: {}, credentials: makeCredentials(), processEnv: {}, promptSecretFn: null,
-      startedBy: 'terminal',
+      processEnv: {}, promptSecretFn: null,
       reservedEnvironmentVariableNames: new Set(['HAPPIER_CODEX_PROVIDER_API_KEY', 'CODEX_API_KEY']),
+      requiredSecretRequirementNamesMissingBinding: new Set(),
     })).rejects.toThrow(/reserved/);
     await expect(buildProfileEnvOverlay({
       agentId: 'codex',
@@ -92,42 +94,46 @@ describe('buildProfileEnvOverlay', () => {
         defaultPermissionModeByTargetKey: {}, defaultPersistenceModeByTargetKey: {}, compatibilityByTargetKey: {},
         createdAt: 1, updatedAt: 1,
       },
-      accountSettings: {}, credentials: makeCredentials(), processEnv: {}, promptSecretFn: null,
-      startedBy: 'terminal',
+      processEnv: {}, promptSecretFn: null,
       reservedEnvironmentVariableNames: new Set(['HAPPIER_CODEX_PROVIDER_API_KEY', 'CODEX_API_KEY']),
+      requiredSecretRequirementNamesMissingBinding: new Set(['CODEX_API_KEY']),
     })).rejects.toThrow(/reserved/);
   });
 
   it('uses secrets from process env when present and expands templates against injected overlay', async () => {
-    const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
+    const {
+      buildProfileEnvOverlay,
+      expandProfileEnvOverlay,
+    } = await import('./buildProfileEnvOverlay.js');
 
     const profile = makeDeepSeekProfile();
-    const credentials = makeCredentials();
-
     const result = await buildProfileEnvOverlay({
       agentId: 'claude',
       profile,
-      accountSettings: {},
-      credentials,
       processEnv: { DEEPSEEK_AUTH_TOKEN: 'sk-from-env' },
       promptSecretFn: null,
-      startedBy: 'terminal',
       reservedEnvironmentVariableNames: new Set(),
+      requiredSecretRequirementNamesMissingBinding:
+        new Set(['DEEPSEEK_AUTH_TOKEN']),
     });
 
-    expect(result.profileId).toBe('deepseek');
-    expect(result.envOverlayExpanded.DEEPSEEK_AUTH_TOKEN).toBe('sk-from-env');
-    expect(result.envOverlayExpanded.ANTHROPIC_AUTH_TOKEN).toBe('sk-from-env');
-    expect(result.envOverlayExpanded.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic');
-    expect(result.envOverlayExpanded.API_TIMEOUT_MS).toBe('600000');
+    const expanded = expandProfileEnvOverlay({
+      profile,
+      envOverlayRaw: result.envOverlayRaw,
+      processEnv: { DEEPSEEK_AUTH_TOKEN: 'sk-from-env' },
+      resolvedEnvironment: {},
+    });
+    expect(expanded.DEEPSEEK_AUTH_TOKEN).toBe('sk-from-env');
+    expect(expanded.ANTHROPIC_AUTH_TOKEN).toBe('sk-from-env');
+    expect(expanded.ANTHROPIC_BASE_URL).toBe('https://api.deepseek.com/anthropic');
+    expect(expanded.API_TIMEOUT_MS).toBe('600000');
     expect(result.permissionModeSeed).toBe('default');
   });
 
-  it('uses saved secret bindings when env is missing (no prompt)', async () => {
+  it('defers a saved secret binding to the daemon without prompting or decrypting', async () => {
     const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
 
     const profile = makeDeepSeekProfile();
-    const credentials = makeCredentials();
     const promptSecretFn = vi.fn(async () => {
       throw new Error('prompt should not be called');
     });
@@ -135,51 +141,57 @@ describe('buildProfileEnvOverlay', () => {
     const result = await buildProfileEnvOverlay({
       agentId: 'claude',
       profile,
-      accountSettings: {
-        secrets: [
-          {
-            id: 's1',
-            name: 'DeepSeek',
-            kind: 'apiKey',
-            encryptedValue: { _isSecretValue: true, value: 'sk-from-saved' },
-            createdAt: 0,
-            updatedAt: 0,
-          },
-        ],
-        secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 's1' } },
-      },
-      credentials,
       processEnv: {},
       promptSecretFn,
-      startedBy: 'terminal',
       reservedEnvironmentVariableNames: new Set(),
+      requiredSecretRequirementNamesMissingBinding: new Set(),
     });
 
     expect(promptSecretFn).not.toHaveBeenCalled();
-    expect(result.envOverlayExpanded.DEEPSEEK_AUTH_TOKEN).toBe('sk-from-saved');
-    expect(result.envOverlayExpanded.ANTHROPIC_AUTH_TOKEN).toBe('sk-from-saved');
+    expect(result.envOverlayRaw).not.toHaveProperty(
+      'DEEPSEEK_AUTH_TOKEN',
+    );
+    expect(result.envOverlayRaw.ANTHROPIC_AUTH_TOKEN).toBe(
+      '${DEEPSEEK_AUTH_TOKEN}',
+    );
   });
 
-  it('refuses a padded SavedSecret id instead of trimming it into a different binding', async () => {
+  it('lets the daemon identify a padded SavedSecret id as a missing binding', async () => {
     const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
+    const { readForegroundProfileRequiredSecretNamesMissingBinding } =
+      await import(
+        '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment'
+      );
+    const profile = makeDeepSeekProfile();
+    const missing =
+      readForegroundProfileRequiredSecretNamesMissingBinding({
+        profile,
+        accountSettings: {
+          secrets: [{
+            id: 's1', name: 'DeepSeek', kind: 'apiKey',
+            encryptedValue: { _isSecretValue: true, value: 'must-not-resolve' },
+            createdAt: 0, updatedAt: 0,
+          }],
+          secretBindingsByProfileId: {
+            deepseek: { DEEPSEEK_AUTH_TOKEN: ' s1 ' },
+          },
+        },
+      });
+    expect(missing).toEqual(['DEEPSEEK_AUTH_TOKEN']);
     await expect(buildProfileEnvOverlay({
       agentId: 'claude',
-      profile: makeDeepSeekProfile(),
-      accountSettings: {
-        secrets: [{
-          id: 's1', name: 'DeepSeek', kind: 'apiKey',
-          encryptedValue: { _isSecretValue: true, value: 'must-not-resolve' },
-          createdAt: 0, updatedAt: 0,
-        }],
-        secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: ' s1 ' } },
-      },
-      credentials: makeCredentials(), processEnv: {}, promptSecretFn: null,
-      startedBy: 'daemon', reservedEnvironmentVariableNames: new Set(),
+      profile,
+      processEnv: {}, promptSecretFn: null,
+      reservedEnvironmentVariableNames: new Set(),
+      requiredSecretRequirementNamesMissingBinding: new Set(missing),
     })).rejects.toThrow(/Missing required secret environment variable/);
   });
 
-  it('decrypts canonical machine-key-sealed saved secrets when credentials are legacy', async () => {
-    const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
+  it('decrypts canonical machine-key-sealed saved secrets only through the daemon helper', async () => {
+    const { resolveForegroundProfileSavedSecretEnvironment } =
+      await import(
+        '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment'
+      );
 
     const profile = makeDeepSeekProfile();
     const credentials = makeCredentials();
@@ -192,8 +204,7 @@ describe('buildProfileEnvOverlay', () => {
       (length) => new Uint8Array(length).fill(3),
     );
 
-    const result = await buildProfileEnvOverlay({
-      agentId: 'claude',
+    const result = resolveForegroundProfileSavedSecretEnvironment({
       profile,
       accountSettings: {
         secrets: [
@@ -208,32 +219,118 @@ describe('buildProfileEnvOverlay', () => {
         ],
         secretBindingsByProfileId: { deepseek: { DEEPSEEK_AUTH_TOKEN: 's1' } },
       },
-      credentials,
-      processEnv: {},
-      promptSecretFn: null,
-      startedBy: 'terminal',
-      reservedEnvironmentVariableNames: new Set(),
+      settingsSecretsReadKeys: [canonicalKey],
+      foregroundSatisfiedSecretRequirementNames: [],
     });
 
-    expect(result.envOverlayExpanded.DEEPSEEK_AUTH_TOKEN).toBe('sk-from-canonical-saved');
-    expect(result.envOverlayExpanded.ANTHROPIC_AUTH_TOKEN).toBe('sk-from-canonical-saved');
+    expect(result.DEEPSEEK_AUTH_TOKEN).toBe('sk-from-canonical-saved');
+  });
+
+  it('returns only canonical required names when a bound SavedSecret needs foreground recovery', async () => {
+    const {
+      ForegroundProfileSecretRecoveryRequiredError,
+      resolveForegroundProfileSavedSecretEnvironment,
+    } = await import(
+      '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment'
+    );
+    const profile = makeDeepSeekProfile();
+    let thrown: unknown = null;
+    try {
+      resolveForegroundProfileSavedSecretEnvironment({
+        profile,
+        accountSettings: {
+          secrets: [{
+            id: 's1',
+            name: 'DeepSeek',
+            kind: 'apiKey',
+            encryptedValue: {
+              _isSecretValue: true,
+              encryptedValue: 'not-a-valid-secret-container',
+            },
+            createdAt: 0,
+            updatedAt: 0,
+          }],
+          secretBindingsByProfileId: {
+            deepseek: { DEEPSEEK_AUTH_TOKEN: 's1' },
+          },
+        },
+        settingsSecretsReadKeys: [new Uint8Array(32).fill(1)],
+        foregroundSatisfiedSecretRequirementNames: [],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(
+      ForegroundProfileSecretRecoveryRequiredError,
+    );
+    expect(thrown).toMatchObject({
+      requirementNames: ['DEEPSEEK_AUTH_TOKEN'],
+    });
+  });
+
+  it('omits an unavailable optional bound SavedSecret without requesting recovery', async () => {
+    const { resolveForegroundProfileSavedSecretEnvironment } =
+      await import(
+        '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment'
+      );
+    const profile = AIBackendProfileSchema.parse({
+      ...makeDeepSeekProfile(),
+      envVarRequirements: [{
+        name: 'DEEPSEEK_AUTH_TOKEN',
+        kind: 'secret',
+        required: false,
+      }],
+    });
+    expect(resolveForegroundProfileSavedSecretEnvironment({
+      profile,
+      accountSettings: {
+        secrets: [{
+          id: 's1',
+          name: 'DeepSeek',
+          kind: 'apiKey',
+          encryptedValue: {
+            _isSecretValue: true,
+            encryptedValue: 'not-a-valid-secret-container',
+          },
+          createdAt: 0,
+          updatedAt: 0,
+        }],
+        secretBindingsByProfileId: {
+          deepseek: { DEEPSEEK_AUTH_TOKEN: 's1' },
+        },
+      },
+      settingsSecretsReadKeys: [new Uint8Array(32).fill(1)],
+      foregroundSatisfiedSecretRequirementNames: [],
+    })).toEqual({});
+  });
+
+  it('rejects noncanonical foreground secret requirement names', async () => {
+    const { resolveForegroundProfileSavedSecretEnvironment } =
+      await import(
+        '@/daemon/agentRuntime/resolveForegroundProfileSavedSecretEnvironment'
+      );
+    expect(() => resolveForegroundProfileSavedSecretEnvironment({
+      profile: makeDeepSeekProfile(),
+      accountSettings: {},
+      settingsSecretsReadKeys: [],
+      foregroundSatisfiedSecretRequirementNames: [
+        'deepseek_auth_token',
+      ],
+    })).toThrow(/canonical requirement names/);
   });
 
   it('fails fast when a required secret is missing in non-interactive mode', async () => {
     const { buildProfileEnvOverlay } = await import('./buildProfileEnvOverlay.js');
 
     const profile = makeDeepSeekProfile();
-    const credentials = makeCredentials();
-
     await expect(buildProfileEnvOverlay({
       agentId: 'claude',
       profile,
-      accountSettings: {},
-      credentials,
       processEnv: {},
       promptSecretFn: null,
-      startedBy: 'terminal',
       reservedEnvironmentVariableNames: new Set(),
+      requiredSecretRequirementNamesMissingBinding:
+        new Set(['DEEPSEEK_AUTH_TOKEN']),
     })).rejects.toThrow(/DEEPSEEK_AUTH_TOKEN/);
   });
 });

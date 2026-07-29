@@ -38,12 +38,55 @@ export function subscribeSessionRuntimePublicationToMetadata(params: Readonly<{
   session: Pick<ApiSessionClient, 'sessionId' | 'updateMetadata'>;
   sessionState: Pick<SessionStateSyncEngine, 'writeHappierField'>;
   runtime: RuntimeTurnOperations;
+  providerSessionMetadataKey?: string | null;
 }>): () => void {
+  let lastPublishedProviderSessionId: string | null = null;
   let lastPublishedDescriptor: unknown = undefined;
   let lastPublishedCapabilities: unknown = undefined;
   let lastPublishedFacets: unknown = undefined;
 
+  const publishProviderSessionId = (rawProviderSessionId: unknown): void => {
+    const metadataKey = typeof params.providerSessionMetadataKey === 'string'
+      ? params.providerSessionMetadataKey.trim()
+      : '';
+    const providerSessionId = typeof rawProviderSessionId === 'string'
+      ? rawProviderSessionId.trim()
+      : '';
+    if (!metadataKey || !providerSessionId || lastPublishedProviderSessionId === providerSessionId) {
+      return;
+    }
+    const previousProviderSessionId = lastPublishedProviderSessionId;
+    lastPublishedProviderSessionId = providerSessionId;
+    void params.sessionState.writeHappierField({
+      sessionId: params.session.sessionId,
+      fieldId: 'identity.providerSessionId',
+      value: { metadataKey, value: providerSessionId },
+      reason: 'reconciliation',
+      metadataReason: 'runtime-provider-session-id',
+      mirrorToProvider: false,
+    }).then((result) => {
+      if (!result.ok && lastPublishedProviderSessionId === providerSessionId) {
+        lastPublishedProviderSessionId = previousProviderSessionId;
+      }
+    }).catch(() => {
+      if (lastPublishedProviderSessionId === providerSessionId) {
+        lastPublishedProviderSessionId = previousProviderSessionId;
+      }
+    });
+  };
+
+  try {
+    publishProviderSessionId(params.runtime.readSessionIdentity().sessionId);
+  } catch {
+    // A later runtime event can still publish identity after cold-read failure.
+  }
+
   return params.runtime.subscribeRuntimeEvents((message) => {
+    if ('kind' in message && message.kind === 'session-id-publish') {
+      publishProviderSessionId(message.publishedSessionId);
+      return;
+    }
+
     if (!isRuntimePublicationEvent(message)) {
       return;
     }

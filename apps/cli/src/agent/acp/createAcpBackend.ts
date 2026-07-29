@@ -5,10 +5,8 @@
  * Use this when you need to create a generic ACP backend without agent-specific
  * configuration (timeouts, filtering, etc.).
  *
- * For agent-specific backends, use the agent ACP backends in:
- * - createGeminiBackend() - Gemini CLI with GeminiTransport
- * - createCodexBackend() - Codex CLI with CodexTransport
- * - createClaudeBackend() - Claude CLI with ClaudeTransport
+ * For agent-specific backends, use catalog/plugin-owned ACP backend definitions
+ * that include their provider-specific transport handlers.
  *
  * @module createAcpBackend
  */
@@ -17,6 +15,10 @@ import { AcpBackend, type AcpBackendOptions } from './AcpBackend';
 import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 import type { McpServerConfig } from '../core';
 import { DefaultTransport, type TransportHandler } from '../transport';
+import type {
+  AcpExtensionContextFactory,
+  AcpExtensionRegistration,
+} from './connection/types';
 
 /**
  * Simplified options for creating an ACP backend
@@ -37,6 +39,9 @@ export interface CreateAcpBackendOptions {
   /** Environment variables to pass to the agent */
   env?: Record<string, string>;
 
+  /** Environment variable names removed from the inherited child environment. */
+  unsetEnv?: readonly string[];
+
   /** MCP servers to make available to the agent */
   mcpServers?: Record<string, McpServerConfig>;
 
@@ -54,6 +59,27 @@ export interface CreateAcpBackendOptions {
 
   /** Optional ACP authenticate metadata forwarded as `_meta`. */
   authMeta?: Record<string, unknown>;
+
+  /** Selects authentication from the final bounded initialize response. */
+  authSelector?: AcpBackendOptions['authSelector'];
+
+  /** Whether the ACP agent should advertise its parameterized model picker. */
+  parameterizedModelPicker?: boolean;
+
+  projectModel?: AcpBackendOptions['projectModel'];
+
+  prepareSessionModels?: AcpBackendOptions['prepareSessionModels'];
+
+  projectSetModelResponse?: AcpBackendOptions['projectSetModelResponse'];
+
+  projectSetModelResponseAwaitable?: AcpBackendOptions['projectSetModelResponseAwaitable'];
+
+  prepareToolUpdate?: AcpBackendOptions['prepareToolUpdate'];
+
+  extensions?: ReadonlyArray<AcpExtensionRegistration>;
+  createExtensionContext?: AcpExtensionContextFactory;
+  onProcessExit?: AcpBackendOptions['onProcessExit'];
+  onPublishedTerminalToolResult?: AcpBackendOptions['onPublishedTerminalToolResult'];
 }
 
 /**
@@ -63,11 +89,6 @@ export interface CreateAcpBackendOptions {
  * prefer the agent-specific factories that include proper transport handlers:
  *
  * ```typescript
- * // Prefer this:
- * import { createGeminiBackend } from '@/backends/gemini/acp/backend';
- * const backend = createGeminiBackend({ cwd: '/path/to/project' });
- *
- * // Over this:
  * import { createAcpBackend } from '@/agent/acp';
  * const backend = createAcpBackend({
  *   agentName: 'gemini',
@@ -87,12 +108,36 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     command: options.command,
     args: options.args,
     env: options.env,
+    ...(options.unsetEnv ? { unsetEnv: options.unsetEnv } : {}),
     mcpServers: options.mcpServers,
     permissionHandler: options.permissionHandler,
     ...(typeof options.fsEnabled === 'boolean' ? { fsEnabled: options.fsEnabled } : {}),
     transportHandler: options.transportHandler ?? new DefaultTransport(options.agentName),
     ...(options.authMethodId ? { authMethodId: options.authMethodId } : {}),
     ...(options.authMeta ? { authMeta: options.authMeta } : {}),
+    ...(options.authSelector ? { authSelector: options.authSelector } : {}),
+    ...(typeof options.parameterizedModelPicker === 'boolean'
+      ? { parameterizedModelPicker: options.parameterizedModelPicker }
+      : {}),
+    ...(options.projectModel ? { projectModel: options.projectModel } : {}),
+    ...(options.prepareSessionModels
+      ? { prepareSessionModels: options.prepareSessionModels }
+      : {}),
+    ...(options.projectSetModelResponse
+      ? { projectSetModelResponse: options.projectSetModelResponse }
+      : {}),
+    ...(options.projectSetModelResponseAwaitable
+      ? { projectSetModelResponseAwaitable: options.projectSetModelResponseAwaitable }
+      : {}),
+    ...(options.prepareToolUpdate ? { prepareToolUpdate: options.prepareToolUpdate } : {}),
+    ...(options.extensions ? { extensions: options.extensions } : {}),
+    ...(options.createExtensionContext
+      ? { createExtensionContext: options.createExtensionContext }
+      : {}),
+    ...(options.onProcessExit ? { onProcessExit: options.onProcessExit } : {}),
+    ...(options.onPublishedTerminalToolResult
+      ? { onPublishedTerminalToolResult: options.onPublishedTerminalToolResult }
+      : {}),
   };
 
   return new AcpBackend(backendOptions);

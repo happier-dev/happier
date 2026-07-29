@@ -55,7 +55,7 @@ describe('resolveSessionForkBackendTarget', () => {
         ...buildConfiguredAcpBackendSessionMetadata({ backendId: 'review-bot', title: 'Review Bot' }),
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'customAcp',
+          agentId: 'customAcp',
           provider: {
             providerSessionId: 'vendor-123',
           },
@@ -71,8 +71,8 @@ describe('resolveSessionForkBackendTarget', () => {
     });
     expect(result).toMatchObject({
       ok: true,
-      providerAgentId: null,
-      providerHintProviderId: 'acp:review-bot',
+      catalogAgentId: null,
+      agentHintAgentId: 'acp:review-bot',
       backendTargetV2: {
         kind: 'backend',
         backendId: 'review-bot',
@@ -110,7 +110,7 @@ describe('resolveSessionForkBackendTarget', () => {
         flavor: 'acp:review-bot',
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'acp:review-bot',
+          agentId: 'acp:review-bot',
           provider: {
             providerSessionId: 'vendor-456',
           },
@@ -126,8 +126,8 @@ describe('resolveSessionForkBackendTarget', () => {
     });
     expect(result).toMatchObject({
       ok: true,
-      providerAgentId: null,
-      providerHintProviderId: 'acp:review-bot',
+      catalogAgentId: null,
+      agentHintAgentId: 'acp:review-bot',
       backendTargetV2: {
         kind: 'backend',
         backendId: 'review-bot',
@@ -164,7 +164,7 @@ describe('resolveSessionForkBackendTarget', () => {
         flavor: 'acp:plugin-review-bot',
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'acp:plugin-review-bot',
+          agentId: 'acp:plugin-review-bot',
           provider: {
             providerSessionId: 'vendor-plugin-123',
           },
@@ -179,8 +179,8 @@ describe('resolveSessionForkBackendTarget', () => {
     });
     expect(result).toMatchObject({
       ok: true,
-      providerAgentId: null,
-      providerHintProviderId: 'acp:plugin-review-bot',
+      catalogAgentId: null,
+      agentHintAgentId: 'acp:plugin-review-bot',
       backendTargetV2: {
         kind: 'backend',
         backendId: 'plugin-review-bot',
@@ -217,8 +217,8 @@ describe('resolveSessionForkBackendTarget', () => {
     expect(resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       ok: true,
-      providerAgentId: 'claude',
-      providerHintProviderId: 'claude',
+      catalogAgentId: 'claude',
+      agentHintAgentId: 'claude',
       backendTargetV2: {
         kind: 'backend',
         backendId: 'claude',

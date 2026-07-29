@@ -1,11 +1,11 @@
 import type { ResolvedConfiguredAcpBackend } from '@/agent/acp/catalog/configured/resolveBackend';
-import type { AcpAuthSpecV1 } from '@happier-dev/plugin-sdk';
 
 import type {
-  AcpRuntimeDefinitionInitV1,
-  AcpRuntimeDefinitionV1,
+  AcpRuntimeDefinitionInit,
+  AcpRuntimeDefinition,
+  HostAcpAuthSpec,
 } from './_types';
-import { createAcpRuntimeDefinition } from './runtimeCore';
+import { createAcpRuntimeDefinition } from './create';
 
 type ConfiguredSupportFlag = boolean | 'yes' | 'no' | 'unknown';
 
@@ -19,7 +19,7 @@ function normalizeSupportFlag(value: ConfiguredSupportFlag | undefined): boolean
   return value;
 }
 
-function normalizeConfiguredAuth(auth: ResolvedConfiguredAcpBackend['auth']): AcpAuthSpecV1 | undefined {
+function normalizeConfiguredAuth(auth: ResolvedConfiguredAcpBackend['auth']): HostAcpAuthSpec | undefined {
   if (!auth) {
     return undefined;
   }
@@ -32,7 +32,7 @@ function normalizeConfiguredAuth(auth: ResolvedConfiguredAcpBackend['auth']): Ac
 function buildConfiguredDefinitionInit(params: Readonly<{
   backend: ResolvedConfiguredAcpBackend;
   launchEnv?: Readonly<Record<string, string>>;
-}>): AcpRuntimeDefinitionInitV1 {
+}>): AcpRuntimeDefinitionInit {
   const capabilities = params.backend.capabilities;
   const auth = normalizeConfiguredAuth(params.backend.auth);
   const launch = params.backend.launch ?? {
@@ -42,9 +42,12 @@ function buildConfiguredDefinitionInit(params: Readonly<{
   };
   return {
     backendId: params.backend.backendId,
-    source: {
-      kind: 'account_configured',
-    },
+    source: params.backend.source.kind === 'plugin_contributed'
+      ? {
+          kind: 'plugin_contributed',
+          pluginId: params.backend.source.pluginId,
+        }
+      : { kind: 'account_configured' },
     identity: {
       backendId: params.backend.backendId,
     },
@@ -76,7 +79,6 @@ function buildConfiguredDefinitionInit(params: Readonly<{
     ...(params.backend.transportLifecycle ? { transportLifecycle: params.backend.transportLifecycle } : {}),
     ...(params.backend.permissionModeArgv ? { permissionModeArgv: params.backend.permissionModeArgv } : {}),
     ...(params.backend.sessionIdHeaderName ? { sessionIdHeaderName: params.backend.sessionIdHeaderName } : {}),
-    ...(params.backend.bootstrap ? { bootstrap: params.backend.bootstrap } : {}),
     ...(params.backend.messageMeta ? { messageMeta: params.backend.messageMeta } : {}),
     mcp: {
       policy: params.backend.mcp?.policy ?? 'pass_through',
@@ -87,6 +89,6 @@ function buildConfiguredDefinitionInit(params: Readonly<{
 export function normalizeConfiguredAcpDefinition(params: Readonly<{
   backend: ResolvedConfiguredAcpBackend;
   launchEnv?: Readonly<Record<string, string>>;
-}>): AcpRuntimeDefinitionV1 {
+}>): AcpRuntimeDefinition {
   return createAcpRuntimeDefinition(buildConfiguredDefinitionInit(params));
 }

@@ -24,6 +24,7 @@ import {
     listExecutionRuns,
     normalizeExecutionRunRpcPayload,
     sendExecutionRunMessage,
+    startExecutionRun,
     stopExecutionRun,
     waitForExecutionRun,
 } from './executionRuns';
@@ -824,6 +825,164 @@ describe('normalizeExecutionRunRpcPayload', () => {
             ok: false,
             code: 'RPC_METHOD_NOT_AVAILABLE',
             message: 'RPC method not available',
+        });
+    });
+
+    it('preserves only canonical feature-decision blocker details from service failures', () => {
+        expect(
+            normalizeExecutionRunRpcPayload({
+                ok: false,
+                error: 'Voice feature disabled',
+                errorCode: 'execution_run_not_allowed',
+                details: {
+                    featureId: 'voice.agent',
+                    blockedBy: 'dependency',
+                    blockerCode: 'dependency_disabled',
+                },
+            }),
+        ).toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Voice feature disabled',
+            details: {
+                featureId: 'voice.agent',
+                blockedBy: 'dependency',
+                blockerCode: 'dependency_disabled',
+            },
+        });
+    });
+
+    it('preserves canonical feature-decision blocker details from raw relay failures', () => {
+        expect(
+            normalizeExecutionRunRpcPayload({
+                error: 'Feature disabled',
+                errorCode: 'execution_run_not_allowed',
+                details: {
+                    featureId: 'voice.agent',
+                    blockedBy: 'local_policy',
+                    blockerCode: 'flag_disabled',
+                },
+            }),
+        ).toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Feature disabled',
+            details: {
+                featureId: 'voice.agent',
+                blockedBy: 'local_policy',
+                blockerCode: 'flag_disabled',
+            },
+        });
+    });
+
+    it.each([
+        null,
+        { featureId: 'voice.agent', blockedBy: 'dependency' },
+        { featureId: 'voice.unknown', blockedBy: 'dependency', blockerCode: 'dependency_disabled' },
+        { featureId: 'voice.agent', blockedBy: 'not_an_axis', blockerCode: 'dependency_disabled' },
+    ])('drops malformed or non-canonical failure details fail-closed (%j)', (details) => {
+        expect(
+            normalizeExecutionRunRpcPayload({
+                ok: false,
+                error: 'Voice feature disabled',
+                errorCode: 'execution_run_not_allowed',
+                details,
+            }),
+        ).toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Voice feature disabled',
+        });
+    });
+
+    it('redacts unknown fields while retaining the canonical blocker subset', () => {
+        expect(
+            normalizeExecutionRunRpcPayload({
+                ok: false,
+                error: 'Voice feature disabled',
+                errorCode: 'execution_run_not_allowed',
+                details: {
+                    featureId: 'voice.agent',
+                    blockedBy: 'dependency',
+                    blockerCode: 'dependency_disabled',
+                    secret: 'must-not-cross-the-service-boundary',
+                },
+            }),
+        ).toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Voice feature disabled',
+            details: {
+                featureId: 'voice.agent',
+                blockedBy: 'dependency',
+                blockerCode: 'dependency_disabled',
+            },
+        });
+    });
+
+    it('rejects blocker details inherited from a custom prototype', () => {
+        const inheritedDetails = Object.create({
+            featureId: 'voice.agent',
+            blockedBy: 'dependency',
+            blockerCode: 'dependency_disabled',
+        }) as Record<string, unknown>;
+
+        expect(
+            normalizeExecutionRunRpcPayload({
+                ok: false,
+                error: 'Voice feature disabled',
+                errorCode: 'execution_run_not_allowed',
+                details: inheritedDetails,
+            }),
+        ).toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Voice feature disabled',
+        });
+    });
+});
+
+describe('startExecutionRun', () => {
+    beforeEach(() => {
+        callSessionRpc.mockReset();
+    });
+
+    it('carries typed feature blocker details across the session RPC service seam', async () => {
+        callSessionRpc.mockResolvedValueOnce({
+            ok: false,
+            error: 'Voice feature disabled',
+            errorCode: 'execution_run_not_allowed',
+            details: {
+                featureId: 'voice.agent',
+                blockedBy: 'dependency',
+                blockerCode: 'dependency_disabled',
+            },
+        });
+
+        const result = await startExecutionRun({
+            token: 'token',
+            sessionId: 'sess-1',
+            ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+            request: {
+                intent: 'voice_agent',
+                backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+                instructions: 'Voice turn.',
+                permissionMode: 'read_only',
+                retentionPolicy: 'resumable',
+                runClass: 'long_lived',
+                ioMode: 'streaming',
+            },
+        });
+
+        expect(result).toEqual({
+            ok: false,
+            code: 'execution_run_not_allowed',
+            message: 'Voice feature disabled',
+            details: {
+                featureId: 'voice.agent',
+                blockedBy: 'dependency',
+                blockerCode: 'dependency_disabled',
+            },
         });
     });
 });

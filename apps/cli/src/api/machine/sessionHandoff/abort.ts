@@ -1,4 +1,3 @@
-import { configuration } from '@/configuration';
 import { SessionHandoffAbortRequestSchema, type SessionHandoffStatus } from '@happier-dev/protocol';
 
 import {
@@ -7,7 +6,7 @@ import {
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
-import { buildSessionHandoffProviderBundleTransferId } from '../../../session/handoff/providerBundle/transferPublication';
+import { buildSessionHandoffAgentBundleTransferId } from '../../../session/handoff/agentBundle/transferPublication';
 import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
 import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 
@@ -18,6 +17,7 @@ type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSou
 type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
 
 export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
+  activeServerDir: string;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
@@ -37,6 +37,7 @@ export type RegisterSessionHandoffAbortRpcHandlerInput = Readonly<{
     completedAtMs?: number;
     failedAtMs?: number;
     lastErrorMessage?: string;
+    lastErrorCode?: string;
     workspaceReplicationJobId?: string;
   }>) => SessionHandoffPrepareTargetJobRecordInput;
   buildStartPendingStatus: (input: Readonly<{
@@ -56,6 +57,7 @@ export function createSessionHandoffAbortActionHandler(
   params: RegisterSessionHandoffAbortRpcHandlerInput,
 ): (raw: unknown) => Promise<unknown> {
   const {
+    activeServerDir,
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -82,7 +84,7 @@ export function createSessionHandoffAbortActionHandler(
 
     if (persistedJob?.workspaceReplicationJobId) {
       await workspaceReplicationAdapter.abortWorkspaceReplicationJob({
-        activeServerDir: configuration.activeServerDir,
+        activeServerDir,
         jobId: persistedJob.workspaceReplicationJobId,
       }).catch(() => undefined);
     }
@@ -103,6 +105,7 @@ export function createSessionHandoffAbortActionHandler(
         workspaceReplicationJobId: persistedJob.workspaceReplicationJobId,
         ...(persistedJob.failedAtMs ? { failedAtMs: persistedJob.failedAtMs } : {}),
         ...(persistedJob.lastErrorMessage ? { lastErrorMessage: persistedJob.lastErrorMessage } : {}),
+        ...(persistedJob.lastErrorCode ? { lastErrorCode: persistedJob.lastErrorCode } : {}),
         status,
         ...(persistedJob.prepareTargetResult ? {
           prepareTargetResult: {
@@ -142,7 +145,7 @@ export function createSessionHandoffAbortActionHandler(
       persistedSourceExport?.targetMachineId,
     ]);
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
-    directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
+    directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
   };

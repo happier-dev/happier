@@ -1,7 +1,5 @@
 import {
   BUILT_IN_INSTALLABLES_REGISTRY,
-  resolveInstallablesRegistry,
-  type InstallableRegistryContribution,
   type InstallablesRegistry,
 } from '@happier-dev/protocol/installables';
 
@@ -13,60 +11,19 @@ import {
   type RuntimeInstallableAdapter,
 } from '@/packagedRuntime/installables/registry';
 import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
+import {
+  resolveExecutableManagedDependenciesRegistry,
+} from '@/plugins/projection/registry/managedDependencyExecutables';
 
 export type RuntimeInstallableAdapterResolver = (
   key: string,
   opts?: Readonly<{ installablesRegistry?: InstallablesRegistry }>,
 ) => Promise<RuntimeInstallableAdapter>;
 
-function toInstallableRegistryContribution(
-  candidate: ResolvedInstallableContribution,
-): InstallableRegistryContribution {
-  const isHostBuiltIn = candidate.provenance === 'first_party'
-    && !candidate.manifestPath
-    && !candidate.manifestDigest
-    && !candidate.daemonEntryPath
-    && !candidate.sourceSpec;
-
-  return {
-    owner: {
-      provenance: isHostBuiltIn
-        ? 'built_in'
-        : candidate.provenance === 'first_party'
-          ? 'bundled_first_party_plugin'
-          : 'external_plugin',
-      ownerId: candidate.pluginId ?? `${candidate.provenance}:${candidate.definition.key}`,
-      ...(candidate.pluginId ? { pluginId: candidate.pluginId } : {}),
-      ...(candidate.manifestPath ? { manifestPath: candidate.manifestPath } : {}),
-      ...(candidate.manifestDigest ? { manifestDigest: candidate.manifestDigest } : {}),
-    },
-    descriptor: candidate.definition,
-  };
-}
-
 export function createInstallablesRegistryFromResolvedContributions(
   contributions: readonly ResolvedInstallableContribution[],
 ): InstallablesRegistry {
-  const builtIns: InstallableRegistryContribution[] = [];
-  const bundledFirstPartyPlugins: InstallableRegistryContribution[] = [];
-  const externalPlugins: InstallableRegistryContribution[] = [];
-
-  for (const contribution of contributions) {
-    const registryContribution = toInstallableRegistryContribution(contribution);
-    if (registryContribution.owner.provenance === 'built_in') {
-      builtIns.push(registryContribution);
-    } else if (registryContribution.owner.provenance === 'bundled_first_party_plugin') {
-      bundledFirstPartyPlugins.push(registryContribution);
-    } else {
-      externalPlugins.push(registryContribution);
-    }
-  }
-
-  return resolveInstallablesRegistry({
-    builtIns,
-    bundledFirstPartyPlugins,
-    externalPlugins,
-  });
+  return resolveExecutableManagedDependenciesRegistry(contributions);
 }
 
 export async function createInstallableCapabilities(params: Readonly<{

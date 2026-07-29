@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +14,10 @@ const pngBytes = Buffer.from(
   'base64',
 );
 const gifBytes = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
+const webmBytes = Buffer.concat([
+  Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x42, 0x86, 0x81, 0x01]),
+  Buffer.from('webm recording bytes', 'utf8'),
+]);
 const nonImageBytes = Buffer.from('not an image', 'utf8');
 
 function sha256Hex(bytes: Buffer): string {
@@ -122,6 +127,77 @@ describe('persistSessionMedia', () => {
     }
   });
 
+  it('persists file-backed video artifacts by safe MIME metadata without image dimensions', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-video-'));
+    const providerDirectory = await mkdtemp(join(tmpdir(), 'happier-provider-video-'));
+
+    try {
+      const localFilePath = join(providerDirectory, 'recording.webm');
+      const localUriPath = join(providerDirectory, 'recording-uri.webm');
+      await writeFile(localFilePath, webmBytes);
+      await writeFile(localUriPath, webmBytes);
+
+      const sources = [
+        {
+          label: 'local-file',
+          source: { kind: 'local-file' as const, path: localFilePath },
+        },
+        {
+          label: 'local-uri',
+          source: { kind: 'local-uri' as const, uri: pathToFileURL(localUriPath).toString(), mimeType: 'video/webm' },
+        },
+        {
+          label: 'provider-file',
+          source: { kind: 'provider-file' as const, providerFileId: 'recording-file-1', mimeType: 'video/webm' },
+        },
+      ];
+
+      for (const { label, source } of sources) {
+        const result = await persistSessionMedia({
+          workingDirectory,
+          pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+          maxBytes: webmBytes.byteLength,
+          providerFileDownloader: async () => ({
+            success: true,
+            bytes: webmBytes,
+            mimeType: 'video/webm',
+            fileNameHint: 'provider-recording.webm',
+          }),
+          input: {
+            sessionId: `session-video-${label}`,
+            messageLocalId: 'message-1',
+            role: 'output',
+            category: 'tool-artifact',
+            source,
+            origin: { source: 'tool-output', toolCallId: `recording-${label}` },
+          },
+        });
+
+        expect(result).toMatchObject({
+          success: true,
+          item: {
+            role: 'output',
+            category: 'tool-artifact',
+            mediaKind: 'video',
+            mimeType: 'video/webm',
+            sizeBytes: webmBytes.byteLength,
+            sha256: sha256Hex(webmBytes),
+            origin: { source: 'tool-output', toolCallId: `recording-${label}` },
+          },
+        });
+        if (!result.success) throw new Error(`expected ${label} video persistence to succeed`);
+        expect(result.item.path).toMatch(new RegExp(`^\\.happier/uploads/artifacts/session-video-${label}/message-1/[0-9a-f-]+-.+\\.webm$`));
+        expect(result.item.width).toBeUndefined();
+        expect(result.item.height).toBeUndefined();
+        expect(JSON.stringify(result.item)).not.toContain(webmBytes.toString('base64'));
+        await expect(readFile(resolve(workingDirectory, result.item.path))).resolves.toEqual(webmBytes);
+      }
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+      await rm(providerDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('rejects unsupported MIME, oversize media, unsafe ids, and unavailable provider-file placeholders', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-reject-'));
     const pathAllowanceRegistry = createTransferPathAllowanceRegistry();
@@ -182,6 +258,31 @@ describe('persistSessionMedia', () => {
       })).resolves.toMatchObject({ success: false, code: 'provider_file_unavailable' });
 
       await expect(stat(join(workingDirectory, '.happier', 'uploads', 'generated', 'message-1'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects inline base64 video sources instead of persisting video bytes from transcript-shaped data', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-session-media-video-base64-'));
+
+    try {
+      const result = await persistSessionMedia({
+        workingDirectory,
+        pathAllowanceRegistry: createTransferPathAllowanceRegistry(),
+        maxBytes: webmBytes.byteLength,
+        input: {
+          sessionId: 'session-video-base64',
+          messageLocalId: 'message-1',
+          role: 'output',
+          category: 'tool-artifact',
+          source: { kind: 'base64', data: webmBytes.toString('base64'), mimeType: 'video/webm' },
+          origin: { source: 'tool-output' },
+        },
+      });
+
+      expect(result).toMatchObject({ success: false, code: 'unsupported_mime' });
+      expect(JSON.stringify(result)).not.toContain(webmBytes.toString('base64'));
     } finally {
       await rm(workingDirectory, { recursive: true, force: true });
     }
@@ -273,7 +374,7 @@ describe('persistSessionMedia', () => {
           origin: {
             source: 'provider-generated',
             agentId: 'agent-safe',
-            providerEventId: 'https://provider.example/events/secret-token',
+            agentEventId: 'https://provider.example/events/secret-token',
             providerFileId: 'aW1hZ2VCeXRlcw==',
             generationId: '$CODEX_HOME/generated/image.png',
           },

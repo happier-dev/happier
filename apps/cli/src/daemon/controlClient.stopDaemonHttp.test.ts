@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { reloadConfiguration } from '@/configuration';
 import { clearDaemonState, writeDaemonState } from '@/persistence';
-import { stopDaemonHttp } from '@/daemon/controlClient';
+import { stopDaemonHttp, stopDaemonSession } from '@/daemon/controlClient';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
@@ -54,7 +54,7 @@ describe('daemon control client: stopDaemonHttp', () => {
     }
   });
 
-  it('POSTs /stop with stopSessions when requested', async () => {
+  it('POSTs /stop with stopSessions and managed-service transfer intent when requested', async () => {
     let observed: { token: string; body: string } | null = null;
 
     const server = http.createServer(async (req, res) => {
@@ -85,11 +85,52 @@ describe('daemon control client: stopDaemonHttp', () => {
         controlToken: 'test-token',
       });
 
-      await stopDaemonHttp({ stopSessions: true });
+      await stopDaemonHttp({
+        stopSessions: true,
+        transferManagedLocalServices: true,
+      });
 
       const req = requireObserved(observed);
       expect(req.token).toBe('test-token');
-      expect(JSON.parse(req.body)).toEqual({ stopSessions: true });
+      expect(JSON.parse(req.body)).toEqual({
+        stopSessions: true,
+        transferManagedLocalServices: true,
+      });
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it('returns the daemon typed physical stop outcome without boolean collapse', async () => {
+    const server = http.createServer(async (req, res) => {
+      if (req.method === 'POST' && req.url === '/stop-session') {
+        await readReqBody(req);
+        res.statusCode = 200;
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ status: 'incomplete', reason: 'runner_exit_timeout' }));
+        return;
+      }
+      res.statusCode = 404;
+      res.end();
+    });
+
+    try {
+      const { port } = await listen(server);
+      tmpHomeDir = await createTempDir('happier-daemon-client-stop-session-test-');
+      envScope.patch({ HAPPIER_HOME_DIR: tmpHomeDir });
+      reloadConfiguration();
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: port,
+        startedAt: Date.now(),
+        startedWithCliVersion: 'test',
+        controlToken: 'test-token',
+      });
+
+      await expect(stopDaemonSession('sess-1')).resolves.toEqual({
+        status: 'incomplete',
+        reason: 'runner_exit_timeout',
+      });
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

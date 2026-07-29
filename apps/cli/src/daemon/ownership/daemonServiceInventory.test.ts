@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 
 import { renderSystemdServiceUnit } from '@happier-dev/cli-common/service';
-import type { DaemonServiceCliRuntime } from '@/daemon/service/cli';
+import type { DaemonServiceCliRuntime } from '@/daemon/service/paths';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -116,6 +116,81 @@ describe('daemonServiceInventory', () => {
             const services = await resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime);
 
             expect(services).toEqual([]);
+        });
+    });
+
+    it('uses the canonical parsed service home when matching a quoted systemd definition', async () => {
+        await withTempDir('happier-daemon-service-inventory-systemd-home-', async (homeDir) => {
+            const currentCliHomeDir = join(homeDir, 'current-cli-home');
+            const serviceCliHomeDir = join(homeDir, 'service cli home');
+            const userHomeDir = join(homeDir, 'user-home');
+
+            envScope.patch({
+                HAPPIER_HOME_DIR: currentCliHomeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'company',
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:24880',
+                HAPPIER_WEBAPP_URL: 'http://localhost:24880',
+                HAPPIER_PUBLIC_SERVER_URL: 'http://127.0.0.1:24880',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+                HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: userHomeDir,
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: currentCliHomeDir,
+                HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+            });
+            vi.resetModules();
+
+            const { resolveInstalledDaemonServiceInventoryForCurrentRelay } = await import('./daemonServiceInventory');
+
+            mkdirSync(serviceCliHomeDir, { recursive: true });
+            writeFileSync(
+                join(serviceCliHomeDir, 'settings.json'),
+                JSON.stringify({
+                    activeServerId: 'company',
+                    servers: {
+                        company: {
+                            id: 'company',
+                            serverUrl: 'http://127.0.0.1:24880',
+                        },
+                    },
+                }),
+                'utf-8',
+            );
+
+            const runtime: DaemonServiceCliRuntime = {
+                platform: 'linux',
+                channel: 'stable',
+                targetMode: 'default-following',
+                instanceId: 'company',
+                activeServerId: 'company',
+                uid: null,
+                userHomeDir,
+                happierHomeDir: currentCliHomeDir,
+                serverUrl: 'http://127.0.0.1:24880',
+                webappUrl: 'http://localhost:24880',
+                publicServerUrl: 'http://127.0.0.1:24880',
+                nodePath: '/usr/local/bin/node',
+                entryPath: '/usr/local/lib/happier/index.mjs',
+            };
+            const installedPath = join(userHomeDir, '.config', 'systemd', 'user', 'happier-daemon.default.service');
+            mkdirSync(dirname(installedPath), { recursive: true });
+            writeFileSync(
+                installedPath,
+                renderSystemdServiceUnit({
+                    description: 'Happier CLI daemon (default)',
+                    execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
+                    env: {
+                        HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+                        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+                        HAPPIER_HOME_DIR: serviceCliHomeDir,
+                        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                    },
+                    wantedBy: 'default.target',
+                }),
+                'utf-8',
+            );
+
+            await expect(resolveInstalledDaemonServiceInventoryForCurrentRelay(runtime)).resolves.toHaveLength(1);
         });
     });
 
@@ -639,6 +714,7 @@ describe('daemonServiceInventory', () => {
                 channel: 'preview',
                 targetMode: 'default-following',
                 instanceId: 'cloud',
+                activeServerId: 'cloud',
                 uid: null,
                 userHomeDir: '/c/Users/test_qa',
                 happierHomeDir: runtimeHomeDir,

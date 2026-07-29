@@ -91,12 +91,9 @@ function planEntriesToTodos(entries: unknown[]): AcpPlanTodo[] {
 
 /**
  * Normalize a standard ACP `plan` SessionUpdate (`entries: [{content, priority, status}]`) into the
- * shared, cross-provider TodoWrite -> TodoView checklist, so any ACP provider's plan renders with the
- * same UI as Claude/Codex todos. This is the generic, centralized plan-rendering path.
- *
- * Providers that deliver plans through a richer proprietary channel (e.g. Cursor's
- * `cursor/create_plan` extension, which also carries markdown + phases) opt out via
- * `transport.suppressAcpPlanUpdate()` so we never render a duplicate checklist.
+ * shared, cross-provider TodoWrite -> TodoView checklist. This legacy ACP path has one standard-plan
+ * owner; providers that need richer proprietary work state must merge it at their canonical projector
+ * instead of discarding the standard update from transport code.
  */
 export function handlePlanUpdate(
   update: SessionUpdate,
@@ -104,8 +101,6 @@ export function handlePlanUpdate(
 ): HandlerResult {
   const entries = resolvePlanEntries(update);
   if (!entries) return { handled: false };
-
-  if (ctx.transport.suppressAcpPlanUpdate?.()) return { handled: true };
 
   const todos = planEntriesToTodos(entries);
   if (todos.length === 0) return { handled: true };

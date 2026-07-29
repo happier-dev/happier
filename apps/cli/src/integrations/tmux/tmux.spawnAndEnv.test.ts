@@ -153,19 +153,20 @@ describe('TmuxUtilities.spawnInTmux', () => {
             }
 
             if (cmd[0] === 'has-session') return { returncode: 0, stdout: '', stderr: '', command: cmd };
-            if (cmd[0] === 'new-session') return { returncode: 0, stdout: '', stderr: '', command: cmd };
+            if (cmd[0] === 'new-session') return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
             if (cmd[0] === 'new-window') return { returncode: 0, stdout: '4242\n', stderr: '', command: cmd };
             return { returncode: 0, stdout: '', stderr: '', command: cmd };
         }
     }
 
-    it('builds tmux new-window args without quoting env values', async () => {
+    it('keeps window environment values out of tmux client arguments', async () => {
         const tmux = new FakeTmuxUtilities();
+        const secretCanary = 'provider-secret-canary-a$b"back\\tick`';
 
         await tmux.spawnInTmux(
             ['echo', 'hello'],
             { sessionName: 'my-session', windowName: 'my-window', cwd: '/tmp' },
-            { FOO: 'a$b', BAR: 'quote"back\\tick`' },
+            { FOO: secretCanary, BAR: 'ordinary-value' },
         );
 
         const newWindowCall = tmux.calls.find((call) => call.cmd[0] === 'new-window');
@@ -173,12 +174,11 @@ describe('TmuxUtilities.spawnInTmux', () => {
         if (!newWindowCall) return;
 
         const newWindowArgs = newWindowCall.cmd;
-        expect(newWindowArgs).toContain('FOO=a$b');
-        expect(newWindowArgs).toContain('BAR=quote"back\\tick`');
-        expect(newWindowArgs.some((arg) => arg.startsWith('FOO="'))).toBe(false);
-        expect(newWindowArgs.some((arg) => arg.startsWith('BAR="'))).toBe(false);
+        expect(JSON.stringify(newWindowArgs)).not.toContain(secretCanary);
+        expect(newWindowArgs).not.toContain(`FOO=${secretCanary}`);
 
-        const commandIndex = newWindowArgs.indexOf("'echo' 'hello'");
+        const separatorIndex = newWindowArgs.indexOf(';');
+        const commandIndex = separatorIndex - 1;
         const pIndex = newWindowArgs.indexOf('-P');
         const fIndex = newWindowArgs.indexOf('-F');
         expect(pIndex).toBeGreaterThanOrEqual(0);
@@ -193,7 +193,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(tIndex).toBeLessThan(commandIndex);
     });
 
-    it('unsets inherited tmux-server variables before executing the window command', async () => {
+    it('keeps inherited-variable cleanup out of tmux client arguments', async () => {
         const tmux = new FakeTmuxUtilities();
 
         await tmux.spawnInTmux(
@@ -207,9 +207,8 @@ describe('TmuxUtilities.spawnInTmux', () => {
         );
 
         const newWindowCall = tmux.calls.find((call) => call.cmd[0] === 'new-window');
-        expect(newWindowCall?.cmd.at(-1)).toBe(
-            "unset OPENAI_API_KEY Gemini_Model; exec 'echo' 'hello'",
-        );
+        expect(JSON.stringify(newWindowCall?.cmd)).not.toContain('OPENAI_API_KEY');
+        expect(JSON.stringify(newWindowCall?.cmd)).not.toContain('Gemini_Model');
     });
 
     it('creates tmux windows detached so existing attached clients keep their active window', async () => {
@@ -225,21 +224,81 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(newWindowCall).toBeDefined();
         if (!newWindowCall) return;
 
-        const commandIndex = newWindowCall.cmd.indexOf("'echo' 'hello'");
+        const separatorIndex = newWindowCall.cmd.indexOf(';');
+        const commandIndex = separatorIndex - 1;
         const detachedIndex = newWindowCall.cmd.indexOf('-d');
         expect(detachedIndex).toBeGreaterThanOrEqual(0);
         expect(detachedIndex).toBeLessThan(commandIndex);
     });
 
-    it('quotes command arguments for tmux shell command safely', async () => {
+    it('creates an exclusive session with the provider as its initial window', async () => {
+        const tmux = new FakeTmuxUtilities();
+
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            {
+                sessionName: 'owned-session',
+                windowName: 'provider',
+                cwd: '/tmp',
+                requireNewSession: true,
+            },
+            {},
+        );
+
+        expect(result).toMatchObject({
+            success: true,
+            sessionName: 'owned-session',
+            windowName: 'provider',
+            pid: 4242,
+        });
+        expect(tmux.calls.some((call) => call.cmd[0] === 'new-session')).toBe(true);
+        expect(tmux.calls.some((call) => call.cmd[0] === 'has-session')).toBe(false);
+        expect(tmux.calls.some((call) => call.cmd[0] === 'new-window')).toBe(false);
+    });
+
+    it('fails without adding a window when an exclusive session name already exists', async () => {
+        class ExistingSessionTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                this.calls.push({ cmd, session });
+                if (cmd[0] === 'new-session') {
+                    return {
+                        returncode: 1,
+                        stdout: '',
+                        stderr: 'duplicate session: owned-session',
+                        command: cmd,
+                    };
+                }
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+        const tmux = new ExistingSessionTmuxUtilities();
+
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            {
+                sessionName: 'owned-session',
+                windowName: 'provider',
+                requireNewSession: true,
+            },
+            {},
+        );
+
+        expect(result).toMatchObject({ success: false, creationDisposition: 'not_created' });
+        expect(tmux.calls.filter((call) => call.cmd[0] === 'new-session')).toHaveLength(1);
+        expect(tmux.calls.some((call) => call.cmd[0] === 'new-window')).toBe(false);
+    });
+
+    it('keeps target command tokens out of tmux client arguments', async () => {
         const tmux = new FakeTmuxUtilities();
         await tmux.spawnInTmux(['echo', 'a b', "c'd", '$(rm -rf /)'], { sessionName: 'my-session', windowName: 'my-window' }, {});
 
         const newWindowCall = tmux.calls.find((call) => call.cmd[0] === 'new-window');
         expect(newWindowCall).toBeDefined();
         if (!newWindowCall) return;
-        const commandArg = newWindowCall.cmd[newWindowCall.cmd.length - 1];
-        expect(commandArg).toBe("'echo' 'a b' 'c'\\''d' '$(rm -rf /)'");
+        const separatorIndex = newWindowCall.cmd.indexOf(';');
+        const commandArg = newWindowCall.cmd[separatorIndex - 1];
+        expect(commandArg).toMatch(/^'\/bin\/sh' '.+\/happier-tmux-window-[^/]+\/launch\.sh'$/);
+        expect(JSON.stringify(newWindowCall.cmd)).not.toContain('$(rm -rf /)');
     });
 
     it('treats empty sessionName as current/most-recent session', async () => {
@@ -247,6 +306,7 @@ describe('TmuxUtilities.spawnInTmux', () => {
         const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: '', windowName: 'my-window' }, {});
 
         expect(result.success).toBe(true);
+        if (!result.success) throw new Error(result.error ?? 'expected tmux launch to succeed');
         expect(result.sessionId).toBe('newSess:my-window');
         const usedLastAttachedFormat = tmux.calls.some(
             (call) => call.cmd[0] === 'list-sessions' && call.cmd[1] === '-F' && Boolean(call.cmd[2]?.includes('session_last_attached')),
@@ -277,6 +337,31 @@ describe('TmuxUtilities.spawnInTmux', () => {
         expect(result.success).toBe(true);
         const newWindowCalls = tmux.calls.filter((call) => call.cmd[0] === 'new-window');
         expect(newWindowCalls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    it('revalidates immediately before every new-window attempt and returns an exact refusal without retrying', async () => {
+        class ConflictThenRefusalTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] !== 'new-window') return super.executeTmuxCommand(cmd, session);
+                this.calls.push({ cmd, session });
+                return { returncode: 1, stdout: '', stderr: 'create window failed: index 1 in use.', command: cmd };
+            }
+        }
+        const refusal = { type: 'error', errorCode: 'provider_binding_changed', errorMessage: 'changed' } as const;
+        const beforeCreateWindow = vi.fn()
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce(refusal);
+        const tmux = new ConflictThenRefusalTmuxUtilities();
+
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', beforeCreateWindow },
+            {},
+        );
+
+        expect(result).toMatchObject({ success: false, commitRefusal: refusal });
+        expect(beforeCreateWindow).toHaveBeenCalledTimes(2);
+        expect(tmux.calls.filter((call) => call.cmd[0] === 'new-window')).toHaveLength(1);
     });
 
     it('falls back to allocating an explicit window index when conflicts persist', async () => {
@@ -411,8 +496,10 @@ describe('TmuxUtilities.spawnInTmux', () => {
         const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: 'my-session', windowName: 'my-window' }, {});
 
         expect(result.success).toBe(false);
+        if (result.success) throw new Error('expected tmux launch to fail');
         expect(result.error).toContain('target=');
         expect(result.error).toContain('my-session');
+        expect(result.creationDisposition).toBe('not_created');
     });
 
     it('returns an error when tmux new-window output is not a numeric pane PID', async () => {
@@ -430,6 +517,275 @@ describe('TmuxUtilities.spawnInTmux', () => {
         const result = await tmux.spawnInTmux(['echo', 'hello'], { sessionName: 'my-session', windowName: 'my-window' }, {});
 
         expect(result.success).toBe(false);
-        expect(result.error).toMatch(/PID/i);
+        if (result.success) throw new Error('expected tmux launch to fail');
+        expect(result.error).toMatch(/failed to reconcile/i);
+        expect(result.creationDisposition).toBe('created_or_uncertain');
+    });
+
+    it('treats a timed-out new-window attempt as creation-uncertain even when stderr resembles a known conflict', async () => {
+        class TimedOutTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'list-windows') {
+                    this.calls.push({ cmd, session });
+                    return null;
+                }
+                if (cmd[0] === 'kill-window') {
+                    this.calls.push({ cmd, session });
+                    return null;
+                }
+                if (cmd[0] !== 'new-window') {
+                    return super.executeTmuxCommand(cmd, session);
+                }
+                this.calls.push({ cmd, session });
+                return {
+                    returncode: 1,
+                    stdout: '',
+                    stderr: 'create window failed: index 1 in use.',
+                    command: cmd,
+                    timedOut: true,
+                };
+            }
+        }
+
+        const tmux = new TimedOutTmuxUtilities();
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', windowNameIsUnique: true },
+            {},
+        );
+
+        expect(result).toMatchObject({
+            success: false,
+            creationDisposition: 'created_or_uncertain',
+        });
+        expect(tmux.calls.filter((call) => call.cmd[0] === 'new-window')).toHaveLength(1);
+    });
+
+    it('reports exact absence when authoritative-id termination succeeds even if follow-up inventory is unavailable', async () => {
+        class TerminatedWithoutFollowUpInventoryTmuxUtilities extends FakeTmuxUtilities {
+            private listCount = 0;
+
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                this.calls.push({ cmd, session });
+                if (cmd[0] === 'new-window') {
+                    return { returncode: 1, stdout: '@6\tnot-a-pid\n', stderr: '', command: cmd, timedOut: true };
+                }
+                if (cmd[0] === 'list-windows') {
+                    this.listCount += 1;
+                    if (this.listCount === 1) {
+                        return {
+                            returncode: 0,
+                            stdout: '@6\tmy-window\tnot-a-pid\n@7\tmy-window\t4242\n',
+                            stderr: '',
+                            command: cmd,
+                        };
+                    }
+                    return null;
+                }
+                if (cmd[0] === 'kill-window') {
+                    return { returncode: 0, stdout: '', stderr: '', command: cmd };
+                }
+                return { returncode: 0, stdout: '', stderr: '', command: cmd };
+            }
+        }
+
+        const tmux = new TerminatedWithoutFollowUpInventoryTmuxUtilities();
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', windowNameIsUnique: true },
+            {},
+        );
+
+        expect(result).toMatchObject({ success: false, creationDisposition: 'created_and_absent' });
+        expect(tmux.calls).toContainEqual(expect.objectContaining({ cmd: ['kill-window', '-t', '@6'] }));
+        expect(tmux.calls).not.toContainEqual(expect.objectContaining({ cmd: ['kill-window', '-t', '@7'] }));
+    });
+
+    it('recovers the exact created window and pane PID after the tmux client times out', async () => {
+        class RecoverableTimedOutTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'new-window') {
+                    this.calls.push({ cmd, session });
+                    return {
+                        returncode: 1,
+                        stdout: '',
+                        stderr: '',
+                        command: cmd,
+                        timedOut: true,
+                    };
+                }
+                if (cmd[0] === 'list-windows') {
+                    this.calls.push({ cmd, session });
+                    return {
+                        returncode: 0,
+                        stdout: '@7\tmy-window\t4242\n',
+                        stderr: '',
+                        command: cmd,
+                    };
+                }
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const tmux = new RecoverableTimedOutTmuxUtilities();
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', windowNameIsUnique: true },
+            {},
+        );
+
+        expect(result).toMatchObject({
+            success: true,
+            sessionId: 'my-session:my-window',
+            windowName: 'my-window',
+            pid: 4242,
+        });
+        expect(tmux.calls.filter((call) => call.cmd[0] === 'new-window')).toHaveLength(1);
+    });
+
+    it('reports a previously ambiguous create as cleanup-safe only after verifying exact absence', async () => {
+        class AbsentAfterTimedOutTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'new-window') {
+                    this.calls.push({ cmd, session });
+                    return { returncode: 1, stdout: '', stderr: '', command: cmd, timedOut: true };
+                }
+                if (cmd[0] === 'list-windows') {
+                    this.calls.push({ cmd, session });
+                    return { returncode: 0, stdout: '@2\tother-window\t3000\n', stderr: '', command: cmd };
+                }
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const tmux = new AbsentAfterTimedOutTmuxUtilities();
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', windowNameIsUnique: true },
+            {},
+        );
+
+        expect(result).toMatchObject({
+            success: false,
+            creationDisposition: 'created_and_absent',
+        });
+    });
+
+    it('does not substitute a different same-name window when the observed exact id is absent', async () => {
+        class ExactIdAbsentTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                this.calls.push({ cmd, session });
+                if (cmd[0] === 'new-window') {
+                    return {
+                        returncode: 1,
+                        stdout: '@6\tnot-a-pid\n',
+                        stderr: '',
+                        command: cmd,
+                        timedOut: true,
+                    };
+                }
+                if (cmd[0] === 'list-windows') {
+                    return { returncode: 0, stdout: '@7\tmy-window\t4242\n', stderr: '', command: cmd };
+                }
+                if (cmd[0] === 'kill-window') {
+                    return { returncode: 0, stdout: '', stderr: '', command: cmd };
+                }
+                return { returncode: 0, stdout: '', stderr: '', command: cmd };
+            }
+        }
+
+        const tmux = new ExactIdAbsentTmuxUtilities();
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', windowNameIsUnique: true },
+            {},
+        );
+
+        expect(result).toMatchObject({
+            success: false,
+            creationDisposition: 'created_and_absent',
+        });
+        expect(tmux.calls.filter((call) => call.cmd[0] === 'kill-window')).toHaveLength(0);
+    });
+
+    it('terminates only the observed exact unrecoverable window id and verifies its absence', async () => {
+        class TerminatingExactIdTmuxUtilities extends FakeTmuxUtilities {
+            private listed = false;
+
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                this.calls.push({ cmd, session });
+                if (cmd[0] === 'new-window') {
+                    return { returncode: 1, stdout: '@6\tnot-a-pid\n', stderr: '', command: cmd, timedOut: true };
+                }
+                if (cmd[0] === 'list-windows') {
+                    if (!this.listed) {
+                        this.listed = true;
+                        return {
+                            returncode: 0,
+                            stdout: '@6\tmy-window\tnot-a-pid\n@7\tmy-window\t4242\n',
+                            stderr: '',
+                            command: cmd,
+                        };
+                    }
+                    return { returncode: 0, stdout: '@7\tmy-window\t4242\n', stderr: '', command: cmd };
+                }
+                return { returncode: 0, stdout: '', stderr: '', command: cmd };
+            }
+        }
+
+        const tmux = new TerminatingExactIdTmuxUtilities();
+        const result = await tmux.spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window', windowNameIsUnique: true },
+            {},
+        );
+
+        expect(result).toMatchObject({ success: false, creationDisposition: 'created_and_absent' });
+        expect(tmux.calls).toContainEqual(expect.objectContaining({ cmd: ['kill-window', '-t', '@6'] }));
+        expect(tmux.calls).not.toContainEqual(expect.objectContaining({ cmd: ['kill-window', '-t', '@7'] }));
+    });
+
+    it('does not recover a sole same-name window without an exact id or uniqueness guarantee', async () => {
+        class NonUniqueNamedWindowTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'new-window') {
+                    return { returncode: 1, stdout: '', stderr: '', command: cmd, timedOut: true };
+                }
+                if (cmd[0] === 'list-windows') {
+                    return { returncode: 0, stdout: '@7\tmy-window\t4242\n', stderr: '', command: cmd };
+                }
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const result = await new NonUniqueNamedWindowTmuxUtilities().spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window' },
+            {},
+        );
+
+        expect(result).toMatchObject({ success: false, creationDisposition: 'created_or_uncertain' });
+    });
+
+    it('does not treat zero same-name windows as exact absence without an id or uniqueness guarantee', async () => {
+        class NonUniqueAbsentNameTmuxUtilities extends FakeTmuxUtilities {
+            override async executeTmuxCommand(cmd: string[], session?: string): Promise<TmuxCommandResult | null> {
+                if (cmd[0] === 'new-window') {
+                    return { returncode: 1, stdout: '', stderr: '', command: cmd, timedOut: true };
+                }
+                if (cmd[0] === 'list-windows') {
+                    return { returncode: 0, stdout: '@2\tother-window\t3000\n', stderr: '', command: cmd };
+                }
+                return super.executeTmuxCommand(cmd, session);
+            }
+        }
+
+        const result = await new NonUniqueAbsentNameTmuxUtilities().spawnInTmux(
+            ['echo', 'hello'],
+            { sessionName: 'my-session', windowName: 'my-window' },
+            {},
+        );
+
+        expect(result).toMatchObject({ success: false, creationDisposition: 'created_or_uncertain' });
     });
 });

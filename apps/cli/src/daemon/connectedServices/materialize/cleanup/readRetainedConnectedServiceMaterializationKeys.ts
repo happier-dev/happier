@@ -2,13 +2,15 @@ import { readConnectedServiceMaterializationIdentityV1FromMetadata } from '@happ
 
 import type { Credentials } from '@/persistence';
 import { fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 
 type SessionRowWithMetadata = Readonly<{
   id?: unknown;
   active?: unknown;
   archivedAt?: unknown;
   metadata?: unknown;
+  metadataLayoutVersion?: unknown;
+  ownerMetadata?: unknown;
   dataEncryptionKey?: unknown;
   encryptionMode?: unknown;
 }>;
@@ -41,7 +43,7 @@ export async function readRetainedConnectedServiceMaterializationKeys(params: Re
   pageLimit?: number;
 }>): Promise<ReadonlyArray<string>> {
   const fetchPage = params.fetchSessionsPage ?? fetchSessionsPage;
-  const decryptMetadata = params.decryptSessionMetadata ?? tryDecryptSessionMetadata;
+  const decryptMetadata = params.decryptSessionMetadata ?? tryDecryptSessionOwnerMetadataView;
   const pageLimit = typeof params.pageLimit === 'number' && Number.isFinite(params.pageLimit)
     ? Math.max(1, Math.trunc(params.pageLimit))
     : DEFAULT_PAGE_LIMIT;

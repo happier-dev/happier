@@ -3,8 +3,10 @@ import axios from 'axios';
 import type { AgentId } from '@happier-dev/agents';
 import {
   accountSettingsParse,
+  AccountSettingsV2GetResponseSchema,
   normalizeCodexBackendMode,
   type AccountSettings,
+  type AccountSettingsV2GetResponse,
   type BackendTargetRefV1,
 } from '@happier-dev/protocol';
 
@@ -25,7 +27,11 @@ import {
   resolveAccountSettingsCachePath,
   writeAccountSettingsCacheAtomic,
 } from './accountSettingsCache';
-import { setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
+import {
+  commitActiveAccountSettingsSnapshot,
+  getActiveAccountSettingsSnapshot,
+  resetActiveAccountSettingsSnapshotForTests,
+} from './activeAccountSettingsSnapshot';
 import { resolveAccountSettingsHttpBaseUrl } from './resolveAccountSettingsHttpBaseUrl';
 import { AccountSettingsStaleError } from './accountSettingsRefreshError';
 import {
@@ -43,8 +49,82 @@ export type AccountSettingsContext = Readonly<{
   settingsVersion: number;
   loadedAtMs: number;
   settingsSecretsReadKeys: readonly Uint8Array[];
+  scopeKey?: string;
   whenRefreshed: Promise<AccountSettingsContext> | null;
 }>;
+
+type ApplyAccountSettingsV2UpdateDeps = Readonly<{
+  resolveCachePath: (credentials: Credentials) => string;
+  decryptCiphertext: (args: { credentials: Credentials; ciphertext: string }) => Promise<Record<string, unknown> | null>;
+}>;
+
+type AccountSettingsLiveApplyError = Error & Readonly<{
+  code: 'ACCOUNT_SETTINGS_DECRYPT_FAILED' | 'ACCOUNT_SETTINGS_SCOPE_CHANGED' | 'ACCOUNT_SETTINGS_SOURCE_STALE';
+}>;
+
+function createAccountSettingsLiveApplyError(
+  code: AccountSettingsLiveApplyError['code'],
+  message: string,
+): AccountSettingsLiveApplyError {
+  return Object.assign(new Error(message), { code });
+}
+
+function contextFromActiveSnapshot(active: NonNullable<ReturnType<typeof getActiveAccountSettingsSnapshot>>): AccountSettingsContext {
+  return {
+    ...active,
+    whenRefreshed: null,
+  };
+}
+
+class AccountSettingsV2RequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number) {
+    super(`Failed to fetch /v2/account/settings (${status})`);
+    this.status = status;
+  }
+}
+
+async function requestAccountSettingsV2(credentials: Credentials): Promise<AccountSettingsV2GetResponse> {
+  const response = await axios.get(`${resolveAccountSettingsHttpBaseUrl()}/v2/account/settings`, {
+    headers: {
+      Authorization: `Bearer ${credentials.token}`,
+      'Content-Type': 'application/json',
+    },
+    timeout: 15_000,
+    validateStatus: () => true,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new AccountSettingsV2RequestError(response.status);
+  }
+  return AccountSettingsV2GetResponseSchema.parse(response.data);
+}
+
+function resolveLiveApplyDisposition(params: Readonly<{
+  active: ReturnType<typeof getActiveAccountSettingsSnapshot>;
+  activeAtStart: ReturnType<typeof getActiveAccountSettingsSnapshot>;
+  scopeKey: string;
+  settingsVersion: number;
+}>): AccountSettingsContext | null {
+  const { active, activeAtStart, scopeKey, settingsVersion } = params;
+  if (!active) return null;
+  if (active.scopeKey && active.scopeKey !== scopeKey) {
+    throw createAccountSettingsLiveApplyError(
+      'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+      'The active account changed before the live settings update could be applied.',
+    );
+  }
+  if (!active.scopeKey && active !== activeAtStart) {
+    throw createAccountSettingsLiveApplyError(
+      'ACCOUNT_SETTINGS_SCOPE_CHANGED',
+      'The unscoped active account settings snapshot changed before the live update could be applied.',
+    );
+  }
+  if (active.scopeKey === scopeKey && active.settingsVersion >= settingsVersion) {
+    return contextFromActiveSnapshot(active);
+  }
+  return null;
+}
 
 function migrateAccountSettingsForCodexAppServerDefault(settings: AccountSettings): AccountSettings {
   const schemaVersion = settings.schemaVersion;
@@ -55,6 +135,102 @@ function migrateAccountSettingsForCodexAppServerDefault(settings: AccountSetting
     schemaVersion: 6,
     codexBackendMode: existingCodexBackendMode ?? 'appServer',
   };
+}
+
+/**
+ * Apply an authoritative user-scoped settings projection to this process.
+ * Live updates intentionally do not write the durable cache; bootstrap remains its sole owner.
+ */
+export async function applyAccountSettingsV2Update(params: Readonly<{
+  credentials: Credentials;
+  update: AccountSettingsV2GetResponse;
+  shouldCommit?: () => boolean;
+  nowMs?: number;
+  deps?: Partial<ApplyAccountSettingsV2UpdateDeps>;
+}>): Promise<AccountSettingsContext> {
+  const nowMs = params.nowMs ?? Date.now();
+  const resolveCachePath = params.deps?.resolveCachePath ?? resolveAccountSettingsCachePath;
+  const decryptCiphertext = params.deps?.decryptCiphertext ?? (async ({ credentials, ciphertext }) => (
+    decryptAccountSettingsCiphertext({ credentials, ciphertext })
+  ));
+  const cachePath = resolveCachePath(params.credentials);
+  const scopeKey = createAccountSettingsScopeKey({ cachePath, token: params.credentials.token });
+  const activeAtStart = getActiveAccountSettingsSnapshot();
+  const reusableAtStart = resolveLiveApplyDisposition({
+    active: activeAtStart,
+    activeAtStart,
+    scopeKey,
+    settingsVersion: params.update.version,
+  });
+  if (reusableAtStart) return reusableAtStart;
+
+  const content = params.update.content;
+  let rawSettings: unknown = null;
+  if (content?.t === 'plain') {
+    rawSettings = content.v;
+  } else if (content?.t === 'encrypted') {
+    rawSettings = await decryptCiphertext({
+      credentials: params.credentials,
+      ciphertext: content.c,
+    });
+    if (!rawSettings) {
+      throw createAccountSettingsLiveApplyError(
+        'ACCOUNT_SETTINGS_DECRYPT_FAILED',
+        'The live account settings payload could not be decrypted.',
+      );
+    }
+  }
+  const settings = migrateAccountSettingsForCodexAppServerDefault(accountSettingsParse(rawSettings ?? {}));
+
+  if (params.shouldCommit && !params.shouldCommit()) {
+    throw createAccountSettingsLiveApplyError(
+      'ACCOUNT_SETTINGS_SOURCE_STALE',
+      'The live account settings source closed before the update could be committed.',
+    );
+  }
+  const reusableBeforeCommit = resolveLiveApplyDisposition({
+    active: getActiveAccountSettingsSnapshot(),
+    activeAtStart,
+    scopeKey,
+    settingsVersion: params.update.version,
+  });
+  if (reusableBeforeCommit) return reusableBeforeCommit;
+
+  const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
+  const committed = commitActiveAccountSettingsSnapshot({
+    source: 'network',
+    settings,
+    settingsVersion: params.update.version,
+    loadedAtMs: nowMs,
+    settingsSecretsReadKeys,
+    scopeKey,
+  });
+  const committedContext = contextFromActiveSnapshot(committed.snapshot);
+  if (!committed.didCommit) return committedContext;
+
+  applyAccountSettingsToProcessEnv({ settings: committed.snapshot.settings });
+  inMemoryByScopeKey.set(scopeKey, committedContext);
+  return committedContext;
+}
+
+/** Request-only convergence for a live session; no durable cache reads or writes. */
+export async function refreshActiveAccountSettingsFromServer(params: Readonly<{
+  credentials: Credentials;
+  minSettingsVersion?: number | null;
+  shouldCommit?: () => boolean;
+  nowMs?: number;
+}>): Promise<AccountSettingsContext> {
+  const update = await requestAccountSettingsV2(params.credentials);
+  const minimum = normalizeAccountSettingsVersionHint(params.minSettingsVersion);
+  if (!shouldTreatVersionAsFresh(update.version, minimum)) {
+    throw new AccountSettingsStaleError();
+  }
+  return applyAccountSettingsV2Update({
+    credentials: params.credentials,
+    update,
+    shouldCommit: params.shouldCommit,
+    nowMs: params.nowMs,
+  });
 }
 
 type BootstrapDeps = Readonly<{
@@ -107,6 +283,7 @@ const inMemoryByScopeKey = new Map<string, AccountSettingsContext>();
 
 export function resetInMemoryAccountSettingsContextForTests(): void {
   inMemoryByScopeKey.clear();
+  resetActiveAccountSettingsSnapshotForTests();
 }
 
 export async function bootstrapAccountSettingsContext(params: Readonly<{
@@ -131,7 +308,6 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const refresh = params.refresh ?? 'auto';
   const mode = params.mode ?? 'blocking';
   const minSettingsVersion = normalizeAccountSettingsVersionHint(params.minSettingsVersion);
-  const effectiveMode = minSettingsVersion !== null ? 'blocking' : mode;
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
 
   const deps: BootstrapDeps = {
@@ -139,42 +315,12 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     readCache: params.deps?.readCache ?? readAccountSettingsCache,
     writeCache: params.deps?.writeCache ?? writeAccountSettingsCacheAtomic,
     fetchFromServer: params.deps?.fetchFromServer ?? (async ({ credentials }) => {
-      const accountSettingsBaseUrl = resolveAccountSettingsHttpBaseUrl();
       try {
-        const response = await axios.get(`${accountSettingsBaseUrl}/v2/account/settings`, {
-          headers: {
-            Authorization: `Bearer ${credentials.token}`,
-            'Content-Type': 'application/json',
-          },
-          timeout: 15_000,
-          validateStatus: () => true,
-        });
-
-        if (response.status === 404) {
-          throw Object.assign(new Error('settings_v2_not_supported'), { code: 'settings_v2_not_supported' });
-        }
-        if (response.status < 200 || response.status >= 300) {
-          throw new Error(`Failed to fetch /v2/account/settings (${response.status})`);
-        }
-
-        const body = response.data as any;
-        const settingsVersion = typeof body?.version === 'number' && Number.isFinite(body.version)
-          ? body.version
-          : 0;
-        const content = body?.content ?? null;
-        if (content === null) {
-          return { settingsContent: null, settingsVersion };
-        }
-        if (content?.t === 'plain') {
-          return { settingsContent: { t: 'plain', v: content.v }, settingsVersion };
-        }
-        if (content?.t === 'encrypted') {
-          return { settingsContent: { t: 'encrypted', c: String(content.c ?? '') }, settingsVersion };
-        }
-        return { settingsContent: null, settingsVersion };
-      } catch (err: any) {
-        if (err?.code !== 'settings_v2_not_supported') throw err;
-        const response = await axios.get(`${accountSettingsBaseUrl}/v1/account/settings`, {
+        const update = await requestAccountSettingsV2(credentials);
+        return { settingsContent: update.content, settingsVersion: update.version };
+      } catch (err) {
+        if (!(err instanceof AccountSettingsV2RequestError) || err.status !== 404) throw err;
+        const response = await axios.get(`${resolveAccountSettingsHttpBaseUrl()}/v1/account/settings`, {
           headers: {
             Authorization: `Bearer ${credentials.token}`,
             'Content-Type': 'application/json',
@@ -192,8 +338,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     decryptCiphertext: params.deps?.decryptCiphertext ?? (async ({ credentials, ciphertext }) => {
       return decryptAccountSettingsCiphertext({ credentials, ciphertext });
     }),
-    applySideEffects: params.deps?.applySideEffects ?? (({ settings, agentId, backendTarget, source, settingsVersion, loadedAtMs }) => {
-      setActiveAccountSettingsSnapshot({ source, settings, settingsVersion, loadedAtMs, settingsSecretsReadKeys, scopeKey });
+    applySideEffects: params.deps?.applySideEffects ?? (({ settings, agentId, backendTarget }) => {
       if (agentId || backendTarget) {
         assertBackendEnabledByAccountSettings({ agentId, backendTarget, settings });
       }
@@ -203,6 +348,33 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
 
   const cachePath = deps.resolveCachePath(params.credentials);
   const scopeKey = createAccountSettingsScopeKey({ cachePath, token: params.credentials.token });
+  const publishContext = (candidate: AccountSettingsContext): Readonly<{
+    context: AccountSettingsContext;
+    didCommit: boolean;
+  }> => {
+    const committed = commitActiveAccountSettingsSnapshot({
+      source: candidate.source,
+      settings: candidate.settings,
+      settingsVersion: candidate.settingsVersion,
+      loadedAtMs: candidate.loadedAtMs,
+      settingsSecretsReadKeys: candidate.settingsSecretsReadKeys,
+      scopeKey,
+    });
+    const context = contextFromActiveSnapshot(committed.snapshot);
+    if (!shouldTreatVersionAsFresh(context.settingsVersion, minSettingsVersion)) {
+      throw new AccountSettingsStaleError();
+    }
+    deps.applySideEffects({
+      settings: context.settings,
+      agentId: params.agentId,
+      backendTarget: params.backendTarget,
+      source: context.source,
+      settingsVersion: context.settingsVersion,
+      loadedAtMs: context.loadedAtMs,
+    });
+    inMemoryByScopeKey.set(scopeKey, context);
+    return { context, didCommit: committed.didCommit };
+  };
 
   const honorModeEnv = params.honorAccountSettingsModeEnv !== false;
   const modeFromEnv = honorModeEnv ? readAccountSettingsModeFromEnv() : 'auto';
@@ -219,22 +391,13 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       settingsSecretsReadKeys,
       whenRefreshed: null,
     };
-    if (!shouldTreatVersionAsFresh(ctx.settingsVersion, minSettingsVersion)) {
-      throw new AccountSettingsStaleError();
-    }
-    deps.applySideEffects({
-      settings,
-      agentId: params.agentId,
-      backendTarget: params.backendTarget,
-      source: 'none',
-      settingsVersion: 0,
-      loadedAtMs: nowMs,
-    });
-    inMemoryByScopeKey.set(scopeKey, ctx);
-    return ctx;
+    return publishContext(ctx).context;
   }
 
-  const existing = inMemoryByScopeKey.get(scopeKey) ?? null;
+  const active = getActiveAccountSettingsSnapshot();
+  const existing = active?.scopeKey === scopeKey
+    ? contextFromActiveSnapshot(active)
+    : (inMemoryByScopeKey.get(scopeKey) ?? null);
   if (
     refresh === 'auto'
     && existing
@@ -281,16 +444,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       settingsSecretsReadKeys,
       whenRefreshed: null,
     };
-    deps.applySideEffects({
-      settings,
-      agentId: params.agentId,
-      backendTarget: params.backendTarget,
-      source: ctx.source,
-      settingsVersion,
-      loadedAtMs: nowMs,
-    });
-    inMemoryByScopeKey.set(scopeKey, ctx);
-    return ctx;
+    return publishContext(ctx).context;
   };
 
   const fetchAndPersist = async (): Promise<AccountSettingsContext> => {
@@ -301,6 +455,20 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         ? (fetched.settingsContent ?? null)
         : (fetched.settingsCiphertext ? { t: 'encrypted', c: fetched.settingsCiphertext } : null);
     const settings = await parseFromContent(settingsContent);
+    const candidate: AccountSettingsContext = {
+      source: 'network',
+      settings,
+      settingsVersion,
+      loadedAtMs: nowMs,
+      settingsSecretsReadKeys,
+      whenRefreshed: null,
+    };
+    if (!shouldTreatVersionAsFresh(candidate.settingsVersion, minSettingsVersion)) {
+      throw new AccountSettingsStaleError();
+    }
+    const publication = publishContext(candidate);
+    if (!publication.didCommit) return publication.context;
+
     try {
       await deps.writeCache(cachePath, {
         version: 2,
@@ -311,33 +479,17 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     } catch (err) {
       logger.debug('[accountSettings] cache write failed; continuing without persistence', serializeAxiosErrorForLog(err));
     }
-    const ctx: AccountSettingsContext = {
-      source: 'network',
-      settings,
-      settingsVersion,
-      loadedAtMs: nowMs,
-      settingsSecretsReadKeys,
-      whenRefreshed: null,
-    };
-    if (!shouldTreatVersionAsFresh(ctx.settingsVersion, minSettingsVersion)) {
-      throw new AccountSettingsStaleError();
-    }
-    deps.applySideEffects({
-      settings,
-      agentId: params.agentId,
-      backendTarget: params.backendTarget,
-      source: 'network',
-      settingsVersion,
-      loadedAtMs: nowMs,
-    });
-    inMemoryByScopeKey.set(scopeKey, ctx);
-    return ctx;
+    const activeAfterWrite = getActiveAccountSettingsSnapshot();
+    return activeAfterWrite?.scopeKey === scopeKey
+      ? contextFromActiveSnapshot(activeAfterWrite)
+      : publication.context;
   };
 
   const cacheFresh = cache
     ? shouldTreatCacheAsFresh(cache, nowMs, ttlMs) && shouldTreatVersionAsFresh(cache.settingsVersion, minSettingsVersion)
     : false;
   const shouldForceFetch = refresh === 'force';
+  const effectiveMode = minSettingsVersion !== null ? 'blocking' : mode;
 
   if (effectiveMode === 'fast') {
     const base = await useCache();

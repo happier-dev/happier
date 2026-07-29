@@ -6,60 +6,214 @@
 import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { logger } from '@/ui/logger';
+import { createDaemonControlAuthGuard } from './controlAuth';
 import { Metadata } from '@/api/types';
 import {
-  CODEX_CHATGPT_AUTH_TOKENS_REFRESH_PATH,
-  CodexChatGptAuthTokensRefreshResponseSchema,
-  CodexChatGptAuthTokensRefreshSelectionSchema,
-  type CodexChatGptAuthTokensRefreshResponse,
-  type CodexChatGptAuthTokensRefreshSelection,
-} from '@happier-dev/plugins-codex/agent/auth/services/openai/cloud/refreshBridge';
+  CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER,
+} from '@happier-dev/plugin-sdk/experimental/cloud/request-auth';
+import {
+  CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES,
+  CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
+  CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
+  CONNECTED_SERVICE_RUN_RELEASE_PATH,
+  ConnectedServiceRunMaterializeRequestSchema,
+  ConnectedServiceRunReleaseRequestSchema,
+  ConnectedServiceRunGenerationCurrentRequestSchema,
+  ExecutionRunConnectedServicesRegistrationV1Schema,
+  type ConnectedServiceRunMaterializationHandler,
+  type ConnectedServiceRunReleaseHandler,
+  type ConnectedServiceRunGenerationCurrentHandler,
+} from './connectedServices/runs/materializeContract';
 import { TrackedSession } from './types';
-import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import {
+  StopSessionResultSchema,
+  type StopSessionResult,
+} from './sessions/stopSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
+import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
-import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@happier-dev/protocol';
 import {
-	  ConnectedServiceBindingsV1Schema,
-	  ConnectedServiceIdSchema,
-	  ConnectedServiceQuotaSnapshotV1Schema,
-	  ProviderAccountUsageAdoptionV1Schema,
-	  ProviderAccountUsageSnapshotV1Schema,
+  ConnectedServiceBindingsV1Schema,
+  createProviderErrorV1,
+  ConnectedServiceCredentialRevisionV1Schema,
+  ConnectedServiceAuthGroupIdSchema,
+  ConnectedServiceIdSchema,
+  ConnectedServiceProfileIdSchema,
+  ConnectedServiceUsageSourceV1Schema,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH,
+  CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH,
+  ConnectedAccountAuthFailureRequestV1Schema,
+  ConnectedAccountQuotaFailureRequestV1Schema,
+  ConnectedAccountRequestAuthLookupRequestV1Schema,
+  DaemonLocalServicePublicPreviewStatusRequestV1Schema,
+  DaemonSimulatorPreviewActionRequestV1Schema,
+  LocalServiceLauncherSnapshotV1Schema,
+  LocalServiceActionRequestV1Schema,
+  LocalServiceActionResultV1Schema,
+  LocalServicePreviewSnapshotV1Schema,
+  LocalServicePublicPreviewSnapshotV1Schema,
+  ProviderAccountUsageSnapshotV1Schema,
+  OAuthBearerLeaseV1Schema,
+  RequestAuthFailureOutcomeV1Schema,
+  RestartAllSessionRunnersRequestV1Schema,
+  RestartAllSessionRunnersResultV1Schema,
+  RestartSessionRunnerRequestV1Schema,
+  RestartSessionRunnerResultV1Schema,
+  SessionRunnerStatusGetRequestV1Schema,
+  SessionRunnerRuntimeStateV1Schema,
+  SpawnSessionErrorCodeSchema,
   SessionUsageLimitRecoveryResumePromptModeV1Schema,
+  SimulatorPreviewActionResultV1Schema,
+  SimulatorPreviewSnapshotV1Schema,
   SshTunnelEnsureRequestSchema,
   SshTunnelProbeRequestSchema,
   SshTunnelReleaseRequestSchema,
   SshTunnelStopRequestSchema,
   type ConnectedServiceBindingsV1,
-	  type ConnectedServiceId,
-	  type ConnectedServiceQuotaSnapshotV1,
-	  type ProviderAccountUsageAdoptionV1,
-	  type ProviderAccountUsageSnapshotV1,
+  type ConnectedServiceId,
+  type ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
+  type ConnectedServiceUsageSourceV1,
+  type ProviderAccountUsageSnapshotV1,
+  type RestartAllSessionRunnersRequestV1,
+  type RestartAllSessionRunnersResultV1,
+  type RestartSessionRunnerRequestV1,
+  type RestartSessionRunnerResultV1,
+  type SessionRunnerStatusGetRequestV1,
+  type SessionRunnerRuntimeStateV1,
   type SessionUsageLimitRecoveryResumePromptModeV1,
-	} from '@happier-dev/protocol';
+} from '@happier-dev/protocol';
+import {
+  ConnectedAccountRequestAuthError,
+  type ConnectedAccountRequestAuthService,
+  type ConnectedAccountRequestAuthSubject,
+} from './connectedServices/requestAuth/ConnectedAccountRequestAuthService';
+import {
+  ProviderAccountUsageAdoptionV1Schema,
+  type ProviderAccountUsageAdoptionV1,
+} from './connectedServices/accountUsage/adoption';
 import { readAuthenticationStatus } from '@/api/client/httpStatusError';
 import { toSshTunnelErrorResponse, type SshTunnelSupervisor } from '@/daemon/ssh/tunnels';
 import type { LocalServiceInventoryRoutes } from './local/services/inventory/routes';
+import type { LocalServiceLauncherRoutes } from './local/services/launch/routes';
+import type { LocalServiceManagedRoutes } from './local/services/managed/routes';
+import type { LocalServiceActionRoutes } from './local/services/actions/routes';
+import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
+import type { LocalServicePublicPreviewRoutes } from './local/services/public/routes';
+import type { PluginLocalServicesBridgeControlRoutes } from './local/services/pluginBridgeRoutes';
+import {
+  PluginLocalServicesBridgeControlRequestV1Schema,
+  PluginLocalServicesBridgeControlResponseV1Schema,
+  type PluginLocalServicesBridgeControlRequestV1,
+} from './local/services/pluginBridgeProtocol';
+import { verifyPluginLocalServicesBridgeToken } from './local/services/pluginBridgeAuthorization';
+import {
+  AGENT_RUNTIME_DAEMON_BRIDGE_PATH,
+  AgentRuntimeDaemonBridgeRequestV1Schema,
+  AgentRuntimeDaemonBridgeResponseV1Schema,
+  type AgentRuntimeDaemonBridgeRequestV1,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
+import type { AgentRuntimeSessionBridgeRoutes } from './agentRuntime/sessionBridgeRoutes';
+import { verifyAgentRuntimeSessionBridgeToken } from './agentRuntime/sessionBridgeAuthorization';
+import type { ForegroundAgentRuntimeAdmissionOwner } from './agentRuntime/foregroundAdmission';
+import {
+  FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
+  FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
+  ForegroundAgentRuntimeAdmissionRequestV1Schema,
+  ForegroundAgentRuntimeAdmissionResponseV1Schema,
+  ForegroundAgentRuntimeReleaseRequestV1Schema,
+  ForegroundAgentRuntimeReleaseResponseV1Schema,
+} from './agentRuntime/foregroundAdmissionContract';
+import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.types';
 import {
   ConnectedServiceRuntimeAuthFailureKindSchema,
   type ConnectedServiceRuntimeFailureClassification,
 } from './connectedServices/runtimeAuth/types';
-import type { RuntimeAuthRecoverySchedulerLike } from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import { sanitizeConnectedServiceRuntimeFailureClassification } from './connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
+
+type AgentRuntimeSessionBridgeControlRoutes = Pick<
+  AgentRuntimeSessionBridgeRoutes,
+  'dispatch' | 'disposeSession' | 'dispose'
+>;
+import type {
+  RuntimeAuthRecoveryScheduleResult,
+  RuntimeAuthRecoverySchedulerLike,
+} from './connectedServices/runtimeAuth/RuntimeAuthRecoveryScheduler';
+import {
+  ConnectedServiceDaemonAuthBridgeRefreshResultSchema,
+  type SessionConnectedServiceRuntimeAuthRefreshHandler,
+} from './connectedServices/sessionRuntimeAuthRefresh';
 import { sanitizeConnectedServiceDiagnosticString } from './connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import {
   isLocallyCompleteWithoutProof,
-  isProvenRuntimeAuthRecoverySuccess,
 } from './connectedServices/runtimeAuth/resolveRuntimeAuthRecoveryOutcome';
 import { buildConnectedServiceRuntimeAuthSwitchAttemptLogContext } from './connectedServices/runtimeAuth/buildConnectedServiceRuntimeAuthSwitchAttemptLogContext';
+import {
+  applyAuthorizedRuntimeAuthFailureSourceBinding,
+  type RuntimeAuthFailureSourceAuthorization,
+} from './connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
 import { buildRuntimeAuthRecoveryScheduledResult } from './connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoveryProjection';
-import { projectConnectedServiceQuotaSnapshotToProviderAccountUsageSnapshot } from './connectedServices/accountUsage/compatibility';
+import { isRecord } from './connectedServices/quotas/quotaNormalization';
+import type { DaemonPluginChangeService } from '@/plugins/daemon/changeService';
+import { registerDaemonPluginChangeRoutes } from '@/plugins/daemon/controlRoutes';
+import { readCurrentDaemonPluginCatalogSnapshot } from '@/plugins/daemon/currentCatalog';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import type {
+  TargetActionCurrentIntentRequest,
+  TargetActionCurrentIntentResult,
+} from '@/plugins/runtime/invocation/actionExecutor';
 
 const DEFAULT_DAEMON_CONTROL_BODY_LIMIT_BYTES = 8 * 1024 * 1024;
 const DAEMON_CONTROL_BODY_LIMIT_BYTES_ENV_KEY = 'HAPPIER_DAEMON_CONTROL_BODY_LIMIT_BYTES';
+const E2E_DAEMON_CONTROL_PORT_ENV_KEY = 'HAPPIER_E2E_DAEMON_CONTROL_PORT';
+const DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN = /^[a-f0-9]{16}$/;
+const DaemonDistClosureFingerprintSchema = z.string().regex(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN);
+type DaemonSelfRestartRequest = Readonly<{
+  successorDistClosureFingerprint?: string;
+}>;
 const DEFAULT_SPAWN_NONCE_PENDING_TTL_MS = 5 * 60_000;
+
+function resolveDaemonControlListenPort(env: NodeJS.ProcessEnv): number {
+  const raw = env[E2E_DAEMON_CONTROL_PORT_ENV_KEY]?.trim();
+  if (!raw) return 0;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`${E2E_DAEMON_CONTROL_PORT_ENV_KEY} must be an integer port`);
+  }
+  const port = Number(raw);
+  if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${E2E_DAEMON_CONTROL_PORT_ENV_KEY} must be between 1 and 65535`);
+  }
+  return port;
+}
+
+const ConnectedServiceRuntimeAuthRefreshSelectionSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('profile'),
+    serviceId: ConnectedServiceIdSchema,
+    profileId: ConnectedServiceProfileIdSchema,
+  }),
+  z.object({
+    kind: z.literal('group'),
+    serviceId: ConnectedServiceIdSchema,
+    groupId: ConnectedServiceAuthGroupIdSchema,
+    activeProfileId: ConnectedServiceProfileIdSchema,
+    fallbackProfileId: ConnectedServiceProfileIdSchema,
+    generation: z.number().int().nonnegative(),
+  }),
+]);
+
+
+function resolveThrownSpawnSessionErrorCode(error: unknown): string {
+  const record = error as any;
+  const candidates = [record?.code, record?.errorCode]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter((value) => value.length > 0);
+  return candidates.find((value) => SpawnSessionErrorCodeSchema.safeParse(value).success)
+    ?? SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED;
+}
 const DEFAULT_SPAWN_NONCE_SUCCESS_TTL_MS = 60 * 60_000;
 const SPAWN_NONCE_PENDING_TTL_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_NONCE_PENDING_TTL_MS';
 const SPAWN_NONCE_SUCCESS_TTL_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_NONCE_SUCCESS_TTL_MS';
@@ -81,6 +235,35 @@ function readSafeDaemonControlErrorDiagnostic(error: unknown): Readonly<{
   };
 }
 
+function isProviderAccountUsageSnapshotIntakeAccepted(result: unknown): boolean {
+  if (
+    !isRecord(result)
+    || typeof result.recordId !== 'string'
+    || result.recordId.length === 0
+  ) {
+    return false;
+  }
+  if (result.status === 'credential_fingerprint_mismatch') {
+    // Exact stale evidence is terminally rejected before store/persistence mutation.
+    // Retrying cannot make that claimed source current and would only burn the bounded
+    // producer retry budget.
+    return result.persisted === false;
+  }
+  return result.status !== 'session_not_found' && result.persisted === true;
+}
+
+function isProviderAccountUsageAdoptionIntakeAccepted(result: unknown): boolean {
+  return (
+    isRecord(result)
+    && (result.status === 'adopted' || result.status === 'already_adopted')
+    && typeof result.fromRecordId === 'string'
+    && result.fromRecordId.length > 0
+    && typeof result.toRecordId === 'string'
+    && result.toRecordId.length > 0
+    && result.persisted === true
+  );
+}
+
 function isCanonicalSessionId(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   const normalized = value.trim();
@@ -88,10 +271,82 @@ function isCanonicalSessionId(value: unknown): value is string {
   return !/^PID-\d+$/.test(normalized);
 }
 
-function safeTokenEquals(provided: string, expected: string): boolean {
-  const hashA = createHash('sha256').update(provided).digest();
-  const hashB = createHash('sha256').update(expected).digest();
-  return timingSafeEqual(hashA, hashB);
+function isAgentRuntimeSessionBridgeRequestAuthorized(
+  request: AgentRuntimeDaemonBridgeRequestV1,
+  sessions: Iterable<TrackedSession>,
+): boolean {
+  const bindingOperation = request.operation.kind === 'factory.prepare'
+    || request.operation.kind === 'session.open'
+    ? request.operation
+    : null;
+  for (const tracked of sessions) {
+    if (
+      tracked.reattachedFromDiskMarker === true
+      || tracked.happySessionId !== request.context.sessionId
+      || tracked.agentRuntimeBridgePluginId !== request.context.pluginId
+      || tracked.agentRuntimeBridgeAgentId !== request.context.agentId
+      || tracked.agentRuntimeBridgeGeneration !== request.context.generation
+      || tracked.agentRuntimeBridgeBackendId
+        !== (bindingOperation
+          ? bindingOperation.descriptor.backendId
+          : tracked.agentRuntimeBridgeBackendId)
+      || !tracked.agentRuntimeBridgeTokenHash
+    ) {
+      continue;
+    }
+    if (bindingOperation) {
+      if (
+        bindingOperation.request.sessionId !== request.context.sessionId
+        || bindingOperation.descriptor.pluginId !== request.context.pluginId
+        || bindingOperation.descriptor.agentId !== request.context.agentId
+        || bindingOperation.descriptor.generation !== request.context.generation
+      ) {
+        return false;
+      }
+    }
+    return verifyAgentRuntimeSessionBridgeToken({
+      providedToken: request.context.token,
+      expectedTokenHash: tracked.agentRuntimeBridgeTokenHash,
+    });
+  }
+  return false;
+}
+
+function isPluginLocalServicesBridgeRequestAuthorized(
+  request: PluginLocalServicesBridgeControlRequestV1,
+  sessions: Iterable<TrackedSession>,
+): boolean {
+  const requestedSessionId = request.context.sessionId.trim();
+  const requestedPluginId = request.context.pluginId.trim();
+  const requestedContributionId = request.context.contributionId.trim();
+  const providedToken = request.bridgeToken?.trim() ?? '';
+  if (!requestedSessionId || !requestedPluginId || !requestedContributionId || !providedToken) {
+    return false;
+  }
+
+  for (const session of sessions) {
+    if (session.startedBy !== 'daemon') continue;
+    const sessionId = typeof session.happySessionId === 'string' ? session.happySessionId.trim() : '';
+    if (sessionId !== requestedSessionId) continue;
+    const expectedTokenHash = typeof session.localServicesBridgeTokenHash === 'string'
+      ? session.localServicesBridgeTokenHash.trim()
+      : '';
+    if (!expectedTokenHash || !verifyPluginLocalServicesBridgeToken({
+      providedToken,
+      expectedTokenHash,
+    })) continue;
+    const expectedPluginId = typeof session.localServicesBridgePluginId === 'string'
+      ? session.localServicesBridgePluginId.trim()
+      : '';
+    if (expectedPluginId !== requestedPluginId) continue;
+    const expectedContributionId = typeof session.localServicesBridgeContributionId === 'string'
+      ? session.localServicesBridgeContributionId.trim()
+      : '';
+    if (expectedContributionId !== requestedContributionId) continue;
+    return true;
+  }
+
+  return false;
 }
 
 function resolveDaemonControlBodyLimitBytes(): number {
@@ -130,16 +385,6 @@ function isRuntimeAuthRecoveryScheduled(value: unknown): boolean {
     && (value as { retryable?: unknown }).retryable === true;
 }
 
-// Recovery success here clears the durable recovery intent (markSucceededByKey).
-// It must require deterministic provider-outcome proof, NOT a local-only
-// completion (credential_refreshed / unverified switch / observed_generation /
-// generic ok), so the recovery is not fabricated as recovered while the provider
-// session is still broken. Shared with the scheduler success boundary via
-// isProvenRuntimeAuthRecoverySuccess.
-function isConnectedServiceRuntimeAuthSuccess(result: unknown): boolean {
-  return isProvenRuntimeAuthRecoverySuccess(result);
-}
-
 function isConnectedServiceRuntimeAuthApplyFailure(result: unknown): boolean {
   const outer = result && typeof result === 'object' && !Array.isArray(result)
     ? result as { status?: unknown; result?: unknown }
@@ -153,22 +398,48 @@ function isConnectedServiceRuntimeAuthApplyFailure(result: unknown): boolean {
 }
 
 async function beginRuntimeAuthRecoveryIntake(input: Readonly<{
+  reportId?: string;
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerLike | null;
   sessionId: string;
   switchesThisTurn: number;
   classification: ConnectedServiceRuntimeFailureClassification;
-}>): Promise<Readonly<{ ok: true }> | Readonly<{ ok: false; error: unknown }>> {
-  if (!input.runtimeAuthRecoveryScheduler?.beginClassifiedFailure) return { ok: true };
+  resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1;
+}>): Promise<Readonly<{
+  ok: true;
+  created: boolean;
+  recovery?: RuntimeAuthRecoveryScheduleResult;
+}> | Readonly<{ ok: false; error: unknown }>> {
+  if (!input.runtimeAuthRecoveryScheduler?.beginClassifiedFailure) return { ok: true, created: false };
   try {
-    await input.runtimeAuthRecoveryScheduler.beginClassifiedFailure({
+    const recovery = await input.runtimeAuthRecoveryScheduler.beginClassifiedFailure({
+      ...(input.reportId ? { reportId: input.reportId } : {}),
       sessionId: input.sessionId,
       switchesThisTurn: input.switchesThisTurn,
       classification: input.classification,
+      resumePromptMode: input.resumePromptMode,
     });
-    return { ok: true };
+    return { ok: true, created: true, recovery };
   } catch (error) {
     return { ok: false, error };
   }
+}
+
+function readRuntimeAuthRecoveryResumePromptMode(
+  recovery: unknown,
+): SessionUsageLimitRecoveryResumePromptModeV1 {
+  const record = recovery && typeof recovery === 'object' && !Array.isArray(recovery)
+    ? recovery as Readonly<Record<string, unknown>>
+    : null;
+  return record?.resumePromptMode === 'off' || record?.resumePromptMode === 'custom'
+    ? record.resumePromptMode
+    : 'standard';
+}
+
+function readRuntimeAuthRecoveryAttemptId(recovery: unknown): string | null {
+  const record = recovery && typeof recovery === 'object' && !Array.isArray(recovery)
+    ? recovery as Readonly<Record<string, unknown>>
+    : null;
+  return typeof record?.attemptId === 'string' && record.attemptId.trim() ? record.attemptId.trim() : null;
 }
 
 type SpawnNonceCorrelationRecord = Readonly<{
@@ -178,49 +449,135 @@ type SpawnNonceCorrelationRecord = Readonly<{
   expiresAtMs: number;
 }>;
 
+type SpawnNonceAdmissionResult =
+  | { type: 'none' }
+  | { type: 'claimed' }
+  | { type: 'pending' }
+  | { type: 'success'; sessionId: string };
+
+export type ConnectedAccountRequestAuthControlRoutes = Readonly<{
+  authenticate: (capability: unknown) => ConnectedAccountRequestAuthSubject | null;
+}> & Pick<
+  ConnectedAccountRequestAuthService,
+  'lookupRequestAuth' | 'refreshAfterAuthFailure' | 'reportQuotaFailure'
+>;
+
 export function createDaemonControlApp({
   getChildren,
   machineId,
+  runtimeId = '',
+  prepareStopSession,
   stopSession,
   spawnSession,
   requestShutdown,
   beforeShutdown,
   isShuttingDown,
   onHappySessionWebhook,
+  admitPersistedTakeover,
   controlToken,
+  connectedAccountRequestAuth,
+  verifyRunMaterializeToken,
+  materializeConnectedServicesForExecutionRun,
+  checkConnectedServicesGenerationForExecutionRun,
+  releaseConnectedServicesForExecutionRun,
   sshTunnels,
   handleConnectedServiceRuntimeAuthFailure,
+  authorizeConnectedServiceRuntimeAuthFailure,
+  resolveConnectedServiceRuntimeAuthResumePromptMode,
   runtimeAuthRecoveryScheduler,
   handleSessionConnectedServiceAuthSwitch,
+  handleSessionConnectedServiceRuntimeAuthRefresh,
+  handleSessionRunnerRestart,
+  handleSessionRunnerRestartAll,
+  handleSessionRunnerStatusGet,
   handleConnectedServiceTurnLifecycle,
-  handleConnectedServiceQuotaSnapshot,
+  handleConnectedServiceUsageLimitWaitResumeCancel,
+  handleConnectedServiceQuotaRecoveryCreditConsume,
   handleProviderAccountUsageSnapshot,
   handleProviderAccountUsageAdoption,
-  handleCodexChatGptAuthTokensRefresh,
   localServicesInventory,
+  localServicesLauncher,
+  localServicesPreview,
+  localServicesActions,
+  localServicesPublicPreview,
+  localServicesPluginBridge,
+  agentRuntimeSessionBridge,
+  foregroundAgentRuntimeAdmission,
+  simulatorPreview,
+  requestSelfRestart,
+  pluginChangeService,
+  pluginActionCurrentIntent,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
-  stopSession: (sessionId: string) => Promise<boolean>;
+  runtimeId?: string;
+  prepareStopSession?: (trackedSession: TrackedSession) => Promise<void> | void;
+  stopSession: (sessionId: string) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
-  beforeShutdown?: () => Promise<void>;
+  beforeShutdown?: (input: Readonly<{
+    managedLocalServicesDisposition: 'permanent' | 'transfer';
+  }>) => Promise<void>;
   // True once daemon shutdown / control-server stop has begun. Recovery handlers early-return when
   // set so switch/restart work is never run into a tearing-down daemon (a deferral, not an attempt).
   isShuttingDown?: () => boolean;
-  onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
+  onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void | Promise<void>;
+  admitPersistedTakeover?: (input: Readonly<{
+    sessionId: string;
+    operationId: string;
+    attemptId: string;
+    phase: 'admit' | 'runtime_bound';
+    signal: AbortSignal;
+  }>) => Promise<void>;
   controlToken: string;
+  connectedAccountRequestAuth?: ConnectedAccountRequestAuthControlRoutes;
+  /**
+   * Validates the scoped execution-run materialization capability token. The
+   * `/connected-service-run/*` bridge endpoints accept only this scoped token and reject the
+   * master control token. When unset the run bridge endpoints fail closed.
+   */
+  verifyRunMaterializeToken?: (provided: string) => boolean;
+  /**
+   * Resolves + materializes connected-service auth for an execution run (RUN-scoped
+   * materialization key) and registers the run PID as a runtime-registry target. Implemented by
+   * the daemon wiring over the canonical spawn-auth owner (`resolveConnectedServiceAuthForSpawn`).
+   * When unset the materialize endpoint fails closed with 501.
+   */
+  materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
+  checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
+  /**
+   * Unregisters the run from the canonical runtime registry and runs the retained materialization
+   * cleanup for a finished execution run. Optional; release is best-effort at run end.
+   */
+  releaseConnectedServicesForExecutionRun?: ConnectedServiceRunReleaseHandler;
   sshTunnels?: Pick<SshTunnelSupervisor, 'ensureTunnel' | 'listTunnels' | 'probeTunnel' | 'releaseTunnel' | 'stopTunnel'>;
   handleConnectedServiceRuntimeAuthFailure?: (input: Readonly<{
     sessionId: string;
     switchesThisTurn: number;
+    interruptedOriginId?: string;
     resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
     classification: ConnectedServiceRuntimeFailureClassification;
+    sourceAuthorization?: RuntimeAuthFailureSourceAuthorization;
   }>) => Promise<unknown>;
+  authorizeConnectedServiceRuntimeAuthFailure?: (input: Readonly<{
+    sessionId: string;
+    classification: ConnectedServiceRuntimeFailureClassification;
+  }>) => Promise<RuntimeAuthFailureSourceAuthorization>;
+  resolveConnectedServiceRuntimeAuthResumePromptMode?: (input: Readonly<{
+    classification: ConnectedServiceRuntimeFailureClassification;
+    explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
+  }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerLike | null;
   handleConnectedServiceTurnLifecycle?: (input: Readonly<{
     sessionId: string;
+    turnId?: string;
     event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+    terminalStatus?: 'completed' | 'failed';
+    connectedServiceSelectionsEnvRaw?: string;
+  }>) => Promise<unknown>;
+  handleConnectedServiceUsageLimitWaitResumeCancel?: (input: Readonly<{
+    sessionId: string;
+    attemptId: string;
   }>) => Promise<unknown>;
   handleSessionConnectedServiceAuthSwitch?: (input: Readonly<{
     sessionId: string;
@@ -229,27 +586,41 @@ export function createDaemonControlApp({
     expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
     accountSettingsVersionHint?: number;
   }>) => Promise<unknown>;
-  handleConnectedServiceQuotaSnapshot?: (input: Readonly<{
-    sessionId: string;
-    serviceId: ConnectedServiceId;
-    snapshot: ConnectedServiceQuotaSnapshotV1;
-  }>) => Promise<unknown>;
+  handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
+  handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1) => Promise<RestartSessionRunnerResultV1>;
+  handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
+  handleSessionRunnerStatusGet?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStateV1>;
+  handleConnectedServiceQuotaRecoveryCreditConsume?: (
+    input: ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
+  ) => Promise<unknown>;
   handleProviderAccountUsageSnapshot?: (input: Readonly<{
     sessionId: string;
     snapshot: ProviderAccountUsageSnapshotV1;
+    source?: ConnectedServiceUsageSourceV1;
+    credentialFingerprint?: string | null;
+    policyDisposition?: 'evidence_only';
   }>) => Promise<unknown>;
   handleProviderAccountUsageAdoption?: (input: Readonly<{
     sessionId: string;
     adoption: ProviderAccountUsageAdoptionV1;
   }>) => Promise<unknown>;
-  handleCodexChatGptAuthTokensRefresh?: (input: Readonly<{
-    sessionId: string;
-    selection: CodexChatGptAuthTokensRefreshSelection;
-    chatgptPlanType: string | null;
-  }>) => Promise<CodexChatGptAuthTokensRefreshResponse>;
   localServicesInventory?: LocalServiceInventoryRoutes;
+  localServicesLauncher?: LocalServiceLauncherRoutes;
+  localServicesManaged?: LocalServiceManagedRoutes;
+  localServicesPreview?: Pick<LocalServicePreviewRoutes, 'getSnapshot'>;
+  localServicesActions?: LocalServiceActionRoutes;
+  localServicesPublicPreview?: LocalServicePublicPreviewRoutes;
+  localServicesPluginBridge?: PluginLocalServicesBridgeControlRoutes;
+  agentRuntimeSessionBridge?: AgentRuntimeSessionBridgeControlRoutes;
+  foregroundAgentRuntimeAdmission?: ForegroundAgentRuntimeAdmissionOwner;
+  simulatorPreview?: SimulatorPreviewRoutes;
+  requestSelfRestart?: (request?: DaemonSelfRestartRequest) => Promise<unknown>;
+  pluginChangeService?: DaemonPluginChangeService;
+  pluginActionCurrentIntent?: (
+    request: TargetActionCurrentIntentRequest
+  ) => Promise<TargetActionCurrentIntentResult>;
 }): FastifyInstance {
-  void machineId;
+  const normalizedRuntimeId = runtimeId.trim();
   const normalizedControlToken = controlToken.trim();
   if (!normalizedControlToken) {
     throw new Error('Daemon control token is required');
@@ -264,6 +635,62 @@ export function createDaemonControlApp({
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const typed = app.withTypeProvider<ZodTypeProvider>();
+  const runtimeAuthReportClaims = new Map<string, Readonly<{
+    claimedAtMs: number;
+    result: Promise<unknown>;
+    settled: boolean;
+  }>>();
+  const runtimeAuthReportClaimTtlMs = 24 * 60 * 60_000;
+  const runtimeAuthReportClaimMaxSettledEntries = 256;
+  const claimRuntimeAuthReport = async <T>(input: Readonly<{
+    reportId?: string;
+    execute: () => Promise<T>;
+    retainSettled?: (result: T) => boolean;
+    onResult?: (result: T) => void;
+  }>): Promise<T> => {
+    const reportId = typeof input.reportId === 'string' ? input.reportId.trim() : '';
+    if (!reportId) return await input.execute();
+    const nowMs = Date.now();
+    for (const [key, claim] of runtimeAuthReportClaims) {
+      if (claim.settled && nowMs - claim.claimedAtMs > runtimeAuthReportClaimTtlMs) {
+        runtimeAuthReportClaims.delete(key);
+      }
+    }
+    const existing = runtimeAuthReportClaims.get(reportId);
+    if (existing) {
+      const joined = await existing.result as T;
+      input.onResult?.(joined);
+      return joined;
+    }
+    let settledEntries = 0;
+    for (const claim of runtimeAuthReportClaims.values()) {
+      if (claim.settled) settledEntries += 1;
+    }
+    if (settledEntries >= runtimeAuthReportClaimMaxSettledEntries) {
+      for (const [key, claim] of runtimeAuthReportClaims) {
+        if (!claim.settled) continue;
+        runtimeAuthReportClaims.delete(key);
+        break;
+      }
+    }
+    const result = input.execute();
+    runtimeAuthReportClaims.set(reportId, { claimedAtMs: nowMs, result, settled: false });
+    void result.then((settled) => {
+      if (input.retainSettled?.(settled) === false && runtimeAuthReportClaims.get(reportId)?.result === result) {
+        runtimeAuthReportClaims.delete(reportId);
+      } else if (runtimeAuthReportClaims.get(reportId)?.result === result) {
+        runtimeAuthReportClaims.set(reportId, { claimedAtMs: nowMs, result, settled: true });
+      }
+    }).catch(() => {
+      if (runtimeAuthReportClaims.get(reportId)?.result === result) {
+        runtimeAuthReportClaims.delete(reportId);
+      }
+    });
+    const settled = await result;
+    input.onResult?.(settled);
+    return settled;
+  };
+  const requestAuthPrincipalByRequest = new WeakMap<object, ConnectedAccountRequestAuthSubject>();
   const spawnNoncePendingTtlMs = resolvePositiveIntFromEnv(
     SPAWN_NONCE_PENDING_TTL_ENV_KEY,
     DEFAULT_SPAWN_NONCE_PENDING_TTL_MS,
@@ -274,6 +701,25 @@ export function createDaemonControlApp({
   );
   const spawnNonceCorrelationByNonce = new Map<string, SpawnNonceCorrelationRecord>();
   let daemonStopRequested = false;
+  let restartState: 'idle' | 'restarting' = 'idle';
+  const isDaemonQuiescing = () => daemonStopRequested || isShuttingDown?.() === true;
+  const daemonShuttingDownResponse = () => ({
+    ok: false as const,
+    errorCode: 'daemon_shutting_down' as const,
+  });
+  const daemonShuttingDownRouteResponseSchema = z.object({
+    ok: z.literal(false),
+    errorCode: z.literal('daemon_shutting_down'),
+  });
+  const daemonShuttingDownErrorResponse = () => ({
+    ...daemonShuttingDownResponse(),
+    error: 'Daemon is shutting down',
+  });
+  const spawnDaemonShuttingDownResponse = () => ({
+    success: false as const,
+    error: 'Daemon is shutting down',
+    errorCode: 'daemon_shutting_down' as const,
+  });
 
   const pruneSpawnNonceCorrelation = (nowMs: number = Date.now()): void => {
     for (const [spawnNonce, record] of spawnNonceCorrelationByNonce.entries()) {
@@ -311,6 +757,64 @@ export function createDaemonControlApp({
     });
   };
 
+  const clearSpawnNonceCorrelation = (spawnNonce: string): void => {
+    const normalizedNonce = spawnNonce.trim();
+    if (!normalizedNonce) return;
+    spawnNonceCorrelationByNonce.delete(normalizedNonce);
+  };
+
+  const readTrackedSpawnNonceAdmission = (spawnNonce: string): Exclude<SpawnNonceAdmissionResult, { type: 'none' | 'claimed' }> | null => {
+    const normalizedNonce = spawnNonce.trim();
+    if (!normalizedNonce) return null;
+
+    let foundPending = false;
+    for (const child of getChildren()) {
+      const childNonce = typeof child.spawnOptions?.spawnNonce === 'string'
+        ? child.spawnOptions.spawnNonce.trim()
+        : '';
+      if (childNonce !== normalizedNonce) continue;
+
+      const childSessionId = typeof child.happySessionId === 'string'
+        ? child.happySessionId.trim()
+        : '';
+      if (isCanonicalSessionId(childSessionId)) {
+        return { type: 'success', sessionId: childSessionId };
+      }
+      foundPending = true;
+    }
+
+    return foundPending ? { type: 'pending' } : null;
+  };
+
+  const claimSpawnNonceAdmission = (spawnNonce: string): SpawnNonceAdmissionResult => {
+    const normalizedNonce = spawnNonce.trim();
+    if (!normalizedNonce) return { type: 'none' };
+    const nowMs = Date.now();
+    pruneSpawnNonceCorrelation(nowMs);
+    const current = spawnNonceCorrelationByNonce.get(normalizedNonce);
+    if (current?.status === 'success' && isCanonicalSessionId(current.sessionId)) {
+      return { type: 'success', sessionId: current.sessionId.trim() };
+    }
+    if (current?.status === 'pending') {
+      return { type: 'pending' };
+    }
+    const tracked = readTrackedSpawnNonceAdmission(normalizedNonce);
+    if (tracked?.type === 'success') {
+      markSpawnNonceSuccess(normalizedNonce, tracked.sessionId);
+      return tracked;
+    }
+    if (tracked?.type === 'pending') {
+      markSpawnNoncePending(normalizedNonce);
+      return tracked;
+    }
+    spawnNonceCorrelationByNonce.set(normalizedNonce, {
+      status: 'pending',
+      updatedAtMs: nowMs,
+      expiresAtMs: nowMs + spawnNoncePendingTtlMs,
+    });
+    return { type: 'claimed' };
+  };
+
   const markSpawnNonceFromTrackedSession = (sessionId: string): void => {
     const normalizedSessionId = sessionId.trim();
     if (!isCanonicalSessionId(normalizedSessionId)) return;
@@ -331,25 +835,216 @@ export function createDaemonControlApp({
     error: z.string(),
   });
 
-  const requireAuth = async (request: { headers: Record<string, unknown> }, reply: any): Promise<void> => {
+  const requireAuth = createDaemonControlAuthGuard(normalizedControlToken);
+
+  const requestAuthErrorResponseSchema = z.object({
+    ok: z.literal(false),
+    error: z.object({ code: z.string().trim().min(1).max(128) }).strict(),
+  }).strict();
+  const requireConnectedAccountRequestAuth = async (request: {
+    headers: Record<string, unknown>;
+  }, reply: FastifyReply): Promise<void> => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return reply.send({
+        ok: false as const,
+        error: { code: 'request_auth_unavailable' },
+      });
+    }
+    const provided = request.headers[CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_HEADER];
+    const principal = typeof provided === 'string'
+      ? connectedAccountRequestAuth?.authenticate(provided) ?? null
+      : null;
+    if (!principal || !principal.isCurrent()) {
+      reply.code(401);
+      return reply.send({
+        ok: false as const,
+        error: { code: 'request_auth_unauthorized' },
+      });
+    }
+    requestAuthPrincipalByRequest.set(request, principal);
+  };
+
+  const takeConnectedAccountRequestAuthPrincipal = (
+    request: object,
+  ): ConnectedAccountRequestAuthSubject | null => {
+    const principal = requestAuthPrincipalByRequest.get(request) ?? null;
+    requestAuthPrincipalByRequest.delete(request);
+    return principal?.isCurrent() === true ? principal : null;
+  };
+
+  const sendConnectedAccountRequestAuthFailure = (
+    reply: FastifyReply,
+    error: unknown,
+  ) => {
+    if (error instanceof ConnectedAccountRequestAuthError) {
+      const status = error.code === 'request_auth_purpose_forbidden'
+        ? 403
+        : error.code === 'request_auth_not_active'
+          ? 409
+          : 503;
+      reply.code(status);
+      return {
+        ok: false as const,
+        error: { code: error.code },
+      };
+    }
+    logger.debug('[CONTROL SERVER] Connected-account request-auth operation failed', {
+      errorCode: 'unexpected_error',
+    });
+    reply.code(503);
+    return {
+      ok: false as const,
+      error: { code: 'request_auth_unavailable' },
+    };
+  };
+
+
+  // Least-privilege gate for the execution-run connected-services bridge. Accepts only the scoped
+  // run-materialize capability token via the injected verifier; the master control token is
+  // rejected. Fails closed when no verifier is wired.
+  const requireRunMaterializeAuth = async (request: { headers: Record<string, unknown> }, reply: any): Promise<void> => {
     const rawHeader = (request.headers as any)['x-happier-daemon-token'];
     const provided = typeof rawHeader === 'string' ? rawHeader : Array.isArray(rawHeader) ? rawHeader[0] : null;
-    if (!provided || !safeTokenEquals(provided, normalizedControlToken)) {
+    if (!provided || !verifyRunMaterializeToken || !verifyRunMaterializeToken(provided)) {
       reply.code(401);
       return reply.send({ success: false as const, error: 'Unauthorized' });
     }
   };
 
+  if (pluginChangeService) {
+    registerDaemonPluginChangeRoutes(app, {
+      service: pluginChangeService,
+      requireAuth,
+      ...(pluginActionCurrentIntent ? { requestCurrentIntent: pluginActionCurrentIntent } : {}),
+      readCatalogSnapshot: async () => await readCurrentDaemonPluginCatalogSnapshot({
+        reloadController: pluginReloadController,
+      }),
+    });
+  }
+
   typed.post('/ping', {
     schema: {
       response: {
-        200: z.object({ status: z.literal('ok') }),
+        200: z.object({
+          status: z.literal('ok'),
+          runtimeId: z.string().min(1).optional(),
+          distClosureFingerprint: DaemonDistClosureFingerprintSchema.optional(),
+        }),
         401: authSchema401,
       }
     },
     preHandler: requireAuth,
   }, async () => {
-    return { status: 'ok' as const };
+    const distClosureFingerprint = String(
+      process.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT ?? '',
+    ).trim();
+    return {
+      status: 'ok' as const,
+      ...(normalizedRuntimeId ? { runtimeId: normalizedRuntimeId } : {}),
+      ...(DAEMON_DIST_CLOSURE_FINGERPRINT_PATTERN.test(distClosureFingerprint)
+        ? { distClosureFingerprint }
+        : {}),
+    };
+  });
+
+  typed.post(CONNECTED_ACCOUNT_REQUEST_AUTH_LOOKUP_PATH, {
+    schema: {
+      body: ConnectedAccountRequestAuthLookupRequestV1Schema,
+      response: {
+        200: z.object({ ok: z.literal(true), value: OAuthBearerLeaseV1Schema }).strict(),
+        401: requestAuthErrorResponseSchema,
+        403: requestAuthErrorResponseSchema,
+        409: requestAuthErrorResponseSchema,
+        503: requestAuthErrorResponseSchema,
+      },
+    },
+    preHandler: requireConnectedAccountRequestAuth,
+  }, async (request, reply) => {
+    const principal = takeConnectedAccountRequestAuthPrincipal(request);
+    if (!principal || !connectedAccountRequestAuth) {
+      reply.code(401);
+      return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
+    }
+    try {
+      const value = await connectedAccountRequestAuth.lookupRequestAuth({
+        subject: principal,
+        purpose: request.body.purpose,
+      });
+      if (!principal.isCurrent()) {
+        reply.code(409);
+        return { ok: false as const, error: { code: 'request_auth_not_active' } };
+      }
+      return { ok: true as const, value };
+    } catch (error) {
+      return sendConnectedAccountRequestAuthFailure(reply, error);
+    }
+  });
+
+  typed.post(CONNECTED_ACCOUNT_REQUEST_AUTH_FAILURE_PATH, {
+    schema: {
+      body: ConnectedAccountAuthFailureRequestV1Schema,
+      response: {
+        200: z.object({ ok: z.literal(true), value: RequestAuthFailureOutcomeV1Schema }).strict(),
+        401: requestAuthErrorResponseSchema,
+        403: requestAuthErrorResponseSchema,
+        409: requestAuthErrorResponseSchema,
+        503: requestAuthErrorResponseSchema,
+      },
+    },
+    preHandler: requireConnectedAccountRequestAuth,
+  }, async (request, reply) => {
+    const principal = takeConnectedAccountRequestAuthPrincipal(request);
+    if (!principal || !connectedAccountRequestAuth) {
+      reply.code(401);
+      return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
+    }
+    try {
+      const value = await connectedAccountRequestAuth.refreshAfterAuthFailure({
+        subject: principal,
+        request: request.body,
+      });
+      if (!principal.isCurrent()) {
+        reply.code(409);
+        return { ok: false as const, error: { code: 'request_auth_not_active' } };
+      }
+      return { ok: true as const, value };
+    } catch (error) {
+      return sendConnectedAccountRequestAuthFailure(reply, error);
+    }
+  });
+
+  typed.post(CONNECTED_ACCOUNT_REQUEST_AUTH_QUOTA_FAILURE_PATH, {
+    schema: {
+      body: ConnectedAccountQuotaFailureRequestV1Schema,
+      response: {
+        200: z.object({ ok: z.literal(true), value: RequestAuthFailureOutcomeV1Schema }).strict(),
+        401: requestAuthErrorResponseSchema,
+        403: requestAuthErrorResponseSchema,
+        409: requestAuthErrorResponseSchema,
+        503: requestAuthErrorResponseSchema,
+      },
+    },
+    preHandler: requireConnectedAccountRequestAuth,
+  }, async (request, reply) => {
+    const principal = takeConnectedAccountRequestAuthPrincipal(request);
+    if (!principal || !connectedAccountRequestAuth) {
+      reply.code(401);
+      return { ok: false as const, error: { code: 'request_auth_unauthorized' } };
+    }
+    try {
+      const value = await connectedAccountRequestAuth.reportQuotaFailure({
+        subject: principal,
+        request: request.body,
+      });
+      if (!principal.isCurrent()) {
+        reply.code(409);
+        return { ok: false as const, error: { code: 'request_auth_not_active' } };
+      }
+      return { ok: true as const, value };
+    } catch (error) {
+      return sendConnectedAccountRequestAuthFailure(reply, error);
+    }
   });
 
   typed.post('/connected-service-auth/session/switch', {
@@ -367,6 +1062,7 @@ export function createDaemonControlApp({
           result: z.unknown(),
         }),
         401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
         501: z.object({
           ok: z.literal(false),
           errorCode: z.literal('connected_service_auth_switch_handler_unavailable'),
@@ -375,6 +1071,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
     if (!handleSessionConnectedServiceAuthSwitch) {
       reply.code(501);
       return {
@@ -396,26 +1096,264 @@ export function createDaemonControlApp({
     return { ok: true as const, result };
   });
 
+  typed.post('/connected-service-auth/session/refresh-runtime-auth', {
+    schema: {
+      body: z.object({
+        sessionId: z.string().trim().min(1),
+        serviceId: ConnectedServiceIdSchema,
+        refreshAttemptId: z.string().trim().min(1),
+        selection: ConnectedServiceRuntimeAuthRefreshSelectionSchema,
+        planType: z.string().trim().min(1).nullable().optional(),
+        failingAccessTokenFingerprint: z.string().trim().min(1).nullable().optional(),
+        expectedCredentialRevision: ConnectedServiceCredentialRevisionV1Schema,
+        reason: z.string().trim().min(1).nullable().optional(),
+      }),
+      response: {
+        200: z.object({ ok: z.literal(true), result: ConnectedServiceDaemonAuthBridgeRefreshResultSchema }),
+        400: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('connected_service_session_refresh_service_id_mismatch'),
+        }),
+        401: authSchema401,
+        403: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('connected_service_session_refresh_forbidden'),
+        }),
+        501: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('connected_service_daemon_auth_bridge_unavailable'),
+        }),
+        503: daemonShuttingDownRouteResponseSchema,
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (request.body.serviceId !== request.body.selection.serviceId) {
+      reply.code(400);
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_session_refresh_service_id_mismatch' as const,
+      };
+    }
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!handleSessionConnectedServiceRuntimeAuthRefresh) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_daemon_auth_bridge_unavailable' as const,
+      };
+    }
+    const result = await handleSessionConnectedServiceRuntimeAuthRefresh({
+      sessionId: request.body.sessionId,
+      refreshAttemptId: request.body.refreshAttemptId,
+      selection: request.body.selection,
+      ...(request.body.planType === undefined ? {} : { planType: request.body.planType }),
+      ...(request.body.failingAccessTokenFingerprint === undefined
+        ? {}
+        : { failingAccessTokenFingerprint: request.body.failingAccessTokenFingerprint }),
+      expectedCredentialRevision: request.body.expectedCredentialRevision,
+      ...(request.body.reason === undefined ? {} : { reason: request.body.reason }),
+    });
+    if (!result.ok) {
+      reply.code(result.errorCode === 'connected_service_session_refresh_forbidden' ? 403 : 501);
+      return result;
+    }
+    return result;
+  });
+
+  typed.post('/session-runners/restart', {
+    schema: {
+      body: RestartSessionRunnerRequestV1Schema,
+      response: {
+        200: RestartSessionRunnerResultV1Schema,
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+        501: z.object({
+          ok: z.literal(false),
+          status: z.literal('unsupported_daemon'),
+          sessionId: z.string(),
+          reasonCode: z.literal('unsupported_daemon_version'),
+        }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!handleSessionRunnerRestart) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        status: 'unsupported_daemon' as const,
+        sessionId: request.body.sessionId,
+        reasonCode: 'unsupported_daemon_version' as const,
+      };
+    }
+    return await handleSessionRunnerRestart(request.body);
+  });
+
+  typed.post('/session-runners/restart-all', {
+    schema: {
+      body: RestartAllSessionRunnersRequestV1Schema,
+      response: {
+        200: RestartAllSessionRunnersResultV1Schema,
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+        501: RestartAllSessionRunnersResultV1Schema,
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!handleSessionRunnerRestartAll) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        mode: request.body.mode,
+        requestedCount: 0,
+        restartedCount: 0,
+        skippedCount: 0,
+        failedCount: 0,
+        results: [],
+      };
+    }
+    return await handleSessionRunnerRestartAll({
+      mode: request.body.mode,
+      dryRun: request.body.dryRun === true,
+      reason: request.body.reason,
+    });
+  });
+
+  typed.post('/session-runners/status', {
+    schema: {
+      body: SessionRunnerStatusGetRequestV1Schema,
+      response: {
+        200: SessionRunnerRuntimeStateV1Schema,
+        401: authSchema401,
+        501: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('unsupported_daemon_version'),
+        }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!handleSessionRunnerStatusGet) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        errorCode: 'unsupported_daemon_version' as const,
+      };
+    }
+    return await handleSessionRunnerStatusGet({ sessionId: request.body.sessionId });
+  });
+
   // Session reports itself after creation
   typed.post('/session-started', {
     schema: {
       body: z.object({
         sessionId: z.string(),
-        metadata: z.any() // Metadata type from API
-      }),
+        metadata: z.any(), // Metadata type from API
+        persistedTakeoverAdmission: z.object({
+          operationId: z.string().trim().min(1).max(256),
+          attemptId: z.string().trim().min(1).max(256),
+          phase: z.enum(['admit', 'runtime_bound']).optional(),
+        }).strict().optional(),
+      }).strict(),
       response: {
         200: z.object({
           status: z.literal('ok')
         }),
         401: authSchema401,
+        503: z.object({
+          status: z.literal('error'),
+          errorCode: z.enum([
+            'session_startup_reconciliation_failed',
+            'persisted_takeover_admission_failed',
+            'persisted_takeover_admission_upgrade_required',
+          ]),
+        }),
       }
     },
     preHandler: requireAuth,
-  }, async (request) => {
-    const { sessionId, metadata } = request.body;
+  }, async (request, reply) => {
+    const { sessionId, metadata, persistedTakeoverAdmission } = request.body;
+
+    if (persistedTakeoverAdmission) {
+      // The host sends this strict, attempt-scoped request only after its ordinary startup
+      // report has completed. Admission must not replay that report or its spawn-nonce side effect.
+      if (!admitPersistedTakeover || !persistedTakeoverAdmission.phase) {
+        reply.code(503);
+        return {
+          status: 'error' as const,
+          errorCode: 'persisted_takeover_admission_upgrade_required' as const,
+        };
+      }
+      const requestLifetime = new AbortController();
+      const abortRequestLifetime = () => {
+        if (!requestLifetime.signal.aborted) {
+          requestLifetime.abort(
+            new Error('Persisted takeover admission control request ended'),
+          );
+        }
+      };
+      const abortIfResponseDidNotFinish = () => {
+        if (!reply.raw.writableEnded) {
+          abortRequestLifetime();
+        }
+      };
+      request.raw.once('aborted', abortRequestLifetime);
+      reply.raw.once('close', abortIfResponseDidNotFinish);
+      if (request.raw.aborted) {
+        abortRequestLifetime();
+      }
+      try {
+        await admitPersistedTakeover({
+          sessionId,
+          operationId: persistedTakeoverAdmission.operationId,
+          attemptId: persistedTakeoverAdmission.attemptId,
+          phase: persistedTakeoverAdmission.phase,
+          signal: requestLifetime.signal,
+        });
+        return { status: 'ok' as const };
+      } catch (error) {
+        logger.debug('[CONTROL SERVER] Persisted takeover admission failed', error);
+        reply.code(503);
+        return {
+          status: 'error' as const,
+          errorCode: 'persisted_takeover_admission_failed' as const,
+        };
+      } finally {
+        request.raw.removeListener('aborted', abortRequestLifetime);
+        reply.raw.removeListener('close', abortIfResponseDidNotFinish);
+      }
+    }
 
     logger.debug(`[CONTROL SERVER] Session started: ${sessionId}`);
-    onHappySessionWebhook(sessionId, metadata);
+    let requiredReadiness: Promise<void>;
+    try {
+      requiredReadiness = Promise.resolve(onHappySessionWebhook(sessionId, metadata));
+    } catch (error) {
+      requiredReadiness = Promise.reject(error);
+    }
+    try {
+      await requiredReadiness;
+    } catch (error) {
+      logger.debug('[CONTROL SERVER] Session startup reconciliation failed', error);
+      reply.code(503);
+      return {
+        status: 'error' as const,
+        errorCode: 'session_startup_reconciliation_failed' as const,
+      };
+    }
     markSpawnNonceFromTrackedSession(sessionId);
 
     return { status: 'ok' as const };
@@ -424,6 +1362,8 @@ export function createDaemonControlApp({
   typed.post('/connected-service-runtime-auth/failure', {
     schema: {
       body: z.object({
+        reportId: z.string().min(1).max(256).optional(),
+        originDaemonExecutionGenerationV1: z.string().min(1).max(256).optional(),
         sessionId: z.string().min(1),
         switchesThisTurn: z.number().int().nonnegative().optional(),
         resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1Schema.optional(),
@@ -442,8 +1382,17 @@ export function createDaemonControlApp({
         200: z.object({
           ok: z.literal(true),
           result: z.unknown(),
+          resumePromptMode: SessionUsageLimitRecoveryResumePromptModeV1Schema.optional(),
+          recoveryReceipt: z.object({
+            reportId: z.string().min(1).max(256),
+            attemptId: z.string().min(1).max(256),
+          }).optional(),
         }),
         401: authSchema401,
+        400: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('connected_service_runtime_auth_invalid_classification'),
+        }),
         501: z.object({
           ok: z.literal(false),
           errorCode: z.literal('connected_service_runtime_auth_handler_unavailable'),
@@ -456,6 +1405,20 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    return await claimRuntimeAuthReport({
+      reportId: request.body.reportId,
+      retainSettled: (result) => result.ok === true,
+      onResult: (result) => {
+        if (result.ok === true) return;
+        reply.code(
+          result.errorCode === 'connected_service_runtime_auth_invalid_classification'
+            ? 400
+            : result.errorCode === 'connected_service_runtime_auth_handler_unavailable'
+              ? 501
+              : 503,
+        );
+      },
+      execute: async () => {
     if (!handleConnectedServiceRuntimeAuthFailure) {
       reply.code(501);
       return {
@@ -466,9 +1429,20 @@ export function createDaemonControlApp({
     const startedAtMs = Date.now();
     const sessionId = request.body.sessionId;
     const switchesThisTurn = request.body.switchesThisTurn ?? 0;
-    const resumePromptMode = request.body.resumePromptMode;
-    const classification = request.body.classification as ConnectedServiceRuntimeFailureClassification;
-    if (daemonStopRequested) {
+    let classification = sanitizeConnectedServiceRuntimeFailureClassification(request.body.classification);
+    if (!classification) {
+      reply.code(400);
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_runtime_auth_invalid_classification' as const,
+      };
+    }
+    const resolvedResumePromptMode = await (resolveConnectedServiceRuntimeAuthResumePromptMode?.({
+      classification,
+      ...(request.body.resumePromptMode ? { explicit: request.body.resumePromptMode } : {}),
+    }) ?? Promise.resolve(request.body.resumePromptMode ?? 'standard')).catch(() => 'standard' as const);
+    let resumePromptMode = resolvedResumePromptMode;
+    if (daemonStopRequested || isShuttingDown?.() === true) {
       return {
         ok: true as const,
         result: {
@@ -477,11 +1451,34 @@ export function createDaemonControlApp({
         },
       };
     }
+    let sourceAuthorization: Awaited<ReturnType<NonNullable<
+      typeof authorizeConnectedServiceRuntimeAuthFailure
+    >>> | undefined;
+    try {
+      sourceAuthorization = await authorizeConnectedServiceRuntimeAuthFailure?.({ sessionId, classification });
+    } catch (error) {
+      logger.warn('[CONTROL SERVER] Connected-service runtime auth source verification unavailable', {
+        sessionId,
+        serviceId: classification.serviceId,
+        error: readSafeDaemonControlErrorDiagnostic(error),
+      });
+      reply.code(503);
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const,
+      };
+    }
+    if (sourceAuthorization && sourceAuthorization.status !== 'authorized') {
+      return { ok: true as const, result: sourceAuthorization };
+    }
+    classification = applyAuthorizedRuntimeAuthFailureSourceBinding(classification, sourceAuthorization);
     const intake = await beginRuntimeAuthRecoveryIntake({
+      ...(request.body.reportId ? { reportId: request.body.reportId } : {}),
       runtimeAuthRecoveryScheduler,
       sessionId,
       switchesThisTurn,
       classification,
+      resumePromptMode,
     });
     if (!intake.ok) {
       const diagnostic = readSafeDaemonControlErrorDiagnostic(intake.error);
@@ -507,44 +1504,49 @@ export function createDaemonControlApp({
         errorCode: 'connected_service_runtime_auth_recovery_intake_failed' as const,
       };
     }
-    // Daemon shutdown / control-server stop in progress: defer recovery without running switch /
-    // restart work and without clearing the recovery intent. The classified failure has already
-    // been durably recorded above, so a healthy future daemon can re-drive it.
-    if (isShuttingDown?.() === true) {
-      return {
-        ok: true as const,
-        result: {
-          status: 'daemon_lifecycle_unavailable' as const,
-          reason: 'recovery_deferred_shutdown' as const,
-        },
-      };
+    if (intake.created) {
+      resumePromptMode = readRuntimeAuthRecoveryResumePromptMode(intake.recovery);
     }
+    const recoveryAttemptId = readRuntimeAuthRecoveryAttemptId(intake.recovery);
+    const recoveryReceipt = request.body.reportId && recoveryAttemptId
+      ? {
+          reportId: request.body.reportId,
+          attemptId: recoveryAttemptId,
+        }
+      : null;
+    const buildAcceptedResponse = (result: unknown) => ({
+      ok: true as const,
+      result,
+      ...(resolveConnectedServiceRuntimeAuthResumePromptMode ? { resumePromptMode } : {}),
+      ...(recoveryReceipt ? { recoveryReceipt } : {}),
+    });
     try {
       const result = await handleConnectedServiceRuntimeAuthFailure({
         sessionId,
         switchesThisTurn,
-        ...(resumePromptMode ? { resumePromptMode } : {}),
+        ...(request.body.reportId ? { interruptedOriginId: request.body.reportId } : {}),
+        resumePromptMode,
         classification,
+        ...(sourceAuthorization ? { sourceAuthorization } : {}),
       });
       if (isConnectedServiceRuntimeAuthApplyFailure(result) && runtimeAuthRecoveryScheduler) {
         try {
           const recovery = await runtimeAuthRecoveryScheduler.enqueueApplyFailure({
+            ...(request.body.reportId ? { reportId: request.body.reportId } : {}),
+            ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
             sessionId,
             switchesThisTurn,
             classification,
             result,
           });
           if (isRuntimeAuthRecoveryScheduled(recovery)) {
-            return {
-              ok: true as const,
-              result: {
+            return buildAcceptedResponse({
                 ...buildRuntimeAuthRecoveryScheduledResult({
                   classification,
                   recovery,
                   originalResult: result,
                 }),
-              },
-            };
+            });
           }
         } catch (schedulerError) {
           logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after apply failure', {
@@ -559,6 +1561,8 @@ export function createDaemonControlApp({
           serviceId: classification.serviceId,
           profileId: classification.profileId ?? null,
           groupId: classification.groupId ?? null,
+          ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
+          result,
         }).catch((error) => {
           logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery proof-wait mark failed after local completion', {
             sessionId,
@@ -566,20 +1570,7 @@ export function createDaemonControlApp({
           });
         });
       }
-      if (isConnectedServiceRuntimeAuthSuccess(result)) {
-        await runtimeAuthRecoveryScheduler?.markSucceededByKey({
-          sessionId,
-          serviceId: classification.serviceId,
-          profileId: classification.profileId ?? null,
-          groupId: classification.groupId ?? null,
-        }).catch((error) => {
-          logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery cancel failed after success', {
-            sessionId,
-            error: readSafeDaemonControlErrorDiagnostic(error),
-          });
-        });
-      }
-      return { ok: true as const, result };
+      return buildAcceptedResponse(result);
     } catch (error) {
       const diagnostic = readSafeDaemonControlErrorDiagnostic(error);
       logger.warn('[CONTROL SERVER] Connected-service runtime auth failure handler failed', {
@@ -601,21 +1592,20 @@ export function createDaemonControlApp({
       if (runtimeAuthRecoveryScheduler) {
         try {
           const recovery = await runtimeAuthRecoveryScheduler.enqueueHandlerFailure({
+            ...(request.body.reportId ? { reportId: request.body.reportId } : {}),
+            ...(recoveryAttemptId ? { expectedAttemptId: recoveryAttemptId } : {}),
             sessionId,
             switchesThisTurn,
             classification,
             error,
           });
           if (isRuntimeAuthRecoveryScheduled(recovery)) {
-            return {
-              ok: true as const,
-              result: {
+            return buildAcceptedResponse({
                 ...buildRuntimeAuthRecoveryScheduledResult({
                   classification,
                   recovery,
                 }),
-              },
-            };
+            });
           }
         } catch (schedulerError) {
           logger.debug('[CONTROL SERVER] Connected-service runtime auth recovery scheduling failed after handler failure', {
@@ -624,21 +1614,23 @@ export function createDaemonControlApp({
           });
         }
       }
-      return {
-        ok: true as const,
-        result: {
+      return buildAcceptedResponse({
           status: 'recovery_handler_failed' as const,
           errorCode: 'unexpected_error' as const,
-        },
-      };
+      });
     }
+      },
+    });
   });
 
   typed.post('/connected-service-turn-lifecycle', {
     schema: {
       body: z.object({
         sessionId: z.string().min(1),
+        turnId: z.string().trim().min(1).max(512).optional(),
         event: z.enum(['prompt_or_steer', 'task_started', 'assistant_message_end', 'turn_cancelled']),
+        terminalStatus: z.enum(['completed', 'failed']).optional(),
+        connectedServiceSelectionsEnvRaw: z.string().min(1).max(64 * 1024).optional(),
       }),
       response: {
         200: z.object({
@@ -646,6 +1638,7 @@ export function createDaemonControlApp({
           result: z.unknown(),
         }),
         401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
         501: z.object({
           ok: z.literal(false),
           errorCode: z.literal('connected_service_turn_lifecycle_handler_unavailable'),
@@ -654,6 +1647,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
     if (!handleConnectedServiceTurnLifecycle) {
       reply.code(501);
       return {
@@ -663,73 +1660,88 @@ export function createDaemonControlApp({
     }
     const result = await handleConnectedServiceTurnLifecycle({
       sessionId: request.body.sessionId,
+      ...(request.body.turnId ? { turnId: request.body.turnId } : {}),
       event: request.body.event,
+      ...(request.body.terminalStatus ? { terminalStatus: request.body.terminalStatus } : {}),
+      ...(request.body.connectedServiceSelectionsEnvRaw
+        ? { connectedServiceSelectionsEnvRaw: request.body.connectedServiceSelectionsEnvRaw }
+        : {}),
     });
     return { ok: true as const, result };
   });
 
-  typed.post('/connected-service-quota-snapshot', {
+  typed.post('/connected-service-usage-limit/wait-resume-cancel', {
     schema: {
       body: z.object({
         sessionId: z.string().min(1),
+        attemptId: z.string().trim().min(1),
+      }),
+      response: {
+        200: z.object({ ok: z.literal(true), result: z.unknown() }),
+        401: authSchema401,
+        501: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('connected_service_usage_limit_wait_resume_cancel_handler_unavailable'),
+        }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!handleConnectedServiceUsageLimitWaitResumeCancel) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        errorCode: 'connected_service_usage_limit_wait_resume_cancel_handler_unavailable' as const,
+      };
+    }
+    return {
+      ok: true as const,
+      result: await handleConnectedServiceUsageLimitWaitResumeCancel(request.body),
+    };
+  });
+
+  typed.post('/connected-service-quota-recovery-credit/consume', {
+    schema: {
+      body: z.object({
         serviceId: ConnectedServiceIdSchema,
-        snapshot: ConnectedServiceQuotaSnapshotV1Schema,
+        profileId: z.string().trim().min(1),
+        idempotencyKey: z.string().trim().min(1).max(256),
+        providerCreditId: z.string().trim().min(1).max(256).optional(),
       }),
       response: {
         200: z.object({
           ok: z.literal(true),
           result: z.unknown(),
         }),
-        400: z.object({
-          ok: z.literal(false),
-          errorCode: z.literal('connected_service_quota_snapshot_service_id_mismatch'),
-        }),
         401: authSchema401,
+        503: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('daemon_shutting_down'),
+        }),
         501: z.object({
           ok: z.literal(false),
-          errorCode: z.literal('connected_service_quota_snapshot_handler_unavailable'),
+          errorCode: z.literal('connected_service_quota_recovery_credit_handler_unavailable'),
         }),
       },
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
-    if (request.body.snapshot.serviceId !== request.body.serviceId) {
-      reply.code(400);
-      return {
-        ok: false as const,
-        errorCode: 'connected_service_quota_snapshot_service_id_mismatch' as const,
-      };
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
     }
-    if (handleProviderAccountUsageSnapshot) {
-      const snapshot = projectConnectedServiceQuotaSnapshotToProviderAccountUsageSnapshot({
-        sessionId: request.body.sessionId,
-        serviceId: request.body.serviceId,
-        snapshot: request.body.snapshot,
-      });
-      const result = await handleProviderAccountUsageSnapshot({
-        sessionId: request.body.sessionId,
-        snapshot,
-      });
-      if (handleConnectedServiceQuotaSnapshot) {
-        await handleConnectedServiceQuotaSnapshot({
-          sessionId: request.body.sessionId,
-          serviceId: request.body.serviceId,
-          snapshot: request.body.snapshot,
-        });
-      }
-      return { ok: true as const, result };
-    }
-    if (!handleConnectedServiceQuotaSnapshot) {
+    if (!handleConnectedServiceQuotaRecoveryCreditConsume) {
       reply.code(501);
       return {
         ok: false as const,
-        errorCode: 'connected_service_quota_snapshot_handler_unavailable' as const,
+        errorCode: 'connected_service_quota_recovery_credit_handler_unavailable' as const,
       };
     }
-    const result = await handleConnectedServiceQuotaSnapshot({
-      sessionId: request.body.sessionId,
+    const result = await handleConnectedServiceQuotaRecoveryCreditConsume({
       serviceId: request.body.serviceId,
-      snapshot: request.body.snapshot,
+      profileId: request.body.profileId,
+      idempotencyKey: request.body.idempotencyKey,
+      ...(request.body.providerCreditId ? { providerCreditId: request.body.providerCreditId } : {}),
     });
     return { ok: true as const, result };
   });
@@ -739,6 +1751,9 @@ export function createDaemonControlApp({
       body: z.object({
         sessionId: z.string().min(1),
         snapshot: ProviderAccountUsageSnapshotV1Schema,
+        source: ConnectedServiceUsageSourceV1Schema.optional(),
+        credentialFingerprint: z.string().regex(/^sha256:[a-f0-9]{8}$/u).nullable().optional(),
+        policyDisposition: z.literal('evidence_only').optional(),
       }),
       response: {
         200: z.object({
@@ -746,6 +1761,13 @@ export function createDaemonControlApp({
           result: z.unknown(),
         }),
         401: authSchema401,
+        503: z.union([
+          daemonShuttingDownRouteResponseSchema,
+          z.object({
+            ok: z.literal(false),
+            errorCode: z.literal('provider_account_usage_snapshot_intake_failed'),
+          }),
+        ]),
         501: z.object({
           ok: z.literal(false),
           errorCode: z.literal('provider_account_usage_snapshot_handler_unavailable'),
@@ -754,6 +1776,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
     if (!handleProviderAccountUsageSnapshot) {
       reply.code(501);
       return {
@@ -761,11 +1787,29 @@ export function createDaemonControlApp({
         errorCode: 'provider_account_usage_snapshot_handler_unavailable' as const,
       };
     }
-    const result = await handleProviderAccountUsageSnapshot({
-      sessionId: request.body.sessionId,
-      snapshot: request.body.snapshot,
-    });
-	    return { ok: true as const, result };
+    try {
+      const result = await handleProviderAccountUsageSnapshot({
+        sessionId: request.body.sessionId,
+        snapshot: request.body.snapshot,
+        ...(request.body.source ? { source: request.body.source } : {}),
+        ...(request.body.credentialFingerprint !== undefined ? { credentialFingerprint: request.body.credentialFingerprint } : {}),
+        ...(request.body.policyDisposition ? { policyDisposition: request.body.policyDisposition } : {}),
+      });
+      if (!isProviderAccountUsageSnapshotIntakeAccepted(result)) {
+        throw new Error('provider_account_usage_snapshot_canonical_custody_unavailable');
+      }
+      return { ok: true as const, result };
+    } catch (error) {
+      logger.warn('[CONTROL SERVER] Provider account usage snapshot canonical intake failed', {
+        sessionId: request.body.sessionId,
+        error: readSafeDaemonControlErrorDiagnostic(error),
+      });
+      reply.code(503);
+      return {
+        ok: false as const,
+        errorCode: 'provider_account_usage_snapshot_intake_failed' as const,
+      };
+    }
 	  });
 
 	  typed.post('/provider-account-usage-adoption', {
@@ -779,15 +1823,26 @@ export function createDaemonControlApp({
 	          ok: z.literal(true),
 	          result: z.unknown(),
 	        }),
-	        401: authSchema401,
-	        501: z.object({
-	          ok: z.literal(false),
-	          errorCode: z.literal('provider_account_usage_adoption_handler_unavailable'),
-	        }),
+        401: authSchema401,
+        503: z.object({
+          ok: z.literal(false),
+          errorCode: z.union([
+            z.literal('daemon_shutting_down'),
+            z.literal('provider_account_usage_adoption_intake_failed'),
+          ]),
+        }),
+        501: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('provider_account_usage_adoption_handler_unavailable'),
+        }),
 	      },
 	    },
 	    preHandler: requireAuth,
 	  }, async (request, reply) => {
+        if (isDaemonQuiescing()) {
+          reply.code(503);
+          return daemonShuttingDownResponse();
+        }
 	    if (!handleProviderAccountUsageAdoption) {
 	      reply.code(501);
 	      return {
@@ -795,47 +1850,119 @@ export function createDaemonControlApp({
 	        errorCode: 'provider_account_usage_adoption_handler_unavailable' as const,
 	      };
 	    }
-	    const result = await handleProviderAccountUsageAdoption({
-	      sessionId: request.body.sessionId,
-	      adoption: request.body.adoption,
-	    });
-	    return { ok: true as const, result };
+      try {
+        const result = await handleProviderAccountUsageAdoption({
+          sessionId: request.body.sessionId,
+          adoption: request.body.adoption,
+        });
+        if (!isProviderAccountUsageAdoptionIntakeAccepted(result)) {
+          throw new Error('provider_account_usage_adoption_canonical_custody_unavailable');
+        }
+        return { ok: true as const, result };
+      } catch (error) {
+        logger.warn('[CONTROL SERVER] Provider account usage adoption canonical intake failed', {
+          sessionId: request.body.sessionId,
+          error: readSafeDaemonControlErrorDiagnostic(error),
+        });
+        reply.code(503);
+        return {
+          ok: false as const,
+          errorCode: 'provider_account_usage_adoption_intake_failed' as const,
+        };
+      }
 	  });
 
-	  typed.post(CODEX_CHATGPT_AUTH_TOKENS_REFRESH_PATH, {
+  // Execution-run connected-services bridge: the RUNNER (which spawns run backends in-process)
+  // asks the daemon — the sole connected-services owner — to resolve + materialize the selected
+  // auth for a RUN-scoped materialization key and register the run PID as a runtime-registry
+  // target. Gated by the SCOPED run-materialize capability token (master token rejected).
+  typed.post(CONNECTED_SERVICE_RUN_MATERIALIZE_PATH, {
     schema: {
-      body: z.object({
-        sessionId: z.string().min(1),
-        selection: CodexChatGptAuthTokensRefreshSelectionSchema,
-        chatgptPlanType: z.string().nullable().optional(),
-      }),
+      body: ConnectedServiceRunMaterializeRequestSchema,
       response: {
         200: z.object({
           ok: z.literal(true),
-          result: CodexChatGptAuthTokensRefreshResponseSchema,
+          result: z.object({
+            activationId: z.string().uuid(),
+            env: z.record(z.string(), z.string()),
+            connectedServicesBindings: z.unknown(),
+            registration: ExecutionRunConnectedServicesRegistrationV1Schema,
+          }),
         }),
         401: authSchema401,
+        403: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal(CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.blocked),
+          errorMessage: z.string().optional(),
+        }),
         501: z.object({
           ok: z.literal(false),
-          errorCode: z.literal('connected_service_chatgpt_refresh_handler_unavailable'),
+          errorCode: z.literal(CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable),
         }),
       },
     },
-    preHandler: requireAuth,
+    preHandler: requireRunMaterializeAuth,
   }, async (request, reply) => {
-    if (!handleCodexChatGptAuthTokensRefresh) {
+    if (!materializeConnectedServicesForExecutionRun) {
       reply.code(501);
       return {
         ok: false as const,
-        errorCode: 'connected_service_chatgpt_refresh_handler_unavailable' as const,
+        errorCode: CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES.unavailable,
       };
     }
-    const result = await handleCodexChatGptAuthTokensRefresh({
-      sessionId: request.body.sessionId,
-      selection: request.body.selection,
-      chatgptPlanType: request.body.chatgptPlanType ?? null,
-    });
-    return { ok: true as const, result };
+    const result = await materializeConnectedServicesForExecutionRun(request.body);
+    if (!result.ok) {
+      reply.code(403);
+      return {
+        ok: false as const,
+        errorCode: result.errorCode,
+        ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+      };
+    }
+    return {
+      ok: true as const,
+      result: {
+        activationId: result.activationId,
+        env: { ...result.env },
+        connectedServicesBindings: result.connectedServicesBindings,
+        registration: result.registration,
+      },
+    };
+  });
+
+  typed.post(CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH, {
+    schema: {
+      body: ConnectedServiceRunGenerationCurrentRequestSchema,
+      response: {
+        200: z.object({ ok: z.literal(true), current: z.boolean() }),
+        401: authSchema401,
+      },
+    },
+    preHandler: requireRunMaterializeAuth,
+  }, async (request) => {
+    if (!checkConnectedServicesGenerationForExecutionRun) {
+      return { ok: true as const, current: false };
+    }
+    return await checkConnectedServicesGenerationForExecutionRun(request.body);
+  });
+
+  // Execution-run release: unregister the run from the canonical runtime registry and run retained
+  // materialization cleanup. Best-effort at run end — a missing handler is a bounded no-op so
+  // run teardown never blocks on daemon wiring.
+  typed.post(CONNECTED_SERVICE_RUN_RELEASE_PATH, {
+    schema: {
+      body: ConnectedServiceRunReleaseRequestSchema,
+      response: {
+        200: z.object({ ok: z.literal(true), released: z.boolean() }),
+        401: authSchema401,
+      },
+    },
+    preHandler: requireRunMaterializeAuth,
+  }, async (request) => {
+    if (!releaseConnectedServicesForExecutionRun) {
+      return { ok: true as const, released: false };
+    }
+    return await releaseConnectedServicesForExecutionRun(request.body);
   });
 
   // List all tracked sessions
@@ -889,11 +2016,16 @@ export function createDaemonControlApp({
       response: {
         200: z.object({ ok: z.literal(true), snapshot: z.unknown() }),
         401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
         501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_inventory_unavailable') }),
       },
     },
     preHandler: requireAuth,
   }, async (_request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
     if (!localServicesInventory) {
       reply.code(501);
       return { ok: false as const, errorCode: 'local_services_inventory_unavailable' as const };
@@ -912,11 +2044,16 @@ export function createDaemonControlApp({
         200: z.object({ ok: z.literal(true) }),
         401: authSchema401,
         404: z.object({ ok: z.literal(false), reason: z.literal('unknown_inventory_entry') }),
+        503: daemonShuttingDownRouteResponseSchema,
         501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_inventory_unavailable') }),
       },
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
     if (!localServicesInventory) {
       reply.code(501);
       return { ok: false as const, errorCode: 'local_services_inventory_unavailable' as const };
@@ -933,6 +2070,254 @@ export function createDaemonControlApp({
     return result;
   });
 
+  typed.post('/local-services/preview/snapshot', {
+    schema: {
+      response: {
+        200: z.object({ ok: z.literal(true), snapshot: LocalServicePreviewSnapshotV1Schema }),
+        401: authSchema401,
+        501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_preview_unavailable') }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (_request, reply) => {
+    if (!localServicesPreview) {
+      reply.code(501);
+      return { ok: false as const, errorCode: 'local_services_preview_unavailable' as const };
+    }
+    return { ok: true as const, snapshot: await localServicesPreview.getSnapshot() };
+  });
+
+  typed.post('/local-services/public-preview/status', {
+    schema: {
+      body: DaemonLocalServicePublicPreviewStatusRequestV1Schema,
+      response: {
+        200: z.object({ ok: z.literal(true), snapshot: LocalServicePublicPreviewSnapshotV1Schema }),
+        401: authSchema401,
+        501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_public_preview_unavailable') }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (!localServicesPublicPreview) {
+      reply.code(501);
+      return { ok: false as const, errorCode: 'local_services_public_preview_unavailable' as const };
+    }
+    return { ok: true as const, snapshot: await localServicesPublicPreview.getStatus(request.body) };
+  });
+
+  typed.post('/local-services/launcher/snapshot', {
+    schema: {
+      response: {
+        200: z.object({ ok: z.literal(true), snapshot: LocalServiceLauncherSnapshotV1Schema }),
+        401: authSchema401,
+        501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_launcher_unavailable') }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (_request, reply) => {
+    if (!localServicesLauncher) {
+      reply.code(501);
+      return { ok: false as const, errorCode: 'local_services_launcher_unavailable' as const };
+    }
+    return { ok: true as const, snapshot: await localServicesLauncher.getSnapshot() };
+  });
+
+  typed.post('/devices/simulator/preview/snapshot', {
+    schema: {
+      response: {
+        200: z.object({ ok: z.literal(true), snapshot: SimulatorPreviewSnapshotV1Schema }),
+        401: authSchema401,
+        501: z.object({ ok: z.literal(false), errorCode: z.literal('simulator_preview_unavailable') }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (_request, reply) => {
+    if (!simulatorPreview) {
+      reply.code(501);
+      return { ok: false as const, errorCode: 'simulator_preview_unavailable' as const };
+    }
+    return { ok: true as const, snapshot: await simulatorPreview.getSnapshot() };
+  });
+
+  typed.post('/devices/simulator/preview/action', {
+    schema: {
+      body: DaemonSimulatorPreviewActionRequestV1Schema,
+      response: {
+        200: z.object({ ok: z.literal(true), result: SimulatorPreviewActionResultV1Schema }),
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+        501: z.object({ ok: z.literal(false), errorCode: z.literal('simulator_preview_unavailable') }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!simulatorPreview) {
+      reply.code(501);
+      return { ok: false as const, errorCode: 'simulator_preview_unavailable' as const };
+    }
+    return { ok: true as const, result: await simulatorPreview.dispatchAction(request.body.event) };
+  });
+
+  typed.post('/local-services/actions/execute', {
+    schema: {
+      body: LocalServiceActionRequestV1Schema,
+      response: {
+        200: z.object({ ok: z.literal(true), result: LocalServiceActionResultV1Schema }),
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+        501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_actions_unavailable') }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!localServicesActions) {
+      reply.code(501);
+      return { ok: false as const, errorCode: 'local_services_actions_unavailable' as const };
+    }
+    return { ok: true as const, result: await localServicesActions.execute(request.body) };
+  });
+
+  typed.post('/local-services/plugin/bridge', {
+    schema: {
+      body: PluginLocalServicesBridgeControlRequestV1Schema,
+      response: {
+        200: PluginLocalServicesBridgeControlResponseV1Schema,
+        401: authSchema401,
+        403: z.object({
+          ok: z.literal(false),
+          errorCode: z.literal('local_services_plugin_bridge_forbidden'),
+        }),
+        503: daemonShuttingDownRouteResponseSchema,
+        501: z.object({ ok: z.literal(false), errorCode: z.literal('local_services_plugin_bridge_unavailable') }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!localServicesPluginBridge) {
+      reply.code(501);
+      return { ok: false as const, errorCode: 'local_services_plugin_bridge_unavailable' as const };
+    }
+    if (!isPluginLocalServicesBridgeRequestAuthorized(request.body, getChildren())) {
+      reply.code(403);
+      return { ok: false as const, errorCode: 'local_services_plugin_bridge_forbidden' as const };
+    }
+    const dispatchRequest: PluginLocalServicesBridgeControlRequestV1 = {
+      protocolVersion: request.body.protocolVersion,
+      context: request.body.context,
+      operation: request.body.operation,
+    };
+    return await localServicesPluginBridge.dispatch(dispatchRequest);
+  });
+
+  typed.post(AGENT_RUNTIME_DAEMON_BRIDGE_PATH, {
+    schema: {
+      body: AgentRuntimeDaemonBridgeRequestV1Schema,
+      response: {
+        200: AgentRuntimeDaemonBridgeResponseV1Schema,
+        401: authSchema401,
+        403: AgentRuntimeDaemonBridgeResponseV1Schema,
+        503: daemonShuttingDownRouteResponseSchema,
+        501: AgentRuntimeDaemonBridgeResponseV1Schema,
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!agentRuntimeSessionBridge) {
+      reply.code(501);
+      return {
+        ok: false as const,
+        error: {
+          code: 'agent_runtime_daemon_bridge_unavailable',
+          message: 'Agent runtime daemon bridge is unavailable',
+        },
+      };
+    }
+    if (
+      !isAgentRuntimeSessionBridgeRequestAuthorized(request.body, getChildren())
+      && !foregroundAgentRuntimeAdmission?.isBridgeRequestAuthorized(
+        request.body,
+      )
+    ) {
+      reply.code(403);
+      return {
+        ok: false as const,
+        error: {
+          code: 'agent_runtime_daemon_bridge_forbidden',
+          message: 'Agent runtime daemon bridge request is forbidden',
+        },
+      };
+    }
+    return await agentRuntimeSessionBridge.dispatch(request.body);
+  });
+
+  typed.post(FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH, {
+    schema: {
+      body: ForegroundAgentRuntimeAdmissionRequestV1Schema,
+      response: {
+        200: ForegroundAgentRuntimeAdmissionResponseV1Schema,
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    if (!foregroundAgentRuntimeAdmission) {
+      return {
+        ok: false as const,
+        error: createProviderErrorV1(
+          'provider_agent_runtime_unsupported',
+          { machineId },
+        ),
+      };
+    }
+    return await foregroundAgentRuntimeAdmission.admit({
+      ...request.body,
+      machineId,
+    });
+  });
+
+  typed.post(FOREGROUND_AGENT_RUNTIME_RELEASE_PATH, {
+    schema: {
+      body: ForegroundAgentRuntimeReleaseRequestV1Schema,
+      response: {
+        200: ForegroundAgentRuntimeReleaseResponseV1Schema,
+        401: authSchema401,
+        503: daemonShuttingDownRouteResponseSchema,
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownResponse();
+    }
+    await foregroundAgentRuntimeAdmission?.release(
+      request.body.attemptId,
+      request.body.sessionId,
+    );
+    return { ok: true as const };
+  });
+
   typed.post('/ssh-tunnels/ensure', {
     schema: {
       body: z.unknown(),
@@ -945,6 +2330,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownErrorResponse();
+    }
     if (!sshTunnels) {
       reply.code(503);
       return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
@@ -1028,6 +2417,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownErrorResponse();
+    }
     if (!sshTunnels) {
       reply.code(503);
       return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
@@ -1062,6 +2455,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return daemonShuttingDownErrorResponse();
+    }
     if (!sshTunnels) {
       reply.code(503);
       return { ok: false as const, errorCode: 'ssh_tunnel_unavailable', error: 'ssh_tunnel_unavailable' };
@@ -1091,9 +2488,7 @@ export function createDaemonControlApp({
         sessionId: z.string()
       }),
       response: {
-        200: z.object({
-          success: z.boolean()
-        }),
+        200: StopSessionResultSchema,
         401: authSchema401,
       }
     },
@@ -1102,8 +2497,7 @@ export function createDaemonControlApp({
     const { sessionId } = request.body;
 
     logger.debug(`[CONTROL SERVER] Stop session request: ${sessionId}`);
-    const success = await stopSession(sessionId);
-    return { success };
+    return await stopSession(sessionId);
   });
 
   // Spawn new session
@@ -1115,6 +2509,11 @@ export function createDaemonControlApp({
           success: z.boolean(),
           sessionId: z.string().optional(),
           approvedNewDirectoryCreation: z.boolean().optional()
+        }),
+        202: z.object({
+          success: z.literal(false),
+          status: z.literal('pending'),
+          errorCode: z.literal(SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT),
         }),
         400: z.object({
           success: z.boolean(),
@@ -1128,6 +2527,11 @@ export function createDaemonControlApp({
           actionRequired: z.string().optional(),
           directory: z.string().optional()
         }),
+        503: z.object({
+          success: z.literal(false),
+          error: z.string(),
+          errorCode: z.literal('daemon_shutting_down'),
+        }),
         500: z.object({
           success: z.boolean(),
           error: z.string().optional(),
@@ -1137,6 +2541,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
       }, async (request, reply) => {
+        if (isDaemonQuiescing()) {
+          reply.code(503);
+          return spawnDaemonShuttingDownResponse();
+        }
         const parsedRequest = SpawnDaemonSessionRequestSchema.safeParse(request.body);
         if (!parsedRequest.success) {
           sendBadRequest(reply, {
@@ -1150,8 +2558,21 @@ export function createDaemonControlApp({
         const requestBody = parsedRequest.data;
         const { directory, sessionId, existingSessionId } = requestBody;
         const spawnNonce = typeof requestBody.spawnNonce === 'string' ? requestBody.spawnNonce.trim() : '';
-        if (spawnNonce) {
-          markSpawnNoncePending(spawnNonce);
+        const nonceAdmission = claimSpawnNonceAdmission(spawnNonce);
+        if (nonceAdmission.type === 'success') {
+          return {
+            success: true,
+            sessionId: nonceAdmission.sessionId,
+            approvedNewDirectoryCreation: true,
+          };
+        }
+        if (nonceAdmission.type === 'pending') {
+          reply.code(202);
+          return {
+            success: false as const,
+            status: 'pending' as const,
+            errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+          };
         }
 
     logger.debug(`[CONTROL SERVER] Spawn session request: dir=${directory}, sessionId=${sessionId || 'new'}`);
@@ -1168,12 +2589,16 @@ export function createDaemonControlApp({
             ) as SpawnSessionOptions,
           );
         } catch (error) {
+          if (spawnNonce) {
+            clearSpawnNonceCorrelation(spawnNonce);
+          }
           const message = error instanceof Error ? error.message : String(error);
+          const errorCode = resolveThrownSpawnSessionErrorCode(error);
           reply.code(500);
           return {
         success: false,
         error: `Failed to spawn session: ${message}`,
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorCode,
       };
     }
 
@@ -1181,6 +2606,9 @@ export function createDaemonControlApp({
       case 'success':
         // Check if sessionId exists, if not return error
         if (!result.sessionId) {
+          if (spawnNonce) {
+            clearSpawnNonceCorrelation(spawnNonce);
+          }
           reply.code(500);
           return {
             success: false,
@@ -1197,6 +2625,9 @@ export function createDaemonControlApp({
         };
       
       case 'requestToApproveDirectoryCreation':
+        if (spawnNonce) {
+          clearSpawnNonceCorrelation(spawnNonce);
+        }
         reply.code(409); // Conflict - user input needed
         return { 
           success: false,
@@ -1206,6 +2637,17 @@ export function createDaemonControlApp({
         };
       
       case 'error':
+        if (spawnNonce && result.errorCode !== SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT) {
+          clearSpawnNonceCorrelation(spawnNonce);
+        }
+        if (spawnNonce && result.errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT) {
+          reply.code(202);
+          return {
+            success: false as const,
+            status: 'pending' as const,
+            errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+          };
+        }
         reply.code(500);
         return { 
           success: false,
@@ -1258,16 +2700,14 @@ export function createDaemonControlApp({
       }
     }
 
-    for (const child of getChildren()) {
-      const childNonce = typeof child.spawnOptions?.spawnNonce === 'string' ? child.spawnOptions.spawnNonce.trim() : '';
-      if (!childNonce || childNonce !== normalizedNonce) continue;
-      const childSessionId = typeof child.happySessionId === 'string' ? child.happySessionId.trim() : '';
-      if (isCanonicalSessionId(childSessionId)) {
-        markSpawnNonceSuccess(normalizedNonce, childSessionId);
+    const tracked = readTrackedSpawnNonceAdmission(normalizedNonce);
+    if (tracked) {
+      if (tracked.type === 'success') {
+        markSpawnNonceSuccess(normalizedNonce, tracked.sessionId);
         return {
           success: true as const,
           status: 'success' as const,
-          sessionId: childSessionId,
+          sessionId: tracked.sessionId,
         };
       }
       markSpawnNoncePending(normalizedNonce);
@@ -1305,6 +2745,11 @@ export function createDaemonControlApp({
           actionRequired: z.string().optional(),
           directory: z.string().optional(),
         }),
+        503: z.object({
+          success: z.literal(false),
+          error: z.string(),
+          errorCode: z.literal('daemon_shutting_down'),
+        }),
         500: z.object({
           success: z.boolean(),
           error: z.string().optional(),
@@ -1314,6 +2759,10 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(503);
+      return spawnDaemonShuttingDownResponse();
+    }
     const parsedRequest = parseSessionContinueWithReplayRpcParamsCompatIngress(request.body);
     if (!parsedRequest.success) {
       sendBadRequest(reply, {
@@ -1346,8 +2795,7 @@ export function createDaemonControlApp({
           approvedNewDirectoryCreation: requestBody.approvedNewDirectoryCreation,
           permissionMode: requestBody.permissionMode,
           permissionModeUpdatedAt: requestBody.permissionModeUpdatedAt,
-          modelId: requestBody.modelId,
-          modelUpdatedAt: requestBody.modelUpdatedAt,
+          modelSelection: requestBody.modelSelection,
           replay: requestBody.replay,
         },
         { spawnSession },
@@ -1362,11 +2810,12 @@ export function createDaemonControlApp({
         };
       }
       const message = error instanceof Error ? error.message : String(error);
+      const errorCode = resolveThrownSpawnSessionErrorCode(error);
       reply.code(500);
       return {
         success: false,
         error: `Failed to spawn session: ${message}`,
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+        errorCode,
       };
     }
 
@@ -1391,13 +2840,91 @@ export function createDaemonControlApp({
     }
   });
 
+  typed.post('/restart', {
+    schema: {
+      body: z
+        .object({
+          stopSessions: z.boolean().optional(),
+          restartSessionRunners: z.boolean().optional(),
+          successorDistClosureFingerprint: DaemonDistClosureFingerprintSchema.optional(),
+        })
+        .strict()
+        .nullish(),
+      response: {
+        202: z.object({
+          status: z.enum(['restarting', 'already_restarting']),
+        }),
+        400: z.union([
+          z.object({
+            status: z.literal('unsupported_restart_options'),
+          }),
+          z.object({
+            statusCode: z.literal(400),
+            code: z.string(),
+            error: z.string(),
+            message: z.string(),
+          }),
+        ]),
+        401: authSchema401,
+        409: z.object({
+          status: z.literal('shutting_down'),
+        }),
+        501: z.object({
+          status: z.literal('restart_unavailable'),
+        }),
+      },
+    },
+    preHandler: requireAuth,
+  }, async (request, reply) => {
+    if (isDaemonQuiescing()) {
+      reply.code(409);
+      return { status: 'shutting_down' as const };
+    }
+    if (!requestSelfRestart) {
+      reply.code(501);
+      return { status: 'restart_unavailable' as const };
+    }
+    if (
+      request.body &&
+      (request.body.stopSessions !== undefined || request.body.restartSessionRunners !== undefined)
+    ) {
+      reply.code(400);
+      return { status: 'unsupported_restart_options' as const };
+    }
+    if (restartState === 'restarting') {
+      reply.code(202);
+      return { status: 'already_restarting' as const };
+    }
+
+    restartState = 'restarting';
+    setTimeout(() => {
+      void (async () => {
+        try {
+          const successorDistClosureFingerprint = request.body?.successorDistClosureFingerprint;
+          await requestSelfRestart(
+            successorDistClosureFingerprint ? { successorDistClosureFingerprint } : undefined,
+          );
+        } catch (error) {
+          logger.debug('[CONTROL SERVER] Daemon self-restart request failed; keeping current daemon alive', error);
+        } finally {
+          restartState = 'idle';
+        }
+      })();
+    }, 50);
+
+    reply.code(202);
+    return { status: 'restarting' as const };
+  });
+
   // Stop daemon
   typed.post('/stop', {
     schema: {
       body: z
         .object({
           stopSessions: z.boolean().optional(),
+          transferManagedLocalServices: z.boolean().optional(),
         })
+        .strict()
         .nullish(),
       response: {
         200: z.object({
@@ -1409,8 +2936,14 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request) => {
     const stopSessions = request.body?.stopSessions === true;
+    const managedLocalServicesDisposition = request.body?.transferManagedLocalServices === true
+      ? 'transfer' as const
+      : 'permanent' as const;
     daemonStopRequested = true;
-    logger.debug('[CONTROL SERVER] Stop daemon request received', { stopSessions });
+    logger.debug('[CONTROL SERVER] Stop daemon request received', {
+      stopSessions,
+      managedLocalServicesDisposition,
+    });
 
     // Give time for response to arrive
     setTimeout(() => {
@@ -1418,7 +2951,7 @@ export function createDaemonControlApp({
       const runBeforeShutdown = async (): Promise<void> => {
         if (!beforeShutdown) return;
         try {
-          await beforeShutdown();
+          await beforeShutdown({ managedLocalServicesDisposition });
         } catch (error) {
           logger.debug('[CONTROL SERVER] beforeShutdown hook failed (best-effort)', error);
         }
@@ -1435,6 +2968,14 @@ export function createDaemonControlApp({
                 Number.isFinite(child.pid) && child.pid > 1 ? `PID-${Math.trunc(child.pid)}` : '';
               const id = sessionId || fallbackSessionId;
               if (!id) continue;
+              if (prepareStopSession) {
+                try {
+                  // eslint-disable-next-line no-await-in-loop
+                  await prepareStopSession(child);
+                } catch (error) {
+                  logger.debug(`[CONTROL SERVER] Failed to prepare session ${id} for stop`, error);
+                }
+              }
               try {
                 // eslint-disable-next-line no-await-in-loop
                 await stopSession(id);
@@ -1461,47 +3002,118 @@ export function createDaemonControlApp({
 export function startDaemonControlServer({
   getChildren,
   machineId,
+  runtimeId = '',
+  prepareStopSession,
   stopSession,
   spawnSession,
   requestShutdown,
   beforeShutdown,
   isShuttingDown,
   onHappySessionWebhook,
+  admitPersistedTakeover,
   controlToken,
+  connectedAccountRequestAuth,
   sshTunnels,
   localServicesInventory,
+  localServicesLauncher,
+  localServicesPreview,
+  localServicesActions,
+  localServicesPublicPreview,
+  localServicesPluginBridge,
+  agentRuntimeSessionBridge,
+  foregroundAgentRuntimeAdmission,
+  simulatorPreview,
   handleConnectedServiceRuntimeAuthFailure,
+  authorizeConnectedServiceRuntimeAuthFailure,
+  resolveConnectedServiceRuntimeAuthResumePromptMode,
   runtimeAuthRecoveryScheduler,
   handleSessionConnectedServiceAuthSwitch,
+  handleSessionConnectedServiceRuntimeAuthRefresh,
+  handleSessionRunnerRestart,
+  handleSessionRunnerRestartAll,
+  handleSessionRunnerStatusGet,
   handleConnectedServiceTurnLifecycle,
-  handleConnectedServiceQuotaSnapshot,
+  handleConnectedServiceUsageLimitWaitResumeCancel,
+  handleConnectedServiceQuotaRecoveryCreditConsume,
   handleProviderAccountUsageSnapshot,
   handleProviderAccountUsageAdoption,
-  handleCodexChatGptAuthTokensRefresh,
+  verifyRunMaterializeToken,
+  materializeConnectedServicesForExecutionRun,
+  checkConnectedServicesGenerationForExecutionRun,
+  releaseConnectedServicesForExecutionRun,
+  requestSelfRestart,
+  pluginChangeService,
+  pluginActionCurrentIntent,
 }: {
   getChildren: () => TrackedSession[];
   machineId: string;
-  stopSession: (sessionId: string) => Promise<boolean>;
+  runtimeId?: string;
+  prepareStopSession?: (trackedSession: TrackedSession) => Promise<void> | void;
+  stopSession: (sessionId: string) => Promise<StopSessionResult>;
   spawnSession: (options: SpawnSessionOptions) => Promise<SpawnSessionResult>;
   requestShutdown: () => void;
-  beforeShutdown?: () => Promise<void>;
+  beforeShutdown?: (input: Readonly<{
+    managedLocalServicesDisposition: 'permanent' | 'transfer';
+  }>) => Promise<void>;
   // True once daemon shutdown / control-server stop has begun. Recovery handlers early-return when
   // set so switch/restart work is never run into a tearing-down daemon (a deferral, not an attempt).
   isShuttingDown?: () => boolean;
-  onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void;
+  onHappySessionWebhook: (sessionId: string, metadata: Metadata) => void | Promise<void>;
+  admitPersistedTakeover?: (input: Readonly<{
+    sessionId: string;
+    operationId: string;
+    attemptId: string;
+    phase: 'admit' | 'runtime_bound';
+    signal: AbortSignal;
+  }>) => Promise<void>;
   controlToken: string;
+  connectedAccountRequestAuth?: ConnectedAccountRequestAuthControlRoutes;
+  /** Validates the scoped execution-run materialization token (see createDaemonControlApp). */
+  verifyRunMaterializeToken?: (provided: string) => boolean;
+  /** Execution-run connected-services materialization handler (see createDaemonControlApp). */
+  materializeConnectedServicesForExecutionRun?: ConnectedServiceRunMaterializationHandler;
+  /** Exact run-key current-generation admission check before provider Send/Steer. */
+  checkConnectedServicesGenerationForExecutionRun?: ConnectedServiceRunGenerationCurrentHandler;
+  /** Execution-run connected-services release handler (see createDaemonControlApp). */
+  releaseConnectedServicesForExecutionRun?: ConnectedServiceRunReleaseHandler;
   sshTunnels?: Pick<SshTunnelSupervisor, 'ensureTunnel' | 'listTunnels' | 'probeTunnel' | 'releaseTunnel' | 'stopTunnel'>;
   localServicesInventory?: LocalServiceInventoryRoutes;
+  localServicesLauncher?: LocalServiceLauncherRoutes;
+  localServicesManaged?: LocalServiceManagedRoutes;
+  localServicesPreview?: Pick<LocalServicePreviewRoutes, 'getSnapshot'>;
+  localServicesActions?: LocalServiceActionRoutes;
+  localServicesPublicPreview?: LocalServicePublicPreviewRoutes;
+  localServicesPluginBridge?: PluginLocalServicesBridgeControlRoutes;
+  agentRuntimeSessionBridge?: AgentRuntimeSessionBridgeControlRoutes;
+  foregroundAgentRuntimeAdmission?: ForegroundAgentRuntimeAdmissionOwner;
+  simulatorPreview?: SimulatorPreviewRoutes;
   handleConnectedServiceRuntimeAuthFailure?: (input: Readonly<{
     sessionId: string;
     switchesThisTurn: number;
+    interruptedOriginId?: string;
     resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
     classification: ConnectedServiceRuntimeFailureClassification;
+    sourceAuthorization?: RuntimeAuthFailureSourceAuthorization;
   }>) => Promise<unknown>;
+  authorizeConnectedServiceRuntimeAuthFailure?: (input: Readonly<{
+    sessionId: string;
+    classification: ConnectedServiceRuntimeFailureClassification;
+  }>) => Promise<RuntimeAuthFailureSourceAuthorization>;
+  resolveConnectedServiceRuntimeAuthResumePromptMode?: (input: Readonly<{
+    classification: ConnectedServiceRuntimeFailureClassification;
+    explicit?: SessionUsageLimitRecoveryResumePromptModeV1;
+  }>) => Promise<SessionUsageLimitRecoveryResumePromptModeV1>;
   runtimeAuthRecoveryScheduler?: RuntimeAuthRecoverySchedulerLike | null;
   handleConnectedServiceTurnLifecycle?: (input: Readonly<{
     sessionId: string;
+    turnId?: string;
     event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+    terminalStatus?: 'completed' | 'failed';
+    connectedServiceSelectionsEnvRaw?: string;
+  }>) => Promise<unknown>;
+  handleConnectedServiceUsageLimitWaitResumeCancel?: (input: Readonly<{
+    sessionId: string;
+    attemptId: string;
   }>) => Promise<unknown>;
   handleSessionConnectedServiceAuthSwitch?: (input: Readonly<{
     sessionId: string;
@@ -1510,49 +3122,79 @@ export function startDaemonControlServer({
     expectedGroupGenerationByServiceId?: Readonly<Record<string, number>>;
     accountSettingsVersionHint?: number;
   }>) => Promise<unknown>;
-  handleConnectedServiceQuotaSnapshot?: (input: Readonly<{
-    sessionId: string;
-    serviceId: ConnectedServiceId;
-    snapshot: ConnectedServiceQuotaSnapshotV1;
-  }>) => Promise<unknown>;
+  handleSessionConnectedServiceRuntimeAuthRefresh?: SessionConnectedServiceRuntimeAuthRefreshHandler;
+  handleSessionRunnerRestart?: (request: RestartSessionRunnerRequestV1) => Promise<RestartSessionRunnerResultV1>;
+  handleSessionRunnerRestartAll?: (request: RestartAllSessionRunnersRequestV1) => Promise<RestartAllSessionRunnersResultV1>;
+  handleSessionRunnerStatusGet?: (request: SessionRunnerStatusGetRequestV1) => Promise<SessionRunnerRuntimeStateV1>;
+  handleConnectedServiceQuotaRecoveryCreditConsume?: (
+    input: ConnectedServiceQuotaRecoveryCreditConsumeRequestV1,
+  ) => Promise<unknown>;
 	  handleProviderAccountUsageSnapshot?: (input: Readonly<{
 	    sessionId: string;
 	    snapshot: ProviderAccountUsageSnapshotV1;
+      source?: ConnectedServiceUsageSourceV1;
+	    credentialFingerprint?: string | null;
+      policyDisposition?: 'evidence_only';
 	  }>) => Promise<unknown>;
 	  handleProviderAccountUsageAdoption?: (input: Readonly<{
 	    sessionId: string;
 	    adoption: ProviderAccountUsageAdoptionV1;
 	  }>) => Promise<unknown>;
-	  handleCodexChatGptAuthTokensRefresh?: (input: Readonly<{
-    sessionId: string;
-    selection: CodexChatGptAuthTokensRefreshSelection;
-    chatgptPlanType: string | null;
-  }>) => Promise<CodexChatGptAuthTokensRefreshResponse>;
+  requestSelfRestart?: (request?: DaemonSelfRestartRequest) => Promise<unknown>;
+  pluginChangeService?: DaemonPluginChangeService;
+  pluginActionCurrentIntent?: (
+    request: TargetActionCurrentIntentRequest
+  ) => Promise<TargetActionCurrentIntentResult>;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = createDaemonControlApp({
       getChildren,
       machineId,
+      runtimeId,
+      prepareStopSession,
       stopSession,
       spawnSession,
       requestShutdown,
       beforeShutdown,
       isShuttingDown,
       onHappySessionWebhook,
+      admitPersistedTakeover,
       controlToken,
+      connectedAccountRequestAuth,
+      verifyRunMaterializeToken,
+      materializeConnectedServicesForExecutionRun,
+      checkConnectedServicesGenerationForExecutionRun,
+      releaseConnectedServicesForExecutionRun,
       sshTunnels,
       localServicesInventory,
+      localServicesLauncher,
+      localServicesPreview,
+      localServicesActions,
+      localServicesPublicPreview,
+      localServicesPluginBridge,
+      agentRuntimeSessionBridge,
+      foregroundAgentRuntimeAdmission,
+      simulatorPreview,
       handleConnectedServiceRuntimeAuthFailure,
+      authorizeConnectedServiceRuntimeAuthFailure,
+      resolveConnectedServiceRuntimeAuthResumePromptMode,
       runtimeAuthRecoveryScheduler,
       handleSessionConnectedServiceAuthSwitch,
+      handleSessionConnectedServiceRuntimeAuthRefresh,
+      handleSessionRunnerRestart,
+      handleSessionRunnerRestartAll,
+      handleSessionRunnerStatusGet,
 	      handleConnectedServiceTurnLifecycle,
-	      handleConnectedServiceQuotaSnapshot,
+	      handleConnectedServiceUsageLimitWaitResumeCancel,
+	      handleConnectedServiceQuotaRecoveryCreditConsume,
 	      handleProviderAccountUsageSnapshot,
 	      handleProviderAccountUsageAdoption,
-	      handleCodexChatGptAuthTokensRefresh,
+      requestSelfRestart,
+      pluginChangeService,
+      pluginActionCurrentIntent,
 	    });
 
-    app.listen({ port: 0, host: '127.0.0.1' }, (err, address) => {
+    app.listen({ port: resolveDaemonControlListenPort(process.env), host: '127.0.0.1' }, (err, address) => {
       if (err) {
         logger.debug('[CONTROL SERVER] Failed to start:', err);
         throw err;

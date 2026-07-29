@@ -1,4 +1,4 @@
-import { createHmac, hkdfSync } from 'node:crypto';
+import { createHash, createHmac, hkdfSync } from 'node:crypto';
 
 import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol';
 import type { Credentials } from '@/persistence';
@@ -61,6 +61,19 @@ function buildMaterialSnapshot(snapshot: ProviderAccountUsageSnapshotV1): JsonVa
   });
 }
 
+function serializeProviderAccountUsageSnapshotMaterial(snapshot: ProviderAccountUsageSnapshotV1): string {
+  return stableJson(buildMaterialSnapshot(snapshot));
+}
+
+export function computeProviderAccountUsageSnapshotMaterialRevision(
+  snapshot: ProviderAccountUsageSnapshotV1,
+): string {
+  return createHash('sha256')
+    .update(serializeProviderAccountUsageSnapshotMaterial(snapshot), 'utf8')
+    .digest('hex')
+    .slice(0, 32);
+}
+
 export function deriveProviderAccountUsageFingerprintKey(input: Readonly<{
   credentials: Credentials;
   serverScope: string;
@@ -83,7 +96,7 @@ export function computeProviderAccountUsageSnapshotFingerprint(
   key: ProviderAccountUsageFingerprintKey,
 ): string {
   return createHmac('sha256', toBuffer(key))
-    .update(stableJson(buildMaterialSnapshot(snapshot)), 'utf8')
+    .update(serializeProviderAccountUsageSnapshotMaterial(snapshot), 'utf8')
     .digest('hex')
     .slice(0, 32);
 }

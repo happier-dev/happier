@@ -6,11 +6,11 @@ import { join, delimiter as PATH_DELIMITER } from 'path';
 import { promisify } from 'util';
 
 import { AGENTS } from '@/agent/catalog/registry';
-import type { CatalogAgentLookupId, CliDetectSpec } from '@/agent/catalog/types';
+import type { CliDetectSpec } from '@/agent/catalog/types';
 import type { CliAuthSpec, CliAuthStatus } from '@/capabilities/cliAuth/types';
 import { resolveAgentCliCommandForRuntime } from '@/packagedRuntime/managedTools/agentCliResolution';
+import { resolveAgentCliRuntimeSpecForLookupId } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
 import { AsyncTtlCache } from '@happier-dev/protocol';
-import { getAgentCliRuntimeSpec, isAgentId, legacyCustomAcpCompat } from '@happier-dev/agents';
 import {
     isAgentCliPathRunnable,
     agentCliPathRequiresJavaScriptRuntime,
@@ -22,7 +22,7 @@ import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@h
 const execFileAsync = promisify(execFile);
 type ExecFileBestEffortOptions = ExecOptions & Readonly<{ windowsVerbatimArguments?: boolean }>;
 
-export type DetectCliName = CatalogAgentLookupId;
+export type DetectCliName = string;
 
 export interface DetectCliRequest {
     /**
@@ -102,16 +102,6 @@ const cliSnapshotCache = new AsyncTtlCache<DetectCliSnapshot>({
 const DEFAULT_CLI_SNAPSHOT_PROBE_TIMEOUT_MS = 3_000;
 const DEFAULT_CLI_SNAPSHOT_LOGIN_STATUS_PROBE_TIMEOUT_MS = process.env.CI ? 7_000 : 6_500;
 const CLI_SNAPSHOT_PROBE_TIMEOUT = Symbol('CLI_SNAPSHOT_PROBE_TIMEOUT');
-
-function resolveAgentCliRuntimeSpecForLookupId(name: DetectCliName) {
-    if (isAgentId(name)) {
-        return getAgentCliRuntimeSpec(name);
-    }
-    if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(name)) {
-        return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
-    }
-    throw new Error(`Unsupported CLI snapshot lookup id '${name}'`);
-}
 
 function resolveCliSnapshotProbeTimeoutMs(includeLoginStatus: boolean): number {
     if (includeLoginStatus) {

@@ -1,7 +1,16 @@
 import type { Credentials } from '@/persistence';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { getSharedBlockingApprovalCoordinator } from '@/session/actions/approvals/blockingApprovalCoordinator';
-import type { ApprovalRequestV1 } from '@happier-dev/protocol';
+import {
+  ApprovalRequestV1Schema,
+  type ApprovalRequestV1,
+  type ReviewCommentPrincipalHeaderV1,
+} from '@happier-dev/protocol';
+import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
+import { createExecutionRunHostActionCurrentIntentAdapter } from '@/session/actions/approvals/executionRunHostActionCurrentIntent';
+import { requestReviewCommentDirectWriteGrant } from '@/agent/executionRuns/profiles/review/directWriteGrantRequester';
+import { resolveReviewCommentHostPluginAuthority } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
+import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
 import type { ExecutionRunRpcApprovalDeps } from './dispatchExecutionRunRpcAction';
 
@@ -18,6 +27,38 @@ function shouldNotifyApprovalUpdated(request: ApprovalRequestV1): boolean {
     || request.status === 'failed';
 }
 
+function staleReviewHostActionError(): Error & { code: string } {
+  return Object.assign(new Error('execution_run_host_action_stale'), {
+    code: 'execution_run_host_action_stale',
+  });
+}
+
+function assertReviewCommentPrincipalCurrent(
+  principal: ReviewCommentPrincipalHeaderV1,
+): void {
+  const currentIntent = principal.currentIntent;
+  if (!currentIntent) return;
+  const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
+  if (!lease) throw staleReviewHostActionError();
+  try {
+    const authority = resolveReviewCommentHostPluginAuthority({
+      pluginId: currentIntent.pluginId,
+      current: lease.registry.pluginFinalPolicyCurrentGenerationsById
+        ?.get(currentIntent.pluginId) ?? null,
+    });
+    if (
+      !authority
+      || authority.immutableGenerationId !== currentIntent.immutableGenerationId
+      || authority.packageDigest !== currentIntent.packageDigest
+      || authority.manifestDigest !== currentIntent.manifestDigest
+    ) {
+      throw staleReviewHostActionError();
+    }
+  } finally {
+    void lease.release();
+  }
+}
+
 export function createExecutionRunRpcApprovalDeps(params: Readonly<{
   readCredentials: () => Promise<Credentials | null>;
 }>): ExecutionRunRpcApprovalDeps {
@@ -30,6 +71,32 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
   };
 
   return {
+    executionRunHostActionCurrentIntent: createExecutionRunHostActionCurrentIntentAdapter({
+      create: async (request) => {
+        const store = await resolveStore();
+        return await store.executionRunHostActionApprovalsCreate({ request });
+      },
+      read: async (artifactId) => {
+        const store = await resolveStore();
+        return await store.executionRunHostActionApprovalsGet({ artifactId });
+      },
+    }),
+    reviewCommentAction: async ({ actionId, input, reviewCommentPrincipal }) => {
+      const credentials = await params.readCredentials();
+      if (!credentials) throw new Error('review_comment_credentials_unavailable');
+      const execute = createCliReviewCommentActionExecutorFromCredentials({
+        credentials,
+        assertPrincipalCurrent: assertReviewCommentPrincipalCurrent,
+      });
+      return await execute(actionId, input, {
+        ...(reviewCommentPrincipal ? { principal: reviewCommentPrincipal } : {}),
+      });
+    },
+    pluginPermissionGrantRequest: async ({ serverId: _serverId, ...input }) => {
+      const credentials = await params.readCredentials();
+      if (!credentials) throw new Error('plugin_permission_grant_credentials_unavailable');
+      return await requestReviewCommentDirectWriteGrant({ credentials, input });
+    },
     approvalsList: async (args) => {
       const store = await resolveStore();
       return await store.approvalsList(args);
@@ -59,8 +126,8 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
         request: args.request,
         decision: args.decision,
       }),
-    approvalsWaitForDecision: async (args) =>
-      await coordinator.waitForDecision({
+    approvalsWaitForDecision: async (args) => {
+      const result = await coordinator.waitForDecision({
         artifactId: args.artifactId,
         request: args.request,
         serverId: args.serverId,
@@ -73,6 +140,8 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
             serverId: args.serverId ?? null,
           });
         },
-      }),
+      });
+      return { ...result, request: ApprovalRequestV1Schema.parse(result.request) };
+    },
   };
 }

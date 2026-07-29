@@ -64,11 +64,11 @@ describe('BasePermissionHandler permission-response routing (gap 28/29)', () => 
     const handler = new CodexLikePermissionHandler({ session: session as any, logPrefix: '[Test]' });
     handler.setPermissionMode('safe-yolo');
 
-    expect(handler.respondToPendingPermission({ id: 'unknown', approved: true })).toEqual({ status: 'not_found' });
+    await expect(handler.respondToPendingPermission({ id: 'unknown', approved: true })).resolves.toEqual({ status: 'not_found' });
 
     const promise = handler.handleToolCall('tool-2', 'Write', { path: '/tmp/y', content: 'hi' });
-    expect(handler.respondToPendingPermission({ id: 'tool-2', approved: true, decision: 'approved' })).toEqual({
-      status: 'resolved',
+    await expect(handler.respondToPendingPermission({ id: 'tool-2', approved: true, decision: 'approved' })).resolves.toEqual({
+        status: 'resolved',
     });
     expect((await promise).decision).toBe('approved');
   });

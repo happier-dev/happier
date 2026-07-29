@@ -12,13 +12,15 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     afterSeqExclusive?: number;
+    transcriptFetchTimeoutMs?: number;
 }>): Promise<SessionTurnActivity> {
+    let projectedActivity: SessionTurnActivity | null = null;
     try {
         const refreshedSession = await fetchSessionById({
             token: params.token,
             sessionId: params.sessionId,
         });
-        const projectedActivity = detectSessionTurnActivityFromProjection(refreshedSession);
+        projectedActivity = detectSessionTurnActivityFromProjection(refreshedSession);
         if (projectedActivity) {
             return projectedActivity;
         }
@@ -26,12 +28,20 @@ export async function detectLatestSessionTurnActivity(params: Readonly<{
         // Fall back to legacy transcript activity detection below.
     }
 
-    return detectSessionTurnActivity({
+    const transcriptActivity = await detectSessionTurnActivity({
         token: params.token,
         sessionId: params.sessionId,
         encryptionMode: params.encryptionMode,
         encryptionKey: params.encryptionKey,
         encryptionVariant: params.encryptionVariant,
         ...(typeof params.afterSeqExclusive === 'number' ? { afterSeqExclusive: params.afterSeqExclusive } : {}),
+        ...(typeof params.transcriptFetchTimeoutMs === 'number'
+            ? { transcriptFetchTimeoutMs: params.transcriptFetchTimeoutMs }
+            : {}),
     });
+    if (transcriptActivity.turnInFlight) {
+        return transcriptActivity;
+    }
+
+    return projectedActivity ?? transcriptActivity;
 }

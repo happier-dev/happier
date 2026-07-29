@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DaemonExecutionRunMarkerSchema, type DaemonExecutionRunMarker } from '@happier-dev/protocol';
+import { normalizePersistedExecutionRunConnectedServicesLaunchV1 } from '@happier-dev/protocol';
 import { resolveReleaseRingScopedBasename } from '../cli/runtime/publicReleaseChannel';
 
 const ExecutionRunMarkerSchema = DaemonExecutionRunMarkerSchema;
@@ -171,7 +172,7 @@ export async function removeExecutionRunMarker(runId: string): Promise<void> {
   }
 }
 
-export async function listExecutionRunMarkers(): Promise<ExecutionRunMarker[]> {
+async function listExecutionRunMarkersRaw(): Promise<ExecutionRunMarker[]> {
   const dir = resolveExecutionRunMarkerDir();
   await mkdir(dir, { recursive: true });
 
@@ -204,6 +205,33 @@ export async function listExecutionRunMarkers(): Promise<ExecutionRunMarker[]> {
   const out = Array.from(recovered.values(), (entry) => entry.marker);
   out.sort((a, b) => a.startedAtMs - b.startedAtMs);
   return out;
+}
+
+function projectExecutionRunMarkerForPublication(
+  marker: ExecutionRunMarker,
+): ExecutionRunMarker {
+  const persistedLaunch = marker.executionRunConnectedServicesLaunchV1;
+  if (!persistedLaunch) return marker;
+  const normalized = normalizePersistedExecutionRunConnectedServicesLaunchV1(persistedLaunch);
+  if (!normalized || normalized.source === 'remote_dev_predecessor') {
+    const {
+      executionRunConnectedServicesLaunchV1: _predecessorLaunch,
+      ...publicMarker
+    } = marker;
+    return publicMarker;
+  }
+  return {
+    ...marker,
+    executionRunConnectedServicesLaunchV1: normalized.registration,
+  };
+}
+
+export async function listExecutionRunMarkersForRehydration(): Promise<ExecutionRunMarker[]> {
+  return await listExecutionRunMarkersRaw();
+}
+
+export async function listExecutionRunMarkers(): Promise<ExecutionRunMarker[]> {
+  return (await listExecutionRunMarkersRaw()).map(projectExecutionRunMarkerForPublication);
 }
 
 export async function gcExecutionRunMarkers(params: Readonly<{

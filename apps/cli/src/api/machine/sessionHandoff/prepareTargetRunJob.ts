@@ -1,11 +1,11 @@
 import os from 'node:os';
 
-import { configuration } from '@/configuration';
 import {
   ExternalSessionsSourceSchema,
   type RuntimeDescriptorV1,
+  type SessionHandoffPrepareTargetFailure,
   type SessionHandoffPrepareTargetRequest,
-  type SessionHandoffPrepareTargetResultGetResponse,
+  type SessionHandoffPrepareTargetResultGetSuccessResponse,
   type SessionHandoffResumePlan,
   type SessionHandoffStatus,
 } from '@happier-dev/protocol';
@@ -13,7 +13,7 @@ import {
 import type { MachineTransferChannel } from '../../../machines/transfer/serverRoutedTransport';
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '../../../machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import { createMachineTransferRouteCache } from '../../../machines/transfer/transferRouteCache';
-import { readSessionHandoffProviderBundleFile } from '../../../session/handoff/providerBundle/file';
+import { readSessionHandoffAgentBundleFile } from '../../../session/handoff/agentBundle/file';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
 import {
   createSessionHandoffPrepareTargetJobStore,
@@ -24,7 +24,8 @@ import {
   startSessionHandoffPrepareTargetJobLeaseHeartbeat,
   tryAcquireSessionHandoffPrepareTargetJobLease,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobLease';
-import type { SessionHandoffProviderBundle } from '../../../session/handoff/types';
+import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
+import { buildSessionHandoffMetadataV1 } from '../../../session/handoff/metadata/sessionHandoffMetadataV1';
 import {
   createSessionHandoffWorkspaceReplicationAdapter,
 } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
@@ -35,7 +36,7 @@ import { readWorkspaceReplicationManifestFromFile } from '../../../session/hando
 
 import {
   directPeerTransferUnavailable,
-  resolvePrepareProviderBundle,
+  resolvePrepareAgentBundle,
   resolvePrepareWorkspaceReplicationMetadata,
   type SessionHandoffDirectPeerTransferHandle,
 } from './prepareTransport';
@@ -47,6 +48,10 @@ import {
   normalizeHandoffWorkspaceRootPath,
   resolvePrepareTargetWorkspaceRootPath,
 } from './prepareTargetState';
+import {
+  resolveSessionHandoffTransferTimeoutMs,
+  type SessionHandoffRuntimeConfig,
+} from './runtimeConfig';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
@@ -57,6 +62,7 @@ type SessionHandoffTransportRouteCache = ReturnType<typeof createMachineTransfer
 export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
   activeServerDir: string;
   homeDir: string;
+  runtimeConfig: SessionHandoffRuntimeConfig;
   jobId: string;
   handoffId: string;
   createdAtMs: number;
@@ -74,7 +80,7 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
   workspaceReplicationTransfers: SessionHandoffWorkspaceReplicationTransfers;
   importSessionBundle: (
-    bundle: SessionHandoffProviderBundle,
+    bundle: SessionHandoffAgentBundle,
     targetPath: string,
     sessionStorageMode: 'direct' | 'persisted',
   ) => Promise<Readonly<{
@@ -94,6 +100,22 @@ export type RunSessionHandoffPrepareTargetJobInput = Readonly<{
     machineIds: readonly (string | undefined)[],
   ) => void;
 }>;
+
+function resolveTypedImportFailure(error: unknown): SessionHandoffPrepareTargetFailure | null {
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as Readonly<{ code?: unknown }>).code;
+  return code === 'target_identity_conflict' || code === 'agent_version_unsupported'
+    ? { code }
+    : null;
+}
+
+function resolveTypedImportFailureMessage(
+  failure: SessionHandoffPrepareTargetFailure,
+): string {
+  return failure.code === 'target_identity_conflict'
+    ? 'The native handoff target conflicts with the exported session identity'
+    : 'The installed Agent version cannot safely import this handoff';
+}
 
 export async function runSessionHandoffPrepareTargetJob(
   params: RunSessionHandoffPrepareTargetJobInput,
@@ -122,13 +144,14 @@ export async function runSessionHandoffPrepareTargetJob(
     getTransferRouteCache,
     invalidateDirectPeerRouteCacheForHandoffMachines,
   } = params;
+  const transferTimeoutMs = resolveSessionHandoffTransferTimeoutMs(params.runtimeConfig);
 
   let leaseAcquired = false;
   let leaseHeartbeat: Readonly<{ stop: () => Promise<void> }> | null = null;
   let workspaceReplicationJobId: string | undefined = initialWorkspaceReplicationJobId;
   let prepareTargetRequest: SessionHandoffPrepareTargetRequest | undefined = initialPrepareTargetRequest ?? request;
   let actualTransportStrategy = initialTransportStrategy;
-  let providerBundle: SessionHandoffProviderBundle | null = null;
+  let agentBundle: SessionHandoffAgentBundle | null = null;
 
   const persistJobRecord = async (jobRecord: SessionHandoffPrepareTargetJobRecordInput): Promise<void> => {
     if (jobRecord.workspaceReplicationJobId) {
@@ -208,11 +231,11 @@ export async function runSessionHandoffPrepareTargetJob(
       const canFallbackToServerRouted = allowServerRoutedFallback && machineTransferChannel !== undefined;
       const directPeerRequester = directPeerTransfer?.requestPayloadFile;
       const localSourceExport = await sourceExportStore.load(handoffId);
-      const localProviderBundle =
-        localSourceExport?.providerBundle
-          ? await readSessionHandoffProviderBundleFile(localSourceExport.providerBundle.filePath).catch(() => null)
+      const localAgentBundle =
+        localSourceExport?.agentBundle
+          ? await readSessionHandoffAgentBundleFile(localSourceExport.agentBundle.filePath).catch(() => null)
           : null;
-      const localProviderBundleEndpointCandidates = localSourceExport?.providerBundle?.endpointCandidates;
+      const localAgentBundleEndpointCandidates = localSourceExport?.agentBundle?.endpointCandidates;
       const localWorkspaceReplicationMetadata =
         localSourceExport?.workspaceManifest && localSourceExport.workspaceSourceRootPath
           ? {
@@ -226,12 +249,12 @@ export async function runSessionHandoffPrepareTargetJob(
           : undefined;
       const localWorkspaceManifestEndpointCandidates = localSourceExport?.workspaceManifest?.endpointCandidates;
 
-      const hasProviderBundleTransferPublication =
-        requestResolvedHandoffMetadataV2?.providerBundleTransferPublication !== undefined;
+      const hasAgentBundleTransferPublication =
+        requestResolvedHandoffMetadataV2?.agentBundleTransferPublication !== undefined;
       if (
         actualTransportStrategy === 'direct_peer'
-        && !hasProviderBundleTransferPublication
-        && !localProviderBundle
+        && !hasAgentBundleTransferPublication
+        && !localAgentBundle
       ) {
         if (canFallbackToServerRouted) {
           actualTransportStrategy = 'server_routed_stream';
@@ -255,8 +278,8 @@ export async function runSessionHandoffPrepareTargetJob(
 
       if (actualTransportStrategy === 'direct_peer') {
         const providerEndpointCandidates =
-          requestResolvedHandoffMetadataV2?.providerBundleTransferPublication?.endpointCandidates
-          ?? localProviderBundleEndpointCandidates;
+          requestResolvedHandoffMetadataV2?.agentBundleTransferPublication?.endpointCandidates
+          ?? localAgentBundleEndpointCandidates;
         const providerCandidatesFallback = providerEndpointCandidates ?? request.endpointCandidates;
         const manifestEndpointCandidates =
           requestResolvedHandoffMetadataV2?.workspaceReplicationManifestTransferPublication?.endpointCandidates
@@ -278,8 +301,8 @@ export async function runSessionHandoffPrepareTargetJob(
           Array.isArray(manifestEndpointCandidates)
           && manifestEndpointCandidates.some((candidate) => candidate.expiresAt >= nowMs);
 
-        const canUseDirectPeerForProviderBundle =
-          Boolean(localProviderBundle)
+        const canUseDirectPeerForAgentBundle =
+          Boolean(localAgentBundle)
           || (
             (typeof directPeerRequester === 'function' || resolvedWorkspaceTransfer?.enabled === true)
             && hasUsableProviderEndpointCandidates
@@ -293,7 +316,7 @@ export async function runSessionHandoffPrepareTargetJob(
             && hasUsableManifestEndpointCandidates
           );
 
-        if (!canUseDirectPeerForProviderBundle || !canUseDirectPeerForWorkspaceManifest) {
+        if (!canUseDirectPeerForAgentBundle || !canUseDirectPeerForWorkspaceManifest) {
           if (canFallbackToServerRouted) {
             actualTransportStrategy = 'server_routed_stream';
           } else {
@@ -302,21 +325,22 @@ export async function runSessionHandoffPrepareTargetJob(
         }
       }
 
-      const resolvedProviderBundle =
-        localProviderBundle
-        ?? await resolvePrepareProviderBundle({
+      const resolvedAgentBundle =
+        localAgentBundle
+        ?? await resolvePrepareAgentBundle({
           request,
           actualTransportStrategy,
           handoffMetadataV2: requestResolvedHandoffMetadataV2,
           machineTransferChannel,
           directPeerTransfer,
           transferRouteCache: getTransferRouteCache(machineTransferChannel),
+          transferTimeoutMs,
           invalidateDirectPeerRouteCacheForHandoffMachines,
         });
-      if (!resolvedProviderBundle) {
+      if (!resolvedAgentBundle) {
         throw new Error('Invalid session handoff provider bundle');
       }
-      providerBundle = resolvedProviderBundle;
+      agentBundle = resolvedAgentBundle;
       const persistedHandoffMetadataV2 = requestResolvedHandoffMetadataV2;
       const persistedWorkspaceReplicationMetadata =
         localWorkspaceReplicationMetadata
@@ -327,6 +351,7 @@ export async function runSessionHandoffPrepareTargetJob(
           handoffMetadataV2: persistedHandoffMetadataV2,
           machineTransferChannel,
           directPeerTransfer,
+          transferTimeoutMs,
           invalidateDirectPeerRouteCacheForHandoffMachines,
         });
       const {
@@ -353,12 +378,13 @@ export async function runSessionHandoffPrepareTargetJob(
         machineTransferChannel,
         allowServerRoutedFallback: canFallbackToServerRouted,
         transfers: workspaceReplicationTransfers,
-        blobPackTargetBytes: configuration.workspaceReplicationBlobPackTargetBytes,
-        blobPackMaxBlobs: configuration.workspaceReplicationBlobPackMaxBlobs,
-        blobPackMaxSingleBlobBytes: configuration.workspaceReplicationBlobPackMaxSingleBlobBytes,
+        blobPackTargetBytes: params.runtimeConfig.workspaceReplicationBlobPackTargetBytes,
+        blobPackMaxBlobs: params.runtimeConfig.workspaceReplicationBlobPackMaxBlobs,
+        blobPackMaxSingleBlobBytes: params.runtimeConfig.workspaceReplicationBlobPackMaxSingleBlobBytes,
         serverRoutedTransferTimeoutMs:
-          typeof configuration.filesTransferSessionTtlMs === 'number' && configuration.filesTransferSessionTtlMs > 0
-            ? configuration.filesTransferSessionTtlMs
+          typeof params.runtimeConfig.filesTransferSessionTtlMs === 'number'
+            && params.runtimeConfig.filesTransferSessionTtlMs > 0
+            ? params.runtimeConfig.filesTransferSessionTtlMs
             : undefined,
         onWorkspaceReplicationJobStarted: async (startedWorkspaceReplicationJobId: string) => {
           workspaceReplicationJobId = workspaceReplicationJobId ?? startedWorkspaceReplicationJobId;
@@ -419,7 +445,7 @@ export async function runSessionHandoffPrepareTargetJob(
       }
 
       const imported = await importSessionBundle(
-        providerBundle,
+        agentBundle,
         importedWorkspace.targetPath,
         request.targetSessionStorageMode === 'persisted'
           ? 'persisted'
@@ -458,7 +484,7 @@ export async function runSessionHandoffPrepareTargetJob(
               resumable: false,
             },
           };
-      const prepareResult: SessionHandoffPrepareTargetResultGetResponse = {
+      const prepareResult: SessionHandoffPrepareTargetResultGetSuccessResponse = {
         handoffId,
         status: readyForCutoverStatus,
         remoteSessionId: imported.remoteSessionId,
@@ -482,18 +508,17 @@ export async function runSessionHandoffPrepareTargetJob(
         await savePreparedTargetLocalMetadata({
           remoteSessionId: imported.remoteSessionId,
           exportMetadataOverlay: {
-            handoffV1: {
-              v: 1,
+            handoffV1: buildSessionHandoffMetadataV1({
               sourceMachineId: request.sourceMachineId,
               targetMachineId: request.targetMachineId,
-              providerId: imported.resume.agent,
+              agentId: imported.resume.agent,
               sessionStorageBefore: request.sourceSessionStorageMode,
               sessionStorageAfter: imported.resume.transcriptStorage,
               transportStrategy: actualTransportStrategy,
               completedAtMs: Date.now(),
               sourceWorkspaceRootPath: handoffBackTargetRootPath,
               targetWorkspaceRootPath: importedTargetWorkspaceRootPath,
-            },
+            }),
           },
         });
       }
@@ -526,9 +551,24 @@ export async function runSessionHandoffPrepareTargetJob(
     } catch (error) {
       const failedAtMs = Date.now();
       const currentJob = await prepareJobStore.read(jobId);
+      const typedImportFailure = resolveTypedImportFailure(error);
+      const { failure: _previousFailure, ...currentStatusWithoutFailure } =
+        currentJob?.status ?? pendingStatus;
       const failedStatus: SessionHandoffStatus = {
-        ...(currentJob?.status ?? pendingStatus),
-        status: currentJob?.cancelRequestedAtMs ? 'aborted' : 'awaiting_recovery',
+        ...currentStatusWithoutFailure,
+        status: currentJob?.cancelRequestedAtMs
+          ? 'aborted'
+          : typedImportFailure?.code === 'target_identity_conflict'
+            ? 'reconciliation_required'
+            : typedImportFailure?.code === 'agent_version_unsupported'
+              ? 'failed'
+              : 'awaiting_recovery',
+        ...(typedImportFailure && !currentJob?.cancelRequestedAtMs
+          ? {
+              failure: typedImportFailure,
+              recoveryActions: [],
+            }
+          : {}),
       };
       await persistJobRecord(buildPrepareJobRecord({
         jobId,
@@ -536,7 +576,11 @@ export async function runSessionHandoffPrepareTargetJob(
         createdAtMs,
         updatedAtMs: failedAtMs,
         ...(currentJob?.cancelRequestedAtMs ? { cancelRequestedAtMs: currentJob.cancelRequestedAtMs, abortedAtMs: failedAtMs } : { failedAtMs }),
-        lastErrorMessage: error instanceof Error ? error.message : 'Failed to prepare handoff target',
+        lastErrorMessage: typedImportFailure
+          ? resolveTypedImportFailureMessage(typedImportFailure)
+          : error instanceof Error
+            ? error.message
+            : 'Failed to prepare handoff target',
         status: failedStatus,
       }));
     }

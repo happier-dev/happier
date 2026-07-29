@@ -9,6 +9,7 @@ import {
     dispatchActionFromRpc,
     type RpcActionExecutor,
 } from './_actionDispatchAdapter';
+import type { RpcHandlerContext } from '@/api/rpc/types';
 import { ACTION_SPEC_RPC_EXCEPTIONS } from './actionSpecRpcExceptions';
 import {
     type ActionSpecRpcRegistrationScope,
@@ -29,7 +30,10 @@ export type ActionSpecRpcExceptionLike = Readonly<{
 
 export type ActionSpecRpcRegistrar = Readonly<{
     hasHandler?: (method: string) => boolean;
-    registerHandler(method: string, handler: (input: unknown) => Promise<unknown>): void;
+    registerHandler(
+        method: string,
+        handler: (input: unknown, context?: RpcHandlerContext) => Promise<unknown>,
+    ): void;
 }>;
 
 export type RegisterActionSpecRpcHandlersParams = Readonly<{
@@ -41,6 +45,12 @@ export type RegisterActionSpecRpcHandlersParams = Readonly<{
     actionIds?: readonly string[];
     methods?: readonly string[];
     scopes?: readonly ActionSpecRpcRegistrationScope[];
+    mapResponseForMethod?: (context: Readonly<{
+        actionId: ActionId;
+        method: string;
+        isAlias: boolean;
+        response: unknown;
+    }>) => unknown;
 }>;
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -147,12 +157,16 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             continue;
         }
 
-        const handler = async (input: unknown) => {
+        const handleAction = async (
+            input: unknown,
+            context?: RpcHandlerContext,
+        ) => {
             const executor = await resolveActionExecutor(params);
             const result = await dispatchActionFromRpc({
                 actionId: actionId as ActionId,
                 input,
                 ...buildActionExecutorContextHints(input),
+                ...(context?.signal ? { signal: context.signal } : {}),
                 executor,
             });
             return unwrapActionResultForRpc(result);
@@ -172,7 +186,18 @@ export function registerActionSpecRpcHandlers(params: RegisterActionSpecRpcHandl
             }
             registeredMethods.set(method, actionId);
 
-            params.rpcHandlerManager.registerHandler(method, handler);
+            params.rpcHandlerManager.registerHandler(method, async (
+                input: unknown,
+                context?: RpcHandlerContext,
+            ) => {
+                const response = await handleAction(input, context);
+                return params.mapResponseForMethod?.({
+                    actionId: actionId as ActionId,
+                    method,
+                    isAlias: method !== rpcMethod,
+                    response,
+                }) ?? response;
+            });
         }
     }
 }

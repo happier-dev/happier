@@ -1,9 +1,10 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { cp, mkdir, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import * as tar from 'tar';
 
+import { createWorkspaceChildBuildEnv } from '../../workspaceChildBuildEnv.mjs';
 import { CLI_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
 import { commandExists, compileBunBinary, ensureFileExists, execOrThrow, resolveBunCommand, resolveYarnCommand, type RunCommand } from './commands.js';
 import {
@@ -14,24 +15,16 @@ import {
 import { withCliDistBuildLock } from './withCliDistBuildLock.js';
 import { resolveCliDistSnapshotDir } from './resolveCliDistSnapshotDir.js';
 import { copyCliNodeRuntimePayload } from './copyCliNodeRuntimePayload.js';
-import type { BundledWorkspacePackage } from './ensureBundledWorkspacePackagesBuilt.js';
+import { finalizeRuntimeArtifactPayload } from './finalizeRuntimeArtifactPayload.js';
+import { CLI_DEFERRED_VOICE_RUNTIME_PACKAGES } from './deferredVoiceRuntimePackages.js';
+import type {
+  BundledWorkspacePackage,
+  EnsureWorkspacePackagesBuiltByName,
+} from './ensureBundledWorkspacePackagesBuilt.js';
 import { ensureBundledWorkspacePackagesBuilt } from './ensureBundledWorkspacePackagesBuilt.js';
 import { shouldReuseCliDistSnapshot } from './shouldReuseCliDistSnapshot.js';
-
-const CLI_RUNTIME_SIDECAR_ENTRIES = [
-  ['childProcessOptions.cjs'],
-  ['claude_version_utils.cjs'],
-  ['claude_local_launcher.cjs'],
-  ['claude_remote_launcher.cjs'],
-  ['session_hook_forwarder.cjs'],
-  ['permission_hook_forwarder.cjs'],
-  ['ripgrep_launcher.cjs'],
-  ['statusline_forwarder.cjs'],
-  ['terminal_launch_spec_runner.cjs'],
-  ['node_pty_relay.cjs'],
-  ['runtime'],
-  ['shims'],
-] as const;
+import { stageCliProxyApiManagedRuntime } from './stageCliProxyApiManagedRuntime.js';
+import { CLI_RUNTIME_SIDECAR_ENTRIES } from './cliRuntimeSidecars.js';
 
 const CLI_RUNTIME_EXTERNAL_PACKAGES = [
   '@huggingface/transformers',
@@ -41,10 +34,13 @@ const CLI_RUNTIME_EXTERNAL_PACKAGES = [
   '@homebridge/node-pty-prebuilt-multiarch',
 ] as const;
 
-const CLI_DEFERRED_VOICE_RUNTIME_PACKAGES = [
-  '@huggingface/transformers',
-  'ffmpeg-static',
-  'sherpa-onnx-node',
+// Every shipped Fastify owner constructs its server with `logger: false`, so its
+// optional Pino branch is deliberately absent from the standalone Bun image.
+// The physical payload still contains the transitive packages for the Node
+// runtime tree; compiled artifact smokes exercise every shipped HTTP owner.
+const CLI_BUN_COMPILE_EXTERNAL_PACKAGES = [
+  'pino',
+  'thread-stream',
 ] as const;
 
 type CliToolUnpackModule = {
@@ -89,12 +85,25 @@ async function copyCliRuntimeSidecars(repoRoot: string, payloadDir: string): Pro
     await cp(sourcePath, targetPath, { recursive: true });
   }
 
-  const resolveFromPackageJsonPath = join(repoRoot, 'package.json');
+  const resolveFromPackageJsonPath = join(repoRoot, 'apps', 'cli', 'package.json');
+  const cliPackageJson = JSON.parse(readFileSync(resolveFromPackageJsonPath, 'utf8')) as {
+    dependencies?: Record<string, unknown>;
+    optionalDependencies?: Record<string, unknown>;
+  };
   for (const packageName of CLI_RUNTIME_EXTERNAL_PACKAGES) {
+    const declaredSpec = cliPackageJson.dependencies?.[packageName]
+      ?? cliPackageJson.optionalDependencies?.[packageName];
+    if (typeof declaredSpec !== 'string' || !declaredSpec.trim()) {
+      throw new Error(
+        `[component-artifacts] missing CLI runtime dependency declaration for ${packageName}`,
+      );
+    }
     bundleInstalledPackageWithRuntimeDependencies({
       packageName,
+      declaredSpec: declaredSpec.trim(),
       resolveFromPackageJsonPath,
       destNodeModulesDir: join(payloadDir, 'node_modules'),
+      dereferenceRootDir: repoRoot,
     });
   }
 }
@@ -153,12 +162,17 @@ async function stageDeferredVoiceInferenceRuntimeArchive(payloadDir: string, tar
   }));
 }
 
-function syncCliBundledWorkspacePackagesForCompile(cliDir: string, workspaceBundles: readonly BundledWorkspacePackage[]): void {
+function syncCliBundledWorkspacePackagesForCompile(
+  repoRoot: string,
+  cliDir: string,
+  workspaceBundles: readonly BundledWorkspacePackage[],
+): void {
   for (const { packageName, srcDir } of workspaceBundles) {
     bundleWorkspacePackageWithRuntimeDependencies({
       packageName,
       srcDir,
       destDir: join(cliDir, 'node_modules', ...packageName.split('/')),
+      dereferenceRootDir: repoRoot,
     });
   }
 }
@@ -171,6 +185,9 @@ export async function buildCliBinaryArtifactPayload({
   runCommand = execOrThrow,
   commandProbe = commandExists,
   compileBinary = compileBunBinary,
+  ensureWorkspacePackagesBuiltByName,
+  cliProxyApiManagedRuntimeExecutablePath,
+  requiredCliDistInputFingerprint,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -179,6 +196,9 @@ export async function buildCliBinaryArtifactPayload({
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
   compileBinary?: typeof compileBunBinary;
+  ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
+  cliProxyApiManagedRuntimeExecutablePath?: string;
+  requiredCliDistInputFingerprint?: string;
 }): Promise<{ executableName: string; entrypoint: string }> {
   const bunCommand = resolveBunCommand({ commandProbe });
   if (!bunCommand) {
@@ -200,19 +220,20 @@ export async function buildCliBinaryArtifactPayload({
     async ({ heldLockValue }) => {
       const runCommandWithHeldDistLock: RunCommand = (cmd, args, options = {}) => runCommand(cmd, args, {
         ...options,
-        env: {
-          ...process.env,
-          ...(options.env ?? {}),
-          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
-        },
+        env: createWorkspaceChildBuildEnv({
+          env: {
+            ...process.env,
+            ...(options.env ?? {}),
+          },
+          heldLockValue,
+        }),
       });
       await ensureBundledWorkspacePackagesBuilt({
         repoRoot,
         bundles: workspaceBundles.map(({ packageName, srcDir }) => ({ packageName, srcDir })),
-        yarn,
-        runCommand: runCommandWithHeldDistLock,
+        ensureWorkspacePackagesBuiltByName,
       });
-      syncCliBundledWorkspacePackagesForCompile(cliDir, workspaceBundles);
+      syncCliBundledWorkspacePackagesForCompile(repoRoot, cliDir, workspaceBundles);
 
       // If the CLI dist entrypoint is already present and is at least as new as the tracked inputs,
       // prefer snapshotting it instead of rebuilding. Rebuilding `apps/cli` is expensive and can
@@ -224,6 +245,7 @@ export async function buildCliBinaryArtifactPayload({
           join(cliDir, 'package.json'),
           ...workspaceBundles.map(({ srcDir }) => join(srcDir, 'dist')),
         ],
+        requiredInputFingerprint: requiredCliDistInputFingerprint,
       });
       return await resolveCliDistSnapshotDir({
         cliDir,
@@ -247,7 +269,11 @@ export async function buildCliBinaryArtifactPayload({
     await mkdir(payloadDir, { recursive: true });
 
     const executableName = resolveExecutableName({ baseName: 'happier', target });
-    const mergedExternals = [...new Set([...CLI_RUNTIME_EXTERNAL_PACKAGES, ...externals.map((value) => String(value ?? '').trim()).filter(Boolean)])];
+    const mergedExternals = [...new Set([
+      ...CLI_RUNTIME_EXTERNAL_PACKAGES,
+      ...CLI_BUN_COMPILE_EXTERNAL_PACKAGES,
+      ...externals.map((value) => String(value ?? '').trim()).filter(Boolean),
+    ])];
     await compileBinary({
       entrypoint: snapshotEntrypoint,
       bunTarget: target.bunTarget,
@@ -262,12 +288,19 @@ export async function buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir,
       distDir: snapshotDistDir,
-      yarn,
-      runCommand,
     });
     await copyCliRuntimeSidecars(repoRoot, payloadDir);
     await copyCliRuntimeTools(repoRoot, payloadDir, target);
+    await stageCliProxyApiManagedRuntime({
+      repoRoot,
+      payloadDir,
+      target,
+      yarn,
+      runCommand,
+      prebuiltExecutablePath: cliProxyApiManagedRuntimeExecutablePath,
+    });
     await stageDeferredVoiceInferenceRuntimeArchive(payloadDir, target);
+    await finalizeRuntimeArtifactPayload(payloadDir);
 
     return {
       executableName,

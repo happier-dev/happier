@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { appendFile, mkdtemp, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rename, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { logger } from '@/ui/logger';
@@ -75,17 +75,110 @@ describe('startFileWatcher', () => {
     stop();
   });
 
+  it('reports attachment before a caller may rely on observing later changes', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-file-watcher-ready-'));
+    const file = join(dir, 'session.jsonl');
+    await writeFile(file, 'initial\n', 'utf8');
+    let attached = false;
+    const stop = startFileWatcher(file, () => {}, {
+      emitInitial: false,
+      onWatcherAttached: () => {
+        attached = true;
+      },
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    stop();
+
+    expect(attached).toBe(true);
+  });
+
+  it('treats creation after registration as a change when initial emission is disabled', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-file-watcher-created-'));
+    const file = join(dir, 'session.jsonl');
+    let calls = 0;
+    const stop = startFileWatcher(file, () => {
+      calls += 1;
+    }, { emitInitial: false });
+
+    await writeFile(file, 'created\n', 'utf8');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    stop();
+
+    expect(calls).toBeGreaterThanOrEqual(1);
+  });
+
+  it('continues across append, atomic replacement, deletion, and recreation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-file-watcher-recreate-'));
+    const file = join(dir, 'session.jsonl');
+    await writeFile(file, 'initial\n', 'utf8');
+    let calls = 0;
+    const stop = startFileWatcher(file, () => {
+      calls += 1;
+    }, { emitInitial: false });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await appendFile(file, 'append\n', 'utf8');
+    await waitFor(() => calls >= 1);
+
+    const replacement = join(dir, 'replacement.jsonl');
+    await writeFile(replacement, 'replacement\n', 'utf8');
+    await rename(replacement, file);
+    await waitFor(() => calls >= 2);
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await unlink(file);
+    await waitFor(() => calls >= 3);
+    const beforeRecreate = calls;
+    await writeFile(file, 'recreated\n', 'utf8');
+    await waitFor(() => calls > beforeRecreate, { timeoutMs: 10_000 });
+
+    stop();
+  });
+
+  it('restarts and redrives when an asynchronous change callback rejects', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happy-file-watcher-redrive-'));
+    const file = join(dir, 'session.jsonl');
+    await writeFile(file, 'initial\n', 'utf8');
+    let calls = 0;
+    const stop = startFileWatcher(file, async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new Error('listener rejected delivery');
+      }
+    }, { emitInitial: false });
+
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    await appendFile(file, 'retry-me\n', 'utf8');
+    await waitFor(() => calls >= 2, { timeoutMs: 10_000 });
+
+    stop();
+  });
+
   it('expires missing-parent retries instead of looping forever', async () => {
     vi.useFakeTimers();
     const file = missingParentOutputFile();
     const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
     let calls = 0;
+    const onWatcherUnavailable = vi.fn();
 
     const stop = startFileWatcher(file, () => {
       calls += 1;
-    });
+    }, { onWatcherUnavailable });
 
-    await vi.advanceTimersByTimeAsync(120_000);
+    await vi.waitFor(() => {
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+    });
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      await vi.advanceTimersByTimeAsync(120_000);
+      if (watcherDebugMessages(debugSpy).some((message) =>
+        message.includes('Parent directory still missing'))) {
+        break;
+      }
+    }
+    expect(watcherDebugMessages(debugSpy).some((message) =>
+      message.includes('Parent directory still missing'))).toBe(true);
+    expect(onWatcherUnavailable).toHaveBeenCalledOnce();
     const debugCountAfterExpiry = watcherDebugMessages(debugSpy).length;
 
     await vi.advanceTimersByTimeAsync(120_000);
@@ -102,10 +195,11 @@ describe('startFileWatcher', () => {
     vi.useFakeTimers();
     const file = missingParentOutputFile();
     const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => undefined);
+    const onWatcherUnavailable = vi.fn();
 
     const stop = startFileWatcher(file, () => {
       throw new Error('missing-parent watcher should not fire');
-    });
+    }, { onWatcherUnavailable });
 
     await vi.waitFor(() => {
       expect(vi.getTimerCount()).toBeGreaterThan(0);
@@ -119,5 +213,6 @@ describe('startFileWatcher', () => {
     await vi.advanceTimersByTimeAsync(60_000);
 
     expect(watcherDebugMessages(debugSpy)).toHaveLength(debugCountAfterStop);
+    expect(onWatcherUnavailable).not.toHaveBeenCalled();
   });
 });

@@ -19,19 +19,19 @@ describe('optionalWorkspaceBundleLock', () => {
     );
   });
 
-  it('reenters only when the inherited lock path exactly matches', async () => {
+  it('reenters only when the inherited owner lease exactly matches', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-lock-reentry-'));
     try {
       const lockPath = resolveCliSharedDepsBuildLockPath(repoRoot);
 
       const result = await withWorkspaceBundleLock(
-        async () =>
+        async ({ heldLockValue }) =>
           await withOptionalCliSharedDepsBuildLock(
             async () => 'nested',
             {
               repoRoot,
               lockPath,
-              env: { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: lockPath },
+              env: { HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue },
               lockTimeoutMs: 60,
               lockPollIntervalMs: 10,
               lockStaleAfterMs: 1_000,

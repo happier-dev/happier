@@ -29,8 +29,8 @@ function createParams() {
         status: 'failed',
         code: 'usage_limit',
         source: 'usage_limit',
-        provider: 'codex',
-        providerTurnId: 'turn-1',
+        agentId: 'codex',
+        agentTurnId: 'turn-1',
         occurredAt: 1_700_000_000_000,
         usageLimit: {
           v: 1,

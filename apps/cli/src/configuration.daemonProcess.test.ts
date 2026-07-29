@@ -12,6 +12,10 @@ describe('isDaemonProcessArgv', () => {
     expect(isDaemonProcessArgv(['daemon', 'start-sync'])).toBe(true);
   });
 
+  it('treats the restricted packed-plugin host as a daemon process', () => {
+    expect(isDaemonProcessArgv(['daemon', 'plugin-packed-test-host'])).toBe(true);
+  });
+
   it('treats bun-wrapped daemon start-sync as a daemon process after argv normalization', () => {
     const { args } = parseCliArgs([
       '/Users/test/.happier/runtime/current/cli/package-dist/index.mjs',

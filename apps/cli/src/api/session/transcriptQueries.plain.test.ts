@@ -12,13 +12,11 @@ vi.mock('../client/loopbackUrl', () => ({
   resolveLoopbackHttpUrl: (url: string) => url,
 }))
 
-import axios, { AxiosError, AxiosHeaders, type InternalAxiosRequestConfig } from 'axios'
+import axios, { AxiosError, AxiosHeaders, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
 
 import { HttpStatusError, isAuthenticationError } from '@/api/client/httpStatusError'
 import { logger } from '@/ui/logger'
 import {
-  detectCommittedProviderActivityAfterLatestUserPrompt,
-  fetchLatestCommittedUserTextAtOrBeforeMs,
   fetchLatestUserPermissionIntentFromEncryptedTranscript,
   fetchRecentTranscriptTextItemsForAcpImportFromServer,
   hasCommittedUserMessageAfterMs,
@@ -121,6 +119,93 @@ describe('transcriptQueries (plaintext envelopes)', () => {
     ])
   })
 
+  it('excludes Voice and malformed provenance from ACP import while preserving legacy and explicit Agent text', async () => {
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      data: {
+        messages: [
+          {
+            createdAt: 400,
+            content: {
+              t: 'plain',
+              v: {
+                role: 'agent',
+                content: { type: 'text', text: 'malformed provenance reply' },
+                meta: {
+                  happier: {
+                    kind: 'conversation_turn.v1',
+                    payload: { v: 1 },
+                    conversationTurnOriginV1: {
+                      v: 1,
+                      channel: 'realtime_conversation',
+                      modality: 'text',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            createdAt: 300,
+            content: {
+              t: 'plain',
+              v: {
+                role: 'user',
+                content: { type: 'text', text: 'spoken question' },
+                meta: {
+                  happier: {
+                    kind: 'conversation_turn.v1',
+                    payload: { v: 1 },
+                    conversationTurnOriginV1: {
+                      v: 1,
+                      channel: 'realtime_conversation',
+                      modality: 'voice',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            createdAt: 200,
+            content: {
+              t: 'plain',
+              v: {
+                role: 'agent',
+                content: { type: 'text', text: 'explicit Agent reply' },
+                meta: {
+                  happier: {
+                    kind: 'conversation_turn.v1',
+                    payload: { v: 1 },
+                    conversationTurnOriginV1: {
+                      v: 1,
+                      channel: 'agent_thread',
+                      modality: 'text',
+                    },
+                  },
+                },
+              },
+            },
+          },
+          {
+            createdAt: 100,
+            content: {
+              t: 'plain',
+              v: {
+                role: 'user',
+                content: { type: 'text', text: 'legacy coding request' },
+              },
+            },
+          },
+        ],
+      },
+    } as AxiosResponse)
+
+    await expect(fetchRecentTranscriptTextItemsForAcpImportFromServer(queryParams)).resolves.toEqual([
+      { role: 'user', text: 'legacy coding request' },
+      { role: 'agent', text: 'explicit Agent reply' },
+    ])
+  })
+
   it('prefilters permission intent scans to user rows on the server', async () => {
     const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
       data: { messages: [] },
@@ -173,129 +258,6 @@ describe('transcriptQueries (plaintext envelopes)', () => {
     })).resolves.toBe(false)
   })
 
-  it('fetches the latest committed user text at or before a recovery failure timestamp', async () => {
-    const getSpy = vi.spyOn(axios, 'get').mockResolvedValueOnce({
-      data: {
-        messages: [
-          {
-            localId: 'after-failure',
-            createdAt: 150,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'too late' },
-              },
-            },
-          },
-          {
-            localId: 'original-local-id',
-            createdAt: 100,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'retry this prompt' },
-                meta: { permissionMode: 'safe-yolo', model: 'claude-sonnet' },
-              },
-            },
-          },
-          {
-            localId: 'older-local-id',
-            createdAt: 90,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'older prompt' },
-              },
-            },
-          },
-        ],
-      },
-    } as any)
-
-    await expect(fetchLatestCommittedUserTextAtOrBeforeMs({
-      ...queryParams,
-      failureAtMs: 125,
-    })).resolves.toEqual({
-      text: 'retry this prompt',
-      localId: 'original-local-id',
-      createdAt: 100,
-      permissionMode: 'safe-yolo',
-      model: 'claude-sonnet',
-    })
-
-    expect(getSpy.mock.calls[0]?.[1]?.params).toEqual({
-      limit: 100,
-      roles: 'user,agent',
-    })
-  })
-
-  it('detects committed provider activity after the latest committed user prompt', async () => {
-    vi.spyOn(axios, 'get').mockResolvedValueOnce({
-      data: {
-        messages: [
-          {
-            createdAt: 130,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'agent',
-                content: { type: 'text', text: 'provider resumed' },
-              },
-            },
-          },
-          {
-            createdAt: 100,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'user',
-                content: { type: 'text', text: 'latest prompt' },
-              },
-            },
-          },
-          {
-            createdAt: 80,
-            content: {
-              t: 'plain',
-              v: {
-                role: 'agent',
-                content: { type: 'text', text: 'older reply' },
-              },
-            },
-          },
-        ],
-      },
-    } as any)
-
-    await expect(detectCommittedProviderActivityAfterLatestUserPrompt({
-      ...queryParams,
-      failureAtMs: 110,
-    })).resolves.toEqual({
-      status: 'activity_found',
-      userPromptAtMs: 100,
-      providerActivityAtMs: 130,
-    })
-  })
-
-  it.each([401, 403] as const)('rethrows auth failures while fetching ACP import transcript text (%s)', async (status) => {
-    const authError = new HttpStatusError(status, 'Authentication failed')
-    vi.spyOn(axios, 'get').mockRejectedValueOnce(authError)
-
-    await expect(fetchRecentTranscriptTextItemsForAcpImportFromServer(queryParams)).rejects.toBe(authError)
-    expect(isAuthenticationError(authError)).toBe(true)
-  })
-
-  it.each([401, 403] as const)('rethrows auth failures while fetching permission intent (%s)', async (status) => {
-    const authError = new HttpStatusError(status, 'Authentication failed')
-    vi.spyOn(axios, 'get').mockRejectedValueOnce(authError)
-
-    await expect(fetchLatestUserPermissionIntentFromEncryptedTranscript(queryParams)).rejects.toBe(authError)
-    expect(isAuthenticationError(authError)).toBe(true)
-  })
-
   it('keeps non-auth ACP import fetch failures empty', async () => {
     vi.spyOn(axios, 'get').mockRejectedValueOnce(new Error('temporary server failure'))
 
@@ -319,7 +281,7 @@ describe('transcriptQueries (plaintext envelopes)', () => {
       token: 't',
       sessionId: 's1',
       failureAtMs: 100,
-    })).resolves.toBe(false)
+    })).rejects.toBe(error)
 
     const diagnostic = JSON.stringify(vi.mocked(logger.debug).mock.calls.at(-1)?.[1])
     expect(diagnostic).toContain('http://example.test/v1/sessions/s1/messages')

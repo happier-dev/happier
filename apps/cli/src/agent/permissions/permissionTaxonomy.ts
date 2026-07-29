@@ -37,8 +37,8 @@ export const SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS = [
   'action_spec_get',
   'action_options_resolve',
   ...SHARED_PERMISSION_SAFE_TOOL_NAME_TOKENS,
-  // ACP fs bridge operations are host-side capability calls; provider policy decides when these occur.
-  // Auto-approve here to avoid duplicating provider permission policy at the host layer.
+  // ACP fs bridge operations are host-side capability calls. Reads and writes outside Read Only/Plan
+  // remain auto-approved to avoid duplicating provider permission policy at the host layer.
   'readtextfile',
   'writetextfile',
   'read_text_file',

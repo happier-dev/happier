@@ -1,19 +1,24 @@
 import type { BootstrapMachineSyncRuntimeParams, BootstrapMachineSyncRuntimeResult } from './bootstrapMachineSyncRuntime';
 import { bootstrapMachineSyncRuntime } from './bootstrapMachineSyncRuntime';
-import type { StartMachineRegistrationRetryLoopParams } from './startMachineRegistrationRetryLoop';
+import type {
+  MachineRegistrationRetryLoopHandle,
+  StartMachineRegistrationRetryLoopParams,
+} from './startMachineRegistrationRetryLoop';
 import { startMachineRegistrationRetryLoop } from './startMachineRegistrationRetryLoop';
 
 export type StartDaemonMachineRegistrationParams = Readonly<
   Omit<StartMachineRegistrationRetryLoopParams, 'onMachineRegistered'> & {
     bootstrapRuntime: Omit<BootstrapMachineSyncRuntimeParams, 'machineId' | 'machine'>;
-    onMachineSyncRuntime: (runtime: BootstrapMachineSyncRuntimeResult) => void;
+    onMachineSyncRuntime: (runtime: BootstrapMachineSyncRuntimeResult) => void | Promise<void>;
   }
 >;
 
-export function startDaemonMachineRegistration(params: StartDaemonMachineRegistrationParams): void {
+export function startDaemonMachineRegistration(
+  params: StartDaemonMachineRegistrationParams,
+): MachineRegistrationRetryLoopHandle {
   const { bootstrapRuntime, onMachineSyncRuntime, ...retryLoopParams } = params;
 
-  startMachineRegistrationRetryLoop({
+  return startMachineRegistrationRetryLoop({
     ...retryLoopParams,
     onMachineRegistered: async ({ machineId, machine }) => {
       const machineSyncRuntime = await bootstrapMachineSyncRuntime({
@@ -21,7 +26,7 @@ export function startDaemonMachineRegistration(params: StartDaemonMachineRegistr
         machineId,
         machine,
       });
-      onMachineSyncRuntime(machineSyncRuntime);
+      await onMachineSyncRuntime(machineSyncRuntime);
     },
   });
 }

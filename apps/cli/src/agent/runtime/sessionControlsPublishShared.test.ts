@@ -4,6 +4,7 @@ import {
   applyModelIntentSessionMetadata,
   applyPermissionModeIntentSessionMetadata,
 } from '@happier-dev/agents/session/state/metadataWriters';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 import type { Metadata } from '@/api/types';
 import { publishSessionControlsMetadataBestEffort } from './controls/publishSessionControlsMetadataBestEffort';
 
@@ -30,12 +31,12 @@ describe('sessionControls publish helpers (shared)', () => {
     expect(next.permissionModeUpdatedAt).toBe(10);
   });
 
-  it('writes only the canonical structured model intent when updatedAt is newer', () => {
+  it('writes only the canonical structured intent for a Provider-bound model', () => {
     const next = applyModelIntentSessionMetadata({ modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'model-a' } } as any, {
       v: 1,
       selection: {
         agentTargetKey: 'backend:codex',
-        providerConnectionId: null,
+        providerConnectionId: ProviderConnectionIdSchema.parse('provider-connection-1'),
         modelId: 'model-b',
       },
       updatedAt: 11,
@@ -46,11 +47,11 @@ describe('sessionControls publish helpers (shared)', () => {
       updatedAt: 11,
       selection: {
         agentTargetKey: 'backend:codex',
-        providerConnectionId: null,
+        providerConnectionId: ProviderConnectionIdSchema.parse('provider-connection-1'),
         modelId: 'model-b',
       },
     });
-    expect(next.modelOverrideV1).toEqual({ v: 1, updatedAt: 10, modelId: 'model-a' });
+    expect(next.modelOverrideV1).toBeUndefined();
   });
 
   it('publishes config options only to canonical metadata keys from the shared publisher', async () => {

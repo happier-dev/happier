@@ -1,4 +1,4 @@
-import type { ExecClientDiagnosticSanitizerV1 } from '@happier-dev/plugin-sdk';
+import type { ExecClientDiagnosticSanitizerV1 } from '../privateContract';
 
 import {
     classifyConnectedServiceSensitiveDiagnosticKey,

@@ -140,6 +140,57 @@ describe('request supervision', () => {
     } satisfies ReadinessProbeResult, { generation: 0 });
   });
 
+  it('keeps every non-probe request failure operation-local', async () => {
+    const purposes = [
+      undefined,
+      'durable_write',
+      'recovery_read',
+      'transcript_sync',
+      'ephemeral_update',
+      'snapshot_fetch',
+    ] as const;
+
+    for (const purpose of purposes) {
+      const supervisor = createSupervisor();
+      const failures = [
+        new HttpStatusError(503, 'domain unavailable'),
+        Object.assign(new Error('connection reset'), { code: 'ECONNRESET' }),
+        Object.assign(new Error('request timed out'), { code: 'ETIMEDOUT' }),
+        new Error('malformed response'),
+      ];
+
+      for (const failure of failures) {
+        await expect(runSupervisedRequest({
+          supervisor,
+          ...(purpose ? { purpose } : {}),
+          request: async () => {
+            throw failure;
+          },
+        })).rejects.toBe(failure);
+      }
+
+      expect(supervisor.reportProbeResult).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps explicit readiness probes as connection-health transition owners', async () => {
+    const supervisor = createSupervisor();
+    const serviceUnavailable = new HttpStatusError(503, 'readiness unavailable');
+
+    await expect(runSupervisedRequest({
+      supervisor,
+      purpose: 'probe',
+      request: async () => {
+        throw serviceUnavailable;
+      },
+    })).rejects.toBe(serviceUnavailable);
+
+    expect(supervisor.reportProbeResult).toHaveBeenCalledWith({
+      status: 'retry_later',
+      errorMessage: 'readiness unavailable',
+    } satisfies ReadinessProbeResult, { generation: 0 });
+  });
+
   it('reports socket connect auth errors back into the supervisor', async () => {
     const supervisor = createSupervisor();
     const socketAuthError = Object.assign(new Error('invalid token'), {

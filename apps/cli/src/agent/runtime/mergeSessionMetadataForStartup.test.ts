@@ -310,7 +310,7 @@ describe('mergeSessionMetadataForStartup', () => {
         });
 
         expect((merged as any).modelSelectionIntentV1).toEqual({ v: 1, updatedAt: 200, selection: null });
-        expect((merged as any).modelOverrideV1).toBeUndefined();
+        expect((merged as any).modelOverrideV1).toEqual({ v: 1, updatedAt: 200, modelId: 'default' });
     });
 
     it('merges ACP config option overrides per entry through the session-state timestamp policy', () => {

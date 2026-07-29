@@ -6,40 +6,23 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type {
     ExecLaunchInputV1,
-    ExecRuntimeServiceV1,
-    FetchRuntimeServiceV1,
-    ManagedServerSpecV1,
-    PluginSettingsFieldDescriptorV1,
-} from '@happier-dev/plugin-sdk';
-import {
-    SESSION_PROVIDER_HOOK_EVENT_ID_V1,
-    type TypedEventV1,
-} from '@happier-dev/protocol';
+} from '../exec/privateContract';
 
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
-import { createPluginAuthService } from './auth';
 import { createPluginEnvService } from './env';
-import {
-    canPluginSubscribeToEvent,
-    createPluginEventsBroker,
-    createPluginEventsService,
-    publishHostPluginEvent,
-} from './events';
-import { createPluginExecService } from './exec';
+import { createPluginExecService } from '../exec/hostService';
 import { createPluginFsService } from './fs';
-import { createPluginManagedServerService } from './managed/server';
-import { createPluginProgressService } from './progress';
-import { createPluginRetryService } from './retry';
-import { createPluginSecretsService } from './secrets';
-import { createPluginSettingsService } from './settings';
+import { createPluginSecretStore, preparePluginSecretsDataRemoval } from './secrets';
 import {
     copyPluginSessionStorageForFork,
     createAccountSettingsBackedPluginStorageScope,
     createPluginStoragePublicShareSnapshot,
-    createPluginStorageService,
+    createPluginStorageOwner,
+    preparePluginStorageDataRemoval,
+    updatePluginStorageScopeValueAtomically,
 } from './storage';
 import { createPluginTerminalHostService } from './terminalHost';
-import { createPluginTranscriptsService } from './transcripts';
+import { createPluginTranscriptFileFollowService } from './transcripts/fileFollow';
 import { createTranscriptFileFollowPathGrantRegistry } from './transcripts/fileFollowGrants';
 import { createPluginDisposableRegistry } from '../lifecycle/disposables';
 import type {
@@ -70,7 +53,7 @@ describe('A.11 plugin context services', () => {
     it('scopes storage by plugin id and keeps ephemeral/session/local/synced behavior distinct', async () => {
         const happyHomeDir = await makeHappyHome();
         const syncedValues = new Map<string, unknown>();
-        const service = createPluginStorageService({
+        const service = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths: resolvePluginStorePaths({ happyHomeDir }),
             sessionId: 'session-source',
@@ -97,7 +80,7 @@ describe('A.11 plugin context services', () => {
         expect(await service.local.get('durable')).toEqual({ local: true });
         expect(await service.synced.get('account')).toEqual({ synced: true });
 
-        const restarted = createPluginStorageService({
+        const restarted = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths: resolvePluginStorePaths({ happyHomeDir }),
             sessionId: 'session-source',
@@ -113,7 +96,7 @@ describe('A.11 plugin context services', () => {
     it('deep-copies session storage on fork and strips it from public share snapshots', async () => {
         const happyHomeDir = await makeHappyHome();
         const paths = resolvePluginStorePaths({ happyHomeDir });
-        const source = createPluginStorageService({
+        const source = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
             sessionId: 'session-source',
@@ -128,14 +111,14 @@ describe('A.11 plugin context services', () => {
         });
         await source.session.set('draft', { nested: { value: 2 } });
 
-        const target = createPluginStorageService({
+        const target = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
             sessionId: 'session-target',
         });
         expect(await target.session.get('draft')).toEqual({ nested: { value: 1 } });
 
-        const unbound = createPluginStorageService({
+        const unbound = createPluginStorageOwner({
             pluginId: 'acme.plugin',
             paths,
         });
@@ -169,138 +152,169 @@ describe('A.11 plugin context services', () => {
         expect(await synced.get('shared')).toBeNull();
     });
 
-    it('validates settings writes while preserving unknown plugin-owned keys and descriptor projection semantics', async () => {
-        const happyHomeDir = await makeHappyHome();
-        const storage = createPluginStorageService({
+    it('atomically updates one synced key through the account settings owner', async () => {
+        let settings: Record<string, unknown> = {
+            existing: true,
+            pluginStorageSyncedV1: {
+                v: 1,
+                plugins: {
+                    'acme.plugin': {
+                        settings: { revision: 0 },
+                        untouched: { keep: true },
+                    },
+                    'sibling.plugin': { settings: { keep: true } },
+                },
+            },
+        };
+        const synced = createAccountSettingsBackedPluginStorageScope({
             pluginId: 'acme.plugin',
-            paths: resolvePluginStorePaths({ happyHomeDir }),
+            getSettings: () => settings,
+            updateSettings: async (mutate) => {
+                settings = mutate(settings);
+                return settings;
+            },
         });
-        const changes: unknown[] = [];
-        const settings = createPluginSettingsService({
-            pluginId: 'acme.plugin',
-            storage: storage.local,
-            descriptors: [
-                {
-                    id: 'endpoint',
-                    kind: 'settings.field',
-                    version: '1.0.0',
-                    valueSchema: { type: 'string' },
-                    control: 'text',
-                    displayKey: 'plugins.acme.endpoint.label',
-                    capabilityGates: [],
-                    permissionGates: [],
-                    redaction: 'none',
-                    hidden: false,
-                    clearWhenEmpty: 'omit',
-                    order: 2,
-                },
-                {
-                    id: 'notes',
-                    kind: 'settings.field',
-                    version: '1.0.0',
-                    valueSchema: { type: 'string' },
-                    control: 'textarea',
-                    displayKey: 'plugins.acme.notes.label',
-                    capabilityGates: [],
-                    permissionGates: [],
-                    redaction: 'none',
-                    hidden: false,
-                    clearWhenEmpty: 'persist',
-                    order: 1,
-                },
-                {
-                    id: 'enabled',
-                    kind: 'settings.field',
-                    version: '1.0.0',
-                    valueSchema: { type: 'boolean' },
-                    control: 'switch',
-                    displayKey: 'plugins.acme.enabled.label',
-                    capabilityGates: [],
-                    permissionGates: [],
-                    redaction: 'none',
-                    defaultBooleanValue: false,
-                    clearWhenEmpty: 'persist',
-                    hidden: true,
-                    order: 3,
-                },
-            ],
-        });
-        const subscription = settings.onChange((next) => changes.push(next));
 
-        await storage.local.set('settings', { unknownPluginKey: 123 });
-        await settings.set('endpoint', 'https://example.test');
-        await settings.set('enabled', false);
-        await settings.set('endpoint', '');
-        await settings.set('notes', '');
+        const revision = await updatePluginStorageScopeValueAtomically({
+            scope: synced,
+            key: 'settings',
+            operation: (current) => ({
+                value: { revision: 1, previous: current },
+                result: 1,
+            }),
+        });
 
-        expect(await settings.get()).toEqual({
-            unknownPluginKey: 123,
-            enabled: false,
-            notes: '',
+        expect(revision).toBe(1);
+        expect(await synced.get('settings')).toEqual({
+            revision: 1,
+            previous: { revision: 0 },
         });
-        await expect(settings.set('enabled', 'false')).rejects.toMatchObject({
-            code: 'PLUGIN_SETTINGS_VALIDATION_FAILED',
+        expect(settings).toMatchObject({
+            existing: true,
+            pluginStorageSyncedV1: {
+                plugins: {
+                    'acme.plugin': { untouched: { keep: true } },
+                    'sibling.plugin': { settings: { keep: true } },
+                },
+            },
         });
-        expect(settings.projectForm().fields.map((field) => field.id)).toEqual(['notes', 'endpoint']);
-        expect(settings.projectForm().storageScope).toBe('pluginLocal');
-        expect(settings.describeFields().find((field) => field.id === 'enabled')).toMatchObject({
-            hidden: true,
-            defaultBooleanValue: false,
-        });
-        expect(changes.length).toBeGreaterThan(0);
-        subscription.unsubscribe();
     });
 
-    it('keeps generic settings plugin-local across service reloads and limits onChange to same-instance writes', async () => {
+    it('removes only one validated plugin storage/settings/session/filesystem and secret namespace', async () => {
         const happyHomeDir = await makeHappyHome();
-        const storage = createPluginStorageService({
-            pluginId: 'acme.plugin',
-            paths: resolvePluginStorePaths({ happyHomeDir }),
-        });
-        const descriptors: PluginSettingsFieldDescriptorV1[] = [
-            {
-                id: 'endpoint',
-                kind: 'settings.field',
-                version: '1.0.0',
-                valueSchema: { type: 'string' },
-                control: 'text',
-                displayKey: 'plugins.acme.endpoint.label',
-                capabilityGates: [],
-                permissionGates: [],
-                redaction: 'none',
-                hidden: false,
-                clearWhenEmpty: 'persist',
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        let accountSettings: Record<string, unknown> = { existing: true };
+        const accountSettingsAdapter = {
+            getSettings: () => accountSettings,
+            updateSettings: async (mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>) => {
+                accountSettings = mutate(accountSettings);
+                return accountSettings;
             },
-        ];
-        const first = createPluginSettingsService({
+        };
+        const acme = createPluginStorageOwner({
             pluginId: 'acme.plugin',
-            storage: storage.local,
-            descriptors,
+            paths,
+            sessionId: 'session-1',
+            synced: createAccountSettingsBackedPluginStorageScope({ pluginId: 'acme.plugin', ...accountSettingsAdapter }),
         });
-
-        await first.set('endpoint', 'https://initial.example');
-
-        const reloaded = createPluginSettingsService({
-            pluginId: 'acme.plugin',
-            storage: storage.local,
-            descriptors,
+        const sibling = createPluginStorageOwner({
+            pluginId: 'sibling.plugin',
+            paths,
+            sessionId: 'session-1',
+            synced: createAccountSettingsBackedPluginStorageScope({ pluginId: 'sibling.plugin', ...accountSettingsAdapter }),
         });
-        expect(await reloaded.get('endpoint')).toBe('https://initial.example');
-        expect(reloaded.projectForm().storageScope).toBe('pluginLocal');
-
-        const firstChanges: unknown[] = [];
-        const subscription = first.onChange((next) => firstChanges.push(next));
-        await storage.local.set('settings', { endpoint: 'https://external.example' });
-        await reloaded.set('endpoint', 'https://reloaded.example');
-        expect(firstChanges).toEqual([]);
-
-        await first.set('endpoint', 'https://same-instance.example');
-        expect(firstChanges).toEqual([
-            {
-                endpoint: 'https://same-instance.example',
+        await acme.local.set('settings', { enabled: true });
+        await acme.session.set('draft', { text: 'remove me' });
+        await acme.synced.set('profile', { id: 'remove-me' });
+        await sibling.local.set('settings', { enabled: false });
+        await sibling.session.set('draft', { text: 'keep me' });
+        await sibling.synced.set('profile', { id: 'keep-me' });
+        accountSettings = {
+            ...accountSettings,
+            pluginStorageSyncedV1: {
+                ...(accountSettings.pluginStorageSyncedV1 as Record<string, unknown>),
+                futureEnvelopeField: { keep: true },
             },
-        ]);
-        subscription.unsubscribe();
+        };
+        await mkdir(join(paths.storageDir, 'acme.plugin', 'fs'), { recursive: true });
+        await writeFile(join(paths.storageDir, 'acme.plugin', 'fs', 'owned.txt'), 'remove me', 'utf8');
+
+        const acmeSecrets = createPluginSecretStore({ pluginId: 'acme.plugin', paths });
+        const siblingSecrets = createPluginSecretStore({ pluginId: 'sibling.plugin', paths });
+        await acmeSecrets.set('token', 'remove-me');
+        await siblingSecrets.set('token', 'keep-me');
+
+        const storageRemoval = await preparePluginStorageDataRemoval({
+            pluginId: 'acme.plugin',
+            paths,
+            synced: accountSettingsAdapter,
+        });
+        const secretsRemoval = await preparePluginSecretsDataRemoval({ pluginId: 'acme.plugin', paths });
+        await storageRemoval.removeSynced();
+        await storageRemoval.removeLocal();
+        await secretsRemoval.remove();
+
+        const restartedAcme = createPluginStorageOwner({
+            pluginId: 'acme.plugin',
+            paths,
+            sessionId: 'session-1',
+            synced: createAccountSettingsBackedPluginStorageScope({ pluginId: 'acme.plugin', ...accountSettingsAdapter }),
+        });
+        expect(await restartedAcme.local.listKeys()).toEqual([]);
+        expect(await restartedAcme.session.listKeys()).toEqual([]);
+        expect(await restartedAcme.synced.listKeys()).toEqual([]);
+        expect(await createPluginSecretStore({ pluginId: 'acme.plugin', paths }).list()).toEqual([]);
+
+        expect(await sibling.local.get('settings')).toEqual({ enabled: false });
+        expect(await sibling.session.get('draft')).toEqual({ text: 'keep me' });
+        expect(await sibling.synced.get('profile')).toEqual({ id: 'keep-me' });
+        expect(await siblingSecrets.get('token')).toBe('keep-me');
+        expect(accountSettings.existing).toBe(true);
+        expect(accountSettings).toMatchObject({
+            pluginStorageSyncedV1: { futureEnvelopeField: { keep: true } },
+        });
+        await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).resolves.toBeUndefined();
+    });
+
+    it('rejects ambiguous identities and symlinked plugin namespaces before any destructive mutation', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        let accountSettings: Record<string, unknown> = {
+            pluginStorageSyncedV1: {
+                v: 1,
+                plugins: { 'sibling.plugin': { keep: true } },
+            },
+        };
+        const updateSettings = vi.fn(async (
+            mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown>,
+        ) => {
+            accountSettings = mutate(accountSettings);
+            return accountSettings;
+        });
+        const synced = { getSettings: () => accountSettings, updateSettings };
+
+        await expect(preparePluginStorageDataRemoval({
+            pluginId: '../sibling.plugin',
+            paths,
+            synced,
+        })).rejects.toMatchObject({ code: 'PLUGIN_DATA_REMOVAL_IDENTITY_INVALID' });
+
+        const outside = join(happyHomeDir, 'outside-plugin-data');
+        await mkdir(outside, { recursive: true });
+        await writeFile(join(outside, 'keep.txt'), 'keep', 'utf8');
+        await mkdir(paths.storageDir, { recursive: true });
+        await symlink(outside, join(paths.storageDir, 'acme.plugin'), process.platform === 'win32' ? 'junction' : 'dir');
+
+        await expect(preparePluginStorageDataRemoval({
+            pluginId: 'acme.plugin',
+            paths,
+            synced,
+        })).rejects.toMatchObject({ code: 'PLUGIN_STORAGE_DATA_PATH_INVALID' });
+        expect(updateSettings).not.toHaveBeenCalled();
+        expect(await readFile(join(outside, 'keep.txt'), 'utf8')).toBe('keep');
+        expect(accountSettings).toMatchObject({
+            pluginStorageSyncedV1: { plugins: { 'sibling.plugin': { keep: true } } },
+        });
     });
 
     it('stores secrets per plugin namespace without exposing values in list output', async () => {
@@ -308,13 +322,13 @@ describe('A.11 plugin context services', () => {
         const paths = resolvePluginStorePaths({ happyHomeDir });
         const fixedKey = new Uint8Array(32).fill(7);
         const randomBytes = (length: number) => new Uint8Array(length).fill(3);
-        const left = createPluginSecretsService({
+        const left = createPluginSecretStore({
             pluginId: 'left.plugin',
             paths,
             secretKey: fixedKey,
             randomBytes,
         });
-        const right = createPluginSecretsService({
+        const right = createPluginSecretStore({
             pluginId: 'right.plugin',
             paths,
             secretKey: fixedKey,
@@ -336,397 +350,129 @@ describe('A.11 plugin context services', () => {
         }
     });
 
-    it('enforces slash event ids, reserved host namespaces, and canonical subscribe permissions', async () => {
-        const bus = createPluginEventsService({
+    it('serializes concurrent secret writes from separate service instances without losing names', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const first = createPluginSecretStore({
             pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            canSubscribe: (eventName) => canPluginSubscribeToEvent({
-                pluginId: 'acme.plugin',
-                eventName,
-                permissions: new Set(['events.session.subscribe']),
-            }),
+            paths,
+            randomBytes: (length) => new Uint8Array(length).fill(3),
         });
-        const listener = vi.fn();
-        const subscription = bus.subscribe('@happier/session/ready', listener);
-
-        await publishHostPluginEvent('@happier/session/ready', { sessionId: 'session-1' });
-        await expect(bus.emit({ id: 'task-complete', payload: { id: 1 } })).resolves.toBeUndefined();
-        await expect(bus.emit({ id: '@happier/runtime/reload', payload: {} })).rejects.toMatchObject({
-            code: 'PLUGIN_EVENTS_RESERVED_NAMESPACE',
-        });
-        await expect(publishHostPluginEvent('@happier/session', {})).rejects.toMatchObject({
-            code: 'PLUGIN_EVENTS_HOST_NAMESPACE_REQUIRED',
-        });
-        await expect(bus.emit({ id: 'other.plugin/task-complete', payload: {} })).rejects.toMatchObject({
-            code: 'PLUGIN_EVENTS_PREFIX_REQUIRED',
-        });
-        await expect(bus.emit({ id: 'acme.plugin.task-complete', payload: {} })).rejects.toMatchObject({
-            code: 'PLUGIN_EVENTS_INVALID_ID',
-        });
-        expect(() => bus.subscribe('@happier/runtime/reload', listener)).toThrowError(/capability/i);
-        expect(listener).toHaveBeenCalledWith({
-            id: '@happier/session/ready',
-            payload: { sessionId: 'session-1' },
-            envelope: expect.objectContaining({
-                emittedAt: expect.any(String),
-                sequence: expect.any(Number),
-                source: {
-                    kind: 'host',
-                    namespace: 'session',
-                },
-            }),
+        const second = createPluginSecretStore({
+            pluginId: 'acme.plugin',
+            paths,
+            randomBytes: (length) => new Uint8Array(length).fill(4),
         });
 
-        subscription.unsubscribe();
+        await Promise.all([
+            first.set('api-token', 'first-secret'),
+            second.set('signing-key', 'second-secret'),
+        ]);
+
+        expect(await first.list()).toEqual([
+            { name: 'api-token' },
+            { name: 'signing-key' },
+        ]);
+        expect(await first.get('api-token')).toBe('first-secret');
+        expect(await first.get('signing-key')).toBe('second-secret');
     });
 
-    it('validates emitted plugin events against manifest-declared payload schemas', async () => {
-        const publisherParams = {
+    it('persists a prototype-named generic local storage key as an own value', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const storage = createPluginStorageOwner({
             pluginId: 'acme.plugin',
-            eventDeclarations: [
-                {
-                    id: 'task-complete',
-                    payloadSchema: {
-                        type: 'object',
-                        required: ['checkpointId'],
-                        properties: {
-                            checkpointId: { type: 'string' },
-                            attempt: { type: 'integer' },
-                        },
-                    },
-                },
-            ],
-        } satisfies Parameters<typeof createPluginEventsService>[0] & Readonly<{
-            eventDeclarations: readonly Readonly<{
-                id: string;
-                payloadSchema: Readonly<Record<string, unknown>>;
-            }>[];
-        }>;
-        const publisher = createPluginEventsService(publisherParams);
-
-        await expect(publisher.emit({
-            id: 'task-complete',
-            payload: { checkpointId: 'checkpoint-1', attempt: 1, extra: true },
-        })).resolves.toBeUndefined();
-        await expect(publisher.emit({
-            id: 'task-complete',
-            payload: { attempt: 1 },
-        })).rejects.toMatchObject({
-            code: 'PLUGIN_EVENTS_INVALID_PAYLOAD',
+            paths: resolvePluginStorePaths({ happyHomeDir }),
         });
-        await expect(publisher.emit({
-            id: 'task-complete',
-            payload: { checkpointId: 1 },
-        })).rejects.toMatchObject({
-            code: 'PLUGIN_EVENTS_INVALID_PAYLOAD',
+
+        await storage.local.set('__proto__', { persisted: true });
+
+        expect(await storage.local.get('__proto__')).toEqual({ persisted: true });
+        expect(await storage.local.listKeys()).toEqual(['__proto__']);
+    });
+
+    it('persists a prototype-named secret as an own encrypted record', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const secrets = createPluginSecretStore({
+            pluginId: 'acme.plugin',
+            paths,
+            secretKey: new Uint8Array(32).fill(7),
+            randomBytes: (length) => new Uint8Array(length).fill(3),
+        });
+
+        await secrets.set('__proto__', 'secret-value');
+
+        expect(await secrets.list()).toEqual([{ name: '__proto__' }]);
+        expect(await secrets.get('__proto__')).toBe('secret-value');
+    });
+
+    it('does not create local secret key material for a missing secret read', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const secrets = createPluginSecretStore({
+            pluginId: 'acme.plugin',
+            paths,
+        });
+
+        await expect(secrets.get('missing')).resolves.toBeNull();
+        await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).rejects.toMatchObject({
+            code: 'ENOENT',
         });
     });
 
-    it('uses final hierarchical event subscription permission names', () => {
-        expect(canPluginSubscribeToEvent({
+    it('does not create local secret key material for a missing prototype-named secret read', async () => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const secrets = createPluginSecretStore({
             pluginId: 'acme.plugin',
-            eventName: '@happier/session/ready',
-            permissions: new Set(['events.session.subscribe']),
-        })).toBe(true);
-        expect(canPluginSubscribeToEvent({
-            pluginId: 'acme.plugin',
-            eventName: '@happier/session/ready',
-            permissions: new Set(['session.subscribe']),
-        })).toBe(false);
-        expect(canPluginSubscribeToEvent({
-            pluginId: 'acme.plugin',
-            eventName: '@happier/runtime/',
-            permissions: new Set(['events.runtime.subscribe']),
-        })).toBe(true);
-        expect(canPluginSubscribeToEvent({
-            pluginId: 'acme.plugin',
-            eventName: '@happier/runtime/',
-            permissions: new Set(['events.session.subscribe']),
-        })).toBe(false);
-        expect(canPluginSubscribeToEvent({
-            pluginId: 'acme.plugin',
-            eventName: 'other.plugin/task-complete',
-            permissionDeclarations: [
-                {
-                    capability: 'events.plugin.subscribe',
-                    scope: 'other.plugin',
-                },
-            ],
-        })).toBe(true);
-        expect(canPluginSubscribeToEvent({
-            pluginId: 'acme.plugin',
-            eventName: 'other.plugin/task-complete',
-            permissions: new Set(['events.plugin.subscribe']),
-        })).toBe(false);
-        expect(canPluginSubscribeToEvent({
-            pluginId: 'acme.plugin',
-            eventName: 'other.plugin/task-complete',
-            permissions: new Set(['events.subscribe']),
-        })).toBe(false);
+            paths,
+        });
+
+        await expect(secrets.get('__proto__')).resolves.toBeNull();
+        await expect(access(join(paths.secretsDir, 'plugin-secrets-key.v1'))).rejects.toMatchObject({
+            code: 'ENOENT',
+        });
     });
 
-    it('does not replay host session events to later subscribers', async () => {
-        const staleReplayOptions = {
-            replay: {
-                maxEvents: 8,
-                ttlMs: 60_000,
-                shouldReplay: (event: TypedEventV1) => event.id.startsWith('@happier/session/'),
+    it.each([
+        {
+            name: 'malformed encrypted entry',
+            rawSecret: {
+                _isSecretValue: true,
+                encryptedValue: { t: 'invalid-envelope', c: 'not-secret-material' },
             },
-        } as unknown as Parameters<typeof createPluginEventsBroker>[0];
-        const broker = createPluginEventsBroker(staleReplayOptions);
-        const payload = {
-            providerId: 'claude',
-            sessionId: 'happier-session-1',
-            providerSessionId: 'provider-session-1',
-            eventName: 'SessionStart',
-            providerPayload: { session_id: 'provider-session-1' },
-        };
-
-        await broker.emit({
-            id: SESSION_PROVIDER_HOOK_EVENT_ID_V1,
-            payload,
-            envelope: {
-                emittedAt: new Date().toISOString(),
-                source: { kind: 'host', namespace: 'session' },
+        },
+        {
+            name: 'plaintext secret entry',
+            rawSecret: {
+                _isSecretValue: true,
+                value: 'unexpected-plaintext',
             },
-        });
-
-        const listener = vi.fn();
-        const bus = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            broker,
-            canSubscribe: (eventName) => canPluginSubscribeToEvent({
-                pluginId: 'acme.plugin',
-                eventName,
-                permissions: new Set(['events.session.subscribe']),
-            }),
-        });
-        bus.subscribe(SESSION_PROVIDER_HOOK_EVENT_ID_V1, listener);
-        await Promise.resolve();
-
-        expect(listener).not.toHaveBeenCalled();
-    });
-
-    it('allows scoped cross-plugin subscriptions when plugin ids contain dots', async () => {
-        const broker = createPluginEventsBroker();
-        const publisher = createPluginEventsService({
-            pluginId: 'other.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-        });
-        const subscriber = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            broker,
-            canSubscribe: (eventName) => canPluginSubscribeToEvent({
-                pluginId: 'acme.plugin',
-                eventName,
-                permissionDeclarations: [
-                    {
-                        capability: 'events.plugin.subscribe',
-                        scope: 'other.plugin',
-                    },
-                ],
-            }),
-        });
-        const listener = vi.fn();
-
-        const subscription = subscriber.subscribe('other.plugin/task-complete', listener);
-        await publisher.emit({ id: 'task-complete', payload: { id: 1 } });
-
-        expect(listener).toHaveBeenCalledWith({
-            id: 'other.plugin/task-complete',
-            payload: { id: 1 },
-            envelope: expect.objectContaining({
-                source: {
-                    kind: 'plugin',
-                    pluginId: 'other.plugin',
-                },
-            }),
-        });
-        expect(() => subscriber.subscribe('other.plugin.task-complete', listener)).toThrowError(/slash grammar/i);
-        expect(() => subscriber.subscribe('other.plugin/task.complete', listener)).toThrowError(/slash grammar/i);
-        expect(() => subscriber.subscribe({ pathPrefix: 'other.plugin/task.complete' }, listener)).toThrowError(/slash grammar/i);
-
-        subscription.unsubscribe();
-    });
-
-    it('fails cross-plugin subscriptions when the target plugin is not installed at subscription time', () => {
-        const subscriber = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            availablePluginIds: new Set(['acme.plugin']),
-            canSubscribe: (eventName) => canPluginSubscribeToEvent({
-                pluginId: 'acme.plugin',
-                eventName,
-                permissionDeclarations: [
-                    {
-                        capability: 'events.plugin.subscribe',
-                        scope: 'missing.plugin',
-                    },
-                ],
-            }),
-        });
-        const listener = vi.fn();
-
-        expect(() => subscriber.subscribe('missing.plugin/task-complete', listener)).toThrowError(/not installed|unavailable/i);
-    });
-
-    it('routes typed plugin events through the shared ctx.events bus while isolating subscriber failures', async () => {
-        const subscriberErrors: unknown[] = [];
-        const broker = createPluginEventsBroker({
-            onSubscriberError: (error) => {
-                subscriberErrors.push(error);
+        },
+    ])('fails closed without rewriting the secrets record when it contains a $name', async ({ rawSecret }) => {
+        const happyHomeDir = await makeHappyHome();
+        const paths = resolvePluginStorePaths({ happyHomeDir });
+        const secretFile = join(paths.secretsDir, 'acme.plugin', 'secrets.v1.json');
+        const original = `${JSON.stringify({
+            t: 'happier_plugin_secrets_v1',
+            secrets: {
+                corrupted: rawSecret,
             },
-        });
-        const publisher = createPluginEventsService({
+        }, null, 2)}\n`;
+        await mkdir(join(paths.secretsDir, 'acme.plugin'), { recursive: true });
+        await writeFile(secretFile, original, 'utf8');
+        const secrets = createPluginSecretStore({
             pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-        });
-        const subscriber = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-            canSubscribe: (eventName) => eventName === 'acme.plugin/task-complete',
-        });
-        const listener = vi.fn();
-        const failingListener = vi.fn(async () => {
-            throw new Error('subscriber failed');
-        });
-        const subscription = subscriber.subscribe('acme.plugin/task-complete', listener);
-        const failingSubscription = subscriber.subscribe('acme.plugin/task-complete', failingListener);
-
-        await expect(publisher.emit({ id: 'task-complete', payload: { id: 1 } })).resolves.toBeUndefined();
-
-        expect(listener).toHaveBeenCalledWith({
-            id: 'acme.plugin/task-complete',
-            payload: { id: 1 },
-            envelope: expect.objectContaining({
-                emittedAt: expect.any(String),
-                sequence: expect.any(Number),
-                source: {
-                    kind: 'plugin',
-                    pluginId: 'acme.plugin',
-                },
-            }),
-        });
-        expect(failingListener).toHaveBeenCalledOnce();
-        await vi.waitFor(() => {
-            expect(subscriberErrors).toEqual([
-                expect.objectContaining({
-                    eventId: 'acme.plugin/task-complete',
-                    pluginId: 'acme.plugin',
-                    error: expect.any(Error),
-                }),
-            ]);
-        });
-        failingSubscription.unsubscribe();
-        subscription.unsubscribe();
-    });
-
-    it('accepts event publication without waiting for slow subscribers', async () => {
-        const broker = createPluginEventsBroker();
-        const publisher = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-        });
-        const subscriber = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-            canSubscribe: (eventName) => eventName === 'acme.plugin/task-complete',
-        });
-        const slowListener = vi.fn(() => new Promise<void>(() => undefined));
-        const subscription = subscriber.subscribe('acme.plugin/task-complete', slowListener);
-
-        await expect(Promise.race([
-            publisher.emit({ id: 'task-complete', payload: { id: 1 } }).then(() => 'accepted' as const),
-            new Promise<'blocked'>((resolve) => {
-                setTimeout(() => resolve('blocked'), 25);
-            }),
-        ])).resolves.toBe('accepted');
-        expect(slowListener).toHaveBeenCalledOnce();
-
-        subscription.unsubscribe();
-    });
-
-    it('disposes event subscriptions through the plugin disposable owner', async () => {
-        const broker = createPluginEventsBroker();
-        const publisher = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-        });
-        const disposableRegistry = createPluginDisposableRegistry();
-        const subscriberParams = {
-            pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-            canSubscribe: (eventName: string) => eventName === 'acme.plugin/task-complete',
-            addDisposable: disposableRegistry.add,
-        };
-        const subscriber = createPluginEventsService(subscriberParams);
-        const listener = vi.fn();
-
-        const subscription = subscriber.subscribe('acme.plugin/task-complete', listener);
-        expect(subscription).toHaveProperty('unsubscribe');
-        await disposableRegistry.dispose();
-        await publisher.emit({ id: 'task-complete', payload: { id: 1 } });
-
-        expect(listener).not.toHaveBeenCalled();
-    });
-
-    it('removes event subscriptions when a delivery permission recheck fails', async () => {
-        const broker = createPluginEventsBroker();
-        const publisher = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-        });
-        let allowSubscription = true;
-        const subscriber = createPluginEventsService({
-            pluginId: 'acme.plugin',
-            declaredEventIds: ['task-complete'],
-            broker,
-            canSubscribe: (eventName) => allowSubscription && eventName === 'acme.plugin/task-complete',
-        });
-        const listener = vi.fn();
-
-        subscriber.subscribe('acme.plugin/task-complete', listener);
-        await publisher.emit({ id: 'task-complete', payload: { id: 1 } });
-        await vi.waitFor(() => {
-            expect(listener).toHaveBeenCalledTimes(1);
+            paths,
+            secretKey: new Uint8Array(32).fill(7),
+            randomBytes: (length) => new Uint8Array(length).fill(3),
         });
 
-        allowSubscription = false;
-        await publisher.emit({ id: 'task-complete', payload: { id: 2 } });
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        allowSubscription = true;
-        await publisher.emit({ id: 'task-complete', payload: { id: 3 } });
-        await new Promise((resolve) => setTimeout(resolve, 0));
-
-        expect(listener).toHaveBeenCalledTimes(1);
-    });
-
-    it('exposes narrow auth identity, change subscription, and service materialization only', async () => {
-        const materialize = vi.fn(async () => ({ env: { TOKEN: 'value' } }));
-        const auth = createPluginAuthService({
-            getIdentity: async () => ({ accountId: 'acct-1', email: 'user@example.test' }),
-            materialize,
+        await expect(secrets.set('unrelated', 'new-secret')).rejects.toMatchObject({
+            code: 'PLUGIN_SECRETS_FILE_INVALID',
+            message: expect.stringContaining('acme.plugin/corrupted'),
         });
-        const changed = vi.fn();
-        const subscription = auth.onChange(changed);
-
-        expect(await auth.getIdentity()).toEqual({ accountId: 'acct-1', email: 'user@example.test' });
-        await expect(auth.services.materialize({ serviceId: 'openai-codex', profileId: 'default' })).resolves.toEqual({
-            env: { TOKEN: 'value' },
-        });
-        expect('getConnectedServices' in auth).toBe(false);
-        expect('startConnect' in auth).toBe(false);
-        expect('disconnect' in auth).toBe(false);
-
-        subscription.unsubscribe();
+        expect(await readFile(secretFile, 'utf8')).toBe(original);
     });
 
     it('provides A.13 env and fs services through plugin-scoped access only', async () => {
@@ -775,6 +521,12 @@ describe('A.11 plugin context services', () => {
         };
         const createOrAttachHost = vi.fn<NonNullable<TerminalHostAdapter['createOrAttachHost']>>(async () => handle);
         const injectUserPrompt = vi.fn<NonNullable<TerminalHostAdapter['injectUserPrompt']>>(async () => injected);
+        const boundHandle: TerminalHostHandle = {
+            ...handle,
+            attachmentId: 'attachment-plugin-host-1' as NonNullable<TerminalHostHandle['attachmentId']>,
+        };
+        const onHostCreated = vi.fn(async () => boundHandle);
+        const disposeHost = vi.fn(async () => undefined);
         const adapter: TerminalHostAdapter = {
             kind: 'tmux',
             createOrAttachHost,
@@ -794,8 +546,16 @@ describe('A.11 plugin context services', () => {
             resolveAgentCliLaunch: (launch) => ({
                 command: '/usr/local/bin/claude',
                 args: ['--dangerously-skip-permissions'],
-                env: { CLAUDE_CONFIG_DIR: '/tmp/claude-config' },
+                env: {
+                    CLAUDE_CONFIG_DIR: '/tmp/claude-config',
+                    OPENAI_API_KEY: 'ambient-key',
+                    CLAUDECODE: '1',
+                    HAPPIER_DAEMON_RUNTIME_ID: 'runtime-parent',
+                    HAPPIER_SERVER_URL: 'https://canonical.example.test',
+                },
             }),
+            onHostCreated,
+            disposeHost,
         });
 
         await expect(service.resolve({ preference: 'auto' })).resolves.toEqual({
@@ -811,10 +571,16 @@ describe('A.11 plugin context services', () => {
                 kind: 'agent-cli',
                 agentId: 'claude',
                 args: ['--continue'],
-                env: { EXTRA: '1' },
+                env: {
+                    EXTRA: '1',
+                    HAPPIER_SESSION_PROFILE_ID: 'plugin-spoof',
+                    HAPPIER_SERVER_URL: 'https://plugin-spoof.example.test',
+                },
+                unsetEnvKeys: ['openai_api_key'],
             },
             isolatedEnv: true,
         });
+        expect(terminalHandle).toBe(boundHandle);
         const prompt: TerminalPromptInput = {
             text: 'hello',
             multiline: false,
@@ -830,13 +596,27 @@ describe('A.11 plugin context services', () => {
             spawnEnv: {
                 CLAUDE_CONFIG_DIR: '/tmp/claude-config',
                 EXTRA: '1',
+                HAPPIER_SERVER_URL: 'https://canonical.example.test',
             },
+            unsetEnvKeys: ['openai_api_key'],
             isolatedEnv: true,
         });
-        expect(injectUserPrompt).toHaveBeenCalledWith(handle, {
+        expect(injectUserPrompt).toHaveBeenCalledWith(boundHandle, {
             ...prompt,
             scheduling: { timeoutMs: 15_000 },
         });
+        expect(onHostCreated).toHaveBeenCalledWith(handle);
+
+        await service.dispose(terminalHandle, {
+            kind: 'preserve_host',
+            reason: 'runtime_recovery',
+        });
+        expect(disposeHost).toHaveBeenCalledWith({
+            handle: boundHandle,
+            adapter,
+            intent: { kind: 'preserve_host', reason: 'runtime_recovery' },
+        });
+        expect(adapter.dispose).not.toHaveBeenCalled();
 
         const disabled = createPluginTerminalHostService({
             hasCapability: () => false,
@@ -844,6 +624,7 @@ describe('A.11 plugin context services', () => {
             resolveAgentCliLaunch: () => {
                 throw new Error('not reached');
             },
+            disposeHost: vi.fn(async () => undefined),
         });
         await expect(disabled.resolve({ preference: 'auto' })).rejects.toMatchObject({
             code: 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED',
@@ -855,6 +636,7 @@ describe('A.11 plugin context services', () => {
                 command: '/usr/local/bin/claude',
                 args: [],
             }),
+            disposeHost: vi.fn(async () => undefined),
         });
         await expect(missingPermission.resolve({ preference: 'auto' })).rejects.toMatchObject({
             code: 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED',
@@ -895,6 +677,7 @@ describe('A.11 plugin context services', () => {
             hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
+            disposeHost: vi.fn(async () => undefined),
         });
 
         const activeHandle = await service.createOrAttachHost({
@@ -953,6 +736,7 @@ describe('A.11 plugin context services', () => {
             hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
+            disposeHost: vi.fn(async () => undefined),
         });
 
         const activeHandle = await service.createOrAttachHost({
@@ -1007,6 +791,7 @@ describe('A.11 plugin context services', () => {
             hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
+            disposeHost: vi.fn(async () => undefined),
         });
         const activeHandle = await service.createOrAttachHost({
             preference: 'tmux',
@@ -1091,6 +876,7 @@ describe('A.11 plugin context services', () => {
             hasCapability: (capability) => capability === 'terminalHost' || capability === 'terminal.host.control',
             resolveTerminalHost: () => ({ status: 'resolved', adapter, reason: 'tmux_available' }),
             resolveAgentCliLaunch: () => ({ command: '/usr/local/bin/claude', args: [] }),
+            disposeHost: vi.fn(async () => undefined),
         });
         const launchRequest = {
             preference: 'tmux' as const,
@@ -1243,63 +1029,7 @@ describe('A.11 plugin context services', () => {
         expect(env.list()).toEqual({ HAPPIER_DECLARED_ENV: 'visible' });
     });
 
-    it('provides retry, progress, and transcript source handles with bounded cleanup semantics', async () => {
-        const retry = createPluginRetryService();
-        let attempts = 0;
-        await expect(retry.wrap(async ({ attempt }) => {
-            attempts = attempt;
-            if (attempt === 1) {
-                throw Object.assign(new Error('retry'), { code: 'ETIMEDOUT' });
-            }
-            return 'ok';
-        }, {
-            maxAttempts: 2,
-            baseDelayMs: 0,
-        })).resolves.toBe('ok');
-        expect(attempts).toBe(2);
-
-        const progress = createPluginProgressService();
-        const handle = progress.start({ id: 'sync', label: 'Sync', total: 2 });
-        progress.report('sync', { current: 1 });
-        expect(handle.snapshot()).toMatchObject({ current: 1, total: 2, state: 'active' });
-        progress.finish('sync', 'done');
-        expect(handle.snapshot()).toMatchObject({ state: 'finished', message: 'done' });
-
-        const release = vi.fn(async () => undefined);
-        const registry = createPluginDisposableRegistry();
-        const transcripts = createPluginTranscriptsService({
-            append: async () => undefined,
-            maxSources: 1,
-            addDisposable: registry.add,
-        });
-        expect(transcripts.fileFollow).toHaveProperty('follow');
-        const source = await transcripts.defineSource({
-            id: 'runtime',
-            page: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
-            readAfter: async () => ({ items: [], nextCursor: null, truncated: false }),
-            acquireFollowLease: async () => ({ release }),
-        });
-        await expect(transcripts.defineSource({
-            id: 'overflow',
-            page: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
-            readAfter: async () => ({ items: [], nextCursor: null, truncated: false }),
-        })).rejects.toThrow(/more than 1/);
-        await source.dispose();
-        await source.dispose();
-        expect(release).toHaveBeenCalledTimes(1);
-
-        const retainedRelease = vi.fn(async () => undefined);
-        await transcripts.defineSource({
-            id: 'retained',
-            page: async () => ({ items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false }),
-            readAfter: async () => ({ items: [], nextCursor: null, truncated: false }),
-            acquireFollowLease: async () => ({ release: retainedRelease }),
-        });
-        await registry.dispose();
-        expect(retainedRelease).toHaveBeenCalledTimes(1);
-    });
-
-    it('threads transcript file-follow grants through the nested transcripts service scope', async () => {
+    it('threads transcript file-follow grants through the Agent transcript owner', async () => {
         const root = await makeHappyHome();
         const filePath = join(root, 'session.jsonl');
         await writeFile(filePath, '{"line":true}\n', 'utf8');
@@ -1313,15 +1043,14 @@ describe('A.11 plugin context services', () => {
             reason: 'testFixture',
             evidence: { kind: 'testOnly' },
         });
-        const transcripts = createPluginTranscriptsService({
-            append: async () => undefined,
+        const fileFollow = createPluginTranscriptFileFollowService({
             pluginId: 'acme.transcript',
             runtimeId: 'runtime-1',
             readSessionId: () => 'session-1',
             fileFollowPathGrants,
         });
 
-        const handle = await transcripts.fileFollow.follow({
+        const handle = await fileFollow.follow({
             path: filePath,
             startAt: 'beginning',
             onLine: (line) => {
@@ -1585,6 +1314,48 @@ describe('A.11 plugin context services', () => {
         } finally {
             process.env.PATH = previousPath;
         }
+    });
+
+    it('launches an executable JavaScript-named system tool directly through its custom shebang', async () => {
+        if (process.platform === 'win32') return;
+
+        const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-node-runtime-'));
+        const toolPath = join(root, 'acme-node-tool.js');
+        await writeFile(
+            toolPath,
+            [
+                '#!/bin/sh',
+                'printf custom-shebang-system-tool',
+                '',
+            ].join('\n'),
+            'utf8',
+        );
+        await chmod(toolPath, 0o755);
+        const exec = createPluginExecService({
+            systemTools: [
+                {
+                    toolId: 'acme.node-tool',
+                    displayName: 'Acme Node Tool',
+                    executablePath: toolPath,
+                    source: 'system',
+                },
+            ],
+            baseEnv: {},
+        });
+
+        const grant = await exec.systemTools.resolve({
+            toolId: 'acme.node-tool',
+            purpose: 'preserve executable JavaScript system-tool shebang',
+        });
+
+        expect(grant.launch).toMatchObject({
+            executablePath: toolPath,
+            args: [],
+        });
+        await expect(exec.run(grant.launch)).resolves.toMatchObject({
+            exitCode: 0,
+            stdout: 'custom-shebang-system-tool',
+        });
     });
 
     it('honors a declared preferred command name through host lookup without treating it as a path', async () => {
@@ -1880,280 +1651,4 @@ describe('A.11 plugin context services', () => {
         }
     }, 10_000);
 
-    it('does not report managed servers healthy when no health check evidence is available', async () => {
-        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
-        const server = createPluginManagedServerService({
-            exec: createPluginExecService({
-                allowedExecutablePaths: [shellPath],
-            }),
-        });
-        const handle = await server.supervise({
-            id: 'without-health',
-            launch: {
-                kind: 'binary',
-                executablePath: shellPath,
-                args: ['-c', 'sleep 30'],
-            },
-            startupTimeoutMs: 25,
-        });
-
-        await expect(handle.waitUntilHealthy({ timeoutMs: 25 })).rejects.toMatchObject({
-            code: 'PLUGIN_MANAGED_SERVER_HEALTH_UNSUPPORTED',
-        });
-        expect(handle.snapshot()).toMatchObject({
-            state: 'unhealthy',
-        });
-        await handle.dispose();
-    });
-
-    it('rejects any unsupported managed-server restart value before spawning', async () => {
-        const spawn = vi.fn(async () => {
-            throw new Error('unsupported restart must be rejected before spawn');
-        });
-        const exec: ExecRuntimeServiceV1 = {
-            systemTools: {
-                async resolve() {
-                    throw new Error('system tools are not used by managed-server supervision');
-                },
-            },
-            async run() {
-                throw new Error('health checks are not reached for unsupported restart values');
-            },
-            spawn,
-            spawnClient: vi.fn(async () => {
-                throw new Error('managed-server supervision does not spawn protocol clients');
-            }) as ExecRuntimeServiceV1['spawnClient'],
-        };
-        const server = createPluginManagedServerService({ exec });
-
-        await expect(server.supervise({
-            id: 'bad-restart',
-            launch: { kind: 'binary', executablePath: '/bin/true' },
-            restart: 'always',
-        } as unknown as ManagedServerSpecV1)).rejects.toMatchObject({
-            code: 'PLUGIN_MANAGED_SERVER_RESTART_UNSUPPORTED',
-        });
-        expect(spawn).not.toHaveBeenCalled();
-    });
-
-    it('removes managed-server polling abort listeners after successful delay intervals', async () => {
-        const controller = new AbortController();
-        const addAbortListener = vi.spyOn(controller.signal, 'addEventListener');
-        const removeAbortListener = vi.spyOn(controller.signal, 'removeEventListener');
-        let healthAttempts = 0;
-        const exec: ExecRuntimeServiceV1 = {
-            systemTools: {
-                async resolve() {
-                    throw new Error('system tools are not used by managed-server supervision');
-                },
-            },
-            run: vi.fn(async () => {
-                healthAttempts += 1;
-                return {
-                    exitCode: healthAttempts >= 3 ? 0 : 1,
-                    signal: null,
-                    stdout: '',
-                    stderr: '',
-                };
-            }),
-            spawn: vi.fn(async () => ({
-                pid: 123,
-                exit: Promise.resolve({
-                    exitCode: 0,
-                    signal: null,
-                    stdout: '',
-                    stderr: '',
-                }),
-                writeStdin: vi.fn(async () => undefined),
-                kill: vi.fn(),
-                dispose: vi.fn(async () => undefined),
-            })),
-            spawnClient: vi.fn(async () => {
-                throw new Error('managed-server supervision does not spawn protocol clients');
-            }) as ExecRuntimeServiceV1['spawnClient'],
-        };
-        const server = createPluginManagedServerService({ exec });
-        const handle = await server.supervise({
-            id: 'command-health-listener-cleanup',
-            launch: { kind: 'binary', executablePath: '/bin/true' },
-            healthCheck: {
-                kind: 'command',
-                launch: { kind: 'binary', executablePath: '/bin/true' },
-                timeoutMs: 1_000,
-            },
-            startupTimeoutMs: 1_000,
-        });
-
-        await expect(handle.waitUntilHealthy({
-            timeoutMs: 1_000,
-            signal: controller.signal,
-        })).resolves.toMatchObject({
-            state: 'healthy',
-        });
-
-        const addedAbortListenerCount = addAbortListener.mock.calls.filter(([eventName]) => eventName === 'abort').length;
-        const removedAbortListenerCount = removeAbortListener.mock.calls.filter(([eventName]) => eventName === 'abort').length;
-        expect(addedAbortListenerCount).toBeGreaterThan(0);
-        expect(removedAbortListenerCount).toBe(addedAbortListenerCount);
-        await handle.dispose();
-    });
-
-    it('composes caller abort signals into managed server HTTP health probes', async () => {
-        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
-        const fetchSignals: AbortSignal[] = [];
-        vi.stubGlobal('fetch', vi.fn(async (_url: string | URL | Request, init?: RequestInit): Promise<Response> => {
-            if (init?.signal instanceof AbortSignal) {
-                fetchSignals.push(init.signal);
-            }
-            await new Promise((resolve) => setTimeout(resolve, 25));
-            return new Response(null, { status: 503 });
-        }));
-        const server = createPluginManagedServerService({
-            exec: createPluginExecService({
-                allowedExecutablePaths: [shellPath],
-            }),
-        });
-        const handle = await server.supervise({
-            id: 'http-health-abort',
-            launch: {
-                kind: 'binary',
-                executablePath: shellPath,
-                args: ['-c', 'sleep 30'],
-            },
-            healthCheck: {
-                kind: 'http',
-                url: 'http://127.0.0.1/health',
-                timeoutMs: 1_000,
-            },
-        });
-        const controller = new AbortController();
-        const wait = handle.waitUntilHealthy({
-            timeoutMs: 1_000,
-            signal: controller.signal,
-        });
-        try {
-            await vi.waitFor(() => {
-                expect(fetchSignals).toHaveLength(1);
-            });
-            controller.abort();
-            expect(fetchSignals[0]?.aborted).toBe(true);
-            await expect(wait).rejects.toMatchObject({
-                name: 'AbortError',
-            });
-        } finally {
-            await wait.catch(() => undefined);
-            await handle.dispose();
-            vi.unstubAllGlobals();
-        }
-    });
-
-    it('removes managed-server HTTP health probe abort listeners after successful retry loops', async () => {
-        const controller = new AbortController();
-        const addAbortListener = vi.spyOn(controller.signal, 'addEventListener');
-        const removeAbortListener = vi.spyOn(controller.signal, 'removeEventListener');
-        let healthAttempts = 0;
-        vi.stubGlobal('fetch', vi.fn(async () => {
-            healthAttempts += 1;
-            return new Response(null, { status: healthAttempts >= 3 ? 200 : 503 });
-        }));
-        const exec: ExecRuntimeServiceV1 = {
-            systemTools: {
-                async resolve() {
-                    throw new Error('system tools are not used by managed-server supervision');
-                },
-            },
-            async run() {
-                throw new Error('command health checks are not used by this test');
-            },
-            spawn: vi.fn(async () => ({
-                pid: 123,
-                exit: Promise.resolve({
-                    exitCode: 0,
-                    signal: null,
-                    stdout: '',
-                    stderr: '',
-                }),
-                writeStdin: vi.fn(async () => undefined),
-                kill: vi.fn(),
-                dispose: vi.fn(async () => undefined),
-            })),
-            spawnClient: vi.fn(async () => {
-                throw new Error('managed-server supervision does not spawn protocol clients');
-            }) as ExecRuntimeServiceV1['spawnClient'],
-        };
-        const server = createPluginManagedServerService({ exec });
-        const handle = await server.supervise({
-            id: 'http-health-listener-cleanup',
-            launch: { kind: 'binary', executablePath: '/bin/true' },
-            healthCheck: {
-                kind: 'http',
-                url: 'http://127.0.0.1/health',
-                timeoutMs: 1_000,
-            },
-            startupTimeoutMs: 1_000,
-        });
-
-        try {
-            await expect(handle.waitUntilHealthy({
-                timeoutMs: 1_000,
-                signal: controller.signal,
-            })).resolves.toMatchObject({
-                state: 'healthy',
-            });
-
-            const addedAbortListenerCount = addAbortListener.mock.calls.filter(([eventName]) => eventName === 'abort').length;
-            const removedAbortListenerCount = removeAbortListener.mock.calls.filter(([eventName]) => eventName === 'abort').length;
-            expect(addedAbortListenerCount).toBeGreaterThan(0);
-            expect(removedAbortListenerCount).toBe(addedAbortListenerCount);
-        } finally {
-            await handle.dispose();
-            vi.unstubAllGlobals();
-        }
-    });
-
-    it('rejects managed-server HTTP health probes for non-loopback origins', async () => {
-        const shellPath = await firstExecutablePath(['/bin/sh', '/usr/bin/sh']);
-        const fetchMock = vi.fn(async () => new Response(null, { status: 200 }));
-        vi.stubGlobal('fetch', fetchMock);
-        const server = createPluginManagedServerService({
-            exec: createPluginExecService({
-                allowedExecutablePaths: [shellPath],
-            }),
-        });
-        const handle = await server.supervise({
-            id: 'http-health-non-loopback',
-            launch: {
-                kind: 'binary',
-                executablePath: shellPath,
-                args: ['-c', 'sleep 30'],
-            },
-            healthCheck: {
-                kind: 'http',
-                url: 'http://127.example.test/health',
-                timeoutMs: 10,
-            },
-            startupTimeoutMs: 10,
-        });
-
-        try {
-            await expect(handle.waitUntilHealthy({ timeoutMs: 10 })).rejects.toThrow(/loopback/);
-            expect(fetchMock).not.toHaveBeenCalled();
-        } finally {
-            await handle.dispose();
-            vi.unstubAllGlobals();
-        }
-    });
 });
-
-export function createFetchRuntimeResponse(body: unknown): Awaited<ReturnType<FetchRuntimeServiceV1>> {
-    return Object.freeze({
-        ok: true,
-        status: 200,
-        statusText: 'OK',
-        headers: Object.freeze({}),
-        body,
-        text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
-        json: async () => body,
-        arrayBuffer: async () => new ArrayBuffer(0),
-    });
-}

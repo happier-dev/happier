@@ -75,13 +75,19 @@ export function libsodiumDecryptForSecretKey(
  * @param secret - The secret key to use for encryption
  * @returns The encrypted data
  */
-export function encryptLegacy(data: any, secret: Uint8Array): Uint8Array {
-  const nonce = getRandomBytes(tweetnacl.secretbox.nonceLength);
+function encryptLegacyWithNonce(data: any, secret: Uint8Array, nonce: Uint8Array): Uint8Array {
+  if (nonce.length !== tweetnacl.secretbox.nonceLength) {
+    throw new Error(`Legacy encryption nonce must be ${tweetnacl.secretbox.nonceLength} bytes`);
+  }
   const encrypted = tweetnacl.secretbox(new TextEncoder().encode(stringifySerializedJsonValue(data)), nonce, secret);
   const result = new Uint8Array(nonce.length + encrypted.length);
   result.set(nonce);
   result.set(encrypted, nonce.length);
   return result;
+}
+
+export function encryptLegacy(data: any, secret: Uint8Array): Uint8Array {
+  return encryptLegacyWithNonce(data, secret, getRandomBytes(tweetnacl.secretbox.nonceLength));
 }
 
 /**
@@ -108,8 +114,10 @@ export function decryptLegacy(data: Uint8Array, secret: Uint8Array): any | null 
  * @param dataKey - The 32-byte AES-256 key
  * @returns The encrypted data bundle (nonce + ciphertext + auth tag)
  */
-export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
-  const nonce = getRandomBytes(12); // GCM uses 12-byte nonces
+function encryptWithDataKeyAndNonce(data: any, dataKey: Uint8Array, nonce: Uint8Array): Uint8Array {
+  if (nonce.length !== 12) {
+    throw new Error('Data-key encryption nonce must be 12 bytes');
+  }
   const cipher = createCipheriv('aes-256-gcm', dataKey, nonce);
 
   const plaintext = new TextEncoder().encode(stringifySerializedJsonValue(data));
@@ -128,6 +136,10 @@ export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
   bundle.set(new Uint8Array(authTag), 13 + encrypted.length);
 
   return bundle;
+}
+
+export function encryptWithDataKey(data: any, dataKey: Uint8Array): Uint8Array {
+  return encryptWithDataKeyAndNonce(data, dataKey, getRandomBytes(12));
 }
 
 /**
@@ -168,12 +180,31 @@ export function decryptWithDataKey(bundle: Uint8Array, dataKey: Uint8Array): any
   }
 }
 
-export function encrypt(key: Uint8Array, variant: 'legacy' | 'dataKey', data: any): Uint8Array {
+export function encrypt(
+  key: Uint8Array,
+  variant: 'legacy' | 'dataKey',
+  data: any,
+): Uint8Array {
   if (variant === 'legacy') {
     return encryptLegacy(data, key);
   } else {
     return encryptWithDataKey(data, key);
   }
+}
+
+/**
+ * Encrypts with a keyed, content-bound nonce derived by the caller. Never pass
+ * an unkeyed or reusable nonce through this narrow idempotent-retry boundary.
+ */
+export function encryptWithDerivedNonce(
+  key: Uint8Array,
+  variant: 'legacy' | 'dataKey',
+  data: any,
+  nonce: Uint8Array,
+): Uint8Array {
+  return variant === 'legacy'
+    ? encryptLegacyWithNonce(data, key, nonce)
+    : encryptWithDataKeyAndNonce(data, key, nonce);
 }
 
 export function decrypt(key: Uint8Array, variant: 'legacy' | 'dataKey', data: Uint8Array): any | null {

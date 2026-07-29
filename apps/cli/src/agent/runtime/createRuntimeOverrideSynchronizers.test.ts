@@ -25,7 +25,7 @@ describe('createRuntimeOverrideSynchronizers exports', () => {
         setPermissionMode,
         setSessionMode: async () => {},
         setSessionConfigOption: async () => {},
-        setSessionModel: async () => {},
+        setSessionModelSelection: async () => {},
       },
       isStarted: () => true,
     });
@@ -62,8 +62,8 @@ describe('createRuntimeOverrideSynchronizers exports', () => {
         setPermissionMode: async (permissionMode) => {
           calls.push(`permission:${permissionMode}`);
         },
-        setSessionModel: async (modelId: string) => {
-          calls.push(`model:${modelId}`);
+        setSessionModelSelection: async (selection) => {
+          calls.push(`model:${selection.modelId}`);
         },
         setSessionConfigOption: async (configId, value) => {
           calls.push(`config:${configId}:${String(value)}`);
@@ -110,8 +110,8 @@ describe('createRuntimeOverrideSynchronizers exports', () => {
         setPermissionMode: async (permissionMode) => {
           calls.push(`permission:${permissionMode}`);
         },
-        setSessionModel: async (modelId: string) => {
-          calls.push(`model:${modelId}`);
+        setSessionModelSelection: async (selection) => {
+          calls.push(`model:${selection.modelId}`);
           await modelApplied;
         },
         setSessionConfigOption: async (configId, value) => {
@@ -135,6 +135,56 @@ describe('createRuntimeOverrideSynchronizers exports', () => {
       'model:gpt-5.5',
       'config:reasoning_effort:xhigh',
     ]);
+  });
+
+  it('delegates a newer metadata model proposal while the owning transition is still in flight', async () => {
+    let metadata = createTestMetadata({
+      modelOverrideV1: { v: 1, updatedAt: 10, modelId: 'gpt-5.5' },
+    });
+    let resolveFirst!: () => void;
+    const firstTransition = new Promise<void>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const setSessionModelSelection = vi.fn(async (selection: { modelId: string }) => {
+      if (selection.modelId === 'gpt-5.5') {
+        await firstTransition;
+      }
+    });
+
+    const sync = createRuntimeOverrideSynchronizers({
+      agentTargetKey: 'backend:codex',
+      session: {
+        getMetadataSnapshot: () => metadata,
+      },
+      runtime: {
+        setSessionMode: async () => {},
+        setPermissionMode: async () => {},
+        setSessionModelSelection,
+        setSessionConfigOption: async () => {},
+      },
+      isStarted: () => true,
+    });
+
+    sync.syncFromMetadata();
+    await vi.waitFor(() => {
+      expect(setSessionModelSelection).toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: 'gpt-5.5' }),
+      );
+    });
+
+    metadata = createTestMetadata({
+      modelOverrideV1: { v: 1, updatedAt: 11, modelId: 'gpt-5.6' },
+    });
+    sync.syncFromMetadata();
+
+    await vi.waitFor(() => {
+      expect(setSessionModelSelection).toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: 'gpt-5.6' }),
+      );
+    });
+
+    resolveFirst();
+    await sync.flushPendingAfterStart();
   });
 
   it('flushes pending model overrides before pending model-scoped config options after runtime start', async () => {
@@ -163,8 +213,8 @@ describe('createRuntimeOverrideSynchronizers exports', () => {
         setPermissionMode: async (permissionMode) => {
           calls.push(`permission:${permissionMode}`);
         },
-        setSessionModel: async (modelId: string) => {
-          calls.push(`model:${modelId}`);
+        setSessionModelSelection: async (selection) => {
+          calls.push(`model:${selection.modelId}`);
         },
         setSessionConfigOption: async (configId, value) => {
           calls.push(`config:${configId}:${String(value)}`);

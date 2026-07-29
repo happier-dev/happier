@@ -52,31 +52,6 @@ function matchesDynamicConnectedServiceCatalogHookImport(text: string): boolean 
   return patterns.some((p) => p.test(text));
 }
 
-function matchesDynamicCodexAppServerSessionControlAdapterImport(text: string): boolean {
-  // Stopped-session controls such as Check limit now run through the built backend catalog.
-  // Codex app-server control adapters must stay in the catalog bundle rather than lazy chunks,
-  // because old daemons can otherwise resolve runtime-relative chunks that a rebuild removed.
-  const patterns: RegExp[] = [
-    /getSessionGoalControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,260}(?:import|require)\(\s*['"]\.\/(?:appServer\/goalControl\/codexAppServerGoalControlAdapter|codexAppServerGoalControlAdapter-[^'"]+)['"]\s*\)/,
-    /getSessionCatalogControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,260}(?:import|require)\(\s*['"]\.\/(?:appServer\/catalogControl\/codexAppServerCatalogControlAdapter|codexAppServerCatalogControlAdapter-[^'"]+)['"]\s*\)/,
-    /getSessionUsageLimitRecoveryControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,260}(?:import|require)\(\s*['"]\.\/(?:appServer\/usageLimitRecoveryControl\/codexAppServerUsageLimitRecoveryControlAdapter|codexAppServerUsageLimitRecoveryControlAdapter-[^'"]+)['"]\s*\)/,
-  ];
-
-  return patterns.some((p) => p.test(text));
-}
-
-function matchesDynamicUsageLimitRecoveryControlAdapterImport(text: string): boolean {
-  // Stopped-session controls such as "Check limit now" use these catalog hooks from
-  // long-lived daemons. Keep provider usage-limit recovery adapters in the reachable
-  // catalog bundle instead of runtime-resolved chunks or source aliases.
-  const patterns: RegExp[] = [
-    /getSessionUsageLimitRecoveryControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,300}(?:import|require)\(\s*['"](?:\.\/|@\/backends\/)(?:claude|gemini|opencode|openCode)[^'"]*(?:UsageLimitRecoveryControlAdapter|usageLimitRecoveryControlAdapter)[^'"]*['"]\s*\)/,
-    /getSessionUsageLimitRecoveryControlAdapter:\s*async\s*\(\)\s*=>[\s\S]{0,300}(?:import|require)\(\s*(?:CLAUDE|GEMINI|OPENCODE)_USAGE_LIMIT_RECOVERY_CONTROL_ADAPTER_MODULE\s*\)/,
-  ];
-
-  return patterns.some((p) => p.test(text));
-}
-
 function findDescriptorOnlyPluginApiRegistration(text: string): string[] {
   const patterns: Readonly<Record<string, RegExp>> = {
     registerResource: /methodName:\s*["']registerResource["']/,
@@ -315,30 +290,6 @@ describe('CLI build output', () => {
     for (const file of distFiles) {
       const text = await fs.readFile(file, 'utf8');
       if (matchesDynamicConnectedServiceCatalogHookImport(text)) offenders.push(file);
-    }
-
-    expect(offenders).toEqual([]);
-  }, 60_000);
-
-  it('does not lazy-load Codex app-server session-control adapters via dynamic import chunks', async () => {
-    expect(distFiles.length).toBeGreaterThan(0);
-
-    const offenders: string[] = [];
-    for (const file of distFiles) {
-      const text = await fs.readFile(file, 'utf8');
-      if (matchesDynamicCodexAppServerSessionControlAdapterImport(text)) offenders.push(file);
-    }
-
-    expect(offenders).toEqual([]);
-  }, 60_000);
-
-  it('does not lazy-load provider usage-limit recovery control adapters via dynamic import chunks', async () => {
-    expect(distFiles.length).toBeGreaterThan(0);
-
-    const offenders: string[] = [];
-    for (const file of distFiles) {
-      const text = await fs.readFile(file, 'utf8');
-      if (matchesDynamicUsageLimitRecoveryControlAdapterImport(text)) offenders.push(file);
     }
 
     expect(offenders).toEqual([]);

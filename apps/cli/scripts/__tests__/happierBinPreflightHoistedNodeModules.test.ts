@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync, realpathSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
 import {
   copyCliBinRuntimeFiles,
   copyCliWorkspaceSyncRuntimeFiles,
@@ -187,11 +188,10 @@ describe('apps/cli bin/happier.mjs preflight', () => {
         entrypointDir: 'dist',
         entrypointContent: "import '@happier-dev/protocol/changes'; console.log('ok');\n",
       });
-      writeFileSync(
-        join(projectRoot, 'dist', '.build-manifest.json'),
-        `${JSON.stringify({ fingerprint: '0123456789abcdef', builtAt: '2026-07-09T00:00:00.000Z', fileCount: 1, toolVersion: '1' })}\n`,
-        'utf8',
-      );
+      cliDistBuildManifest.writeCliDistBuildManifest(join(projectRoot, 'dist', 'index.mjs'), {
+        outputDir: join(projectRoot, 'dist'),
+        builtAt: '2026-07-09T00:00:00.000Z',
+      });
       writeFileSync(
         join(projectRoot, 'package.json'),
         `${JSON.stringify({ name: '@happier-dev/cli', bundledDependencies: ['@happier-dev/protocol'] }, null, 2)}\n`,

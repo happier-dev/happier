@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 
-import type { Client, InitializeRequest } from '@agentclientprotocol/sdk';
+import type { InitializeRequest } from '@agentclientprotocol/sdk';
+
+import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 
 import type { AcpPermissionHandler } from '../permissions/acpPermissionHandler';
+import type { AcpClientConnectionHandlers } from '../connection/types';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -18,8 +21,8 @@ function isTruthyEnv(value: string | undefined): boolean {
 
 export function isAcpFsEnabled(): boolean {
   // Default ON: ACP agents that support the `fs` capability will route file reads/writes
-  // through the client (Happier). This is the only reliable way for Happier to enforce
-  // workspace boundaries for ACP backends.
+  // through the client (Happier), so host-mediated operations can apply workspace policy.
+  // This does not sandbox an Agent process that can access the filesystem directly.
   const raw = process.env.HAPPIER_ACP_FS;
   if (raw === undefined) return true;
   return isTruthyEnv(raw);
@@ -29,6 +32,7 @@ export function buildInitializeRequest(params: {
   clientName: string;
   clientVersion: string;
   fsEnabled?: boolean;
+  parameterizedModelPicker?: boolean;
 }): InitializeRequest {
   const fsEnabled = params.fsEnabled ?? isAcpFsEnabled();
   return {
@@ -38,6 +42,9 @@ export function buildInitializeRequest(params: {
         readTextFile: fsEnabled,
         writeTextFile: fsEnabled,
       },
+      ...(typeof params.parameterizedModelPicker === 'boolean'
+        ? { _meta: { parameterizedModelPicker: params.parameterizedModelPicker } }
+        : {}),
     },
     clientInfo: {
       name: params.clientName,
@@ -49,7 +56,7 @@ export function buildInitializeRequest(params: {
 export function createAcpClientFsMethods(params: {
   cwd: string;
   permissionHandler?: AcpPermissionHandler;
-}): Pick<Client, 'readTextFile' | 'writeTextFile'> {
+}): Pick<AcpClientConnectionHandlers, 'readTextFile' | 'writeTextFile'> {
   const rootResolved = resolve(params.cwd);
   const rootRealPromise = fs.realpath(rootResolved).catch(() => rootResolved);
 
@@ -65,11 +72,19 @@ export function createAcpClientFsMethods(params: {
     return false;
   };
 
-  const assertWithinCwd = async (targetPath: string, opts: { kind: 'read' | 'write' }): Promise<void> => {
-    const targetResolved = resolve(targetPath);
-    if (!isWithinRoot(rootResolved, targetResolved)) {
+  const assertWithinCwd = async (
+    targetPath: string,
+    opts: { kind: 'read' | 'write' },
+  ): Promise<string> => {
+    const authorization = authorizeFilesystemPath({
+      targetPath,
+      defaultDirectory: rootResolved,
+      accessPolicy: { kind: 'restrictedRoots', roots: [rootResolved] },
+    });
+    if (!authorization.valid) {
       throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
     }
+    const targetResolved = authorization.resolvedPath;
 
     const rootReal = await rootRealPromise;
     // `realpath()` can normalize the same directory into different spellings on some platforms
@@ -95,13 +110,15 @@ export function createAcpClientFsMethods(params: {
     if (opts.kind === 'read') {
       const targetReal = await fs.realpath(targetResolved).catch((error) => {
         const errno = (error as NodeJS.ErrnoException | undefined)?.code;
-        if (errno === 'ENOENT') return targetResolved;
+        if (errno === 'ENOENT') return null;
         throw new Error(`Permission denied for ${opts.kind}TextFile (cannot resolve path)`);
       });
-      if (!isWithinAnyRoot(roots, targetReal)) {
+      const targetOrAncestorReal = targetReal
+        ?? await resolveExistingAncestorRealPath(dirname(targetResolved));
+      if (!isWithinAnyRoot(roots, targetOrAncestorReal)) {
         throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
       }
-      return;
+      return targetResolved;
     }
 
     const targetReal = await fs.realpath(targetResolved).catch((error) => {
@@ -117,11 +134,11 @@ export function createAcpClientFsMethods(params: {
     if (!isWithinAnyRoot(roots, existingAncestorReal)) {
       throw new Error(`Permission denied for ${opts.kind}TextFile (path traversal)`);
     }
+    return targetResolved;
   };
 
-  const readTextFile: NonNullable<Client['readTextFile']> = async (req) => {
-    const targetPath = isAbsolute(req.path) ? resolve(req.path) : resolve(rootResolved, req.path);
-    await assertWithinCwd(targetPath, { kind: 'read' });
+  const readTextFile: NonNullable<AcpClientConnectionHandlers['readTextFile']> = async (req) => {
+    const targetPath = await assertWithinCwd(req.path, { kind: 'read' });
     const full = await fs.readFile(targetPath, 'utf8');
     const line = typeof req.line === 'number' ? req.line : null;
     const limit = typeof req.limit === 'number' ? req.limit : null;
@@ -139,30 +156,45 @@ export function createAcpClientFsMethods(params: {
     return { content: slice.join('\n') };
   };
 
-  const writeTextFile: NonNullable<Client['writeTextFile']> = async (req) => {
-    const targetPath = isAbsolute(req.path) ? resolve(req.path) : resolve(rootResolved, req.path);
-    await assertWithinCwd(targetPath, { kind: 'write' });
+  const writeTextFile: NonNullable<AcpClientConnectionHandlers['writeTextFile']> = async (req) => {
+    const targetPath = await assertWithinCwd(req.path, { kind: 'write' });
     const reqRecord = asRecord(req) ?? {};
     const meta = asRecord(reqRecord._meta) ?? {};
     const toolCallId = typeof meta.toolCallId === 'string' ? meta.toolCallId : `acp-fs-write:${randomUUID()}`;
+    const permissionInput = {
+      path: targetPath,
+      bytes: Buffer.byteLength(req.content, 'utf8'),
+    };
+    const permissionContext = { origin: 'host_acp_fs_write' as const };
+    const isApproved = (decision: string): boolean => (
+      decision === 'approved'
+      || decision === 'approved_for_session'
+      || decision === 'approved_execpolicy_amendment'
+    );
 
     if (params.permissionHandler) {
-      const result = await params.permissionHandler.handleToolCall(toolCallId, 'writeTextFile', {
-        path: targetPath,
-        bytes: Buffer.byteLength(req.content, 'utf8'),
-      });
-
-      const approved =
-        result.decision === 'approved' ||
-        result.decision === 'approved_for_session' ||
-        result.decision === 'approved_execpolicy_amendment';
-
-      if (!approved) {
+      const result = await params.permissionHandler.handleToolCall(
+        toolCallId,
+        'writeTextFile',
+        permissionInput,
+        permissionContext,
+      );
+      if (!isApproved(result.decision)) {
         throw new Error(`Permission denied for writeTextFile (${toolCallId})`);
       }
     }
 
     await fs.mkdir(dirname(targetPath), { recursive: true });
+    const finalDecision = params.permissionHandler?.getImmediateDecision?.(
+      toolCallId,
+      'writeTextFile',
+      permissionInput,
+      permissionContext,
+    );
+    if (finalDecision && !isApproved(finalDecision.decision)) {
+      throw new Error(`Permission denied for writeTextFile (${toolCallId})`);
+    }
+    await assertWithinCwd(targetPath, { kind: 'write' });
     await fs.writeFile(targetPath, req.content, 'utf8');
     return {};
   };

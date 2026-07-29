@@ -14,6 +14,7 @@ function toProbeResult(params: Readonly<{
   statusCode: number | null;
   error?: unknown;
   hadAuth: boolean;
+  outcomeSupervision: 'connection_health' | 'authentication_only';
 }>): Exclude<ReadinessProbeResult, Readonly<{ status: 'ready' }>> | null {
   if (params.hadAuth && isAuthenticationStatus(params.statusCode)) {
     return {
@@ -21,6 +22,10 @@ function toProbeResult(params: Readonly<{
       ...(typeof params.statusCode === 'number' ? { statusCode: params.statusCode } : {}),
       errorMessage: readErrorMessage(params.error, `HTTP ${params.statusCode}`),
     };
+  }
+
+  if (params.outcomeSupervision === 'authentication_only') {
+    return null;
   }
 
   if (typeof params.statusCode === 'number' && params.statusCode >= 500) {
@@ -47,12 +52,14 @@ export function reportRequestOutcomeToSupervisor(params: Readonly<{
   error?: unknown;
   hadAuth: boolean;
   scope?: ReturnType<NonNullable<ManagedConnectionSupervisor['captureProbeReportScope']>>;
+  outcomeSupervision?: 'connection_health' | 'authentication_only';
 }>): void {
   const scope = params.scope ?? params.supervisor.captureProbeReportScope?.();
   const probe = toProbeResult({
     statusCode: params.statusCode ?? readHttpStatus(params.error),
     error: params.error,
     hadAuth: params.hadAuth,
+    outcomeSupervision: params.outcomeSupervision ?? 'connection_health',
   });
   if (!probe) {
     return;

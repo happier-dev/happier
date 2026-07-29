@@ -151,7 +151,10 @@ export function createTailscaleTransferServeLifecycle(params: TailscaleTransferS
       const hasHttpsUrl = Boolean(result.httpsUrl);
       const hasReadableStatus = Boolean(String(result.rawStatus ?? '').trim());
 
-      appliedUpstreamUrl = hasHttpsUrl ? desiredUpstreamUrl : null;
+      // A successful enable command can mutate the owned Serve path even when the
+      // immediate status readback is empty or not yet parseable. Retain cleanup
+      // ownership unless the command explicitly stopped at the approval boundary.
+      appliedUpstreamUrl = needsApproval ? null : desiredUpstreamUrl;
       appliedHttpsBaseUrl = hasHttpsUrl ? stripTrailingSlashes(String(result.httpsUrl)) : null;
       publishListenerState({
         enabled: true,

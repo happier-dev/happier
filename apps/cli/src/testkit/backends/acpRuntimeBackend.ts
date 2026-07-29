@@ -1,6 +1,7 @@
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 
 import type { AcpRuntimeBackend } from '@/agent/acp/runtime/createAcpRuntime';
+import type { AcpPromptSubmissionResult } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 
 export type FakeAcpRuntimeBackend = AcpRuntimeBackend & {
     emit: (msg: AgentMessage) => void;
@@ -9,7 +10,10 @@ export type FakeAcpRuntimeBackend = AcpRuntimeBackend & {
 type FakeAcpRuntimeBackendOptions = {
     sessionId?: string;
     startSession?: AcpRuntimeBackend['startSession'];
-    sendPrompt?: AcpRuntimeBackend['sendPrompt'];
+    sendPrompt?: (
+        sessionId: Parameters<AcpRuntimeBackend['sendPrompt']>[0],
+        prompt: Parameters<AcpRuntimeBackend['sendPrompt']>[1],
+    ) => Promise<AcpPromptSubmissionResult | void>;
     compactContext?: AcpRuntimeBackend['compactContext'];
     waitForResponseComplete?: AcpRuntimeBackend['waitForResponseComplete'];
     setSessionMode?: AcpRuntimeBackend['setSessionMode'];
@@ -27,17 +31,18 @@ export function createFakeAcpRuntimeBackend(opts?: FakeAcpRuntimeBackendOptions)
         onMessage(fn: (msg: AgentMessage) => void) {
             handler = fn;
         },
-        async startSession(initialPrompt?: string) {
+        async startSession() {
             if (opts?.startSession) {
-                return await opts.startSession(initialPrompt);
+                return await opts.startSession();
             }
             return { sessionId };
         },
         async sendPrompt(activeSessionId: string, prompt: string) {
             if (opts?.sendPrompt) {
-                return await opts.sendPrompt(activeSessionId, prompt);
+                return await opts.sendPrompt(activeSessionId, prompt)
+                    ?? { kind: 'accepted_by_prompt_response' as const };
             }
-            // noop
+            return { kind: 'accepted_by_prompt_response' as const };
         },
         ...(opts?.compactContext
             ? {

@@ -2,14 +2,17 @@ import chalk from 'chalk';
 
 import type { Credentials } from '@/persistence';
 import {
+  ExecutionRunListRequestSchema,
+  ExecutionRunListResponseSchema,
   ExecutionRunStatusSchema,
 } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readFlagValue, readIntFlagValue } from '@/cli/commands/shared/argvFlags';
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
-import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
+import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
+import { listExecutionRuns } from '@/session/services/executionRuns';
 
 export async function cmdSessionRunList(
   argv: string[],
@@ -18,7 +21,7 @@ export async function cmdSessionRunList(
   const json = wantsJson(argv);
   const idOrPrefix = String(argv[2] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runList}`);
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -34,40 +37,59 @@ export async function cmdSessionRunList(
   const backendRaw = (readFlagValue(argv, '--backend') ?? '').trim();
   const backendTarget = backendRaw ? parseSingleBackendTargetFromFlag(backendRaw) : undefined;
   if (backendRaw && !backendTarget) {
-    throw new Error('Usage: happier session run list <session-id-or-prefix> [--backend <backend-target>] [--status <status>] [--limit <count>] [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runList}`);
   }
   const statusRaw = (readFlagValue(argv, '--status') ?? '').trim();
   const status = statusRaw ? ExecutionRunStatusSchema.parse(statusRaw) : undefined;
   const limit = readIntFlagValue(argv, '--limit');
-  const executor = createCliActionExecutorFromCredentials({ credentials });
-  const actionRes = await executor.execute(
-    'execution.run.list',
-    {
-      sessionId: idOrPrefix,
-      ...(backendTarget ? { backendTarget } : {}),
-      ...(status ? { status } : {}),
-      ...(typeof limit === 'number' ? { limit } : {}),
-    },
-    { surface: 'cli', defaultSessionId: null },
-  );
-  const normalized = normalizeActionExecuteResult(actionRes);
-  if (!normalized.ok) {
+
+  const request = ExecutionRunListRequestSchema.parse({
+    ...(backendTarget ? { backendTarget } : {}),
+    ...(status ? { status } : {}),
+    ...(typeof limit === 'number' ? { limit } : {}),
+  });
+
+  const transport = await resolveSessionTransportContext({ credentials, idOrPrefix });
+  if (!transport.ok) {
     if (json) {
       printJsonEnvelope({
         ok: false,
         kind: 'session_run_list',
-        error: { code: normalized.errorCode, ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}) },
+        error: {
+          code: transport.code,
+          ...(transport.sessionId ? { sessionId: transport.sessionId } : {}),
+          ...(transport.candidates ? { candidates: transport.candidates } : {}),
+        },
       });
       return;
     }
-    throw new Error(normalized.errorMessage ?? normalized.errorCode);
+    throw new Error(transport.code);
   }
 
-  const result = normalized.data as any;
-  const runPayload = result && typeof result === 'object' && result.ok === true ? result.data : null;
+  const result = await listExecutionRuns({
+    token: credentials.token,
+    sessionId: transport.sessionId,
+    mode: transport.mode,
+    ctx: transport.ctx,
+    request,
+    skipLiveRpc: transport.rawSession.active === false,
+  });
+  if (!result.ok) {
+    if (json) {
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_run_list',
+        error: { code: result.code, ...(result.message ? { message: result.message } : {}) },
+      });
+      return;
+    }
+    throw new Error(result.message ?? result.code);
+  }
+
+  const runPayload = ExecutionRunListResponseSchema.parse(result.data);
 
   if (json) {
-    printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId: idOrPrefix, ...(runPayload as any) } });
+    printJsonEnvelope({ ok: true, kind: 'session_run_list', data: { sessionId: transport.sessionId, ...runPayload } });
     return;
   }
 

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { validatePluginManifest } from './validate';
+import { ingestCanonicalPluginManifest } from './ingest';
 import type { CanonicalPluginManifest } from './types';
 
 export type ReadPluginManifestResult =
@@ -42,24 +42,15 @@ export async function readPluginManifest(params: Readonly<{ manifestPath: string
     throw error;
   }
 
-  let parsedJson: unknown;
-  try {
-    parsedJson = JSON.parse(manifestRawText) as unknown;
-  } catch {
+  const ingestion = ingestCanonicalPluginManifest(manifestRawText);
+  if (!ingestion.ok) {
     return {
       ok: false,
-      diagnostics: [
-        {
-          code: 'plugin_manifest_invalid',
-          message: `Plugin manifest is not valid JSON: ${params.manifestPath}`,
-        },
-      ],
+      diagnostics: ingestion.diagnostics.map((diagnostic) => ({
+        code: 'plugin_manifest_invalid',
+        message: `${diagnostic.code}: ${diagnostic.message}`,
+      })),
     };
-  }
-
-  const validation = validatePluginManifest(parsedJson);
-  if (!validation.ok) {
-    return validation;
   }
 
   return {
@@ -67,6 +58,6 @@ export async function readPluginManifest(params: Readonly<{ manifestPath: string
     manifestPath: params.manifestPath,
     manifestRawText,
     manifestDigest: hashManifest(manifestRawText),
-    manifest: validation.manifest,
+    manifest: ingestion.manifest,
   };
 }

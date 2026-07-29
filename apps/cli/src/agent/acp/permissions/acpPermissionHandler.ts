@@ -1,3 +1,19 @@
+import type {
+  SessionPermissionFollowUpPromptIntentV1,
+  SessionPermissionPersistAllowRuleV1,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+
+export type AcpPermissionDecisionResult = Readonly<{
+  decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+  rationale?: string;
+  followUpPrompt?: SessionPermissionFollowUpPromptIntentV1;
+  persistAllowRule?: SessionPermissionPersistAllowRuleV1;
+}>;
+
+export type AcpPermissionCallContext = Readonly<{
+  origin?: 'host_acp_fs_write';
+}>;
+
 /**
  * Permission handler interface for ACP backends.
  *
@@ -10,17 +26,18 @@ export interface AcpPermissionHandler {
     toolCallId: string,
     toolName: string,
     input: unknown
-  ): Promise<{ decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort'; rationale?: string } | null>;
+  ): Promise<AcpPermissionDecisionResult | null>;
 
   /**
-   * Best-effort synchronous preview used to suppress UI/mobile permission prompts for
-   * requests the handler can auto-approve immediately.
+   * Side-effect-free synchronous decision used both to suppress redundant prompts and
+   * to revalidate host-mediated effects immediately before dispatch.
    */
   getImmediateDecision?(
     toolCallId: string,
     toolName: string,
-    input: unknown
-  ): { decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort'; rationale?: string } | null;
+    input: unknown,
+    context?: AcpPermissionCallContext,
+  ): AcpPermissionDecisionResult | null;
 
   /**
    * Handle a tool permission request.
@@ -32,8 +49,9 @@ export interface AcpPermissionHandler {
   handleToolCall(
     toolCallId: string,
     toolName: string,
-    input: unknown
-  ): Promise<{ decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort'; rationale?: string }>;
+    input: unknown,
+    context?: AcpPermissionCallContext,
+  ): Promise<AcpPermissionDecisionResult>;
 
   abortPendingRequestsAndFlush?(reason: string): Promise<void>;
 }

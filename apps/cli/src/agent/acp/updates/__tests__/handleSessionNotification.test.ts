@@ -1,33 +1,19 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 import { describe, expect, it } from 'vitest';
 
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { TransportHandler } from '@/agent/transport';
 
 import { handleAcpSessionNotification } from '../handleSessionNotification';
 import type { HandlerContext, SessionUpdate } from '../types';
+import { createLegacyHandlerContextFixture } from '../../__tests__/legacyToolRuntimeFixture';
 
 function createHandlerContext(transport: TransportHandler): HandlerContext {
-  return {
-    transport,
-    activeToolCalls: new Set<string>(),
-    finalizedToolCalls: new Set<string>(),
-    toolCallLifecycleStates: new Map(),
-    toolCallStartTimes: new Map<string, number>(),
-    toolCallTimeouts: new Map<string, NodeJS.Timeout>(),
-    toolCallIdToNameMap: new Map<string, string>(),
-    toolCallIdToInputMap: new Map<string, Record<string, unknown>>(),
-    idleTimeout: null,
-    toolCallCountSincePrompt: 0,
-    emit: (_msg: AgentMessage) => {},
-    emitIdleStatus: () => {},
-    clearIdleTimeout: () => {},
-    setIdleTimeout: () => {},
-  };
+  return createLegacyHandlerContextFixture({ transport });
 }
 
 describe('handleAcpSessionNotification transport hooks', () => {
-  it('delegates terminal tool update logging to the transport hook', () => {
+  it('delegates terminal tool update logging to the transport hook', async () => {
     const logged: Array<Readonly<{
       update: unknown;
       sessionUpdateType: string;
@@ -49,7 +35,7 @@ describe('handleAcpSessionNotification transport hooks', () => {
       kind: 'execute',
     };
 
-    handleAcpSessionNotification({
+    await handleAcpSessionNotification({
       notification: { update } as unknown as SessionNotification,
       agentName: 'provider-with-hook',
       transport,
@@ -69,5 +55,60 @@ describe('handleAcpSessionNotification transport hooks', () => {
     });
 
     expect(logged).toEqual([{ update, sessionUpdateType: 'tool_call_update' }]);
+  });
+
+  it('awaits remote tool preparation in provider order before handling updates', async () => {
+    const order: string[] = [];
+    const transport: TransportHandler = {
+      agentName: 'remote-provider',
+      getInitTimeout: () => 1_000,
+      getToolPatterns: () => [],
+      logTerminalToolUpdate: (update) => {
+        order.push(`handled:${String(Reflect.get(update, 'kind'))}`);
+      },
+    };
+    const first: SessionUpdate = {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tool-1',
+      status: 'completed',
+      kind: 'unresolved-first',
+    };
+    const second: SessionUpdate = {
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tool-2',
+      status: 'completed',
+      kind: 'unresolved-second',
+    };
+
+    await handleAcpSessionNotification({
+      notification: { update: [first, second] } as unknown as SessionNotification,
+      agentName: 'remote-provider',
+      transport,
+      replayCapture: null,
+      waitingForResponse: false,
+      onResponseTrafficObserved: () => {},
+      onAssistantMessageObserved: () => {},
+      prepareToolUpdate: async (update) => {
+        order.push(`prepare:${String(update.kind)}`);
+        await Promise.resolve();
+        return { ...update, kind: String(update.kind).replace('unresolved-', '') };
+      },
+      createHandlerContext: () => createHandlerContext(transport),
+      setToolCallCountSincePrompt: () => {},
+      emit: () => {},
+      sessionModeState: null,
+      setSessionModeState: () => {},
+      sessionModelState: null,
+      setSessionModelState: () => {},
+      sessionConfigOptionsState: null,
+      setSessionConfigOptionsState: () => {},
+    });
+
+    expect(order).toEqual([
+      'prepare:unresolved-first',
+      'handled:first',
+      'prepare:unresolved-second',
+      'handled:second',
+    ]);
   });
 });

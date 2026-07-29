@@ -2,14 +2,28 @@ import type { PermissionMode } from '@/api/types';
 import type { Credentials } from '@/persistence';
 import type { AccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { TerminalRuntimeFlags } from '@/terminal/runtime/terminalRuntimeFlags';
-import type { ProviderAcceptancePendingMaterializationPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
-import { normalizeProviderAcceptancePendingMaterializationPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
 import type {
     ResolvedAgentRuntimeContribution,
     ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
-import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
+import {
+  AcpConfigOptionOverridesV1Schema,
+    BackendTargetRefV2Schema,
+    buildBackendTargetKeyV2,
+    normalizeBackendTargetRefV2InputToV2,
+    resolveSessionModelSelectionInputRefV1,
+    SessionModelSelectionResolutionError,
+    SessionModelSelectionV1Schema,
+    type BackendTargetRefV2Input,
+    type AcpConfigOptionOverridesV1,
+    type SessionModelSelectionV1,
+} from '@happier-dev/protocol';
 import type { PluginSessionLaunchResultCandidate } from './sessionMetadata';
+import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
+import {
+  NativeForkSourceSchema,
+  type NativeForkSource,
+} from '@/session/shared/spawnSessionContract';
 
 export type PluginSessionBindingInput = Readonly<{
     credentials: Credentials;
@@ -19,13 +33,18 @@ export type PluginSessionBindingInput = Readonly<{
         source?: 'daemon' | 'terminal';
         accountSettingsContext?: AccountSettingsContext | null;
         environmentVariables?: Readonly<Record<string, string>>;
+        unsetEnvironmentVariables?: readonly string[];
+        resolveLateEnvironment?: HostPrivateLateSessionEnvironmentResolver;
     }>;
-    resume: Readonly<{
+  resume: Readonly<{
         existingSessionId?: string;
+        sessionAttachFilePath?: string;
         resumeSessionId?: string;
-    }>;
+  }>;
+  nativeForkSource?: NativeForkSource;
     runtimePreferences: Readonly<{
         terminal?: TerminalRuntimeFlags | null;
+        startingMode?: 'terminal' | 'remote' | 'local';
         permission?: Readonly<{
             mode: PermissionMode;
             updatedAt?: number;
@@ -34,18 +53,23 @@ export type PluginSessionBindingInput = Readonly<{
             id: string;
             updatedAt?: number;
         }>;
-        model?: Readonly<{
-            id: string;
-            updatedAt?: number;
-        }>;
-        providerAcceptancePendingMaterialization?: ProviderAcceptancePendingMaterializationPolicy;
+        modelSelection?: SessionModelSelectionV1;
+        configurationOptions?: AcpConfigOptionOverridesV1;
     }>;
 }>;
+
+export type HostPrivateLateSessionEnvironmentResolver = () => Promise<
+  Readonly<{
+    environmentVariables: Readonly<Record<string, string>>;
+    unsetEnvironmentVariables: readonly string[];
+    sensitiveEnvironmentVariableNames: readonly string[];
+  }>
+>;
 
 export type PluginSessionLaunchParams = Readonly<{
     backend: Readonly<{
         id: string;
-        providerId: string;
+        agentId: string;
     }>;
     sessionId: string;
     directory: string;
@@ -55,6 +79,29 @@ export type PluginSessionLaunchParams = Readonly<{
 export type PluginSessionLaunchHandler = (
     params: PluginSessionLaunchParams,
 ) => Promise<PluginSessionLaunchResultCandidate>;
+
+export type PluginHostSessionRuntimeOptions = Readonly<{
+    credentials: Credentials;
+    directory?: string;
+    backendTarget?: BackendTargetRefV2Input;
+    startedBy?: 'daemon' | 'terminal';
+    terminalRuntime?: TerminalRuntimeFlags | null;
+    startingMode?: 'terminal' | 'remote' | 'local';
+    permissionMode?: PermissionMode;
+    permissionModeUpdatedAt?: number;
+    sessionModeId?: string;
+    sessionModeUpdatedAt?: number;
+    modelSelection?: SessionModelSelectionV1;
+    sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
+    existingSessionId?: string;
+    sessionAttachFilePath?: string;
+    resume?: string;
+    nativeForkSource?: NativeForkSource;
+    accountSettingsContext?: AccountSettingsContext | null;
+    environmentVariables?: Readonly<Record<string, string>>;
+    unsetEnvironmentVariables?: readonly string[];
+    resolveLateEnvironment?: HostPrivateLateSessionEnvironmentResolver;
+}>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -72,6 +119,12 @@ function readOptionalNumber(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function readStartingMode(value: unknown): 'terminal' | 'remote' | 'local' | undefined {
+    return value === 'terminal' || value === 'remote' || value === 'local'
+        ? value
+        : undefined;
+}
+
 function readStringRecord(value: unknown): Readonly<Record<string, string>> | undefined {
     if (!isRecord(value)) {
         return undefined;
@@ -82,12 +135,64 @@ function readStringRecord(value: unknown): Readonly<Record<string, string>> | un
     return entries.length > 0 ? Object.freeze(Object.fromEntries(entries)) : undefined;
 }
 
-function readProviderAcceptancePendingMaterialization(
-    value: unknown,
-): ProviderAcceptancePendingMaterializationPolicy | undefined {
-    return value === 'claimUntilProviderAccept' || value === 'commitAtMaterialize'
-        ? normalizeProviderAcceptancePendingMaterializationPolicy(value)
-        : undefined;
+function readStringArray(value: unknown): readonly string[] | undefined {
+    if (value === undefined) {
+        return undefined;
+    }
+    if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+        throw new Error('Plugin session unset environment variables must be a string array');
+    }
+    const entries = normalizeUnsetEnvKeys(value as string[]);
+    return entries.length > 0 ? entries : undefined;
+}
+
+function readNativeForkSource(value: unknown): NativeForkSource | undefined {
+    if (value === undefined) return undefined;
+    const parsed = NativeForkSourceSchema.safeParse(value);
+    if (!parsed.success) {
+        throw new Error('Invalid plugin session native fork source');
+    }
+    return parsed.data;
+}
+
+function readBackendTargetKey(value: unknown): string | null {
+    const parsed = BackendTargetRefV2Schema.safeParse(normalizeBackendTargetRefV2InputToV2(value));
+    return parsed.success ? buildBackendTargetKeyV2(parsed.data) : null;
+}
+
+function readModelSelection(raw: Record<string, unknown>): SessionModelSelectionV1 | undefined {
+    const targetKey = readBackendTargetKey(raw.backendTarget);
+    const hasCanonicalModelSelection = raw.modelSelection !== undefined;
+    const parsed = SessionModelSelectionV1Schema.safeParse(raw.modelSelection);
+    if (parsed.success) {
+        if (!targetKey) {
+            throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+        }
+        if (parsed.data.ref.agentTargetKey !== targetKey) {
+            throw new SessionModelSelectionResolutionError('model_selection_agent_target_mismatch');
+        }
+        return parsed.data;
+    }
+    if (hasCanonicalModelSelection) {
+        throw new Error('Invalid plugin session model selection');
+    }
+
+    const legacyModelId = readOptionalString(raw.modelId);
+    if (!legacyModelId) return undefined;
+    if (!targetKey) {
+        throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+    }
+    const ref = resolveSessionModelSelectionInputRefV1({
+        agentTargetKey: targetKey,
+        providerConnectionId: null,
+        modelId: legacyModelId,
+    });
+    if (ref === null) return undefined;
+    return SessionModelSelectionV1Schema.parse({
+        v: 1,
+        updatedAt: readOptionalNumber(raw.modelUpdatedAt) ?? Date.now(),
+        ref,
+    });
 }
 
 export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindingInput {
@@ -100,9 +205,27 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
         throw new Error('Plugin session launch params must include credentials');
     }
 
-    const providerAcceptancePendingMaterialization = readProviderAcceptancePendingMaterialization(
-        raw.providerAcceptancePendingMaterialization,
+    if (
+        Object.prototype.hasOwnProperty.call(raw, 'resume')
+        && raw.resume !== undefined
+        && raw.resume !== null
+        && readOptionalString(raw.resume) === undefined
+    ) {
+        throw new Error('Plugin session runtime requires a non-empty provider continuation id');
+    }
+
+    const modelSelection = readModelSelection(raw);
+    const nativeForkSource = readNativeForkSource(raw.nativeForkSource);
+    if (nativeForkSource && readOptionalString(raw.resume)) {
+        throw new Error('Plugin session native fork source cannot be combined with provider resume');
+    }
+    const hasConfigurationOptions = raw.sessionConfigOptionOverrides !== undefined;
+    const parsedConfigurationOptions = AcpConfigOptionOverridesV1Schema.safeParse(
+        raw.sessionConfigOptionOverrides,
     );
+    if (hasConfigurationOptions && !parsedConfigurationOptions.success) {
+        throw new Error('Invalid plugin session configuration option overrides');
+    }
 
     return Object.freeze({
         credentials,
@@ -118,14 +241,28 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
             ...(readStringRecord(raw.environmentVariables)
                 ? { environmentVariables: readStringRecord(raw.environmentVariables) }
                 : {}),
+            ...(readStringArray(raw.unsetEnvironmentVariables)
+                ? { unsetEnvironmentVariables: readStringArray(raw.unsetEnvironmentVariables) }
+                : {}),
+            ...(typeof raw.resolveLateEnvironment === 'function'
+                ? {
+                    resolveLateEnvironment:
+                        raw.resolveLateEnvironment as HostPrivateLateSessionEnvironmentResolver,
+                }
+                : {}),
         }),
         resume: Object.freeze({
             ...(readOptionalString(raw.existingSessionId) ? { existingSessionId: readOptionalString(raw.existingSessionId) } : {}),
+            ...(readOptionalString(raw.sessionAttachFilePath) ? { sessionAttachFilePath: readOptionalString(raw.sessionAttachFilePath) } : {}),
             ...(readOptionalString(raw.resume) ? { resumeSessionId: readOptionalString(raw.resume) } : {}),
         }),
+        ...(nativeForkSource ? { nativeForkSource } : {}),
         runtimePreferences: Object.freeze({
             ...(raw.terminalRuntime === null || isRecord(raw.terminalRuntime)
                 ? { terminal: raw.terminalRuntime as TerminalRuntimeFlags | null }
+                : {}),
+            ...(readStartingMode(raw.startingMode)
+                ? { startingMode: readStartingMode(raw.startingMode) }
                 : {}),
             ...(readOptionalString(raw.permissionMode)
                 ? {
@@ -147,20 +284,9 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
                     }),
                 }
                 : {}),
-            ...(readOptionalString(raw.modelId)
-                ? {
-                    model: Object.freeze({
-                        id: readOptionalString(raw.modelId)!,
-                        ...(readOptionalNumber(raw.modelUpdatedAt) !== undefined
-                            ? { updatedAt: readOptionalNumber(raw.modelUpdatedAt) }
-                            : {}),
-                    }),
-                }
-                : {}),
-            ...(providerAcceptancePendingMaterialization
-                ? {
-                    providerAcceptancePendingMaterialization,
-                }
+            ...(modelSelection ? { modelSelection } : {}),
+            ...(parsedConfigurationOptions.success
+                ? { configurationOptions: parsedConfigurationOptions.data }
                 : {}),
         }),
     });
@@ -168,7 +294,7 @@ export function buildPluginSessionBindingInput(raw: unknown): PluginSessionBindi
 
 export function buildPluginSessionLaunchParams(params: Readonly<{
     backend: ResolvedAgentRuntimeContribution;
-    provider: ResolvedAgentContribution;
+    agent: ResolvedAgentContribution;
     input: PluginSessionBindingInput;
     runtime: Readonly<{
         sessionId: string;
@@ -179,7 +305,7 @@ export function buildPluginSessionLaunchParams(params: Readonly<{
     return Object.freeze({
         backend: Object.freeze({
             id: params.backend.id,
-            providerId: params.provider.id,
+            agentId: params.agent.id,
         }),
         sessionId: params.runtime.sessionId,
         directory: params.runtime.directory,
@@ -190,13 +316,14 @@ export function buildPluginSessionLaunchParams(params: Readonly<{
 
 export function buildPluginHostSessionRuntimeOptions(
     input: PluginSessionBindingInput,
-) {
+): PluginHostSessionRuntimeOptions {
     return Object.freeze({
         credentials: input.credentials,
         ...(typeof input.bootstrap.workingDirectory === 'string' ? { directory: input.bootstrap.workingDirectory } : {}),
         ...(input.bootstrap.target ? { backendTarget: input.bootstrap.target } : {}),
         ...(input.bootstrap.source ? { startedBy: input.bootstrap.source } : {}),
         ...(input.runtimePreferences.terminal !== undefined ? { terminalRuntime: input.runtimePreferences.terminal } : {}),
+        ...(input.runtimePreferences.startingMode ? { startingMode: input.runtimePreferences.startingMode } : {}),
         ...(input.runtimePreferences.permission?.mode ? { permissionMode: input.runtimePreferences.permission.mode } : {}),
         ...(typeof input.runtimePreferences.permission?.updatedAt === 'number'
             ? { permissionModeUpdatedAt: input.runtimePreferences.permission.updatedAt }
@@ -205,17 +332,29 @@ export function buildPluginHostSessionRuntimeOptions(
         ...(typeof input.runtimePreferences.sessionMode?.updatedAt === 'number'
             ? { sessionModeUpdatedAt: input.runtimePreferences.sessionMode.updatedAt }
             : {}),
-        ...(input.runtimePreferences.model?.id ? { modelId: input.runtimePreferences.model.id } : {}),
-        ...(typeof input.runtimePreferences.model?.updatedAt === 'number'
-            ? { modelUpdatedAt: input.runtimePreferences.model.updatedAt }
+        ...(input.runtimePreferences.modelSelection
+            ? { modelSelection: input.runtimePreferences.modelSelection }
+            : {}),
+        ...(input.runtimePreferences.configurationOptions
+            ? { sessionConfigOptionOverrides: input.runtimePreferences.configurationOptions }
             : {}),
         ...(input.resume.existingSessionId ? { existingSessionId: input.resume.existingSessionId } : {}),
+        ...(input.resume.sessionAttachFilePath ? { sessionAttachFilePath: input.resume.sessionAttachFilePath } : {}),
         ...(input.resume.resumeSessionId ? { resume: input.resume.resumeSessionId } : {}),
         ...(input.bootstrap.accountSettingsContext !== undefined
             ? { accountSettingsContext: input.bootstrap.accountSettingsContext }
             : {}),
         ...(input.bootstrap.environmentVariables
             ? { environmentVariables: { ...input.bootstrap.environmentVariables } }
+            : {}),
+        ...(input.bootstrap.unsetEnvironmentVariables
+            ? { unsetEnvironmentVariables: [...input.bootstrap.unsetEnvironmentVariables] }
+            : {}),
+        ...(input.bootstrap.resolveLateEnvironment
+            ? {
+                resolveLateEnvironment:
+                    input.bootstrap.resolveLateEnvironment,
+            }
             : {}),
     });
 }

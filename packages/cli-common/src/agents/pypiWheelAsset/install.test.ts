@@ -1,12 +1,12 @@
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
-import { access, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { installPypiWheelAsset } from './install.js';
+import { installPypiWheelAsset, readInstalledPypiWheelAsset } from './install.js';
 import type { PypiWheelAssetSimpleIndex } from './resolve.js';
 
 const tempDirs = new Set<string>();
@@ -279,5 +279,47 @@ describe('installPypiWheelAsset', () => {
     })).rejects.toMatchObject({ code: 'compatibility_probe_failed' });
 
     await expect(readFile(previousPath, 'utf8')).resolves.toBe('previous');
+  });
+
+  it('rejects current metadata whose executable path escapes the managed install root', async () => {
+    const installRoot = await createInstallRoot();
+    const outsideExecutable = join(installRoot, '..', 'outside-localharness');
+    await mkdir(installRoot, { recursive: true });
+    await writeFile(outsideExecutable, 'outside');
+    await writeFile(join(installRoot, 'current.json'), JSON.stringify({
+      sourceKind: 'managed_pypi_wheel_asset',
+      distribution: 'google-antigravity',
+      version: '0.1.5',
+      wheelFilename: 'google_antigravity-0.1.5-py3-none-macosx_14_0_arm64.whl',
+      wheelDigest: `sha256:${'a'.repeat(64)}`,
+      assetPath: 'google/antigravity/bin/localharness',
+      platform: 'darwin-arm64',
+      executablePath: outsideExecutable,
+      compatibilityProbe: { id: 'antigravity-localharness-v1', ok: true },
+    }));
+
+    await expect(readInstalledPypiWheelAsset(installRoot)).resolves.toBeNull();
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects a contained executable symlink that escapes the managed install root', async () => {
+    const installRoot = await createInstallRoot();
+    const outsideExecutable = join(installRoot, '..', 'outside-localharness');
+    const containedLink = join(installRoot, 'versions', '0.1.5', 'bin', 'localharness');
+    await mkdir(join(containedLink, '..'), { recursive: true });
+    await writeFile(outsideExecutable, 'outside');
+    await symlink(outsideExecutable, containedLink);
+    await writeFile(join(installRoot, 'current.json'), JSON.stringify({
+      sourceKind: 'managed_pypi_wheel_asset',
+      distribution: 'google-antigravity',
+      version: '0.1.5',
+      wheelFilename: 'google_antigravity-0.1.5-py3-none-macosx_14_0_arm64.whl',
+      wheelDigest: `sha256:${'a'.repeat(64)}`,
+      assetPath: 'google/antigravity/bin/localharness',
+      platform: 'darwin-arm64',
+      executablePath: containedLink,
+      compatibilityProbe: { id: 'antigravity-localharness-v1', ok: true },
+    }));
+
+    await expect(readInstalledPypiWheelAsset(installRoot)).resolves.toBeNull();
   });
 });

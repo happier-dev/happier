@@ -21,6 +21,12 @@ export function registerMachineSessionRpcHandlers(params: Readonly<{
         ...(params.deps?.runReplaySummaryForDialog
           ? { runReplaySummaryForDialog: params.deps.runReplaySummaryForDialog }
         : {}),
+        ...(params.deps?.resolveExecutionSurfaces
+          ? { resolveExecutionSurfaces: params.deps.resolveExecutionSurfaces }
+          : {}),
+        ...(params.deps?.awaitAgentSessionOpen
+          ? { awaitAgentSessionOpen: params.deps.awaitAgentSessionOpen }
+          : {}),
       },
     }),
     scopes: MACHINE_SESSION_LIFECYCLE_RPC_SCOPES,

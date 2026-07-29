@@ -42,9 +42,32 @@ describe('createTmuxTerminalHostAdapter', () => {
         windowName: 'session-a',
         cwd: '/workspace/project',
         unsetEnvKeys: ['openai_api_key'],
+        requireNewSession: true,
       },
       { HAPPIER_ALLOWED: 'allowed' },
     );
+  });
+
+  it('destroys the exact owned tmux session instead of only its provider window', async () => {
+    const utility = createUtility();
+    const adapter = createTmuxTerminalHostAdapter({ tmux: utility });
+
+    await adapter.dispose({
+      kind: 'tmux',
+      sessionName: 'session-a',
+      paneId: 'claude',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    });
+
+    expect(utility.executeTmuxCommand).toHaveBeenCalledWith(['kill-session'], 'session-a');
+    expect(utility.killWindow).not.toHaveBeenCalled();
   });
 
   it('injects prompts into the explicit tmux target and returns typed host metadata', async () => {

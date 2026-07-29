@@ -71,4 +71,38 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
       signal: null,
     });
   });
+
+  it('does not report stop completion until durable exit observation staging completes', async () => {
+    const { waitForExistingSessionExitIfStopRequested } = await import('./waitForExistingSessionExitIfStopRequested');
+
+    let releaseStaging!: () => void;
+    const staging = new Promise<void>((resolve) => {
+      releaseStaging = resolve;
+    });
+    const onExitObserved = vi.fn(async () => {
+      await staging;
+    });
+    const pidToTrackedSession = new Map<number, any>([
+      [1, { happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
+    ]);
+
+    let completed = false;
+    const wait = waitForExistingSessionExitIfStopRequested({
+      sessionId: 'sess-1',
+      pidToTrackedSession,
+      isSessionRunnerActive: async () => false,
+      timeoutMs: 1_000,
+      pollIntervalMs: 50,
+      onExitObserved,
+    }).then(() => {
+      completed = true;
+    });
+
+    await vi.waitFor(() => expect(onExitObserved).toHaveBeenCalledOnce());
+    expect(completed).toBe(false);
+
+    releaseStaging();
+    await wait;
+    expect(completed).toBe(true);
+  });
 });

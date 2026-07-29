@@ -1,12 +1,16 @@
 import tweetnacl from 'tweetnacl';
 import {
     SignedDirectRouteGrantV1Schema,
+    SignedDirectRouteGrantV2Schema,
     PeerRouteNonceProofV1Schema,
     createDirectRouteGrantSigningInputV1,
+    createDirectRouteGrantSigningInputV2,
     createPeerRouteNonceSigningInputV1,
+    verifyPeerRouteEphemeralProofV2,
     type DirectPeerRouteKindV1,
     type PeerFlowKindV1,
     type SignedDirectRouteGrantV1,
+    type SignedDirectRouteGrantV2,
     type PeerRouteNonceProofV1,
 } from '@happier-dev/protocol';
 
@@ -28,6 +32,16 @@ export type DirectRouteGrantVerifyReasonCode =
 export type DirectRouteGrantVerificationResult =
     | Readonly<{ valid: true; payload: SignedDirectRouteGrantV1['payload']; receipt: 'peer.route_grant.verified' }>
     | Readonly<{ valid: false; reasonCode: DirectRouteGrantVerifyReasonCode; receipt?: 'peer.route_grant.rejected' }>;
+
+export type DirectRouteGrantV2VerifyReasonCode = DirectRouteGrantVerifyReasonCode
+    | 'proof_invalid'
+    | 'proof_grant_invalid'
+    | 'proof_grant_digest_mismatch'
+    | 'proof_bad_signature';
+
+export type DirectRouteGrantV2VerificationResult =
+    | Readonly<{ valid: true; payload: SignedDirectRouteGrantV2['payload']; receipt: 'peer.route_grant.verified' }>
+    | Readonly<{ valid: false; reasonCode: DirectRouteGrantV2VerifyReasonCode; receipt?: 'peer.route_grant.rejected' }>;
 
 export type PeerRouteNonceVerifyReasonCode =
     | 'nonce_invalid'
@@ -71,7 +85,7 @@ function findTrustRoot(
 }
 
 function matchesExpectedBinding(
-    payload: SignedDirectRouteGrantV1['payload'],
+    payload: SignedDirectRouteGrantV1['payload'] | SignedDirectRouteGrantV2['payload'],
     expected: DirectRouteGrantExpectedBinding,
 ): DirectRouteGrantVerifyReasonCode | null {
     if (payload.accountId !== expected.accountId) return 'grant_account_mismatch';
@@ -82,6 +96,45 @@ function matchesExpectedBinding(
         return 'grant_endpoint_mismatch';
     }
     return null;
+}
+
+export function verifyDirectRouteGrantV2(input: Readonly<{
+    grant: unknown;
+    proof: unknown;
+    trustRoots: readonly DirectRouteGrantTrustRoot[];
+    nowMs: number;
+    expected: DirectRouteGrantExpectedBinding;
+    revokedGrantIds?: ReadonlySet<string>;
+    revokedGrantFamilyIds?: ReadonlySet<string>;
+}>): DirectRouteGrantV2VerificationResult {
+    const parsed = SignedDirectRouteGrantV2Schema.safeParse(input.grant);
+    if (!parsed.success) return { valid: false, reasonCode: 'grant_invalid', receipt: 'peer.route_grant.rejected' };
+
+    const grant = parsed.data;
+    const publicKey = findTrustRoot(input.trustRoots, grant.signature.keyId);
+    if (!publicKey) return { valid: false, reasonCode: 'grant_unknown_key' };
+    if (input.nowMs >= grant.payload.exp) return { valid: false, reasonCode: 'grant_expired' };
+    if (input.nowMs < grant.payload.iat) return { valid: false, reasonCode: 'grant_not_yet_valid' };
+    if (input.revokedGrantIds?.has(grant.payload.grantId) === true) {
+        return { valid: false, reasonCode: 'grant_revoked' };
+    }
+    if (grant.payload.grantFamilyId && input.revokedGrantFamilyIds?.has(grant.payload.grantFamilyId) === true) {
+        return { valid: false, reasonCode: 'grant_revoked' };
+    }
+
+    const bindingMismatch = matchesExpectedBinding(grant.payload, input.expected);
+    if (bindingMismatch) return { valid: false, reasonCode: bindingMismatch };
+    const signature = fromBase64Url(grant.signature.valueBase64Url);
+    if (!signature || signature.length !== tweetnacl.sign.signatureLength) {
+        return { valid: false, reasonCode: 'grant_bad_signature' };
+    }
+    const signingInput = Buffer.from(createDirectRouteGrantSigningInputV2(grant.payload), 'utf8');
+    if (!tweetnacl.sign.detached.verify(signingInput, signature, publicKey)) {
+        return { valid: false, reasonCode: 'grant_bad_signature' };
+    }
+    const proofVerification = verifyPeerRouteEphemeralProofV2({ grant, proof: input.proof });
+    if (!proofVerification.valid) return proofVerification;
+    return { valid: true, payload: grant.payload, receipt: 'peer.route_grant.verified' };
 }
 
 export function verifyDirectRouteGrantV1(input: Readonly<{

@@ -16,9 +16,6 @@ export type RegisterSessionHandoffPrepareTargetResultGetRpcHandlerInput = Readon
     handoffId: string;
     jobStore: SessionHandoffPrepareTargetJobStore;
   }>) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
-  maybeRecoverPrepareTargetJobMissingRunner: (
-    job: SessionHandoffPrepareTargetJobRecord,
-  ) => Promise<SessionHandoffPrepareTargetJobRecord>;
   isTerminalHandoffStatus: (status: SessionHandoffStatus) => boolean;
   invalidRequest: () => Readonly<{
     ok: false;
@@ -32,7 +29,6 @@ export function createSessionHandoffPrepareTargetResultGetActionHandler(
   const {
     prepareJobStore,
     readPersistedPrepareJob,
-    maybeRecoverPrepareTargetJobMissingRunner,
     isTerminalHandoffStatus,
     invalidRequest,
   } = params;
@@ -41,13 +37,10 @@ export function createSessionHandoffPrepareTargetResultGetActionHandler(
     const parsed = SessionHandoffPrepareTargetResultGetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    let persistedJob = await readPersistedPrepareJob({
+    const persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
       jobStore: prepareJobStore,
     });
-    if (persistedJob) {
-      persistedJob = await maybeRecoverPrepareTargetJobMissingRunner(persistedJob);
-    }
     if (persistedJob?.prepareTargetResult) {
       return persistedJob.prepareTargetResult;
     }
@@ -57,6 +50,20 @@ export function createSessionHandoffPrepareTargetResultGetActionHandler(
       // reached a terminal non-ready state (aborted/failed/awaiting_recovery), surface that
       // explicitly so callers don't spin forever on `not_found`.
       if (isTerminalHandoffStatus(persistedJob.status)) {
+        if (persistedJob.lastErrorCode) {
+          return {
+            ok: false,
+            errorCode: persistedJob.lastErrorCode,
+            error: persistedJob.lastErrorMessage ?? 'Session handoff preparation failed',
+          } as const;
+        }
+        if (persistedJob.status.failure) {
+          return {
+            ok: false,
+            errorCode: persistedJob.status.failure.code,
+            error: persistedJob.lastErrorMessage ?? 'Prepare-target native import failed',
+          } as const;
+        }
         const statusCode = persistedJob.status.status;
         // `ready_for_cutover` should always have a result payload, but fail closed if the record is corrupt.
         if (statusCode === 'ready_for_cutover') {

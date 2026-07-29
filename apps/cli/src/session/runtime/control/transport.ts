@@ -5,14 +5,11 @@ import {
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type {
-  HostRuntimeControlRequestOptionsV1,
-  HostRuntimeControlResultV1,
-  HostRuntimeControlSessionDelegateV1,
-  HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
-  HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1,
-  HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
-  HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1,
-} from '@happier-dev/agents';
+  SessionConnectedServiceAuthApplyGenerationRequestV1,
+  SessionConnectedServiceAuthApplyGenerationResponseV1,
+  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
+  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1,
+} from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
@@ -24,12 +21,47 @@ import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 
 type ResolvedTransport = Awaited<ReturnType<typeof resolveSessionTransportContext>>;
 
-export type CreateSessionRuntimeControlTransportParams = Readonly<{
+export type SessionConnectedServiceAuthTransportResult<T> =
+  | Readonly<{
+      ok: true;
+      value: T;
+      diagnostics?: readonly Readonly<{ code: string }>[];
+    }>
+  | Readonly<{
+      ok: false;
+      code: string;
+      error: string;
+      retryable?: boolean;
+      diagnostics?: readonly Readonly<{ code: string }>[];
+    }>;
+
+export type SessionConnectedServiceAuthTransportOptions = Readonly<{
+  signal?: AbortSignal;
+}>;
+
+export type SessionConnectedServiceAuthTransport = Readonly<{
+  checkConnectedServiceAuthTransportInvalidation: (
+    options?: SessionConnectedServiceAuthTransportOptions,
+  ) => Promise<SessionConnectedServiceAuthTransportResult<true>>;
+  invalidateConnectedServiceAuthTransports: (
+    options?: SessionConnectedServiceAuthTransportOptions,
+  ) => Promise<SessionConnectedServiceAuthTransportResult<true>>;
+  applyConnectedServiceAuthGeneration: (
+    input: SessionConnectedServiceAuthApplyGenerationRequestV1,
+    options?: SessionConnectedServiceAuthTransportOptions,
+  ) => Promise<SessionConnectedServiceAuthTransportResult<SessionConnectedServiceAuthApplyGenerationResponseV1>>;
+  readConnectedServiceRuntimeIdentity: (
+    input: SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
+    options?: SessionConnectedServiceAuthTransportOptions,
+  ) => Promise<SessionConnectedServiceAuthTransportResult<SessionConnectedServiceAuthReadRuntimeIdentityResponseV1>>;
+}>;
+
+export type CreateSessionConnectedServiceAuthTransportParams = Readonly<{
   credentials?: Credentials | null;
   sessionId: string;
 }>;
 
-export type CreateResolvedSessionRuntimeControlTransportParams = Readonly<{
+export type CreateResolvedSessionConnectedServiceAuthTransportParams = Readonly<{
   token: string;
   sessionId: string;
   ctx: SessionEncryptionContext;
@@ -40,11 +72,11 @@ type ResponseSchema<T> = Readonly<{
   safeParse(value: unknown): { success: true; data: T } | { success: false };
 }>;
 
-function success<T>(value: T): HostRuntimeControlResultV1<T> {
+function success<T>(value: T): SessionConnectedServiceAuthTransportResult<T> {
   return { ok: true, value };
 }
 
-function failure<T = never>(code: string): HostRuntimeControlResultV1<T> {
+function failure<T = never>(code: string): SessionConnectedServiceAuthTransportResult<T> {
   return {
     ok: false,
     code,
@@ -53,11 +85,13 @@ function failure<T = never>(code: string): HostRuntimeControlResultV1<T> {
   };
 }
 
-function aborted<T = never>(options?: HostRuntimeControlRequestOptionsV1): HostRuntimeControlResultV1<T> | null {
+function aborted<T = never>(
+  options?: SessionConnectedServiceAuthTransportOptions,
+): SessionConnectedServiceAuthTransportResult<T> | null {
   return options?.signal?.aborted ? failure('runtime_control_aborted') : null;
 }
 
-async function callRuntimeControlSessionRpc<T>(params: Readonly<{
+async function callConnectedServiceAuthSessionRpc<T>(params: Readonly<{
   token: string;
   sessionId: string;
   ctx: SessionEncryptionContext;
@@ -66,7 +100,7 @@ async function callRuntimeControlSessionRpc<T>(params: Readonly<{
   request: unknown;
   responseSchema: ResponseSchema<T>;
   failureCode: string;
-}>): Promise<HostRuntimeControlResultV1<T>> {
+}>): Promise<SessionConnectedServiceAuthTransportResult<T>> {
   const rawResponse = await callSessionRpc({
     token: params.token,
     sessionId: params.sessionId,
@@ -82,9 +116,9 @@ async function callRuntimeControlSessionRpc<T>(params: Readonly<{
   return success(parsedResponse.data);
 }
 
-export function createSessionRuntimeControlTransport(
-  params: CreateSessionRuntimeControlTransportParams,
-): HostRuntimeControlSessionDelegateV1 {
+export function createSessionConnectedServiceAuthTransport(
+  params: CreateSessionConnectedServiceAuthTransportParams,
+): SessionConnectedServiceAuthTransport {
   let resolvedTransport: Promise<ResolvedTransport> | null = null;
   const resolveTransport = async (): Promise<ResolvedTransport> => {
     if (!params.credentials) {
@@ -131,15 +165,15 @@ export function createSessionRuntimeControlTransport(
       return success(true);
     },
     applyConnectedServiceAuthGeneration: async (
-      request: HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
+      request: SessionConnectedServiceAuthApplyGenerationRequestV1,
       options,
     ) => {
-      const abortedResult = aborted<HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1>(options);
+      const abortedResult = aborted<SessionConnectedServiceAuthApplyGenerationResponseV1>(options);
       if (abortedResult) return abortedResult;
       const transport = await resolveTransport();
       if (!transport.ok || !params.credentials) return failure('session_transport_unavailable');
       if (options?.signal?.aborted) return failure('runtime_control_aborted');
-      return await callRuntimeControlSessionRpc({
+      return await callConnectedServiceAuthSessionRpc({
         token: params.credentials.token,
         sessionId: transport.sessionId,
         ctx: transport.ctx,
@@ -151,15 +185,15 @@ export function createSessionRuntimeControlTransport(
       });
     },
     readConnectedServiceRuntimeIdentity: async (
-      request: HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
+      request: SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
       options,
     ) => {
-      const abortedResult = aborted<HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1>(options);
+      const abortedResult = aborted<SessionConnectedServiceAuthReadRuntimeIdentityResponseV1>(options);
       if (abortedResult) return abortedResult;
       const transport = await resolveTransport();
       if (!transport.ok || !params.credentials) return failure('session_transport_unavailable');
       if (options?.signal?.aborted) return failure('runtime_control_aborted');
-      return await callRuntimeControlSessionRpc({
+      return await callConnectedServiceAuthSessionRpc({
         token: params.credentials.token,
         sessionId: transport.sessionId,
         ctx: transport.ctx,
@@ -173,9 +207,9 @@ export function createSessionRuntimeControlTransport(
   };
 }
 
-export function createResolvedSessionRuntimeControlTransport(
-  params: CreateResolvedSessionRuntimeControlTransportParams,
-): HostRuntimeControlSessionDelegateV1 {
+export function createResolvedSessionConnectedServiceAuthTransport(
+  params: CreateResolvedSessionConnectedServiceAuthTransportParams,
+): SessionConnectedServiceAuthTransport {
   return {
     checkConnectedServiceAuthTransportInvalidation: async (options) =>
       aborted(options) ?? success(true),
@@ -197,12 +231,12 @@ export function createResolvedSessionRuntimeControlTransport(
       return success(true);
     },
     applyConnectedServiceAuthGeneration: async (
-      request: HostRuntimeControlConnectedServiceAuthApplyGenerationInputV1,
+      request: SessionConnectedServiceAuthApplyGenerationRequestV1,
       options,
     ) => {
-      const abortedResult = aborted<HostRuntimeControlConnectedServiceAuthApplyGenerationOutputV1>(options);
+      const abortedResult = aborted<SessionConnectedServiceAuthApplyGenerationResponseV1>(options);
       if (abortedResult) return abortedResult;
-      return await callRuntimeControlSessionRpc({
+      return await callConnectedServiceAuthSessionRpc({
         token: params.token,
         sessionId: params.sessionId,
         ctx: params.ctx,
@@ -214,12 +248,12 @@ export function createResolvedSessionRuntimeControlTransport(
       });
     },
     readConnectedServiceRuntimeIdentity: async (
-      request: HostRuntimeControlConnectedServiceRuntimeIdentityInputV1,
+      request: SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
       options,
     ) => {
-      const abortedResult = aborted<HostRuntimeControlConnectedServiceRuntimeIdentityOutputV1>(options);
+      const abortedResult = aborted<SessionConnectedServiceAuthReadRuntimeIdentityResponseV1>(options);
       if (abortedResult) return abortedResult;
-      return await callRuntimeControlSessionRpc({
+      return await callConnectedServiceAuthSessionRpc({
         token: params.token,
         sessionId: params.sessionId,
         ctx: params.ctx,

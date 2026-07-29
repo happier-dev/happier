@@ -34,7 +34,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
         ensureBackend: async () => backend,
       });
 
-      await runtime.startOrLoad({});
+      await runtime.sendTurnPrompt('session setup');
       runtime.beginTurn();
 
       backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
@@ -84,7 +84,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     backend.emit({ type: 'model-output', textDelta: 'First answer' } satisfies AgentMessage);
 
@@ -149,7 +149,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       ensureBackend: async () => backend,
     } as any);
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
@@ -195,7 +195,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
         ensureBackend: async () => backend,
       });
 
-      await runtime.startOrLoad({});
+      await runtime.sendTurnPrompt('session setup');
       runtime.beginTurn();
 
       backend.emit({ type: 'model-output', textDelta: 'Hello' } satisfies AgentMessage);
@@ -261,7 +261,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     backend.emit({ type: 'model-output', textDelta: 'Hello world' } satisfies AgentMessage);
 
@@ -304,7 +304,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({ type: 'model-output', textDelta: 'The' } satisfies AgentMessage);
@@ -356,7 +356,7 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     backend.emit({
@@ -411,12 +411,12 @@ describe('createAcpRuntime (transcript streaming vNext)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
 
     const media = [{
       source: { kind: 'base64' as const, data: 'iVBORw0KGgo=', mimeType: 'image/png', fileNameHint: 'generated.png' },
-      origin: { source: 'acp-content' as const, providerEventId: 'final-message-1' },
+      origin: { source: 'acp-content' as const, agentEventId: 'final-message-1' },
     }];
 
     backend.emit({

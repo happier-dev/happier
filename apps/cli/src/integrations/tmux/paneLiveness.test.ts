@@ -46,47 +46,104 @@ describe('evaluateTmuxPaneLiveness', () => {
     expect(liveness.paneCurrentCommand).not.toContain('provider-bearer-secret');
   });
 
-  it('treats failed liveness probes as inconclusive', async () => {
-    await expect(evaluateTmuxPaneLiveness({
-      executor: async () => null,
-      target: 'missing',
-      observedAt: 99,
-    })).resolves.toEqual({
-      paneAlive: false,
-      probeInconclusive: true,
-      observedAt: 99,
-    });
-
+  it.each([
+    'error connecting to /private/tmp/tmux-501/default (No such file or directory)',
+    'no server running on /private/tmp/tmux-501/default',
+    "can't find session: missing",
+    "can't find window: missing",
+    "can't find pane: missing",
+  ])('treats an exact tmux absence response as confirmed dead: %s', async (stderr) => {
     await expect(evaluateTmuxPaneLiveness({
       executor: async () => ({
         returncode: 1,
         stdout: '',
-        stderr: 'no such pane',
+        stderr,
         command: [],
       }),
       target: 'missing',
       observedAt: 100,
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
       paneAlive: false,
-      probeInconclusive: true,
-      paneScreenDumpError: 'no such pane',
+      paneDead: true,
       observedAt: 100,
     });
+  });
 
+  it('checks the exact target when display-message succeeds with no pane fields', async () => {
     await expect(evaluateTmuxPaneLiveness({
-      executor: async () => ({
-        returncode: 0,
-        stdout: '',
-        stderr: '',
-        command: [],
-        timedOut: true,
-      }),
-      target: 'slow',
+      executor: async (args) => args[0] === 'display-message'
+        ? {
+            returncode: 0,
+            stdout: '\t\t\n',
+            stderr: '',
+            command: [...args],
+          }
+        : {
+            returncode: 1,
+            stdout: '',
+            stderr: "can't find session: missing",
+            command: [...args],
+          },
+      target: 'missing:window',
       observedAt: 101,
-    })).resolves.toEqual({
+    })).resolves.toMatchObject({
+      paneAlive: false,
+      paneDead: true,
+      observedAt: 101,
+    });
+  });
+
+  it('keeps malformed successful output inconclusive when the exact-target follow-up is not authoritative', async () => {
+    await expect(evaluateTmuxPaneLiveness({
+      executor: async (args) => args[0] === 'display-message'
+        ? { returncode: 0, stdout: '\t\t\n', stderr: '', command: [...args] }
+        : { returncode: 1, stdout: '', stderr: 'permission denied', command: [...args] },
+      target: 'unknown:window',
+      observedAt: 102,
+    })).resolves.toMatchObject({
       paneAlive: false,
       probeInconclusive: true,
-      observedAt: 101,
+      paneScreenDumpError: 'permission denied',
+      observedAt: 102,
+    });
+  });
+
+  it.each([
+    null,
+    {
+      returncode: 1,
+      stdout: '',
+      stderr: 'permission denied',
+      command: [],
+    },
+    {
+      returncode: 1,
+      stdout: '',
+      stderr: 'tmux command failed unexpectedly',
+      command: [],
+    },
+    {
+      returncode: 1,
+      stdout: '',
+      stderr: "can't find pane",
+      command: [],
+    },
+    {
+      returncode: 0,
+      stdout: '',
+      stderr: '',
+      command: [],
+      timedOut: true,
+    },
+  ])('keeps an unknown or timed-out tmux failure inconclusive', async (result) => {
+    await expect(evaluateTmuxPaneLiveness({
+      executor: async () => result,
+      target: 'slow',
+      observedAt: 102,
+    })).resolves.toMatchObject({
+      paneAlive: false,
+      probeInconclusive: true,
+      observedAt: 102,
     });
   });
 });

@@ -1,13 +1,28 @@
-import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { configuration } from '@/configuration';
 
 import type { PluginReloadController, PluginRuntimeRegistryLease } from './controller';
 import { pluginReloadController } from './singleton';
 
+export function createEphemeralPluginRuntimeRegistryLease(
+    registry: ResolvedExecutablePluginRuntimeRegistry,
+): PluginRuntimeRegistryLease {
+    let released = false;
+    return {
+        registry,
+        source: 'ephemeral',
+        release: async () => {
+            if (released) return;
+            released = true;
+            await registry.dispose();
+        },
+    };
+}
+
 export async function acquireAuthoritativePluginRuntimeRegistryLease(params?: Readonly<{
     happyHomeDir?: string;
     controller?: PluginReloadController;
-    resolveRuntimeRegistry?: () => Promise<Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>>>;
+    resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
 }>): Promise<PluginRuntimeRegistryLease> {
     // Callers may scope the registry resolution to a specific home directory (tests, multi-home
     // diagnostics). The singleton controller is global and reads `configuration.happyHomeDir`,
@@ -16,31 +31,26 @@ export async function acquireAuthoritativePluginRuntimeRegistryLease(params?: Re
         || params.happyHomeDir === configuration.happyHomeDir;
     const controller = params?.controller
         ?? (shouldUseSingletonController ? pluginReloadController : null);
-    if (controller && typeof controller.acquireRuntimeRegistry === 'function') {
-        return await controller.acquireRuntimeRegistry({
-            resolveRuntimeRegistry: params?.resolveRuntimeRegistry,
-        });
+    const lease = controller?.tryAcquireRuntimeRegistry?.() ?? null;
+    if (lease) {
+        return lease;
     }
 
-    if (params?.resolveRuntimeRegistry) {
-        const registry = await params.resolveRuntimeRegistry();
-        return {
-            registry,
-            source: 'ephemeral',
-            release: async () => {
-                await registry.dispose();
-            },
-        };
-    }
+    const error = new Error(
+        'The canonical daemon-applied plugin runtime is unavailable in this process',
+    ) as Error & { code: string };
+    error.code = 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE';
+    throw error;
+}
 
-    const registry = await resolveExecutablePluginRuntimeRegistry({
-        happyHomeDir: params?.happyHomeDir,
-    });
-    return {
-        registry,
-        source: 'ephemeral',
-        release: async () => {
-            await registry.dispose();
-        },
-    };
+export function tryAcquireAuthoritativePluginRuntimeRegistryLease(params?: Readonly<{
+    happyHomeDir?: string;
+    controller?: PluginReloadController;
+    resolveRuntimeRegistry?: () => Promise<ResolvedExecutablePluginRuntimeRegistry>;
+}>): PluginRuntimeRegistryLease | null {
+    const shouldUseSingletonController = typeof params?.happyHomeDir !== 'string'
+        || params.happyHomeDir === configuration.happyHomeDir;
+    const controller = params?.controller
+        ?? (shouldUseSingletonController ? pluginReloadController : null);
+    return controller?.tryAcquireRuntimeRegistry?.() ?? null;
 }

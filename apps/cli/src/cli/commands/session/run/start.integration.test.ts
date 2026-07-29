@@ -222,7 +222,9 @@ describe('happier session run start (integration)', () => {
       expect(parsed.ok).toBe(false);
       expect(parsed.kind).toBe('session_run_start');
       expect(parsed.error?.code).toBe('invalid_arguments');
-      expect(parsed.error?.message).toBe('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+      expect(parsed.error?.message).toBe(
+        'Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backend-target> [--instructions <text>] [--permission-mode <mode>] [--retention <policy>] [--run-class <class>] [--io-mode <mode>] [--json]',
+      );
     } finally {
       output.restore();
     }
@@ -314,6 +316,7 @@ describe('happier session run start (integration)', () => {
     const { handleSessionCommand } = await import('../index');
 
     const output = captureConsoleJsonOutput();
+    let voiceStartParams: unknown = null;
 
     const socket = createApiSessionSocketStub({
       emit: async (event: string, args: unknown[]) => {
@@ -322,12 +325,7 @@ describe('happier session run start (integration)', () => {
         const { decodeBase64, decrypt, encodeBase64: encodeBase64Rpc, encrypt } = await import('@/api/encryption');
         const decodedParams = decodeBase64(String(data.params ?? ''), 'base64');
         const decrypted = decrypt(new Uint8Array(32).fill(3), 'dataKey', decodedParams) as any;
-        expect(decrypted).toMatchObject({
-          intent: 'voice_agent',
-          backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-          runClass: 'long_lived',
-          ioMode: 'streaming',
-        });
+        voiceStartParams = decrypted;
 
         const resultPayload = { runId: 'run_voice_1', callId: 'call_voice_1', sidechainId: 'call_voice_1' };
         cb?.({
@@ -357,6 +355,13 @@ describe('happier session run start (integration)', () => {
       const parsed = output.json();
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_run_start');
+      expect(voiceStartParams).toMatchObject({
+        intent: 'voice_agent',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        retentionPolicy: 'resumable',
+        runClass: 'long_lived',
+        ioMode: 'streaming',
+      });
       expect(parsed.data?.runId).toBe('run_voice_1');
       expect(parsed.data?.backendId).toBe('claude');
       expect(parsed.data?.backendTarget).toEqual({ kind: 'backend', backendId: 'claude', sourceKind: 'built_in' });

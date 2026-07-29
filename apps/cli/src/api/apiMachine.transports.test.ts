@@ -1,18 +1,23 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import {
+  bindApiSessionSocketMock,
+  createApiSessionSocketStub,
+} from '@/testkit/backends/apiSessionSocketHarness';
 import { logger } from '@/ui/logger';
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
+import { resolveSessionClientDurableMutationJournalPaths } from './session/client/transport/mutations/sessionClientDurableMutationPersistence';
 import type { Machine } from './types';
 
 const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.hoisted(() => ({
   configurationMock: {
     apiServerUrl: 'http://localhost:3005',
     activeServerDir: '',
+    currentCliVersion: '0.2.10-test',
     socketIoTransports: ['polling', 'websocket'] as string[],
   },
   mockAxiosIsAxiosError: vi.fn((error: unknown) => (
@@ -28,7 +33,7 @@ const { configurationMock, mockAxiosIsAxiosError, mockAxiosPost, mockIo } = vi.h
 }));
 
 const registerFileSystemHandlersMock = vi.hoisted(() => vi.fn(() => ({
-  transferSessionStore: {},
+  transferSessionStore: { dispose: async () => {} },
 })));
 const registerMachineRpcHandlersMock = vi.hoisted(() => vi.fn());
 
@@ -72,13 +77,17 @@ vi.mock('./rpc/RpcHandlerManager', () => ({
     async invokeLocal() {
       return { ok: true };
     }
+    async waitForIdle() {}
   },
 }));
 vi.mock('./changes', () => ({ fetchChanges: vi.fn() }));
-vi.mock('@/persistence', () => ({ readLastChangesCursor: vi.fn(), writeLastChangesCursor: vi.fn() }));
+vi.mock('@/persistence', () => ({ readAccountChangesCursor: vi.fn(), writeAccountChangesCursor: vi.fn() }));
 vi.mock('./client/loopbackUrl', () => ({ resolveLoopbackHttpUrl: (value: string) => value }));
 vi.mock('@/utils/proxy/socketIoProxy', () => ({ getSocketIoProxyOptions: () => ({}) }));
 vi.mock('@/utils/time', () => ({ backoff: async <T>(fn: () => Promise<T>) => await fn() }));
+vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({
+  createLoopbackReadinessProbe: () => async () => ({ status: 'ready' as const }),
+}));
 
 describe('ApiMachineClient transports', () => {
   beforeEach(() => {
@@ -86,7 +95,7 @@ describe('ApiMachineClient transports', () => {
     configurationMock.socketIoTransports = ['polling', 'websocket'];
     mockAxiosPost.mockResolvedValue({ status: 200, data: { success: true, applied: true } });
     registerFileSystemHandlersMock.mockReset();
-    registerFileSystemHandlersMock.mockReturnValue({ transferSessionStore: {} });
+    registerFileSystemHandlersMock.mockReturnValue({ transferSessionStore: { dispose: async () => {} } });
     registerMachineRpcHandlersMock.mockReset();
     bindApiSessionSocketMock(mockIo, createApiSessionSocketStub());
   });
@@ -122,6 +131,53 @@ describe('ApiMachineClient transports', () => {
     expect(opts.autoConnect).toBe(false);
   });
 
+  it('uses the strict machine terminal capture/finalize socket contract', async () => {
+    const responses = [
+      { v: 1, status: 'captured', sessionId: 's1', committedFenceMs: 1_234 },
+      { v: 1, status: 'closed', sessionId: 's1' },
+    ];
+    const machineSocket = createApiSessionSocketStub({
+      emitWithAck: vi.fn(async () => responses.shift()),
+    });
+    bindApiSessionSocketMock(mockIo, machineSocket);
+    const mod = await import('./apiMachine');
+    const {
+      MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
+      MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
+    } = await import('@happier-dev/protocol');
+    const client = new mod.ApiMachineClient('fake-token', {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    });
+    client.connect();
+
+    await expect(client.captureMachineSessionTerminal('s1')).resolves.toEqual({
+      v: 1,
+      status: 'captured',
+      sessionId: 's1',
+      committedFenceMs: 1_234,
+    });
+    await expect(client.finalizeMachineSessionTerminal({
+      sessionId: 's1',
+      committedFenceMs: 1_234,
+    })).resolves.toEqual({ v: 1, status: 'closed', sessionId: 's1' });
+    expect(machineSocket.emitWithAck).toHaveBeenNthCalledWith(
+      1,
+      MACHINE_SESSION_TERMINAL_CAPTURE_EVENT_V1,
+      { v: 1, sessionId: 's1' },
+    );
+    expect(machineSocket.emitWithAck).toHaveBeenNthCalledWith(
+      2,
+      MACHINE_SESSION_TERMINAL_FINALIZE_EVENT_V1,
+      { v: 1, sessionId: 's1', committedFenceMs: 1_234 },
+    );
+  });
+
   it('can force websocket-only via config flag', async () => {
     configurationMock.socketIoTransports = ['websocket'];
 
@@ -147,86 +203,7 @@ describe('ApiMachineClient transports', () => {
     expect(opts.autoConnect).toBe(false);
   });
 
-  it('confirms session-end over HTTP even when the machine socket is absent', async () => {
-    const mod = await import('./apiMachine');
-
-    const machine: Machine = {
-      id: 'test-machine',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
-      metadata: null,
-      metadataVersion: 0,
-      daemonState: null,
-      daemonStateVersion: 0,
-    };
-
-    const client = new mod.ApiMachineClient('fake-token', machine);
-    client.emitSessionEnd({ sid: 'session-1', time: 1234 });
-
-    await vi.waitFor(() => {
-      expect(mockAxiosPost).toHaveBeenCalledWith(
-        'http://localhost:3005/v1/sessions/session-1/end',
-        { time: 1234 },
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer fake-token',
-          }),
-        }),
-      );
-    });
-  });
-
-  it('keeps startup cleanup session-end queued when HTTP delivery fails', async () => {
-    const tempServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-session-end-'));
-    configurationMock.activeServerDir = tempServerDir;
-    mockAxiosPost.mockRejectedValue(new Error('server offline'));
-    const mod = await import('./apiMachine');
-
-    const machine: Machine = {
-      id: 'test-machine',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
-      metadata: null,
-      metadataVersion: 0,
-      daemonState: null,
-      daemonStateVersion: 0,
-    };
-
-    const client = new mod.ApiMachineClient('fake-token', machine);
-
-    try {
-      const durableClient: {
-        enqueueSessionEndMutation?: (payload: { sid: string; time: number; exit?: unknown }) => void;
-      } = client;
-
-      expect(durableClient.enqueueSessionEndMutation).toBeTypeOf('function');
-      durableClient.enqueueSessionEndMutation?.({
-        sid: 'session-1',
-        time: 1234,
-        exit: { observedBy: 'daemon', reason: 'process-missing' },
-      });
-
-      await vi.waitFor(async () => {
-        const parsed = JSON.parse(
-          await readFile(join(tempServerDir, 'session-mutations', 'session-session-1.json'), 'utf8'),
-        ) as { mutations?: Array<{ kind?: string; payload?: { sessionId?: string; observedAt?: number } }> };
-        expect(parsed.mutations).toEqual([
-          expect.objectContaining({
-            kind: 'session_end',
-            payload: expect.objectContaining({
-              sessionId: 'session-1',
-              observedAt: 1234,
-            }),
-          }),
-        ]);
-      });
-    } finally {
-      await client.shutdown();
-      await rm(tempServerDir, { recursive: true, force: true });
-    }
-  });
-
-  it('keeps daemon turn settlement queued durably when delivery fails', async () => {
+  it('keeps an exact daemon turn settlement in the disjoint daemon journal when delivery fails', async () => {
     const tempServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-turn-settlement-'));
     configurationMock.activeServerDir = tempServerDir;
     mockAxiosPost.mockRejectedValue(new Error('server offline'));
@@ -245,84 +222,90 @@ describe('ApiMachineClient transports', () => {
     const client = new mod.ApiMachineClient('fake-token', machine);
 
     try {
-      const durableClient: {
-        enqueueSessionTurnSettlementMutation?: (payload: { sid: string; time: number }) => void;
-      } = client;
-
-      expect(durableClient.enqueueSessionTurnSettlementMutation).toBeTypeOf('function');
-      durableClient.enqueueSessionTurnSettlementMutation?.({
-        sid: 'session-1',
-        time: 1234,
+      expect(client.enqueueDaemonTerminalExactTurnEnd).toBeTypeOf('function');
+      await client.enqueueDaemonTerminalExactTurnEnd({
+        v: 1,
+        sessionId: 'session-1',
+        mutationId: 'daemon-observed-exit:exact-1',
+        action: 'end_session',
+        turnId: 'turn-1',
+        observedAt: 1234,
       });
 
-      await vi.waitFor(async () => {
-        const parsed = JSON.parse(
-          await readFile(join(tempServerDir, 'session-mutations', 'session-session-1.json'), 'utf8'),
-        ) as { mutations?: Array<{ kind?: string; payload?: { sessionId?: string; action?: string; mutationId?: string; observedAt?: number } }> };
-        expect(parsed.mutations).toEqual([
-          expect.objectContaining({
-            kind: 'session_turn_mutation',
-            payload: expect.objectContaining({
-              sessionId: 'session-1',
-              action: 'end_session',
-              mutationId: 'daemon-exit-turn-settlement:session-1:1234',
-              observedAt: 1234,
-            }),
-          }),
-        ]);
+      const runtimePaths = resolveSessionClientDurableMutationJournalPaths({
+        activeServerDir: tempServerDir,
+        sessionId: 'session-1',
+        custody: 'runtime',
       });
+      const daemonPaths = resolveSessionClientDurableMutationJournalPaths({
+        activeServerDir: tempServerDir,
+        sessionId: 'session-1',
+        custody: 'daemon',
+      });
+      const parsed = JSON.parse(
+        await readFile(daemonPaths.queuePath, 'utf8'),
+      ) as { mutations?: Array<{ kind?: string; payload?: Record<string, unknown> }> };
+      expect(parsed.mutations).toEqual([
+        expect.objectContaining({
+          kind: 'session_turn_mutation',
+          payload: {
+            v: 1,
+            sessionId: 'session-1',
+            mutationId: 'daemon-observed-exit:exact-1',
+            action: 'end_session',
+            turnId: 'turn-1',
+            observedAt: 1234,
+          },
+        }),
+      ]);
+      await expect(readFile(runtimePaths.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await client.shutdown();
       await rm(tempServerDir, { recursive: true, force: true });
     }
   });
 
-  it('redacts authorization headers when session-end HTTP confirmation fails', async () => {
-    const mod = await import('./apiMachine');
-
-    const machine: Machine = {
-      id: 'test-machine',
-      encryptionKey: new Uint8Array(32),
-      encryptionVariant: 'legacy',
-      metadata: null,
-      metadataVersion: 0,
-      daemonState: null,
-      daemonStateVersion: 0,
-    };
-
-    mockAxiosPost.mockRejectedValueOnce({
-      isAxiosError: true,
-      name: 'AxiosError',
-      message: 'socket hang up',
-      code: 'ECONNRESET',
-      config: {
-        method: 'post',
-        url: 'http://localhost:3005/v1/sessions/session-1/end?token=secret',
-        headers: { Authorization: 'Bearer fake-token' },
-        data: { time: 1234 },
+  it('installs usage and exact bindings before replaying discovered daemon journals', async () => {
+    const tempServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-daemon-recovery-'));
+    configurationMock.activeServerDir = tempServerDir;
+    const journalDir = join(tempServerDir, 'session-mutations');
+    await mkdir(journalDir, { recursive: true });
+    const payload = {
+      v: 1,
+      sessionId: 'session-recovery-1',
+      mutationId: 'daemon-recovery-exact-1',
+      action: 'end_session',
+      turnId: 'turn-recovery-1',
+      observedAt: 100,
+    } as const;
+    const recoveryPaths = resolveSessionClientDurableMutationJournalPaths({
+      activeServerDir: tempServerDir,
+      sessionId: 'session-recovery-1',
+      custody: 'daemon',
+    });
+    await writeFile(recoveryPaths.queuePath, JSON.stringify({
+      v: 1,
+      mutations: [{
+        kind: 'session_turn_mutation',
+        mutationId: payload.mutationId,
+        payload,
+        createdAt: 100,
+        attempts: 0,
+        nextAttemptAt: 0,
+      }],
+    }));
+    mockAxiosPost.mockResolvedValue({
+      status: 200,
+      data: {
+        success: true,
+        receipt: {
+          ...payload,
+          decision: 'applied',
+          appliedAt: 101,
+        },
       },
     });
-
-    const client = new mod.ApiMachineClient('fake-token', machine);
-    client.emitSessionEnd({ sid: 'session-1', time: 1234 });
-
-    await vi.waitFor(() => {
-      expect(logger.warn).toHaveBeenCalled();
-    });
-
-    const logged = JSON.stringify(vi.mocked(logger.warn).mock.calls);
-    expect(logged).not.toContain('fake-token');
-    expect(logged).not.toContain('Authorization');
-    expect(logged).not.toContain('token=secret');
-  });
-
-  it('does not warn when connected legacy session-end delivery reaches a server without the durable route', async () => {
-    const machineSocket = createApiSessionSocketStub({ connected: true });
-    bindApiSessionSocketMock(mockIo, machineSocket);
-    mockAxiosPost.mockResolvedValueOnce({ status: 404, data: { error: 'not found' } });
-
     const mod = await import('./apiMachine');
-
     const machine: Machine = {
       id: 'test-machine',
       encryptionKey: new Uint8Array(32),
@@ -332,24 +315,193 @@ describe('ApiMachineClient transports', () => {
       daemonState: null,
       daemonStateVersion: 0,
     };
-
     const client = new mod.ApiMachineClient('fake-token', machine);
-    client.connect();
-    client.emitSessionEnd({ sid: 'session-1', time: 1234 });
+    const bindUsageLimitRecoveryJournals = vi.fn(async (sessionIds: readonly string[]) => ({
+      boundSessionIds: sessionIds,
+      retainedSessionIds: [],
+    }));
 
-    await vi.waitFor(() => {
-      expect(mockAxiosPost).toHaveBeenCalledWith(
-        'http://localhost:3005/v1/sessions/session-1/end',
-        { time: 1234 },
-        expect.any(Object),
-      );
+    try {
+      await expect(client.recoverDaemonTerminalSessionMutationJournals({
+        bindUsageLimitRecoveryJournals,
+      })).resolves.toEqual({
+        recoveredSessionIds: ['session-recovery-1'],
+        retainedSessionIds: [],
+      });
+      expect(bindUsageLimitRecoveryJournals).toHaveBeenCalledWith(['session-recovery-1']);
+      expect(bindUsageLimitRecoveryJournals).toHaveBeenCalledBefore(mockAxiosPost);
+      await expect(readFile(recoveryPaths.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await client.shutdown();
+      await rm(tempServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('retains a discovered daemon journal when quiescence begins while usage binding is in flight', async () => {
+    const tempServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-daemon-quiesced-binding-'));
+    configurationMock.activeServerDir = tempServerDir;
+    await mkdir(join(tempServerDir, 'session-mutations'), { recursive: true });
+    const payload = {
+      v: 1,
+      sessionId: 'session-quiesced-binding',
+      mutationId: 'daemon-quiesced-binding-exact-1',
+      action: 'end_session',
+      turnId: 'turn-quiesced-binding-1',
+      observedAt: 100,
+    } as const;
+    const recoveryPaths = resolveSessionClientDurableMutationJournalPaths({
+      activeServerDir: tempServerDir,
+      sessionId: payload.sessionId,
+      custody: 'daemon',
     });
-    await new Promise<void>((resolve) => {
-      setTimeout(resolve, 0);
+    await writeFile(recoveryPaths.queuePath, JSON.stringify({
+      v: 1,
+      mutations: [{
+        kind: 'session_turn_mutation',
+        mutationId: payload.mutationId,
+        payload,
+        createdAt: 100,
+        attempts: 0,
+        nextAttemptAt: 0,
+      }],
+    }));
+    const mod = await import('./apiMachine');
+    const client = new mod.ApiMachineClient('fake-token', {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    });
+    let quiescing = false;
+    let releaseBinding!: () => void;
+    const bindingGate = new Promise<void>((resolve) => { releaseBinding = resolve; });
+    const bindUsageLimitRecoveryJournals = vi.fn(async (sessionIds: readonly string[]) => {
+      await bindingGate;
+      return {
+        boundSessionIds: sessionIds,
+        retainedSessionIds: [],
+      };
     });
 
-    expect(machineSocket.emit).toHaveBeenCalledWith('session-end', { sid: 'session-1', time: 1234 });
-    expect(logger.warn).not.toHaveBeenCalled();
+    try {
+      const recovery = client.recoverDaemonTerminalSessionMutationJournals({
+        bindUsageLimitRecoveryJournals,
+        isShuttingDown: () => quiescing,
+      });
+      await vi.waitFor(() => expect(bindUsageLimitRecoveryJournals).toHaveBeenCalledOnce());
+      quiescing = true;
+      releaseBinding();
+      await expect(recovery).resolves.toEqual({
+        recoveredSessionIds: [],
+        retainedSessionIds: [],
+      });
+
+      expect(mockAxiosPost).not.toHaveBeenCalled();
+      await expect(readFile(recoveryPaths.queuePath, 'utf8')).resolves.toContain(payload.mutationId);
+    } finally {
+      await client.shutdown();
+      await rm(tempServerDir, { recursive: true, force: true });
+    }
+  });
+
+  it('finishes one admitted journal flush but starts no later journal after quiescence', async () => {
+    const tempServerDir = await mkdtemp(join(tmpdir(), 'happier-machine-daemon-quiesced-next-journal-'));
+    configurationMock.activeServerDir = tempServerDir;
+    await mkdir(join(tempServerDir, 'session-mutations'), { recursive: true });
+    const payloads = [
+      {
+        v: 1,
+        sessionId: 'session-quiesced-a',
+        mutationId: 'daemon-quiesced-a-exact-1',
+        action: 'end_session',
+        turnId: 'turn-quiesced-a-1',
+        observedAt: 100,
+      },
+      {
+        v: 1,
+        sessionId: 'session-quiesced-b',
+        mutationId: 'daemon-quiesced-b-exact-1',
+        action: 'end_session',
+        turnId: 'turn-quiesced-b-1',
+        observedAt: 101,
+      },
+    ] as const;
+    const recoveryPaths = payloads.map((payload) => resolveSessionClientDurableMutationJournalPaths({
+      activeServerDir: tempServerDir,
+      sessionId: payload.sessionId,
+      custody: 'daemon',
+    }));
+    for (const [index, payload] of payloads.entries()) {
+      await writeFile(recoveryPaths[index]!.queuePath, JSON.stringify({
+        v: 1,
+        mutations: [{
+          kind: 'session_turn_mutation',
+          mutationId: payload.mutationId,
+          payload,
+          createdAt: payload.observedAt,
+          attempts: 0,
+          nextAttemptAt: 0,
+        }],
+      }));
+    }
+    let quiescing = false;
+    let releaseFirstFlush!: () => void;
+    const firstFlushGate = new Promise<void>((resolve) => { releaseFirstFlush = resolve; });
+    mockAxiosPost.mockImplementation(async () => {
+      const callIndex = mockAxiosPost.mock.calls.length - 1;
+      const payload = payloads[callIndex]!;
+      if (callIndex === 0) {
+        quiescing = true;
+        await firstFlushGate;
+      }
+      return {
+        status: 200,
+        data: {
+          success: true,
+          receipt: {
+            ...payload,
+            decision: 'applied',
+            appliedAt: payload.observedAt + 1,
+          },
+        },
+      };
+    });
+    const mod = await import('./apiMachine');
+    const client = new mod.ApiMachineClient('fake-token', {
+      id: 'test-machine',
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    });
+
+    try {
+      const recovery = client.recoverDaemonTerminalSessionMutationJournals({
+        bindUsageLimitRecoveryJournals: async (sessionIds) => ({
+          boundSessionIds: sessionIds,
+          retainedSessionIds: [],
+        }),
+        isShuttingDown: () => quiescing,
+      });
+      await vi.waitFor(() => expect(mockAxiosPost).toHaveBeenCalled());
+      releaseFirstFlush();
+      await expect(recovery).resolves.toEqual({
+        recoveredSessionIds: ['session-quiesced-a'],
+        retainedSessionIds: [],
+      });
+
+      expect(mockAxiosPost).toHaveBeenCalledTimes(1);
+      await expect(readFile(recoveryPaths[0]!.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(recoveryPaths[1]!.queuePath, 'utf8')).resolves.toContain(payloads[1].mutationId);
+    } finally {
+      await client.shutdown();
+      await rm(tempServerDir, { recursive: true, force: true });
+    }
   });
 
   it('includes takeover auth when explicitly requested', async () => {
@@ -640,7 +792,7 @@ describe('ApiMachineClient transports', () => {
     expect(received).toEqual([envelope]);
   });
 
-  it('emits direct-session transcript delta updates over the machine-scoped socket', async () => {
+  it('emits content-free external-session invalidations over the machine-scoped socket', async () => {
     const machineSocket = createApiSessionSocketStub();
     bindApiSessionSocketMock(mockIo, machineSocket);
 
@@ -660,31 +812,30 @@ describe('ApiMachineClient transports', () => {
     client.connect();
 
     client.emitExternalSessionTranscriptUpdate({
-      type: 'direct-session-transcript-delta',
-      sessionId: 'session-1',
-      items: [
-        {
-          id: 'a2',
-          createdAtMs: 1_050,
-          localId: 'direct-2',
-          raw: {
-            type: 'assistant',
-            uuid: 'a2',
-            message: { model: 'm', content: [{ type: 'text', text: 'hello from push' }] },
+      v: 1,
+      type: 'external-session-transcript-invalidated',
+      binding: {
+        v: 1,
+        machineId: 'test-machine',
+        sessionId: 'session-1',
+        link: { generation: 'link-1', remoteSessionId: 'remote-1' },
+        source: {
+          qualifiedIdentity: {
+            v: 1,
+            agent: { pluginId: 'happier.claude', localId: 'claude' },
+            source: { kind: 'claudeConfig', contractVersion: 1 },
           },
+          generation: 'source-1',
         },
-      ],
-      nextCursor: 'cursor-2',
-      truncated: false,
+        contributionGeneration: 'contribution-1',
+        cursorIdentity: `external_session_cursor_binding_v1:${'a'.repeat(64)}`,
+      },
     });
 
-    expect(machineSocket.emit).toHaveBeenCalledWith('direct-session-transcript-delta', expect.objectContaining({
-      sessionId: 'session-1',
-      truncated: false,
-      items: expect.arrayContaining([
-        expect.objectContaining({ id: 'a2' }),
-      ]),
+    expect(machineSocket.emit).toHaveBeenCalledWith('external-session-transcript-invalidated', expect.objectContaining({
+      binding: expect.objectContaining({ sessionId: 'session-1' }),
     }));
+    expect(machineSocket.emit.mock.calls.at(-1)?.[1]).not.toHaveProperty('items');
   });
 
   it('forwards voice inference workers into machine RPC registration', async () => {
@@ -716,6 +867,19 @@ describe('ApiMachineClient transports', () => {
       warmModelPack: vi.fn(async () => {}),
       installModel: vi.fn(async () => ({
         packId: 'stt-pack',
+        pluginIdentity: null,
+        kind: 'stt_sherpa' as const,
+        model: 'sherpa',
+        version: '1',
+        executionSupport: ['daemon' as const],
+        installState: 'installed' as const,
+        progress: null,
+        lastError: null,
+        updatedAtMs: 0,
+      })),
+      acceptModelPackLicense: vi.fn(async () => ({
+        packId: 'stt-pack',
+        pluginIdentity: null,
         kind: 'stt_sherpa' as const,
         model: 'sherpa',
         version: '1',
@@ -740,6 +904,9 @@ describe('ApiMachineClient transports', () => {
         language: 'en',
         modelPackId: 'stt-pack',
       })),
+      createStreamingTranscriptionSession: vi.fn(async () => {
+        throw Object.assign(new Error('streaming runtime unavailable'), { code: 'runtime_unavailable' });
+      }),
       cancelStt: vi.fn(async () => {}),
     };
 
@@ -756,6 +923,94 @@ describe('ApiMachineClient transports', () => {
         voiceInference,
       }),
     }));
+  });
+
+  it('projects canonical update-session archive state into machine RPC lifecycle dependencies', async () => {
+    const machineSocket = createApiSessionSocketStub();
+    bindApiSessionSocketMock(mockIo, machineSocket);
+    const mod = await import('./apiMachine');
+    const machine: Machine = {
+      id: 'machine-archive-state',
+      encryptionKey: new Uint8Array(32).fill(1),
+      encryptionVariant: 'legacy',
+      metadata: null,
+      metadataVersion: 0,
+      daemonState: null,
+      daemonStateVersion: 0,
+    };
+    const client = new mod.ApiMachineClient('fake-token', machine);
+    client.setRPCHandlers({
+      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+      stopSession: async () => true,
+      requestShutdown: () => {},
+    });
+
+    const registration = registerMachineRpcHandlersMock.mock.calls[0]![0] as Readonly<{
+      deps: Readonly<{
+        subscribeSessionArchivedStateChanges(
+          listener: (change: Readonly<{
+            sessionId: string;
+            archived: boolean;
+          }>) => void,
+        ): () => void;
+      }>;
+    }>;
+    const listener = vi.fn();
+    const unsubscribe = registration.deps.subscribeSessionArchivedStateChanges(listener);
+    client.connect();
+
+    machineSocket.getHandler('update')?.({
+      id: 'update-session-without-archive-state',
+      seq: 1,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'session-metadata-only',
+        metadata: 'encrypted-metadata',
+      },
+    } as never);
+    machineSocket.getHandler('update')?.({
+      id: 'update-archive',
+      seq: 2,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'session-archived',
+        archivedAt: 123,
+      },
+    } as never);
+    machineSocket.getHandler('update')?.({
+      id: 'update-unarchive',
+      seq: 3,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'session-archived',
+        archivedAt: null,
+      },
+    } as never);
+
+    expect(listener).toHaveBeenNthCalledWith(1, {
+      sessionId: 'session-archived',
+      archived: true,
+    });
+    expect(listener).toHaveBeenNthCalledWith(2, {
+      sessionId: 'session-archived',
+      archived: false,
+    });
+
+    unsubscribe();
+    machineSocket.getHandler('update')?.({
+      id: 'update-after-unsubscribe',
+      seq: 4,
+      createdAt: Date.now(),
+      body: {
+        t: 'update-session',
+        id: 'session-after-unsubscribe',
+        archivedAt: 456,
+      },
+    } as never);
+    expect(listener).toHaveBeenCalledTimes(2);
   });
 
 });

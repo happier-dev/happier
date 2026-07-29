@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type BackendTargetRefV1,
   ReviewFindingsV1Schema,
   ReviewFindingsV2Schema,
   ReviewFollowUpInputSchema,
@@ -23,9 +24,22 @@ import type {
   ExecutionRunState,
 } from './executionRunTypes';
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
+import type {
+  ReviewCommentHostActionCandidate,
+  ReviewCommentHostActionMaterializationResult,
+} from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
 
 function readNonEmptyString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function backendTargetsEqual(left: BackendTargetRefV1, right: BackendTargetRefV1): boolean {
+  if (left.kind !== right.kind) return false;
+  return left.kind === 'builtInAgent' && right.kind === 'builtInAgent'
+    ? left.agentId === right.agentId
+    : left.kind === 'configuredAcpBackend' && right.kind === 'configuredAcpBackend'
+      ? left.backendId === right.backendId
+      : false;
 }
 
 export async function applyExecutionRunAction(args: Readonly<{
@@ -44,6 +58,9 @@ export async function applyExecutionRunAction(args: Readonly<{
   parentProvider: ACPProvider;
   onVoiceAgentWelcomed?: (runId: string, welcomedEpoch: number) => Promise<void> | void;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
+  materializeReviewHostAction?: (
+    readCurrentCandidate: () => ReviewCommentHostActionCandidate | null,
+  ) => Promise<ReviewCommentHostActionMaterializationResult>;
 }>): Promise<ExecutionRunActionResult> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
@@ -185,6 +202,65 @@ export async function applyExecutionRunAction(args: Readonly<{
   const profile = args.profileCatalog
     ? resolveExecutionRunIntentProfileFromCatalog(args.profileCatalog, run.intent, run.profileId)
     : resolveExecutionRunIntentProfile(run.intent);
+  const availableActionIds = profile.listAvailableActionIds?.({
+    start: buildExecutionRunProfileStartParams(run),
+    structuredMeta: run.structuredMeta ?? null,
+    controllerKind: args.controllers.get(args.runId)?.kind ?? null,
+  }) ?? [];
+  if (run.status !== 'succeeded' && args.params.actionId === 'reviews.comments.create') {
+    return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Review comment proposals are not available for an incomplete run' };
+  }
+  if (!availableActionIds.includes(args.params.actionId)) {
+    return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Action is not available for this run' };
+  }
+  if (args.params.actionId === 'reviews.comments.create') {
+    if (!args.materializeReviewHostAction || !args.profileCatalog) {
+      return { ok: false, errorCode: 'execution_run_host_action_unavailable', error: 'Review host-action materialization is unavailable' };
+    }
+    const readCurrentCandidate = (): ReviewCommentHostActionCandidate | null => {
+      const current = args.runs.get(args.runId);
+      if (!current || current.status !== 'succeeded' || current.intent !== 'review') return null;
+      const profileId = typeof current.profileId === 'string' ? current.profileId.trim() : '';
+      if (!profileId) return null;
+      const descriptor = args.profileCatalog?.profileDescriptorsById.get(profileId) ?? null;
+      if (!descriptor?.pluginId || !descriptor.definition.actions?.some(
+        (action) => action.kind === 'hostAction' && action.actionId === 'reviews.comments.create',
+      )) return null;
+      const retained = current.structuredMeta?.kind === 'review_findings.v2'
+        ? ReviewFindingsV2Schema.safeParse(current.structuredMeta.payload)
+        : null;
+      if (!retained?.success
+        || retained.data.runRef.runId !== current.runId
+        || retained.data.runRef.callId !== current.callId
+        || retained.data.runRef.backendId !== current.backendId
+        || (retained.data.runRef.backendTarget
+          && !backendTargetsEqual(retained.data.runRef.backendTarget, current.backendTarget))
+        || !retained.data.proposedComments?.length) return null;
+      return Object.freeze({
+        actionId: 'reviews.comments.create',
+        sessionId: current.sessionId,
+        runId: current.runId,
+        callId: current.callId,
+        profileId,
+        pluginId: descriptor.pluginId,
+        agentId: current.backendId,
+        proposals: retained.data.proposedComments,
+      });
+    };
+    let materialized: ReviewCommentHostActionMaterializationResult;
+    try {
+      materialized = await args.materializeReviewHostAction(readCurrentCandidate);
+    } catch {
+      return {
+        ok: false,
+        errorCode: 'execution_run_host_action_failed',
+        error: 'Review host-action materialization failed',
+      };
+    }
+    return materialized.ok
+      ? { ok: true, result: materialized.result }
+      : materialized;
+  }
   if (!profile.applyAction) {
     return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Unsupported action' };
   }

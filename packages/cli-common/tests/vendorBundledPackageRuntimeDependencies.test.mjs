@@ -94,6 +94,35 @@ test('vendorBundledPackageRuntimeDependencies vendors transitive external depend
   }
 });
 
+test('vendorBundledPackageRuntimeDependencies removes an empty runtime dependency directory', async () => {
+  const tempRoot = mkdtempSync(join(tmpdir(), 'cli-common-vendor-empty-runtime-deps-'));
+  try {
+    const srcPackageDir = join(tempRoot, 'packages', 'plugins-review');
+    const destPackageDir = join(tempRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-review');
+    const srcPackageJsonPath = join(srcPackageDir, 'package.json');
+
+    mkdirSync(srcPackageDir, { recursive: true });
+    mkdirSync(join(destPackageDir, 'node_modules'), { recursive: true });
+    writeFileSync(
+      srcPackageJsonPath,
+      `${JSON.stringify({
+        name: '@happier-dev/plugins-review',
+        version: '0.0.0',
+        type: 'module',
+        dependencies: {},
+      }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const workspaces = await import('../dist/workspaces/index.js');
+    workspaces.vendorBundledPackageRuntimeDependencies({ srcPackageJsonPath, destPackageDir });
+
+    assert.equal(existsSync(join(destPackageDir, 'node_modules')), false);
+  } finally {
+    rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('rmDirSafeSync retries transient ENOTEMPTY errors before removing a directory', async () => {
   const workspaces = await import('../dist/workspaces/index.js');
   assert.equal(typeof workspaces.rmDirSafeSync, 'function');

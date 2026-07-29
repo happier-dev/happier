@@ -1,4 +1,5 @@
-import { readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,7 +29,6 @@ import { SessionHostBridge } from './SessionHostBridge';
 function createRuntimeTurnOperations() {
   return {
     beginTurnLifecycle: vi.fn(),
-    startOrLoadSession: vi.fn(async () => undefined),
     sendTurnPrompt: vi.fn(async () => undefined),
     steerInFlightTurn: vi.fn(async () => undefined),
     waitForTurnCompletion: vi.fn(async () => undefined),
@@ -51,6 +51,12 @@ const forbiddenExecutionSurfaceResolvers = [
   'resolveBackendExecutionSurfaces',
   'resolveBackendEngineAdapterResolution',
   'resolveCliEngineRegistry',
+] as const;
+const retiredProcessGlobalExternalSessionHostOperationSymbols = [
+  'installExternalSessionFollowHostOperation',
+  'readExternalSessionFollowHostOperation',
+  'installExternalSessionTakeoverHostOperation',
+  'readExternalSessionTakeoverHostOperation',
 ] as const;
 
 async function listProductionTypeScriptFiles(root: string): Promise<string[]> {
@@ -227,6 +233,22 @@ describe('SessionHostBridge execution surfaces', () => {
     expect(violations).toEqual([]);
   });
 
+  it('keeps External Session host operations out of process-global installation stacks', async () => {
+    const violations: string[] = [];
+    const files = await listProductionTypeScriptFiles(cliSourceRoot);
+
+    for (const file of files) {
+      const source = await readFile(file, 'utf8');
+      for (const symbol of retiredProcessGlobalExternalSessionHostOperationSymbols) {
+        if (source.includes(symbol)) {
+          violations.push(`${relative(cliSourceRoot, file)} contains ${symbol}`);
+        }
+      }
+    }
+
+    expect(violations).toEqual([]);
+  });
+
   it('creates a canonical host session plan through runtimeCore for the requested backend', async () => {
     const createdPlan = {
       kind: 'hostSessionRuntimePlan',
@@ -333,7 +355,6 @@ describe('SessionHostBridge execution surfaces', () => {
       messages.push(message);
     });
 
-    await createdRuntime.operations.startOrLoadSession();
     unsubscribe();
 
     expect(messages).toEqual([
@@ -451,12 +472,189 @@ describe('SessionHostBridge execution surfaces', () => {
       localServicesRuntime: expect.objectContaining({
         createPluginLocalServicesBridge: expect.any(Function),
       }),
+      requireDaemonAgentRuntimeCarrier: true,
     });
     expect(createSessionRuntime).toHaveBeenCalledWith({
       cwd: '/tmp/session',
       happyHomeDir: '/tmp/happy-home',
       startedBy: 'daemon',
     });
+  });
+
+  it('threads the matching daemon token-file runtime carrier through the child session entrypoint', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-session-host-carrier-'));
+    const tokenFilePath = join(root, 'carrier.json');
+    const envKey = 'HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE';
+    const previousTokenFilePath = process.env[envKey];
+    const descriptor = {
+      v: 1 as const,
+      pluginId: 'happier.agent.acme',
+      pluginVersion: '1.0.0',
+      agentId: 'acme',
+      backendId: 'acme.sample.backend',
+      generation: 'generation-1',
+      runtimeAuthority: {
+        permissions: ['session.hooks.control'],
+        runtimeCapabilities: ['sessionHooks'],
+      },
+      runtimeSurfaces: {
+        terminal: true,
+      },
+      factoryControls: {
+        continuation: false,
+        goals: false,
+        catalog: false,
+        usageLimitRecovery: false,
+      },
+    };
+    await writeFile(tokenFilePath, `${JSON.stringify({
+      v: 1,
+      token: 'child-private-token',
+      descriptor,
+    })}\n`, 'utf8');
+    process.env[envKey] = tokenFilePath;
+
+    const createdPlan = {
+      kind: 'hostSessionRuntimePlan',
+      agentId: descriptor.agentId,
+      opts: { cwd: '/tmp/session' },
+      config: {},
+    };
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      provenance: 'first_party',
+      diagnostics: [],
+      engineAdapter: {
+        runtimeCore: {
+          createSessionRuntime: vi.fn(async () => createdPlan),
+        },
+      },
+    });
+
+    try {
+      const bridge = new SessionHostBridge();
+      await expect(bridge.createSessionRuntime(descriptor.backendId, {
+        cwd: '/tmp/session',
+        startedBy: 'daemon',
+      })).resolves.toEqual(createdPlan);
+      expect(resolveBackendEngineAdapterResolutionMock).toHaveBeenCalledWith(
+        descriptor.backendId,
+        expect.objectContaining({
+          requireDaemonAgentRuntimeCarrier: true,
+          nativeAgentRuntimeCarrier: expect.objectContaining({
+            descriptor,
+            runtime: expect.objectContaining({
+              sessions: expect.objectContaining({ open: expect.any(Function) }),
+              surfaces: {
+                terminal: {
+                  resolveLaunch: expect.any(Function),
+                },
+              },
+            }),
+            externalSessionHostOperations: expect.objectContaining({
+              bindSession: expect.any(Function),
+            }),
+            isCurrent: expect.any(Function),
+          }),
+        }),
+      );
+    } finally {
+      if (previousTokenFilePath === undefined) delete process.env[envKey];
+      else process.env[envKey] = previousTokenFilePath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('threads an admitted foreground token-file runtime carrier without changing terminal session params', async () => {
+    const root = await mkdtemp(
+      join(tmpdir(), 'happier-session-host-foreground-carrier-'),
+    );
+    const tokenFilePath = join(root, 'carrier.json');
+    const descriptor = {
+      v: 1 as const,
+      pluginId: 'happier.agent.acme',
+      pluginVersion: '1.0.0',
+      agentId: 'acme',
+      backendId: 'acme.sample.backend',
+      generation: 'generation-1',
+      runtimeAuthority: {
+        permissions: ['session.hooks.control'],
+        runtimeCapabilities: ['sessionHooks'],
+      },
+      runtimeSurfaces: {
+        terminal: true,
+      },
+      factoryControls: {
+        continuation: false,
+        goals: false,
+        catalog: false,
+        usageLimitRecovery: false,
+      },
+    };
+    await writeFile(tokenFilePath, `${JSON.stringify({
+      v: 1,
+      token: 'foreground-private-token',
+      descriptor,
+    })}\n`, 'utf8');
+    const sessionParams = {
+      cwd: '/tmp/session',
+      startedBy: 'terminal',
+      resume: 'agent-session-1',
+    };
+    const createdPlan = {
+      kind: 'hostSessionRuntimePlan',
+      agentId: descriptor.agentId,
+      opts: sessionParams,
+      config: {},
+    };
+    const createSessionRuntime = vi.fn(async () => createdPlan);
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      provenance: 'first_party',
+      diagnostics: [],
+      engineAdapter: {
+        runtimeCore: {
+          createSessionRuntime,
+        },
+      },
+    });
+
+    try {
+      const bridge = new SessionHostBridge();
+      await expect(bridge.runSessionCommand(
+        descriptor.backendId,
+        sessionParams,
+        {
+          agentRuntimeDaemonBridgeTokenFilePath: tokenFilePath,
+        },
+      )).resolves.toBeUndefined();
+      expect(resolveBackendEngineAdapterResolutionMock).toHaveBeenCalledWith(
+        descriptor.backendId,
+        expect.objectContaining({
+          requireDaemonAgentRuntimeCarrier: true,
+          nativeAgentRuntimeCarrier: expect.objectContaining({
+            descriptor,
+            runtime: expect.objectContaining({
+              sessions: expect.objectContaining({ open: expect.any(Function) }),
+            }),
+          }),
+        }),
+      );
+      expect(runHostSessionRuntimePlanMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          deps: expect.objectContaining({
+            sessionLoopLifecycleDeps: expect.objectContaining({
+              daemonTurnContributionsBridge: expect.objectContaining({
+                resolvePrompt: expect.any(Function),
+                transformAgentContext: expect.any(Function),
+                transformSessionInput: expect.any(Function),
+              }),
+            }),
+          }),
+        }),
+      );
+      expect(createSessionRuntime).toHaveBeenCalledWith(sessionParams);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('rejects raw runtime turn operations as a bridge return shape', async () => {
@@ -502,5 +700,67 @@ describe('SessionHostBridge execution surfaces', () => {
     expect(resolveBackendEngineAdapterResolutionMock).toHaveBeenCalledWith('acme.sample.backend', undefined);
     expect(createSessionRuntime).toHaveBeenCalledWith({ cwd: '/tmp/session', resume: 'resume-1' });
     expect(runHostSessionRuntimePlanMock).toHaveBeenCalledWith(createdPlan);
+  });
+
+  it('runs final commit revalidation after plan construction and before runtime execution', async () => {
+    const events: string[] = [];
+    const createdPlan = {
+      kind: 'hostSessionRuntimePlan',
+      agentId: 'acme.sample.backend',
+      opts: { cwd: '/tmp/session' },
+      config: {},
+    };
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      provenance: 'first_party',
+      diagnostics: [],
+      engineAdapter: {
+        runtimeCore: {
+          createSessionRuntime: async () => {
+            events.push('plan-created');
+            return createdPlan;
+          },
+        },
+      },
+    });
+    runHostSessionRuntimePlanMock.mockImplementation(async () => {
+      events.push('runtime-started');
+    });
+    const bridge = new SessionHostBridge();
+
+    await bridge.runSessionCommand(
+      'acme.sample.backend',
+      { cwd: '/tmp/session' },
+      {
+        beforeRuntimePlanCommit: async () => {
+          events.push('commit-revalidated');
+        },
+      },
+    );
+
+    expect(events).toEqual(['plan-created', 'commit-revalidated', 'runtime-started']);
+  });
+
+  it('does not execute a runtime plan when final commit revalidation refuses', async () => {
+    const createdPlan = {
+      kind: 'hostSessionRuntimePlan',
+      agentId: 'acme.sample.backend',
+      opts: { cwd: '/tmp/session' },
+      config: {},
+    };
+    resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
+      provenance: 'first_party',
+      diagnostics: [],
+      engineAdapter: {
+        runtimeCore: { createSessionRuntime: async () => createdPlan },
+      },
+    });
+    const bridge = new SessionHostBridge();
+
+    await expect(bridge.runSessionCommand(
+      'acme.sample.backend',
+      { cwd: '/tmp/session' },
+      { beforeRuntimePlanCommit: async () => { throw new Error('authorization changed'); } },
+    )).rejects.toThrow('authorization changed');
+    expect(runHostSessionRuntimePlanMock).not.toHaveBeenCalled();
   });
 });

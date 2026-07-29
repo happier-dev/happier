@@ -27,8 +27,8 @@ describe('prepareDeferredDirectPeerStart', () => {
     const sourceExportStoreSave = vi.fn(async () => undefined);
     const waitForPersistedSourceExport = vi.fn(async () => null);
     const exportSessionBundle = vi.fn(async () => ({
-      providerBundle: {
-        providerId: 'claude',
+      agentBundle: {
+        agentId: 'claude',
         remoteSessionId: 'claude_session_source',
         transcriptBase64: Buffer.from('{}', 'utf8').toString('base64'),
       } as const,
@@ -39,6 +39,7 @@ describe('prepareDeferredDirectPeerStart', () => {
     const recordDeferredStartFailure = vi.fn();
 
     const prepared = await prepareDeferredDirectPeerStart({
+      activeServerDir: '/tmp/happier-session-handoff-deferred-direct-peer-test',
       handoffId: 'handoff_deferred_direct_peer_no_workspace',
       request,
       metadata: {
@@ -57,8 +58,8 @@ describe('prepareDeferredDirectPeerStart', () => {
       },
       deferredHandoffMetadataV2,
       sourceExportStore: {
-        writeProviderBundleFile: vi.fn(async () => {
-          throw new Error('writeProviderBundleFile should not be called for carrier direct-peer fallback path');
+        writeAgentBundleFile: vi.fn(async () => {
+          throw new Error('writeAgentBundleFile should not be called for carrier direct-peer fallback path');
         }),
         save: sourceExportStoreSave,
       },
@@ -67,10 +68,14 @@ describe('prepareDeferredDirectPeerStart', () => {
       prepareStartedState,
       resolveSourceStopState,
       recordDeferredStartFailure,
+      claimMaintenance: {
+        throwIfLost: () => undefined,
+        race: async <T>(startEffect: () => T | PromiseLike<T>) => await startEffect(),
+      } as never,
     });
 
     expect(prepared.deferredStartEndpointCandidates.length).toBeGreaterThan(0);
-    expect(deferredHandoffMetadataV2.providerBundleTransferPublication?.endpointCandidates?.length).toBeGreaterThan(0);
+    expect(deferredHandoffMetadataV2.agentBundleTransferPublication?.endpointCandidates?.length).toBeGreaterThan(0);
 
     await prepared.deferredStartWorkPromise;
     expect(recordDeferredStartFailure).not.toHaveBeenCalled();

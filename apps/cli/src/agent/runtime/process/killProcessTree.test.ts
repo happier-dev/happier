@@ -1,15 +1,32 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const psListState = vi.hoisted(() => ({
+  actual: null as null | (() => Promise<unknown[]>),
+  mock: vi.fn<() => Promise<unknown[]>>(),
+}));
+
+vi.mock('ps-list', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('ps-list')>();
+  psListState.actual = actual.default;
+  psListState.mock.mockImplementation(actual.default);
+  return { default: psListState.mock };
+});
 
 import {
   isPidAlive,
   spawnDetachedInlineNodeTestProcess,
   spawnInlineNodeParentWithChild,
+  spawnInlineNodeTestProcess,
   waitForProcessExit,
 } from '@/testkit/process/spawn';
 import { killProcessTree } from './killProcessTree';
+
+afterEach(() => {
+  if (psListState.actual) psListState.mock.mockImplementation(psListState.actual);
+});
 
 async function waitForPidFile(filePath: string, opts: { timeoutMs: number }): Promise<number> {
   const start = Date.now();
@@ -27,6 +44,42 @@ async function waitForPidFile(filePath: string, opts: { timeoutMs: number }): Pr
 }
 
 describe('killProcessTree', () => {
+  it('delegates Windows subtree termination to the canonical taskkill boundary', async () => {
+    const platformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    if (!platformDescriptor) throw new Error('Expected process.platform to be configurable');
+    const child = spawnDetachedInlineNodeTestProcess('setInterval(() => {}, 1000)', {
+      stdio: 'ignore',
+    });
+    const terminateWindowsTree = vi.fn(async () => {});
+
+    try {
+      Object.defineProperty(process, 'platform', { ...platformDescriptor, value: 'win32' });
+      await killProcessTree(child, { graceMs: 25, terminateWindowsTree });
+      expect(terminateWindowsTree).toHaveBeenNthCalledWith(1, {
+        pid: child.pid,
+        force: false,
+      });
+      expect(terminateWindowsTree).toHaveBeenNthCalledWith(2, {
+        pid: child.pid,
+        force: true,
+      });
+    } finally {
+      Object.defineProperty(process, 'platform', platformDescriptor);
+      if (child.pid) {
+        try {
+          process.kill(-child.pid, 'SIGKILL');
+        } catch {
+          // ignore
+        }
+        try {
+          process.kill(child.pid, 'SIGKILL');
+        } catch {
+          // ignore
+        }
+      }
+    }
+  }, 20_000);
+
   it('kills the root process in the Vitest process sandbox (posix)', async () => {
     if (process.platform === 'win32') return;
 
@@ -52,6 +105,85 @@ describe('killProcessTree', () => {
       } catch {
         // ignore
       }
+    }
+  }, 20_000);
+
+  it('bounds a stalled descendant census for a non-detached subprocess (posix)', async () => {
+    if (process.platform === 'win32') return;
+
+    const child = spawnInlineNodeTestProcess('setInterval(() => {}, 1000)', {
+      stdio: 'ignore',
+    });
+    let hasOwnProcessGroup = true;
+    try {
+      process.kill(-child.pid!, 0);
+    } catch {
+      hasOwnProcessGroup = false;
+    }
+    expect(hasOwnProcessGroup).toBe(false);
+
+    psListState.mock.mockImplementation(() => new Promise<unknown[]>(() => {}));
+    try {
+      const outcome = await Promise.race([
+        killProcessTree(child, { graceMs: 100 }).then(() => 'completed' as const),
+        new Promise<'timedOut'>((resolve) => {
+          setTimeout(() => resolve('timedOut'), 1_500);
+        }),
+      ]);
+
+      expect(outcome).toBe('completed');
+      expect(isPidAlive(child.pid!)).toBe(false);
+    } finally {
+      try {
+        process.kill(child.pid!, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+    }
+  }, 20_000);
+
+  it('force-kills a TERM-resistant direct child when the descendant census stalls (posix)', async () => {
+    if (process.platform === 'win32') return;
+
+    const tempDir = mkdtempSync(join(tmpdir(), 'happier-kill-tree-stalled-census-'));
+    const readyFile = join(tempDir, 'child.ready');
+    const { parent, childPid } = await spawnInlineNodeParentWithChild(
+      [
+        'const fs = require("node:fs");',
+        'process.on("SIGTERM", () => {});',
+        `fs.writeFileSync(${JSON.stringify(readyFile)}, String(process.pid));`,
+        'setInterval(() => {}, 1000);',
+      ].join('\n'),
+    );
+
+    await waitForPidFile(readyFile, { timeoutMs: 2_000 });
+    psListState.mock.mockImplementation(() => new Promise<unknown[]>(() => {}));
+
+    try {
+      const outcome = await Promise.race([
+        killProcessTree(parent, { graceMs: 100 }).then(() => 'completed' as const),
+        new Promise<'timedOut'>((resolve) => {
+          setTimeout(() => resolve('timedOut'), 1_500);
+        }),
+      ]);
+
+      expect(outcome).toBe('completed');
+      if (psListState.actual) psListState.mock.mockImplementation(psListState.actual);
+      await expect(waitForProcessExit(parent.pid!, { timeoutMs: 3_000 })).resolves.toBe(true);
+      await expect(waitForProcessExit(childPid, { timeoutMs: 3_000 })).resolves.toBe(true);
+    } finally {
+      if (psListState.actual) psListState.mock.mockImplementation(psListState.actual);
+      try {
+        process.kill(parent.pid!, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+      try {
+        process.kill(childPid, 'SIGKILL');
+      } catch {
+        // ignore
+      }
+      rmSync(tempDir, { recursive: true, force: true });
     }
   }, 20_000);
 

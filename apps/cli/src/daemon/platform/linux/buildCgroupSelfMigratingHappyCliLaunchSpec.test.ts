@@ -42,4 +42,40 @@ describe('buildCgroupSelfMigratingHappyCliLaunchSpec', () => {
     expect(shellScript).toContain('exec "$@"');
     expect(shellScript).toContain('|| true');
   });
+
+  it('wraps the admitted immutable runner decision without recomputing the child entrypoint', async () => {
+    sandboxDir = await mkdtemp(join(tmpdir(), 'happier-cgroup-immutable-launch-spec-'));
+    const procfsRootDir = join(sandboxDir, 'proc');
+    const daemonProcDir = join(procfsRootDir, '222');
+    await mkdir(daemonProcDir, { recursive: true });
+    await writeFile(
+      join(daemonProcDir, 'cgroup'),
+      '0::/user.slice/user-501.slice/user@501.service/app.slice/happier-daemon.default.service\n',
+      'utf8',
+    );
+    const immutableEntrypoint = '/runtime/.runner-snapshots/0123456789abcdef/index.mjs';
+
+    const result = await buildCgroupSelfMigratingHappyCliLaunchSpec({
+      args: ['codex', '--happy-terminal-mode', 'plain'],
+      daemonPid: 222,
+      procfsRootDir,
+      launchOptions: {
+        runtimeDecision: {
+          runtime: 'node',
+          argvPrefix: ['--no-warnings', '--no-deprecation', immutableEntrypoint],
+          env: { HAPPIER_TEST_ADMITTED_CLOSURE: '0123456789abcdef' },
+        },
+      },
+    });
+
+    expect(result?.args).toEqual(expect.arrayContaining([
+      immutableEntrypoint,
+      'codex',
+      '--happy-terminal-mode',
+      'plain',
+    ]));
+    expect(result?.env).toMatchObject({
+      HAPPIER_TEST_ADMITTED_CLOSURE: '0123456789abcdef',
+    });
+  });
 });

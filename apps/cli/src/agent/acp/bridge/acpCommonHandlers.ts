@@ -1,4 +1,4 @@
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { MessageBuffer } from '@/ui/ink/messageBuffer';
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
 

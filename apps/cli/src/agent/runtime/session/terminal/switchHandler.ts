@@ -1,8 +1,8 @@
 import type {
-    TerminalRuntimeSwitchHandlerServiceV1,
-    TerminalRuntimeSwitchRequestV1,
-    TerminalRuntimeSwitchTargetV1,
-} from '@happier-dev/agents';
+    HostTerminalSwitchHandlerService,
+    HostTerminalSwitchRequest,
+    HostTerminalSwitchTarget,
+} from './contract';
 
 type RpcSwitchRegistrar = Readonly<{
     registerHandler(
@@ -11,7 +11,7 @@ type RpcSwitchRegistrar = Readonly<{
     ): void;
 }>;
 
-function readSwitchTarget(request: unknown): TerminalRuntimeSwitchTargetV1 {
+function readSwitchTarget(request: unknown): HostTerminalSwitchTarget {
     const record = request && typeof request === 'object' && !Array.isArray(request)
         ? request as Record<string, unknown>
         : {};
@@ -25,7 +25,7 @@ function readSwitchTarget(request: unknown): TerminalRuntimeSwitchTargetV1 {
     return 'unknown';
 }
 
-function sanitizeSwitchRequest(request: unknown): TerminalRuntimeSwitchRequestV1 {
+function sanitizeSwitchRequest(request: unknown): HostTerminalSwitchRequest {
     return Object.freeze({
         target: readSwitchTarget(request),
     });
@@ -33,7 +33,7 @@ function sanitizeSwitchRequest(request: unknown): TerminalRuntimeSwitchRequestV1
 
 export function createTerminalRuntimeSwitchHandlerService(params: Readonly<{
     registerHandler: RpcSwitchRegistrar['registerHandler'];
-}>): TerminalRuntimeSwitchHandlerServiceV1 {
+}>): HostTerminalSwitchHandlerService {
     let active = false;
 
     return Object.freeze({

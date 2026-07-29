@@ -28,16 +28,11 @@ export {
 } from './updates/messages';
 
 export {
-  formatDuration,
-  formatDurationMinutes,
   markToolCallRunningAfterPermission,
   markToolCallWaitingForPermission,
-  startToolCall,
-  completeToolCall,
-  failToolCall,
   handleToolCallUpdate,
   handleToolCall,
-} from './updates/toolCalls';
+} from './toolCalls/legacy/handlers';
 
 export {
   handleAvailableCommandsUpdate,

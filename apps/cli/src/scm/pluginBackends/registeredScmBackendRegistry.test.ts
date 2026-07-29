@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os';
 import { mkdtempSync } from 'node:fs';
 
 import type {
-    ScmBackendContribution,
+    ScmBackendCapabilities,
     ScmWorktreesEnrichmentRequest,
 } from '@happier-dev/protocol';
+import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol';
 import type {
     ScmBackendRuntimeHandlerInput,
     ScmBackendRuntimeRegistration,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import { readCurrentScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import { createRegisteredScmBackendRegistry } from './registeredScmBackendRegistry';
@@ -30,7 +31,7 @@ function createCapabilities(input?: Readonly<{
     workspaceCheckoutMaterialization?: 'supported' | 'unsupported';
     lifecycleClone?: 'supported' | 'unsupported';
     pullRequestRead?: 'supported' | 'unsupported';
-}>): ScmBackendContribution['capabilities'] {
+}>): ScmBackendCapabilities {
     const supported = { support: 'supported' } as const;
     const unsupported = { support: 'unsupported', reason: 'not_implemented' } as const;
 
@@ -137,8 +138,8 @@ function createCapabilities(input?: Readonly<{
 }
 
 function createDefinition(input?: Readonly<{
-    capabilities?: ScmBackendContribution['capabilities'];
-}>): ScmBackendContribution {
+    capabilities?: ScmBackendCapabilities;
+}>) {
     return {
         id: 'acme-vcs',
         displayName: 'Acme VCS',
@@ -159,6 +160,159 @@ function createDefinition(input?: Readonly<{
 }
 
 describe('registered SCM backend registry', () => {
+    it('keeps same-local-id backends from distinct plugins independently selectable', () => {
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' }),
+                },
+                read: {
+                    statusSnapshot: async () => ({ success: true }),
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: ['one', 'two'].map((suffix) => ({
+                pluginId: `acme.scm.${suffix}`,
+                contributionId: 'acme-vcs',
+                definition: createDefinition(),
+            })),
+            registrations: ['one', 'two'].map((suffix) => ({
+                pluginId: `acme.scm.${suffix}`,
+                registration,
+            })),
+        });
+
+        expect(resolved.diagnostics).toEqual([]);
+        expect(resolved.backends.map((backend) => backend.id)).toEqual([
+            'acme.scm.one/acme-vcs',
+            'acme.scm.two/acme-vcs',
+        ]);
+    });
+
+    it('projects the selected qualified backend identity through describe and status responses', async () => {
+        const capabilities = createCapabilities();
+        const registration: ScmBackendRuntimeRegistration = {
+            id: 'acme-vcs',
+            handlers: {
+                detection: {
+                    detectRepo: async () => ({ isRepo: true, rootPath: '/repo', mode: '.git' }),
+                    describeBackend: async () => ({
+                        success: true,
+                        backendId: 'acme-vcs',
+                        repoMode: '.git',
+                        isRepo: true,
+                    }),
+                },
+                read: {
+                    statusSnapshot: async () => ({
+                        success: true,
+                        snapshot: {
+                            projectKey: 'acme-vcs:/repo',
+                            fetchedAt: 1,
+                            repo: {
+                                isRepo: true,
+                                rootPath: '/repo',
+                                backendId: 'acme-vcs',
+                                mode: '.git',
+                                worktrees: [],
+                                remotes: [],
+                            },
+                            capabilities: createScmCapabilitiesFromBackendCapabilities(capabilities),
+                            branch: {
+                                head: 'main',
+                                upstream: null,
+                                ahead: 0,
+                                behind: 0,
+                                detached: false,
+                            },
+                            hasConflicts: false,
+                            entries: [],
+                            totals: {
+                                includedFiles: 0,
+                                pendingFiles: 0,
+                                untrackedFiles: 0,
+                                includedAdded: 0,
+                                includedRemoved: 0,
+                                pendingAdded: 0,
+                                pendingRemoved: 0,
+                            },
+                        },
+                    }),
+                    diffFile: async () => ({ success: true, diff: '' }),
+                },
+            },
+        };
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.backend',
+                contributionId: 'acme-vcs',
+                definition: createDefinition({ capabilities }),
+            }],
+            registrations: [{
+                pluginId: 'acme.scm.backend',
+                registration,
+            }],
+        });
+        const backend = resolved.backends[0];
+        if (!backend) throw new Error('Expected registered backend');
+        const context = {
+            cwd: '/repo',
+            projectKey: 'acme-vcs:/repo',
+            detection: { isRepo: true, rootPath: '/repo', mode: '.git' as const },
+        };
+
+        await expect(backend.describeBackend({
+            context,
+            request: { cwd: '/repo' },
+        })).resolves.toMatchObject({
+            success: true,
+            backendId: 'acme.scm.backend/acme-vcs',
+        });
+        await expect(backend.statusSnapshot({
+            context,
+            request: { cwd: '/repo' },
+        })).resolves.toMatchObject({
+            success: true,
+            snapshot: {
+                repo: { backendId: 'acme.scm.backend/acme-vcs' },
+            },
+        });
+    });
+
+    it('rejects a V2 declaration without executable runtime facts instead of indexing retired manifest fields', () => {
+        const resolved = createRegisteredScmBackendRegistry({
+            definitions: [{
+                pluginId: 'acme.scm.backend',
+                contributionId: 'acme-vcs',
+                definition: {
+                    id: 'acme-vcs',
+                    title: 'Acme VCS',
+                    kind: 'acme',
+                    capabilities: ['detect'],
+                },
+            }],
+            registrations: [{
+                pluginId: 'acme.scm.backend',
+                registration: {
+                    id: 'acme-vcs',
+                    handlers: {
+                        detection: {
+                            detectRepo: async () => ({ isRepo: false, rootPath: null, mode: null }),
+                        },
+                    },
+                },
+            }],
+        });
+
+        expect(resolved.backends).toEqual([]);
+        expect(resolved.diagnostics).toEqual([
+            expect.objectContaining({ code: 'plugin_scm_backend_activation_drift' }),
+        ]);
+    });
+
     it('rejects activation when an advertised executable read leaf has no handler', () => {
         const registration: ScmBackendRuntimeRegistration = {
             id: 'acme-vcs',

@@ -18,6 +18,8 @@ export type {
 } from './componentCatalog.js';
 
 export {
+  assertValidFirstPartyVersionId,
+  InvalidFirstPartyVersionIdError,
   resolveFirstPartyInstallLayout,
   resolveFirstPartyVersionInstallPath,
 } from './installLayout.js';
@@ -77,6 +79,9 @@ export { listInstalledVersionIdsNewestFirst } from './listInstalledVersionIdsNew
 export { installVersionedPayload } from './installVersionedPayload.js';
 export { promoteVersionedPayload } from './promoteVersionedPayload.js';
 export type { FirstPartyPayloadPromotionResult } from './promoteVersionedPayload.js';
+export { FirstPartyPayloadStateRestoreIncompleteError } from './restoreInstalledPayloadState.js';
+export { FirstPartyPayloadMutationLockError } from './withFirstPartyPayloadMutationLock.js';
+export { FirstPartyVersionIdConflictError } from './copyRuntimePayloadTree.js';
 
 export { pruneRetainedVersions } from './pruneRetainedVersions.js';
 export type { FirstPartyPruneRetainedVersionsResult } from './pruneRetainedVersions.js';

@@ -1,49 +1,55 @@
-import {
-    AsyncTtlCache,
-    ConnectedServiceCredentialRecordV1Schema,
-    openConnectedServiceCredentialCiphertext,
-    type ConnectedServiceCredentialRecordV1,
-    type ConnectedServiceId,
-} from '@happier-dev/protocol';
+import type { ManagedExecutableRef } from '@happier-dev/protocol';
 import type {
-    ScmHostingProviderRuntimeCommandResolution,
     ScmHostingProviderRuntimeCommandResult,
     ScmHostingProviderRuntimeServices,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
 import {
     createScmHostingProviderRegistry,
     type ResolvedScmHostingProviderRegistry,
     type ScmHostingProviderDescriptor,
     type ScmHostingProviderRuntimeBinding,
 } from './registry';
+import { createDaemonSpawnToolResolutionContext } from '@/daemon/spawnHooks';
+import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { createStableManagedExecutableResolver } from '@/plugins/runtime/invocation/services/managedExecutableResolver';
+import type { StablePluginManagedDependenciesHost } from '@/plugins/runtime/invocation/services/managedDependencies';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import {
-    createConnectedServiceCredentialApi,
-    type ConnectedServiceCredentialApi,
-} from '@/api/client/connectedServiceCredentialApi';
-import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
-import { getAzDepStatus } from '@/capabilities/deps/az';
-import { getGhDepStatus } from '@/capabilities/deps/gh';
-import { readCredentials } from '@/persistence';
+    deriveScmHostingProviderConnectedAccountPurposeAuthorization,
+} from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
+import type {
+    StablePluginConnectedAccountsOwner,
+} from '@/plugins/runtime/invocation/services/connectedAccounts';
 import type {
     ResolvedConnectedAccountDescriptorContribution,
     ResolvedScmHostingProviderContribution,
 } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import {
-    resolveScmHostingBasicAuthMaterialization,
-    resolveScmHostingBasicAuthServiceId,
-    resolveScmHostingTokenMaterialization,
-    resolveScmHostingTokenServiceId,
-    type ScmHostingAuthMaterializationRegistry,
-} from './auth';
+import { readHostingProviderExecutionAuthority } from './executionAuthority';
 
 type ScmHostingProviderRuntimeRegistryInput = Readonly<{
     contributes: Readonly<{
         scmHostingProviders?: readonly ResolvedScmHostingProviderContribution[];
         connectedAccountDescriptors?: readonly ResolvedConnectedAccountDescriptorContribution[];
+        systemTools?: ResolvedExecutablePluginRuntimeRegistry['contributes']['systemTools'];
     }>;
     scmHostingProvidersById: ResolvedExecutablePluginRuntimeRegistry['scmHostingProvidersById'];
+    envAllowedNamesByPluginId?: ResolvedExecutablePluginRuntimeRegistry['envAllowedNamesByPluginId'];
+    managedDependencies?: Pick<StablePluginManagedDependenciesHost, 'resolveExecutable'>;
+    resolveConnectedAccountPurposeBindingOwner?: () =>
+        Pick<StablePluginConnectedAccountsOwner, 'materialize'> | null;
+    executeCommand?: (
+        input: Readonly<{
+            executable: ManagedExecutableRef;
+            args: readonly string[];
+            timeoutMs: number;
+            env?: Readonly<Record<string, string>>;
+            maxStdoutBytes?: number;
+            maxStderrBytes?: number;
+        }>,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ) => Promise<ScmHostingProviderRuntimeCommandResult>;
 }>;
 
 type ScmHostingProviderRuntimeTokenMaterializationRequest = Parameters<
@@ -54,25 +60,8 @@ type ScmHostingProviderRuntimeBasicAuthMaterializationRequest = Parameters<
     NonNullable<ScmHostingProviderRuntimeServices['resolveScmHostingBasicAuthMaterialization']>
 >[0];
 
-type ConnectedServicesCredentialApi = Pick<
-    ConnectedServiceCredentialApi,
-    'getConnectedServiceCredentialPlain' | 'getConnectedServiceCredentialSealed' | 'listConnectedServiceProfiles'
->;
-
-const DEFAULT_CONNECTED_SERVICE_PROFILE_ID = 'default';
-const DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_SUCCESS_TTL_MS = 10_000;
-const DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_ERROR_TTL_MS = 1_000;
-
-type ScmHostingCredentialRecordsCache = AsyncTtlCache<readonly ConnectedServiceCredentialRecordV1[]>;
-
-function buildCredentialRecordsCacheKey(input: Readonly<{
-    serviceId: ConnectedServiceId;
-    profileId?: string | null;
-}>): string {
-    return JSON.stringify({
-        serviceId: input.serviceId,
-        profileId: input.profileId?.trim() || null,
-    });
+function assertHostingOperationCurrent(signal?: AbortSignal): void {
+    if (signal?.aborted) throw new Error('SCM hosting operation was aborted');
 }
 
 function normalizeUrlSafety(
@@ -91,164 +80,100 @@ function normalizeUrlSafety(
     };
 }
 
-async function readCredentialRecord(input: Readonly<{
-    api: ConnectedServicesCredentialApi;
-    credentials: NonNullable<Awaited<ReturnType<typeof readCredentials>>>;
-    serviceId: ConnectedServiceId;
-    profileId: string;
-}>): Promise<ConnectedServiceCredentialRecordV1 | null> {
-    const plain = await input.api.getConnectedServiceCredentialPlain({
-        serviceId: input.serviceId,
-        profileId: input.profileId,
-    }).catch(() => null);
-    if (plain?.content.v !== undefined) {
-        const parsedPlain = ConnectedServiceCredentialRecordV1Schema.safeParse(plain.content.v);
-        if (parsedPlain.success) return parsedPlain.data;
-    }
-
-    const sealed = await input.api.getConnectedServiceCredentialSealed({
-        serviceId: input.serviceId,
-        profileId: input.profileId,
-    }).catch(() => null);
-    if (!sealed) return null;
-
-    const opened = openConnectedServiceCredentialCiphertext({
-        material: input.credentials.encryption,
-        ciphertext: sealed.sealed.ciphertext,
-    });
-    const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(opened?.value);
-    return parsed.success ? parsed.data : null;
+function resolveProviderPurposeAuthorization(
+    input: ScmHostingProviderRuntimeRegistryInput,
+    providerId: string,
+): ReturnType<typeof deriveScmHostingProviderConnectedAccountPurposeAuthorization> {
+    const provider = (input.contributes.scmHostingProviders ?? []).find((candidate) => (
+        candidate.pluginId
+        && `${candidate.pluginId}/${candidate.definition.id}` === providerId
+    ));
+    if (!provider) return null;
+    const authorization =
+        deriveScmHostingProviderConnectedAccountPurposeAuthorization(provider);
+    if (!authorization) return null;
+    const [service] = authorization.serviceRefs;
+    if (!service) return null;
+    const descriptorExists = (input.contributes.connectedAccountDescriptors ?? []).some(
+        (candidate) => (
+            candidate.pluginId === service.pluginId
+            && candidate.definition.id === service.localId
+        ),
+    );
+    return descriptorExists ? authorization : null;
 }
 
-async function listProfileIds(input: Readonly<{
-    api: ConnectedServicesCredentialApi;
-    serviceId: ConnectedServiceId;
-    profileId?: string | null;
-}>): Promise<readonly string[]> {
-    const explicit = input.profileId?.trim();
-    if (explicit) return [explicit];
-
-    const listed = await input.api.listConnectedServiceProfiles({
-        serviceId: input.serviceId,
-    }).catch(() => null);
-    const profileIds = listed?.profiles
-        .map((profile) => profile.profileId.trim())
-        .filter((profileId) => profileId.length > 0) ?? [];
-    return profileIds.length > 0 ? profileIds : [DEFAULT_CONNECTED_SERVICE_PROFILE_ID];
-}
-
-async function readConnectedServiceCredentialRecords(input: Readonly<{
-    serviceId: ConnectedServiceId;
-    profileId?: string | null;
-    cache?: ScmHostingCredentialRecordsCache;
-}>): Promise<readonly ConnectedServiceCredentialRecordV1[]> {
-    const cacheKey = buildCredentialRecordsCacheKey(input);
-    const cached = input.cache?.get(cacheKey) ?? null;
-    if (cached && input.cache?.isFresh(cached)) {
-        return cached.kind === 'success' ? cached.value : [];
-    }
-
-    const cache = input.cache;
-    if (cache) {
-        return await cache.runDedupe(cacheKey, async () => {
-            const cachedAfterDedupe = cache.get(cacheKey) ?? null;
-            if (cachedAfterDedupe && cache.isFresh(cachedAfterDedupe)) {
-                return cachedAfterDedupe.kind === 'success' ? cachedAfterDedupe.value : [];
-            }
-
-            try {
-                const records = await readConnectedServiceCredentialRecords({
-                    serviceId: input.serviceId,
-                    profileId: input.profileId,
-                });
-                cache.setSuccess(cacheKey, records);
-                return records;
-            } catch {
-                cache.setError(cacheKey);
-                return [];
-            }
-        });
-    }
-
-    const credentials = await readCredentials().catch(() => null);
-    if (!credentials) return [];
-    const api = createConnectedServiceCredentialApi(credentials);
-    const records: ConnectedServiceCredentialRecordV1[] = [];
-    for (const profileId of await listProfileIds({
-        api,
-        serviceId: input.serviceId,
-        profileId: input.profileId,
-    })) {
-        const record = await readCredentialRecord({
-            api,
-            credentials,
-            serviceId: input.serviceId,
-            profileId,
-        });
-        if (record) records.push(record);
-    }
-    return records;
-}
-
-async function resolveHostingInstallableCommand(
-    input: Readonly<{ capabilityId: string }>,
-): Promise<ScmHostingProviderRuntimeCommandResolution> {
-    if (input.capabilityId === 'dep.az') {
-        const status = await getAzDepStatus({ onlyIfInstalled: true });
-        if (!status?.installed || !status.binPath || !status.resolvedSource) {
-            return { kind: 'missing' };
+function resolveHttpsOrigin(host: string): string | null {
+    const normalized = host.trim();
+    if (!normalized) return null;
+    try {
+        const parsed = new URL(
+            normalized.includes('://') ? normalized : `https://${normalized}`,
+        );
+        if (
+            parsed.protocol !== 'https:'
+            || parsed.username
+            || parsed.password
+            || parsed.pathname !== '/'
+            || parsed.search
+            || parsed.hash
+        ) {
+            return null;
         }
-        return {
-            kind: 'available',
-            source: status.resolvedSource,
-            binPath: status.binPath,
-        };
+        return parsed.origin;
+    } catch {
+        return null;
     }
-    if (input.capabilityId !== 'dep.gh') return { kind: 'missing' };
-    const status = await getGhDepStatus({ onlyIfInstalled: true });
-    if (!status.installed || !status.binPath || !status.resolvedSource) {
-        return { kind: 'missing' };
-    }
-    return {
-        kind: 'available',
-        source: status.resolvedSource,
-        binPath: status.binPath,
-    };
 }
 
-async function runHostingCommand(
-    request: Readonly<{
-        binPath: string;
-        args: readonly string[];
-        timeoutMs: number;
-        env?: Readonly<Record<string, string>>;
-    }>,
-): Promise<ScmHostingProviderRuntimeCommandResult> {
-    return await runCliCommandBestEffort({
-        resolvedPath: request.binPath,
-        args: [...request.args],
-        timeoutMs: request.timeoutMs,
-        env: request.env,
-    });
+function readHttpHeader(
+    headers: Readonly<Record<string, string>>,
+    name: string,
+): string | null {
+    const entry = Object.entries(headers).find(
+        ([candidate]) => candidate.toLowerCase() === name.toLowerCase(),
+    );
+    return entry?.[1]?.trim() || null;
+}
+
+function readBearerToken(headers: Readonly<Record<string, string>>): string | null {
+    const authorization = readHttpHeader(headers, 'authorization');
+    const match = authorization?.match(/^Bearer\s+(.+)$/i);
+    return match?.[1]?.trim() || null;
+}
+
+function readBasicCredentials(
+    headers: Readonly<Record<string, string>>,
+): Readonly<{ username: string; password: string }> | null {
+    const authorization = readHttpHeader(headers, 'authorization');
+    const match = authorization?.match(/^Basic\s+([A-Za-z0-9+/]+={0,2})$/i);
+    if (!match?.[1]) return null;
+    const decoded = Buffer.from(match[1], 'base64').toString('utf8');
+    const separator = decoded.indexOf(':');
+    if (separator <= 0) return null;
+    const username = decoded.slice(0, separator).trim();
+    const password = decoded.slice(separator + 1);
+    return username && password ? { username, password } : null;
 }
 
 export function createHostScmHostingProviderRegistry(
     input: ScmHostingProviderRuntimeRegistryInput,
 ): ResolvedScmHostingProviderRegistry {
     const providers: ScmHostingProviderDescriptor[] = (input.contributes.scmHostingProviders ?? [])
-        .map((provider) => {
-            const { urlSafety: sourceUrlSafety, ...definition } = provider.definition;
-            void sourceUrlSafety;
-            return Object.freeze({
+        .flatMap((provider) => {
+            const { title, ...definition } = provider.definition;
+            return [Object.freeze({
                 ...definition,
+                displayName: typeof title === 'string' ? title : title.fallback,
                 pluginId: provider.pluginId,
-                urlSafety: normalizeUrlSafety(provider.definition),
-            });
+                urlSafety: normalizeUrlSafety({}),
+            })];
         });
     const runtimeRegistrations: ScmHostingProviderRuntimeBinding[] = [
         ...input.scmHostingProvidersById.values(),
     ].map((entry) => ({
         pluginId: entry.pluginId,
+        generation: entry.generation,
         registration: entry.registration,
     }));
 
@@ -261,75 +186,186 @@ export function createHostScmHostingProviderRegistry(
 export function createHostScmHostingProviderRuntimeServices(
     input: ScmHostingProviderRuntimeRegistryInput,
 ): ScmHostingProviderRuntimeServices {
-    let providerRegistry: ResolvedScmHostingProviderRegistry | null = null;
     const resolveScmHostingProviderRegistry = async (): Promise<ResolvedScmHostingProviderRegistry> => {
-        providerRegistry ??= createHostScmHostingProviderRegistry(input);
-        return providerRegistry;
+        return createHostScmHostingProviderRegistry(input);
     };
-    const authMaterializationRegistry: ScmHostingAuthMaterializationRegistry = {
-        scmHostingProvidersById: input.scmHostingProvidersById,
+    const captureHostingAuthAuthority = (providerId: string) => {
+        const authority = readHostingProviderExecutionAuthority();
+        if (!authority) {
+            throw new Error('SCM hosting authentication requires a provider-qualified invocation');
+        }
+        const qualifiedId = `${authority.pluginId}/${authority.contributionId}`;
+        if (providerId !== qualifiedId) {
+            throw new Error('SCM hosting authentication provider authority does not match the request');
+        }
+        return Object.freeze({ ...authority, qualifiedId });
     };
-    const connectedServiceCredentialRecordsCache: ScmHostingCredentialRecordsCache = new AsyncTtlCache({
-        successTtlMs: DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_SUCCESS_TTL_MS,
-        errorTtlMs: DEFAULT_SCM_HOSTING_CREDENTIAL_RECORDS_ERROR_TTL_MS,
+    const assertHostingAuthCurrent = (
+        authority: ReturnType<typeof captureHostingAuthAuthority>,
+        signal?: AbortSignal,
+    ): void => {
+        assertHostingOperationCurrent(signal);
+        const current = input.scmHostingProvidersById.get(authority.qualifiedId);
+        if (!current || current.generation !== authority.generation) {
+            throw new Error('SCM hosting authentication generation is stale');
+        }
+    };
+    const systemToolContext = createDaemonSpawnToolResolutionContext({ processEnv: process.env });
+    const executableResolver = createStableManagedExecutableResolver({
+        systemTools: input.contributes.systemTools ?? [],
+        managedDependencies: input.managedDependencies ?? {
+            async resolveExecutable() {
+                throw new PluginError({
+                    code: 'plugin_managed_dependency_unavailable',
+                    message: 'Managed dependency execution is unavailable in the SCM hosting host',
+                });
+            },
+        },
+        async resolveSystemTool(request) {
+            const resolved = await systemToolContext.resolveSystemTool({
+                toolId: request.toolId,
+                lookupNames: request.executableNames,
+                reason: 'Execute the declared SCM hosting-provider command',
+            });
+            if (!resolved.ok) {
+                throw new PluginError({ code: 'plugin_system_tool_unavailable', message: 'System tool is unavailable' });
+            }
+            return {
+                toolId: request.toolId,
+                command: resolved.command,
+                args: resolved.args,
+            };
+        },
     });
 
     const services: ScmHostingProviderRuntimeServices = {
         async resolveScmHostingTokenMaterialization(
             request: ScmHostingProviderRuntimeTokenMaterializationRequest,
+            options,
         ) {
-            const serviceId = await resolveScmHostingTokenServiceId(request, authMaterializationRegistry);
-            if (!serviceId) {
-                return await resolveScmHostingTokenMaterialization({ ...request, records: [] }, authMaterializationRegistry);
+            const authority = captureHostingAuthAuthority(request.providerId);
+            assertHostingAuthCurrent(authority, options?.signal);
+            const authorization = resolveProviderPurposeAuthorization(
+                input,
+                request.providerId,
+            );
+            if (!authorization) return { kind: 'missing', reason: 'unsupported_provider' };
+            const origin = resolveHttpsOrigin(request.host);
+            if (!origin) return { kind: 'missing', reason: 'unsupported_host' };
+            if (request.profileId?.trim()) {
+                return { kind: 'missing', reason: 'credential_unavailable' };
             }
-            const records = await readConnectedServiceCredentialRecords({
-                serviceId,
-                profileId: request.profileId,
-                cache: connectedServiceCredentialRecordsCache,
+            const owner =
+                input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
+            if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
+            const signal = options?.signal ?? new AbortController().signal;
+            const result = await owner.materialize({
+                ...authorization,
+                request: {
+                    kind: 'httpHeaders',
+                    origin,
+                    headerNames: ['Authorization'],
+                },
+                signal,
             });
-            const result = await resolveScmHostingTokenMaterialization({
-                kind: request.kind,
-                providerId: request.providerId,
-                host: request.host,
-                ...(request.profileId ? { profileId: request.profileId } : {}),
-                records,
-            }, authMaterializationRegistry);
-            if (result.kind !== 'available') return result;
+            assertHostingAuthCurrent(authority, options?.signal);
+            if (result.kind !== 'httpHeaders') {
+                return { kind: 'missing', reason: 'unsupported_materialization' };
+            }
+            const token = readBearerToken(result.headers);
+            if (!token) return { kind: 'missing', reason: 'credential_unavailable' };
             return {
                 kind: 'available',
-                token: result.token,
-                profileKey: `${result.serviceId}:${result.profileId}`,
+                token,
             };
         },
         async resolveScmHostingBasicAuthMaterialization(
             request: ScmHostingProviderRuntimeBasicAuthMaterializationRequest,
+            options,
         ) {
-            const serviceId = await resolveScmHostingBasicAuthServiceId(request, authMaterializationRegistry);
-            if (!serviceId) {
-                return await resolveScmHostingBasicAuthMaterialization({ ...request, records: [] }, authMaterializationRegistry);
+            const authority = captureHostingAuthAuthority(request.providerId);
+            assertHostingAuthCurrent(authority, options?.signal);
+            const authorization = resolveProviderPurposeAuthorization(
+                input,
+                request.providerId,
+            );
+            if (!authorization) return { kind: 'missing', reason: 'unsupported_provider' };
+            const origin = resolveHttpsOrigin(request.host);
+            if (!origin) return { kind: 'missing', reason: 'unsupported_host' };
+            if (request.profileId?.trim()) {
+                return { kind: 'missing', reason: 'credential_unavailable' };
             }
-            const records = await readConnectedServiceCredentialRecords({
-                serviceId,
-                profileId: request.profileId,
-                cache: connectedServiceCredentialRecordsCache,
+            const owner =
+                input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
+            if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
+            const signal = options?.signal ?? new AbortController().signal;
+            const result = await owner.materialize({
+                ...authorization,
+                request: {
+                    kind: 'httpHeaders',
+                    origin,
+                    headerNames: ['Authorization'],
+                },
+                signal,
             });
-            const result = await resolveScmHostingBasicAuthMaterialization({
-                kind: request.kind,
-                providerId: request.providerId,
-                host: request.host,
-                ...(request.profileId ? { profileId: request.profileId } : {}),
-                records,
-            }, authMaterializationRegistry);
-            if (result.kind !== 'available') return result;
+            assertHostingAuthCurrent(authority, options?.signal);
+            if (result.kind !== 'httpHeaders') {
+                return { kind: 'missing', reason: 'unsupported_materialization' };
+            }
+            const credentials = readBasicCredentials(result.headers);
+            if (!credentials) {
+                return { kind: 'missing', reason: 'credential_unavailable' };
+            }
             return {
                 kind: 'available',
-                username: result.username,
-                password: result.password,
-                profileKey: `${result.serviceId}:${result.profileId}`,
+                username: credentials.username,
+                password: credentials.password,
             };
         },
-        resolveInstallableCommand: resolveHostingInstallableCommand,
-        runCommand: runHostingCommand,
+        async executeCommand(request, options) {
+                const authority = readHostingProviderExecutionAuthority();
+                if (!authority) {
+                    throw new Error('SCM hosting command execution requires a provider-qualified invocation');
+                }
+                const qualifiedId = `${authority.pluginId}/${authority.contributionId}`;
+                const current = input.scmHostingProvidersById.get(qualifiedId);
+                if (!current || current.generation !== authority.generation) {
+                    throw new Error('SCM hosting command execution generation is stale');
+                }
+                if (options?.signal?.aborted) {
+                    throw new Error('SCM hosting command execution was aborted');
+                }
+                if (input.executeCommand) return await input.executeCommand(request, options);
+                const signal = options?.signal ?? new AbortController().signal;
+                const service = createStablePluginExecService({
+                    allowedExecutables: [request.executable],
+                    allowedEnvKeys: [...(input.envAllowedNamesByPluginId?.get(authority.pluginId) ?? [])],
+                    signal,
+                    isGenerationCurrent: () => {
+                        const latest = input.scmHostingProvidersById.get(qualifiedId);
+                        return latest?.generation === authority.generation;
+                    },
+                    resolveExecutable: async (executable) => await executableResolver(executable, authority.pluginId),
+                    async resolvePath() {
+                        throw new PluginError({ code: 'plugin_exec_cwd_denied', message: 'SCM hosting commands do not accept plugin paths' });
+                    },
+                });
+                const result = await service.run({
+                    executable: request.executable,
+                    args: request.args,
+                    timeoutMs: request.timeoutMs,
+                    ...(request.env ? { env: request.env } : {}),
+                    maxStdoutBytes: request.maxStdoutBytes ?? 4 * 1024 * 1024,
+                    maxStderrBytes: request.maxStderrBytes ?? 4 * 1024 * 1024,
+                }, options);
+                const observed = result.termination.observed;
+                return Object.freeze({
+                    ok: observed.kind === 'exit' && observed.exitCode === 0,
+                    stdout: Buffer.from(result.stdout).toString('utf8'),
+                    stderr: Buffer.from(result.stderr).toString('utf8'),
+                    exitCode: observed.kind === 'exit' ? observed.exitCode : null,
+                });
+        },
         resolveScmHostingProviderRegistry,
     };
     return Object.freeze(services);

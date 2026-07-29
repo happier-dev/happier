@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import tweetnacl from 'tweetnacl';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { DirectRouteGrantPayloadV1, PeerMachineRpcDirectRequestV1 } from '@happier-dev/protocol';
+import {
+    createDirectRouteGrantSigningInputV2,
+    createEphemeralPeerRouteProofHandleV2,
+    type DirectRouteGrantPayloadV1,
+    type DirectRouteGrantPayloadV2,
+    type PeerMachineRpcDirectRequestV1,
+    type PeerMachineRpcDirectRequestV2,
+} from '@happier-dev/protocol';
 
 import { createPeerMachineRpcCallLimiter } from './callLimits';
 import { createPeerMachineRpcVerificationQuarantine } from './quarantine';
@@ -58,6 +66,67 @@ function createRequest(endpointFingerprint: string): PeerMachineRpcDirectRequest
 }
 
 describe('validatePeerMachineRpcDirectRequest', () => {
+    it('admits a valid V2 ephemeral proof through the same method/scope owner', () => {
+        const serverKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+        const handle = createEphemeralPeerRouteProofHandleV2({
+            randomBytes: (length) => new Uint8Array(length).fill(length === 32 ? 8 : 9),
+        });
+        const payload: DirectRouteGrantPayloadV2 = {
+            ...grantPayload,
+            v: 2,
+            proofKind: 'ephemeral_ed25519',
+            ephemeralPublicKeyBase64Url: handle.publicKeyBase64Url,
+        };
+        const grant = {
+            payload,
+            signature: {
+                keyId: 'key_1',
+                alg: 'Ed25519' as const,
+                valueBase64Url: Buffer.from(tweetnacl.sign.detached(
+                    Buffer.from(createDirectRouteGrantSigningInputV2(payload), 'utf8'),
+                    serverKeyPair.secretKey,
+                )).toString('base64url'),
+            },
+        };
+        const request: PeerMachineRpcDirectRequestV2 = {
+            v: 2,
+            requestId: 'request_v2',
+            method: RPC_METHODS.DAEMON_MEMORY_STATUS,
+            params: {},
+            routeKind: 'loopback_direct',
+            flowKind: 'machine_rpc',
+            endpointFingerprint: 'endpoint_1',
+            grant,
+            proof: handle.sign(grant),
+        };
+        const nowMs = 2_000;
+        const callLimiter = createPeerMachineRpcCallLimiter({ nowMs: () => nowMs });
+        const quarantine = createPeerMachineRpcVerificationQuarantine({ nowMs: () => nowMs });
+        const replayKeyCache = createPeerMachineRpcReplayKeyCache({ nowMs: () => nowMs });
+        const options = {
+            body: request,
+            expected: {
+                accountId: 'account_1', machineId: 'machine_1', flowKind: 'machine_rpc' as const,
+                routeKind: 'loopback_direct' as const, endpointFingerprint: 'endpoint_1',
+            },
+            trustRoots: [{ keyId: 'key_1', publicKey: Buffer.from(serverKeyPair.publicKey).toString('base64url') }],
+            nowMs,
+            callLimiter,
+            quarantine,
+            replayKeyCache,
+        };
+        const result = validatePeerMachineRpcDirectRequest(options);
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+            expect(result.request.v).toBe(2);
+            result.releaseCallLimit();
+        }
+        const secondValidation = validatePeerMachineRpcDirectRequest(options);
+        expect(secondValidation.ok).toBe(true);
+        if (secondValidation.ok) secondValidation.releaseCallLimit();
+    });
+
     it('quarantines repeated grant verification failures by expected endpoint, not caller-supplied endpoint', () => {
         let nowMs = 2_000;
         const callLimiter = createPeerMachineRpcCallLimiter({ nowMs: () => nowMs });

@@ -1,4 +1,7 @@
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import {
+  isAgentThreadTextConversationTurnMeta,
+  redactBugReportSensitiveText,
+} from '@happier-dev/protocol';
 
 import type { DecryptedTranscriptRow } from '@/session/replay/decryptTranscriptRows';
 import {
@@ -56,6 +59,11 @@ function mapSemanticItemToMemoryIndexable(params: Readonly<{
 }>): MemoryIndexableTranscriptItem | null {
   const sessionId = String(params.sessionId ?? '').trim();
   if (!sessionId) return null;
+  if (!isAgentThreadTextConversationTurnMeta({
+    happier: {
+      conversationTurnOriginV1: params.item.origin,
+    },
+  })) return null;
 
   const policy = normalizeMemoryContentPolicy(params.contentPolicy);
   const seq = normalizeSeq(params.item.seq);

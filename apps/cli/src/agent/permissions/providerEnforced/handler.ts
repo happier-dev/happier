@@ -3,9 +3,9 @@
  *
  * ACP permission handler that only bridges provider permission requests to Happier UI.
  *
- * Key property: it does NOT apply local allow/deny heuristics based on Happier permission mode.
- * The provider is expected to enforce its own policies (sandbox / approval rules) and to decide
- * when to emit ACP `requestPermission` prompts.
+ * Provider-native permission policy remains authoritative for provider operations. Happier only
+ * applies its own mode to host-mediated capabilities that bypass provider enforcement, such as
+ * the ACP filesystem bridge.
  */
 
 import { logger } from '@/ui/logger';
@@ -23,12 +23,15 @@ import {
   shouldSuppressProviderPermissionForHappierApproval,
 } from '@/agent/tools/happierTools/resolveHappierActionForMcpToolName';
 import type { AccountSettings, ActionId } from '@happier-dev/protocol';
+import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
 import {
   isSharedPermissionSafeToolName,
   SHARED_PROVIDER_ENFORCED_SAFE_TOOL_CALL_ID_SEGMENTS,
   SHARED_PROVIDER_ENFORCED_SAFE_TOOL_NAME_SEGMENTS,
 } from '../permissionTaxonomy';
 import { shouldDenyAgentSessionTitleToolCall } from '../codingPromptTitlePermission';
+import { normalizePermissionRequestOwner, type PermissionRequestOwner } from '../permissionRequestOwner';
+import { resolveAgentRequestKind } from '../requestKind';
 
 export type { PermissionResult, PendingRequest };
 
@@ -53,10 +56,19 @@ const ALWAYS_AUTO_APPROVE_HAPPIER_ACTION_IDS = new Set<ActionId>([
   'action.options.resolve',
 ]);
 
+function isFullAccessPermissionMode(mode: PermissionMode): boolean {
+  return mode === 'yolo' || mode === 'bypassPermissions';
+}
+
+function deniesHostMediatedFsWrites(mode: PermissionMode): boolean {
+  return mode === 'read-only' || mode === 'plan';
+}
+
 export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   private readonly logPrefix: string;
   private readonly alwaysAutoApproveToolNameIncludes: ReadonlyArray<string>;
   private readonly alwaysAutoApproveToolCallIdIncludes: ReadonlyArray<string>;
+  private currentPermissionMode: PermissionMode = 'default';
 
   constructor(
     session: ApiSessionClient,
@@ -86,10 +98,22 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
 
   /**
    * Compatibility shim: some runtimes still call `setPermissionMode()` even when provider enforcement is enabled.
-   * This handler intentionally ignores the mode for decision-making.
+   * The mode still governs host-mediated operations that do not pass through provider policy.
    */
   setPermissionMode(mode: PermissionMode): void {
-    logger.debug(`${this.getLogPrefix()} Permission mode set to: ${mode} (provider-enforced, no local auto-approval)`);
+    this.currentPermissionMode = mode;
+    logger.debug(`${this.getLogPrefix()} Permission mode set to: ${mode} (provider-enforced)`);
+    this.resolvePendingRequestsIfNowDecidable();
+  }
+
+  private resolvePendingRequestsIfNowDecidable(): void {
+    if (this.pendingRequests.size === 0) return;
+
+    for (const [toolCallId, pending] of Array.from(this.pendingRequests.entries())) {
+      const decision = this.getImmediateDecision(toolCallId, pending.toolName, pending.input);
+      if (!decision) continue;
+      this.resolvePendingPermissionRequest(toolCallId, decision);
+    }
   }
 
   private splitNameTokens(value: string): string[] {
@@ -126,17 +150,31 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       toolName,
       input,
       accountSettings: this.getAccountSettingsSnapshot(),
-      surface: 'session_agent',
+      surface: 'agent',
     }).suppress;
   }
 
-  getImmediateDecision(toolCallId: string, toolName: string, input: unknown): PermissionResult | null {
+  getImmediateDecision(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    context?: AcpPermissionCallContext,
+  ): PermissionResult | null {
     if (shouldDenyAgentSessionTitleToolCall({
       settings: this.getAccountSettingsSnapshot(),
       toolName,
       input,
     })) {
       return { decision: 'denied' };
+    }
+    if (
+      context?.origin === 'host_acp_fs_write'
+      && deniesHostMediatedFsWrites(this.currentPermissionMode)
+    ) {
+      return { decision: 'denied' };
+    }
+    if (isFullAccessPermissionMode(this.currentPermissionMode) && resolveAgentRequestKind(toolName) === 'permission') {
+      return { decision: 'approved' };
     }
     if (this.isAlwaysAutoApprove(toolName, toolCallId, input)) {
       return { decision: 'approved' };
@@ -147,22 +185,44 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     return null;
   }
 
-  async handleToolCall(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
-    const immediateDecision = this.getImmediateDecision(toolCallId, toolName, input);
+  async handleToolCall(
+    toolCallId: string,
+    toolName: string,
+    input: unknown,
+    options?: AcpPermissionCallContext & Readonly<{
+      owner?: PermissionRequestOwner | null;
+      source?: string | null;
+      signal?: AbortSignal;
+    }>,
+  ): Promise<PermissionResult> {
+    if (options?.signal?.aborted) {
+      throw new Error('Permission request aborted');
+    }
+    const owner = normalizePermissionRequestOwner(options?.owner);
+    const source = typeof options?.source === 'string' ? options.source.trim() : '';
+    const immediateDecision = this.getImmediateDecision(toolCallId, toolName, input, options);
     if (immediateDecision) {
-      this.recordAutoDecision(toolCallId, toolName, input, immediateDecision.decision);
-      logger.debug(`${this.getLogPrefix()} Auto-approving safe tool ${toolName} (${toolCallId})`);
+      this.recordAutoDecision(toolCallId, toolName, input, immediateDecision.decision, {
+        ...(owner ? { owner } : {}),
+        ...(source ? { source } : {}),
+      });
+      logger.debug(
+        `${this.getLogPrefix()} Applying immediate ${immediateDecision.decision} decision for tool ${toolName} (${toolCallId})`,
+      );
       return immediateDecision;
     }
 
     // Respect user "don't ask again for session" choices captured via our permission UI.
-    if (this.isAllowedForSession(toolName, input)) {
+    if (this.isAllowedForSessionForOwner(toolName, input, owner)) {
       logger.debug(`${this.getLogPrefix()} Auto-approving (allowed for session) tool ${toolName} (${toolCallId})`);
-      this.recordAutoDecision(toolCallId, toolName, input, 'approved_for_session');
+      this.recordAutoDecision(toolCallId, toolName, input, 'approved_for_session', {
+        ...(owner ? { owner } : {}),
+        ...(source ? { source } : {}),
+      });
       return { decision: 'approved_for_session' };
     }
 
-    const pending = this.requestPermissionDecision(toolCallId, toolName, input);
+    const pending = this.requestPermissionDecision(toolCallId, toolName, input, options);
     logger.debug(`${this.getLogPrefix()} Permission request sent for tool: ${toolName} (${toolCallId})`);
     return await pending;
   }

@@ -201,6 +201,7 @@ describe('createTailscaleTransferServeLifecycle', () => {
       available?: boolean;
     }> = [];
 
+    const runTailscaleServeDisable = vi.fn(async () => undefined);
     const lifecycle = createTailscaleTransferServeLifecycle({
       enabled: true,
       servePath: '/__happier/transfer',
@@ -213,7 +214,7 @@ describe('createTailscaleTransferServeLifecycle', () => {
         httpsUrl: null,
         rawStatus: '',
       })),
-      runTailscaleServeDisable: vi.fn(async () => undefined),
+      runTailscaleServeDisable,
     });
 
     await lifecycle.observeDirectTransferServerLifecycleState({
@@ -230,6 +231,15 @@ describe('createTailscaleTransferServeLifecycle', () => {
       available: false,
     });
     expect(lifecycle.getHttpsBaseUrlWithServePath()).toBe(null);
+
+    await lifecycle.stop();
+
+    expect(runTailscaleServeDisable).toHaveBeenCalledOnce();
+    expect(runTailscaleServeDisable).toHaveBeenCalledWith({
+      env: process.env,
+      servePath: '/__happier/transfer',
+      httpsPort: 8443,
+    });
   });
 
   it('disables the owned mapping when the runtime feature is turned off', async () => {

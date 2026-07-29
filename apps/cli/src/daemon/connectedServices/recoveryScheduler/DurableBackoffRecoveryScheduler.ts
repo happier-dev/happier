@@ -1,13 +1,27 @@
+import { randomUUID } from 'node:crypto';
+
 import { sanitizeConnectedServiceDiagnosticString } from '../runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 
 type RecoveryStatus = 'waiting' | 'checking' | 'cancelled' | 'exhausted';
 
 export type DurableBackoffRecoveryStore<TIntent> = Readonly<{
   read: (sessionId: string) => unknown | null;
+  readAuthoritative?: (sessionId: string) => unknown | null;
   readAll?: () => ReadonlyArray<readonly [string, unknown]>;
   write: (sessionId: string, intent: TIntent) => Promise<void> | void;
   remove?: (sessionId: string) => Promise<void> | void;
   prune?: (predicate: (entry: Readonly<{ sessionId: string; value: unknown }>) => boolean) => Promise<ReadonlyArray<string>> | ReadonlyArray<string>;
+  transact?: <TResult>(
+    sessionId: string,
+    transaction: (current: Readonly<{
+      intent: TIntent | null;
+      effectClaimToken: string | null;
+    }>) => Readonly<{
+      intent: TIntent | null;
+      effectClaimToken: string | null;
+      result: TResult;
+    }>,
+  ) => Promise<TResult>;
 }>;
 
 export type DurableBackoffRecoveryResult<TIntent> =
@@ -32,6 +46,15 @@ export type DurableRecoveryGateResult =
   | Readonly<{ status: 'delayed'; retryAtMs: number; reason: string }>;
 
 type TimerHandle = ReturnType<typeof setTimeout>;
+
+type DurableWakePreparation<TIntent> =
+  | Readonly<{ status: 'inactive' }>
+  | Readonly<{ status: 'cancelled' }>
+  | Readonly<{ status: 'already_exhausted' }>
+  | Readonly<{ status: 'checking' }>
+  | Readonly<{ status: 'delayed'; intent: TIntent; retryAtMs: number; reason: string }>
+  | Readonly<{ status: 'exhausted'; intent: TIntent }>
+  | Readonly<{ status: 'claimed'; intent: TIntent; effectClaimToken: string }>;
 
 // Node setTimeout treats delays above 2^31-1 ms (~24.8 days) as overflowed and fires
 // them immediately. Long durable waits (wait-until-reset intents) must be chunked:
@@ -68,6 +91,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
   readonly #jitterMs: () => number;
   readonly #store: DurableBackoffRecoveryStore<TIntent> | null;
   readonly #normalizeIntent: (value: unknown) => TIntent | null;
+  readonly #isSameIntentVersion: (left: TIntent, right: TIntent) => boolean;
   readonly #getStatus: (intent: TIntent) => RecoveryStatus;
   readonly #getNextRetryAtMs: (intent: TIntent) => number | null;
   readonly #getAttemptCount: (intent: TIntent) => number;
@@ -95,6 +119,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     jitterMs?: () => number;
     store?: DurableBackoffRecoveryStore<TIntent>;
     normalizeIntent: (value: unknown) => TIntent | null;
+    isSameIntentVersion?: (left: TIntent, right: TIntent) => boolean;
     getStatus: (intent: TIntent) => RecoveryStatus;
     getNextRetryAtMs: (intent: TIntent) => number | null;
     getAttemptCount: (intent: TIntent) => number;
@@ -124,6 +149,8 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     this.#jitterMs = deps.jitterMs ?? (() => 0);
     this.#store = deps.store ?? null;
     this.#normalizeIntent = deps.normalizeIntent;
+    this.#isSameIntentVersion = deps.isSameIntentVersion
+      ?? ((left, right) => JSON.stringify(left) === JSON.stringify(right));
     this.#getStatus = deps.getStatus;
     this.#getNextRetryAtMs = deps.getNextRetryAtMs;
     this.#getAttemptCount = deps.getAttemptCount;
@@ -164,38 +191,124 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     intent: TIntent;
     merge: (previous: TIntent | null, next: TIntent) => TIntent;
   }>): Promise<TIntent> {
-    const previous = this.read(input.sessionId);
-    const merged = input.merge(previous, input.intent);
-    if (previous && Object.is(previous, merged)) return merged;
-    await this.#write(input.sessionId, merged);
-    return merged;
+    return await this.transact({
+      sessionId: input.sessionId,
+      transaction: (current) => {
+        const previous = this.#normalizeIntent(current);
+        const merged = input.merge(previous, input.intent);
+        // Preserve the transaction input identity for semantic no-ops. This prevents
+        // duplicate reports from fencing an already-running recovery, while a genuinely
+        // different replacement object still advances the settlement epoch.
+        return { intent: previous !== null && merged === previous ? current : merged, result: merged };
+      },
+    });
   }
 
-  read(sessionId: string): TIntent | null {
+  async transact<TResult>(input: Readonly<{
+    sessionId: string;
+    transaction: (current: TIntent | null) => Readonly<{ intent: TIntent | null; result: TResult }>;
+    schedule?: boolean;
+  }>): Promise<TResult> {
+    let nextIntent: TIntent | null = null;
+    let changed = true;
+    const run = (current: TIntent | null) => {
+      const next = input.transaction(current);
+      nextIntent = next.intent;
+      changed = next.intent !== current;
+      return next;
+    };
+    if (!this.#store?.transact) {
+      const current = this.read(input.sessionId, { schedule: input.schedule });
+      const next = run(current);
+      if (!changed) return next.result;
+      if (next.intent === null) {
+        await this.#remove(input.sessionId);
+        this.#clearTimer(input.sessionId);
+      } else {
+        await this.#write(input.sessionId, next.intent, { schedule: input.schedule });
+      }
+      return next.result;
+    }
+    const result = await this.#store.transact(input.sessionId, (current) => {
+      const next = run(current.intent);
+      return {
+        ...next,
+        effectClaimToken: current.effectClaimToken,
+      };
+    });
+    if (!changed) return result;
+    const durableCurrent = this.#store.readAuthoritative
+      ? this.#normalizeIntent(this.#store.readAuthoritative(input.sessionId))
+      : nextIntent;
+    this.#intentVersionsBySessionId.set(input.sessionId, (this.#intentVersionsBySessionId.get(input.sessionId) ?? 0) + 1);
+    if (durableCurrent === null) {
+      this.#intentsBySessionId.delete(input.sessionId);
+      this.#clearTimer(input.sessionId);
+    } else {
+      this.#intentsBySessionId.set(input.sessionId, durableCurrent);
+      if (input.schedule !== false) this.#schedule(input.sessionId, durableCurrent);
+    }
+    return result;
+  }
+
+  read(
+    sessionId: string,
+    options: Readonly<{ schedule?: boolean }> = {},
+  ): TIntent | null {
     const cached = this.#intentsBySessionId.get(sessionId);
-    if (cached) return cached;
-    const stored = this.#store?.read(sessionId) ?? null;
+    const stored = this.#store?.readAuthoritative
+      ? this.#store.readAuthoritative(sessionId)
+      : cached ?? this.#store?.read(sessionId) ?? null;
     const normalized = this.#normalizeIntent(stored);
-    if (!normalized) return null;
+    if (!normalized) {
+      this.#intentsBySessionId.delete(sessionId);
+      this.#clearTimer(sessionId);
+      return null;
+    }
     this.#intentsBySessionId.set(sessionId, normalized);
-    this.#schedule(sessionId, normalized);
+    if (options.schedule !== false) this.#schedule(sessionId, normalized);
     return normalized;
   }
 
-  hydrate(): ReadonlyArray<TIntent> {
+  hydrate(options: Readonly<{ schedule?: boolean }> = {}): ReadonlyArray<TIntent> {
     const stored = this.#store?.readAll?.() ?? [];
     const hydrated: TIntent[] = [];
     for (const [sessionId, value] of stored) {
       const normalized = this.#normalizeIntent(value);
       if (!normalized) continue;
       this.#intentsBySessionId.set(sessionId, normalized);
-      this.#schedule(sessionId, normalized);
+      if (options.schedule !== false) {
+        this.#schedule(sessionId, normalized);
+      }
       hydrated.push(normalized);
     }
     return hydrated;
   }
 
   async cancel(input: Readonly<{ sessionId: string }>): Promise<TIntent | null> {
+    if (this.#store?.transact) {
+      const cancelled = await this.#store.transact(input.sessionId, (current) => {
+        const intent = current.intent === null ? null : this.#normalizeIntent(current.intent);
+        const next = intent ? this.#markCancelled(intent) : null;
+        return {
+          intent: next,
+          effectClaimToken: null,
+          result: next,
+        };
+      });
+      this.#intentVersionsBySessionId.set(
+        input.sessionId,
+        (this.#intentVersionsBySessionId.get(input.sessionId) ?? 0) + 1,
+      );
+      if (!cancelled) {
+        this.#intentsBySessionId.delete(input.sessionId);
+        this.#clearTimer(input.sessionId);
+        return null;
+      }
+      this.#intentsBySessionId.set(input.sessionId, cancelled);
+      this.#clearTimer(input.sessionId);
+      return cancelled;
+    }
     const current = this.read(input.sessionId);
     if (!current) return null;
     const cancelled = this.#markCancelled(current);
@@ -210,6 +323,57 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     await this.#remove(input.sessionId);
     this.#clearTimer(input.sessionId);
     return current;
+  }
+
+  /**
+   * A durable effect claim has no time-based expiry: a slow live owner may overlap a
+   * replacement process. Only a fresh user action, after the caller has independently
+   * confirmed that owner is gone, may rearm the recovery.
+   */
+  async rearmAfterConfirmedEffectOwnerLoss(input: Readonly<{
+    sessionId: string;
+    authorization: 'fresh_user_action_after_owner_loss';
+  }>): Promise<TIntent | null> {
+    if (!this.#store?.transact) return this.read(input.sessionId);
+    const rearmed = await this.#store.transact(input.sessionId, (current) => {
+      const intent = current.intent === null ? null : this.#normalizeIntent(current.intent);
+      if (!intent || current.effectClaimToken === null) {
+        return {
+          intent,
+          effectClaimToken: current.effectClaimToken,
+          result: intent,
+        };
+      }
+      const status = this.#getStatus(intent);
+      if (status === 'cancelled' || status === 'exhausted') {
+        return {
+          intent,
+          effectClaimToken: null,
+          result: intent,
+        };
+      }
+      const next = this.#markWaiting(intent, {
+        nextRetryAtMs: this.#resolveNextRetryAtMs(this.#getAttemptCount(intent)),
+        lastError: 'recovery_effect_owner_lost',
+      });
+      return {
+        intent: next,
+        effectClaimToken: null,
+        result: next,
+      };
+    });
+    this.#intentVersionsBySessionId.set(
+      input.sessionId,
+      (this.#intentVersionsBySessionId.get(input.sessionId) ?? 0) + 1,
+    );
+    if (!rearmed) {
+      this.#intentsBySessionId.delete(input.sessionId);
+      this.#clearTimer(input.sessionId);
+      return null;
+    }
+    this.#intentsBySessionId.set(input.sessionId, rearmed);
+    this.#schedule(input.sessionId, rearmed);
+    return rearmed;
   }
 
   async pruneTerminalRecords(): Promise<ReadonlyArray<string>> {
@@ -276,41 +440,163 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       return { status: 'waiting' };
     }
 
-    const gate = this.#gate?.({ sessionId: input.sessionId, intent: current }) ?? { status: 'open' as const };
-    if (gate.status === 'delayed') {
-      const reason = sanitizeConnectedServiceDiagnosticString(gate.reason);
-      const delayed = this.#markWaiting(current, {
-        nextRetryAtMs: gate.retryAtMs,
-        lastError: sanitizeLastError(reason),
-      });
-      await this.#write(input.sessionId, delayed);
-      this.#onDelayed?.({
-        sessionId: input.sessionId,
-        intent: delayed,
-        retryAtMs: gate.retryAtMs,
-        reason,
-      });
-      return { status: 'waiting' };
+    const effectClaimToken = randomUUID();
+    const durablePreparation = this.#store?.transact
+      ? await this.#store.transact<DurableWakePreparation<TIntent>>(input.sessionId, (stored) => {
+        const durableIntent = stored.intent === null ? null : this.#normalizeIntent(stored.intent);
+        if (!durableIntent) {
+          return {
+            intent: null,
+            effectClaimToken: null,
+            result: { status: 'inactive' as const },
+          };
+        }
+        const durableStatus = this.#getStatus(durableIntent);
+        if (durableStatus === 'cancelled' || durableStatus === 'exhausted') {
+          return {
+            intent: durableIntent,
+            effectClaimToken: null,
+            result: {
+              status: durableStatus === 'cancelled'
+                ? 'cancelled' as const
+                : 'already_exhausted' as const,
+            },
+          };
+        }
+        if (stored.effectClaimToken !== null) {
+          return {
+            intent: durableIntent,
+            effectClaimToken: stored.effectClaimToken,
+            result: { status: 'checking' as const },
+          };
+        }
+        const durableGate = this.#gate?.({
+          sessionId: input.sessionId,
+          intent: durableIntent,
+        }) ?? { status: 'open' as const };
+        if (durableGate.status === 'delayed') {
+          const reason = sanitizeConnectedServiceDiagnosticString(durableGate.reason);
+          const delayed = this.#markWaiting(durableIntent, {
+            nextRetryAtMs: durableGate.retryAtMs,
+            lastError: sanitizeLastError(reason),
+          });
+          return {
+            intent: delayed,
+            effectClaimToken: null,
+            result: {
+              status: 'delayed' as const,
+              intent: delayed,
+              retryAtMs: durableGate.retryAtMs,
+              reason,
+            },
+          };
+        }
+        const nextAttemptCount = this.#getAttemptCount(durableIntent) + 1;
+        const maxAttempts = this.#getMaxAttempts(durableIntent);
+        if (maxAttempts > 0 && this.#getAttemptCount(durableIntent) >= maxAttempts) {
+          const exhaustedBase = this.#markChecking(durableIntent, nextAttemptCount);
+          const exhausted = this.#markExhausted(exhaustedBase, { lastError: 'max_attempts_exhausted' });
+          return {
+            intent: exhausted,
+            effectClaimToken: null,
+            result: { status: 'exhausted' as const, intent: exhausted },
+          };
+        }
+        const checking = this.#markChecking(durableIntent, nextAttemptCount);
+        return {
+          intent: checking,
+          effectClaimToken,
+          result: {
+            status: 'claimed' as const,
+            intent: checking,
+            effectClaimToken,
+          },
+        };
+      })
+      : null;
+
+    if (durablePreparation) {
+      if (durablePreparation.status === 'inactive' || durablePreparation.status === 'cancelled') {
+        this.#intentsBySessionId.delete(input.sessionId);
+        this.#clearTimer(input.sessionId);
+        return { status: 'inactive' };
+      }
+      if (durablePreparation.status === 'already_exhausted') {
+        this.#clearTimer(input.sessionId);
+        return { status: 'exhausted' };
+      }
+      if (durablePreparation.status === 'checking') {
+        this.#clearTimer(input.sessionId);
+        return { status: 'checking' };
+      }
+      this.#intentVersionsBySessionId.set(
+        input.sessionId,
+        (this.#intentVersionsBySessionId.get(input.sessionId) ?? 0) + 1,
+      );
+      this.#intentsBySessionId.set(input.sessionId, durablePreparation.intent);
+      if (durablePreparation.status === 'delayed') {
+        this.#schedule(input.sessionId, durablePreparation.intent);
+        this.#onDelayed?.({
+          sessionId: input.sessionId,
+          intent: durablePreparation.intent,
+          retryAtMs: durablePreparation.retryAtMs,
+          reason: durablePreparation.reason,
+        });
+        return { status: 'waiting' };
+      }
+      if (durablePreparation.status === 'exhausted') {
+        this.#clearTimer(input.sessionId);
+        this.#onExhausted?.({
+          sessionId: input.sessionId,
+          intent: durablePreparation.intent,
+          lastError: 'max_attempts_exhausted',
+        });
+        return { status: 'exhausted' };
+      }
     }
 
-    const nextAttemptCount = this.#getAttemptCount(current) + 1;
-    const maxAttempts = this.#getMaxAttempts(current);
-    if (maxAttempts > 0 && this.#getAttemptCount(current) >= maxAttempts) {
-      const exhaustedBase = this.#markChecking(current, nextAttemptCount);
-      const exhausted = this.#markExhausted(exhaustedBase, { lastError: 'max_attempts_exhausted' });
-      await this.#write(input.sessionId, exhausted);
-      this.#clearTimer(input.sessionId);
-      this.#onExhausted?.({
-        sessionId: input.sessionId,
-        intent: exhausted,
-        lastError: 'max_attempts_exhausted',
-      });
-      return { status: 'exhausted' };
-    }
+    let checking: TIntent;
+    if (durablePreparation?.status === 'claimed') {
+      checking = durablePreparation.intent;
+    } else {
+      const gate = this.#gate?.({ sessionId: input.sessionId, intent: current }) ?? { status: 'open' as const };
+      if (gate.status === 'delayed') {
+        const reason = sanitizeConnectedServiceDiagnosticString(gate.reason);
+        const delayed = this.#markWaiting(current, {
+          nextRetryAtMs: gate.retryAtMs,
+          lastError: sanitizeLastError(reason),
+        });
+        if (!await this.#replaceIfCurrent(input.sessionId, current, delayed)) return { status: 'inactive' };
+        this.#onDelayed?.({
+          sessionId: input.sessionId,
+          intent: delayed,
+          retryAtMs: gate.retryAtMs,
+          reason,
+        });
+        return { status: 'waiting' };
+      }
 
-    const checking = this.#markChecking(current, nextAttemptCount);
-    await this.#write(input.sessionId, checking);
+      const nextAttemptCount = this.#getAttemptCount(current) + 1;
+      const maxAttempts = this.#getMaxAttempts(current);
+      if (maxAttempts > 0 && this.#getAttemptCount(current) >= maxAttempts) {
+        const exhaustedBase = this.#markChecking(current, nextAttemptCount);
+        const exhausted = this.#markExhausted(exhaustedBase, { lastError: 'max_attempts_exhausted' });
+        if (!await this.#replaceIfCurrent(input.sessionId, current, exhausted)) return { status: 'inactive' };
+        this.#clearTimer(input.sessionId);
+        this.#onExhausted?.({
+          sessionId: input.sessionId,
+          intent: exhausted,
+          lastError: 'max_attempts_exhausted',
+        });
+        return { status: 'exhausted' };
+      }
+
+      checking = this.#markChecking(current, nextAttemptCount);
+      if (!await this.#replaceIfCurrent(input.sessionId, current, checking)) return { status: 'inactive' };
+    }
     const recoveryStartedVersion = this.#intentVersionsBySessionId.get(input.sessionId) ?? 0;
+    const nextAttemptCount = this.#getAttemptCount(checking);
+    const maxAttempts = this.#getMaxAttempts(checking);
 
     const recovery = await this.#recover(checking, {
       sessionId: input.sessionId,
@@ -327,20 +613,20 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     if (recovery.status === 'success') {
       const succeeded = recovery.intent ?? checking;
       if (this.#clearOnSuccess && this.#getStatus(succeeded) !== 'cancelled' && this.#getStatus(succeeded) !== 'exhausted') {
-        await this.#remove(input.sessionId);
+        if (!await this.#replaceIfCurrent(input.sessionId, checking, null, effectClaimToken)) return { status: 'inactive' };
         this.#clearTimer(input.sessionId);
         await this.#onSuccess?.({ sessionId: input.sessionId, intent: succeeded });
         return recovery.wakeResult ?? { status: 'succeeded' };
       }
       const cancelled = this.#markCancelled(succeeded);
-      await this.#write(input.sessionId, cancelled);
+      if (!await this.#replaceIfCurrent(input.sessionId, checking, cancelled, effectClaimToken)) return { status: 'inactive' };
       this.#clearTimer(input.sessionId);
       await this.#onSuccess?.({ sessionId: input.sessionId, intent: cancelled });
       return recovery.wakeResult ?? { status: 'succeeded' };
     }
 
     if (recovery.status === 'superseded') {
-      await this.#remove(input.sessionId);
+      if (!await this.#replaceIfCurrent(input.sessionId, checking, null, effectClaimToken)) return { status: 'inactive' };
       this.#clearTimer(input.sessionId);
       this.#onSuperseded?.({
         sessionId: input.sessionId,
@@ -353,7 +639,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     if (recovery.status === 'terminal') {
       const terminal = recovery.intent ?? checking;
       const cancelled = this.#markCancelled(terminal);
-      await this.#write(input.sessionId, cancelled);
+      if (!await this.#replaceIfCurrent(input.sessionId, checking, cancelled, effectClaimToken)) return { status: 'inactive' };
       this.#clearTimer(input.sessionId);
       return recovery.wakeResult ?? { status: 'terminal' };
     }
@@ -363,7 +649,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       const exhausted = this.#markExhausted(recovery.intent ?? checking, {
         lastError,
       });
-      await this.#write(input.sessionId, exhausted);
+      if (!await this.#replaceIfCurrent(input.sessionId, checking, exhausted, effectClaimToken)) return { status: 'inactive' };
       this.#clearTimer(input.sessionId);
       this.#onExhausted?.({
         sessionId: input.sessionId,
@@ -386,7 +672,7 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       const exhausted = this.#markExhausted(recovery.intent ?? checking, {
         lastError,
       });
-      await this.#write(input.sessionId, exhausted);
+      if (!await this.#replaceIfCurrent(input.sessionId, checking, exhausted, effectClaimToken)) return { status: 'inactive' };
       this.#clearTimer(input.sessionId);
       this.#onExhausted?.({
         sessionId: input.sessionId,
@@ -402,8 +688,59 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
       nextRetryAtMs: retryAtMs,
       lastError: sanitizeLastError(recovery.lastError),
     });
-    await this.#write(input.sessionId, waiting);
+    if (!await this.#replaceIfCurrent(input.sessionId, checking, waiting, effectClaimToken)) return { status: 'inactive' };
     return recovery.wakeResult ?? { status: 'waiting' };
+  }
+
+  async #replaceIfCurrent(
+    sessionId: string,
+    expected: TIntent,
+    replacement: TIntent | null,
+    effectClaimToken?: string,
+  ): Promise<boolean> {
+    if (effectClaimToken && this.#store?.transact) {
+      const settled = await this.#store.transact(sessionId, (current) => {
+        const intent = current.intent === null ? null : this.#normalizeIntent(current.intent);
+        if (
+          !intent
+          || current.effectClaimToken !== effectClaimToken
+          || !this.#isSameIntentVersion(intent, expected)
+        ) {
+          return {
+            intent,
+            effectClaimToken: current.effectClaimToken,
+            result: false,
+          };
+        }
+        return {
+          intent: replacement,
+          effectClaimToken: null,
+          result: true,
+        };
+      });
+      if (!settled) return false;
+      this.#intentVersionsBySessionId.set(
+        sessionId,
+        (this.#intentVersionsBySessionId.get(sessionId) ?? 0) + 1,
+      );
+      if (replacement === null) {
+        this.#intentsBySessionId.delete(sessionId);
+        this.#clearTimer(sessionId);
+      } else {
+        this.#intentsBySessionId.set(sessionId, replacement);
+        this.#schedule(sessionId, replacement);
+      }
+      return true;
+    }
+    return await this.transact({
+      sessionId,
+      transaction: (current) => {
+        if (!current || !this.#isSameIntentVersion(current, expected)) {
+          return { intent: current, result: false };
+        }
+        return { intent: replacement, result: true };
+      },
+    });
   }
 
   #resolveNextRetryAtMs(attemptCount: number): number {
@@ -415,12 +752,16 @@ export class DurableBackoffRecoveryScheduler<TIntent> {
     return this.#nowMs() + delayMs + jitterMs;
   }
 
-  async #write(sessionId: string, intent: TIntent): Promise<void> {
+  async #write(
+    sessionId: string,
+    intent: TIntent,
+    options: Readonly<{ schedule?: boolean }> = {},
+  ): Promise<void> {
     await this.pruneTerminalRecords();
     this.#intentVersionsBySessionId.set(sessionId, (this.#intentVersionsBySessionId.get(sessionId) ?? 0) + 1);
     this.#intentsBySessionId.set(sessionId, intent);
     await this.#store?.write(sessionId, intent);
-    this.#schedule(sessionId, intent);
+    if (options.schedule !== false) this.#schedule(sessionId, intent);
   }
 
   async #remove(sessionId: string): Promise<void> {

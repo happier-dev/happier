@@ -9,6 +9,7 @@ export type ResolveDaemonPeerMediationPolicyInput = Readonly<{
 const FLOW_ENV_KEYS: Readonly<Record<PeerFlowKindV1, string>> = Object.freeze({
     bounded_transfer: 'HAPPIER_DAEMON_PEER_MEDIATION_TRANSFER_DIRECT_ENABLED',
     tcp_tunnel: 'HAPPIER_DAEMON_PEER_MEDIATION_TUNNEL_DIRECT_ENABLED',
+    voice_media: 'HAPPIER_DAEMON_PEER_MEDIATION_TUNNEL_DIRECT_ENABLED',
     live_stream: 'HAPPIER_DAEMON_PEER_MEDIATION_LIVE_STREAM_DIRECT_ENABLED',
     machine_rpc: 'HAPPIER_DAEMON_PEER_MEDIATION_RPC_DIRECT_ENABLED',
 });

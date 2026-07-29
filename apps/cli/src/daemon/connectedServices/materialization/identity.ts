@@ -6,7 +6,7 @@ import {
   type ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
 
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {
   HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
   parseSessionConnectedServiceMaterializationIdentityJson,

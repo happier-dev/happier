@@ -1,8 +1,9 @@
+import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import type { FirstPartyInstallLayout } from './installLayout.js';
+import { assertValidFirstPartyVersionId, type FirstPartyInstallLayout } from './installLayout.js';
 
 const CURRENT_VERSION_MARKER_FILE = 'current.version';
 const PREVIOUS_VERSION_MARKER_FILE = 'previous.version';
@@ -29,13 +30,24 @@ function readOptionalTrimmedFileSync(path: string): string | null {
   }
 }
 
+function validateOptionalVersionId(versionId: string | null): string | null {
+  if (versionId !== null) {
+    assertValidFirstPartyVersionId(versionId);
+  }
+  return versionId;
+}
+
 export async function readInstalledVersionMarkers(layout: FirstPartyInstallLayout): Promise<{
   currentVersionId: string | null;
   previousVersionId: string | null;
 }> {
   return {
-    currentVersionId: await readOptionalTrimmedFile(resolveMarkerPath(layout, CURRENT_VERSION_MARKER_FILE)),
-    previousVersionId: await readOptionalTrimmedFile(resolveMarkerPath(layout, PREVIOUS_VERSION_MARKER_FILE)),
+    currentVersionId: validateOptionalVersionId(
+      await readOptionalTrimmedFile(resolveMarkerPath(layout, CURRENT_VERSION_MARKER_FILE)),
+    ),
+    previousVersionId: validateOptionalVersionId(
+      await readOptionalTrimmedFile(resolveMarkerPath(layout, PREVIOUS_VERSION_MARKER_FILE)),
+    ),
   };
 }
 
@@ -52,8 +64,12 @@ export function readInstalledVersionMarkersSync(layout: FirstPartyInstallLayout)
   previousVersionId: string | null;
 } {
   return {
-    currentVersionId: readOptionalTrimmedFileSync(resolveMarkerPath(layout, CURRENT_VERSION_MARKER_FILE)),
-    previousVersionId: readOptionalTrimmedFileSync(resolveMarkerPath(layout, PREVIOUS_VERSION_MARKER_FILE)),
+    currentVersionId: validateOptionalVersionId(
+      readOptionalTrimmedFileSync(resolveMarkerPath(layout, CURRENT_VERSION_MARKER_FILE)),
+    ),
+    previousVersionId: validateOptionalVersionId(
+      readOptionalTrimmedFileSync(resolveMarkerPath(layout, PREVIOUS_VERSION_MARKER_FILE)),
+    ),
   };
 }
 
@@ -70,5 +86,12 @@ export async function writeInstalledVersionMarker(params: Readonly<{
     await rm(markerPath, { force: true });
     return;
   }
-  await writeFile(markerPath, `${params.versionId}\n`, 'utf8');
+  assertValidFirstPartyVersionId(params.versionId);
+  const temporaryPath = `${markerPath}.tmp-${process.pid}-${randomUUID()}`;
+  try {
+    await writeFile(temporaryPath, `${params.versionId}\n`, 'utf8');
+    await rename(temporaryPath, markerPath);
+  } finally {
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
 }

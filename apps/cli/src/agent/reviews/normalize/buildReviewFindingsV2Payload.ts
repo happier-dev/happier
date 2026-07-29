@@ -4,6 +4,7 @@ import {
   ReviewFindingsV2Schema,
   type ReviewFinding,
   type ReviewFindingsV2,
+  type ReviewCommentProposalsV1,
 } from '@happier-dev/protocol';
 
 export function buildReviewFindingsV2Payload(params: Readonly<{
@@ -20,6 +21,7 @@ export function buildReviewFindingsV2Payload(params: Readonly<{
   limits?: Readonly<Record<string, unknown>> | null;
   triage?: unknown;
   publication?: unknown;
+  proposedComments?: ReviewCommentProposalsV1;
   generatedAtMs: number;
 }>): ReviewFindingsV2 {
   return ReviewFindingsV2Schema.parse({
@@ -38,6 +40,7 @@ export function buildReviewFindingsV2Payload(params: Readonly<{
     findings: params.findings,
     questions: params.questions ?? [],
     assumptions: params.assumptions ?? [],
+    ...(params.proposedComments ? { proposedComments: params.proposedComments } : {}),
     ...(params.limits ? { limits: params.limits } : {}),
     ...(params.triage ? { triage: params.triage } : {}),
     ...(params.publication ? { publication: params.publication } : {}),

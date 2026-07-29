@@ -3,6 +3,7 @@ import {
     pickSessionRuntimeLocalMetadata,
     type SessionRuntimeLocalMetadata,
 } from '@/agent/runtime/identity';
+import { normalizeLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol';
 
 type MetadataRecord = Record<string, unknown>;
 
@@ -108,11 +109,12 @@ export function resolveSessionHandoffExportMetadata(input: Readonly<{
     const runtimeLocalMetadata = localSplit?.runtimeLocalMetadata;
 
     if (!runtimeLocalMetadata) {
-        return exportMetadata;
+        return normalizeLinkedExternalSessionMetadataV1(exportMetadata) ?? exportMetadata;
     }
 
-    return {
+    const mergedMetadata = {
         ...exportMetadata,
         ...cloneSessionRuntimeLocalMetadata(runtimeLocalMetadata),
     };
+    return normalizeLinkedExternalSessionMetadataV1(mergedMetadata) ?? mergedMetadata;
 }

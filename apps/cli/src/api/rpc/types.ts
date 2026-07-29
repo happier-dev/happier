@@ -2,13 +2,21 @@
  * Common RPC types and interfaces for both session and machine clients
  */
 
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
+import type {
+    SocketRpcTransportAcknowledgementV1,
+} from '@happier-dev/protocol/socketRpc';
+
 /**
  * Generic RPC handler function type
  * @template TRequest - The request data type
  * @template TResponse - The response data type
  */
+export type RpcHandlerContext = Readonly<{ signal: AbortSignal }>;
+
 export type RpcHandler<TRequest = any, TResponse = any> = (
-    data: TRequest
+    data: TRequest,
+    context?: RpcHandlerContext,
 ) => TResponse | Promise<TResponse>;
 
 export type RpcHandlerRegistrar = Readonly<{
@@ -19,7 +27,7 @@ export type RpcHandlerRegistrar = Readonly<{
 }>;
 
 export type RpcHandlerInvoker = Readonly<{
-    invokeLocal: (method: string, params: unknown) => Promise<unknown>;
+    invokeLocal: (method: string, params: unknown, options?: Readonly<{ signal?: AbortSignal }>) => Promise<unknown>;
 }>;
 
 export type RpcHandlerManagerLike = RpcHandlerRegistrar & RpcHandlerInvoker;
@@ -35,7 +43,14 @@ export type RpcHandlerMap = Map<string, RpcHandler>;
 export interface RpcRequest {
     method: string;
     params: unknown;
+    authorization?: SocketRpcAuthorizationContext;
+    timeoutMs?: number;
+    transportResponseEnvelopeVersion?: 1;
 }
+
+export type RpcAuthorizationResult =
+    | Readonly<{ ok: true }>
+    | Readonly<{ ok: false; error: string; errorCode?: string }>;
 
 /**
  * RPC response callback
@@ -50,7 +65,19 @@ export interface RpcHandlerConfig {
     encryptionKey: Uint8Array;
     encryptionVariant: 'legacy' | 'dataKey';
     encryptionMode?: 'e2ee' | 'plain';
+    authorizeRequest?: (request: Readonly<{
+        method: string;
+        params: unknown;
+        authorization?: SocketRpcAuthorizationContext;
+    }>) => RpcAuthorizationResult | Promise<RpcAuthorizationResult>;
+    projectTransportAcknowledgement?: (request: Readonly<{
+        method: string;
+        params: unknown;
+        result: unknown;
+        authorization?: SocketRpcAuthorizationContext;
+    }>) => SocketRpcTransportAcknowledgementV1 | null;
     logger?: (message: string, data?: any) => void;
+    onRegistrationError?: (error: unknown) => void;
 }
 
 /**

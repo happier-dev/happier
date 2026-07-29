@@ -1,10 +1,29 @@
-import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
-
 import type {
-    ResolvedContributionRegistry,
     ResolvedContributionProvenance,
+    ResolvedContributionRegistry,
     ResolvedContributionSource,
 } from '../../../projection/registry/types';
+import { derivePluginDaemonContributionRegistrationRights } from '@happier-dev/protocol';
+
+export type PluginContributionActivationDemand = Readonly<{
+    pluginId: string;
+    family: string;
+    localId: string;
+}>;
+
+const PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES = new Set([
+    'actions',
+    'hooks',
+    'mcp.servers',
+    'mcp.discoveryProviders',
+    'scmBackends',
+    'scmHostingProviders',
+    'requestInterceptors',
+    'notificationChannels',
+    'connectedAccountDescriptors',
+    'agents',
+    'voiceProviders.speech',
+]);
 
 /**
  * Activation targets: the deduplicated set of (plugin, daemon entry) pairs
@@ -12,17 +31,7 @@ import type {
  * collect them and decide when they should activate.
  */
 
-export type ActivationTarget = Readonly<{
-    provenance: ResolvedContributionProvenance;
-    source: ResolvedContributionSource;
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string;
-    devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
-    activationEvents?: readonly string[];
-}>;
+export type ActivationTarget = import('../../../projection/registry/types').ResolvedActivationTarget;
 
 export function addActivationTarget(targets: Map<string, ActivationTarget>, raw: Readonly<{
     provenance?: ResolvedContributionProvenance;
@@ -32,13 +41,15 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
     manifestDigest?: string;
     daemonEntryPath?: string | null;
     devDaemonEntryPath?: string | null;
-    sourceSpec?: PluginSourceSpecV1;
+    sourceSpec?: ActivationTarget['sourceSpec'];
     activationEvents?: readonly string[];
+    manifest?: ActivationTarget['manifest'];
 }>): void {
-    if (!raw.pluginId || !raw.manifestPath || !raw.manifestDigest || !raw.daemonEntryPath) {
+    if (!raw.pluginId || !raw.manifestPath || !raw.manifestDigest
+        || (!raw.daemonEntryPath && !raw.devDaemonEntryPath) || !raw.sourceSpec || !raw.manifest) {
         return;
     }
-    const key = `${raw.pluginId}::${raw.daemonEntryPath}`;
+    const key = `${raw.pluginId}::${raw.daemonEntryPath ?? raw.devDaemonEntryPath}`;
     if (targets.has(key)) {
         return;
     }
@@ -48,9 +59,10 @@ export function addActivationTarget(targets: Map<string, ActivationTarget>, raw:
         pluginId: raw.pluginId,
         manifestPath: raw.manifestPath,
         manifestDigest: raw.manifestDigest,
-        daemonEntryPath: raw.daemonEntryPath,
+        daemonEntryPath: raw.daemonEntryPath ?? null,
         devDaemonEntryPath: raw.devDaemonEntryPath ?? null,
         sourceSpec: raw.sourceSpec,
+        manifest: raw.manifest,
         ...(raw.activationEvents ? { activationEvents: raw.activationEvents } : {}),
     });
 }
@@ -60,11 +72,8 @@ export function collectActivationTargets(contributes: ResolvedContributionRegist
     for (const target of contributes.activationTargets) {
         addActivationTarget(targets, target);
     }
-    for (const provider of contributes.agents) {
-        addActivationTarget(targets, provider);
-    }
-    for (const backend of contributes.agentRuntimes) {
-        addActivationTarget(targets, backend);
+    for (const agent of contributes.agents) {
+        addActivationTarget(targets, agent);
     }
     for (const action of contributes.actions) {
         addActivationTarget(targets, action);
@@ -75,19 +84,31 @@ export function collectActivationTargets(contributes: ResolvedContributionRegist
     for (const command of contributes.commands ?? []) {
         addActivationTarget(targets, command);
     }
-    for (const hookRegistration of contributes.hookRegistrations) {
-        addActivationTarget(targets, hookRegistration);
-    }
-    for (const lifecycleHandler of contributes.lifecycleHandlers ?? []) {
-        addActivationTarget(targets, lifecycleHandler);
-    }
     return Object.freeze([...targets.values()]);
 }
 
 export function shouldActivateTargetAtStartup(target: ActivationTarget): boolean {
-    return target.activationEvents === undefined || target.activationEvents.includes('startup');
+    if (target.activationEvents?.includes('startup')) return true;
+    const registrationRights = derivePluginDaemonContributionRegistrationRights(
+        target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
+    );
+    if (registrationRights.length === 0) return false;
+
+    // Families stay on compatibility-eager activation until their real
+    // consumer owns a positive asynchronous demand boundary. This prevents a
+    // nominally "lazy" cutover from silently deleting registrations that are
+    // still read synchronously today.
+    return registrationRights.some((right) => (
+        !PRODUCT_DEMAND_READY_REGISTRATION_FAMILIES.has(right.family)
+    ));
 }
 
-export function activationTargetMatchesEvent(target: ActivationTarget, activationEvent: string): boolean {
-    return target.activationEvents?.includes(activationEvent) === true;
+export function activationTargetMatchesContributionDemand(
+    target: ActivationTarget,
+    demand: PluginContributionActivationDemand,
+): boolean {
+    if (demand.pluginId !== target.pluginId) return false;
+    return derivePluginDaemonContributionRegistrationRights(
+        target.manifest.contributes as unknown as Readonly<Record<string, unknown>>,
+    ).some((right) => right.family === demand.family && right.localId === demand.localId);
 }

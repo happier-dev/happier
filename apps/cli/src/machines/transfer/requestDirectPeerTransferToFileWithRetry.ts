@@ -1,4 +1,7 @@
-import type { TransferEndpointCandidate } from '@happier-dev/protocol';
+import {
+    isSafeDirectTransferEndpointCandidate,
+    type TransferEndpointCandidate,
+} from '@happier-dev/protocol';
 
 import { isDirectPeerTransferProtocolError } from './directPeerTransport';
 
@@ -10,12 +13,16 @@ export async function requestDirectPeerTransferToFileWithRetry<TResult>(params: 
         transferId: string;
         endpointCandidates: readonly TransferEndpointCandidate[];
         destinationPath: string;
+        expectedSizeBytes?: number;
+        expectedManifestHash?: string;
         openBody?: unknown;
         timeoutMs?: number;
     }>) => Promise<TResult>;
     transferId: string;
     endpointCandidates: readonly TransferEndpointCandidate[];
     destinationPath: string;
+    expectedSizeBytes?: number;
+    expectedManifestHash?: string;
     openBody?: unknown;
     timeoutMs?: number;
     maxAttempts?: number;
@@ -32,12 +39,19 @@ export async function requestDirectPeerTransferToFileWithRetry<TResult>(params: 
             : DEFAULT_DIRECT_PEER_WORKSPACE_RETRY_DELAY_MS;
 
     let lastError: unknown = null;
+    const endpointCandidates = params.endpointCandidates.filter(isSafeDirectTransferEndpointCandidate);
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
         try {
             return await params.requestTransferToFile({
                 transferId: params.transferId,
-                endpointCandidates: params.endpointCandidates,
+                endpointCandidates,
                 destinationPath: params.destinationPath,
+                ...(typeof params.expectedSizeBytes === 'number'
+                    ? { expectedSizeBytes: params.expectedSizeBytes }
+                    : {}),
+                ...(typeof params.expectedManifestHash === 'string'
+                    ? { expectedManifestHash: params.expectedManifestHash }
+                    : {}),
                 ...(params.openBody !== undefined ? { openBody: params.openBody } : {}),
                 ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
             });

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFile, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -69,8 +70,7 @@ describe('resolveWorkspaceFileUploadTarget', () => {
         });
         expect(result.success).toBe(true);
         if (result.success) {
-            expect(result.target.destPath.endsWith('/nested/file.txt')).toBe(true);
-            expect(result.target.destPath).toContain('happier-transfer-upload-target-');
+            expect(result.target.destPath).toBe(join(workspace, 'nested', 'file.txt'));
         }
     });
 
@@ -116,18 +116,12 @@ describe('resolveWorkspaceFileUploadTarget', () => {
             return;
         }
 
-        const finalizeUpload = (
-            result.target as {
-                finalizeUpload?: (input: Readonly<{ tempPath: string; sizeBytes: number; sha256: string }>) => Promise<{
-                    path: string;
-                    sizeBytes: number;
-                }>;
-            }
-        ).finalizeUpload;
+        const finalizeUpload = result.target.finalizeUpload;
 
         expect(typeof finalizeUpload).toBe('function');
 
         const finalized = await finalizeUpload?.({
+            uploadId: 'upload-materialize',
             tempPath: stagedPath,
             sizeBytes: 6,
             sha256: 'hash-1',
@@ -139,6 +133,80 @@ describe('resolveWorkspaceFileUploadTarget', () => {
             sizeBytes: 6,
         });
         expect(readFileSync(join(workspace, 'nested', 'file.txt'), 'utf8')).toBe('hello\n');
+    });
+
+    it('binds one exact-upload filesystem fault beneath the canonical finalizer, then retries normally', async () => {
+        const workspace = createWorkspace();
+        const stagedPath = join(workspace, '.staged-upload');
+        const destinationPath = join(workspace, 'nested', 'file.txt');
+        writeFileSync(stagedPath, 'hello\n', 'utf8');
+        // The absent destination keeps this topology on the no-backup rollback path:
+        // source cleanup fails, then removing the newly published destination fails.
+        expect(existsSync(destinationPath)).toBe(false);
+        let faultArmed = true;
+
+        const result = resolveWorkspaceFileUploadTarget({
+            workingDirectory: workspace,
+            path: 'nested/file.txt',
+            sizeBytes: 6,
+            overwrite: true,
+            finalizeFileOperations: ({ uploadId, tempPath, destPath }) => {
+                if (!faultArmed || uploadId !== 'upload-1' || tempPath !== stagedPath || destPath !== destinationPath) {
+                    return null;
+                }
+                faultArmed = false;
+                return {
+                    copyFile,
+                    rename: async (from: string, to: string) => {
+                        if (from === stagedPath && to === destinationPath) {
+                            const error = new Error('testkit cross-device boundary') as NodeJS.ErrnoException;
+                            error.code = 'EXDEV';
+                            throw error;
+                        }
+                        await rename(from, to);
+                    },
+                    rm: async (path: string, options?: Parameters<typeof rm>[1]) => {
+                        if (path === stagedPath || path === destinationPath) {
+                            const error = new Error('testkit recovery boundary') as NodeJS.ErrnoException;
+                            error.code = 'EPERM';
+                            throw error;
+                        }
+                        await rm(path, options);
+                    },
+                };
+            },
+        });
+
+        expect(result.success).toBe(true);
+        if (!result.success) {
+            return;
+        }
+        const finalizeUpload = result.target.finalizeUpload;
+
+        await expect(finalizeUpload({
+            uploadId: 'upload-1',
+            tempPath: stagedPath,
+            sizeBytes: 6,
+            sha256: 'hash-1',
+        })).resolves.toMatchObject({
+            success: false,
+            errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+            keepSession: true,
+        });
+        expect(readFileSync(stagedPath, 'utf8')).toBe('hello\n');
+        expect(readFileSync(destinationPath, 'utf8')).toBe('hello\n');
+
+        await expect(finalizeUpload({
+            uploadId: 'upload-1',
+            tempPath: stagedPath,
+            sizeBytes: 6,
+            sha256: 'hash-1',
+        })).resolves.toEqual({
+            success: true,
+            path: 'nested/file.txt',
+            sizeBytes: 6,
+        });
+        expect(readFileSync(destinationPath, 'utf8')).toBe('hello\n');
     });
 
     it('fails closed when the selected session-routed size limit is exceeded', () => {

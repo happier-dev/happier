@@ -1,9 +1,13 @@
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
 import { rm, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import { configuration } from '@/configuration';
+import {
+    readProcessIdentityByPid,
+    type ReadProcessIdentityByPidDependencies,
+} from '@/daemon/processIdentity';
+import { hashProcessCommand } from '@/daemon/sessionRegistry';
 import { logger } from '@/ui/logger';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
@@ -23,14 +27,17 @@ export type ManagedServerPersistentState = Readonly<{
 
 type ManagedServerProcessInfo = Readonly<{
     command: string;
-    startedAtMs: number | null;
+    pid?: number;
+    processStartTimeMs?: number;
+    startedAtMs?: number | null;
 }>;
 
 type ReleaseFromStateDeps = Readonly<{
     readState: () => Promise<ManagedServerPersistentState | null>;
     removeState: () => Promise<void>;
     isPidAlive: (pid: number) => boolean;
-    readProcessInfo: (pid: number) => Promise<ManagedServerProcessInfo | null>;
+    readProcessInfo?: (pid: number) => Promise<ManagedServerProcessInfo | null>;
+    processIdentityDependencies?: ReadProcessIdentityByPidDependencies;
     killPid: (pid: number, drainMs: number) => Promise<boolean> | boolean;
     isExpectedProcessCommand: (command: string) => boolean;
     expectedOwnerToken: string | null;
@@ -70,10 +77,6 @@ export type ManagedServerStatePathParams = Readonly<{
     namespace: string;
     fingerprintInput: Readonly<Record<string, string>>;
 }>;
-
-function hashCommandLine(value: string): string {
-    return createHash('sha256').update(value).digest('hex');
-}
 
 function hashFingerprintInput(input: Readonly<Record<string, string>>): string {
     return createHash('sha256').update(JSON.stringify(input)).digest('hex');
@@ -174,30 +177,11 @@ async function terminatePidBestEffort(pid: number, drainMs: number): Promise<boo
     return await waitForPidExit(pid, 1_000);
 }
 
-async function readProcessInfoBestEffort(pid: number): Promise<ManagedServerProcessInfo | null> {
-    if (!Number.isInteger(pid) || pid <= 0) return null;
-    try {
-        const command = execFileSync(
-            'ps',
-            ['-o', 'command=', '-p', String(pid)],
-            { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' },
-        ).trim();
-        if (!command) return null;
-        const startedAtRaw = execFileSync(
-            'ps',
-            ['-o', 'lstart=', '-p', String(pid)],
-            { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' },
-        ).trim();
-        const startedAtMs = Number.isFinite(Date.parse(startedAtRaw))
-            ? Date.parse(startedAtRaw)
-            : null;
-        return {
-            command,
-            startedAtMs,
-        };
-    } catch {
-        return null;
-    }
+function readObservedProcessStartTimeMs(processInfo: ManagedServerProcessInfo): number | null {
+    const value = processInfo.processStartTimeMs ?? processInfo.startedAtMs;
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.trunc(value)
+        : null;
 }
 
 async function probeHttpHealth(baseUrl: string, params: Readonly<{
@@ -296,20 +280,30 @@ export async function releaseManagedServerForSwitchFromState(
         return { released: false, reason: 'tracked_session_claimed' };
     }
 
-    const processInfo = await deps.readProcessInfo(state.pid);
-    if (!processInfo || !deps.isExpectedProcessCommand(processInfo.command)) {
+    const processInfo = deps.readProcessInfo
+        ? await deps.readProcessInfo(state.pid)
+        : await readProcessIdentityByPid(state.pid, deps.processIdentityDependencies);
+    const observedStartTimeMs = processInfo
+        ? readObservedProcessStartTimeMs(processInfo)
+        : null;
+    if (
+        !processInfo
+        || (processInfo.pid !== undefined && processInfo.pid !== state.pid)
+        || observedStartTimeMs === null
+        || !deps.isExpectedProcessCommand(processInfo.command)
+    ) {
         await deps.removeState().catch(() => {});
         return { released: false, reason: 'process_identity_mismatch' };
     }
 
     const expectedCmdlineHash = readNonEmptyString(state.expectedCmdlineHash);
-    if (expectedCmdlineHash && expectedCmdlineHash !== hashCommandLine(processInfo.command)) {
+    if (expectedCmdlineHash && expectedCmdlineHash !== hashProcessCommand(processInfo.command)) {
         await deps.removeState().catch(() => {});
         return { released: false, reason: 'process_identity_mismatch' };
     }
 
-    if (Number.isFinite(state.startTimeMs) && state.startTimeMs && processInfo.startedAtMs) {
-        if (!isCompatibleProcessStartTime(state.startTimeMs, processInfo.startedAtMs)) {
+    if (Number.isFinite(state.startTimeMs) && state.startTimeMs) {
+        if (!isCompatibleProcessStartTime(state.startTimeMs, observedStartTimeMs)) {
             await deps.removeState().catch(() => {});
             return { released: false, reason: 'process_identity_mismatch' };
         }
@@ -348,7 +342,6 @@ export async function releaseManagedServerForSwitch(params: ManagedServerStatePa
             await rm(previousStatePath, { force: true });
         },
         isPidAlive,
-        readProcessInfo: readProcessInfoBestEffort,
         killPid: terminatePidBestEffort,
         isExpectedProcessCommand: params.isExpectedProcessCommand,
         expectedOwnerToken: params.expectedOwnerToken ?? null,

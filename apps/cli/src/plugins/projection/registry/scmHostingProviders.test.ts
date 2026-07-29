@@ -1,9 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
+import {
+    buildQualifiedPluginContributionKey,
+    createPluginContributionIdentity,
+} from '@happier-dev/protocol';
+
 import { buildPluginProjectionV2 } from './projection/v2';
 import { buildPluginContributionRegistry } from './normalize/package';
 import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry } from './types';
+import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 const sourceSpec = {
     kind: 'path' as const,
@@ -15,31 +22,53 @@ const sourceSpec = {
 function createEmptyRegistry(overrides: Partial<ResolvedContributionRegistry> = {}): ResolvedContributionRegistry {
     return {
         agents: [],
-        agentRuntimes: [],
-        actions: [],
+                actions: [],
         tools: [],
         commands: [],
         resources: [],
-        uiDescriptors: [],
         activationTargets: [],
-        hookRegistrations: [],
-        lifecycleHandlers: [],
         actionsById: new Map(),
         toolsById: new Map(),
         commandsById: new Map(),
         resourcesById: new Map(),
-        uiDescriptorsById: new Map(),
-        lifecycleHandlersById: new Map(),
-        surfaceHandlersByBackendId: new Map(),
-        catalogEntriesById: {},
+                catalogEntriesById: {},
         agentDefinitionsById: new Map(),
-        agentRuntimeDefinitionsById: new Map(),
-        pluginDiagnosticsByPluginId: {},
+                pluginDiagnosticsByPluginId: {},
         ...overrides,
     } as ResolvedContributionRegistry;
 }
 
 describe('SCM hosting-provider plugin contributions', () => {
+    it('projects current runtime-v2 operation arrays without throwing in the full projection', () => {
+        const registry = createEmptyRegistry({
+            scmHostingProviders: [{
+                id: 'bitbucket',
+                provenance: 'first_party',
+                source: { kind: 'bundled' },
+                pluginId: 'happier.scm.hosting.bitbucket',
+                definition: {
+                    id: 'bitbucket',
+                    title: 'Bitbucket',
+                    kind: 'bitbucket',
+                    capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
+                    authService: 'bitbucket-account',
+                },
+            }],
+        });
+
+        const projection = buildPluginProjectionV2({ registry, generation: 3 });
+
+        expect(projection.familiesById.scmHostingProviders?.entriesById['happier.scm.hosting.bitbucket/bitbucket']).toEqual(
+            expect.objectContaining({
+                id: 'happier.scm.hosting.bitbucket/bitbucket',
+                localId: 'bitbucket',
+                displayName: 'Bitbucket',
+                capabilities: expect.objectContaining({
+                    pullRequests: expect.objectContaining({ list: true, get: true, create: true }),
+                }),
+            }),
+        );
+    });
     it('flattens non-agent manifest descriptors without requiring provider or backend contributes', () => {
         const registry = buildPluginContributionRegistry({
             loadedPlugins: [
@@ -51,7 +80,7 @@ describe('SCM hosting-provider plugin contributions', () => {
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
-                    manifest: {
+                    manifest: readCanonicalPluginManifest(createPluginManifestV2Fixture({
                         schemaVersion: 2,
                         id: 'acme.scm',
                         version: '1.0.0',
@@ -59,38 +88,24 @@ describe('SCM hosting-provider plugin contributions', () => {
                         engines: {
                             happier: '^0.2.0',
                         },
-                        activationEvents: [],
-                        uses: [],
-                        entrypoints: { main: './daemon.js' },
-                        permissions: [],
+                        entrypoints: { daemon: './daemon.js' },
                         contributes: {
                             agents: [],
-                            agentRuntimes: [],
                             actions: [],
                             tools: [],
                             commands: [],
                             resources: [],
-                            uiDescriptors: [],
                             scmHostingProviders: [
                                 {
-                                    id: 'acme.scm.github',
+                                    id: 'github',
                                     kind: 'github',
-                                    displayName: 'Acme GitHub',
-                                    baseUrl: 'https://github.example.com',
-                                    remoteHostMatchers: {
-                                        exactHosts: ['github.example.com'],
-                                    },
-                                    urlSafety: {
-                                        allowedSchemes: ['https:'],
-                                        allowedBaseUrls: ['https://github.example.com'],
-                                        allowedOrigins: ['https://github.example.com'],
-                                    },
+                                    title: 'Acme GitHub',
+                                    capabilities: ['detect', 'pullRequest'],
                                 },
                             ],
                             hooks: [],
-                            lifecycleHandlers: [],
                         },
-                    },
+                    }))!,
                 },
             ],
         });
@@ -100,80 +115,69 @@ describe('SCM hosting-provider plugin contributions', () => {
                 pluginId: 'acme.scm',
                 identity: {
                     pluginId: 'acme.scm',
-                    family: 'scmHostingProviders',
-                    contributionId: 'acme.scm.github',
-                    provenance: 'external',
+                    localId: 'github',
                 },
                 definition: expect.objectContaining({
-                    id: 'acme.scm.github',
+                    id: 'github',
                     kind: 'github',
                 }),
             }),
         ]);
         expect(registry.agents).toEqual([]);
-        expect(registry.agentRuntimes).toEqual([]);
     });
 
-    it('keeps first-party providers active when an external plugin declares a duplicate id', () => {
+    it('keeps same-local-id providers from distinct plugin namespaces addressable', () => {
         const registry = createResolvedContributionRegistry({
             agents: [],
-            agentRuntimes: [],
-            scmHostingProviders: [
+                        scmHostingProviders: [
                 {
-                    id: 'scm.github',
-                    provenance: 'first_party',
-                    source: { kind: 'bundled' },
-                    pluginId: 'happier.scm.hosting.github',
+                    id: 'shared',
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.scm.one',
                     definition: {
-                        id: 'scm.github',
+                        id: 'shared',
                         kind: 'github',
-                        displayName: 'GitHub',
-                        baseUrl: 'https://github.com',
-                        remoteHostMatchers: {
-                            exactHosts: ['github.com'],
-                        },
-                        urlSafety: {
-                            allowedSchemes: ['https:'],
-                            allowedBaseUrls: ['https://github.com'],
-                            allowedOrigins: ['https://github.com'],
-                        },
+                        title: 'GitHub',
+                        capabilities: ['detect', 'pullRequest'],
                     },
                 },
                 {
-                    id: 'scm.github',
+                    id: 'shared',
                     provenance: 'external',
                     source: { kind: 'path' },
-                    pluginId: 'acme.shadow',
+                    pluginId: 'acme.scm.two',
                     manifestPath: '/plugins/acme-shadow/.happier-plugin/plugin.json',
                     manifestDigest: 'sha256:shadow',
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
                     definition: {
-                        id: 'scm.github',
+                        id: 'shared',
                         kind: 'github',
-                        displayName: 'Shadow GitHub',
-                        baseUrl: 'https://github.shadow.example.com',
-                        remoteHostMatchers: {
-                            exactHosts: ['github.shadow.example.com'],
-                        },
-                        urlSafety: {
-                            allowedSchemes: ['https:'],
-                            allowedBaseUrls: ['https://github.shadow.example.com'],
-                            allowedOrigins: ['https://github.shadow.example.com'],
-                        },
+                        title: 'Shadow GitHub',
+                        capabilities: ['detect'],
                     },
                 },
             ],
         });
 
-        expect(registry.scmHostingProvidersById?.get('scm.github')?.pluginId).toBe('happier.scm.hosting.github');
-        expect(registry.scmHostingProviders).toHaveLength(1);
-        expect(registry.pluginDiagnosticsByPluginId['acme.shadow']).toEqual([
-            expect.objectContaining({
-                code: 'scm_hosting_provider_duplicate',
-                message: expect.stringContaining('acme.shadow:scmHostingProviders:scm.github'),
-            }),
+        const firstKey = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+            pluginId: 'acme.scm.one',
+            localId: 'shared',
+        }));
+        const secondKey = buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+            pluginId: 'acme.scm.two',
+            localId: 'shared',
+        }));
+        expect(registry.scmHostingProvidersById?.get(firstKey)?.pluginId).toBe('acme.scm.one');
+        expect(registry.scmHostingProvidersById?.get(secondKey)?.pluginId).toBe('acme.scm.two');
+        expect(registry.scmHostingProviders).toHaveLength(2);
+        expect(registry.pluginDiagnosticsByPluginId['acme.scm.two']).toBeUndefined();
+        const projection = buildPluginProjectionV2({ registry, generation: 9 });
+        expect(Object.keys(projection.familiesById.scmHostingProviders?.entriesById ?? {})).toEqual([
+            'acme.scm.one/shared',
+            'acme.scm.two/shared',
         ]);
     });
 
@@ -193,20 +197,8 @@ describe('SCM hosting-provider plugin contributions', () => {
                     definition: {
                         id: 'acme.scm.github',
                         kind: 'github',
-                        displayName: 'Acme GitHub',
-                        baseUrl: 'https://github.example.com',
-                        remoteHostMatchers: {
-                            exactHosts: ['github.example.com'],
-                        },
-                        urlSafety: {
-                            allowedSchemes: ['https:'],
-                            allowedBaseUrls: ['https://github.example.com'],
-                            allowedOrigins: ['https://github.example.com'],
-                        },
-                        capabilities: {
-                            compareUrl: true,
-                            openUrl: true,
-                        },
+                        title: 'Acme GitHub',
+                        capabilities: ['detect', 'pullRequest'],
                     },
                 },
             ],
@@ -218,29 +210,24 @@ describe('SCM hosting-provider plugin contributions', () => {
             generation: 3,
         });
 
-        expect(projection.familiesById.scmHostingProviders?.entriesById['acme.scm.github']).toEqual({
-            id: 'acme.scm.github',
-            pluginId: 'acme.scm',
-            kind: 'github',
-            displayName: 'Acme GitHub',
-            baseUrl: 'https://github.example.com',
-            urlSafety: {
-                allowedSchemes: ['https:'],
-                allowedBaseUrls: ['https://github.example.com'],
-                allowedOrigins: ['https://github.example.com'],
-            },
-            capabilities: expect.objectContaining({
-                compareUrl: true,
-                openUrl: true,
+        expect(projection.familiesById.scmHostingProviders?.entriesById['acme.scm/acme.scm.github']).toEqual(
+            expect.objectContaining({
+                id: 'acme.scm/acme.scm.github',
+                localId: 'acme.scm.github',
+                pluginId: 'acme.scm',
+                kind: 'github',
+                displayName: 'Acme GitHub',
+                capabilities: expect.objectContaining({
+                    pullRequests: expect.objectContaining({ list: true, get: true, create: true }),
+                }),
             }),
-        });
+        );
     });
 
     it('projects bundled first-party SCM hosting providers without agent or backend contributions', () => {
         const registry = createEmptyRegistry({
             agents: [],
-            agentRuntimes: [],
-            scmHostingProviders: [
+                        scmHostingProviders: [
                 {
                     id: 'scm.github',
                     provenance: 'first_party',
@@ -249,16 +236,8 @@ describe('SCM hosting-provider plugin contributions', () => {
                     definition: {
                         id: 'scm.github',
                         kind: 'github',
-                        displayName: 'GitHub',
-                        baseUrl: 'https://github.com',
-                        remoteHostMatchers: {
-                            exactHosts: ['github.com'],
-                        },
-                        urlSafety: {
-                            allowedSchemes: ['https:'],
-                            allowedBaseUrls: ['https://github.com'],
-                            allowedOrigins: ['https://github.com'],
-                        },
+                        title: 'GitHub',
+                        capabilities: ['detect'],
                     },
                 },
             ],
@@ -271,21 +250,73 @@ describe('SCM hosting-provider plugin contributions', () => {
         });
 
         expect(registry.agents).toEqual([]);
-        expect(registry.agentRuntimes).toEqual([]);
-        expect(projection.familiesById.scmHostingProviders?.entriesById['scm.github']).toEqual({
-            id: 'scm.github',
-            pluginId: 'happier.scm.hosting.github',
-            kind: 'github',
-            displayName: 'GitHub',
-            baseUrl: 'https://github.com',
-            urlSafety: {
-                allowedSchemes: ['https:'],
-                allowedBaseUrls: ['https://github.com'],
-                allowedOrigins: ['https://github.com'],
+        expect(projection.familiesById.scmHostingProviders?.entriesById['happier.scm.hosting.github/scm.github']).toEqual(
+            expect.objectContaining({
+                id: 'happier.scm.hosting.github/scm.github',
+                localId: 'scm.github',
+                pluginId: 'happier.scm.hosting.github',
+                kind: 'github',
+                displayName: 'GitHub',
+                capabilities: expect.objectContaining({
+                    compareUrl: false,
+                    openUrl: false,
+                }),
+            }),
+        );
+    });
+
+    it('projects only hosting providers backed by the current authoritative runtime lease with auth facts', () => {
+        const registry = createEmptyRegistry({
+            scmHostingProviders: [
+                {
+                    id: 'active',
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.scm.hosting',
+                    definition: {
+                        id: 'active',
+                        title: 'Acme Forge',
+                        description: 'Active hosting provider',
+                        kind: 'acme',
+                        capabilities: ['detect', 'clone', 'pullRequest'],
+                        authService: 'account',
+                        metadata: { tier: 'enterprise' },
+                    },
+                },
+                {
+                    id: 'stale',
+                    provenance: 'external',
+                    source: { kind: 'path' },
+                    pluginId: 'acme.scm.hosting',
+                    definition: {
+                        id: 'stale',
+                        title: 'Stale Forge',
+                        kind: 'acme',
+                        capabilities: ['detect'],
+                    },
+                },
+            ],
+        });
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 12,
+            scmRuntimeAvailability: {
+                backendIds: new Set(),
+                hostingProviderIds: new Set(['acme.scm.hosting/active']),
             },
-            capabilities: expect.objectContaining({
-                compareUrl: false,
-                openUrl: false,
+        });
+
+        expect(projection.familiesById.scmHostingProviders?.entriesById).toEqual({
+            'acme.scm.hosting/active': expect.objectContaining({
+                id: 'acme.scm.hosting/active',
+                localId: 'active',
+                pluginId: 'acme.scm.hosting',
+                displayName: 'Acme Forge',
+                description: 'Active hosting provider',
+                operations: ['detect', 'clone', 'pullRequest'],
+                authService: { pluginId: 'acme.scm.hosting', localId: 'account' },
+                metadata: { tier: 'enterprise' },
             }),
         });
     });

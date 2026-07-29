@@ -27,4 +27,16 @@ describe('daemon tmux env building', () => {
         expect(merged.Path).toBe('C:\\Windows\\System32');
         expect('PATH' in merged).toBe(false);
     }, 10000);
+
+    it('applies case-insensitive unsets before explicit tmux window values', async () => {
+        const spawnConfigModule = (await import('@/daemon/platform/tmux/spawnConfig')) as typeof import('@/daemon/platform/tmux/spawnConfig');
+        const merged = spawnConfigModule.buildTmuxWindowEnv(
+            { HOME: '/ambient-home', PATH: '/bin' },
+            { HOME: '/explicit-home', EMPTY: '' },
+            process.platform,
+            ['home'],
+        );
+
+        expect(merged).toEqual({ PATH: '/bin', HOME: '/explicit-home', EMPTY: '' });
+    }, 10000);
 });

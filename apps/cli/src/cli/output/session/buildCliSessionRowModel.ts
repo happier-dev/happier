@@ -1,4 +1,9 @@
-import { inferAgentIdFromSessionMetadata, evaluateVendorResumeEligibility, type VendorResumeEligibility } from '@happier-dev/agents';
+import {
+  inferAgentIdFromSessionMetadata,
+  evaluateVendorResumeEligibility,
+  isLinkedVendorResumeIdentityCurrent,
+  type VendorResumeEligibility,
+} from '@happier-dev/agents';
 import {
   buildBackendTargetKey,
   readAcpConfiguredBackendV1FromMetadata,
@@ -9,8 +14,9 @@ import {
 
 import type { Credentials } from '@/persistence';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { resolveEngineRuntimeContribution } from '@/agent/runtime/registry/engineRegistry/contributions';
 
 export type CliSessionRowModel = Readonly<{
   id: string;
@@ -29,7 +35,21 @@ export type CliSessionRowModel = Readonly<{
   encryptionMode: 'plain' | 'e2ee';
 }>;
 
-type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'providerDefinitionsById' | 'backendDefinitionsById'>;
+type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>;
+
+function resolveLinkedSessionCurrentAgent(
+  agentId: string,
+  contributionRegistry: ResumeContributionRegistry | null,
+) {
+  const contribution = contributionRegistry?.agentDefinitionsById.get(agentId);
+  const identity = contribution?.identity;
+  const sources = contribution?.richDefinition?.definition.surfaces?.externalSession?.sources;
+  if (!identity || !sources || sources.length === 0) return null;
+  return {
+    identity,
+    sourceKinds: sources.map((source) => source.sourceKind),
+  };
+}
 
 function readOptionalNonEmptyString(record: Record<string, unknown>, key: string): string | null {
   const raw = record[key];
@@ -95,16 +115,16 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
 
   const configuredBackendId = resolveConfiguredAcpBackendId(metadata);
   const providerIdFromConfiguredBackend = configuredBackendId
-    ? contributionRegistry.backendDefinitionsById.get(configuredBackendId)?.providerId ?? null
+    ? resolveEngineRuntimeContribution(contributionRegistry, configuredBackendId)?.agentId ?? null
     : null;
   const runtimeDescriptor = readRuntimeDescriptorV1FromMetadata(metadata);
-  const providerIdFromRuntimeDescriptor = typeof runtimeDescriptor?.providerId === 'string'
-    ? runtimeDescriptor.providerId.trim() || null
+  const providerIdFromRuntimeDescriptor = typeof runtimeDescriptor?.agentId === 'string'
+    ? runtimeDescriptor.agentId.trim() || null
     : null;
   const providerId = providerIdFromConfiguredBackend ?? providerIdFromRuntimeDescriptor;
   if (!providerId) return null;
 
-  const providerContribution = contributionRegistry.providerDefinitionsById.get(providerId);
+  const providerContribution = contributionRegistry.agentDefinitionsById.get(providerId);
   if (!providerContribution || providerContribution.provenance !== 'external') return null;
 
   if (isConfiguredBackendDisabledByAccountSettings({ configuredBackendId, accountSettings: params.accountSettings })) {
@@ -127,8 +147,8 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
     return { eligible: false, reasonCode: 'experimental_disabled' };
   }
 
-  const runtimeProviderRecord = asRecord(runtimeDescriptor?.provider);
-  const runtimeDescriptorVendorResumeId = runtimeDescriptor?.providerId === providerId && runtimeProviderRecord
+  const runtimeProviderRecord = asRecord(runtimeDescriptor?.agent);
+  const runtimeDescriptorVendorResumeId = runtimeDescriptor?.agentId === providerId && runtimeProviderRecord
     ? readOptionalNonEmptyString(runtimeProviderRecord, 'providerSessionId')
     : null;
   const metadataVendorResumeId = resumeConfig.vendorResumeIdField
@@ -138,7 +158,14 @@ function evaluatePluginVendorResumeEligibility(params: Readonly<{
   if (!vendorResumeId) {
     return { eligible: false, reasonCode: 'vendor_resume_id_missing' };
   }
-
+  if (!isLinkedVendorResumeIdentityCurrent({
+    agentId: providerId,
+    metadata,
+    vendorResumeIdField: resumeConfig.vendorResumeIdField,
+    linkedSessionCurrentAgent: resolveLinkedSessionCurrentAgent(providerId, contributionRegistry),
+  })) {
+    return { eligible: false, reasonCode: 'linked_session_identity_unverified' };
+  }
   return { eligible: true, vendorResumeId };
 }
 
@@ -173,7 +200,10 @@ export function buildCliSessionRowModel(params: Readonly<{
   const activeAt = raw.activeAt;
   const archivedAt = resolveArchivedAtValue(raw);
 
-  const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: params.rawSession });
+  const metadata = tryDecryptSessionOwnerMetadataView({
+    credentials: params.credentials,
+    rawSession: params.rawSession,
+  });
   const metaRecord = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>)
     : null;
@@ -194,11 +224,16 @@ export function buildCliSessionRowModel(params: Readonly<{
     accountSettings: accountSettingsRecord,
     contributionRegistry: params.contributionRegistry ?? null,
   });
-  const vendorResume = pluginVendorResume ?? evaluateVendorResumeEligibility({
+  const vendorResumeInput = {
     agentId,
     metadata: metaRecord,
     accountSettings: accountSettingsRecord,
-  });
+    linkedSessionCurrentAgent: resolveLinkedSessionCurrentAgent(
+      agentId,
+      params.contributionRegistry ?? null,
+    ),
+  };
+  const vendorResume = pluginVendorResume ?? evaluateVendorResumeEligibility(vendorResumeInput);
 
   const encryptionMode: 'plain' | 'e2ee' = raw.encryptionMode === 'plain' ? 'plain' : 'e2ee';
 

@@ -11,35 +11,68 @@ import {
     ProviderAccountUsageAdoptionV1Schema,
     type ProviderAccountUsageAdoptionV1,
 } from './adoption';
+import { computeProviderAccountUsageSnapshotMaterialRevision } from './fingerprint';
 
 export type ProviderAccountUsageObservation = Readonly<{
     sources?: readonly ConnectedServiceUsageSourceV1[];
+}>;
+
+export type ProviderAccountUsageStoreMutationStatus =
+    | 'snapshot_advanced'
+    | 'source_linked'
+    | 'duplicate'
+    | 'older';
+
+export type ProviderAccountUsageStoreMutationResult = Readonly<{
+    status: ProviderAccountUsageStoreMutationStatus;
+    recordId: ProviderAccountUsageRecordId;
+    snapshotAdvanced: boolean;
+    sourceLinked: boolean;
+}>;
+
+export function isProviderAccountUsageStoreMutationAccepted(
+    result: Readonly<{ status: string }>,
+): boolean {
+    return result.status === 'snapshot_advanced' || result.status === 'source_linked';
+}
+
+export type ProviderAccountUsageAdoptionResult = Readonly<{
+    status: 'adopted' | 'already_adopted';
+    fromRecordId: ProviderAccountUsageRecordId;
+    toRecordId: ProviderAccountUsageRecordId;
+}>;
+
+export type PreparedProviderAccountUsageAdoption = Readonly<{
+    status: ProviderAccountUsageAdoptionResult['status'];
+    fromRecordId: ProviderAccountUsageRecordId;
+    toRecordId: ProviderAccountUsageRecordId;
+    snapshot: ProviderAccountUsageSnapshotV1 | null;
+    observation: ProviderAccountUsageObservation;
+    commit(): ProviderAccountUsageAdoptionResult;
 }>;
 
 export type ProviderAccountUsageStore = Readonly<{
     recordSnapshot(
         snapshot: ProviderAccountUsageSnapshotV1,
         observation?: ProviderAccountUsageObservation,
-    ): Readonly<{ status: 'recorded'; recordId: ProviderAccountUsageRecordId }>;
+    ): ProviderAccountUsageStoreMutationResult;
     resolveRecordId(recordId: string): ProviderAccountUsageSnapshotV1 | null;
     resolveBySource(source: ConnectedServiceUsageSourceV1): ProviderAccountUsageSnapshotV1 | null;
     listSnapshots(): readonly ProviderAccountUsageSnapshotV1[];
-    applyAdoption(adoption: ProviderAccountUsageAdoptionV1): Readonly<{
-        status: 'adopted' | 'already_adopted';
-        fromRecordId: ProviderAccountUsageRecordId;
-        toRecordId: ProviderAccountUsageRecordId;
-    }>;
+    prepareAdoption(adoption: ProviderAccountUsageAdoptionV1): PreparedProviderAccountUsageAdoption;
 }>;
 
 function sourceKey(source: ConnectedServiceUsageSourceV1): string {
     const parsed = ConnectedServiceUsageSourceV1Schema.parse(source);
-    return JSON.stringify([
-        parsed.serviceId,
-        parsed.profileId,
-        parsed.bindingKind,
-        parsed.groupId ?? '',
-        parsed.groupGeneration ?? '',
-    ]);
+    return parsed.bindingKind === 'profile'
+        ? JSON.stringify([parsed.serviceId, parsed.profileId, 'profile'])
+        : JSON.stringify([
+            parsed.serviceId,
+            parsed.profileId,
+            'group_member',
+            parsed.groupId,
+            parsed.groupGeneration ?? '',
+        ]);
 }
 
 function normalizeObservation(
@@ -112,7 +145,7 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
     function recordSnapshot(
         rawSnapshot: ProviderAccountUsageSnapshotV1,
         observation?: ProviderAccountUsageObservation,
-    ): Readonly<{ status: 'recorded'; recordId: ProviderAccountUsageRecordId }> {
+    ): ProviderAccountUsageStoreMutationResult {
         const normalized = normalizeObservation(rawSnapshot, observation);
         const parsed = normalized.snapshot;
         const targetRecordId = resolveRedirect(parsed.recordId);
@@ -126,15 +159,25 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
             throw new Error(`Missing provider account usage adoption target key for ${targetRecordId}`);
         }
 
-        const sources = mergeSources(sourcesByRecordId.get(targetRecordId) ?? [], normalized.sources);
+        const existingSources = sourcesByRecordId.get(targetRecordId) ?? [];
+        const existingSourceKeys = new Set(existingSources.map(sourceKey));
+        const sourceLinked = normalized.sources.some((source) => !existingSourceKeys.has(sourceKey(source)));
+        const sources = sourceLinked
+            ? mergeSources(existingSources, normalized.sources)
+            : existingSources;
 
         if (existing && parsed.fetchedAtMs < existing.fetchedAtMs) {
-            setRecordSources(targetRecordId, sources);
+            if (sourceLinked) setRecordSources(targetRecordId, sources);
             if (targetRecordId !== parsed.recordId) {
                 snapshotsByRecordId.delete(parsed.recordId);
                 sourcesByRecordId.delete(parsed.recordId);
             }
-            return { status: 'recorded', recordId: targetRecordId as ProviderAccountUsageRecordId };
+            return {
+                status: sourceLinked ? 'source_linked' : 'older',
+                recordId: targetRecordId as ProviderAccountUsageRecordId,
+                snapshotAdvanced: false,
+                sourceLinked,
+            };
         }
 
         const next = ProviderAccountUsageSnapshotV1Schema.parse({
@@ -149,21 +192,26 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
                     id: targetRecordKey.accountSubjectId,
                 },
         });
-        snapshotsByRecordId.set(targetRecordId, next);
-        setRecordSources(targetRecordId, sources);
+        const snapshotAdvanced = !existing
+            || parsed.fetchedAtMs > existing.fetchedAtMs
+            || computeProviderAccountUsageSnapshotMaterialRevision(next)
+                !== computeProviderAccountUsageSnapshotMaterialRevision(existing);
+        if (snapshotAdvanced) snapshotsByRecordId.set(targetRecordId, next);
+        if (sourceLinked || !existing) setRecordSources(targetRecordId, sources);
 
         if (targetRecordId !== parsed.recordId) {
             snapshotsByRecordId.delete(parsed.recordId);
             sourcesByRecordId.delete(parsed.recordId);
         }
-        return { status: 'recorded', recordId: targetRecordId as ProviderAccountUsageRecordId };
+        return {
+            status: snapshotAdvanced ? 'snapshot_advanced' : sourceLinked ? 'source_linked' : 'duplicate',
+            recordId: targetRecordId as ProviderAccountUsageRecordId,
+            snapshotAdvanced,
+            sourceLinked,
+        };
     }
 
-    function applyAdoption(adoption: ProviderAccountUsageAdoptionV1): Readonly<{
-        status: 'adopted' | 'already_adopted';
-        fromRecordId: ProviderAccountUsageRecordId;
-        toRecordId: ProviderAccountUsageRecordId;
-    }> {
+    function prepareAdoption(adoption: ProviderAccountUsageAdoptionV1): PreparedProviderAccountUsageAdoption {
         const parsed = ProviderAccountUsageAdoptionV1Schema.parse(adoption);
         const expectedToRecordId = buildProviderAccountUsageRecordId(parsed.stableRecordKey);
         if (expectedToRecordId !== parsed.toRecordId) {
@@ -172,7 +220,28 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
         const existingRedirect = resolveRedirect(parsed.fromRecordId);
         if (existingRedirect !== parsed.fromRecordId) {
             if (existingRedirect === parsed.toRecordId) {
-                return { status: 'already_adopted', fromRecordId: parsed.fromRecordId, toRecordId: parsed.toRecordId };
+                const snapshot = snapshotsByRecordId.get(parsed.toRecordId) ?? null;
+                return {
+                    status: 'already_adopted',
+                    fromRecordId: parsed.fromRecordId,
+                    toRecordId: parsed.toRecordId,
+                    snapshot,
+                    observation: {
+                        sources: sourcesByRecordId.get(parsed.toRecordId) ?? [],
+                    },
+                    commit: () => {
+                        if (resolveRedirect(parsed.fromRecordId) !== parsed.toRecordId) {
+                            throw new Error(
+                                `Provider account usage adoption ${parsed.fromRecordId} changed before commit`,
+                            );
+                        }
+                        return {
+                            status: 'already_adopted',
+                            fromRecordId: parsed.fromRecordId,
+                            toRecordId: parsed.toRecordId,
+                        };
+                    },
+                };
             }
             throw new Error(`Provider account usage record ${parsed.fromRecordId} is already adopted to ${existingRedirect}`);
         }
@@ -187,19 +256,17 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
         if (fromSnapshot && fromSnapshot.accountSubject.kind !== 'provisionalLocalSubject') {
             throw new Error(`Provider account usage adoption source ${parsed.fromRecordId} is not provisional`);
         }
-
-        redirectsByRecordId.set(parsed.fromRecordId, parsed.toRecordId);
-        stableRecordKeysByRecordId.set(parsed.toRecordId, parsed.stableRecordKey);
-
-        const targetSources = mergeSources(
-            sourcesByRecordId.get(parsed.toRecordId) ?? [],
-            sourcesByRecordId.get(parsed.fromRecordId) ?? [],
-        );
-        setRecordSources(parsed.toRecordId, targetSources);
-
         const toSnapshot = snapshotsByRecordId.get(parsed.toRecordId);
-        if (toSnapshot) {
-            snapshotsByRecordId.set(parsed.toRecordId, ProviderAccountUsageSnapshotV1Schema.parse({
+        const hadFromSources = sourcesByRecordId.has(parsed.fromRecordId);
+        const hadToSources = sourcesByRecordId.has(parsed.toRecordId);
+        const fromSources = sourcesByRecordId.get(parsed.fromRecordId) ?? [];
+        const toSources = sourcesByRecordId.get(parsed.toRecordId) ?? [];
+        const targetSources = mergeSources(
+            toSources,
+            fromSources,
+        );
+        const snapshot = toSnapshot
+            ? ProviderAccountUsageSnapshotV1Schema.parse({
                 ...toSnapshot,
                 recordId: parsed.toRecordId,
                 recordKey: parsed.stableRecordKey,
@@ -208,9 +275,9 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
                     kind: 'providerSubject',
                     id: parsed.stableRecordKey.accountSubjectId,
                 },
-            }));
-        } else if (fromSnapshot) {
-            snapshotsByRecordId.set(parsed.toRecordId, ProviderAccountUsageSnapshotV1Schema.parse({
+            })
+            : fromSnapshot
+                ? ProviderAccountUsageSnapshotV1Schema.parse({
                 ...fromSnapshot,
                 recordId: parsed.toRecordId,
                 recordKey: parsed.stableRecordKey,
@@ -219,13 +286,74 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
                     kind: 'providerSubject',
                     id: parsed.stableRecordKey.accountSubjectId,
                 },
-            }));
-        }
+            })
+                : null;
+        const targetRedirect = redirectsByRecordId.get(parsed.toRecordId);
+        const targetStableRecordKey = stableRecordKeysByRecordId.get(parsed.toRecordId);
+        const targetSourceRecordIds = new Map(
+            targetSources.map((source) => {
+                const key = sourceKey(source);
+                return [key, sourceRecordIdsByKey.get(key)] as const;
+            }),
+        );
 
-        if (fromSnapshot) snapshotsByRecordId.delete(parsed.fromRecordId);
-        sourcesByRecordId.delete(parsed.fromRecordId);
+        return {
+            status: 'adopted',
+            fromRecordId: parsed.fromRecordId,
+            toRecordId: parsed.toRecordId,
+            snapshot,
+            observation: { sources: targetSources },
+            commit: () => {
+                const currentFromRecordId = resolveRedirect(parsed.fromRecordId);
+                if (currentFromRecordId !== parsed.fromRecordId) {
+                    if (currentFromRecordId === parsed.toRecordId) {
+                        return {
+                            status: 'already_adopted',
+                            fromRecordId: parsed.fromRecordId,
+                            toRecordId: parsed.toRecordId,
+                        };
+                    }
+                    throw new Error(
+                        `Provider account usage record ${parsed.fromRecordId} changed before adoption commit`,
+                    );
+                }
+                if (
+                    snapshotsByRecordId.get(parsed.fromRecordId) !== fromSnapshot
+                    || snapshotsByRecordId.get(parsed.toRecordId) !== toSnapshot
+                    || sourcesByRecordId.has(parsed.fromRecordId) !== hadFromSources
+                    || sourcesByRecordId.has(parsed.toRecordId) !== hadToSources
+                    || (hadFromSources && sourcesByRecordId.get(parsed.fromRecordId) !== fromSources)
+                    || (hadToSources && sourcesByRecordId.get(parsed.toRecordId) !== toSources)
+                    || redirectsByRecordId.get(parsed.toRecordId) !== targetRedirect
+                    || stableRecordKeysByRecordId.get(parsed.toRecordId) !== targetStableRecordKey
+                    || [...targetSourceRecordIds].some(
+                        ([key, recordId]) => sourceRecordIdsByKey.get(key) !== recordId,
+                    )
+                ) {
+                    throw new Error(
+                        `Provider account usage adoption ${parsed.fromRecordId} changed before commit`,
+                    );
+                }
+                if (redirectChainContains(parsed.toRecordId, parsed.fromRecordId)) {
+                    throw new Error(
+                        `Provider account usage adoption would create a redirect cycle from ${parsed.fromRecordId} to ${parsed.toRecordId}`,
+                    );
+                }
 
-        return { status: 'adopted', fromRecordId: parsed.fromRecordId, toRecordId: parsed.toRecordId };
+                redirectsByRecordId.set(parsed.fromRecordId, parsed.toRecordId);
+                stableRecordKeysByRecordId.set(parsed.toRecordId, parsed.stableRecordKey);
+                setRecordSources(parsed.toRecordId, targetSources);
+                if (snapshot) snapshotsByRecordId.set(parsed.toRecordId, snapshot);
+                if (fromSnapshot) snapshotsByRecordId.delete(parsed.fromRecordId);
+                sourcesByRecordId.delete(parsed.fromRecordId);
+
+                return {
+                    status: 'adopted',
+                    fromRecordId: parsed.fromRecordId,
+                    toRecordId: parsed.toRecordId,
+                };
+            },
+        };
     }
 
     function resolveRecordId(recordId: string): ProviderAccountUsageSnapshotV1 | null {
@@ -250,6 +378,6 @@ export function createProviderAccountUsageStore(): ProviderAccountUsageStore {
         resolveRecordId,
         resolveBySource,
         listSnapshots,
-        applyAdoption,
+        prepareAdoption,
     };
 }

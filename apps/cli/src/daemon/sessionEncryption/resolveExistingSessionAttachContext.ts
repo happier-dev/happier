@@ -1,16 +1,27 @@
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import { readAcpConfiguredBackendV1FromMetadata, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import {
+  SESSION_METADATA_LAYOUT_VERSION_V1,
+  SessionSharedMetadataV1Schema,
+  projectSessionOwnerCompatibilityViewV1,
+  readAcpConfiguredBackendV1FromMetadata,
+  readLinkedExternalSessionV1FromMetadata,
+  type BackendTargetRefV1,
+  type SessionOwnerMetadataV1,
+} from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
 import type { AgentState, Metadata } from '@/api/types';
 import type { Credentials } from '@/persistence';
 import { encodeBase64 } from '@/api/encryption';
+import { resolveCurrentExternalSessionAgentIdentity } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 import { resolveVendorResumeIdForExistingSession } from '@/daemon/spawn/resolveVendorResumeIdForExistingSession';
 import {
   decryptStoredSessionPayload,
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
   tryDecryptSessionMetadata,
+  tryDecryptSessionOwnerMetadata,
 } from '@/session/transport/encryption/sessionEncryptionContext';
+import { readSessionMetadataLayoutVersion } from '@/session/metadata/sessionMetadataLayout';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { tryParseJsonRecord } from '@/utils/tryParseJsonRecord';
 
@@ -22,7 +33,10 @@ export type ExistingSessionAttachContext = Readonly<{
   ok: true;
   attachPayload: SessionAttachFilePayload;
   vendorResumeId: string | null;
+  linkedVendorResumeId?: string;
   backendTarget: BackendTargetRefV1 | null;
+  ownerMetadata?: SessionOwnerMetadataV1;
+  existingSessionWorkspacePath?: string;
 }>;
 
 export type ExistingSessionAttachContextFailureReason =
@@ -31,7 +45,9 @@ export type ExistingSessionAttachContextFailureReason =
   | 'fetchFailed'
   | 'sessionNotFound'
   | 'missingCredentials'
-  | 'invalidEncryptionKey';
+  | 'invalidEncryptionKey'
+  | 'invalidOwnerMetadata'
+  | 'linkedResumeIdentityUnavailable';
 
 export type ExistingSessionAttachContextFailure = Readonly<{
   ok: false;
@@ -124,9 +140,12 @@ function buildAttachSnapshot(params: Readonly<{
     agentStateVersion?: unknown;
     dataEncryptionKey?: unknown;
     encryptionMode?: unknown;
+    metadataLayoutVersion?: unknown;
+    ownerMetadata?: unknown;
   }>;
   credentials: Credentials | null;
   metadataRecord: Record<string, unknown> | null;
+  ownerMetadata?: SessionOwnerMetadataV1;
 }>): SessionAttachFilePayload['snapshot'] | undefined {
   const metadataVersion = readNonNegativeInteger(params.rawSession.metadataVersion);
   const agentStateVersion = readNonNegativeInteger(params.rawSession.agentStateVersion);
@@ -145,6 +164,13 @@ function buildAttachSnapshot(params: Readonly<{
     metadataVersion,
     agentState,
     agentStateVersion,
+    ...(params.ownerMetadata
+      ? {
+        metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
+        ownerMetadata: params.ownerMetadata,
+        ownerMetadataCiphertext: String(params.rawSession.ownerMetadata),
+      }
+      : {}),
   };
 }
 
@@ -178,7 +204,7 @@ function resolveExistingSessionBackendTarget(metadataRecord: Record<string, unkn
   };
 }
 
-function buildExistingSessionAttachContext(params: Readonly<{
+async function buildExistingSessionAttachContext(params: Readonly<{
   rawSession: Readonly<{
     metadata?: unknown;
     metadataVersion?: unknown;
@@ -186,21 +212,69 @@ function buildExistingSessionAttachContext(params: Readonly<{
     agentStateVersion?: unknown;
     dataEncryptionKey?: unknown;
     encryptionMode?: unknown;
+    metadataLayoutVersion?: unknown;
+    ownerMetadata?: unknown;
     seq?: unknown;
   }>;
   credentials: Credentials | null;
-}>): ExistingSessionAttachContext | ExistingSessionAttachContextFailure {
+}>): Promise<ExistingSessionAttachContext | ExistingSessionAttachContextFailure> {
+  const metadataLayoutVersion = readSessionMetadataLayoutVersion(
+    params.rawSession.metadataLayoutVersion,
+  );
   const metadataRecord = tryReadExistingSessionMetadataRecord({
     rawSession: params.rawSession,
     credentials: params.credentials,
   });
-  const backendTarget = resolveExistingSessionBackendTarget(metadataRecord);
+  const ownerMetadata = metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
+    && params.credentials
+    ? tryDecryptSessionOwnerMetadata({
+      credentials: params.credentials,
+      rawSession: params.rawSession,
+    })
+    : null;
+  if (
+    metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1
+    && (!ownerMetadata || !metadataRecord)
+  ) {
+    return { ok: false, reason: 'invalidOwnerMetadata' };
+  }
+  const ownerLocalRuntimeMetadata = ownerMetadata && metadataRecord
+    ? projectSessionOwnerCompatibilityViewV1({
+      sharedMetadata: SessionSharedMetadataV1Schema.parse(metadataRecord),
+      ownerMetadata,
+    })
+    : null;
+  const authorityMetadataRecord = ownerLocalRuntimeMetadata ?? metadataRecord;
+  const backendTarget = resolveExistingSessionBackendTarget(authorityMetadataRecord);
+  const hasLinkedExternalSession = authorityMetadataRecord !== null
+    && Object.hasOwn(authorityMetadataRecord, 'externalSessionV1');
+  const linkedExternalSession = authorityMetadataRecord
+    ? readLinkedExternalSessionV1FromMetadata(authorityMetadataRecord)
+    : null;
+  const linkedSessionCurrentAgent = hasLinkedExternalSession && linkedExternalSession
+    ? await resolveCurrentExternalSessionAgentIdentity(linkedExternalSession.agentId).catch(() => null)
+    : null;
+  const vendorResumeId = resolveVendorResumeIdForExistingSession({
+    agent: undefined,
+    credentials: params.credentials,
+    metadataRecord: authorityMetadataRecord,
+    rawSession: params.rawSession,
+    linkedSessionCurrentAgent,
+  });
+  if (hasLinkedExternalSession && !vendorResumeId) {
+    return { ok: false, reason: 'linkedResumeIdentityUnavailable' };
+  }
+  const linkedVendorResumeId = hasLinkedExternalSession
+    ? vendorResumeId ?? undefined
+    : undefined;
+  const existingSessionWorkspacePath = ownerMetadata?.workspace?.path?.trim() || null;
   const mode = resolveSessionStoredContentEncryptionMode(params.rawSession);
   const lastObservedMessageSeq = resolveLastObservedMessageSeq(params.rawSession);
   const snapshot = buildAttachSnapshot({
     rawSession: params.rawSession,
     credentials: params.credentials,
     metadataRecord,
+    ...(ownerMetadata ? { ownerMetadata } : {}),
   });
   if (mode === 'plain') {
     return {
@@ -212,12 +286,12 @@ function buildExistingSessionAttachContext(params: Readonly<{
         ...(snapshot ? { snapshot } : {}),
       },
       backendTarget,
-      vendorResumeId: resolveVendorResumeIdForExistingSession({
-        agent: undefined,
-        credentials: params.credentials,
-        metadataRecord,
-        rawSession: params.rawSession,
-      }),
+      vendorResumeId,
+      ...(linkedVendorResumeId ? { linkedVendorResumeId } : {}),
+      ...(ownerMetadata ? { ownerMetadata } : {}),
+      ...(existingSessionWorkspacePath
+        ? { existingSessionWorkspacePath }
+        : {}),
     };
   }
 
@@ -237,12 +311,12 @@ function buildExistingSessionAttachContext(params: Readonly<{
       ...(snapshot ? { snapshot } : {}),
     },
     backendTarget,
-    vendorResumeId: resolveVendorResumeIdForExistingSession({
-      agent: undefined,
-      credentials: params.credentials,
-      metadataRecord,
-      rawSession: params.rawSession,
-    }),
+    vendorResumeId,
+    ...(linkedVendorResumeId ? { linkedVendorResumeId } : {}),
+    ...(ownerMetadata ? { ownerMetadata } : {}),
+    ...(existingSessionWorkspacePath
+      ? { existingSessionWorkspacePath }
+      : {}),
   };
 }
 
@@ -262,7 +336,7 @@ export async function resolveExistingSessionAttachContext(_params: Readonly<{
     );
     if (!raw) return { ok: false, reason: 'sessionNotFound' };
 
-    return buildExistingSessionAttachContext({
+    return await buildExistingSessionAttachContext({
       rawSession: raw,
       credentials: _params.credentials,
     });

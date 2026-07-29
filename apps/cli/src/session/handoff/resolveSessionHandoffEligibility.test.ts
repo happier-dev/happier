@@ -31,7 +31,7 @@ describe('resolveSessionHandoffEligibility', () => {
           opencodeSessionId: 'sess_2',
           externalSessionV1: {
             v: 1,
-            providerId: 'opencode',
+            agentId: 'opencode',
             machineId: 'machine_source',
             remoteSessionId: 'sess_2',
             source: { kind: 'opencodeServer', directory: '/repo' },
@@ -55,7 +55,7 @@ describe('resolveSessionHandoffEligibility', () => {
           machineId: 'machine_source',
           externalSessionV1: {
             v: 1,
-            providerId: 'opencode',
+            agentId: 'opencode',
             machineId: 'machine_source',
             remoteSessionId: 'opencode_runtime_1',
             source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
@@ -78,14 +78,14 @@ describe('resolveSessionHandoffEligibility', () => {
     });
   });
 
-  it('resolves provider identity from direct session provider ids when flavor is unavailable', () => {
+  it('resolves agent identity from canonical external-session links when flavor is unavailable', () => {
     expect(
       resolveSessionHandoffEligibility({
         metadata: {
           machineId: 'machine_source',
           externalSessionV1: {
             v: 1,
-            providerId: 'opencode',
+            agentId: 'opencode',
             machineId: 'machine_source',
             remoteSessionId: 'opencode_runtime_2',
             source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
@@ -99,6 +99,30 @@ describe('resolveSessionHandoffEligibility', () => {
       storageMode: 'direct',
       sourceMachineId: 'machine_source',
       vendorHandoffId: 'opencode_runtime_2',
+    });
+  });
+
+  it('recognizes an A13-retained legacy directSessionV1 link as direct storage', () => {
+    expect(
+      resolveSessionHandoffEligibility({
+        metadata: {
+          machineId: 'machine_source',
+          directSessionV1: {
+            v: 1,
+            providerId: 'opencode',
+            machineId: 'machine_source',
+            remoteSessionId: 'opencode_legacy',
+            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },
+            linkedAtMs: 1,
+          },
+        },
+      }),
+    ).toEqual({
+      eligible: true,
+      agentId: 'opencode',
+      storageMode: 'direct',
+      sourceMachineId: 'machine_source',
+      vendorHandoffId: 'opencode_legacy',
     });
   });
 
@@ -120,7 +144,7 @@ describe('resolveSessionHandoffEligibility', () => {
     });
   });
 
-  it('rejects unsupported direct session storage providers', () => {
+  it('does not classify malformed external-session metadata as direct storage', () => {
     expect(
       resolveSessionHandoffEligibility({
         metadata: {
@@ -129,15 +153,15 @@ describe('resolveSessionHandoffEligibility', () => {
           piSessionId: 'sess_pi',
           externalSessionV1: {
             v: 1,
-            providerId: 'pi',
+            agentId: 'pi',
           },
         },
       }),
     ).toEqual({
       eligible: false,
-      reasonCode: 'storage_mode_unsupported',
+      reasonCode: 'handoff_unsupported',
       agentId: 'pi',
-      storageMode: 'direct',
+      storageMode: 'persisted',
     });
   });
 

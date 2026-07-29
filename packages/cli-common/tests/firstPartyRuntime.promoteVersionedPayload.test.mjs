@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { existsSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -74,7 +74,7 @@ test('promoteVersionedPayload fails closed without leaving a partial version dir
     });
 
     const secondStage = await createStagedPayload(homeDir, '2.0.0', 'second-version');
-    await chmod(join(secondStage, 'package-dist', 'index.mjs'), 0);
+    await mkdir(join(secondStage, 'public-release-ring.id'));
 
     await assert.rejects(
       () =>
@@ -84,7 +84,7 @@ test('promoteVersionedPayload fails closed without leaving a partial version dir
           versionId: '2.0.0',
           stagedPayloadPath: secondStage,
         }),
-      /eacces|permission/i,
+      /directory|eisdir/i,
     );
 
     const paths = resolveInstalledFirstPartyComponentPaths({

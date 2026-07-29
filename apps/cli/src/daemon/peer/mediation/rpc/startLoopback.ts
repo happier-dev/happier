@@ -24,7 +24,7 @@ const PEER_MEDIATION_MACHINE_RPC_ENDPOINT_FINGERPRINT_BYTES = 16;
 export type StartPeerMediationMachineRpcLoopbackInput = Readonly<{
   accountId: string;
   machineId: string;
-  accountSigningSeed: Uint8Array;
+  accountSigningSeed?: Uint8Array;
   serverFeatures: FeaturesResponse;
   rpcHandlerManager: PeerMachineRpcDirectHandlerManager;
   nowMs?: () => number;
@@ -46,7 +46,7 @@ type PeerTcpTunnelDirectRuntimeOptions = Omit<
 export type StartPeerMediationLoopbackInput = Readonly<{
   accountId: string;
   machineId: string;
-  accountSigningSeed: Uint8Array;
+  accountSigningSeed?: Uint8Array;
   serverFeatures: FeaturesResponse;
   rpcHandlerManager?: PeerMachineRpcDirectHandlerManager;
   stream?: PeerMachineLiveStreamDirectRuntimeOptions;
@@ -92,8 +92,8 @@ function resolveGrantTrustRoots(input: Readonly<{
     }));
 }
 
-function resolveAccountPublicKey(accountSigningSeed: Uint8Array): string | null {
-  if (accountSigningSeed.length !== tweetnacl.sign.seedLength) {
+function resolveAccountPublicKey(accountSigningSeed: Uint8Array | undefined): string | null {
+  if (!accountSigningSeed || accountSigningSeed.length !== tweetnacl.sign.seedLength) {
     return null;
   }
   const keyPair = tweetnacl.sign.keyPair.fromSeed(accountSigningSeed);
@@ -157,7 +157,9 @@ export async function startPeerMediationLoopback(
   }
 
   const accountPublicKey = resolveAccountPublicKey(input.accountSigningSeed);
-  if (!accountPublicKey) {
+  const supportsEphemeralProofV2 = input.serverFeatures.capabilities.machines.peerMediation
+    .directRouteGrantProofMintVersions.includes(2);
+  if (!accountPublicKey && !supportsEphemeralProofV2) {
     return null;
   }
 
@@ -168,7 +170,7 @@ export async function startPeerMediationLoopback(
     flowKind: 'machine_rpc' as const,
     routeKind: 'loopback_direct' as const,
     endpointFingerprint,
-    accountPublicKey,
+    ...(accountPublicKey ? { accountPublicKey } : {}),
   };
   const tcpTunnelExpected = {
     accountId: input.accountId,
@@ -176,7 +178,11 @@ export async function startPeerMediationLoopback(
     flowKind: 'tcp_tunnel' as const,
     routeKind: 'loopback_direct' as const,
     endpointFingerprint,
-    accountPublicKey,
+    ...(accountPublicKey ? { accountPublicKey } : {}),
+  };
+  const voiceMediaExpected = {
+    ...tcpTunnelExpected,
+    flowKind: 'voice_media' as const,
   };
   const liveStreamExpected = {
     accountId: input.accountId,
@@ -184,7 +190,7 @@ export async function startPeerMediationLoopback(
     flowKind: 'live_stream' as const,
     routeKind: 'loopback_direct' as const,
     endpointFingerprint,
-    accountPublicKey,
+    ...(accountPublicKey ? { accountPublicKey } : {}),
   };
   const primaryExpected = rpcEnabled ? machineRpcExpected : liveStreamEnabled ? liveStreamExpected : tcpTunnelExpected;
   const defaultEndpointTtlMs = Math.max(
@@ -201,9 +207,11 @@ export async function startPeerMediationLoopback(
       ...(rpcEnabled ? { machine_rpc: machineRpcExpected } : {}),
       ...(liveStreamEnabled ? { live_stream: liveStreamExpected } : {}),
       ...(tunnelEnabled ? { tcp_tunnel: tcpTunnelExpected } : {}),
+      ...(tunnelEnabled ? { voice_media: voiceMediaExpected } : {}),
     },
     trustRoots,
     endpointExpiresAt: now + (input.endpointTtlMs ?? defaultEndpointTtlMs),
+    directRouteGrantProofVerifierVersions: supportsEphemeralProofV2 ? [2] : [],
     host: input.host ?? PEER_MEDIATION_MACHINE_RPC_DEFAULT_HOST,
     port: input.port ?? PEER_MEDIATION_MACHINE_RPC_DEFAULT_PORT,
     ...(rpcEnabled

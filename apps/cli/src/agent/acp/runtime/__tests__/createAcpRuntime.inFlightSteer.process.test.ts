@@ -151,10 +151,12 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
       } as any);
 
       runtime.beginTurn();
-      await (runtime as any).startOrLoad({});
-
-      const primaryPromise = (runtime as any).sendPrompt('hello');
-      await new Promise((r) => setTimeout(r, 10));
+      const primaryPromise = runtime.sendTurnPrompt('hello');
+      const openDeadlineMs = Date.now() + 2_000;
+      while (!runtime.readSessionIdentity().sessionId && Date.now() < openDeadlineMs) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(runtime.readSessionIdentity().sessionId).toBe('test-session');
 
       await (runtime as any).steerPrompt('steer-now');
       await primaryPromise;

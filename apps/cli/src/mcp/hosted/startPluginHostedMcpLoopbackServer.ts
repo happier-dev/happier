@@ -3,12 +3,13 @@ import type { AddressInfo } from 'node:net';
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { McpHostedRuntimeEndpointV1, McpServerSpecV1 } from '@happier-dev/plugin-sdk';
+import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
 
 import { assertHostedMcpHandlerSpec, registerHostedMcpHandlers } from './handlers';
+import type { HostedMcpRuntimeEndpoint } from '../runtimeTypes';
 
 export type PluginHostedMcpLoopbackServer = Readonly<{
-    endpoint: Extract<McpHostedRuntimeEndpointV1, Readonly<{ kind: 'loopbackHttp' }>>;
+    endpoint: Extract<HostedMcpRuntimeEndpoint, Readonly<{ kind: 'loopbackHttp' }>>;
     dispose: () => Promise<void>;
 }>;
 

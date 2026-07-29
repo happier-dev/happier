@@ -130,7 +130,11 @@ export type AccountSettingsUpdateV2Deps = Readonly<{
 
 export type UpdateAccountSettingsV2WithRetryParams = Readonly<{
   credentials: Credentials;
-  mutate: (settings: Readonly<Record<string, unknown>>) => Record<string, unknown> | Promise<Record<string, unknown>>;
+  mutate: (
+    settings: Readonly<Record<string, unknown>>,
+  ) =>
+    | Readonly<Record<string, unknown>>
+    | Promise<Readonly<Record<string, unknown>>>;
   deps?: AccountSettingsUpdateV2Deps;
   maxAttempts?: number;
 }>;

@@ -1,8 +1,7 @@
-import { configuration } from '@/configuration';
 import {
   SessionHandoffCommitRequestSchema,
   type SessionHandoffPrepareTargetRequest,
-  type SessionHandoffPrepareTargetResultGetResponse,
+  type SessionHandoffPrepareTargetResultGetSuccessResponse,
   type SessionHandoffStatus,
 } from '@happier-dev/protocol';
 
@@ -12,7 +11,7 @@ import {
   type SessionHandoffPrepareTargetJobRecordInput,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import { createSessionHandoffSourceExportStore } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
-import { buildSessionHandoffProviderBundleTransferId } from '../../../session/handoff/providerBundle/transferPublication';
+import { buildSessionHandoffAgentBundleTransferId } from '../../../session/handoff/agentBundle/transferPublication';
 import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
 import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 import { readWorkspaceReplicationManifestFromFile } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/manifestFile';
@@ -24,6 +23,7 @@ type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSou
 type SessionHandoffWorkspaceReplicationAdapter = ReturnType<typeof createSessionHandoffWorkspaceReplicationAdapter>;
 
 export type RegisterSessionHandoffCommitRpcHandlerInput = Readonly<{
+  activeServerDir: string;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
@@ -38,7 +38,7 @@ export type RegisterSessionHandoffCommitRpcHandlerInput = Readonly<{
     handoffId: string;
     status: SessionHandoffStatus;
     prepareTargetRequest?: SessionHandoffPrepareTargetRequest;
-    prepareTargetResult?: SessionHandoffPrepareTargetResultGetResponse;
+    prepareTargetResult?: SessionHandoffPrepareTargetResultGetSuccessResponse;
     createdAtMs: number;
     updatedAtMs?: number;
     cancelRequestedAtMs?: number;
@@ -75,6 +75,7 @@ export function createSessionHandoffCommitActionHandler(
   params: RegisterSessionHandoffCommitRpcHandlerInput,
 ): (raw: unknown) => Promise<unknown> {
   const {
+    activeServerDir,
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
@@ -168,7 +169,7 @@ export function createSessionHandoffCommitActionHandler(
             sizeBytes: persistedSourceExport.workspaceManifest.sizeBytes,
           });
           await workspaceReplicationAdapter.persistBaselineFromManifest({
-            activeServerDir: configuration.activeServerDir,
+            activeServerDir,
             scope: reverseScope,
             manifest,
             savedAtMs: Date.now(),
@@ -223,7 +224,7 @@ export function createSessionHandoffCommitActionHandler(
       persistedSourceExport?.targetMachineId,
     ]);
     await disposeEphemeralServerRoutedPayloadSourcesForHandoff(parsed.data.handoffId);
-    directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffProviderBundleTransferId(parsed.data.handoffId));
+    directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffAgentBundleTransferId(parsed.data.handoffId));
     directPeerTransfer?.clearPublishedTransfer(buildSessionHandoffWorkspaceManifestTransferId({ handoffId: parsed.data.handoffId }));
     return { handoffId: parsed.data.handoffId, status };
   };

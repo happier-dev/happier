@@ -1,16 +1,25 @@
 export type InferenceConcurrencyCoordinator = Readonly<{
-  runExclusive: <T>(modelId: string, work: () => Promise<T>) => Promise<T>;
-  runLifecycleExclusive: <T>(modelId: string, work: () => Promise<T>) => Promise<T>;
+  runExclusive: <T>(modelId: string, work: () => Promise<T>, options?: InferenceConcurrencyRunOptions) => Promise<T>;
+  runLifecycleExclusive: <T>(modelId: string, work: () => Promise<T>, options?: InferenceConcurrencyRunOptions) => Promise<T>;
+}>;
+
+export type InferenceConcurrencyRunOptions = Readonly<{
+  signal?: AbortSignal | null;
 }>;
 
 type ModelConcurrencyState = {
   activeShared: number;
   exclusiveActive: boolean;
-  waiters: Array<Readonly<{
+  waiters: Array<{
     mode: 'shared' | 'exclusive';
     resolve: () => void;
-  }>>;
+    cleanup: () => void;
+  }>;
 };
+
+function createInferenceCancelledError(): Error {
+  return Object.assign(new Error('inference_cancelled'), { code: 'cancelled' });
+}
 
 function normalizePerModelConcurrency(input: number | null | undefined): number {
   if (!Number.isFinite(input)) {
@@ -66,6 +75,7 @@ export function createInferenceConcurrencyCoordinator(params?: Readonly<{
       }
       state.waiters.shift();
       state.exclusiveActive = true;
+      nextWaiter.cleanup();
       nextWaiter.resolve();
       return;
     }
@@ -80,24 +90,69 @@ export function createInferenceConcurrencyCoordinator(params?: Readonly<{
         break;
       }
       state.activeShared += 1;
+      waiter.cleanup();
       waiter.resolve();
     }
   }
 
-  async function runShared<T>(modelId: string, work: () => Promise<T>): Promise<T> {
+  function rejectIfAborted(signal: AbortSignal | null | undefined): void {
+    if (signal?.aborted) {
+      throw createInferenceCancelledError();
+    }
+  }
+
+  async function waitForTurn(
+    modelId: string,
+    state: ModelConcurrencyState,
+    mode: 'shared' | 'exclusive',
+    signal: AbortSignal | null | undefined,
+  ): Promise<void> {
+    rejectIfAborted(signal);
+    await new Promise<void>((resolve, reject) => {
+      let waiter: ModelConcurrencyState['waiters'][number] | null = null;
+      let abortListener: (() => void) | null = null;
+      const cleanup = () => {
+        if (signal && abortListener) {
+          signal.removeEventListener('abort', abortListener);
+        }
+      };
+      abortListener = () => {
+        if (!waiter) {
+          return;
+        }
+        const index = state.waiters.indexOf(waiter);
+        if (index >= 0) {
+          state.waiters.splice(index, 1);
+          cleanup();
+          reject(createInferenceCancelledError());
+          drainWaiters(modelId, state);
+          maybeDeleteState(modelId, state);
+        }
+      };
+      waiter = {
+        mode,
+        resolve,
+        cleanup,
+      };
+      if (signal) {
+        signal.addEventListener('abort', abortListener, { once: true });
+      }
+      state.waiters.push(waiter);
+    });
+  }
+
+  async function runShared<T>(modelId: string, work: () => Promise<T>, options?: InferenceConcurrencyRunOptions): Promise<T> {
+    const signal = options?.signal ?? null;
+    rejectIfAborted(signal);
     const state = getOrCreateState(modelId);
     if (!state.exclusiveActive && state.waiters.length === 0 && state.activeShared < perModelConcurrency) {
       state.activeShared += 1;
     } else {
-      await new Promise<void>((resolve) => {
-        state.waiters.push({
-          mode: 'shared',
-          resolve,
-        });
-      });
+      await waitForTurn(modelId, state, 'shared', signal);
     }
 
     try {
+      rejectIfAborted(signal);
       return await work();
     } finally {
       state.activeShared = Math.max(0, state.activeShared - 1);
@@ -106,20 +161,18 @@ export function createInferenceConcurrencyCoordinator(params?: Readonly<{
     }
   }
 
-  async function runLifecycleExclusive<T>(modelId: string, work: () => Promise<T>): Promise<T> {
+  async function runLifecycleExclusive<T>(modelId: string, work: () => Promise<T>, options?: InferenceConcurrencyRunOptions): Promise<T> {
+    const signal = options?.signal ?? null;
+    rejectIfAborted(signal);
     const state = getOrCreateState(modelId);
     if (!state.exclusiveActive && state.activeShared === 0 && state.waiters.length === 0) {
       state.exclusiveActive = true;
     } else {
-      await new Promise<void>((resolve) => {
-        state.waiters.push({
-          mode: 'exclusive',
-          resolve,
-        });
-      });
+      await waitForTurn(modelId, state, 'exclusive', signal);
     }
 
     try {
+      rejectIfAborted(signal);
       return await work();
     } finally {
       state.exclusiveActive = false;
@@ -129,7 +182,7 @@ export function createInferenceConcurrencyCoordinator(params?: Readonly<{
   }
 
   return {
-    runExclusive: async <T>(modelId: string, work: () => Promise<T>): Promise<T> => await runShared(modelId, work),
+    runExclusive: async <T>(modelId: string, work: () => Promise<T>, options?: InferenceConcurrencyRunOptions): Promise<T> => await runShared(modelId, work, options),
     runLifecycleExclusive,
   };
 }

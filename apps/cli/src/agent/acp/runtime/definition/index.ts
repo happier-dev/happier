@@ -1,8 +1,7 @@
 export type {
-  AcpRuntimeDefinitionInitV1,
-  AcpRuntimeDefinitionBridgeV1,
-  AcpRuntimeDefinitionSourceV1,
-  AcpRuntimeDefinitionV1,
+  AcpRuntimeDefinitionInit,
+  AcpRuntimeDefinitionSource,
+  AcpRuntimeDefinition,
 } from './_types';
 export {
   normalizeBuiltInAcpDefinition,
@@ -15,18 +14,9 @@ export {
   withAcpLaunchEnvDefaults,
 } from './env';
 export {
-  createAcpBackendFactoryFromRuntimeDefinitionBridge,
-} from './factory';
-export {
   normalizePluginAcpDefinition,
   normalizePluginBackendContributionAcpDefinition,
 } from './plugin';
-export {
-  resolveAcpRuntimeDefinitionProbeLaunch,
-} from './probe';
-export type {
-  AcpRuntimeDefinitionProbeLaunchV1,
-} from './probe';
 export {
   createAcpBackendFromDefinition,
   createSynchronousAcpBackendFromDefinition,

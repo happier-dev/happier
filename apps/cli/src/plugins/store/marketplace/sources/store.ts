@@ -22,6 +22,7 @@ export type MarketplaceSourceRegistryInputV1 = Readonly<{
   enabled?: boolean;
   origin?: MarketplaceSourceOriginV1;
   description?: string | null;
+  registryProfileId?: string | null;
 }>;
 
 const DEFAULT_CURATED_MARKETPLACE_SOURCE_URL = 'https://marketplace.happier.dev/catalog.json';
@@ -41,7 +42,26 @@ function createMarketplaceSourceRecord(
     description: input.description,
     enabled: input.enabled,
     origin: input.origin,
+    registryProfileId: input.registryProfileId,
   }, existing);
+}
+
+function assertMarketplaceSourceAuthorityTransition(
+  current: MarketplaceSourceRegistryV1,
+  next: MarketplaceSourceRegistryV1,
+): void {
+  for (const nextSource of next.sources) {
+    const existing = current.sources.find((source) => source.id === nextSource.id || source.sourceUrl === nextSource.sourceUrl);
+    if (!existing) {
+      if (nextSource.origin === 'curated') {
+        throw new Error('Marketplace source curated authority can only be established by the daemon seed');
+      }
+      continue;
+    }
+    if (existing.origin !== nextSource.origin) {
+      throw new Error('Marketplace source curated authority cannot be changed by registry mutation');
+    }
+  }
 }
 
 export function createMarketplaceSourceRegistryStore(params?: Readonly<{ happyHomeDir?: string }>): Readonly<{
@@ -112,7 +132,10 @@ export function createMarketplaceSourceRegistryStore(params?: Readonly<{ happyHo
       paths,
       lockName: MARKETPLACE_SOURCE_REGISTRY_LOCK_NAME,
       fn: async () => {
-        await writeUnlocked(next);
+        const current = await readUnlocked() ?? createDefaultCuratedMarketplaceSourceRegistryV1(resolveCuratedMarketplaceSourceUrl());
+        const parsed = MarketplaceSourceRegistryV1Schema.parse(next);
+        assertMarketplaceSourceAuthorityTransition(current, parsed);
+        await writeUnlocked(parsed);
       },
     });
   }
@@ -126,6 +149,7 @@ export function createMarketplaceSourceRegistryStore(params?: Readonly<{ happyHo
       fn: async () => {
         const current = await readUnlocked() ?? createDefaultCuratedMarketplaceSourceRegistryV1(resolveCuratedMarketplaceSourceUrl());
         const next = MarketplaceSourceRegistryV1Schema.parse(await transform(current));
+        assertMarketplaceSourceAuthorityTransition(current, next);
         await writeUnlocked(next);
         return next;
       },

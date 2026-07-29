@@ -2,12 +2,26 @@ import type { SessionId } from '@/agent/core/AgentMessage';
 import type { ExecutionRunControllerFailureSignal } from './failureSignal';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
 import type { StreamedTranscriptWriter } from '@/api/session/streamedTranscriptWriter';
+import type { VoiceAgentTurnStreamReadResult } from '@/agent/voice/agent/voiceAgentTypes';
+
+export type PendingVoiceAgentTranscriptTurn = {
+  mode: 'legacy_pair' | 'assistant_only';
+  user: Readonly<{ text: string; localId: string; meta: Record<string, unknown> }> | null;
+  assistant: Readonly<{ text: string; meta: Record<string, unknown> }> | null;
+  commitInFlight: Promise<Readonly<{ persisted: boolean; delivered: boolean }>> | null;
+};
+
+export type CachedTerminalVoiceAgentTurnRead = Readonly<{
+  requestedCursor: number;
+  result: VoiceAgentTurnStreamReadResult;
+}>;
 
 export type ExecutionRunSendDelivery = 'prompt' | 'steer_if_supported' | 'interrupt';
 
 export type ExecutionRunExternalMessage = Readonly<{
   message: string;
   delivery: ExecutionRunSendDelivery;
+  authorizeProviderEffect?: () => Promise<void>;
   resolve: () => void;
   reject: (e: Error) => void;
 }>;
@@ -48,7 +62,9 @@ export type ExecutionRunVoiceAgentController = {
   transcript: Readonly<{ persistenceMode: 'ephemeral' | 'persistent'; epoch: number }>;
   externalStreamIdByInternal: Map<string, string>;
   internalStreamIdByExternal: Map<string, string>;
-  persistedDoneByExternalStreamId: Set<string>;
+  pendingTranscriptTurnByExternalStreamId: Map<string, PendingVoiceAgentTranscriptTurn>;
+  terminalReadByExternalStreamId: Map<string, CachedTerminalVoiceAgentTurnRead>;
+  readInFlightByExternalStreamId: Map<string, Promise<VoiceAgentTurnStreamReadResult>>;
 };
 
 export type ExecutionRunController = ExecutionRunBackendController | ExecutionRunVoiceAgentController;

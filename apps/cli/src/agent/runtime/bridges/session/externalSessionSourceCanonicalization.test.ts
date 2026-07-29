@@ -27,7 +27,6 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
         resolveExternalSessionProviderOps: async () => ({
           validateSource: async ({ source }) => ({ ok: true, source }),
           listCandidates: async () => ({ candidates: [], nextCursor: null }),
-          getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
           pageTranscript: async () => ({
             items: [],
             nextCursor: null,
@@ -35,8 +34,7 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
             hasMore: false,
             truncated: false,
           }),
-          readAfterTranscript: async () => ({ items: [], nextCursor: null, truncated: false }),
-          resolveTakeoverSpawnOptions: async () => null,
+          readAfterTranscript: async () => ({ outcome: 'already_current' }),
           resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor: receivedRuntimeDescriptor }) => ({
             remoteSessionId:
               typeof receivedRuntimeDescriptor?.agent?.providerSessionId === 'string'
@@ -99,7 +97,6 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
         resolveExternalSessionProviderOps: async () => ({
           validateSource: async ({ source }) => ({ ok: true, source }),
           listCandidates: async () => ({ candidates: [], nextCursor: null }),
-          getActivity: async () => ({ lastActivityAtMs: null, isRunning: false }),
           pageTranscript: async () => ({
             items: [],
             nextCursor: null,
@@ -107,8 +104,7 @@ describe('canonicalizeLinkedExternalSessionSource', () => {
             hasMore: false,
             truncated: false,
           }),
-          readAfterTranscript: async () => ({ items: [], nextCursor: null, truncated: false }),
-          resolveTakeoverSpawnOptions: async () => null,
+          readAfterTranscript: async () => ({ outcome: 'already_current' }),
           resolveLinkIdentity: async ({ remoteSessionId, source, runtimeDescriptor }) => ({
             remoteSessionId:
               typeof runtimeDescriptor?.agent?.providerSessionId === 'string'

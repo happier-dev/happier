@@ -15,6 +15,7 @@ import type {
   RuntimeAuthFailureReportOutboxItem,
   RuntimeAuthFailureReportOutboxReport,
 } from './runtimeAuthFailureReportOutboxTypes';
+import { withRuntimeAuthFailureReportOutboxFileLock } from './runtimeAuthFailureReportOutboxFileLock';
 
 const OUTBOX_SCHEMA_VERSION = 1;
 const OUTBOX_DIR_BASENAME = 'connected-service-runtime-auth-report-outbox';
@@ -81,6 +82,7 @@ function buildReportKey(input: Readonly<{
     providerLimitId: input.classification.providerLimitId ?? null,
     sourceProviderAccountId: input.classification.sourceProviderAccountId ?? null,
     groupGeneration: input.classification.groupGeneration ?? null,
+    expectedCredentialRevision: input.classification.expectedCredentialRevision ?? null,
     action: input.classification.action ?? null,
     recoveryAction: input.classification.recoveryAction ?? null,
     connectedServiceRecovery: input.classification.connectedServiceRecovery ?? null,
@@ -98,11 +100,19 @@ function sanitizeReport(report: RuntimeAuthFailureReportOutboxReport): RuntimeAu
   const classification = sanitizeClassification(report.classification);
   if (!sessionId || !classification) return null;
   const resumePromptMode = readResumePromptMode(report.resumePromptMode);
-  const reportKey = buildReportKey({ sessionId, classification });
+  const reportKey = buildReportKey({
+    sessionId,
+    classification,
+  });
+  const suppliedReportId = readBoundedString(report.reportId, 256);
+  const reportId = suppliedReportId?.startsWith('runtime-auth-report:')
+    ? suppliedReportId
+    : `runtime-auth-report:${hashText(reportKey)}`;
   return {
     schemaVersion: OUTBOX_SCHEMA_VERSION,
     fileId: buildFileId(reportKey),
     reportKey,
+    reportId,
     sessionId,
     switchesThisTurn: readNonNegativeInt(report.switchesThisTurn, 0),
     ...(resumePromptMode ? { resumePromptMode } : {}),
@@ -131,14 +141,21 @@ function normalizePersistedItem(value: unknown): RuntimeAuthFailureReportOutboxI
   if (value.schemaVersion !== OUTBOX_SCHEMA_VERSION) return null;
   const fileId = readBoundedString(value.fileId);
   const reportKey = readBoundedString(value.reportKey);
+  const persistedReportId = readBoundedString(value.reportId, 256);
+  const reportId = persistedReportId?.startsWith('runtime-auth-report:')
+    ? persistedReportId
+    : reportKey
+      ? `runtime-auth-report:${hashText(reportKey)}`
+      : null;
   const sessionId = readBoundedString(value.sessionId);
   const classification = sanitizeClassification(value.classification);
-  if (!fileId || !fileId.startsWith('report-') || !reportKey || !sessionId || !classification) return null;
+  if (!fileId || !fileId.startsWith('report-') || !reportKey || !reportId || !sessionId || !classification) return null;
   const resumePromptMode = readResumePromptMode(value.resumePromptMode);
   return {
     schemaVersion: OUTBOX_SCHEMA_VERSION,
     fileId,
     reportKey,
+    reportId,
     sessionId,
     switchesThisTurn: readNonNegativeInt(value.switchesThisTurn, 0),
     ...(resumePromptMode ? { resumePromptMode } : {}),
@@ -195,20 +212,25 @@ export async function enqueueRuntimeAuthFailureReportOutboxItem(input: Readonly<
   const outboxDir = resolveOutboxDir(input);
   const timestampMs = nowFrom(input);
   await mkdir(outboxDir, { recursive: true });
-  const existing = await readExistingItem(outboxDir, sanitized.fileId);
-  const item: RuntimeAuthFailureReportOutboxItem = {
-    ...sanitized,
-    switchesThisTurn: sanitized.switchesThisTurn,
-    attemptCount: (existing?.attemptCount ?? 0) + 1,
-    createdAtMs: existing?.createdAtMs ?? timestampMs,
-    updatedAtMs: timestampMs,
-  };
-  await writeJsonAtomic(itemPath(outboxDir, item.fileId), item);
-  return {
-    status: 'enqueued',
-    enqueue: existing ? 'coalesced' : 'accepted',
-    item,
-  };
+  const path = itemPath(outboxDir, sanitized.fileId);
+  return await withRuntimeAuthFailureReportOutboxFileLock(path, async () => {
+    const existing = await readExistingItem(outboxDir, sanitized.fileId);
+    const existingReport = existing !== null;
+    const item: RuntimeAuthFailureReportOutboxItem = {
+      ...sanitized,
+      reportId: existingReport ? existing.reportId : sanitized.reportId,
+      switchesThisTurn: sanitized.switchesThisTurn,
+      attemptCount: (existingReport ? existing.attemptCount : 0) + 1,
+      createdAtMs: existingReport ? existing.createdAtMs : timestampMs,
+      updatedAtMs: timestampMs,
+    };
+    await writeJsonAtomic(path, item);
+    return {
+      status: 'enqueued' as const,
+      enqueue: existingReport ? 'coalesced' as const : 'accepted' as const,
+      item,
+    };
+  });
 }
 
 export async function readRuntimeAuthFailureReportOutboxItems(input: Readonly<{
@@ -235,35 +257,61 @@ export async function readRuntimeAuthFailureReportOutboxItems(input: Readonly<{
   return items.sort((left, right) => left.createdAtMs - right.createdAtMs || left.reportKey.localeCompare(right.reportKey));
 }
 
+export async function readRuntimeAuthFailureReportOutboxItem(input: Readonly<{
+  outboxDir?: string;
+  reportKey: string;
+}>): Promise<RuntimeAuthFailureReportOutboxItem | null> {
+  const reportKey = readBoundedString(input.reportKey);
+  if (!reportKey) return null;
+  return await readExistingItem(resolveOutboxDir(input), buildFileId(reportKey));
+}
+
 export async function removeRuntimeAuthFailureReportOutboxItem(input: Readonly<{
   outboxDir?: string;
   reportKey: string;
+  expectedItem?: RuntimeAuthFailureReportOutboxItem;
 }>): Promise<void> {
   const reportKey = readBoundedString(input.reportKey);
   if (!reportKey) return;
   const outboxDir = resolveOutboxDir(input);
   const fileId = buildFileId(reportKey);
-  await unlink(itemPath(outboxDir, fileId)).catch((error) => {
-    const err = error as NodeJS.ErrnoException;
-    if (err?.code !== 'ENOENT') throw error;
+  const path = itemPath(outboxDir, fileId);
+  await withRuntimeAuthFailureReportOutboxFileLock(path, async () => {
+    if (input.expectedItem) {
+      const current = await readExistingItem(outboxDir, fileId);
+      if (!current || stableStringify(current) !== stableStringify(input.expectedItem)) return;
+    }
+    await unlink(path).catch((error) => {
+      const err = error as NodeJS.ErrnoException;
+      if (err?.code !== 'ENOENT') throw error;
+    });
   });
 }
 
 export async function removeRuntimeAuthFailureReportOutboxItemsForSession(input: Readonly<{
   outboxDir?: string;
   sessionId: string;
+  updatedBeforeMs?: number;
 }>): Promise<void> {
   const sessionId = readBoundedString(input.sessionId);
   if (!sessionId) return;
+  const updatedBeforeMs = typeof input.updatedBeforeMs === 'number'
+    && Number.isFinite(input.updatedBeforeMs)
+    ? Math.max(0, Math.trunc(input.updatedBeforeMs))
+    : null;
   const items = await readRuntimeAuthFailureReportOutboxItems({
     ...(input.outboxDir ? { outboxDir: input.outboxDir } : {}),
   });
   await Promise.all(items
-    .filter((item) => item.sessionId === sessionId)
+    .filter((item) => (
+      item.sessionId === sessionId
+      && (updatedBeforeMs === null || item.updatedAtMs < updatedBeforeMs)
+    ))
     .map(async (item) => {
       await removeRuntimeAuthFailureReportOutboxItem({
         ...(input.outboxDir ? { outboxDir: input.outboxDir } : {}),
         reportKey: item.reportKey,
+        expectedItem: item,
       });
     }));
 }
@@ -301,6 +349,7 @@ export async function drainRuntimeAuthFailureReportOutboxItems(input: Readonly<{
       await removeRuntimeAuthFailureReportOutboxItem({
         ...(input.outboxDir ? { outboxDir: input.outboxDir } : {}),
         reportKey: item.reportKey,
+        expectedItem: item,
       });
       if (result.status === 'delivered') {
         delivered += 1;

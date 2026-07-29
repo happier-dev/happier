@@ -10,10 +10,18 @@ vi.mock('@/cli/commandRegistry', () => ({
     gemini: geminiHandlerSpy,
   },
   ensureMergedAgentCommandRegistryLoaded: ensureMergedAgentCommandRegistryLoadedSpy,
+  findCommandDispatchDescriptor: vi.fn((command: string) => {
+    if (command !== 'gemini') return null;
+    return {
+      id: 'gemini',
+      command: 'gemini',
+      handler: geminiHandlerSpy,
+    };
+  }),
 }));
 
-vi.mock('@/backends/catalog', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/backends/catalog')>();
+vi.mock('@/agent/catalog/registry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/catalog/registry')>();
   return {
     ...actual,
     resolveCatalogAgentIdForCliSubcommand: vi.fn(() => 'gemini'),

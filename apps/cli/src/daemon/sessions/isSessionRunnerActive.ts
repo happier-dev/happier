@@ -30,14 +30,8 @@ function isValidCommandHash(value: string | null | undefined): value is string {
 
 type ReadProcessRunState = (pid: number) => Promise<ProcessRunState>;
 
-/**
- * "Active" means the runner can actually SERVE the session (consume pending messages, answer RPC).
- * A merely-signalable pid is not enough: a SIGSTOPped or zombie runner passes `kill(pid, 0)` but
- * serves nothing, and refusing a resume for it loses the user's message (incident 2026-06-12,
- * "Resume requested ... but session is already running"). Probe failures stay fail-closed:
- * an alive pid whose state cannot be inspected is treated as servable.
- */
-async function isPidActivelyServing(pid: number, readProcessRunState: ReadProcessRunState): Promise<boolean> {
+/** Process-presence evidence for duplicate-spawn fencing, not exact-session RPC serviceability. */
+async function isPidPresentForDuplicateFence(pid: number, readProcessRunState: ReadProcessRunState): Promise<boolean> {
   const state = await readProcessRunState(pid).catch<ProcessRunState>(() => 'servable');
   return state === 'servable';
 }
@@ -63,7 +57,7 @@ async function isLockActive(params: {
   if (!status || !status.ok) return false;
 
   const pid = status.lock.pid;
-  if (!(await isPidActivelyServing(pid, params.readProcessRunState))) return false;
+  if (!(await isPidPresentForDuplicateFence(pid, params.readProcessRunState))) return false;
 
   // If the lock PID is alive but its command hash is provably different, the OS reused
   // the PID for another process. Treat it as inactive so acquisition can break the stale lock.
@@ -77,7 +71,7 @@ async function isLockActive(params: {
     return false;
   }
 
-  // Fail-closed: a lock with a live servable PID is treated as active unless we can prove PID reuse.
+  // Fail-closed: a lock with a present PID is treated as active unless we can prove PID reuse.
   return true;
 }
 
@@ -92,10 +86,7 @@ async function isTrackedSessionActive(params: {
   const childPid = typeof params.tracked.childProcess?.pid === 'number' ? params.tracked.childProcess.pid : null;
   const pidToCheck = childPid ?? params.tracked.pid;
 
-  // A stopped/zombie runner cannot serve a resume even when the daemon holds a live
-  // ChildProcess handle for it; reporting it inactive lets the resume respawn instead of
-  // refusing and stranding the user's message in the pending queue.
-  if (!(await isPidActivelyServing(pidToCheck, params.readProcessRunState))) return false;
+  if (!(await isPidPresentForDuplicateFence(pidToCheck, params.readProcessRunState))) return false;
 
   // If the daemon has a live ChildProcess handle, treat the runner as active even if process inspection is flaky.
   // This avoids spawning duplicates due to transient ps/command-line inspection failures.
@@ -135,4 +126,76 @@ export async function isSessionRunnerActive(params: Readonly<{
   }
 
   return await isLockActive({ sessionId, readProcessRunState, getProcessCommandHash, readSessionRunnerLockStatus: readLockStatus });
+}
+
+export type SessionRunnerServiceability =
+  | Readonly<{ state: 'servable' }>
+  | Readonly<{ state: 'recoverable_unservable'; reason: string }>
+  | Readonly<{ state: 'unknown'; reason: string }>;
+
+export type SessionRunnerServiceabilityProbe =
+  | Readonly<{ state: 'runner_absent' }>
+  | Readonly<{ state: 'runner_unknown'; reason: 'runner_presence_unproven' }>
+  | Readonly<{ state: 'runner_present'; control: SessionRunnerServiceability }>;
+
+export function resolveSessionRunnerResumeDecision(probe: SessionRunnerServiceabilityProbe):
+  | Readonly<{ action: 'spawn' }>
+  | Readonly<{ action: 'adopt' }>
+  | Readonly<{ action: 'fence'; reason: string }> {
+  if (probe.state === 'runner_absent') return { action: 'spawn' };
+  if (probe.state === 'runner_unknown') return { action: 'fence', reason: probe.reason };
+  return probe.control.state === 'servable'
+    ? { action: 'adopt' }
+    : { action: 'fence', reason: probe.control.reason };
+}
+
+export async function probeSessionRunnerServiceability(params: Readonly<{
+  sessionId: string;
+  trackedSessions: Iterable<TrackedSession>;
+  probeCapability: () => Promise<SessionRunnerServiceability>;
+  readProcessRunState?: ReadProcessRunState;
+  getProcessCommandHash?: (pid: number) => Promise<string | null>;
+  readSessionRunnerLockStatus?: (args: { sessionId: string }) => Promise<SessionRunnerLockStatus>;
+}>): Promise<SessionRunnerServiceabilityProbe> {
+  const sessionId = normalizeSessionId(params.sessionId);
+  const trackedSessions = Array.from(params.trackedSessions);
+  const readProcessRunState = params.readProcessRunState ?? readProcessRunStateDefault;
+  const readLockStatus = params.readSessionRunnerLockStatus ?? readSessionRunnerLockStatus;
+  let lockStatusPromise: Promise<SessionRunnerLockStatus> | null = null;
+  const readLockStatusOnce = async (input: { sessionId: string }): Promise<SessionRunnerLockStatus> => {
+    lockStatusPromise ??= readLockStatus(input).catch((error: unknown) => ({
+      ok: false,
+      reason: 'io_error',
+      errorMessage: error instanceof Error ? error.message : String(error),
+    }));
+    return await lockStatusPromise;
+  };
+  const runnerPresent = await isSessionRunnerActive({
+    ...params,
+    trackedSessions,
+    readProcessRunState,
+    readSessionRunnerLockStatus: readLockStatusOnce,
+  });
+  if (!runnerPresent) {
+    for (const tracked of trackedSessions) {
+      if (!trackedSessionMatchesSessionId(tracked, sessionId)) continue;
+      const childPid = typeof tracked.childProcess?.pid === 'number' ? tracked.childProcess.pid : null;
+      const runState = await readProcessRunState(childPid ?? tracked.pid).catch(() => null);
+      if (runState !== 'dead' && runState !== 'zombie') {
+        return { state: 'runner_unknown', reason: 'runner_presence_unproven' };
+      }
+    }
+
+    const lockStatus = await readLockStatusOnce({ sessionId });
+    if (!lockStatus.ok) {
+      return lockStatus.reason === 'not_found'
+        ? { state: 'runner_absent' }
+        : { state: 'runner_unknown', reason: 'runner_presence_unproven' };
+    }
+    const lockRunState = await readProcessRunState(lockStatus.lock.pid).catch(() => null);
+    return lockRunState === 'dead' || lockRunState === 'zombie'
+      ? { state: 'runner_absent' }
+      : { state: 'runner_unknown', reason: 'runner_presence_unproven' };
+  }
+  return { state: 'runner_present', control: await params.probeCapability() };
 }

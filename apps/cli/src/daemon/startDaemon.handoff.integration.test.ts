@@ -141,11 +141,17 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
     spawnHappyCLI: vi.fn(),
 }));
 
-vi.mock('@/backends/catalog', () => ({
-    AGENTS: {},
+vi.mock('@/session/runtime/catalogHooks', () => ({
     getVendorResumeSupport: vi.fn(async () => () => true),
+}));
+
+vi.mock('@/daemon/managedServers/catalogHooks', () => ({
     getManagedServerShutdownCleanup: vi.fn(async () => null),
-    requireCatalogEntry: vi.fn(),
+    listManagedServerClaimDescriptors: vi.fn(async () => []),
+}));
+
+vi.mock('@/agent/catalog/resolution', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/agent/catalog/resolution')>(),
     resolveAgentCliSubcommand: vi.fn(),
     resolveCatalogAgentId: vi.fn(() => 'codex'),
 }));
@@ -173,6 +179,7 @@ vi.mock('./controlServer', () => ({
 vi.mock('./sessions/reattachFromMarkers', () => ({
     reattachTrackedSessionsFromMarkers: vi.fn(async () => ({
         orphanedDeadDaemonSessions: [],
+        connectedServiceRestartIntents: [],
     })),
 }));
 
@@ -189,7 +196,7 @@ vi.mock('./sessions/visibleConsoleSpawnWaiter', () => ({
 }));
 
 vi.mock('./sessions/stopSession', () => ({
-    createStopSession: vi.fn(() => vi.fn(async () => ({ stopped: true }))),
+    createStopSession: vi.fn(() => vi.fn(async () => ({ status: 'stopped' as const }))),
 }));
 
 vi.mock('./sessions/resolveSpawnWebhookResult', () => ({
@@ -345,11 +352,6 @@ vi.mock('./connectedServices/quotas/startConnectedServiceQuotasLoop', () => ({
     startConnectedServiceQuotasLoop: vi.fn(() => ({ stop: vi.fn(), pause: vi.fn(), resume: vi.fn() })),
 }));
 
-vi.mock('@/agent/runtime/daemonInitialPrompt', () => ({
-    HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY: 'HAPPIER_DAEMON_INITIAL_PROMPT',
-    normalizeDaemonInitialPrompt: vi.fn(() => null),
-}));
-
 vi.mock('@/terminal/attachment/terminalAttachmentInfo', () => ({
     writeTerminalAttachmentInfo: vi.fn(async () => {}),
 }));
@@ -413,7 +415,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
             const endpointCandidates = await handlers.directPeerTransfer.publishTransfer({
                 transferId: 'handoff_rns',
                 payload: {
-                    providerBundle: {
+                    agentBundle: {
                         providerId: 'claude',
                         remoteSessionId: 'claude_session_source',
                         transcriptBase64: 'e30K',
@@ -955,7 +957,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
             await expect(handlers.directPeerTransfer.publishTransfer({
                 transferId: 'handoff_missing_payload_source',
                 payload: {
-                    providerBundle: {
+                    agentBundle: {
                         providerId: 'claude',
                         remoteSessionId: 'claude_session_source',
                         transcriptBase64: 'e30K',

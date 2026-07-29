@@ -174,4 +174,70 @@ describe('importSessionHandoffAgentBundle', () => {
             targetDirectory: '/repo',
         });
     });
+
+    it.each([
+        'target_identity_conflict',
+        'agent_version_unsupported',
+    ] as const)('preserves the bounded typed leaf failure %s', async (code) => {
+        resolveExecutionSurfaces.mockResolvedValueOnce({
+            terminalRuntime: null,
+            externalSession: null,
+            attach: null,
+            handoff: {
+                exportBundle: vi.fn(),
+                importBundle: vi.fn(async () => ({
+                    ok: false as const,
+                    code,
+                    message: 'safe handoff failure',
+                })),
+            },
+            fork: null,
+            checkpoint: null,
+        });
+        const { importSessionHandoffAgentBundle } = await import('./import');
+
+        await expect(importSessionHandoffAgentBundle({
+            bundle: {
+                agentId: 'codex',
+                remoteSessionId: 'codex_1',
+                files: [],
+            },
+            targetPath: '/repo',
+        })).rejects.toMatchObject({
+            code,
+            message: 'safe handoff failure',
+        });
+    });
+
+    it.each([
+        'target_identity_conflict',
+        'agent_version_unsupported',
+    ] as const)('preserves the bounded typed thrown leaf failure %s', async (code) => {
+        resolveExecutionSurfaces.mockResolvedValueOnce({
+            terminalRuntime: null,
+            externalSession: null,
+            attach: null,
+            handoff: {
+                exportBundle: vi.fn(),
+                importBundle: vi.fn(async () => {
+                    throw Object.assign(new Error('safe thrown handoff failure'), { code });
+                }),
+            },
+            fork: null,
+            checkpoint: null,
+        });
+        const { importSessionHandoffAgentBundle } = await import('./import');
+
+        await expect(importSessionHandoffAgentBundle({
+            bundle: {
+                agentId: 'codex',
+                remoteSessionId: 'codex_1',
+                files: [],
+            },
+            targetPath: '/repo',
+        })).rejects.toMatchObject({
+            code,
+            message: 'safe thrown handoff failure',
+        });
+    });
 });

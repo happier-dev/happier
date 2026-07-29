@@ -4,15 +4,44 @@ export default async function resolveTranscriptBinding() {
 
 export { resolveTranscriptBinding };
 
+export function activate(api) {
+    api.agents.register('sample-provider', () => ({
+        sessions: {
+            async open(request) {
+                let listener = null;
+                return {
+                    async send(input) {
+                        listener?.({
+                            kind: 'input-accepted',
+                            turnId: input.delivery.turnId,
+                        });
+                        return { status: 'admitted' };
+                    },
+                    watch(nextListener) {
+                        listener = nextListener;
+                        return {
+                            dispose() {
+                                if (listener === nextListener) listener = null;
+                            }
+                        };
+                    },
+                    async dispose() {
+                        listener = null;
+                    },
+                    sessionId: request.sessionId
+                };
+            }
+        }
+    }));
+    api.hooks.register('resolve-prerequisites', resolveTranscriptBinding);
+}
+
 function createRuntimeTurnOperations() {
     let handler = null;
     let sessionId = null;
 
     return {
         beginTurnLifecycle() {},
-        async startOrLoadSession(opts) {
-            sessionId = opts?.resumeId ?? 'integration-session';
-        },
         async sendTurnPrompt(prompt) {
             if (handler) {
                 handler({ type: 'model-output', fullText: `integration:${prompt}` });
@@ -73,20 +102,12 @@ export async function listCandidates() {
     return { ok: true, value: { candidates: [], nextCursor: null } };
 }
 
-export async function getActivity() {
-    return { ok: true, value: { lastActivityAtMs: null, isRunning: false } };
-}
-
 export async function pageTranscript() {
     return { ok: true, value: { items: [], nextCursor: null, tailCursor: null, hasMore: false, truncated: false } };
 }
 
 export async function readAfterTranscript() {
-    return { ok: true, value: { items: [], nextCursor: null, truncated: false } };
-}
-
-export async function resolveTakeoverSpawnOptions() {
-    return { ok: true, value: null };
+    return { ok: true, value: { outcome: 'already_current' } };
 }
 
 export async function evaluateAvailability() {

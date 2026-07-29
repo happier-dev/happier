@@ -196,6 +196,7 @@ describe('projectRuntimeTranscriptEvent', () => {
         emittedAtMs: 1,
         turnId: 'turn-1',
         toolCallId: 'call-1',
+        localId: 'acp-call-v1:test-call',
         toolName: 'Bash',
         toolInput: { command: 'pwd' },
       },
@@ -210,6 +211,7 @@ describe('projectRuntimeTranscriptEvent', () => {
         emittedAtMs: 2,
         turnId: 'turn-1',
         toolCallId: 'call-1',
+        localId: 'acp-result-v1:test-result',
         output: { stdout: '/tmp/repo', exitCode: 0 },
       },
     })).resolves.toEqual({ projected: true, kind: 'tool-result' });
@@ -222,15 +224,16 @@ describe('projectRuntimeTranscriptEvent', () => {
         callId: 'call-1',
         name: 'Bash',
         input: { command: 'pwd' },
-        id: 'turn-1:call-1:tool-call',
+        id: 'acp-call-v1:test-call',
       },
       {
-        localId: 'turn-1:call-1:tool-call',
+        localId: 'acp-call-v1:test-call',
         meta: {
           source: 'runtime',
           runtimeEventKind: 'tool-call',
           runtimeTurnId: 'turn-1',
         },
+        provenance: { kind: 'non_dependent', source: 'external' },
       },
     );
     expect(session.enqueueAgentMessageCommitted).toHaveBeenCalledWith(
@@ -239,15 +242,16 @@ describe('projectRuntimeTranscriptEvent', () => {
         type: 'tool-result',
         callId: 'call-1',
         output: { stdout: '/tmp/repo', exitCode: 0 },
-        id: 'turn-1:call-1:tool-result',
+        id: 'acp-result-v1:test-result',
       },
       {
-        localId: 'turn-1:call-1:tool-result',
+        localId: 'acp-result-v1:test-result',
         meta: {
           source: 'runtime',
           runtimeEventKind: 'tool-result',
           runtimeTurnId: 'turn-1',
         },
+        provenance: { kind: 'non_dependent', source: 'external' },
       },
     );
     expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();
@@ -268,13 +272,13 @@ describe('projectRuntimeTranscriptEvent', () => {
         sessionId: 'session-1',
         emittedAtMs: 1,
         text: 'terminal-origin prompt',
-        localId: 'local-user-1',
+        localId: ' opaque-local-user-1 ',
         meta: { terminalOrigin: true },
       },
     })).resolves.toEqual({ projected: true, kind: 'transcript-user-text' });
 
     expect(session.sendUserTextMessage).toHaveBeenCalledWith('terminal-origin prompt', {
-      localId: 'local-user-1',
+      localId: ' opaque-local-user-1 ',
       meta: { terminalOrigin: true },
     });
   });
@@ -307,6 +311,7 @@ describe('projectRuntimeTranscriptEvent', () => {
       {
         localId: 'turn-1:turn_failed',
         meta: { source: 'runtime' },
+        provenance: { kind: 'non_dependent', source: 'external' },
       },
     );
     expect(session.sendAgentMessageCommitted).not.toHaveBeenCalled();

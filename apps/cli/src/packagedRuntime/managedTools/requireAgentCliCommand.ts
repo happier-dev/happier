@@ -1,24 +1,19 @@
-import {
-  getAgentCliRuntimeSpec,
-  isAgentId,
-  legacyCustomAcpCompat,
-} from '@happier-dev/agents';
-import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
+import { legacyCustomAcpCompat } from '@happier-dev/agents';
+import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 
 import { readAgentCliOverrideForRuntime, resolveAgentCliCommandForRuntime } from './agentCliResolution';
 
-export function resolveAgentCliRuntimeSpecForLookupId(agentId: CatalogAgentLookupId) {
-  if (isAgentId(agentId)) {
-    return getAgentCliRuntimeSpec(agentId);
-  }
+export function resolveAgentCliRuntimeSpecForLookupId(agentId: string) {
   if (legacyCustomAcpCompat.isLegacyCustomAcpAgentId(agentId)) {
     return legacyCustomAcpCompat.getLegacyCustomAcpAgentCliRuntimeSpec();
   }
-  throw new Error(`Unsupported agent CLI runtime lookup id '${agentId}'`);
+  const runtimeSpec = readAgentCatalogSnapshot().agentDefinitionsById.get(agentId)?.runtimeSpec;
+  if (runtimeSpec) return runtimeSpec;
+  throw new Error(`Missing agent CLI runtime metadata for '${agentId}'`);
 }
 
 export function buildMissingAgentCliCommandErrorMessage(
-  agentId: CatalogAgentLookupId,
+  agentId: string,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
   const processEnv = opts.processEnv ?? process.env;
@@ -37,7 +32,7 @@ export function buildMissingAgentCliCommandErrorMessage(
 }
 
 export function requireAgentCliCommand(
-  agentId: CatalogAgentLookupId,
+  agentId: string,
   opts: Readonly<{ processEnv?: NodeJS.ProcessEnv }> = {},
 ): string {
   const resolved = resolveAgentCliCommandForRuntime(resolveAgentCliRuntimeSpecForLookupId(agentId), {

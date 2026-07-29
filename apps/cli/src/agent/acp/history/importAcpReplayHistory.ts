@@ -106,14 +106,14 @@ function extractReplayTextItems(replay: ReadonlyArray<unknown>): {
   return { messages, hasToolEvents };
 }
 
-function makeImportLocalId(params: { provider: string; remoteSessionId: string; index: number; role: string; text: string }): string {
+function makeImportLocalId(params: { agentId: string; remoteSessionId: string; index: number; role: string; text: string }): string {
   const textHash = sha256(`${params.role}:${normalizeTextForMatch(params.text)}`).slice(0, 12);
-  return `acp-import:v1:${params.provider}:${params.remoteSessionId}:${params.index}:${textHash}`;
+  return `acp-import:v1:${params.agentId}:${params.remoteSessionId}:${params.index}:${textHash}`;
 }
 
-function makeImportEventLocalId(params: { provider: string; remoteSessionId: string; index: number; key: string }): string {
+function makeImportEventLocalId(params: { agentId: string; remoteSessionId: string; index: number; key: string }): string {
   const short = sha256(params.key).slice(0, 12);
-  return `acp-import:v1:${params.provider}:${params.remoteSessionId}:e${params.index}:${short}`;
+  return `acp-import:v1:${params.agentId}:${params.remoteSessionId}:e${params.index}:${short}`;
 }
 
 function isSafeRemoteSessionId(remoteSessionId: string): boolean {
@@ -149,7 +149,7 @@ export async function importAcpReplayHistoryV1(params: {
 }): Promise<void> {
   if (!isSafeRemoteSessionId(params.remoteSessionId)) {
     logger.debug('[ACP History] Invalid remoteSessionId; skipping history import', {
-      provider: params.provider,
+      agentId: params.provider,
       remoteSessionId: String(params.remoteSessionId ?? '').slice(0, 80),
     });
     return;
@@ -170,7 +170,7 @@ export async function importAcpReplayHistoryV1(params: {
     const remoteTail = replayMessages.slice(-3).map((m) => ({ role: m.role, text: normalizeTextForMatch(m.text).slice(0, 200) }));
 
     logger.debug('[ACP History] Divergence detected; prompting user', {
-      provider: params.provider,
+      agentId: params.provider,
       remoteSessionId: params.remoteSessionId,
       overlapReason: overlap.reason,
       localCount: existing.length,
@@ -179,7 +179,7 @@ export async function importAcpReplayHistoryV1(params: {
 
     // Use the standard permission flow so UI can render it as a tool card.
     const decisionPromise = params.permissionHandler.handleToolCall(permissionId, 'AcpHistoryImport', {
-      provider: params.provider,
+      agentId: params.provider,
       remoteSessionId: params.remoteSessionId,
       localCount: existing.length,
       remoteCount: replayMessages.length,
@@ -213,7 +213,7 @@ export async function importAcpReplayHistoryV1(params: {
   if (newMessages.length === 0) return;
 
   logger.debug('[ACP History] Importing new replay messages', {
-    provider: params.provider,
+    agentId: params.provider,
     remoteSessionId: params.remoteSessionId,
     newCount: newMessages.length,
     matchedCount: overlap.matchedCount,
@@ -234,7 +234,7 @@ async function importMessageDeltas(
   for (let i = startIndex; i < replayMessages.length; i++) {
     const msg = replayMessages[i];
     const localId = makeImportLocalId({
-      provider: params.provider,
+      agentId: params.provider,
       remoteSessionId: params.remoteSessionId,
       index: i,
       role: msg.role,
@@ -261,7 +261,7 @@ async function importMessageDeltas(
         ...m,
         acpHistoryImportV1: {
           v: 1,
-          provider: params.provider,
+          agentId: params.provider,
           remoteSessionId: params.remoteSessionId,
           importedAt: Date.now(),
           lastImportedFingerprint: sha256(fingerprintItem(last)).slice(0, 16),
@@ -291,7 +291,7 @@ async function importFullReplay(
       const text = record.text;
       if (typeof role !== 'string' || typeof text !== 'string') continue;
       const localId = makeImportEventLocalId({
-        provider: params.provider,
+        agentId: params.provider,
         remoteSessionId: params.remoteSessionId,
         index: i,
         key: `${role}:${text}`,
@@ -320,7 +320,7 @@ async function importFullReplay(
         const text = extractThinkingTextFromThinkToolInput(rawInput);
         if (text) {
           const localId = makeImportEventLocalId({
-            provider: params.provider,
+            agentId: params.provider,
             remoteSessionId: params.remoteSessionId,
             index: i,
             key: `thinking:${toolCallId}:${safeStringifyForKey(text)}`,
@@ -334,7 +334,7 @@ async function importFullReplay(
         continue;
       }
       const localId = makeImportEventLocalId({
-        provider: params.provider,
+        agentId: params.provider,
         remoteSessionId: params.remoteSessionId,
         index: i,
         key: `tool_call:${toolCallId}:${kind ?? ''}:${safeStringifyForKey(rawInput ?? null)}`,
@@ -363,7 +363,7 @@ async function importFullReplay(
       const status = typeof record.status === 'string' ? record.status : '';
       const rawOutput = record.rawOutput ?? record.content ?? null;
       const localId = makeImportEventLocalId({
-        provider: params.provider,
+        agentId: params.provider,
         remoteSessionId: params.remoteSessionId,
         index: i,
         key: `tool_result:${toolCallId}:${status}:${safeStringifyForKey(rawOutput)}`,

@@ -1,7 +1,34 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+const { kiroHandlerSpy, primeResolvedContributionRegistryMock } = vi.hoisted(() => ({
+  kiroHandlerSpy: vi.fn(async () => {}),
+  primeResolvedContributionRegistryMock: vi.fn(async () => {}),
+}));
+
+vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () => ({
+  getResolvedContributionRegistry: () => ({
+    catalogEntriesById: {
+      kiro: {
+        id: 'kiro',
+        cliSubcommand: 'kiro',
+        getCliCommandHandler: async () => kiroHandlerSpy,
+      },
+    },
+    agentDefinitionsById: new Map(),
+  }),
+  primeResolvedContributionRegistry: primeResolvedContributionRegistryMock,
+}));
+
+vi.mock('@/configuration', () => ({
+  configuration: {
+    happyHomeDir: '/tmp/happier-test',
+  },
+}));
 
 import {
   commandRegistry,
+  ensureMergedAgentCommandRegistryLoaded,
+  findCommandDispatchDescriptor,
   resolveCommandDispatchRegistry,
 } from './commandRegistry';
 import { resolveCommandSurfaceCatalog } from './commandSurfaceManifest';
@@ -69,7 +96,9 @@ describe('commandRegistry install/update aliases', () => {
     expect(commandRegistry.uninstall).toBeTypeOf('function');
   });
 
-  it('registers built-in agent commands without a customAcp built-in shim', () => {
+  it('loads built-in agent commands without a customAcp built-in shim', async () => {
+    await ensureMergedAgentCommandRegistryLoaded();
+
     const registry = commandRegistry as Record<string, unknown>;
     expect(registry.customAcp).toBeUndefined();
     expect(registry.kiro).toBeTypeOf('function');
@@ -77,6 +106,21 @@ describe('commandRegistry install/update aliases', () => {
 
   it('registers the configured ACP catalog command namespace', () => {
     expect(commandRegistry['acp-catalog']).toBeTypeOf('function');
+  });
+
+  it('registers providers as a static command namespace', () => {
+    expect(commandRegistry.providers).toBeTypeOf('function');
+  });
+
+  it('reserves singular provider without registering it as an executable alias', () => {
+    const surfaceCatalog = resolveCommandSurfaceCatalog();
+
+    expect(commandRegistry.provider).toBeUndefined();
+    expect(findCommandDispatchDescriptor('provider')).toBeNull();
+    expect(surfaceCatalog.findByCommand('provider')).toMatchObject({
+      command: 'provider',
+      allowTmux: false,
+    });
   });
 
   it('exposes canonical command-dispatch descriptors', () => {
@@ -98,7 +142,7 @@ describe('commandRegistry install/update aliases', () => {
       id: 'install',
       command: 'install',
       rootHelpLabel: 'happier install',
-      rootHelpDescription: 'Install provider CLIs and helpers',
     });
+    expect(installSurface?.rootHelpDescription).toEqual(expect.any(String));
   });
 });

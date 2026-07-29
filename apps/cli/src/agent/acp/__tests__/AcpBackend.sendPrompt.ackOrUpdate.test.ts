@@ -28,9 +28,11 @@ function writeFakeAcpAgentScript(params: {
   dir: string;
   promptAckDelayMs: number;
   promptAckMode?: 'ok' | 'gemini_late_empty_response_error';
+  emitUpdate?: boolean;
 }): string {
   const ackDelayMs = Number.isFinite(params.promptAckDelayMs) ? params.promptAckDelayMs : 0;
   const ackMode = params.promptAckMode ?? 'ok';
+  const emitUpdate = params.emitUpdate ?? true;
   const src = `
     const decoder = new TextDecoder();
     let buf = '';
@@ -73,20 +75,22 @@ function writeFakeAcpAgentScript(params: {
         }
 
         if (method === 'session/prompt') {
-          // Emit a session/update quickly, but delay the RPC ACK significantly.
-          setTimeout(() => {
-            send({
-              jsonrpc: '2.0',
-              method: 'session/update',
-              params: {
-                sessionId: 'test-session',
-                update: {
-                  sessionUpdate: 'agent_message_chunk',
-                  content: { type: 'text', text: 'hello' },
+          if (${JSON.stringify(emitUpdate)}) {
+            // Emit a session/update quickly, but delay the request-scoped result.
+            setTimeout(() => {
+              send({
+                jsonrpc: '2.0',
+                method: 'session/update',
+                params: {
+                  sessionId: 'test-session',
+                  update: {
+                    sessionUpdate: 'agent_message_chunk',
+                    content: { type: 'text', text: 'hello' },
+                  },
                 },
-              },
-            });
-          }, 10);
+              });
+            }, 10);
+          }
 
           setTimeout(() => {
             if (${JSON.stringify(ackMode)} === 'gemini_late_empty_response_error') {
@@ -165,9 +169,9 @@ function writeFakeAcpAgentNeverAckPromptScript(params: { dir: string }): string 
 }
 
 describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
-  it('resolves once a session/update arrives even when the prompt ACK is delayed', async () => {
+  it('does not accept an early session/update before the exact prompt response', async () => {
     await withTempDir('happier-acp-sendprompt-first-update-', async (dir) => {
-      const scriptPath = writeFakeAcpAgentScript({ dir, promptAckDelayMs: 5_000 });
+      const scriptPath = writeFakeAcpAgentScript({ dir, promptAckDelayMs: 150 });
       let backendForCleanup: AcpBackend | undefined;
 
       try {
@@ -181,19 +185,23 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         backendForCleanup = backend;
 
         const started = await backend.startSession();
-        const outcome = await Promise.race([
-          backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
-          delay(500).then(() => 'timeout' as const),
+        const sending = backend.sendPrompt(started.sessionId, 'hi');
+        const earlyOutcome = await Promise.race([
+          sending.then(() => 'resolved' as const),
+          delay(50).then(() => 'pending' as const),
         ]);
+        expect(earlyOutcome).toBe('pending');
 
-        expect(outcome).toBe('resolved');
+        await expect(sending).resolves.toEqual({
+          kind: 'accepted_by_prompt_response',
+        });
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }
     });
   }, 20_000);
 
-  it('ignores transport-suppressed late prompt errors when sendPrompt returns early on first session/update', async () => {
+  it('reports effect ambiguity when an early update is followed by a rejected prompt response', async () => {
     await withTempDir('happier-acp-sendprompt-gemini-late-error-', async (dir) => {
       const scriptPath = writeFakeAcpAgentScript({
         dir,
@@ -208,14 +216,7 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
           cwd: dir,
           command: process.execPath,
           args: [scriptPath],
-          transportHandler: createAcpTestTransportHandler({
-            agentName: 'provider-with-hook',
-            idleTimeoutMs: 1,
-            shouldIgnorePromptError: (error, context) =>
-              isLateEmptyResponseError(error) &&
-              context.activeToolCallCount === 0 &&
-              (!context.waitingForResponse || context.sawSessionUpdateSincePrompt),
-          }),
+          transportHandler: createAcpTestTransportHandler({ agentName: 'gemini', idleTimeoutMs: 1 }),
         });
         backendForCleanup = backend;
 
@@ -223,25 +224,99 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         backend.onMessage((msg) => emitted.push(msg));
 
         const started = await backend.startSession();
-        const sendOutcome = await Promise.race([
-          backend.sendPrompt(started.sessionId, 'hi').then(() => 'resolved' as const),
-          delay(500).then(() => 'timeout' as const),
-        ]);
-        expect(sendOutcome).toBe('resolved');
-
-        await backend.waitForResponseComplete(2_000);
-        await delay(200);
+        const sendOutcome = await backend.sendPrompt(started.sessionId, 'hi');
+        expect(sendOutcome).toMatchObject({
+          kind: 'effect_may_have_occurred',
+        });
+        expect(isLateEmptyResponseError(
+          sendOutcome.kind === 'effect_may_have_occurred' ? sendOutcome.error : null,
+        )).toBe(true);
 
         const errorStatuses = emitted.filter((m) => m?.type === 'status' && m?.status === 'error');
-        expect(errorStatuses).toHaveLength(0);
-        expect((backend as any).responseCompletionError).toBeNull();
+        expect(errorStatuses).toHaveLength(1);
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }
     });
   }, 20_000);
 
-  it('rejects when neither a prompt ACK nor a first session/update arrives', async () => {
+  it('does not downgrade correlated provider-effect acceptance after a late prompt rejection', async () => {
+    await withTempDir('happier-acp-sendprompt-monotonic-acceptance-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        promptAckDelayMs: 75,
+        promptAckMode: 'gemini_late_empty_response_error',
+        emitUpdate: false,
+      });
+      let backendForCleanup: AcpBackend | undefined;
+
+      try {
+        const backend = new AcpBackend({
+          agentName: 'gemini',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ agentName: 'gemini', idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
+        const emitted: any[] = [];
+        backend.onMessage((msg) => emitted.push(msg));
+
+        const started = await backend.startSession();
+        const sending = backend.sendPrompt(started.sessionId, 'hi');
+        await delay(10);
+        expect(backend.submitCompletionEvidence({ kind: 'completed' })).toBe(true);
+        await expect(sending).resolves.toEqual({
+          kind: 'accepted_by_correlated_provider_effect',
+        });
+
+        await delay(100);
+        expect(emitted.filter((m) => m?.type === 'status' && m?.status === 'error')).toHaveLength(0);
+        expect(backend.getLastTurnOutcome()).toEqual({
+          kind: 'completed',
+          stopReason: 'end_turn',
+        });
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('reports a request-scoped RPC rejection before any provider effect as rejected before effect', async () => {
+    await withTempDir('happier-acp-sendprompt-pre-effect-rejection-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({
+        dir,
+        promptAckDelayMs: 10,
+        promptAckMode: 'gemini_late_empty_response_error',
+        emitUpdate: false,
+      });
+      let backendForCleanup: AcpBackend | undefined;
+
+      try {
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+        });
+        backendForCleanup = backend;
+
+        const started = await backend.startSession();
+        const outcome = await backend.sendPrompt(started.sessionId, 'hi');
+        expect(outcome).toMatchObject({
+          kind: 'rejected_before_effect',
+        });
+        expect(isLateEmptyResponseError(
+          outcome.kind === 'rejected_before_effect' ? outcome.error : null,
+        )).toBe(true);
+      } finally {
+        await backendForCleanup?.dispose().catch(() => {});
+      }
+    });
+  }, 20_000);
+
+  it('reports effect ambiguity when an attempted prompt produces no exact result or evidence', async () => {
     await withTempDir('happier-acp-sendprompt-no-ack-no-update-', async (dir) => {
       const scriptPath = writeFakeAcpAgentNeverAckPromptScript({ dir });
       let backendForCleanup: AcpBackend | undefined;
@@ -259,7 +334,12 @@ describe('AcpBackend.sendPrompt (prompt ACK vs first session/update)', () => {
         backendForCleanup = backend;
 
         const started = await backend.startSession();
-        await expect(backend.sendPrompt(started.sessionId, 'hi')).rejects.toThrow(/prompt ack|first session\/update|liveness/i);
+        await expect(backend.sendPrompt(started.sessionId, 'hi')).resolves.toMatchObject({
+          kind: 'effect_may_have_occurred',
+          error: expect.objectContaining({
+            message: expect.stringMatching(/prompt response|provider-effect evidence|liveness/i),
+          }),
+        });
       } finally {
         envScope.restore();
         await backendForCleanup?.dispose().catch(() => {});

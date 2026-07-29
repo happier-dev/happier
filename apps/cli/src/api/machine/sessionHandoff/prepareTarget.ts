@@ -9,7 +9,7 @@ import { createSessionHandoffSourceExportStore } from '../../../session/handoff/
 import {
   createSessionHandoffPrepareTargetJobStore,
 } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
-import type { SessionHandoffProviderBundle } from '../../../session/handoff/types';
+import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
 import {
   createSessionHandoffWorkspaceReplicationAdapter,
 } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
@@ -17,6 +17,7 @@ import {
 import {
   type SessionHandoffDirectPeerTransferHandle,
 } from './prepareTransport';
+import type { SessionHandoffRuntimeConfig } from './runtimeConfig';
 import {
   createSessionHandoffPrepareTargetWorkflow,
   type SessionHandoffPrepareTargetWorkflow,
@@ -34,12 +35,13 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
   activePrepareJobs: Map<string, Promise<void>>;
   prepareTargetJobLeaseOwnerId: string;
   prepareTargetJobLeaseTtlMs: number;
+  runtimeConfig: SessionHandoffRuntimeConfig;
   machineTransferChannel: MachineTransferChannel | undefined;
   directPeerTransfer: SessionHandoffDirectPeerTransferHandle | undefined;
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
   workspaceReplicationTransfers: SessionHandoffWorkspaceReplicationTransfers;
   importSessionBundle: (
-    bundle: SessionHandoffProviderBundle,
+    bundle: SessionHandoffAgentBundle,
     targetPath: string,
     sessionStorageMode: 'direct' | 'persisted',
   ) => Promise<Readonly<{
@@ -62,7 +64,7 @@ export type RegisterSessionHandoffPrepareTargetRpcHandlerInput = Readonly<{
 
 export type RegisterSessionHandoffPrepareTargetRpcHandlerResult = Readonly<{
   handle: SessionHandoffPrepareTargetWorkflow['handlePrepareTargetRaw'];
-  restartPrepareTargetJobFromPersistedRequest: SessionHandoffPrepareTargetWorkflow['handlePrepareTargetRaw'];
+  resumePersistedPrepareTarget: SessionHandoffPrepareTargetWorkflow['resumePersistedPrepareTarget'];
 }>;
 
 export function createSessionHandoffPrepareTargetActionHandler(
@@ -74,6 +76,7 @@ export function createSessionHandoffPrepareTargetActionHandler(
     activePrepareJobs,
     prepareTargetJobLeaseOwnerId,
     prepareTargetJobLeaseTtlMs,
+    runtimeConfig,
     machineTransferChannel,
     directPeerTransfer,
     workspaceReplicationAdapter,
@@ -90,6 +93,7 @@ export function createSessionHandoffPrepareTargetActionHandler(
     activePrepareJobs,
     prepareTargetJobLeaseOwnerId,
     prepareTargetJobLeaseTtlMs,
+    runtimeConfig,
     machineTransferChannel,
     directPeerTransfer,
     workspaceReplicationAdapter,
@@ -102,6 +106,6 @@ export function createSessionHandoffPrepareTargetActionHandler(
 
   return {
     handle: workflow.handlePrepareTargetRaw,
-    restartPrepareTargetJobFromPersistedRequest: workflow.handlePrepareTargetRaw,
+    resumePersistedPrepareTarget: workflow.resumePersistedPrepareTarget,
   };
 }

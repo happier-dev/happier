@@ -1,39 +1,24 @@
-import tweetnacl from 'tweetnacl';
 import { describe, expect, it } from 'vitest';
-import {
-    createPluginUiArtifactSignaturePayloadV1,
-    createPluginUiArtifactSignatureSigningInputV1,
-    encodeBase64,
-    type PluginUiArtifactRevocationV1,
-} from '@happier-dev/protocol';
 
-import { createPluginUiArtifactRevocationState } from '@/plugins/install/ui/revocation';
 import { buildPluginProjectionV2 } from '../projection/v2';
 import type { ResolvedContributionRegistry } from '../types';
+import { resolveBuiltInContributions } from '../resolveBuiltInContributions';
 
 function createEmptyResolvedContributionRegistry(): ResolvedContributionRegistry {
     return {
         agents: [],
-        agentRuntimes: [],
-        actions: [],
+                actions: [],
         tools: [],
         commands: [],
         resources: [],
-        uiDescriptors: [],
         activationTargets: [],
-        hookRegistrations: [],
-        lifecycleHandlers: [],
         actionsById: new Map(),
         toolsById: new Map(),
         commandsById: new Map(),
         resourcesById: new Map(),
-        uiDescriptorsById: new Map(),
-        lifecycleHandlersById: new Map(),
-        surfaceHandlersByBackendId: new Map(),
-        catalogEntriesById: {},
+                catalogEntriesById: {},
         agentDefinitionsById: new Map(),
-        agentRuntimeDefinitionsById: new Map(),
-        pluginDiagnosticsByPluginId: {},
+                pluginDiagnosticsByPluginId: {},
     };
 }
 
@@ -44,29 +29,19 @@ const display = {
     tone: 'info',
 };
 
-// A local path install ALWAYS records the user trust grant as
-// `sourceSpec.trustPolicy:'local_trusted'` (see localPath.ts / store/install/source.ts).
-// The trust gate keys on that granted policy, NOT on `source.kind`.
-const localTrustedPathSourceSpec = {
+// Legacy source trust metadata may remain descriptive, but UI projection
+// admission is owned by final package policy plus artifact integrity.
+const localPathSourceSpec = {
     kind: 'path',
     locator: '/plugins/acme',
-    trustPolicy: 'local_trusted',
-    installPolicy: 'link',
-} as const;
-
-// A REMOTE marketplace archive keeps `trustPolicy:'prompt'` — install is NOT a
-// local trust grant; it must satisfy signature/integrity verification (§5.2).
-const remoteMarketplaceSourceSpec = {
-    kind: 'archive',
-    locator: 'https://registry.example/acme/preview.tgz',
     trustPolicy: 'prompt',
-    installPolicy: 'managed_install',
+    installPolicy: 'link',
 } as const;
 
 const reactNativeBundleContribution = {
     provenance: 'external',
     source: { kind: 'path' },
-    sourceSpec: localTrustedPathSourceSpec,
+    sourceSpec: localPathSourceSpec,
     pluginId: 'acme.preview',
     manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
     manifestDigest: 'sha256:manifest',
@@ -96,7 +71,7 @@ const reactNativeBundleContribution = {
 const reactNativeBundleArtifact = {
     provenance: 'external',
     source: { kind: 'path' },
-    sourceSpec: localTrustedPathSourceSpec,
+    sourceSpec: localPathSourceSpec,
     pluginId: 'acme.preview',
     manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
     manifestDigest: 'sha256:manifest',
@@ -125,192 +100,6 @@ const reactNativeBundleArtifact = {
         assetPath: 'react-native/native-preview/ios.bundle.js',
     },
 } as const;
-
-function createSignedReactNativeBundleFixture() {
-    const digest = `sha256:${'a'.repeat(64)}`;
-    // Signature-path fixtures use a REMOTE (marketplace) source so the
-    // signature/integrity gate is the only path to trust (§5.2). A local
-    // (`path`/`archive`) source would be trusted-for-local-render WITHOUT a
-    // signature (§5.1), which would not exercise signature verification.
-    const contribution = {
-        ...reactNativeBundleContribution,
-        source: { kind: 'marketplace' },
-        sourceSpec: remoteMarketplaceSourceSpec,
-        definition: {
-            ...reactNativeBundleContribution.definition,
-            bundle: {
-                ...reactNativeBundleContribution.definition.bundle,
-                integrity: { digest },
-            },
-        },
-    };
-    const unsignedArtifact = {
-        ...reactNativeBundleArtifact,
-        source: { kind: 'marketplace' },
-        sourceSpec: remoteMarketplaceSourceSpec,
-        definition: {
-            ...reactNativeBundleArtifact.definition,
-            integrity: { digest, signingKeyId: 'rn-key-1' },
-        },
-    };
-    const artifactManifest = {
-        ...unsignedArtifact.definition,
-        pluginId: unsignedArtifact.pluginId,
-    };
-    const keyPair = tweetnacl.sign.keyPair();
-    const payload = createPluginUiArtifactSignaturePayloadV1(artifactManifest);
-    const signature = encodeBase64(
-        tweetnacl.sign.detached(
-            new TextEncoder().encode(createPluginUiArtifactSignatureSigningInputV1(payload)),
-            keyPair.secretKey,
-        ),
-        'base64url',
-    );
-    return {
-        contribution,
-        artifact: {
-            ...unsignedArtifact,
-            definition: {
-                ...unsignedArtifact.definition,
-                integrity: {
-                    ...unsignedArtifact.definition.integrity,
-                    signature,
-                },
-            },
-        },
-        trustRoot: {
-            id: 'happier-rn-root-v1',
-            keys: [{
-                keyId: 'rn-key-1',
-                alg: 'ed25519' as const,
-                publicKeyBase64Url: encodeBase64(keyPair.publicKey, 'base64url'),
-            }],
-        },
-    };
-}
-
-const embeddedWebBundleContribution = {
-    provenance: 'external',
-    source: { kind: 'path' },
-    sourceSpec: localTrustedPathSourceSpec,
-    pluginId: 'acme.preview',
-    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-    manifestDigest: 'sha256:manifest',
-    daemonEntryPath: '/plugins/acme/daemon.mjs',
-    definition: {
-        id: 'embedded-preview',
-        bundle: {
-            platform: 'web',
-            channel: 'internal',
-            assetPath: 'embedded-web/embedded-preview/entry.mjs',
-            integrity: { digest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' },
-        },
-        entry: { mechanism: 'hostRuntimeFactoryV1' },
-        compatibility: {
-            hostUiApiVersion: '1.0.0',
-            reactVersion: '19.0.0',
-            hostAppVersion: '2.0.0',
-            supportedPlatforms: ['web'],
-            supportedChannels: ['internal'],
-        },
-        hostApi: { minVersion: '1.0.0', methods: ['surface.read'] },
-        fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-        display,
-        policy: { loadTimeoutMs: 10000, crashThreshold: 3 },
-    },
-} as const;
-
-const embeddedWebBundleArtifact = {
-    provenance: 'external',
-    source: { kind: 'path' },
-    pluginId: 'acme.preview',
-    manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
-    manifestDigest: 'sha256:manifest',
-    daemonEntryPath: '/plugins/acme/daemon.mjs',
-    sourceSpec: {
-        kind: 'path',
-        locator: '/plugins/acme',
-        trustPolicy: 'local_trusted',
-        installPolicy: 'link',
-    },
-    definition: {
-        id: 'embedded-preview-web',
-        contributionId: 'embedded-preview',
-        contributionFamily: 'embeddedWebBundles',
-        artifactKind: 'embeddedWebBundle',
-        platform: 'web',
-        channel: 'internal',
-        integrity: { digest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' },
-        compatibility: {
-            hostAppVersion: '2.0.0',
-            hostUiApiVersion: '1.0.0',
-            reactVersion: '19.0.0',
-            nativeCapabilities: [],
-        },
-        byteSize: 1024,
-        contentType: 'text/javascript',
-        assetPath: 'embedded-web/embedded-preview/entry.mjs',
-    },
-} as const;
-
-function createSignedEmbeddedWebBundleFixture() {
-    const digest = `sha256:${'c'.repeat(64)}`;
-    const contribution = {
-        ...embeddedWebBundleContribution,
-        source: { kind: 'marketplace' },
-        sourceSpec: remoteMarketplaceSourceSpec,
-        definition: {
-            ...embeddedWebBundleContribution.definition,
-            bundle: {
-                ...embeddedWebBundleContribution.definition.bundle,
-                integrity: { digest },
-            },
-        },
-    };
-    const unsignedArtifact = {
-        ...embeddedWebBundleArtifact,
-        source: { kind: 'marketplace' },
-        sourceSpec: remoteMarketplaceSourceSpec,
-        definition: {
-            ...embeddedWebBundleArtifact.definition,
-            integrity: { digest, signingKeyId: 'embedded-key-1' },
-        },
-    };
-    const artifactManifest = {
-        ...unsignedArtifact.definition,
-        pluginId: unsignedArtifact.pluginId,
-    };
-    const keyPair = tweetnacl.sign.keyPair();
-    const payload = createPluginUiArtifactSignaturePayloadV1(artifactManifest);
-    const signature = encodeBase64(
-        tweetnacl.sign.detached(
-            new TextEncoder().encode(createPluginUiArtifactSignatureSigningInputV1(payload)),
-            keyPair.secretKey,
-        ),
-        'base64url',
-    );
-    return {
-        contribution,
-        artifact: {
-            ...unsignedArtifact,
-            definition: {
-                ...unsignedArtifact.definition,
-                integrity: {
-                    ...unsignedArtifact.definition.integrity,
-                    signature,
-                },
-            },
-        },
-        trustRoot: {
-            id: 'happier-embedded-root-v1',
-            keys: [{
-                keyId: 'embedded-key-1',
-                alg: 'ed25519' as const,
-                publicKeyBase64Url: encodeBase64(keyPair.publicKey, 'base64url'),
-            }],
-        },
-    };
-}
 
 function projectReactNativeFixture(params: Readonly<{
     uiArtifacts?: readonly unknown[];
@@ -344,9 +133,123 @@ function projectReactNativeFixture(params: Readonly<{
 }
 
 describe('plugin UI projection family', () => {
-    it('projects descriptor, hosted web, executable bundle, translation, and artifact metadata through one host-owned family', () => {
+    it('gives the deterministic V2 locale owner precedence over the legacy translation adapter', () => {
+        const v2Translations = [
+            {
+                pluginId: 'acme.preview',
+                localeIdentity: { pluginId: 'acme.preview', locale: 'en' },
+                manifestPath: '/plugins/acme/z.plugin.json',
+                manifestDigest: 'sha256:z',
+                definition: { locale: 'en', messages: { title: 'Zulu V2' } },
+            },
+            {
+                pluginId: 'acme.preview',
+                localeIdentity: { pluginId: 'acme.preview', locale: 'en' },
+                manifestPath: '/plugins/acme/a.plugin.json',
+                manifestDigest: 'sha256:a',
+                definition: { locale: 'en', messages: { title: 'Alpha V2' } },
+            },
+        ] as const;
+        const project = (translations: readonly (typeof v2Translations)[number][]) => {
+            const registry = {
+                ...createEmptyResolvedContributionRegistry(),
+                uiTranslationsV2: translations,
+                uiTranslations: [{
+                    pluginId: 'acme.preview',
+                    manifestPath: '/plugins/acme/legacy.plugin.json',
+                    definition: {
+                        locales: { en: { title: 'Legacy V1' } },
+                    },
+                }],
+            } as unknown as ResolvedContributionRegistry;
+            return buildPluginProjectionV2({ registry, generation: 1 })
+                .familiesById.pluginUi?.entriesById['translations:acme.preview'];
+        };
+
+        const forward = project(v2Translations);
+        const reversed = project([...v2Translations].reverse());
+
+        expect(forward).toEqual(reversed);
+        expect(forward).toMatchObject({
+            bundles: { en: { title: 'Zulu V2' } },
+            diagnostics: ['duplicate_translation_locale'],
+        });
+        expect(JSON.stringify(forward)).not.toContain('Legacy V1');
+    });
+
+    it('projects connected-account descriptors only through the canonical connectedAccounts family', () => {
+        const builtIn = resolveBuiltInContributions();
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
+            connectedAccountDescriptors: builtIn.connectedAccountDescriptors,
+            scmHostingProviders: builtIn.scmHostingProviders,
+        } as ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 7,
+            pluginUiHostRuntime: {},
+        } as Parameters<typeof buildPluginProjectionV2>[0]);
+
+        expect(projection.familiesById.connectedAccounts?.entriesById['happier.scm.hosting.bitbucket/bitbucket-account'])
+            .toEqual(expect.objectContaining({
+                id: 'bitbucket-account',
+                serviceId: 'bitbucket',
+                pluginId: 'happier.scm.hosting.bitbucket',
+                provenance: 'first_party',
+                sourceKind: 'bundled',
+                availability: { state: 'available', reason: 'resolved' },
+                authentication: expect.objectContaining({
+                    defaultModeId: 'manual',
+                    modes: expect.arrayContaining([
+                        expect.objectContaining({
+                            id: 'manual',
+                            kind: 'manual',
+                            fields: expect.arrayContaining([
+                                expect.objectContaining({ id: 'token', secret: true }),
+                            ]),
+                        }),
+                    ]),
+                }),
+            }));
+        expect(projection.familiesById.pluginUi?.entriesById)
+            .not.toHaveProperty('connectedAccountDescriptor:happier.scm.hosting.bitbucket:bitbucket-account');
+    });
+
+    it('projects descriptor, hosted web, executable bundle, translation, and artifact metadata through one host-owned family', () => {
+        const previewAction = {
+            provenance: 'external' as const,
+            source: { kind: 'path' as const },
+            pluginId: 'acme.preview',
+            manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+            manifestDigest: 'sha256:manifest',
+            daemonEntryPath: '/plugins/acme/daemon.mjs',
+            definition: {
+                kindVersion: 1 as const,
+                id: 'open-preview',
+                title: 'Open preview',
+                description: 'Open the plugin preview',
+                dangerLevel: 'safe' as const,
+                surfaces: {
+                    ui: true,
+                    voice: false,
+                    agent: false,
+                    mcp: false,
+                    cli: false,
+                    rpc: false,
+                    sdk: false,
+                },
+                inputSchema: { type: 'object' as const, additionalProperties: false },
+                execution: {
+                    routing: 'plugin' as const,
+                    handler: { target: 'plugin' as const, exportName: 'openPreview' },
+                },
+            },
+        };
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            actions: [previewAction],
+            actionsById: new Map([['acme.preview/open-preview', previewAction]]),
             uiTranslations: [
                 {
                     provenance: 'external',
@@ -375,10 +278,11 @@ describe('plugin UI projection family', () => {
                     daemonEntryPath: '/plugins/acme/daemon.mjs',
                     definition: {
                         id: 'preview-card',
+                        title: 'Preview',
                         kind: 'acme.preview/preview-card.v1',
                         payloadSchema: { type: 'object' },
-                        renderer: { kind: 'host', rendererId: 'summaryCard' },
-                        display,
+                        renderer: 'summary-card',
+                        fallback: { kind: 'summary', template: 'Preview unavailable' },
                     },
                 },
             ],
@@ -411,13 +315,8 @@ describe('plugin UI projection family', () => {
                     daemonEntryPath: '/plugins/acme/daemon.mjs',
                     definition: {
                         id: 'open-preview',
-                        action: {
-                            id: 'open-preview',
-                            labelKey: 'title',
-                            kind: 'openSurface',
-                            target: { surfaceId: 'preview-pane' },
-                        },
-                        display,
+                        title: { key: 'title', fallback: 'Open preview' },
+                        action: 'open-preview',
                     },
                 },
             ],
@@ -446,9 +345,6 @@ describe('plugin UI projection family', () => {
             ],
             reactNativeBundles: [
                 reactNativeBundleContribution,
-            ],
-            embeddedWebBundles: [
-                embeddedWebBundleContribution,
             ],
             uiArtifacts: [
                 reactNativeBundleArtifact,
@@ -499,7 +395,7 @@ describe('plugin UI projection family', () => {
             pluginId: 'acme.preview',
             contributionKind: 'structuredMessage',
             kind: 'acme.preview/preview-card.v1',
-            renderer: { kind: 'host', rendererId: 'summaryCard' },
+            fallback: { kind: 'summary', template: 'Preview unavailable' },
         });
         expect(entries['surfacePlacement:acme.preview:preview-pane']).toMatchObject({
             contributionKind: 'surfacePlacement',
@@ -508,7 +404,8 @@ describe('plugin UI projection family', () => {
         });
         expect(entries['sessionHeaderAction:acme.preview:open-preview']).toMatchObject({
             contributionKind: 'sessionHeaderAction',
-            action: expect.objectContaining({ kind: 'openSurface' }),
+            title: { key: 'title', fallback: 'Open preview' },
+            action: 'open-preview',
         });
         expect(entries['hostedWeb:acme.preview:preview-web']).toMatchObject({
             contributionKind: 'hostedWeb',
@@ -551,31 +448,6 @@ describe('plugin UI projection family', () => {
                 },
             },
         });
-        expect(entries['embeddedWebBundle:acme.preview:embedded-preview']).toMatchObject({
-            contributionKind: 'embeddedWebBundle',
-            contributionId: 'embedded-preview',
-            bundle: expect.objectContaining({
-                platform: 'web',
-                assetPath: 'embedded-web/embedded-preview/entry.mjs',
-                integrity: { digest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' },
-            }),
-            entry: { mechanism: 'hostRuntimeFactoryV1' },
-            compatibility: expect.objectContaining({
-                hostAppVersion: '2.0.0',
-                reactVersion: '19.0.0',
-            }),
-            fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['feature_disabled'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'feature_disabled',
-                    diagnostics: ['feature_disabled'],
-                    fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                },
-            },
-        });
         expect(entries['uiArtifact:acme.preview:native-preview-ios']).toMatchObject({
             contributionKind: 'uiArtifact',
             artifactKind: 'reactNativeBundle',
@@ -593,9 +465,7 @@ describe('plugin UI projection family', () => {
         expect(entries['digest:acme.preview']).toMatchObject({
             contributionKind: 'digest',
             digest: expect.stringMatching(/^sha256:/u),
-            families: expect.objectContaining({
-                embeddedWebBundles: expect.stringMatching(/^sha256:/u),
-            }),
+            families: expect.any(Object),
         });
     });
 
@@ -607,10 +477,11 @@ describe('plugin UI projection family', () => {
                     pluginId: 'acme.preview',
                     definition: {
                         id: 'preview-card',
+                        title: 'Preview',
                         kind: 'acme.preview/preview-card.v1',
                         payloadSchema: { type: 'object' },
-                        renderer: { kind: 'host', rendererId: 'summaryCard' },
-                        display: { titleKey: 'title' },
+                        renderer: 'summary-card',
+                        fallback: { kind: 'summary', template: 'Preview unavailable' },
                     },
                 },
             ],
@@ -641,7 +512,7 @@ describe('plugin UI projection family', () => {
         expect(enabled['structuredMessage:acme.preview:preview-card']).toMatchObject({
             contributionKind: 'structuredMessage',
             kind: 'acme.preview/preview-card.v1',
-            renderer: { kind: 'host', rendererId: 'summaryCard' },
+            fallback: { kind: 'summary', template: 'Preview unavailable' },
         });
     });
 
@@ -659,319 +530,6 @@ describe('plugin UI projection family', () => {
                 },
             },
         });
-    });
-
-    it('projects fail-closed RN runtime diagnostics when the installed artifact is revoked', () => {
-        expect(projectReactNativeFixture({
-            uiArtifacts: [{
-                ...reactNativeBundleArtifact,
-                definition: {
-                    ...reactNativeBundleArtifact.definition,
-                    revokedAt: '2026-06-14T00:00:00.000Z',
-                },
-            }],
-        })).toMatchObject({
-            contributionKind: 'reactNativeBundle',
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['artifact_revoked'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'artifact_revoked',
-                    diagnostics: ['artifact_revoked'],
-                    fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                },
-            },
-        });
-    });
-
-    it('projects feed-scoped RN artifact revocations before exposing a load policy', () => {
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [reactNativeBundleContribution],
-            uiArtifacts: [{
-                ...reactNativeBundleArtifact,
-                definition: {
-                    ...reactNativeBundleArtifact.definition,
-                    integrity: {
-                        ...reactNativeBundleArtifact.definition.integrity,
-                        signingKeyId: 'rn-key-1',
-                    },
-                },
-            }],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    revocationState: createPluginUiArtifactRevocationState({
-                        revocations: [{
-                            id: 'revoke-rn-key',
-                            scope: { kind: 'signingKey', signingKeyId: 'rn-key-1' },
-                            reason: 'compromised',
-                            revokedAt: '2026-06-15T00:00:00.000Z',
-                        } satisfies PluginUiArtifactRevocationV1],
-                    }),
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['artifact_revoked'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'artifact_revoked',
-                    diagnostics: ['artifact_revoked'],
-                    fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
-        expect(entry?.runtime).not.toHaveProperty('cacheIdentity');
-    });
-
-    it('does not project an RN load policy for untrusted remote artifacts before byte-serving would accept them', () => {
-        // A remote (marketplace) source is NOT trusted-for-local-render: it must
-        // pass signature/integrity verification (§2.2 / §5.2). Without a trust
-        // root or signature it falls back as `execution_trust_unverified`.
-        const remoteContribution = {
-            ...reactNativeBundleContribution,
-            source: { kind: 'marketplace' },
-            sourceSpec: remoteMarketplaceSourceSpec,
-        };
-        const remoteArtifact = {
-            ...reactNativeBundleArtifact,
-            source: { kind: 'marketplace' },
-            sourceSpec: remoteMarketplaceSourceSpec,
-        };
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [remoteContribution],
-            uiArtifacts: [remoteArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['execution_trust_unverified'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'trust_denied',
-                    diagnostics: ['execution_trust_unverified'],
-                    fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
-        expect(entry?.runtime).not.toHaveProperty('cacheIdentity');
-    });
-
-    it('projects externally sourced RN artifacts only after signature verification against host trust roots', () => {
-        const signed = createSignedReactNativeBundleFixture();
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [signed.contribution],
-            uiArtifacts: [signed.artifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    trustRoots: [signed.trustRoot],
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'loadable',
-                diagnostics: [],
-                decision: {
-                    state: 'load',
-                    reason: 'compatible',
-                    diagnostics: [],
-                },
-                loadPolicy: { source: 'installedArtifact' },
-            },
-        });
-    });
-
-    it('does not accept caller-asserted verifiedSignature execution trust as proof', () => {
-        const signed = createSignedReactNativeBundleFixture();
-        const artifactManifest = {
-            ...signed.artifact.definition,
-            pluginId: signed.artifact.pluginId,
-        };
-        const forgedTrust = {
-            kind: 'verifiedSignature',
-            signature: signed.artifact.definition.integrity.signature,
-            signingKeyId: 'rn-key-1',
-            trustRootId: 'happier-rn-root-v1',
-            canonicalPayload: createPluginUiArtifactSignatureSigningInputV1(
-                createPluginUiArtifactSignaturePayloadV1(artifactManifest),
-            ),
-        } as const;
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [signed.contribution],
-            uiArtifacts: [signed.artifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    executionTrustByArtifactDigest: {
-                        [signed.artifact.definition.integrity.digest]: forgedTrust,
-                    },
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['execution_trust_unverified'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'trust_denied',
-                    diagnostics: ['execution_trust_unverified'],
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
-    });
-
-    it('does not let explicit RN signature trust bypass trust-root revocation', () => {
-        const signed = createSignedReactNativeBundleFixture();
-        const artifactManifest = {
-            ...signed.artifact.definition,
-            pluginId: signed.artifact.pluginId,
-        };
-        const explicitTrust = {
-            kind: 'verifiedSignature',
-            signature: signed.artifact.definition.integrity.signature,
-            signingKeyId: 'rn-key-1',
-            trustRootId: 'happier-rn-root-v1',
-            canonicalPayload: createPluginUiArtifactSignatureSigningInputV1(
-                createPluginUiArtifactSignaturePayloadV1(artifactManifest),
-            ),
-        } as const;
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [signed.contribution],
-            uiArtifacts: [signed.artifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    trustRoots: [signed.trustRoot],
-                    executionTrustByArtifactDigest: {
-                        [signed.artifact.definition.integrity.digest]: explicitTrust,
-                    },
-                    revocationState: createPluginUiArtifactRevocationState({
-                        revocations: [{
-                            id: 'revoke-root',
-                            scope: { kind: 'trustRoot', trustRootId: 'happier-rn-root-v1' },
-                            reason: 'compromised',
-                            revokedAt: '2026-06-20T00:00:00.000Z',
-                        } satisfies PluginUiArtifactRevocationV1],
-                    }),
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                diagnostics: ['execution_trust_unverified'],
-                decision: {
-                    state: 'fallback',
-                    reason: 'trust_denied',
-                    diagnostics: ['execution_trust_unverified'],
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
     });
 
     it('projects RN bundles as loadable when host runtime gates expose a loader backend', () => {
@@ -1055,7 +613,7 @@ describe('plugin UI projection family', () => {
         };
         const webSiblingArtifact = {
             ...reactNativeBundleArtifact,
-            sourceSpec: localTrustedPathSourceSpec,
+            sourceSpec: localPathSourceSpec,
             definition: {
                 ...reactNativeBundleArtifact.definition,
                 id: 'native-preview-web',
@@ -1066,7 +624,7 @@ describe('plugin UI projection family', () => {
         };
         const trustedIosArtifact = {
             ...reactNativeBundleArtifact,
-            sourceSpec: localTrustedPathSourceSpec,
+            sourceSpec: localPathSourceSpec,
         };
 
         function buildBothPlatformsProjection(connectingPlatform: string | undefined) {
@@ -1256,7 +814,6 @@ describe('plugin UI projection family', () => {
                     featureEnabled: true,
                     loaderBackendAvailable: true,
                     devHotReloadEnabled: true,
-                    executionTrustByArtifactDigest: {},
                     hostRuntime: {
                         platform: 'ios',
                         channel: 'development',
@@ -1288,11 +845,7 @@ describe('plugin UI projection family', () => {
         });
     });
 
-    it('renders a local (path-source) RN bundle without a signature (install + enable = trust for local render)', () => {
-        // §5.1: an installed+enabled plugin from a local source the user pointed
-        // the CLI at (`path`) must DERIVE trust for local render — no signature,
-        // no explicit `local_trusted` policy required. The family kill-switch
-        // (`featureEnabled`) stays the outer gate; revocation stays a kill-switch.
+    it('renders a final-policy-admitted local RN bundle through artifact integrity', () => {
         const registry = {
             ...createEmptyResolvedContributionRegistry(),
             reactNativeBundles: [reactNativeBundleContribution],
@@ -1366,51 +919,6 @@ describe('plugin UI projection family', () => {
             runtime: {
                 state: 'fallback',
                 decision: { reason: 'feature_disabled' },
-            },
-        });
-    });
-
-    it('blocks a local RN bundle when its installed artifact digest is revoked', () => {
-        // §5.1/§5.2: install+enable=trust does NOT bypass the revocation
-        // kill-switch even for a local source.
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            reactNativeBundles: [reactNativeBundleContribution],
-            uiArtifacts: [{
-                ...reactNativeBundleArtifact,
-                definition: {
-                    ...reactNativeBundleArtifact.definition,
-                    revokedAt: '2026-06-15T00:00:00.000Z',
-                },
-            }],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                reactNativeBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    hostRuntime: {
-                        platform: 'ios',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                        reactNativeVersion: '0.83.4',
-                        availableNativeCapabilities: ['clipboard'],
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['reactNativeBundle:acme.preview:native-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                decision: { reason: 'artifact_revoked' },
-                diagnostics: ['artifact_revoked'],
             },
         });
     });
@@ -1522,329 +1030,6 @@ describe('plugin UI projection family', () => {
             },
         });
         expect(entry).not.toHaveProperty('runtimeMode');
-    });
-
-    it('projects embedded-web bundles as loadable with a generation-bound installed artifact identity', () => {
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            embeddedWebBundles: [embeddedWebBundleContribution],
-            uiArtifacts: [embeddedWebBundleArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                embeddedWebBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    trustState: 'full',
-                    csp: {
-                        supportsSameOriginModuleUrl: false,
-                        allowsBlobModuleImport: true,
-                    },
-                    hostRuntime: {
-                        platform: 'web',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['embeddedWebBundle:acme.preview:embedded-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'loadable',
-                diagnostics: [],
-                decision: {
-                    state: 'load',
-                    reason: 'compatible',
-                    diagnostics: [],
-                },
-                loadPolicy: { source: 'installedArtifact' },
-                cacheIdentity: {
-                    pluginId: 'acme.preview',
-                    contributionId: 'embedded-preview',
-                    artifactDigest: 'sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-                    hostAppVersion: '2.0.0',
-                    hostUiApiVersion: '1.0.0',
-                    reactVersion: '19.0.0',
-                    platform: 'web',
-                    channel: 'internal',
-                    projectionGeneration: 8,
-                },
-            },
-        });
-    });
-
-    it('derives full trust for a local (path-source) embedded-web bundle without an injected trust state', () => {
-        // §5.1: an installed+enabled embedded-web plugin from a local `path`
-        // source DERIVES trust for local render even when the host runtime does
-        // not assert `trustState`. Previously this fell back as `trust_denied` /
-        // `full_trust_plugin_required`.
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            embeddedWebBundles: [embeddedWebBundleContribution],
-            uiArtifacts: [embeddedWebBundleArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                embeddedWebBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    // No trustState injected — projection must derive it.
-                    csp: {
-                        supportsSameOriginModuleUrl: false,
-                        allowsBlobModuleImport: true,
-                    },
-                    hostRuntime: {
-                        platform: 'web',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['embeddedWebBundle:acme.preview:embedded-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'loadable',
-                decision: { state: 'load', reason: 'compatible' },
-                loadPolicy: { source: 'installedArtifact' },
-            },
-        });
-    });
-
-    it('denies an embedded-web bundle from a remote (marketplace) source without an explicit trust grant', () => {
-        // §5.2: remote embedded-web sources are NOT trusted-for-local-render.
-        // Remote sources require signature/trust-root verification; provenance or
-        // digest alone must not expose a load policy.
-        const remoteContribution = {
-            ...embeddedWebBundleContribution,
-            source: { kind: 'marketplace' },
-            sourceSpec: {
-                kind: 'marketplace',
-                locator: 'acme/preview',
-                trustPolicy: 'prompt',
-                installPolicy: 'managed_install',
-            },
-        };
-        const remoteArtifact = {
-            ...embeddedWebBundleArtifact,
-            source: { kind: 'marketplace' },
-            sourceSpec: {
-                kind: 'marketplace',
-                locator: 'acme/preview',
-                trustPolicy: 'prompt',
-                installPolicy: 'managed_install',
-            },
-        };
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            embeddedWebBundles: [remoteContribution],
-            uiArtifacts: [remoteArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                embeddedWebBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    csp: {
-                        supportsSameOriginModuleUrl: false,
-                        allowsBlobModuleImport: true,
-                    },
-                    hostRuntime: {
-                        platform: 'web',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['embeddedWebBundle:acme.preview:embedded-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                decision: {
-                    reason: 'trust_denied',
-                    diagnostics: ['full_trust_plugin_required'],
-                },
-            },
-        });
-    });
-
-    it('does not treat host-asserted embedded-web full trust as executable proof for remote artifacts', () => {
-        const remoteContribution = {
-            ...embeddedWebBundleContribution,
-            source: { kind: 'marketplace' },
-            sourceSpec: remoteMarketplaceSourceSpec,
-        };
-        const remoteArtifact = {
-            ...embeddedWebBundleArtifact,
-            source: { kind: 'marketplace' },
-            sourceSpec: remoteMarketplaceSourceSpec,
-        };
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            embeddedWebBundles: [remoteContribution],
-            uiArtifacts: [remoteArtifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                embeddedWebBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    trustState: 'full',
-                    csp: {
-                        supportsSameOriginModuleUrl: false,
-                        allowsBlobModuleImport: true,
-                    },
-                    hostRuntime: {
-                        platform: 'web',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['embeddedWebBundle:acme.preview:embedded-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'fallback',
-                decision: {
-                    reason: 'trust_denied',
-                    diagnostics: ['embeddedWebBundle:source=marketplace:trust=unverified'],
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
-        expect(entry?.runtime).not.toHaveProperty('cacheIdentity');
-    });
-
-    it('loads a signed embedded-web bundle from a remote source after trust-root verification', () => {
-        const signed = createSignedEmbeddedWebBundleFixture();
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            embeddedWebBundles: [signed.contribution],
-            uiArtifacts: [signed.artifact],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                embeddedWebBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    trustRoots: [signed.trustRoot],
-                    csp: {
-                        supportsSameOriginModuleUrl: false,
-                        allowsBlobModuleImport: true,
-                    },
-                    hostRuntime: {
-                        platform: 'web',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['embeddedWebBundle:acme.preview:embedded-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'loadable',
-                decision: { state: 'load', reason: 'compatible' },
-                loadPolicy: { source: 'installedArtifact' },
-            },
-        });
-    });
-
-    it('projects feed-scoped embedded-web artifact revocations before exposing a load policy', () => {
-        const registry = {
-            ...createEmptyResolvedContributionRegistry(),
-            embeddedWebBundles: [embeddedWebBundleContribution],
-            uiArtifacts: [{
-                ...embeddedWebBundleArtifact,
-                definition: {
-                    ...embeddedWebBundleArtifact.definition,
-                    integrity: {
-                        ...embeddedWebBundleArtifact.definition.integrity,
-                        signingKeyId: 'embedded-key-1',
-                    },
-                },
-            }],
-        } as unknown as ResolvedContributionRegistry;
-
-        const projection = buildPluginProjectionV2({
-            registry,
-            generation: 8,
-            pluginUiHostRuntime: {
-                embeddedWebBundles: {
-                    featureEnabled: true,
-                    loaderBackendAvailable: true,
-                    trustState: 'full',
-                    revocationState: createPluginUiArtifactRevocationState({
-                        revocations: [{
-                            id: 'revoke-embedded-key',
-                            scope: { kind: 'signingKey', signingKeyId: 'embedded-key-1' },
-                            reason: 'compromised',
-                            revokedAt: '2026-06-15T00:00:00.000Z',
-                        } satisfies PluginUiArtifactRevocationV1],
-                    }),
-                    csp: {
-                        supportsSameOriginModuleUrl: false,
-                        allowsBlobModuleImport: true,
-                    },
-                    hostRuntime: {
-                        platform: 'web',
-                        channel: 'internal',
-                        hostAppVersion: '2.0.0',
-                        hostUiApiVersion: '1.0.0',
-                        reactVersion: '19.0.0',
-                    },
-                },
-            },
-        } as Parameters<typeof buildPluginProjectionV2>[0]);
-        const entry = projection.familiesById.pluginUi?.entriesById['embeddedWebBundle:acme.preview:embedded-preview'];
-
-        expect(entry).toMatchObject({
-            runtime: {
-                state: 'blocked',
-                diagnostics: ['artifact_revoked'],
-                decision: {
-                    state: 'blocked',
-                    reason: 'artifact_revoked',
-                    diagnostics: ['artifact_revoked'],
-                    fallback: { kind: 'hostedWeb', contributionId: 'preview-web' },
-                },
-            },
-        });
-        expect(entry?.runtime).not.toHaveProperty('loadPolicy');
-        expect(entry?.runtime).not.toHaveProperty('cacheIdentity');
     });
 
     it('flags a duplicate contribution id with a diagnostic instead of silently dropping it (DR-2)', () => {
@@ -1993,5 +1178,467 @@ describe('plugin UI projection family', () => {
         expect(entries['surfacePlacement:acme.preview:settings-host']).toMatchObject({
             availability: { state: 'available', reason: 'available' },
         });
+    });
+
+    it('projects every V2 view through the canonical surface-placement family while retaining RN artifact ownership', () => {
+        const generatedArtifact = {
+            contributionId: 'panel-artifact',
+            tier: 'reactNative' as const,
+            platform: 'web' as const,
+            entry: 'react-native/panel/index.js',
+            files: [
+                {
+                    relativePath: 'react-native/panel/chunk.js',
+                    digest: `sha256:${'2'.repeat(64)}`,
+                    byteSize: 11,
+                },
+                {
+                    relativePath: 'react-native/panel/index.js',
+                    digest: `sha256:${'3'.repeat(64)}`,
+                    byteSize: 12,
+                },
+            ],
+            digest: `sha256:${'1'.repeat(64)}`,
+            builtWith: { bundler: 'vite' as const, version: '7.0.0' },
+            hostUiApiVersion: '1.0.0',
+            compat: {
+                react: '19.2.0',
+                reactNative: '0.83.4',
+            },
+        };
+        const generatedHostedArtifact = {
+            contributionId: 'hosted-artifact',
+            tier: 'hostedWeb' as const,
+            platform: 'web' as const,
+            entry: 'hosted-web/hosted-artifact/index.html',
+            files: [
+                {
+                    relativePath: 'hosted-web/hosted-artifact/index.html',
+                    digest: `sha256:${'5'.repeat(64)}`,
+                    byteSize: 13,
+                },
+                {
+                    relativePath: 'hosted-web/hosted-artifact/assets/index.js',
+                    digest: `sha256:${'6'.repeat(64)}`,
+                    byteSize: 14,
+                },
+            ],
+            digest: `sha256:${'4'.repeat(64)}`,
+            builtWith: { bundler: 'vite' as const, version: '7.0.0' },
+            hostUiApiVersion: '1.0.0',
+            compat: { react: '19.2.0' },
+        };
+        const stableDeclarativeModel = {
+            identity: {
+                pluginId: 'acme.generated-rnw',
+                localId: 'declarative-renderer',
+                qualifiedId: 'acme.generated-rnw/declarative-renderer',
+                generation: '31',
+            },
+            visible: true,
+            requiredHostMethods: ['context', 'executeAction'],
+            root: { kind: 'text', path: 'root', order: 0, text: 'Generated status' },
+            nodes: [{ kind: 'text', path: 'root', order: 0, text: 'Generated status' }],
+        };
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-rnw',
+                identity: { pluginId: 'acme.generated-rnw', localId: 'panel-renderer' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                pluginRootPath: '/plugins/acme',
+                generatedUiArtifactsManifest: {
+                    version: 1 as const,
+                    entries: [generatedArtifact],
+                },
+                definition: {
+                    id: 'panel-renderer',
+                    kind: 'reactNative',
+                    artifact: 'panel-artifact',
+                    requiredHostMethods: ['context', 'watchContext'],
+                },
+            }, {
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-rnw',
+                identity: { pluginId: 'acme.generated-rnw', localId: 'declarative-renderer' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                definition: {
+                    id: 'declarative-renderer',
+                    kind: 'declarative',
+                    root: { kind: 'text', text: 'Generated status' },
+                    requiredHostMethods: ['context', 'executeAction'],
+                },
+            }, {
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-rnw',
+                identity: { pluginId: 'acme.generated-rnw', localId: 'hosted-renderer' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                pluginRootPath: '/plugins/acme',
+                generatedUiArtifactsManifest: {
+                    version: 1 as const,
+                    entries: [generatedHostedArtifact],
+                },
+                definition: {
+                    id: 'hosted-renderer',
+                    kind: 'hostedWeb',
+                    source: { kind: 'artifact', artifact: 'hosted-artifact' },
+                    requiredHostMethods: ['context'],
+                },
+            }],
+            uiViewsV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-rnw',
+                identity: { pluginId: 'acme.generated-rnw', localId: 'panel' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                definition: {
+                    id: 'panel',
+                    placement: 'app.sidePanel',
+                    renderer: 'panel-renderer',
+                    title: 'Generated panel',
+                },
+            }, {
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-rnw',
+                identity: { pluginId: 'acme.generated-rnw', localId: 'declarative-view' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                definition: {
+                    id: 'declarative-view',
+                    placement: 'app.settingsPage',
+                    renderer: 'declarative-renderer',
+                    title: { key: 'settings.title', fallback: 'Generated settings' },
+                },
+            }, {
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-rnw',
+                identity: { pluginId: 'acme.generated-rnw', localId: 'hosted-view' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                definition: {
+                    id: 'hosted-view',
+                    placement: 'app.sidePanel',
+                    renderer: 'hosted-renderer',
+                    fallbackRenderers: ['panel-renderer'],
+                    title: 'Generated hosted panel',
+                },
+            }],
+            surfacePlacements: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.generated-rnw',
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                definition: {
+                    id: 'declarative-view',
+                    placement: 'app.settingsPage',
+                    target: { kind: 'app' },
+                    renderer: { kind: 'host', rendererId: 'descriptorPanel' },
+                    display: { titleKey: 'legacy-duplicate', developerFallback: 'Legacy duplicate' },
+                    order: 99,
+                    actions: [],
+                    hostActions: [],
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 31,
+            pluginUiHostRuntime: {
+                hostedWeb: { featureEnabled: true },
+                reactNativeBundles: {
+                    featureEnabled: true,
+                    loaderBackendAvailable: true,
+                    hostRuntime: {
+                        platform: 'web',
+                        channel: 'internal',
+                        hostAppVersion: '2.0.0',
+                        hostUiApiVersion: '1.0.0',
+                        reactVersion: '19.2.0',
+                        reactNativeVersion: '0.83.4',
+                        availableNativeCapabilities: [],
+                    },
+                },
+                declarative: {
+                    modelsByRendererKey: {
+                        ['acme.generated-rnw\0declarative-renderer']: stableDeclarativeModel,
+                    },
+                },
+            },
+        } as Parameters<typeof buildPluginProjectionV2>[0]);
+        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
+
+        expect(entries['reactNativeBundle:acme.generated-rnw:panel-renderer']).toMatchObject({
+            pluginId: 'acme.generated-rnw',
+            contributionKind: 'reactNativeBundle',
+            contributionId: 'panel-renderer',
+            artifactGraph: generatedArtifact,
+            requiredHostMethods: ['context', 'watchContext'],
+            runtime: {
+                state: 'loadable',
+                decision: { state: 'load', reason: 'compatible' },
+                cacheIdentity: {
+                    pluginId: 'acme.generated-rnw',
+                    contributionId: 'panel-renderer',
+                    artifactDigest: generatedArtifact.digest,
+                    platform: 'web',
+                    projectionGeneration: 31,
+                },
+                loadPolicy: { source: 'installedArtifact' },
+            },
+        });
+        expect(entries['reactNativeBundle:acme.generated-rnw:panel-renderer']?.artifactGraph)
+            .toEqual(generatedArtifact);
+        expect(entries['surfacePlacement:acme.generated-rnw:panel']).toMatchObject({
+            pluginId: 'acme.generated-rnw',
+            contributionKind: 'surfacePlacement',
+            descriptorId: 'panel',
+            placement: 'app.sidePanel',
+            renderer: { kind: 'reactNative', contributionId: 'panel-renderer' },
+            availability: { state: 'available', reason: 'available' },
+        });
+        expect(entries['surfacePlacement:acme.generated-rnw:declarative-view']).toMatchObject({
+            pluginId: 'acme.generated-rnw',
+            contributionKind: 'surfacePlacement',
+            descriptorId: 'declarative-view',
+            generatedV2: true,
+            placement: 'app.settingsPage',
+            display: { titleKey: 'settings.title', developerFallback: 'Generated settings' },
+            renderer: {
+                kind: 'declarative',
+                contributionId: 'declarative-renderer',
+                model: stableDeclarativeModel,
+            },
+            availability: { state: 'available', reason: 'available' },
+        });
+        expect(entries['surfacePlacement:acme.generated-rnw:declarative-view']).not.toHaveProperty('order');
+        expect(entries['surfacePlacement:acme.generated-rnw:hosted-view']).toMatchObject({
+            pluginId: 'acme.generated-rnw',
+            contributionKind: 'surfacePlacement',
+            descriptorId: 'hosted-view',
+            generatedV2: true,
+            placement: 'app.sidePanel',
+            fallbackRenderers: ['panel-renderer'],
+            renderer: {
+                kind: 'hostedWeb',
+                contributionId: 'hosted-renderer',
+                source: { kind: 'artifact', artifact: 'hosted-artifact' },
+                requiredHostMethods: ['context'],
+            },
+            availability: { state: 'available', reason: 'available' },
+        });
+        expect(entries['hostedWeb:acme.generated-rnw:hosted-renderer']).toMatchObject({
+            pluginId: 'acme.generated-rnw',
+            contributionKind: 'hostedWeb',
+            contributionId: 'hosted-renderer',
+            generatedV2: true,
+            runtimeMode: {
+                kind: 'installedStaticAssets',
+                artifactId: 'hosted-artifact',
+                assetRootId: 'hosted-web/hosted-artifact',
+            },
+            entry: { routeMode: 'pathFallback', path: '/' },
+            runtime: { state: 'available', decision: { state: 'render', reason: 'available' } },
+        });
+    });
+
+    it('projects a Voice provider client from its canonical generated artifact graph without a UI renderer', () => {
+        const generatedArtifact = {
+            contributionId: 'voice-runtime-web',
+            tier: 'reactNative' as const,
+            platform: 'web' as const,
+            entry: 'react-native/voice-runtime-web/index.js',
+            files: [{
+                relativePath: 'react-native/voice-runtime-web/index.js',
+                digest: `sha256:${'4'.repeat(64)}`,
+                byteSize: 1,
+            }],
+            digest: `sha256:${'3'.repeat(64)}`,
+            builtWith: { bundler: 'vite' as const, version: '7.0.0' },
+            hostUiApiVersion: '1.0.0',
+            compat: { react: '19.2.0', reactNative: '0.83.4' },
+        };
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            voiceProviders: [{
+                provenance: 'external',
+                source: { kind: 'package' },
+                pluginId: 'acme.generated-voice',
+                pluginVersion: '1.0.0',
+                identity: { pluginId: 'acme.generated-voice', localId: 'conversation' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                pluginRootPath: '/plugins/acme',
+                generatedUiArtifactsManifest: { version: 1 as const, entries: [generatedArtifact] },
+                definition: {
+                    id: 'conversation',
+                    title: 'Conversation',
+                    kind: 'conversation',
+                    roles: ['realtime_conversation', 'turn_control'],
+                    platforms: ['web'],
+                    capabilities: {
+                        readiness: { requirements: [] },
+                        turn: { cancelResponse: true, bargeIn: false },
+                    },
+                    client: {
+                        artifactId: generatedArtifact.contributionId,
+                        modulePath: './voiceRuntime',
+                        exportName: 'activate',
+                    },
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 33,
+            pluginUiHostRuntime: {
+                reactNativeBundles: {
+                    featureEnabled: true,
+                    loaderBackendAvailable: true,
+                    hostRuntime: {
+                        platform: 'web',
+                        channel: 'internal',
+                        hostAppVersion: '2.0.0',
+                        hostUiApiVersion: '1.0.0',
+                        reactVersion: '19.2.0',
+                        reactNativeVersion: '0.83.4',
+                        availableNativeCapabilities: [],
+                    },
+                },
+            },
+        } as Parameters<typeof buildPluginProjectionV2>[0]);
+        const entries = projection.familiesById.pluginUi?.entriesById ?? {};
+
+        expect(entries['reactNativeBundle:acme.generated-voice:conversation']).toMatchObject({
+            pluginId: 'acme.generated-voice',
+            contributionKind: 'reactNativeBundle',
+            contributionId: 'conversation',
+            artifactGraph: generatedArtifact,
+            runtime: {
+                state: 'loadable',
+                decision: { state: 'load', reason: 'compatible' },
+                cacheIdentity: {
+                    pluginId: 'acme.generated-voice',
+                    contributionId: 'conversation',
+                    artifactDigest: generatedArtifact.digest,
+                    platform: 'web',
+                    projectionGeneration: 33,
+                },
+                loadPolicy: { source: 'installedArtifact' },
+            },
+        });
+        expect(Object.keys(entries).some((id) => id.startsWith('uiArtifact:acme.generated-voice:'))).toBe(false);
+    });
+
+    it('projects a V2-owned generated native renderer directly without reviving legacy artifact rows', () => {
+        const registry = {
+            ...createEmptyResolvedContributionRegistry(),
+            reactNativeBundles: [reactNativeBundleContribution],
+            uiArtifacts: [reactNativeBundleArtifact],
+            uiRenderersV2: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId: 'acme.preview',
+                identity: { pluginId: 'acme.preview', localId: 'native-preview' },
+                manifestPath: '/plugins/acme/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:manifest',
+                pluginRootPath: '/plugins/acme',
+                generatedUiArtifactsManifest: {
+                    version: 1 as const,
+                    entries: [{
+                        contributionId: 'native-artifact',
+                        tier: 'reactNative' as const,
+                        platform: 'ios' as const,
+                        entry: 'react-native/native-preview/ios.bundle.js',
+                        files: [{
+                            relativePath: 'react-native/native-preview/ios.bundle.js',
+                            digest: `sha256:${'4'.repeat(64)}`,
+                            byteSize: 1,
+                        }],
+                        digest: `sha256:${'2'.repeat(64)}`,
+                        builtWith: { bundler: 'repack' as const, version: '5.2.5' },
+                        repack: {
+                            containerName: 'acme_preview_native',
+                            modulePath: './renderSurface',
+                            exportName: 'renderSurface',
+                        },
+                        hostUiApiVersion: '1.0.0',
+                        compat: {
+                            react: '19.0.0',
+                            reactNative: '0.83.4',
+                        },
+                    }],
+                },
+                definition: {
+                    id: 'native-preview',
+                    kind: 'reactNative',
+                    artifact: 'native-artifact',
+                },
+            }],
+        } as unknown as ResolvedContributionRegistry;
+
+        const projection = buildPluginProjectionV2({
+            registry,
+            generation: 32,
+            pluginUiHostRuntime: {
+                reactNativeBundles: {
+                    featureEnabled: true,
+                    loaderBackendAvailable: true,
+                    hostRuntime: {
+                        platform: 'ios',
+                        channel: 'internal',
+                        hostAppVersion: '2.0.0',
+                        hostUiApiVersion: '1.0.0',
+                        reactVersion: '19.0.0',
+                        reactNativeVersion: '0.83.4',
+                        availableNativeCapabilities: ['clipboard'],
+                    },
+                },
+            },
+        } as Parameters<typeof buildPluginProjectionV2>[0]);
+        const entry = projection.familiesById.pluginUi?.entriesById[
+            'reactNativeBundle:acme.preview:native-preview'
+        ];
+
+        expect(entry).toMatchObject({
+            contributionKind: 'reactNativeBundle',
+            contributionId: 'native-preview',
+            artifactGraph: expect.objectContaining({
+                contributionId: 'native-artifact',
+                platform: 'ios',
+                builtWith: { bundler: 'repack', version: '5.2.5' },
+                repack: {
+                    containerName: 'acme_preview_native',
+                    modulePath: './renderSurface',
+                    exportName: 'renderSurface',
+                },
+            }),
+            runtime: {
+                state: 'loadable',
+                decision: {
+                    state: 'load',
+                    reason: 'compatible',
+                    diagnostics: [],
+                },
+                cacheIdentity: expect.objectContaining({
+                    platform: 'ios',
+                    artifactDigest: `sha256:${'2'.repeat(64)}`,
+                    projectionGeneration: 32,
+                }),
+            },
+        });
+        expect(entry?.bundle).not.toEqual(reactNativeBundleContribution.definition.bundle);
     });
 });

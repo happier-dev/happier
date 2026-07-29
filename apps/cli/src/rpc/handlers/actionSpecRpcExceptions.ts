@@ -1,5 +1,5 @@
 import type { ActionId } from '@happier-dev/protocol';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 export const ACTION_SPEC_RPC_EXCEPTION_REASONS = Object.freeze([
     'legacy_alias',
@@ -29,6 +29,7 @@ const SCM_REPOSITORY_PACKET_OWNER = 'SCM repository coordination lane';
 const SCM_HOSTING_PACKET_OWNER = 'SCM hosting-provider packet chain';
 const SCM_DIFF_SUMMARY_PACKET_OWNER = 'SCM diff-summary packet chain';
 const A12_VOICE_CLEANUP_PACKET_OWNER = 'A.12-voice-cleanup';
+const SESSION_RUNTIME_CONTROL_PACKET_OWNER = 'session runtime-control RPC packet';
 
 const SCM_PULL_REQUEST_RETIREMENT =
     'Retire when the first SCM pull-request implementation packet registers this ActionSpec RPC method through the generic registrar.';
@@ -48,6 +49,7 @@ const A12_VOICE_TARGETED_STATUS_METHODS = Object.freeze([
 
 const A12_VOICE_MODEL_ADMIN_METHODS = Object.freeze([
     RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
 ] as const);
@@ -58,12 +60,22 @@ const A12_VOICE_TRANSPORT_METHODS = Object.freeze([
     RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_FINALIZE,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_ABORT,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_CANCEL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_START,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_NEXT,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_ACK,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_STATUS,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
     RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL,
+    RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_STATUS,
 ] as const);
 
 const A12_VOICE_TARGETED_STATUS_EXCEPTIONS = A12_VOICE_TARGETED_STATUS_METHODS.map((method) => ({
@@ -91,6 +103,22 @@ const A12_VOICE_TRANSPORT_EXCEPTIONS = A12_VOICE_TRANSPORT_METHODS.map((method) 
 } satisfies ActionSpecRpcException));
 
 export const ACTION_SPEC_RPC_EXCEPTIONS = Object.freeze([
+    {
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2,
+        actionId: 'execution.run.stream.start',
+        reason: 'packet_owned_coordination',
+        ownerPacket: 'remote-delta4-voice-custody',
+        rationale: 'Versioned voice transcript-custody transport must fail closed and is registered by the execution-run host owner.',
+        retirement: 'Retire only when ActionSpec can express the exact v2 transcript-custody request without changing its wire ABI.',
+    },
+    {
+        method: SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1,
+        actionId: 'execution.run.stream.start',
+        reason: 'packet_owned_coordination',
+        ownerPacket: 'remote-delta4-voice-custody',
+        rationale: 'Direct voice shortcuts require one exact durable transcript commit before their side effect.',
+        retirement: 'Retire only when ActionSpec owns an equivalent exact-localId committed transcript action.',
+    },
     ...A12_VOICE_TARGETED_STATUS_EXCEPTIONS,
     ...A12_VOICE_MODEL_ADMIN_EXCEPTIONS,
     ...A12_VOICE_TRANSPORT_EXCEPTIONS,
@@ -214,5 +242,14 @@ export const ACTION_SPEC_RPC_EXCEPTIONS = Object.freeze([
         ownerPacket: SCM_DIFF_SUMMARY_PACKET_OWNER,
         rationale: 'SCM diff-summary RPC implementation is not present in the CLI handler tree yet and is owned by the SCM diff-summary implementation packet.',
         retirement: SCM_DIFF_SUMMARY_RETIREMENT,
+    },
+    {
+        method: SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR,
+        actionId: 'session.terminalComposer.clear',
+        reason: 'custom_result_envelope',
+        ownerPacket: SESSION_RUNTIME_CONTROL_PACKET_OWNER,
+        rationale: 'Terminal composer clear is served by the explicit session runtime-control RPC handler so unsupported/malformed runtime states preserve the session-control result envelope.',
+        abiProof: 'apps/cli/src/rpc/handlers/sessionControls.ts registers session.terminalComposer.clear with SessionTerminalComposerClearRequestV1Schema and SessionTerminalComposerClearResultV1Schema.',
+        retirement: 'Retire only if the session runtime-control handler is replaced by generic ActionSpec RPC dispatch without changing the session-control result envelope.',
     },
 ] satisfies readonly ActionSpecRpcException[]);

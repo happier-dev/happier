@@ -3,10 +3,33 @@ import { describe, expect, it } from 'vitest';
 import type { MachineLiveStreamFrameV1 } from '@happier-dev/protocol';
 
 import {
+  classifyCaptureTerminalCloseKind,
   createDaemonMachineLiveStreamCaptureAdapter,
   type MachineLiveStreamCaptureAdapter,
 } from './captureAdapter';
 import { createMachineLiveStreamCaptureRegistry } from './captureRegistry';
+
+describe('classifyCaptureTerminalCloseKind', () => {
+  it('maps a clean end-of-stream reason to flow.closed', () => {
+    expect(classifyCaptureTerminalCloseKind('android_scrcpy_raw_stream_ended')).toBe('flow.closed');
+    expect(classifyCaptureTerminalCloseKind('capture_stopped')).toBe('flow.closed');
+    expect(classifyCaptureTerminalCloseKind('end_of_stream')).toBe('flow.closed');
+  });
+
+  it('maps an upstream/source abort reason to flow.aborted', () => {
+    expect(classifyCaptureTerminalCloseKind('android_scrcpy_raw_stream_unavailable')).toBe('flow.aborted');
+    expect(classifyCaptureTerminalCloseKind('upstream_abort')).toBe('flow.aborted');
+    expect(classifyCaptureTerminalCloseKind('capture_source_unavailable')).toBe('flow.aborted');
+  });
+
+  it('maps cap, failure, and unknown reasons to flow.errored', () => {
+    expect(classifyCaptureTerminalCloseKind('max_total_bytes_exceeded')).toBe('flow.errored');
+    expect(classifyCaptureTerminalCloseKind('android_scrcpy_raw_stream_buffer_limit_exceeded')).toBe('flow.errored');
+    expect(classifyCaptureTerminalCloseKind('producer_start_failed')).toBe('flow.errored');
+    expect(classifyCaptureTerminalCloseKind(undefined)).toBe('flow.errored');
+    expect(classifyCaptureTerminalCloseKind('something_unexpected')).toBe('flow.errored');
+  });
+});
 
 describe('createDaemonMachineLiveStreamCaptureAdapter', () => {
   it('fails closed until a real daemon capture source is available', async () => {

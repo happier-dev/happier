@@ -283,7 +283,47 @@ describe('multi-daemon helpers', () => {
 
         expect(fetchSpy).toHaveBeenCalledTimes(1);
         expect(JSON.parse(String(observed[0]?.body ?? ''))).toEqual({ stopSessions: true });
+        expect(String((observed[0]?.headers ?? ({} as any)).Connection ?? '')).toBe('close');
         expect(String((observed[0]?.headers ?? ({} as any))['x-happier-daemon-token'] ?? '')).toBe('test-token');
+        expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
+        expect(existsSync(statePath)).toBe(false);
+      } finally {
+        fetchSpy.mockRestore();
+        await sleepy.kill();
+      }
+    });
+  });
+
+  it('transfers managed local services without stopping sessions when requested', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'happier-multi-daemon-transfer-services-' }, async ({ homeDir }) => {
+      await writeDaemonSettingsFixture(homeDir);
+
+      const port = await reserveEphemeralPort();
+      const sleepy = spawnSleepyDetachedProcess();
+      const statePath = await writeDaemonStateFixture(homeDir, 'company', {
+        pid: sleepy.pid,
+        httpPort: port,
+        controlToken: 'test-token',
+      });
+
+      const observed: Array<{ body: unknown }> = [];
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url: any, init: any) => {
+        observed.push({ body: init?.body });
+        try {
+          process.kill(sleepy.pid, 'SIGTERM');
+        } catch {
+          // ignore
+        }
+        return { ok: true, status: 200, json: async () => ({ ok: true }) } as Response;
+      });
+
+      try {
+        await stopAllDaemonsBestEffort({ transferManagedLocalServices: true });
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        expect(JSON.parse(String(observed[0]?.body ?? ''))).toEqual({
+          transferManagedLocalServices: true,
+        });
         expect(await waitForProcessExit(sleepy.pid, { timeoutMs: 3_000 })).toBe(true);
         expect(existsSync(statePath)).toBe(false);
       } finally {

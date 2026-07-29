@@ -1,6 +1,10 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import {
+  clearTimeout as clearNodeTimeout,
+  setTimeout as setNodeTimeout,
+} from 'node:timers';
 
 import {
   closeOpenSshLocalPortForward,
@@ -31,7 +35,7 @@ import type {
 
 const DEFAULT_IDLE_TTL_MS = 5 * 60_000;
 
-type TimerHandle = ReturnType<typeof setTimeout>;
+type TimerHandle = number | ReturnType<typeof setNodeTimeout>;
 
 type ActiveTunnel = {
   tunnelKey: string;
@@ -227,8 +231,8 @@ export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): S
   const active = new Map<string, ActiveTunnel>();
   const pending = new Map<string, Promise<ActiveTunnel>>();
   const leaseToTunnelKey = new Map<string, string>();
-  const schedule = deps.setTimeout ?? setTimeout;
-  const unschedule = deps.clearTimeout ?? clearTimeout;
+  const schedule = deps.setTimeout ?? setNodeTimeout;
+  const unschedule = deps.clearTimeout ?? clearNodeTimeout;
 
   const persist = async (): Promise<void> => {
     await registry.write(Array.from(active.values()).map(entryFromActive));

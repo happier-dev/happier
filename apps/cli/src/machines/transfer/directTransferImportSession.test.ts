@@ -1,18 +1,285 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { access, mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { createEncryptedTransferChunkEnvelope } from './transferChunkEncryption';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
+import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 
-afterEach(() => {
-  // No shared state.
+let failNextUploadPromotionWithExdev = false;
+let failNextUploadSourceCleanup = false;
+let failDestinationBackupRestore = false;
+let destinationBackupPath: string | null = null;
+
+vi.mock('node:fs/promises', async () => {
+  const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+
+  return {
+    ...actual,
+    rename: vi.fn(async (from: string, to: string) => {
+      if (failNextUploadPromotionWithExdev && from.endsWith('.upload')) {
+        failNextUploadPromotionWithExdev = false;
+        const error = new Error('simulated cross-device upload promotion') as NodeJS.ErrnoException;
+        error.code = 'EXDEV';
+        throw error;
+      }
+      if (failDestinationBackupRestore && destinationBackupPath === from) {
+        throw new Error('simulated destination backup restoration failure');
+      }
+      await actual.rename(from, to);
+      if (to.includes('.happier-upload-backup-')) {
+        destinationBackupPath = to;
+      }
+    }),
+    rm: vi.fn(async (path: string, options?: Parameters<typeof actual.rm>[1]) => {
+      if (failNextUploadSourceCleanup && path.endsWith('.upload')) {
+        failNextUploadSourceCleanup = false;
+        const error = new Error('simulated staged upload cleanup failure') as NodeJS.ErrnoException;
+        error.code = 'EPERM';
+        throw error;
+      }
+      await actual.rm(path, options);
+    }),
+  };
 });
 
+afterEach(() => {
+  failNextUploadPromotionWithExdev = false;
+  failNextUploadSourceCleanup = false;
+  failDestinationBackupRestore = false;
+  destinationBackupPath = null;
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+async function expectPathMissing(path: string): Promise<void> {
+  await expect(access(path)).rejects.toMatchObject({ code: 'ENOENT' });
+}
+
 describe('direct transfer import session manager', () => {
+  it('never advertises an import chunk size larger than the encrypted-transfer hard limit', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-chunk-limit-'));
+    const manager = createDirectTransferImportSessionManager({
+      ttlMs: 10_000,
+      chunkSizeBytes: TRANSFER_CHUNK_HARD_MAX_BYTES + 1,
+    });
+
+    try {
+      const opened = await manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'payload.txt',
+        sizeBytes: TRANSFER_CHUNK_HARD_MAX_BYTES + 1,
+        overwrite: true,
+      });
+
+      expect(opened).toMatchObject({
+        success: true,
+        response: {
+          chunkSizeBytes: TRANSFER_CHUNK_HARD_MAX_BYTES,
+        },
+      });
+    } finally {
+      await manager.close();
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('drops active import activity after a route-independent abort', async () => {
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-machine-abort-'));
+    const activeCounts: number[] = [];
+
+    try {
+      const manager = createDirectTransferImportSessionManager({
+        ttlMs: 10_000,
+        onActiveSessionCountChanged: (count) => activeCounts.push(count),
+      });
+      const opened = await manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'payload.txt',
+        sizeBytes: 4,
+        overwrite: true,
+      });
+      if (!opened.success) {
+        throw new Error(opened.error);
+      }
+
+      expect(manager.countActiveImportSessions()).toBe(1);
+      await manager.abortImportTransferSession({ uploadId: opened.response.uploadId });
+
+      expect(manager.countActiveImportSessions()).toBe(0);
+      expect(activeCounts).toEqual([1, 0]);
+    } finally {
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('preserves finalize recovery codes and retained session state through the import manager', async () => {
+    let now = 1_000;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-finalize-recovery-'));
+    const destinationPath = join(workingDirectory, 'payload.txt');
+    const manager = createDirectTransferImportSessionManager({
+      ttlMs: 10_000,
+      chunkSizeBytes: 16,
+    });
+    const payload = Buffer.from('replacement', 'utf8');
+
+    try {
+      await writeFile(destinationPath, 'original', 'utf8');
+      const opened = await manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'payload.txt',
+        sizeBytes: payload.length,
+        overwrite: true,
+      });
+      if (!opened.success) {
+        throw new Error(opened.error);
+      }
+      const encryptedChunk = createEncryptedTransferChunkEnvelope({
+        transferId: opened.response.uploadId,
+        sequence: 0,
+        payload,
+        recipientPublicKeyBase64: opened.response.recipientPublicKeyBase64,
+      });
+      now = 2_000;
+      await expect(manager.writeImportTransferChunk({
+        uploadId: opened.response.uploadId,
+        index: 0,
+        payloadBase64: encryptedChunk.payloadBase64,
+        encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
+      })).resolves.toEqual({ success: true });
+
+      failNextUploadPromotionWithExdev = true;
+      failNextUploadSourceCleanup = true;
+      failDestinationBackupRestore = true;
+
+      await expect(manager.finalizeImportTransferSession({
+        uploadId: opened.response.uploadId,
+      })).resolves.toEqual({
+        success: false,
+        error: 'Failed to finalize uploaded file because destination recovery was incomplete. Recovery files were preserved; inspect the destination before retrying.',
+        errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
+        keepSession: true,
+        expiresAt: 12_000,
+      });
+      expect(manager.countActiveImportSessions()).toBe(1);
+    } finally {
+      nowSpy.mockRestore();
+      await manager.close();
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('uses refreshed canonical-store expiry truth and ignores stale prepared deadlines', async () => {
+    const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-idle-expiry-'));
+    const tempEnv = createEnvKeyScope(['TEMP', 'TMP', 'TMPDIR']);
+    const activeCounts: number[] = [];
+    let manager: ReturnType<typeof createDirectTransferImportSessionManager> | null = null;
+
+    try {
+      tempEnv.patch({
+        TEMP: workingDirectory,
+        TMP: workingDirectory,
+        TMPDIR: workingDirectory,
+      });
+      manager = createDirectTransferImportSessionManager({
+        ttlMs: 1_000,
+        onActiveSessionCountChanged: (count) => activeCounts.push(count),
+      });
+      const first = await manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'first-payload.txt',
+        sizeBytes: 8,
+        overwrite: true,
+      });
+      if (!first.success) {
+        throw new Error(first.error);
+      }
+      nowSpy.mockReturnValue(1_200);
+      const second = await manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'second-payload.txt',
+        sizeBytes: 4,
+        overwrite: true,
+      });
+      if (!second.success) {
+        throw new Error(second.error);
+      }
+      nowSpy.mockReturnValue(1_500);
+      const refreshedChunk = createEncryptedTransferChunkEnvelope({
+        transferId: first.response.uploadId,
+        sequence: 0,
+        payload: Buffer.from('data', 'utf8'),
+        recipientPublicKeyBase64: first.response.recipientPublicKeyBase64,
+      });
+      await expect(manager.writeImportTransferChunk({
+        uploadId: first.response.uploadId,
+        index: 0,
+        payloadBase64: refreshedChunk.payloadBase64,
+        encryptedDataKeyEnvelopeBase64: refreshedChunk.encryptedDataKeyEnvelopeBase64,
+      })).resolves.toEqual({ success: true });
+
+      expect(manager.countActiveImportSessions()).toBe(2);
+      expect(activeCounts).toEqual([1, 2]);
+      const importExpiryOwner = manager as typeof manager & Readonly<{
+        getNextImportSessionExpiryAt: () => number | null;
+      }>;
+      expect(importExpiryOwner.getNextImportSessionExpiryAt()).toBe(second.response.expiresAt);
+      const transferRoots = await readdir(join(workingDirectory, 'happier', 'file-transfers'));
+      expect(transferRoots).toHaveLength(1);
+      const transferTempRoot = join(workingDirectory, 'happier', 'file-transfers', transferRoots[0] ?? '');
+      const firstStagedUploadPath = join(transferTempRoot, `${first.response.uploadId}.upload`);
+      const secondStagedUploadPath = join(transferTempRoot, `${second.response.uploadId}.upload`);
+
+      manager.cleanupExpiredImportSessions(first.response.expiresAt);
+      expect(manager.countActiveImportSessions()).toBe(2);
+      expect(activeCounts.at(-1)).toBe(2);
+      await expect(access(firstStagedUploadPath)).resolves.toBeUndefined();
+      await expect(access(secondStagedUploadPath)).resolves.toBeUndefined();
+
+      nowSpy.mockReturnValue(second.response.expiresAt);
+      manager.cleanupExpiredImportSessions(second.response.expiresAt);
+      expect(manager.countActiveImportSessions()).toBe(1);
+      expect(activeCounts.at(-1)).toBe(1);
+      expect(importExpiryOwner.getNextImportSessionExpiryAt()).toBe(first.response.expiresAt + 500);
+      await expect(manager.writeImportTransferChunk({
+        uploadId: second.response.uploadId,
+        index: 0,
+        contentBase64: Buffer.from('data', 'utf8').toString('base64'),
+      })).resolves.toEqual({
+        success: false,
+        error: 'Upload session not found',
+      });
+      await vi.waitFor(async () => {
+        await expectPathMissing(secondStagedUploadPath);
+      });
+      await expect(access(firstStagedUploadPath)).resolves.toBeUndefined();
+
+      nowSpy.mockReturnValue(first.response.expiresAt + 500);
+      manager.cleanupExpiredImportSessions(first.response.expiresAt + 500);
+      expect(manager.countActiveImportSessions()).toBe(0);
+      expect(activeCounts.at(-1)).toBe(0);
+      expect(importExpiryOwner.getNextImportSessionExpiryAt()).toBeNull();
+      await vi.waitFor(async () => {
+        await expectPathMissing(firstStagedUploadPath);
+      });
+    } finally {
+      await manager?.close();
+      tempEnv.restore();
+      await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('applies the manager filesystem access policy to workspace file uploads', async () => {
     const allowedRoot = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-allowed-'));
     const deniedRoot = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-denied-'));
@@ -346,8 +613,10 @@ describe('direct transfer import session manager', () => {
 
   it('cleans up active import sessions and invalidates their upload ids when the manager closes', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-direct-transfer-import-close-'));
+    const previousTmpdir = process.env.TMPDIR;
 
     try {
+      process.env.TMPDIR = workingDirectory;
       const manager = createDirectTransferImportSessionManager({
         ttlMs: 10_000,
       });
@@ -374,10 +643,16 @@ describe('direct transfer import session manager', () => {
       }
 
       expect(manager.countActiveImportSessions()).toBe(1);
+      const transferRoots = await readdir(join(workingDirectory, 'happier', 'file-transfers'));
+      expect(transferRoots).toHaveLength(1);
+      const transferTempRoot = join(workingDirectory, 'happier', 'file-transfers', transferRoots[0] ?? '');
+      await expect(access(transferTempRoot)).resolves.toBeUndefined();
 
+      await manager.close();
       await manager.close();
 
       expect(manager.countActiveImportSessions()).toBe(0);
+      await expectPathMissing(transferTempRoot);
       await expect(manager.writeImportTransferChunk({
         uploadId: open.response.uploadId,
         index: 0,
@@ -386,7 +661,19 @@ describe('direct transfer import session manager', () => {
         success: false,
         error: 'Upload session not found',
       });
+      await expect(manager.openTrustedImportSession({
+        workingDirectory,
+        t: 'session_file_upload_v1',
+        path: 'after-close.txt',
+        sizeBytes: payload.length,
+        overwrite: true,
+      })).rejects.toThrow('Transfer session store is disposed');
     } finally {
+      if (previousTmpdir == null) {
+        delete process.env.TMPDIR;
+      } else {
+        process.env.TMPDIR = previousTmpdir;
+      }
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);
     }
   });

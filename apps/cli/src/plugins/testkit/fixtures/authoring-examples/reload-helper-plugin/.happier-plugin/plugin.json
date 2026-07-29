@@ -7,20 +7,27 @@
   "engines": {
     "happier": "^0.2.0"
   },
-  "uses": [
-    "actions"
-  ],
-  "entrypoints": {
-    "main": "./agent/daemon.mjs"
+  "runtime": {
+    "apiVersion": 1
   },
-  "permissions": {
+  "entrypoints": {
+    "daemon": "./agent/daemon.mjs"
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "hostAccess": {
     "required": [],
     "optional": []
   },
   "contributes": {
     "actions": [
       {
-        "id": "examples.reload.report",
+        "id": "reload-report",
         "title": "Report Reload Timestamp",
         "description": "Returns activation-time data so you can verify happier plugins reload.",
         "scopes": [
@@ -42,10 +49,6 @@
             }
           },
           "additionalProperties": false
-        },
-        "handler": {
-          "target": "daemon",
-          "registrationId": "examples.reload.report"
         }
       }
     ]

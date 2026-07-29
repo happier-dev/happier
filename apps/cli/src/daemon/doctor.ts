@@ -5,15 +5,20 @@
  * Helps diagnose and fix issues with hung or orphaned processes
  */
 
-import psList from 'ps-list';
 import spawn from 'cross-spawn';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { listProcessSnapshot } from './processSnapshotCache';
+import {
+  readWindowsProcessInventory,
+  type WindowsProcessInventoryFact,
+} from './platform/windows/windowsProcessInventory';
 
 const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
   'HAPPIER_HOME_DIR',
   'HAPPIER_ACTIVE_SERVER_ID',
+  'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
   'HAPPIER_SERVER_URL',
   'HAPPIER_WEBAPP_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
@@ -140,80 +145,55 @@ function isCliSourceSnapshotCommand(normalizedCommand: string): boolean {
     normalizedCommand.includes('/cli-dist/src/index.ts');
 }
 
-function parsePositiveInt(value: unknown): number | null {
-  const parsed = typeof value === 'number'
-    ? value
-    : Number.parseInt(typeof value === 'string' ? value : '', 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+function projectWindowsDoctorProcessInfo(
+  fact: WindowsProcessInventoryFact,
+): RawProcessInfo {
+  return {
+    pid: fact.pid,
+    ...(fact.name ? { name: fact.name } : {}),
+    ...(fact.command ? { cmd: fact.command } : {}),
+  };
 }
 
-function parseWindowsProcessInfoOutput(output: string): Map<number, { pid: number; name?: string; cmd?: string }> {
-  const trimmed = output.trim();
-  if (!trimmed) return new Map();
-
-  const parsed = JSON.parse(trimmed) as unknown;
-  const rows = Array.isArray(parsed) ? parsed : [parsed];
-  const result = new Map<number, { pid: number; name?: string; cmd?: string }>();
-  for (const row of rows) {
-    if (!row || typeof row !== 'object') continue;
-    const pid = parsePositiveInt((row as { ProcessId?: unknown }).ProcessId);
-    if (!pid) continue;
-    const name = typeof (row as { Name?: unknown }).Name === 'string' ? (row as { Name?: string }).Name : undefined;
-    const commandLine = typeof (row as { CommandLine?: unknown }).CommandLine === 'string'
-      ? (row as { CommandLine?: string }).CommandLine?.trim()
-      : undefined;
-    result.set(pid, { pid, ...(name ? { name } : {}), ...(commandLine ? { cmd: commandLine } : {}) });
+async function readWindowsDoctorProcessInventory(
+  pids?: readonly number[],
+): Promise<Map<number, RawProcessInfo>> {
+  if (process.platform !== 'win32') return new Map();
+  try {
+    const facts = await readWindowsProcessInventory({
+      execFile: async (command, args, options) => ({
+        stdout: execFileSync(command, [...args], {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: options.timeout,
+          maxBuffer: options.maxBuffer,
+        }),
+      }),
+      ...(pids ? { pids } : {}),
+    });
+    return new Map(
+      [...facts.values()].map((fact) => [
+        fact.pid,
+        projectWindowsDoctorProcessInfo(fact),
+      ]),
+    );
+  } catch {
+    return new Map();
   }
-  return result;
 }
 
 async function getProcessInfosByPidWindows(
   pids: readonly number[],
-): Promise<Map<number, { pid: number; name?: string; cmd?: string }>> {
-  if (process.platform !== 'win32') return new Map();
-
-  const uniquePids = Array.from(new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0)));
-  if (uniquePids.length === 0) return new Map();
-
-  try {
-    const filter = uniquePids.map((pid) => `ProcessId=${pid}`).join(' OR ');
-    const script = [
-      `$rows = Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, Name, CommandLine`,
-      'if ($null -eq $rows) { return }',
-      '$rows | ConvertTo-Json -Compress',
-    ].join('; ');
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    return parseWindowsProcessInfoOutput(output);
-  } catch {
-    return new Map();
-  }
+): Promise<Map<number, RawProcessInfo>> {
+  return await readWindowsDoctorProcessInventory(pids);
 }
 
-async function getAllProcessInfosWindows(): Promise<Map<number, { pid: number; name?: string; cmd?: string }>> {
-  if (process.platform !== 'win32') return new Map();
-
-  try {
-    const script = [
-      '$rows = Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine',
-      'if ($null -eq $rows) { return }',
-      '$rows | ConvertTo-Json -Compress',
-    ].join('; ');
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    return parseWindowsProcessInfoOutput(output);
-  } catch {
-    return new Map();
-  }
+async function getAllProcessInfosWindows(): Promise<Map<number, RawProcessInfo>> {
+  return await readWindowsDoctorProcessInventory();
 }
 
-async function getProcessInfoByPidWindows(pid: number): Promise<{ pid: number; name?: string; cmd?: string } | null> {
+async function getProcessInfoByPidWindows(pid: number): Promise<RawProcessInfo | null> {
   return (await getProcessInfosByPidWindows([pid])).get(pid) ?? null;
 }
 
@@ -310,7 +290,7 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
 
 async function findAllHappyProcessesSnapshot(): Promise<HappyProcessInfo[]> {
   try {
-    const processes = await psList().catch((error: unknown) => {
+    const processes = await listProcessSnapshot().catch((error: unknown) => {
       if (process.platform !== 'win32') throw error;
       return [];
     });
@@ -426,7 +406,7 @@ export async function killRunawayHappyProcesses(): Promise<{ killed: number, err
         await new Promise(resolve => setTimeout(resolve, 1000));
         
         // Check if still alive
-        const processes = await psList();
+        const processes = await listProcessSnapshot({ ttlMs: 0 });
         const stillAlive = processes.find(p => p.pid === pid);
         if (stillAlive) {
           console.log(`Process PID ${pid} ignored SIGTERM, using SIGKILL`);

@@ -6,6 +6,7 @@ import type {
   AccountSettings,
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
+  QualifiedConnectedAccountPurposeBindingV1,
 } from '@happier-dev/protocol';
 
 import { getConnectedServicesMaterializer } from '@/daemon/connectedServices/catalogHooks';
@@ -182,6 +183,7 @@ export async function materializeConnectedServicesForSpawn(params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
+  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>): Promise<ConnectedServicesMaterialization | null> {
@@ -203,6 +205,7 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
+  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>, rootDir: string): Promise<ConnectedServicesMaterialization | null> {
@@ -229,6 +232,9 @@ async function materializeConnectedServicesForSpawnUnlocked(params: Readonly<{
       sessionDirectory: params.sessionDirectory ?? null,
       recordsByServiceId: params.recordsByServiceId,
       selectionsByServiceId: params.selectionsByServiceId,
+      ...(params.requestAuthPurposeBindings
+        ? { requestAuthPurposeBindings: params.requestAuthPurposeBindings }
+        : {}),
       accountSettings: params.accountSettings ?? null,
       processEnv: params.processEnv ?? process.env,
     });

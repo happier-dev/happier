@@ -45,21 +45,23 @@ function resolveAttachmentPath(cwd: string, uploadPath: string): string {
     return path.isAbsolute(uploadPath) ? uploadPath : path.resolve(cwd, uploadPath);
 }
 
-async function fileMatchesDeclaredUpload(params: Readonly<{
+export async function readVerifiedSessionAttachmentLocalImage(params: Readonly<{
     cwd: string;
     uploadPath: string;
     sha256: string;
     sizeBytes: number | null;
-}>): Promise<boolean> {
+    maxBytes?: number;
+}>): Promise<Buffer | null> {
     try {
         const absolutePath = resolveAttachmentPath(params.cwd, params.uploadPath);
         const fileStat = await stat(absolutePath);
-        if (!fileStat.isFile()) return false;
-        if (params.sizeBytes !== null && fileStat.size !== params.sizeBytes) return false;
+        if (!fileStat.isFile()) return null;
+        if (params.sizeBytes !== null && fileStat.size !== params.sizeBytes) return null;
+        if (params.maxBytes !== undefined && fileStat.size > params.maxBytes) return null;
         const content = await readFile(absolutePath);
-        return createHash('sha256').update(content).digest('hex') === params.sha256;
+        return createHash('sha256').update(content).digest('hex') === params.sha256 ? content : null;
     } catch {
-        return false;
+        return null;
     }
 }
 
@@ -80,12 +82,12 @@ export async function resolveTrustedSessionAttachmentLocalImagePaths(params: Rea
         const sha256 = readSha256(attachment.sha256);
         if (!sha256) continue;
         const sizeBytes = readSizeBytes(attachment.sizeBytes);
-        if (await fileMatchesDeclaredUpload({
+        if (await readVerifiedSessionAttachmentLocalImage({
             cwd: params.cwd,
             uploadPath: normalizedPath,
             sha256,
             sizeBytes,
-        })) {
+        }) !== null) {
             trusted.add(normalizedPath);
         }
     }

@@ -37,10 +37,10 @@ function extractTextFromMessageContent(content: unknown): string | null {
 }
 
 function extractSessionMediaFromMessageContent(update: SessionUpdate): ReturnType<typeof extractAcpMediaContentBlocks> {
-  const providerEventId = typeof update.id === 'string' ? update.id : nextAcpMessageMediaId();
+  const agentEventId = typeof update.id === 'string' ? update.id : nextAcpMessageMediaId();
   return extractAcpMediaContentBlocks(update.content, {
     originSource: 'acp-content',
-    providerEventId,
+    agentEventId,
   });
 }
 
@@ -82,17 +82,17 @@ function refreshMessageIdleTimeout(ctx: HandlerContext): void {
     (ctx.toolCallCountSincePrompt === 0
       ? ctx.transport.getPreToolCallIdleTimeoutMs?.()
       : null) ??
-    (ctx.toolCallCountSincePrompt > 0 && ctx.activeToolCalls.size === 0
+    (ctx.toolCallCountSincePrompt > 0 && ctx.toolCalls.activeCalls().length === 0
       ? resolvePostToolCallIdleTimeoutMs(ctx.transport)
       : null) ??
     ctx.transport.getIdleTimeout?.() ??
     DEFAULT_IDLE_TIMEOUT_MS;
   ctx.setIdleTimeout(() => {
-    if (ctx.activeToolCalls.size === 0) {
+    if (ctx.toolCalls.activeCalls().length === 0) {
       logger.debug('[AcpBackend] No more chunks received, emitting idle status');
       ctx.emitIdleStatus();
     } else {
-      logger.debug(`[AcpBackend] Delaying idle status - ${ctx.activeToolCalls.size} active tool calls`);
+      logger.debug(`[AcpBackend] Delaying idle status - ${ctx.toolCalls.activeCalls().length} active tool calls`);
     }
   }, idleTimeoutMs);
 }
@@ -152,8 +152,8 @@ export function handleAgentThoughtChunk(
   if (!text.trim()) return { handled: true };
 
   // Log thinking chunks when tool calls are active.
-  if (ctx.activeToolCalls.size > 0) {
-    const activeToolCallsList = Array.from(ctx.activeToolCalls);
+  if (ctx.toolCalls.activeCalls().length > 0) {
+    const activeToolCallsList = ctx.toolCalls.activeCalls().map((call) => call.toolCallId);
     logger.debug(
       `[AcpBackend] 💭 Thinking chunk received (${text.length} chars) during active tool calls: ${activeToolCallsList.join(', ')}`,
     );
@@ -179,7 +179,10 @@ export function handleUserMessageChunk(
   ctx.emit({
     type: 'event',
     name: 'user_message_chunk',
-    payload: { text },
+    payload: {
+      text,
+      ...(update._meta === undefined ? {} : { _meta: update._meta }),
+    },
   });
   return { handled: true };
 }

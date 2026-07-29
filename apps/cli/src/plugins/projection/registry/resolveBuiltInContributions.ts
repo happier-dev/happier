@@ -1,67 +1,55 @@
 import { GH_INSTALLABLE_DESCRIPTOR } from '@happier-dev/protocol';
 
 import {
-    BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS,
-    BUNDLED_FIRST_PARTY_AGENT_RUNTIME_CONTRIBUTIONS,
-    BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS,
-    BUNDLED_FIRST_PARTY_EXECUTION_RUN_PROFILE_CONTRIBUTIONS,
-    BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS,
-    BUNDLED_FIRST_PARTY_PLUGIN_AGENT_RUNTIME_CONTRIBUTIONS,
-    BUNDLED_FIRST_PARTY_AGENT_CATALOG_ENTRY_HOOKS,
-    BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS,
-    BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS,
-    BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS,
+    BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS,
+    BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
 } from './sources/generatedBundledPlugins';
-import {
-    FIRST_PARTY_REACT_NATIVE_BUNDLES,
-    FIRST_PARTY_SETTINGS,
-    FIRST_PARTY_STRUCTURED_MESSAGES,
-    FIRST_PARTY_SURFACE_PLACEMENTS,
-    FIRST_PARTY_UI_ARTIFACTS,
-    FIRST_PARTY_UI_TRANSLATIONS,
-} from './firstPartyUiContributions';
-import { applyProviderCatalogEntryHooks } from './providerCatalogEntryHooks';
-import type { ResolvedContributionInputs } from './types';
+import { projectBuiltInAgents } from './builtIn/agents';
+import { projectBuiltInProviders } from './builtIn/providers';
+import { loadBundledPluginLocators } from './builtIn/locators';
+import { projectLoadedPluginContributes } from './resolvePluginContributions';
+import type { ResolvedContributionInputs, ResolvedInstallableContribution } from './types';
 
 const EMPTY_CONTRIBUTIONS = Object.freeze([]);
-const EMPTY_DIAGNOSTICS = Object.freeze({});
 
 type ResolvedBuiltInContributionInputs = ResolvedContributionInputs & Required<
-    Pick<ResolvedContributionInputs, 'agents' | 'agentRuntimes'>
+    Pick<ResolvedContributionInputs, 'agents' | 'providers'>
 >;
 
+/**
+ * Projects first-party packages through the same canonical manifest path as
+ * installed plugins, then overlays only host-owned executable Agent facts.
+ */
 export function resolveBuiltInContributions(): ResolvedBuiltInContributionInputs {
-    return {
-        agents: BUNDLED_FIRST_PARTY_AGENT_CONTRIBUTIONS.map((provider) =>
-            applyProviderCatalogEntryHooks(provider, BUNDLED_FIRST_PARTY_AGENT_CATALOG_ENTRY_HOOKS)
-        ),
-        agentRuntimes: Object.freeze([
-            ...BUNDLED_FIRST_PARTY_AGENT_RUNTIME_CONTRIBUTIONS,
-            ...BUNDLED_FIRST_PARTY_PLUGIN_AGENT_RUNTIME_CONTRIBUTIONS,
-        ]),
+    const loadedPlugins = loadBundledPluginLocators(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS);
+    const projected = projectLoadedPluginContributes({
+        loadResult: {
+            loadedPlugins,
+            diagnosticsByPluginId: {},
+        },
+        provenance: 'first_party',
+    });
+    const agents = projectBuiltInAgents({
+        manifestAgents: projected.agents ?? EMPTY_CONTRIBUTIONS,
+        implementationBindings: BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS,
+    });
+
+    return Object.freeze({
+        ...projected,
+        agents,
+        providers: projectBuiltInProviders({
+            manifestProviders: projected.providers ?? EMPTY_CONTRIBUTIONS,
+            implementationBindings: BUNDLED_FIRST_PARTY_IMPLEMENTATION_BINDINGS,
+        }),
         catalogEntries: EMPTY_CONTRIBUTIONS,
-        actions: EMPTY_CONTRIBUTIONS,
-        executionRunProfiles: BUNDLED_FIRST_PARTY_EXECUTION_RUN_PROFILE_CONTRIBUTIONS,
         managedDependencies: Object.freeze([
             {
                 provenance: 'first_party',
                 source: { kind: 'bundled' },
                 pluginId: 'happier.core',
                 definition: GH_INSTALLABLE_DESCRIPTOR,
-            },
-            ...BUNDLED_FIRST_PARTY_INSTALLABLE_CONTRIBUTIONS,
+            } satisfies ResolvedInstallableContribution,
+            ...(projected.managedDependencies ?? EMPTY_CONTRIBUTIONS),
         ]),
-        activationTargets: BUNDLED_FIRST_PARTY_ACTIVATION_TARGETS,
-        scmHostingProviders: BUNDLED_FIRST_PARTY_SCM_HOSTING_PROVIDER_CONTRIBUTIONS,
-        scmBackends: BUNDLED_FIRST_PARTY_SCM_BACKEND_CONTRIBUTIONS,
-        connectedAccountDescriptors: BUNDLED_FIRST_PARTY_CONNECTED_ACCOUNT_DESCRIPTOR_CONTRIBUTIONS,
-        uiTranslations: FIRST_PARTY_UI_TRANSLATIONS,
-        surfacePlacements: FIRST_PARTY_SURFACE_PLACEMENTS,
-        structuredMessages: FIRST_PARTY_STRUCTURED_MESSAGES,
-        reactNativeBundles: FIRST_PARTY_REACT_NATIVE_BUNDLES,
-        uiArtifacts: FIRST_PARTY_UI_ARTIFACTS,
-        settings: FIRST_PARTY_SETTINGS,
-        hookRegistrations: EMPTY_CONTRIBUTIONS,
-        pluginDiagnosticsByPluginId: EMPTY_DIAGNOSTICS,
-    };
+    });
 }

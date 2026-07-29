@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
 
 import { ProviderEnforcedPermissionHandler } from './handler';
 import { __resetToolTraceForTests } from '@/agent/tools/trace/toolTrace';
@@ -31,6 +32,15 @@ class FakeSession {
   getMetadataSnapshot() {
     return this.metadata;
   }
+}
+
+async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfilled' | 'rejected'> {
+  const pending = Symbol('pending');
+  const result = await Promise.race([
+    promise.then(() => 'fulfilled' as const, () => 'rejected' as const),
+    Promise.resolve(pending),
+  ]);
+  return result === pending ? 'pending' : result;
 }
 
 describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () => {
@@ -78,7 +88,7 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
           actions: {
             'session.list': {
               disabledSurfaces: [],
-              approvalRequiredSurfaces: ['session_agent'],
+              approvalRequiredSurfaces: ['agent'],
             },
           },
         },
@@ -108,6 +118,50 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     await expect(handler.handleToolCall('fs-write-1', 'writeTextFile', {})).resolves.toEqual({ decision: 'approved' });
     expect(session.agentState.requests['fs-read-1']).toBeFalsy();
     expect(session.agentState.requests['fs-write-1']).toBeFalsy();
+  });
+
+  it('denies every host ACP fs write alias in Read Only and Plan modes before default or custom safe-tool matching', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, {
+      logPrefix: '[Test]',
+      alwaysAutoApproveToolNameIncludes: ['write_text_file'],
+      alwaysAutoApproveToolCallIdIncludes: ['custom-safe-write'],
+    });
+    const aliases = [
+      'writeTextFile',
+      'writetextfile',
+      'write_text_file',
+      'mcp__happier__write_text_file',
+      'happier_writeTextFile',
+    ];
+    for (const permissionMode of ['read-only', 'plan'] as const) {
+      handler.setPermissionMode(permissionMode);
+      expect(handler.getImmediateDecision(`fs-read-${permissionMode}`, 'readTextFile', {})).toEqual({
+        decision: 'approved',
+      });
+
+      for (const [index, toolName] of aliases.entries()) {
+        const toolCallId = `custom-safe-write-${permissionMode}-${index}`;
+        await expect(
+          handler.handleToolCall(toolCallId, toolName, {}, { origin: 'host_acp_fs_write' }),
+        ).resolves.toEqual({ decision: 'denied' });
+        expect(session.agentState.requests[toolCallId]).toBeFalsy();
+      }
+    }
+  });
+
+  it('keeps provider-native operations named writeTextFile under provider enforcement in low-privilege modes', async () => {
+    for (const permissionMode of ['read-only', 'plan'] as const) {
+      const session = new FakeSession();
+      const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+      handler.setPermissionMode(permissionMode);
+
+      await expect(
+        handler.handleToolCall(`provider-write-${permissionMode}`, 'writeTextFile', {
+          path: 'provider-owned-path',
+        }),
+      ).resolves.toEqual({ decision: 'approved' });
+    }
   });
 
   it('denies session title tool calls when coding prompt title updates are disabled', async () => {
@@ -167,20 +221,269 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
     });
   });
 
-  it('still prompts provider-enforced tool requests in bypassPermissions mode', async () => {
+  it('auto-approves provider permission requests in full-access modes without suppressing user actions', async () => {
     const session = new FakeSession();
     const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
 
+    const pendingBeforeModeChange = handler.handleToolCall('perm-before-mode-change', 'bash', { command: 'echo later' });
+    expect(session.agentState.requests['perm-before-mode-change']).toBeTruthy();
+
     handler.setPermissionMode('bypassPermissions');
 
-    const pending = handler.handleToolCall('perm-1', 'bash', { command: 'echo hello' });
+    await expect(pendingBeforeModeChange).resolves.toEqual({ decision: 'approved' });
+    expect(session.agentState.requests['perm-before-mode-change']).toBeFalsy();
+    expect(session.agentState.completedRequests['perm-before-mode-change']).toMatchObject({
+      tool: 'bash',
+      status: 'approved',
+      decision: 'approved',
+    });
 
-    expect(session.agentState.requests['perm-1']).toBeTruthy();
+    expect(handler.getImmediateDecision('perm-1', 'bash', { command: 'echo hello' })).toEqual({
+      decision: 'approved',
+    });
+    await expect(handler.handleToolCall('perm-1', 'bash', { command: 'echo hello' })).resolves.toEqual({
+      decision: 'approved',
+    });
+    expect(session.agentState.requests['perm-1']).toBeFalsy();
+    expect(session.agentState.completedRequests['perm-1']).toMatchObject({
+      tool: 'bash',
+      status: 'approved',
+      decision: 'approved',
+    });
+
+    handler.setPermissionMode('yolo');
+
+    expect(handler.getImmediateDecision('perm-2', 'TodoWrite', { todos: [] })).toEqual({ decision: 'approved' });
+    await expect(handler.handleToolCall('perm-2', 'TodoWrite', { todos: [] })).resolves.toEqual({
+      decision: 'approved',
+    });
+    expect(session.agentState.requests['perm-2']).toBeFalsy();
+
+    const pending = handler.handleToolCall('ask-1', 'AskUserQuestion', {
+      questions: [{ id: 'language', question: 'Which language?' }],
+    });
+
+    expect(session.agentState.requests['ask-1']).toBeTruthy();
     const respond = session.rpcHandlerManager.handlers.get('permission');
     expect(respond).toBeTruthy();
-    await respond?.({ id: 'perm-1', approved: true, decision: 'approved' });
-    await expect(pending).resolves.toEqual({ decision: 'approved' });
-    expect(session.agentState.requests['perm-1']).toBeFalsy();
+    await respond?.({
+      id: 'ask-1',
+      approved: true,
+      decision: 'approved',
+      answers: { language: 'TypeScript' },
+    });
+    await expect(pending).resolves.toEqual({
+      decision: 'approved',
+      answers: { language: 'TypeScript' },
+    });
+    expect(session.agentState.requests['ask-1']).toBeFalsy();
+  });
+
+  it('does not locally settle a pending provider-native request when switching to Read Only or Plan', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const pending = handler.handleToolCall('provider-pending', 'Edit', { path: 'provider-owned-path' });
+
+    handler.setPermissionMode('read-only');
+    expect(await settledState(pending)).toBe('pending');
+    handler.setPermissionMode('plan');
+    expect(await settledState(pending)).toBe('pending');
+
+    await session.rpcHandlerManager.handlers.get('permission')?.({
+      id: 'provider-pending',
+      approved: false,
+      decision: 'denied',
+    });
+    await expect(pending).resolves.toEqual({ decision: 'denied' });
+  });
+
+  it('cancels only pending requests owned by the deactivated plugin', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+
+    const pluginA = handler.handleToolCall('plugin-a-request', 'Bash', { command: 'echo a' }, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+    });
+    const pluginB = handler.handleToolCall('plugin-b-request', 'Bash', { command: 'echo b' }, {
+      owner: { kind: 'plugin', pluginId: 'plugin-b', runtimeId: 'runtime-b' },
+    });
+
+    handler.cancelByPlugin('plugin-a', 'plugin_deactivated');
+
+    await expect(pluginA).rejects.toThrow('plugin_deactivated');
+    expect(await settledState(pluginB)).toBe('pending');
+    expect(session.agentState.requests['plugin-a-request']).toBeFalsy();
+    expect(session.agentState.completedRequests['plugin-a-request']).toMatchObject({
+      status: 'canceled',
+      reason: 'plugin_deactivated',
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+    });
+    expect(session.agentState.requests['plugin-b-request']).toMatchObject({
+      tool: 'Bash',
+      owner: { kind: 'plugin', pluginId: 'plugin-b', runtimeId: 'runtime-b' },
+    });
+
+    const respond = session.rpcHandlerManager.handlers.get('permission');
+    await respond?.({ id: 'plugin-b-request', approved: false, decision: 'denied' });
+    await expect(pluginB).resolves.toEqual({ decision: 'denied' });
+  });
+
+  it('terminalizes a caller-aborted plugin request and rejects a later user-action answer as not found', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const abort = new AbortController();
+
+    const first = handler.handleToolCall('plugin-caller-aborted', 'AskUserQuestion', {
+      questions: [{ id: 'language', question: 'Language?' }],
+    }, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+      signal: abort.signal,
+    });
+    expect(session.agentState.requests['plugin-caller-aborted']).toBeTruthy();
+
+    abort.abort();
+    const racingAnswer = session.rpcHandlerManager.handlers.get('session.user_action.answer')?.({
+      id: 'plugin-caller-aborted',
+      approved: true,
+      decision: 'approved',
+      answers: { language: 'TypeScript' },
+    });
+
+    await expect(first).rejects.toThrow('Permission request aborted');
+    expect(session.agentState.requests['plugin-caller-aborted']).toBeFalsy();
+    expect(session.agentState.completedRequests['plugin-caller-aborted']).toMatchObject({
+      status: 'canceled',
+      decision: 'abort',
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+    });
+    await expect(racingAnswer).resolves.toEqual({
+      ok: false,
+      errorCode: 'permission_request_not_found',
+      requestId: 'plugin-caller-aborted',
+    });
+
+    const second = handler.handleToolCall('plugin-second-request', 'AskUserQuestion', {
+      questions: [{ id: 'language', question: 'Language?' }],
+    }, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+    });
+    await session.rpcHandlerManager.handlers.get('session.user_action.answer')?.({
+      id: 'plugin-second-request',
+      approved: true,
+      decision: 'approved',
+      answers: { language: 'Rust' },
+    });
+    await expect(second).resolves.toEqual({ decision: 'approved', answers: { language: 'Rust' } });
+    expect(Object.keys(session.agentState.completedRequests).sort()).toEqual([
+      'plugin-caller-aborted',
+      'plugin-second-request',
+    ]);
+  });
+
+  it('does not publish or auto-decide a request whose caller signal was already aborted', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const abort = new AbortController();
+    abort.abort();
+
+    await expect(handler.handleToolCall('plugin-pre-aborted', 'think', {}, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+      signal: abort.signal,
+    })).rejects.toThrow('Permission request aborted');
+    expect(session.agentState.requests).toEqual({});
+    expect(session.agentState.completedRequests).toEqual({});
+  });
+
+  it('projects a caller-owned source separately from tool input', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+
+    const pending = handler.handleToolCall('plugin-dialog-request', 'AskUserQuestion', {
+      happierDialog: { dialogId: 'trust_folder' },
+    }, {
+      owner: { kind: 'plugin', pluginId: 'happier.agent.claude', runtimeId: 'claude' },
+      source: 'claude_unified_terminal_dialog_choice',
+    });
+
+    expect(session.agentState.requests['plugin-dialog-request']).toMatchObject({
+      tool: 'AskUserQuestion',
+      source: 'claude_unified_terminal_dialog_choice',
+      owner: { kind: 'plugin', pluginId: 'happier.agent.claude', runtimeId: 'claude' },
+    });
+
+    await session.rpcHandlerManager.handlers.get('permission')?.({
+      id: 'plugin-dialog-request',
+      approved: false,
+      decision: 'denied',
+    });
+    await expect(pending).resolves.toEqual({ decision: 'denied' });
+  });
+
+  it('does not reuse plugin-owned approved-for-session decisions across plugin owners', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const input = { command: 'echo shared' };
+
+    const pluginA = handler.handleToolCall('plugin-a-request', 'Bash', input, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+    });
+    const respond = session.rpcHandlerManager.handlers.get('permission');
+    expect(respond).toBeTruthy();
+    await respond?.({ id: 'plugin-a-request', approved: true, decision: 'approved_for_session' });
+    await expect(pluginA).resolves.toEqual({ decision: 'approved_for_session' });
+
+    const pluginASiblingRuntime = handler.handleToolCall('plugin-a-sibling-runtime-request', 'Bash', input, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-b' },
+    });
+
+    expect(await settledState(pluginASiblingRuntime)).toBe('pending');
+    expect(session.agentState.requests['plugin-a-sibling-runtime-request']).toMatchObject({
+      tool: 'Bash',
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-b' },
+    });
+
+    await respond?.({ id: 'plugin-a-sibling-runtime-request', approved: false, decision: 'denied' });
+    await expect(pluginASiblingRuntime).resolves.toEqual({ decision: 'denied' });
+
+    const pluginB = handler.handleToolCall('plugin-b-request', 'Bash', input, {
+      owner: { kind: 'plugin', pluginId: 'plugin-b', runtimeId: 'runtime-b' },
+    });
+
+    expect(await settledState(pluginB)).toBe('pending');
+    expect(session.agentState.requests['plugin-b-request']).toMatchObject({
+      tool: 'Bash',
+      owner: { kind: 'plugin', pluginId: 'plugin-b', runtimeId: 'runtime-b' },
+    });
+
+    await respond?.({ id: 'plugin-b-request', approved: false, decision: 'denied' });
+    await expect(pluginB).resolves.toEqual({ decision: 'denied' });
+  });
+
+  it('does not let a rejected plugin duplicate mark an unowned request as plugin-owned', async () => {
+    const session = new FakeSession();
+    const handler = new ProviderEnforcedPermissionHandler(session as any, { logPrefix: '[Test]' });
+    const input = { command: 'echo shared' };
+
+    const unowned = handler.handleToolCall('shared-request-id', 'Bash', input);
+    await expect(handler.handleToolCall('shared-request-id', 'Bash', input, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+    })).rejects.toBeInstanceOf(Error);
+
+    const pluginOwned = handler.handleToolCall('plugin-owned-request', 'Bash', input, {
+      owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+    });
+    const respond = session.rpcHandlerManager.handlers.get('permission');
+    await respond?.({ id: 'plugin-owned-request', approved: true, decision: 'approved_for_session' });
+    await expect(pluginOwned).resolves.toEqual({ decision: 'approved_for_session' });
+
+    expect(await settledState(unowned)).toBe('pending');
+    expect(session.agentState.requests['shared-request-id']).toMatchObject({
+      tool: 'Bash',
+    });
+    expect(session.agentState.requests['shared-request-id']?.owner).toBeUndefined();
+
+    await respond?.({ id: 'shared-request-id', approved: false, decision: 'denied' });
+    await expect(unowned).resolves.toEqual({ decision: 'denied' });
   });
 
   it('records permission-request tool trace events when enabled', async () => {
@@ -219,6 +522,72 @@ describe('ProviderEnforcedPermissionHandler always-auto-approve matching', () =>
       const respond = session.rpcHandlerManager.handlers.get('permission');
       expect(respond).toBeTruthy();
       await respond?.({ id: 'perm-1', approved: false, decision: 'denied' });
+      await expect(pending).resolves.toEqual({ decision: 'denied' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('redacts source-owned terminal dialog prompts and options from tool traces', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happy-tool-trace-source-dialog-'));
+    try {
+      const filePath = join(dir, 'tool-trace.jsonl');
+      process.env.HAPPIER_STACK_TOOL_TRACE = '1';
+      process.env.HAPPIER_STACK_TOOL_TRACE_FILE = filePath;
+
+      const session = new FakeSession();
+      const handler = new ProviderEnforcedPermissionHandler(session as any, {
+        logPrefix: '[Test]',
+        toolTrace: { protocol: 'claude', provider: 'claude' },
+      });
+      const pending = handler.handleToolCall('dialog-1', 'AskUserQuestion', {
+        happierDialog: {
+          kind: 'unrecognized',
+          mode: 'generic',
+          dialogId: 'unrecognized_confirmation',
+        },
+        questions: [{
+          question: 'private prompt text must not reach the trace',
+          options: [
+            { label: 'private option one', description: 'sensitive description one' },
+            { label: 'private option two', description: 'sensitive description two' },
+          ],
+        }],
+      }, {
+        source: CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE,
+        owner: { kind: 'plugin', pluginId: 'happier.agent.claude', runtimeId: 'claude' },
+      });
+
+      const raw = readFileSync(filePath, 'utf8');
+      expect(raw).not.toContain('private prompt text');
+      expect(raw).not.toContain('private option');
+      expect(raw).not.toContain('sensitive description');
+      expect(JSON.parse(raw.trim())).toMatchObject({
+        kind: 'permission-request',
+        payload: {
+          type: 'permission-request',
+          permissionId: 'dialog-1',
+          toolName: 'AskUserQuestion',
+          options: {
+            input: {
+              redacted: true,
+              dialog: {
+                kind: 'unrecognized',
+                mode: 'generic',
+                dialogId: 'unrecognized_confirmation',
+              },
+              questionCount: 1,
+              optionCount: 2,
+            },
+          },
+        },
+      });
+
+      await session.rpcHandlerManager.handlers.get('permission')?.({
+        id: 'dialog-1',
+        approved: false,
+        decision: 'denied',
+      });
       await expect(pending).resolves.toEqual({ decision: 'denied' });
     } finally {
       rmSync(dir, { recursive: true, force: true });

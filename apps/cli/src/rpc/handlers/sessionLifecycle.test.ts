@@ -28,8 +28,10 @@ function readExpectedDefaultSessionId(input: unknown): string | undefined {
 
 const SESSION_LIFECYCLE_RPC_CASES = [
     [RPC_METHODS.SPAWN_HAPPY_SESSION, 'session.spawn_new', { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } }],
+    [RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE, 'session.spawn_new', { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } }],
     [RPC_METHODS.STOP_SESSION, 'session.stop', { sessionId: 'session-1' }],
     [RPC_METHODS.SESSION_FORK, 'session.fork', { parentSessionId: 'session-1', forkPoint: { type: 'latest' } }],
+    [RPC_METHODS.SESSION_FORK_PROVIDER_SAFE, 'session.fork', { parentSessionId: 'session-1', forkPoint: { type: 'latest' } }],
     [RPC_METHODS.SESSION_CONTINUE_WITH_REPLAY, 'session.continue_with_replay', { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, replay: { seedDraft: 'continue' } }],
     [SESSION_RPC_METHODS.SESSION_ROLLBACK, 'session.rollback', { sessionId: 'session-1', targetMessageId: 'message-1' }],
     [SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK, 'session.checkpoint_code_rollback', {
@@ -62,6 +64,7 @@ const SESSION_LIFECYCLE_RPC_CASES = [
     }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_START, 'session.handoff', { sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2', preferredTransportStrategies: ['server_routed_stream'] }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET, 'session.handoff.prepare_target', { handoffId: 'handoff-1', sessionId: 'session-1', sourceMachineId: 'machine-1', targetMachineId: 'machine-2' }],
+    [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME, 'session.handoff.prepare_target.resume', { handoffId: 'handoff-1', jobId: 'prepare_handoff-1', expectedRevision: 2, attemptId: 'attempt-1' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESULT_GET, 'session.handoff.prepare_target_result.get', { handoffId: 'handoff-1' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_COMMIT, 'session.handoff.commit', { handoffId: 'handoff-1' }],
     [RPC_METHODS.DAEMON_SESSION_HANDOFF_ABORT, 'session.handoff.abort', { handoffId: 'handoff-1' }],

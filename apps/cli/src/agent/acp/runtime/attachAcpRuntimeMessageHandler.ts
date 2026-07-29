@@ -89,27 +89,31 @@ async function readRuntimeAuthStatusError(params: Readonly<{
     error: params.detail,
   });
   if (!classification) return params.detail;
-  let runtimeAuthRecoveryResult: unknown;
-  try {
-    runtimeAuthRecoveryResult = await params.hooks?.onRuntimeAuthFailure?.({
-      provider: params.provider,
-      happierSessionId: params.happierSessionId,
-      activeSessionId: params.activeSessionId,
-      classification,
-    });
-  } catch (error) {
-    logger.debug(`[${params.provider}] Runtime auth failure hook failed (non-fatal)`, error);
-  }
+  // The provider status already terminalized this exact turn. Connected Services recovery is a
+  // separate account operation and must not delay the canonical turn-failure publication that
+  // Pending/continuation consume.
+  void (async () => {
+    try {
+      await params.hooks?.onRuntimeAuthFailure?.({
+        provider: params.provider,
+        happierSessionId: params.happierSessionId,
+        activeSessionId: params.activeSessionId,
+        classification,
+      });
+    } catch (error) {
+      logger.debug(`[${params.provider}] Runtime auth failure hook failed (non-fatal)`, error);
+    }
+  })();
   return {
     originalError: params.detail,
     runtimeAuthClassification: classification,
-    ...(runtimeAuthRecoveryResult === undefined ? {} : { runtimeAuthRecoveryResult }),
   };
 }
 
 export function attachAcpRuntimeMessageHandler(params: Readonly<{
   backend: Pick<AcpRuntimeBackend, 'onMessage'>;
   provider: string;
+  transcriptProvider: string;
   happierSessionId: string | null;
   directory: string;
   session: AcpRuntimeSessionClient;
@@ -129,8 +133,8 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
 }>): void {
   const seenSessionMediaKeys = new Set<string>();
   const forwarder = createAcpAgentMessageForwarder({
-    sendAcp: (provider, body) => params.session.sendAgentMessage(provider, body),
-    provider: params.provider,
+    sendAcp: (provider, body, opts) => params.session.sendAgentMessage(provider, body, opts),
+    provider: params.transcriptProvider,
     makeId: () => randomUUID(),
   });
 
@@ -152,8 +156,8 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
             detail: msg.detail,
           });
           await surfacePrimarySessionRuntimeIssue({
-            provider: params.provider,
-            providerTurnId: params.state.currentTurnId,
+            provider: params.transcriptProvider,
+            agentTurnId: params.state.currentTurnId,
             sessionTurnId: params.state.currentRuntimeTurnId,
             cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
             error,
@@ -212,7 +216,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
           if (params.state.turnInFlight) {
             handleAcpStatusRunning({
               session: params.session,
-              agent: params.provider,
+              agent: params.transcriptProvider,
               getTaskStartedSent: () => params.state.taskStartedSent,
               setTaskStartedSent: (value) => {
                 params.state.taskStartedSent = value;
@@ -248,8 +252,8 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
               detail: msg.detail,
             });
             await surfacePrimarySessionRuntimeIssue({
-              provider: params.provider,
-              providerTurnId: params.state.currentTurnId,
+              provider: params.transcriptProvider,
+              agentTurnId: params.state.currentTurnId,
               sessionTurnId: params.state.currentRuntimeTurnId,
               cause: isAbortLikeError(typeof msg.detail === 'string' ? msg.detail : '') ? 'cancelled' : 'status_error',
               error,
@@ -288,6 +292,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
         params.state.hadTurnActivity = true;
         handleAcpRuntimeToolResultMessage({
           provider: params.provider,
+          transcriptProvider: params.transcriptProvider,
           directory: params.directory,
           session: params.session,
           messageBuffer: params.messageBuffer,
@@ -353,7 +358,7 @@ export function attachAcpRuntimeMessageHandler(params: Readonly<{
           params.state.hadTurnActivity = true;
         }
         handleAcpRuntimeEventMessage({
-          provider: params.provider,
+          provider: params.transcriptProvider,
           session: params.session,
           seenSessionMediaKeys,
           streamedTranscriptWriter: params.streamedTranscriptWriter,

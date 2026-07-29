@@ -211,6 +211,11 @@ function resolveUpdatePackageName(): string {
   });
 }
 
+function shouldSkipInstallPayloadMigration(processEnv: NodeJS.ProcessEnv): boolean {
+  const raw = String(processEnv.HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
+}
+
 async function runSelfUpdateStep<T>(
   steps: ReturnType<typeof createStepPrinter>,
   label: string,
@@ -446,11 +451,12 @@ async function cmdInternalInstallPayload(argv: string[], rawArgv: readonly strin
     componentId,
     channel,
     payloadRoot,
+    payloadRootAlreadyFiltered: true,
     processEnv: process.env,
     versionId,
   });
 
-  if (componentId === 'happier-cli') {
+  if (componentId === 'happier-cli' && !shouldSkipInstallPayloadMigration(process.env)) {
     const installedPaths = resolveInstalledFirstPartyComponentPaths({
       componentId: 'happier-cli',
       channel,

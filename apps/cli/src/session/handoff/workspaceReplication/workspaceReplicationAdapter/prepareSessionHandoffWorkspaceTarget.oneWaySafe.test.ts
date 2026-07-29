@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import { fingerprintWorkspaceManifest } from '@/scm/workspace/workspaceExportPackaging/fingerprintWorkspaceManifest';
 import { createWorkspaceReplicationBaselineStore } from '@/workspaces/replication/baseline/workspaceReplicationBaselineStore';
 import { createWorkspaceReplicationCasStore } from '@/workspaces/replication/cas/workspaceReplicationCasStore';
@@ -15,6 +16,8 @@ import { createWorkspaceReplicationJobStore } from '@/workspaces/replication/job
 import { createSessionHandoffWorkspaceReplicationMetadata } from './metadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './adapter';
+
+const scmRegistry = createScmBackendRegistry([]);
 
 function makeManifest(entries: WorkspaceManifest['entries']): WorkspaceManifest {
   const fingerprint = fingerprintWorkspaceManifest({ entries });
@@ -99,6 +102,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         targetPath: targetWorkspaceRoot,
+        scmRegistry,
         workspaceTransfer: {
           enabled: true,
           strategy: 'sync_changes',
@@ -204,6 +208,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         targetPath: targetWorkspaceRoot,
+        scmRegistry,
         workspaceTransfer: {
           enabled: true,
           strategy: 'sync_changes',
@@ -315,6 +320,7 @@ describe('prepareSessionHandoffWorkspaceTarget (one_way_safe baseline enforcemen
           sourceMachineId: 'machine_source',
           targetMachineId: 'machine_target',
           targetPath: targetWorkspaceRoot,
+          scmRegistry,
           workspaceTransfer: {
             enabled: true,
             strategy: 'sync_changes',

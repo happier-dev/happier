@@ -135,33 +135,6 @@ describe('ApiSessionClient message commit queue', () => {
     vi.clearAllMocks();
   });
 
-  it('records committed user message seqs by local id from socket acks', async () => {
-    vi.resetModules();
-    sessionSocketStub = createApiSessionSocketStub({
-      connected: true,
-      emitWithAckResult: {
-        ok: true,
-        id: 'msg-1',
-        seq: 42,
-        localId: 'user-local-1',
-      },
-    });
-    userSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
-
-    const { ApiSessionClient } = await import('./sessionClient');
-
-    const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' })));
-
-    const waitingSeq = (client as any).waitForCommittedUserMessageSeq('user-local-1', {
-      timeoutMs: 250,
-      pollMs: 5,
-    });
-    await client.sendUserTextMessageCommitted('hello', { localId: 'user-local-1' });
-
-    expect((client as any).getCommittedUserMessageSeq('user-local-1')).toBe(42);
-    await expect(waitingSeq).resolves.toBe(42);
-  });
-
   it('records committed user message seqs by local id from transcript echoes', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAckResult: { ok: true } });
@@ -384,7 +357,7 @@ describe('ApiSessionClient message commit queue', () => {
       const client = trackClient(new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' })));
       await flushMicrotasks();
 
-      await client.enqueueSessionTurnMutation({
+      const enqueuePromise = client.enqueueSessionTurnMutation({
         v: 1,
         sessionId: 's1',
         mutationId: 'mutation-complete',
@@ -395,27 +368,31 @@ describe('ApiSessionClient message commit queue', () => {
         observedAt: 123,
       });
 
+      await vi.waitFor(() => {
+        expect(sessionTurnMutationPayload).not.toBeNull();
+      }, { timeout: 5_000 });
+
       let didFlush = false;
       const flushPromise = client.flush().then(() => {
         didFlush = true;
       });
 
-      await flushMicrotasks();
       expect(sessionTurnMutationPayload).toEqual(expect.objectContaining({
         v: 1,
         sessionId: 's1',
         mutationId: 'mutation-complete',
         action: 'complete',
         turnId: 'turn-1',
-        provider: 'codex',
+        agentId: 'codex',
         agentTurnId: 'turn-1',
       }));
       expect(didFlush).toBe(false);
 
       mutationAck.resolve({ ok: true });
-      await flushPromise;
+      await Promise.all([enqueuePromise, flushPromise]);
       expect(didFlush).toBe(true);
     } finally {
+      mutationAck.resolve({ ok: true });
       if (originalSocketAckTimeoutMs === undefined) {
         delete process.env.HAPPIER_SESSION_SOCKET_ACK_TIMEOUT_MS;
       } else {

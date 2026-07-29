@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 
-import { sanitizeServerIdForFilesystem } from '@/server/serverId';
+import { deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 
 type PersistedServerProfile = Readonly<{
@@ -66,17 +66,6 @@ export function readActiveServerFromSettingsFile(path: string): PersistedServerS
   }
 }
 
-function deriveServerIdFromUrl(url: string): string {
-  const comparableKey = safeCreateComparableServerUrlKey(url);
-  const value = comparableKey || url;
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `env_${(hash >>> 0).toString(16)}`;
-}
-
 function normalizeServerUrl(url: string): string {
   return String(url ?? '').trim().replace(/\/+$/, '');
 }
@@ -109,9 +98,36 @@ export function resolveServerSelection(params: Readonly<{
     const out = normalizeServerUrl(value ?? '');
     return out ? out : null;
   };
+  const matchesUrl = (server: Readonly<{ serverUrl: string; localServerUrl?: string | null }>, url: string): boolean => {
+    const targetComparableKey = safeCreateComparableServerUrlKey(url);
+    const serverComparableKey = safeCreateComparableServerUrlKey(server.serverUrl);
+    if (targetComparableKey && serverComparableKey && targetComparableKey === serverComparableKey) return true;
+    if (normalizeServerUrl(server.serverUrl) === url) return true;
+    const local = normalizeServerUrl(server.localServerUrl ?? '');
+    if (local && local === url) return true;
+    const localComparableKey = safeCreateComparableServerUrlKey(server.localServerUrl ?? '');
+    return Boolean(targetComparableKey && localComparableKey && targetComparableKey === localComparableKey);
+  };
 
   const envCanonicalServerUrl = normalizeUrl(params.envPublicServerUrl) ?? normalizeUrl(params.envServerUrl);
   if (envCanonicalServerUrl) {
+    const explicitActiveServerId = params.envActiveServerId
+      ? sanitizeServerIdForFilesystem(params.envActiveServerId, '')
+      : '';
+    const explicitActivePersisted = explicitActiveServerId && params.persisted
+      ? params.persisted.servers[explicitActiveServerId] ?? null
+      : null;
+    if (explicitActivePersisted && !matchesUrl(explicitActivePersisted, envCanonicalServerUrl)) {
+      const canonical = normalizeServerUrl(explicitActivePersisted.serverUrl);
+      const apiServerUrl = normalizeServerUrl(explicitActivePersisted.localServerUrl ?? '') || canonical;
+      return {
+        activeServerId: resolveActiveServerId(explicitActivePersisted.id),
+        serverUrl: canonical,
+        apiServerUrl,
+        webappUrl: explicitActivePersisted.webappUrl,
+      };
+    }
+
     const envPublicServerUrl = normalizeUrl(params.envPublicServerUrl);
     const envLocalServerUrl = normalizeUrl(params.envLocalServerUrl);
     const ignoreStaleLocalOverride =
@@ -134,18 +150,6 @@ export function resolveServerSelection(params: Readonly<{
             }
           };
 
-          const matchesUrl = (server: Readonly<{ serverUrl: string; localServerUrl?: string | null }>, url: string): boolean => {
-            const targetComparableKey = safeCreateComparableServerUrlKey(url);
-            const serverComparableKey = safeCreateComparableServerUrlKey(server.serverUrl);
-            if (targetComparableKey && serverComparableKey && targetComparableKey === serverComparableKey) return true;
-            if (normalizeServerUrl(server.serverUrl) === url) return true;
-            const local = normalizeServerUrl(server.localServerUrl ?? '');
-            if (local && local === url) return true;
-            const localComparableKey = safeCreateComparableServerUrlKey(server.localServerUrl ?? '');
-            return Boolean(targetComparableKey && localComparableKey && targetComparableKey === localComparableKey);
-          };
-
-          const explicitActiveServerId = sanitizeServerIdForFilesystem(params.envActiveServerId ?? '', '');
           const explicitActive = explicitActiveServerId ? params.persisted.servers[explicitActiveServerId] ?? null : null;
           if (
             explicitActive

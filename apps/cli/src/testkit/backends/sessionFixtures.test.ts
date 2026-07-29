@@ -107,6 +107,7 @@ describe('session fixtures', () => {
     it('creates mutable api session clients with canonical metadata lifecycle helpers', async () => {
         const mod = await import('./sessionFixtures');
         const session = mod.createMutableApiSessionClientFixture({
+            sessionId: 'session-port-1',
             metadataPermissionMode: 'read-only',
         });
 
@@ -129,6 +130,24 @@ describe('session fixtures', () => {
         const replacement = createTestMetadata({ permissionMode: 'acceptEdits' });
         session.__setMetadata(replacement);
         expect(session.getMetadataSnapshot?.()).toEqual(replacement);
+
+        let metadataUpdated = 0;
+        const onMetadataUpdated = () => { metadataUpdated += 1; };
+        session.on('metadata-updated', onMetadataUpdated);
+        session.updateMetadata((current) => current);
+        expect(metadataUpdated).toBe(1);
+        session.off('metadata-updated', onMetadataUpdated);
+        session.updateMetadata((current) => current);
+        expect(metadataUpdated).toBe(1);
+
+        session.rpcHandlerManager.registerHandler('test.echo', async (input) => ({ input }));
+        await expect(session.rpcHandlerManager.invokeLocal('test.echo', { value: 1 })).resolves.toEqual({
+            input: { value: 1 },
+        });
+
+        await session.updateAgentState((current) => ({ ...current, ready: true }));
+        expect(session.__getAgentState()).toEqual({ ready: true });
+        expect(session.sessionId).toBe('session-port-1');
     });
 
     it('creates basic session clients with selective overrides', async () => {

@@ -1,7 +1,11 @@
-import { SessionSynopsisV1Schema } from '@happier-dev/protocol';
+import {
+  SessionSynopsisV1Schema,
+  isAgentThreadTextConversationTurnMeta,
+} from '@happier-dev/protocol';
 
 import { decodeBase64, decrypt } from '@/api/encryption';
 import { collectReferencedSessionMediaWorkspacePaths } from '@/session/media/referencedPaths';
+import { decodeTranscriptBody } from '@/session/services/transcript/transcriptBodyDecoder';
 
 import type { HappierReplayDialogItem } from './types';
 
@@ -29,12 +33,6 @@ function tryReadSessionSynopsisText(meta: unknown): { synopsis: string; updatedA
   return { synopsis: parsed.data.synopsis, updatedAtMs: parsed.data.updatedAtMs, seqTo: parsed.data.seqTo };
 }
 
-function normalizeText(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 function normalizePositiveInt(value: unknown, fallback: number, opts?: { min?: number; max?: number }): number {
   const raw = typeof value === 'number' && Number.isFinite(value) ? value : Number(value);
   const n = Number.isFinite(raw) ? Math.floor(raw) : fallback;
@@ -53,209 +51,6 @@ function truncateText(text: string, maxChars: number): string {
     return text.slice(0, normalizedMax);
   }
   return text.slice(0, normalizedMax - suffix.length) + suffix;
-}
-
-function normalizeInlineText(value: unknown): string | null {
-  const text = normalizeText(value);
-  if (!text) return null;
-  // Keep replay lines compact and stable across renderers.
-  return text.replace(/\s+/g, ' ').trim();
-}
-
-function safeInlineJson(value: unknown, maxChars: number): string | null {
-  try {
-    const raw = JSON.stringify(value);
-    const normalized = normalizeInlineText(raw);
-    if (!normalized) return null;
-    return normalized.length > maxChars ? normalized.slice(0, maxChars) + '…' : normalized;
-  } catch {
-    return null;
-  }
-}
-
-function extractToolResultText(value: unknown): string | null {
-  if (typeof value === 'string') {
-    return normalizeText(value);
-  }
-  if (!Array.isArray(value)) return null;
-  const parts: string[] = [];
-  for (const part of value) {
-    if (typeof part === 'string') {
-      const text = normalizeText(part);
-      if (text) parts.push(text);
-      continue;
-    }
-    if (!part || typeof part !== 'object') continue;
-    if ((part as any).type === 'text') {
-      const text = normalizeText((part as any).text);
-      if (text) parts.push(text);
-    }
-  }
-  const joined = parts.join('\n').trim();
-  return joined.length > 0 ? joined : null;
-}
-
-function extractAcpLikeToolCallDetail(rawInput: unknown): string | null {
-  if (!rawInput || typeof rawInput !== 'object' || Array.isArray(rawInput)) {
-    return safeInlineJson(rawInput, 200);
-  }
-
-  const rec = rawInput as Record<string, unknown>;
-  const command = typeof rec.command === 'string' ? normalizeInlineText(rec.command) : null;
-  const cmd = typeof rec.cmd === 'string' ? normalizeInlineText(rec.cmd) : null;
-  const description = typeof rec.description === 'string' ? normalizeInlineText(rec.description) : null;
-  const resolvedCommand = command ?? cmd;
-
-  if (description && resolvedCommand) return `${description} — ${resolvedCommand}`;
-  return description ?? resolvedCommand ?? safeInlineJson(rawInput, 200);
-}
-
-function extractAssistantTextFromAcpData(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const type = (value as any).type;
-
-  if (type === 'message') {
-    return normalizeText((value as any).message);
-  }
-  if (type === 'reasoning') {
-    return null;
-  }
-  if (type === 'thinking') {
-    return null;
-  }
-  if (type === 'tool-call') {
-    const name = normalizeText((value as any).name) ?? '';
-    const detail = extractAcpLikeToolCallDetail((value as any).input);
-    if (!name && !detail) return null;
-    return detail ? `Tool use (${name || 'Unknown'}): ${detail}` : `Tool use (${name || 'Unknown'})`;
-  }
-  if (type === 'tool-result') {
-    const out = (value as any).output;
-    const isError = (value as any).isError === true;
-    const outText =
-      typeof out === 'string'
-        ? normalizeInlineText(out)
-        : safeInlineJson(out, 400) ?? (out == null ? null : normalizeInlineText(String(out)));
-    if (!outText) return null;
-    return isError ? `Tool result (error): ${outText}` : `Tool result: ${outText}`;
-  }
-  if (type === 'file-edit') {
-    const description = normalizeText((value as any).description);
-    const filePath = normalizeText((value as any).filePath);
-    if (!description && !filePath) return null;
-    if (description && filePath) return `File edit: ${description} — ${filePath}`;
-    return `File edit: ${description ?? filePath}`;
-  }
-  if (type === 'terminal-output') {
-    const data = normalizeText((value as any).data);
-    if (!data) return null;
-    const normalized = normalizeInlineText(data) ?? data;
-    return `Terminal output: ${normalized}`;
-  }
-
-  return null;
-}
-
-function extractAssistantTextFromCodexData(value: unknown): string | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const type = (value as any).type;
-
-  if (type === 'message') {
-    return normalizeText((value as any).message);
-  }
-  if (type === 'reasoning') {
-    return null;
-  }
-  if (type === 'thinking') {
-    return null;
-  }
-  if (type === 'tool-call') {
-    const name = normalizeText((value as any).name) ?? '';
-    const detail = extractAcpLikeToolCallDetail((value as any).input);
-    if (!name && !detail) return null;
-    return detail ? `Tool use (${name || 'Unknown'}): ${detail}` : `Tool use (${name || 'Unknown'})`;
-  }
-  if (type === 'tool-call-result') {
-    const out = (value as any).output;
-    const outText =
-      typeof out === 'string'
-        ? normalizeInlineText(out)
-        : safeInlineJson(out, 400) ?? (out == null ? null : normalizeInlineText(String(out)));
-    if (!outText) return null;
-    return `Tool result: ${outText}`;
-  }
-
-  return null;
-}
-
-function extractAssistantTextFromClaudeOutputEnvelope(value: unknown): string | null {
-  if (!value || typeof value !== 'object') return null;
-  const type = (value as any).type;
-  if (type !== 'assistant') return null;
-  const message = (value as any).message;
-  if (!message || typeof message !== 'object') return null;
-  const role = (message as any).role;
-
-  const content = (message as any).content;
-  if (typeof content === 'string') {
-    return normalizeText(content);
-  }
-  if (!Array.isArray(content)) return null;
-
-  const parts: string[] = [];
-  for (const part of content) {
-    if (typeof part === 'string') {
-      const text = normalizeText(part);
-      if (text) parts.push(text);
-      continue;
-    }
-    if (!part || typeof part !== 'object') continue;
-    if ((part as any).type === 'text') {
-      const text = normalizeText((part as any).text);
-      if (text) parts.push(text);
-    }
-  }
-  const joined = parts.join('\n').trim();
-  if (joined.length > 0) return joined;
-
-  // Claude (and Claude Code) frequently emits tool_use / tool_result turns without any
-  // adjacent natural language. For replay forks, those tool interactions carry critical
-  // context, so include a compact text summary.
-  if (role === 'assistant') {
-    const toolLines: string[] = [];
-    for (const part of content) {
-      if (!part || typeof part !== 'object') continue;
-      if ((part as any).type !== 'tool_use') continue;
-      const name = typeof (part as any).name === 'string' ? String((part as any).name).trim() : '';
-      if (!name) continue;
-      const input = (part as any).input;
-      const command = typeof input?.command === 'string' ? normalizeInlineText(input.command) : null;
-      const description = typeof input?.description === 'string' ? normalizeInlineText(input.description) : null;
-      const detail =
-        description && command
-          ? `${description} — ${command}`
-          : description ?? command ?? safeInlineJson(input, 200) ?? '';
-      toolLines.push(detail ? `Tool use (${name}): ${detail}` : `Tool use (${name})`);
-    }
-    const toolsJoined = toolLines.join('\n').trim();
-    return toolsJoined.length > 0 ? toolsJoined : null;
-  }
-
-  if (role === 'user') {
-    const resultLines: string[] = [];
-    for (const part of content) {
-      if (!part || typeof part !== 'object') continue;
-      if ((part as any).type !== 'tool_result') continue;
-      const resultText = extractToolResultText((part as any).content);
-      if (!resultText) continue;
-      const normalized = normalizeInlineText(resultText) ?? resultText.trim();
-      resultLines.push(`Tool result: ${normalized}`);
-    }
-    const resultsJoined = resultLines.join('\n').trim();
-    return resultsJoined.length > 0 ? resultsJoined : null;
-  }
-
-  return null;
 }
 
 export function decryptTranscriptReplayCore(params: Readonly<{
@@ -308,77 +103,37 @@ export function decryptTranscriptReplayCore(params: Readonly<{
         continue;
       }
 
-      const role = decryptedValue.role;
-      const body = decryptedValue.content;
+      if (!isAgentThreadTextConversationTurnMeta(decryptedValue.meta)) continue;
 
-      if (role === 'user') {
-        if (body?.type !== 'text') continue;
-        const text = normalizeText(body?.text);
-        if (!text) continue;
-        out.push({
-          role: 'User',
-          createdAt,
-          seq,
-          text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
-        });
-        continue;
-      }
-
-      if (role === 'agent') {
+      if (decryptedValue.role === 'agent') {
         // Skip explicit thinking transcripts when they are surfaced as agent messages.
         if (decryptedValue?.meta?.isThinking === true) continue;
         // Skip daemon-generated memory artifacts (summary shards / synopsis).
         if (isMemoryArtifactMeta(decryptedValue?.meta)) continue;
+      }
 
-        if (body?.type === 'output') {
-          const text = extractAssistantTextFromClaudeOutputEnvelope(body?.data);
-          if (!text) continue;
-          out.push({
-            role: 'Assistant',
-            createdAt,
-            seq,
-            text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
-          });
-          continue;
-        }
+      const decoded = decodeTranscriptBody(decryptedValue);
+      if (!decoded) continue;
+      if (decoded.semanticRole === 'user') {
+        if (!decoded.text) continue;
+        out.push({
+          role: 'User',
+          createdAt,
+          seq,
+          text: typeof maxTextChars === 'number' ? truncateText(decoded.text, maxTextChars) : decoded.text,
+        });
+        continue;
+      }
 
-        if (body?.type === 'text') {
-          const text = normalizeText(body?.text);
-          if (!text) continue;
-          out.push({
-            role: 'Assistant',
-            createdAt,
-            seq,
-            text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
-          });
-          continue;
-        }
-
-        if (body?.type === 'acp') {
-          const data = body?.data;
-          const text = extractAssistantTextFromAcpData(data);
-          if (!text) continue;
-          out.push({
-            role: 'Assistant',
-            createdAt,
-            seq,
-            text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
-          });
-          continue;
-        }
-
-        if (body?.type === 'codex') {
-          const data = body?.data;
-          const text = extractAssistantTextFromCodexData(data);
-          if (!text) continue;
-          out.push({
-            role: 'Assistant',
-            createdAt,
-            seq,
-            text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
-          });
-          continue;
-        }
+      if (decryptedValue.role === 'agent' && (decoded.semanticRole === 'assistant' || decoded.semanticRole === 'tool')) {
+        const text = decoded.text ?? decoded.summary;
+        if (!text) continue;
+        out.push({
+          role: 'Assistant',
+          createdAt,
+          seq,
+          text: typeof maxTextChars === 'number' ? truncateText(text, maxTextChars) : text,
+        });
       }
     } catch {
       // Tolerate corrupted transcript rows or unexpected shapes; skip the row.

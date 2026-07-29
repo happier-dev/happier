@@ -1,9 +1,20 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
+import {
+  PI_AGENT_RUNTIME_CONTRIBUTION,
+  PI_AUTH_ENV_KEYS_TO_NEUTRALIZE,
+} from '@happier-dev/plugins-pi/agent/contributions/runtime';
+
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
+import { buildTrackedSessionRespawnEnvironmentVariables } from '../processSupervision/sessionRunnerRespawnDescriptor';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from '@/agent/runtime/sessionConnectedServicesBindingsEnv';
+import { serializeConnectedServiceMaterializedEnvKeys } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 
 describe('resolveSpawnChildEnvironment (connected services)', () => {
   it('injects connected service materialization env when provided', async () => {
@@ -30,6 +41,71 @@ describe('resolveSpawnChildEnvironment (connected services)', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.expandedEnvironmentVariables.XDG_DATA_HOME).toBe('/tmp/xdg');
+    }
+  });
+
+  it('lets Pi materialization empty overlays replace inherited and tracked legacy broker env', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-pi-retired-broker-env-'));
+    const legacyEnv = Object.fromEntries(
+      PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [key, `legacy-${key}`]),
+    );
+    const materializeAuthEnvironment =
+      PI_AGENT_RUNTIME_CONTRIBUTION.connectedServices.materializeAuthEnvironment;
+
+    try {
+      const materialized = await materializeAuthEnvironment({
+        rootDir,
+        processEnv: legacyEnv,
+      });
+      expect(JSON.parse(
+        serializeConnectedServiceMaterializedEnvKeys(materialized.env) ?? '[]',
+      )).toEqual(expect.arrayContaining([...PI_AUTH_ENV_KEYS_TO_NEUTRALIZE]));
+
+      const result = await resolveSpawnChildEnvironment({
+        options: {
+          directory: '.',
+          environmentVariables: legacyEnv,
+        },
+        profileEnvironmentVariables: legacyEnv,
+        daemonSpawnHooks: null,
+        processEnv: legacyEnv,
+        logDebug: () => {},
+        logInfo: () => {},
+        logWarn: () => {},
+        connectedServiceAuth: {
+          env: { ...materialized.env },
+          cleanupOnFailure: null,
+          cleanupOnExit: null,
+        },
+      });
+
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(Object.fromEntries(
+        PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [
+          key,
+          result.expandedEnvironmentVariables[key],
+        ]),
+      )).toEqual(Object.fromEntries(
+        PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [key, '']),
+      ));
+      expect(Object.fromEntries(
+        PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [
+          key,
+          result.extraEnvForChild[key],
+        ]),
+      )).toEqual(Object.fromEntries(
+        PI_AUTH_ENV_KEYS_TO_NEUTRALIZE.map((key) => [key, '']),
+      ));
+      const trackedRespawnEnv = buildTrackedSessionRespawnEnvironmentVariables({
+        expandedEnvironmentVariables: result.expandedEnvironmentVariables,
+        extraEnvForChild: result.extraEnvForChild,
+      });
+      for (const key of PI_AUTH_ENV_KEYS_TO_NEUTRALIZE) {
+        expect(trackedRespawnEnv).not.toHaveProperty(key);
+      }
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
     }
   });
 

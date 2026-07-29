@@ -2,15 +2,19 @@ import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/Sessi
 import { isAcpForkEligibleForAgent } from '@/agent/acp/acpForkEligibility';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { readCredentials } from '@/persistence';
-import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 import { resolveForkCutoffSeqInclusive } from '@/session/fork/resolveForkCutoffSeqInclusive';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
 import { createStableSpawnNonce } from '@/session/shared/spawnNonce';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { SessionForkRpcParamsSchema } from '@happier-dev/protocol';
+import { evaluateAgentSessionCapabilitySupport } from '@happier-dev/agents';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 import { attemptAcpLatestFork } from './fork/attemptAcpLatestFork';
+import { attemptNativeForkOpen } from './fork/attemptNativeForkOpen';
 import { attemptProviderNativeFork } from './fork/attemptProviderNativeFork';
 import { createReplayForkSession } from './fork/createReplayForkSession';
 import type { ForkLifecycleResult } from './fork/forkLifecycleTypes';
@@ -83,7 +87,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             };
         }
 
-        const parentMetadata = tryDecryptSessionMetadata({
+        const parentMetadata = tryDecryptSessionOwnerMetadataView({
             credentials,
             rawSession: parentSession,
         });
@@ -120,10 +124,39 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
 
         const forkIsConfiguredAcp = forkBackendResolution.configuredAcp !== null;
         const forkAgentId = forkBackendResolution.catalogAgentId;
+        const nativeForkOpenDeclared = forkAgentId !== null
+            && readAgentSessionCapabilities(
+                getResolvedContributionRegistry().agentDefinitionsById
+                    .get(forkAgentId)
+                    ?.richDefinition
+                    ?.definition,
+            )?.open.includes('fork') === true;
+        const nativeForkCapabilitySupported = forkAgentId !== null
+            && evaluateAgentSessionCapabilitySupport({
+                agentId: forkAgentId,
+                capability: forkPoint.type === 'seq'
+                    ? 'sessionFork.fromMessage'
+                    : 'sessionFork.conversation',
+                metadata: parentMetadata,
+            }) === 'supported';
+        const nativeForkOpenSupported =
+            nativeForkOpenDeclared && nativeForkCapabilitySupported;
         const inheritedForkOverrides = resolveForkInheritedOverridesFromMetadata(
             parentMetadata,
             forkBackendResolution.backendTargetV2,
         );
+        const providerBoundFork = inheritedForkOverrides.spawn.modelSelection?.ref.providerConnectionId != null;
+        if (
+            providerBoundFork
+            && requestedStrategy !== 'auto'
+            && requestedStrategy !== 'replay'
+        ) {
+            return {
+                ok: false,
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Provider-bound sessions require replay fork so authorization completes before any vendor fork side effect',
+            };
+        }
 
         const targetSeqInclusive = forkPoint.type === 'seq'
             ? forkPoint.upToSeqInclusive
@@ -174,14 +207,8 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 replayMaxSeedChars: parsed.data.replayMaxSeedChars ?? null,
                 replaySummaryRunner: parsed.data.replaySummaryRunner ?? null,
             });
-            const maxTextChars = readReplayTextLimitFromEnv();
-            const resolveExecutionSurfaces = params.resolveExecutionSurfaces
-                ?? params.sessionHostBridge.resolveExecutionSurfaces.bind(params.sessionHostBridge);
-            const forkSurface = (await resolveExecutionSurfaces(
-                forkBackendResolution.backendTargetV2.backendId,
-            )).fork;
-
             const shouldAttemptAcpForkLatest =
+                !providerBoundFork &&
                 (requestedStrategy === 'auto' || requestedStrategy === 'acp_fork_latest') &&
                 forkPoint.type === 'latest' &&
                 (
@@ -192,10 +219,42 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                     }))
                 );
 
+            if (
+                !providerBoundFork
+                && nativeForkOpenSupported
+                && (requestedStrategy === 'auto' || requestedStrategy === 'provider_native')
+            ) {
+                const nativeForkOpen = await attemptNativeForkOpen({
+                    credentials,
+                    parentSessionId,
+                    parentMetadata,
+                    directory,
+                    forkPoint,
+                    targetSeqInclusive,
+                    effectiveCutoffSeqInclusive,
+                    spawnNonce: `${spawnNonce}:native-open`,
+                    forkBackendResolution,
+                    inheritedForkOverrides,
+                    spawnSession: params.handlers.spawnSession,
+                    stopSession: params.handlers.stopSession,
+                    ...(params.deps?.awaitAgentSessionOpen
+                        ? { awaitAgentSessionOpen: params.deps.awaitAgentSessionOpen }
+                        : {}),
+                });
+                if (nativeForkOpen) return nativeForkOpen;
+            }
+
+            const maxTextChars = readReplayTextLimitFromEnv();
+            const resolveExecutionSurfaces = params.resolveExecutionSurfaces
+                ?? params.sessionHostBridge.resolveExecutionSurfaces.bind(params.sessionHostBridge);
+            const forkSurface = (await resolveExecutionSurfaces(
+                forkBackendResolution.backendTargetV2.backendId,
+            )).fork;
+
             // An agent-owned fork surface can implement both native and ACP
             // modes. Route ACP-backed sessions directly to the ACP lifecycle so
             // one surface invocation has one authoritative persisted strategy.
-            if (!(requestedStrategy === 'auto' && shouldAttemptAcpForkLatest)) {
+            if (!providerBoundFork && !(requestedStrategy === 'auto' && shouldAttemptAcpForkLatest)) {
                 const providerNativeFork = await attemptProviderNativeFork({
                     requestedStrategy,
                     credentials,
@@ -206,7 +265,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                     forkPoint,
                     targetSeqInclusive,
                     effectiveCutoffSeqInclusive,
-                    spawnNonce,
+                    spawnNonce: `${spawnNonce}:native`,
                     forkBackendResolution,
                     inheritedForkOverrides,
                     forkSurface,
@@ -225,7 +284,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                     directory,
                     effectiveCutoffSeqInclusive,
                     forkIsConfiguredAcp,
-                    spawnNonce,
+                    spawnNonce: `${spawnNonce}:acp_fork_latest`,
                     forkBackendResolution,
                     inheritedForkOverrides,
                     forkSurface,
@@ -249,7 +308,7 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
                 parentMetadata,
                 directory,
                 effectiveCutoffSeqInclusive,
-                spawnNonce,
+                spawnNonce: `${spawnNonce}:replay`,
                 forkPointType: forkPoint.type,
                 replaySummaryRunner: parsed.data.replaySummaryRunner,
                 replayMaxSeedChars: parsed.data.replayMaxSeedChars,

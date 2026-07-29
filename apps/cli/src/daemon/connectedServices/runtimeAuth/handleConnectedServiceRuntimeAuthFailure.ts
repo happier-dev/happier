@@ -152,12 +152,15 @@ function normalizeFingerprintPart(value: string | null | undefined, fallback: st
 }
 
 function buildTemporaryThrottleIssueFingerprint(input: Readonly<{
+    kind: ConnectedServiceRuntimeFailureClassification['kind'];
     serviceId: string;
     profileId: string | null;
     groupId: string | null;
 }>): string {
     return [
-        'temporary-throttle',
+        input.kind === 'temporary_throttle'
+            ? 'temporary-throttle'
+            : `temporary-retry:${input.kind}`,
         normalizeFingerprintPart(input.serviceId, 'unknown-service'),
         normalizeFingerprintPart(input.groupId, 'no-group'),
         normalizeFingerprintPart(input.profileId, 'no-profile'),
@@ -185,7 +188,12 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
     }>
 > {
     if (!input.classification) return { status: 'not_classified' };
-    if (input.classification.kind === 'temporary_throttle') {
+    const recoveryDecision = decideConnectedServiceRecovery({
+        actor: 'automatic',
+        issue: input.classification,
+        selection: input.selection,
+    });
+    if (recoveryDecision.action === 'temporary_retry') {
         const profileId = readTemporaryThrottleProfileId({
             selection: input.selection,
             classification: input.classification,
@@ -223,6 +231,7 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
             profileId,
             groupId,
             issueFingerprint: buildTemporaryThrottleIssueFingerprint({
+                kind: input.classification.kind,
                 serviceId: input.classification.serviceId,
                 profileId,
                 groupId,
@@ -255,11 +264,6 @@ export async function handleConnectedServiceRuntimeAuthFailure(input: Readonly<{
             recovery,
         };
     }
-    const recoveryDecision = decideConnectedServiceRecovery({
-        actor: 'automatic',
-        issue: input.classification,
-        selection: input.selection,
-    });
     const actionRequired = mapRecoveryDecisionToActionRequired({
         decision: recoveryDecision,
         classification: input.classification,

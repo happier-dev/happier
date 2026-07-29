@@ -9,14 +9,27 @@ import {
 import { PermissionRequestPushNotifier } from '@/settings/notifications/permissionRequestPushNotifier';
 import type { PermissionRequestPushSender } from '@/agent/permissions/BasePermissionHandler';
 import { logger } from '@/ui/logger';
+import {
+    isAgentStateRequestCoveredByCompletedRequests,
+    resolveAgentStateRequestCoverageOptions,
+} from '@happier-dev/agents';
 import type { AccountSettings } from '@happier-dev/protocol';
 import {
     getSessionNotificationAgentDisplayName,
     getSessionNotificationTitle,
 } from '@/agent/runtime/notifications/sessionNotificationContext';
+import {
+    isPermissionRequestOwnedByPlugin,
+    normalizePermissionRequestOwner,
+    type PermissionRequestOwner,
+} from './permissionRequestOwner';
 
 type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 type AgentStateCompletedEntry = NonNullable<AgentState['completedRequests']>[string];
+
+const PENDING_REQUEST_COVERAGE_OPTIONS = resolveAgentStateRequestCoverageOptions({
+    kind: 'localPermissionBridge',
+});
 
 export type AgentStateRequestResponseTarget = Readonly<{ kind: string } & Record<string, unknown>>;
 
@@ -40,6 +53,7 @@ export type AgentStateOutstandingRequest = Readonly<{
     subagentRef?: unknown;
     sidechainId?: string;
     permissionSuggestions?: readonly unknown[];
+    owner?: PermissionRequestOwner;
 }>;
 
 type SessionLike = Readonly<{
@@ -144,12 +158,26 @@ export class AgentStateRequestStore {
         subagentRef?: unknown;
         sidechainId?: string | null;
         permissionSuggestions?: readonly unknown[] | null;
+        owner?: PermissionRequestOwner | null;
         updateState?: (state: AgentState) => AgentState;
     }>): void {
-        updateAgentStateBestEffort(
-            this.session,
-            (currentState) => {
+        let shouldNotify = false;
+        let didRunUpdater = false;
+        const notify = () => {
+            if (!shouldNotify) return;
+            this.notifyPermissionRequestPushBestEffort({
+                permissionId: params.requestId,
+                toolName: params.toolName,
+                toolInput: params.toolInput,
+                createdAtMs: params.createdAt,
+            });
+        };
+
+        try {
+            const result = this.session.updateAgentState((currentState) => {
+                didRunUpdater = true;
                 const requests = cloneStringKeyedRecordToNullProto<AgentStateRequestEntry>(currentState.requests);
+                const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedEntry>(currentState.completedRequests);
                 const entry = Object.create(null) as AgentStateRequestEntry & { source?: string; permissionSuggestions?: readonly unknown[] };
                 entry.tool = params.toolName;
                 entry.kind = params.kind ?? resolveAgentRequestKind(params.toolName);
@@ -162,27 +190,48 @@ export class AgentStateRequestStore {
                     entry.permissionSuggestions = [...params.permissionSuggestions];
                 }
                 applyAgentStateRequestMetadata(entry, params);
+                delete completedRequests[params.requestId];
+                if (isAgentStateRequestCoveredByCompletedRequests({
+                    requestId: params.requestId,
+                    request: entry,
+                    completedRequests,
+                    options: PENDING_REQUEST_COVERAGE_OPTIONS,
+                })) {
+                    const coveredState: AgentState = {
+                        ...currentState,
+                        completedRequests,
+                    };
+                    return typeof params.updateState === 'function' ? params.updateState(coveredState) : coveredState;
+                }
                 requests[params.requestId] = entry;
+                shouldNotify = true;
 
                 const nextState: AgentState = {
                     ...currentState,
                     requests,
+                    completedRequests,
                 };
                 return typeof params.updateState === 'function' ? params.updateState(nextState) : nextState;
-            },
-            this.logPrefix,
-            'publish_request',
-        );
+            });
 
-        this.notifyPermissionRequestPushBestEffort({
-            permissionId: params.requestId,
-            toolName: params.toolName,
-            toolInput: params.toolInput,
-            createdAtMs: params.createdAt,
-        });
+            if (isPromiseLike(result)) {
+                void Promise.resolve(result)
+                    .then(() => {
+                        if (didRunUpdater) notify();
+                    })
+                    .catch((error) => {
+                        logger.debug(`${this.logPrefix} Failed to update agent state (publish_request) (non-fatal)`, error);
+                    });
+                return;
+            }
+
+            if (didRunUpdater) notify();
+        } catch (error) {
+            logger.debug(`${this.logPrefix} Failed to update agent state (publish_request) (non-fatal)`, error);
+        }
     }
 
-    completeRequest(params: Readonly<{
+    async completeRequest(params: Readonly<{
         requestId: string;
         status: string;
         decision?: string;
@@ -201,10 +250,11 @@ export class AgentStateRequestStore {
             subagentRef?: unknown;
             sidechainId?: string | null;
             permissionSuggestions?: readonly unknown[] | null;
+            owner?: PermissionRequestOwner | null;
         }> | null;
         updateState?: (state: AgentState) => AgentState;
-    }>): void {
-        this.updateAgentStateWithResponseDispatchBestEffort(
+    }>): Promise<void> {
+        await this.updateAgentStateWithResponseDispatchBestEffort(
             'complete_request',
             (currentState) => {
                 const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
@@ -256,6 +306,13 @@ export class AgentStateRequestStore {
                 }
 
                 completedRequests[params.requestId] = completedEntry as AgentStateCompletedEntry;
+                removeRequestsCoveredByCompletedEntry({
+                    completedRequestId: params.requestId,
+                    completedEntry: completedEntry as AgentStateCompletedEntry,
+                    requests,
+                    completedRequests,
+                    markCompleted: (requestId) => this.markPermissionRequestCompletedBestEffort(requestId),
+                });
                 const nextState: AgentState = {
                     ...currentState,
                     requests,
@@ -290,11 +347,13 @@ export class AgentStateRequestStore {
         subagentRef?: unknown;
         sidechainId?: string | null;
         permissionSuggestions?: readonly unknown[] | null;
+        owner?: PermissionRequestOwner | null;
         reason?: string;
     }>): void {
         this.updateAgentStateWithResponseDispatchBestEffort(
             'record_completed_request',
             (currentState) => {
+                const requests = cloneStringKeyedRecordToNullProto(currentState.requests);
                 const completedRequests = cloneStringKeyedRecordToNullProto<AgentStateCompletedEntry>(currentState.completedRequests);
                 const entry = Object.create(null) as AgentStateCompletedEntry & { source?: string; reason?: string };
                 entry.tool = params.toolName;
@@ -322,8 +381,19 @@ export class AgentStateRequestStore {
                     }
                 }
                 completedRequests[params.requestId] = entry;
+                removeRequestsCoveredByCompletedEntry({
+                    completedRequestId: params.requestId,
+                    completedEntry: entry,
+                    requests,
+                    completedRequests,
+                    markCompleted: (requestId) => this.markPermissionRequestCompletedBestEffort(requestId),
+                });
                 return {
-                    state: { ...currentState, completedRequests } satisfies AgentState,
+                    state: {
+                        ...currentState,
+                        requests,
+                        completedRequests,
+                    } satisfies AgentState,
                     responseDispatch: createResponseTargetDispatch(params.requestId, entry),
                 };
             },
@@ -332,9 +402,12 @@ export class AgentStateRequestStore {
         this.markPermissionRequestCompletedBestEffort(params.requestId);
     }
 
-    cancelAllRequests(params: Readonly<{ reason: string }>): void {
-        updateAgentStateBestEffort(
-            this.session,
+    async cancelAllRequests(params: Readonly<{
+        reason: string;
+        decision?: string;
+        requestIds: readonly string[];
+    }>): Promise<void> {
+        await this.updateAgentStateBestEffortAndWait(
             (currentState) => {
                 const pendingRequests = cloneStringKeyedRecordToNullProto(currentState.requests);
                 const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
@@ -345,6 +418,25 @@ export class AgentStateRequestStore {
                     entry.completedAt = now;
                     entry.status = 'canceled';
                     entry.reason = params.reason;
+                    if (typeof params.decision === 'string') {
+                        entry.decision = params.decision;
+                    }
+                    completedRequests[id] = entry as AgentStateCompletedEntry;
+                    this.markPermissionRequestCompletedBestEffort(id);
+                }
+
+                for (const id of params.requestIds) {
+                    const completed = completedRequests[id];
+                    if (!completed) continue;
+                    const entry = clonePlainObjectToNullProto(completed) ?? Object.create(null);
+                    entry.completedAt = now;
+                    entry.status = 'canceled';
+                    entry.reason = params.reason;
+                    if (typeof params.decision === 'string') {
+                        entry.decision = params.decision;
+                    } else {
+                        delete entry.decision;
+                    }
                     completedRequests[id] = entry as AgentStateCompletedEntry;
                     this.markPermissionRequestCompletedBestEffort(id);
                 }
@@ -355,8 +447,63 @@ export class AgentStateRequestStore {
                     completedRequests,
                 };
             },
-            this.logPrefix,
             'cancel_all_requests',
+        );
+    }
+
+    async cancelRequestsByOwner(params: Readonly<{
+        owner: PermissionRequestOwner;
+        reason: string;
+        decision?: string;
+        requestIds: readonly string[];
+    }>): Promise<void> {
+        await this.updateAgentStateBestEffortAndWait(
+            (currentState) => {
+                const pendingRequests = cloneStringKeyedRecordToNullProto(currentState.requests);
+                const completedRequests = cloneStringKeyedRecordToNullProto(currentState.completedRequests);
+                const now = Date.now();
+
+                for (const [id, request] of Object.entries(pendingRequests)) {
+                    const entry = clonePlainObjectToNullProto(request) ?? Object.create(null);
+                    const owner = normalizePermissionRequestOwner(entry.owner);
+                    if (!isPermissionRequestOwnedByPlugin(owner, params.owner.pluginId)) {
+                        continue;
+                    }
+                    delete pendingRequests[id];
+                    entry.completedAt = now;
+                    entry.status = 'canceled';
+                    entry.reason = params.reason;
+                    completedRequests[id] = entry as AgentStateCompletedEntry;
+                    this.markPermissionRequestCompletedBestEffort(id);
+                }
+
+                for (const id of params.requestIds) {
+                    const completed = completedRequests[id];
+                    if (!completed) continue;
+                    const entry = clonePlainObjectToNullProto(completed) ?? Object.create(null);
+                    const owner = normalizePermissionRequestOwner(entry.owner);
+                    if (!isPermissionRequestOwnedByPlugin(owner, params.owner.pluginId)) {
+                        continue;
+                    }
+                    entry.completedAt = now;
+                    entry.status = 'canceled';
+                    entry.reason = params.reason;
+                    if (typeof params.decision === 'string') {
+                        entry.decision = params.decision;
+                    } else {
+                        delete entry.decision;
+                    }
+                    completedRequests[id] = entry as AgentStateCompletedEntry;
+                    this.markPermissionRequestCompletedBestEffort(id);
+                }
+
+                return {
+                    ...currentState,
+                    requests: pendingRequests,
+                    completedRequests,
+                };
+            },
+            'cancel_requests_by_owner',
         );
     }
 
@@ -404,10 +551,10 @@ export class AgentStateRequestStore {
         }
     }
 
-    private updateAgentStateWithResponseDispatchBestEffort(
+    private async updateAgentStateWithResponseDispatchBestEffort(
         reason: string,
         updater: (state: AgentState) => AgentStateUpdateWithResponseDispatch,
-    ): void {
+    ): Promise<void> {
         let responseDispatch: AgentStateResponseTargetDispatch | null = null;
         let didRunUpdater = false;
 
@@ -420,21 +567,23 @@ export class AgentStateRequestStore {
             });
 
             if (isPromiseLike(result)) {
-                void Promise.resolve(result)
-                    .then(() => {
-                        if (didRunUpdater) {
-                            this.dispatchResponseTargetBestEffort(responseDispatch);
-                        }
-                    })
-                    .catch((error) => {
-                        logger.debug(`${this.logPrefix} Failed to update agent state (${reason}) (non-fatal)`, error);
-                    });
-                return;
+                await Promise.resolve(result);
             }
 
             if (didRunUpdater) {
                 this.dispatchResponseTargetBestEffort(responseDispatch);
             }
+        } catch (error) {
+            logger.debug(`${this.logPrefix} Failed to update agent state (${reason}) (non-fatal)`, error);
+        }
+    }
+
+    private async updateAgentStateBestEffortAndWait(
+        updater: (state: AgentState) => AgentState,
+        reason: string,
+    ): Promise<void> {
+        try {
+            await Promise.resolve(this.session.updateAgentState(updater));
         } catch (error) {
             logger.debug(`${this.logPrefix} Failed to update agent state (${reason}) (non-fatal)`, error);
         }
@@ -502,6 +651,7 @@ type AgentStateRequestMetadata = Readonly<{
     subagentRef?: unknown;
     sidechainId?: string;
     permissionSuggestions?: readonly unknown[];
+    owner?: PermissionRequestOwner;
 }>;
 
 type AgentStateUpdateWithResponseDispatch = Readonly<{
@@ -517,12 +667,14 @@ function readAgentStateRequestMetadata(entry: unknown): AgentStateRequestMetadat
     const permissionSuggestions = Array.isArray(record.permissionSuggestions)
         ? [...record.permissionSuggestions]
         : undefined;
+    const owner = normalizePermissionRequestOwner(record.owner);
     return {
         ...(typeof record.source === 'string' ? { source: record.source } : {}),
         ...(responseTarget ? { responseTarget } : {}),
         ...(typeof record.subagentRef !== 'undefined' ? { subagentRef: record.subagentRef } : {}),
         ...(typeof record.sidechainId === 'string' ? { sidechainId: record.sidechainId } : {}),
         ...(permissionSuggestions ? { permissionSuggestions } : {}),
+        ...(owner ? { owner } : {}),
     };
 }
 
@@ -533,6 +685,7 @@ function applyAgentStateRequestMetadata(
         subagentRef?: unknown;
         sidechainId?: string | null;
         permissionSuggestions?: readonly unknown[] | null;
+        owner?: PermissionRequestOwner | null;
     }>,
 ): void {
     const responseTarget = readResponseTarget(metadata.responseTarget);
@@ -547,6 +700,10 @@ function applyAgentStateRequestMetadata(
     }
     if (Array.isArray(metadata.permissionSuggestions) && metadata.permissionSuggestions.length > 0) {
         entry.permissionSuggestions = [...metadata.permissionSuggestions];
+    }
+    const owner = normalizePermissionRequestOwner(metadata.owner);
+    if (owner) {
+        entry.owner = owner;
     }
 }
 
@@ -581,6 +738,56 @@ function createResponseTargetDispatchFromUnknown(
     const record = clonePlainObjectToNullProto(completedRequest);
     if (!record) return null;
     return createResponseTargetDispatch(requestId, record);
+}
+
+function copyCompletedCoverageFields(
+    target: Record<string, unknown>,
+    completedEntry: Record<string, unknown>,
+): void {
+    const fields = [
+        'completedAt',
+        'status',
+        'decision',
+        'reason',
+        'mode',
+        'allowedTools',
+        'updatedPermissions',
+    ] as const;
+    for (const field of fields) {
+        if (typeof completedEntry[field] !== 'undefined') {
+            target[field] = completedEntry[field];
+        }
+    }
+}
+
+function removeRequestsCoveredByCompletedEntry(params: Readonly<{
+    completedRequestId: string;
+    completedEntry: AgentStateCompletedEntry;
+    requests: Record<string, AgentStateRequestEntry>;
+    completedRequests: Record<string, AgentStateCompletedEntry>;
+    markCompleted: (requestId: string) => void;
+}>): void {
+    const completedRequestsForCoverage: Record<string, unknown> = {
+        [params.completedRequestId]: params.completedEntry,
+    };
+
+    for (const [requestId, request] of Object.entries(params.requests)) {
+        if (requestId === params.completedRequestId) continue;
+        if (!isAgentStateRequestCoveredByCompletedRequests({
+            requestId,
+            request,
+            completedRequests: completedRequestsForCoverage,
+            options: PENDING_REQUEST_COVERAGE_OPTIONS,
+        })) {
+            continue;
+        }
+
+        delete params.requests[requestId];
+        const coveredEntry = clonePlainObjectToNullProto(request) ?? Object.create(null);
+        copyCompletedCoverageFields(coveredEntry, params.completedEntry as Record<string, unknown>);
+        params.completedRequests[requestId] = coveredEntry as AgentStateCompletedEntry;
+        params.markCompleted(requestId);
+    }
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {

@@ -30,4 +30,17 @@ describe('parseConnectArgs', () => {
     expect(res.subcommand).toBe('github');
     expect(res.options.token).toBe(true);
   });
+
+  it('parses an exact reconnect account and an explicit authentication mode', () => {
+    const res = parseConnectArgs([
+      'happier.plugin/service',
+      '--account',
+      'account-7',
+      '--mode',
+      'service-account',
+    ]);
+    expect(res.subcommand).toBe('happier.plugin/service');
+    expect(res.options.accountId).toBe('account-7');
+    expect(res.options.modeId).toBe('service-account');
+  });
 });

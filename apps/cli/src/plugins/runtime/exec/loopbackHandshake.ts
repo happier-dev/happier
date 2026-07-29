@@ -1,4 +1,4 @@
-import type { ExecLengthPrefixedByteOrderV1 } from '@happier-dev/plugin-sdk';
+import type { ExecLengthPrefixedByteOrderV1 } from './privateContract';
 
 import {
     PluginExecClientError,

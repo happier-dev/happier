@@ -1,19 +1,14 @@
 import type { AgentCatalogEntry, CatalogAgentId } from '@/agent/catalog/types';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import {
-    resolveInstallablesRegistry,
     buildQualifiedPluginContributionKey,
     createPluginContributionIdentity,
     derivePluginUiArtifactCacheKeyV1,
-    getPluginHookDefinitionV1,
     qualifyPluginEventIdV1,
-    type InstallableRegistryContribution,
 } from '@happier-dev/protocol';
 
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 import type {
-    ResolvedAgentRuntimeContribution,
-    ResolvedBackendSurfaceContribution,
     ResolvedActionContribution,
     ResolvedBrowserActionContribution,
     ResolvedBrowserTargetContribution,
@@ -24,13 +19,13 @@ import type {
     ResolvedCatalogEntry,
     ResolvedExecutionRunProfileContribution,
     ResolvedEventContribution,
-    ResolvedEmbeddedWebBundleContribution,
     ResolvedInstallableContribution,
-    ResolvedLifecycleHandlerContribution,
     ResolvedMcpDiscoveryProviderContribution,
     ResolvedMcpServerContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
+    ResolvedProviderContribution,
+    ResolvedPromptAssetContribution,
     ResolvedHostedWebContribution,
     ResolvedReactNativeBundleContribution,
     ResolvedRequestInterceptorContribution,
@@ -42,30 +37,66 @@ import type {
     ResolvedSessionHeaderActionContribution,
     ResolvedSurfacePlacementContribution,
     ResolvedStructuredMessageContribution,
+    ResolvedSystemToolContribution,
     ResolvedToolContribution,
     ResolvedUiArtifactContribution,
-    ResolvedUiDescriptorContribution,
+    ResolvedUiTranslationBundleV2Contribution,
     ResolvedUiTranslationsContribution,
     ResolvedActivationTarget,
+    ResolvedVoiceModelPackContribution,
+    ResolvedVoiceProviderContribution,
 } from './types';
+import { resolveLocalSettingsDeclarations } from '@/plugins/settings/localSettingsContributions';
+import {
+    isExecutableManagedDependency,
+    resolveExecutableManagedDependenciesRegistry,
+    toExecutableManagedDependencyRegistryContribution,
+    type ResolvedExecutableManagedDependency,
+} from './managedDependencyExecutables';
+
+function resolveContributionRegistryKey(contribution: Readonly<{
+    pluginId?: string;
+    definition: Readonly<{ id: string }>;
+}>): string {
+    return contribution.pluginId
+        ? buildQualifiedPluginContributionKey(createPluginContributionIdentity({
+            pluginId: contribution.pluginId,
+            localId: contribution.definition.id,
+        }))
+        : contribution.definition.id;
+}
 
 export function createResolvedContributionRegistry(inputs: ResolvedContributionInputs): ResolvedContributionRegistry {
+    const introspectionContributions = Object.freeze([...(inputs.introspectionContributions ?? [])].sort((left, right) => (
+        resolveIntrospectionCandidateSortKey(left).localeCompare(resolveIntrospectionCandidateSortKey(right))
+    )));
+    const uiViewsV2 = Object.freeze([...(inputs.uiViewsV2 ?? [])]);
+    const uiRenderersV2 = Object.freeze([...(inputs.uiRenderersV2 ?? [])]);
+    const uiTranslationsV2 = Object.freeze([...(inputs.uiTranslationsV2 ?? [])].sort(compareUiTranslationsV2Contributes));
     const inputAgents = inputs.agents ?? [];
-    const inputAgentRuntimes = inputs.agentRuntimes ?? [];
+    const providers = Object.freeze([...(inputs.providers ?? [])].sort((left, right) =>
+        buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
+    ));
+    const providersByContributionKey = new Map<string, ResolvedProviderContribution>();
+    for (const provider of providers) {
+        const contributionKey = buildQualifiedPluginContributionKey(provider.identity);
+        if (providersByContributionKey.has(contributionKey)) {
+            throw new Error(`Duplicate provider contribution '${contributionKey}'`);
+        }
+        providersByContributionKey.set(contributionKey, provider);
+    }
     const agentDefinitionsById = new Map<string, ResolvedAgentContribution>();
-    const agentRuntimeDefinitionsById = new Map<string, ResolvedAgentRuntimeContribution>();
     const standaloneCatalogEntries = Object.freeze([...(inputs.catalogEntries ?? [])]);
     const actions = Object.freeze([...(inputs.actions ?? [])].sort(compareActionContributes));
     const tools = Object.freeze([...(inputs.tools ?? [])].sort(compareToolContributes));
     const commands = Object.freeze([...(inputs.commands ?? [])].sort(compareCommandContributes));
     const resources = Object.freeze([...(inputs.resources ?? [])].sort(compareResourceContributes));
-    const uiDescriptors = Object.freeze([...(inputs.uiDescriptors ?? [])].sort(compareUiDescriptorContributes));
+    const promptAssets = Object.freeze([...(inputs.promptAssets ?? [])].sort(comparePromptAssetContributes));
     const uiTranslations = Object.freeze([...(inputs.uiTranslations ?? [])].sort(compareUiTranslationsContributes));
     const structuredMessages = Object.freeze([...(inputs.structuredMessages ?? [])].sort(compareStructuredMessageContributes));
     const sessionHeaderActions = Object.freeze([...(inputs.sessionHeaderActions ?? [])].sort(compareSessionHeaderActionContributes));
     const surfacePlacements = Object.freeze([...(inputs.surfacePlacements ?? [])].sort(compareSurfacePlacementContributes));
     const hostedWeb = Object.freeze([...(inputs.hostedWeb ?? [])].sort(compareHostedWebContributes));
-    const embeddedWebBundles = Object.freeze([...(inputs.embeddedWebBundles ?? [])].sort(compareEmbeddedWebBundleContributes));
     const reactNativeBundles = Object.freeze([...(inputs.reactNativeBundles ?? [])].sort(compareReactNativeBundleContributes));
     const uiArtifacts = Object.freeze([...(inputs.uiArtifacts ?? [])].sort(compareUiArtifactContributes));
     const browserTargets = Object.freeze([...(inputs.browserTargets ?? [])].sort(compareBrowserTargetContributes));
@@ -82,6 +113,10 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         inputs.pluginDiagnosticsByPluginId ?? {},
     );
     const managedDependencies = managedDependenciesResult.managedDependencies;
+    const systemTools = Object.freeze([...(inputs.systemTools ?? [])].sort((left, right) => (
+        left.definition.id.localeCompare(right.definition.id)
+        || (left.pluginId ?? '').localeCompare(right.pluginId ?? '')
+    )));
     const scmHostingProvidersResult = resolveScmHostingProviderContributions(
         inputs.scmHostingProviders ?? [],
         managedDependenciesResult.pluginDiagnosticsByPluginId,
@@ -94,23 +129,20 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const scmBackends = scmBackendsResult.backends;
     const connectedAccountDescriptors = Object.freeze([...(inputs.connectedAccountDescriptors ?? [])].sort(compareConnectedAccountDescriptorContributes));
     const requestInterceptors = Object.freeze([...(inputs.requestInterceptors ?? [])].sort(compareRequestInterceptorContributes));
+    const voiceModelPacks = Object.freeze([...(inputs.voiceModelPacks ?? [])].sort(compareVoiceModelPackContributes));
+    const voiceProviders = Object.freeze([...(inputs.voiceProviders ?? [])].sort((left, right) => (
+        buildQualifiedPluginContributionKey(left.identity).localeCompare(buildQualifiedPluginContributionKey(right.identity))
+    )));
     const activationTargets = Object.freeze([...(inputs.activationTargets ?? [])].sort(compareActivationTargets));
-    const lifecycleHandlers = Object.freeze([...(inputs.lifecycleHandlers ?? [])].sort(compareLifecycleHandlerContributes));
-    const hookRegistrationsResult = resolveHookRegistrations(
-        inputs.hookRegistrations ?? [],
-        scmBackendsResult.pluginDiagnosticsByPluginId,
-    );
-    const hookRegistrations = hookRegistrationsResult.hookRegistrations;
     const actionsById = new Map<string, ResolvedActionContribution>();
     const toolsById = new Map<string, ResolvedToolContribution>();
     const commandsById = new Map<string, ResolvedCommandContribution>();
     const resourcesById = new Map<string, ResolvedResourceContribution>();
-    const uiDescriptorsById = new Map<string, ResolvedUiDescriptorContribution>();
+    const promptAssetsById = new Map<string, ResolvedPromptAssetContribution>();
     const structuredMessagesById = new Map<string, ResolvedStructuredMessageContribution>();
     const sessionHeaderActionsById = new Map<string, ResolvedSessionHeaderActionContribution>();
     const surfacePlacementsById = new Map<string, ResolvedSurfacePlacementContribution>();
     const hostedWebById = new Map<string, ResolvedHostedWebContribution>();
-    const embeddedWebBundlesById = new Map<string, ResolvedEmbeddedWebBundleContribution>();
     const reactNativeBundlesById = new Map<string, ResolvedReactNativeBundleContribution>();
     const uiArtifactsById = new Map<string, ResolvedUiArtifactContribution>();
     const browserTargetsById = new Map<string, ResolvedBrowserTargetContribution>();
@@ -121,11 +153,8 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     const eventsById = new Map<string, ResolvedEventContribution>();
     const executionRunProfilesById = new Map<string, ResolvedExecutionRunProfileContribution>();
     const managedDependenciesByKey = new Map<string, ResolvedInstallableContribution>();
+    const systemToolsById = new Map<string, ResolvedSystemToolContribution>();
     const connectedAccountDescriptorsById = new Map<string, ResolvedConnectedAccountDescriptorContribution>();
-    const lifecycleHandlersById = new Map<string, ResolvedLifecycleHandlerContribution>();
-    // Host dispatch map keyed by backend id. Backend-surface operation names are
-    // stable plugin ABI values; the dispatch map itself remains host-local.
-    const surfaceHandlersByBackendId = new Map<string, readonly ResolvedBackendSurfaceContribution[]>();
     // Internal merged projection used by CLI host surfaces; not a public plugin ABI.
     const catalogEntriesById: Record<string, ResolvedCatalogEntry> = {};
 
@@ -137,85 +166,52 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         catalogEntriesById[catalogEntry.id] = catalogEntry;
     }
 
-    for (const provider of inputAgents) {
-        assertAgentContributionAligned(provider);
-        if (agentDefinitionsById.has(provider.id)) {
-            throw new Error(`Duplicate agent contribution '${provider.id}'`);
+    for (const agent of inputAgents) {
+        assertAgentContributionAligned(agent);
+        if (agentDefinitionsById.has(agent.id)) {
+            throw new Error(`Duplicate agent contribution '${agent.id}'`);
         }
 
-        agentDefinitionsById.set(provider.id, provider);
+        agentDefinitionsById.set(agent.id, agent);
 
-        if (provider.catalogEntry) {
-            if (catalogEntriesById[provider.catalogEntry.id]) {
-                throw new Error(`Duplicate catalog entry contribution '${provider.catalogEntry.id}'`);
+        if (agent.catalogEntry) {
+            if (catalogEntriesById[agent.catalogEntry.id]) {
+                throw new Error(`Duplicate catalog entry contribution '${agent.catalogEntry.id}'`);
             }
-            catalogEntriesById[provider.id] = provider.catalogEntry;
-        }
-    }
-
-    for (const backend of inputAgentRuntimes) {
-        assertBackendContributionAligned(backend);
-        if (agentRuntimeDefinitionsById.has(backend.id)) {
-            throw new Error(`Duplicate backend contribution '${backend.id}'`);
-        }
-        if (!agentDefinitionsById.has(backend.agentId) && !isProviderlessReviewExecutionRunBackend(backend)) {
-            throw new Error(`Missing agent contribution '${backend.agentId}' for agent runtime '${backend.id}'`);
-        }
-
-        agentRuntimeDefinitionsById.set(backend.id, backend);
-
-        const surfaceHandlers = backend.surfaceHandlers ?? [];
-        if (surfaceHandlers.length > 0) {
-            surfaceHandlersByBackendId.set(
-                backend.id,
-                Object.freeze(surfaceHandlers.map((definition) => ({
-                    backendId: backend.id,
-                    provenance: backend.provenance,
-                    source: backend.source,
-                    definition,
-                    pluginId: backend.pluginId,
-                    manifestPath: backend.manifestPath,
-                    manifestDigest: backend.manifestDigest,
-                    daemonEntryPath: backend.daemonEntryPath,
-                    devDaemonEntryPath: backend.devDaemonEntryPath,
-                }))),
-            );
+            catalogEntriesById[agent.id] = agent.catalogEntry;
         }
     }
 
     for (const action of actions) {
-        if (actionsById.has(action.definition.id)) {
-            throw new Error(`Duplicate action contribution '${action.definition.id}'`);
+        const key = resolveContributionRegistryKey(action);
+        if (actionsById.has(key)) {
+            throw new Error(`Duplicate action contribution '${key}'`);
         }
-        actionsById.set(action.definition.id, action);
+        actionsById.set(key, action);
     }
 
     for (const tool of tools) {
-        if (toolsById.has(tool.definition.id)) {
-            throw new Error(`Duplicate tool contribution '${tool.definition.id}'`);
+        const key = resolveContributionRegistryKey(tool);
+        if (toolsById.has(key)) {
+            throw new Error(`Duplicate tool contribution '${key}'`);
         }
-        toolsById.set(tool.definition.id, tool);
+        toolsById.set(key, tool);
     }
 
     for (const command of commands) {
-        if (commandsById.has(command.definition.id)) {
-            throw new Error(`Duplicate command contribution '${command.definition.id}'`);
+        const key = resolveContributionRegistryKey(command);
+        if (commandsById.has(key)) {
+            throw new Error(`Duplicate command contribution '${key}'`);
         }
-        commandsById.set(command.definition.id, command);
+        commandsById.set(key, command);
     }
 
     for (const resource of resources) {
-        if (resourcesById.has(resource.definition.id)) {
-            throw new Error(`Duplicate resource contribution '${resource.definition.id}'`);
+        const key = resolveContributionRegistryKey(resource);
+        if (resourcesById.has(key)) {
+            throw new Error(`Duplicate resource contribution '${key}'`);
         }
-        resourcesById.set(resource.definition.id, resource);
-    }
-
-    for (const uiDescriptor of uiDescriptors) {
-        if (uiDescriptorsById.has(uiDescriptor.definition.id)) {
-            throw new Error(`Duplicate UI descriptor contribution '${uiDescriptor.definition.id}'`);
-        }
-        uiDescriptorsById.set(uiDescriptor.definition.id, uiDescriptor);
+        resourcesById.set(key, resource);
     }
 
     for (const message of structuredMessages) {
@@ -248,14 +244,6 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             throw new Error(`Duplicate hosted web contribution '${id}'`);
         }
         hostedWebById.set(id, contribution);
-    }
-
-    for (const contribution of embeddedWebBundles) {
-        const id = resolvePluginUiContributionRegistryId(contribution);
-        if (embeddedWebBundlesById.has(id)) {
-            throw new Error(`Duplicate embedded web bundle contribution '${id}'`);
-        }
-        embeddedWebBundlesById.set(id, contribution);
     }
 
     for (const contribution of reactNativeBundles) {
@@ -300,35 +288,29 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         browserActionsById.set(id, action);
     }
 
-    const settingsFieldIdsByPluginId = new Map<string, Set<string>>();
+    resolveLocalSettingsDeclarations({ settings });
     for (const setting of settings) {
-        if (settingsById.has(setting.definition.id)) {
-            throw new Error(`Duplicate settings contribution '${setting.definition.id}'`);
+        const key = resolveContributionRegistryKey(setting);
+        if (settingsById.has(key)) {
+            throw new Error(`Duplicate settings contribution '${key}'`);
         }
-        const fieldNamespace = setting.pluginId ?? setting.definition.id;
-        const fieldIds = settingsFieldIdsByPluginId.get(fieldNamespace) ?? new Set<string>();
-        for (const field of setting.definition.fields) {
-            if (fieldIds.has(field.id)) {
-                throw new Error(`Duplicate settings field '${field.id}' for plugin '${fieldNamespace}'`);
-            }
-            fieldIds.add(field.id);
-        }
-        settingsFieldIdsByPluginId.set(fieldNamespace, fieldIds);
-        settingsById.set(setting.definition.id, setting);
+        settingsById.set(key, setting);
     }
 
     for (const notification of notifications) {
-        if (notificationsById.has(notification.definition.id)) {
-            throw new Error(`Duplicate notification category contribution '${notification.definition.id}'`);
+        const key = resolveContributionRegistryKey(notification);
+        if (notificationsById.has(key)) {
+            throw new Error(`Duplicate notification category contribution '${key}'`);
         }
-        notificationsById.set(notification.definition.id, notification);
+        notificationsById.set(key, notification);
     }
 
     for (const channel of notificationChannels) {
-        if (notificationChannelsById.has(channel.definition.id)) {
-            throw new Error(`Duplicate notification channel contribution '${channel.definition.id}'`);
+        const key = resolveContributionRegistryKey(channel);
+        if (notificationChannelsById.has(key)) {
+            throw new Error(`Duplicate notification channel contribution '${key}'`);
         }
-        notificationChannelsById.set(channel.definition.id, channel);
+        notificationChannelsById.set(key, channel);
     }
 
     for (const event of events) {
@@ -340,45 +322,60 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
     }
 
     for (const profile of executionRunProfiles) {
-        if (executionRunProfilesById.has(profile.definition.id)) {
-            throw new Error(`Duplicate execution-run profile contribution '${profile.definition.id}'`);
+        const key = resolveContributionRegistryKey(profile);
+        if (executionRunProfilesById.has(key)) {
+            throw new Error(`Duplicate execution-run profile contribution '${key}'`);
         }
-        executionRunProfilesById.set(profile.definition.id, profile);
+        executionRunProfilesById.set(key, profile);
     }
 
     for (const installable of managedDependencies) {
-        managedDependenciesByKey.set(installable.definition.key, installable);
+        const dependencyId = isExecutableManagedDependency(installable)
+            ? installable.definition.id
+            : resolveContributionRegistryKey(installable);
+        if (managedDependenciesByKey.has(dependencyId)) {
+            throw new Error(`Duplicate managed dependency contribution '${dependencyId}'`);
+        }
+        managedDependenciesByKey.set(dependencyId, installable);
+    }
+    for (const systemTool of systemTools) {
+        const key = resolveContributionRegistryKey(systemTool);
+        if (systemToolsById.has(key)) {
+            throw new Error(`Duplicate system tool contribution '${key}'`);
+        }
+        systemToolsById.set(key, systemTool);
+    }
+    for (const promptAsset of promptAssets) {
+        const key = buildQualifiedPluginContributionKey(promptAsset.identity);
+        if (promptAssetsById.has(key)) {
+            throw new Error(`Duplicate prompt asset contribution '${key}'`);
+        }
+        promptAssetsById.set(key, promptAsset);
     }
     for (const descriptor of connectedAccountDescriptors) {
-        if (connectedAccountDescriptorsById.has(descriptor.definition.id)) {
-            throw new Error(`Duplicate connected account descriptor contribution '${descriptor.definition.id}'`);
+        const key = resolveContributionRegistryKey(descriptor);
+        if (connectedAccountDescriptorsById.has(key)) {
+            throw new Error(`Duplicate connected account descriptor contribution '${key}'`);
         }
-        connectedAccountDescriptorsById.set(descriptor.definition.id, descriptor);
+        connectedAccountDescriptorsById.set(key, descriptor);
     }
-
-    for (const lifecycleHandler of lifecycleHandlers) {
-        if (lifecycleHandlersById.has(lifecycleHandler.definition.id)) {
-            throw new Error(`Duplicate lifecycle handler contribution '${lifecycleHandler.definition.id}'`);
-        }
-        lifecycleHandlersById.set(lifecycleHandler.definition.id, lifecycleHandler);
-    }
-
     return Object.freeze({
+        introspectionContributions,
         generationId: buildRegistryGenerationId({
             agents: inputAgents,
-            agentRuntimes: inputAgentRuntimes,
+            providers,
             catalogEntries: standaloneCatalogEntries,
             actions,
             tools,
             commands,
             resources,
-            uiDescriptors,
+            promptAssets,
+            uiTranslationsV2,
             uiTranslations,
             structuredMessages,
             sessionHeaderActions,
             surfacePlacements,
             hostedWeb,
-            embeddedWebBundles,
             reactNativeBundles,
             uiArtifacts,
             browserTargets,
@@ -391,27 +388,30 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
             mcpServers,
             mcpDiscoveryProviders,
             managedDependencies,
+            systemTools,
             scmHostingProviders,
             scmBackends,
             connectedAccountDescriptors,
             requestInterceptors,
+            voiceModelPacks,
+            voiceProviders,
             activationTargets,
-            hookRegistrations,
-            lifecycleHandlers,
         }),
+        uiViewsV2,
+        uiRenderersV2,
+        uiTranslationsV2,
         agents: inputAgents,
-        agentRuntimes: inputAgentRuntimes,
+        providers,
         actions,
         tools,
         commands,
         resources,
-        uiDescriptors,
+        promptAssets,
         uiTranslations,
         structuredMessages,
         sessionHeaderActions,
         surfacePlacements,
         hostedWeb,
-        embeddedWebBundles,
         reactNativeBundles,
         uiArtifacts,
         browserTargets,
@@ -424,23 +424,23 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         mcpServers,
         mcpDiscoveryProviders,
         managedDependencies,
+        systemTools,
         scmHostingProviders,
         scmBackends,
         connectedAccountDescriptors,
         requestInterceptors,
+        voiceModelPacks,
+        voiceProviders,
         activationTargets,
-        hookRegistrations,
-        lifecycleHandlers,
         actionsById: Object.freeze(actionsById),
         toolsById: Object.freeze(toolsById),
         commandsById: Object.freeze(commandsById),
         resourcesById: Object.freeze(resourcesById),
-        uiDescriptorsById: Object.freeze(uiDescriptorsById),
+        promptAssetsById: Object.freeze(promptAssetsById),
         structuredMessagesById: Object.freeze(structuredMessagesById),
         sessionHeaderActionsById: Object.freeze(sessionHeaderActionsById),
         surfacePlacementsById: Object.freeze(surfacePlacementsById),
         hostedWebById: Object.freeze(hostedWebById),
-        embeddedWebBundlesById: Object.freeze(embeddedWebBundlesById),
         reactNativeBundlesById: Object.freeze(reactNativeBundlesById),
         uiArtifactsById: Object.freeze(uiArtifactsById),
         browserTargetsById: Object.freeze(browserTargetsById),
@@ -450,16 +450,15 @@ export function createResolvedContributionRegistry(inputs: ResolvedContributionI
         notificationChannelsById: Object.freeze(notificationChannelsById),
         eventsById: Object.freeze(eventsById),
         executionRunProfilesById: Object.freeze(executionRunProfilesById),
-            managedDependenciesByKey: Object.freeze(managedDependenciesByKey),
+        managedDependenciesByKey: Object.freeze(managedDependenciesByKey),
+        systemToolsById: Object.freeze(systemToolsById),
         scmHostingProvidersById: scmHostingProvidersResult.providersById,
         scmBackendsById: scmBackendsResult.backendsById,
         connectedAccountDescriptorsById: Object.freeze(connectedAccountDescriptorsById),
-        lifecycleHandlersById: Object.freeze(lifecycleHandlersById),
-        surfaceHandlersByBackendId: Object.freeze(surfaceHandlersByBackendId),
         catalogEntriesById: Object.freeze(catalogEntriesById),
         agentDefinitionsById,
-        agentRuntimeDefinitionsById,
-        pluginDiagnosticsByPluginId: hookRegistrationsResult.pluginDiagnosticsByPluginId,
+        providersByContributionKey: Object.freeze(providersByContributionKey),
+        pluginDiagnosticsByPluginId: scmBackendsResult.pluginDiagnosticsByPluginId,
     });
 }
 
@@ -514,57 +513,6 @@ function freezePluginDiagnostics(
     );
 }
 
-function toInstallableRegistryContribution(
-    candidate: ResolvedInstallableContribution,
-): InstallableRegistryContribution {
-    const isHostBuiltIn = candidate.provenance === 'first_party'
-        && !candidate.manifestPath
-        && !candidate.manifestDigest
-        && !candidate.daemonEntryPath
-        && !candidate.sourceSpec;
-    return {
-        owner: {
-            provenance: isHostBuiltIn
-                ? 'built_in'
-                : candidate.provenance === 'first_party'
-                    ? 'bundled_first_party_plugin'
-                    : 'external_plugin',
-            ownerId: candidate.pluginId ?? `${candidate.provenance}:${candidate.definition.key}`,
-            ...(candidate.pluginId ? { pluginId: candidate.pluginId } : {}),
-            ...(candidate.manifestPath ? { manifestPath: candidate.manifestPath } : {}),
-            ...(candidate.manifestDigest ? { manifestDigest: candidate.manifestDigest } : {}),
-        },
-        descriptor: candidate.definition,
-    };
-}
-
-function resolveHookRegistrations(
-    candidates: readonly NonNullable<ResolvedContributionInputs['hookRegistrations']>[number][],
-    pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
-): Readonly<{
-    hookRegistrations: readonly NonNullable<ResolvedContributionInputs['hookRegistrations']>[number][];
-    pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
-}> {
-    const diagnosticsByPluginId = clonePluginDiagnostics(pluginDiagnosticsByPluginId);
-    const hookRegistrations: NonNullable<ResolvedContributionInputs['hookRegistrations']>[number][] = [];
-
-    for (const candidate of candidates) {
-        if (!getPluginHookDefinitionV1(candidate.definition.id)) {
-            appendPluginDiagnostic(diagnosticsByPluginId, candidate.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin hook '${candidate.definition.id}' is not in the final public hook catalog`,
-            });
-            continue;
-        }
-        hookRegistrations.push(candidate);
-    }
-
-    return {
-        hookRegistrations: Object.freeze(hookRegistrations),
-        pluginDiagnosticsByPluginId: freezePluginDiagnostics(diagnosticsByPluginId),
-    };
-}
-
 function resolveInstallableContributions(
     candidates: readonly ResolvedInstallableContribution[],
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
@@ -573,28 +521,16 @@ function resolveInstallableContributions(
     pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
 }> {
     const diagnosticsByPluginId = clonePluginDiagnostics(pluginDiagnosticsByPluginId);
-    const candidateByOwnerAndKey = new Map<string, ResolvedInstallableContribution>();
-    const builtIns: InstallableRegistryContribution[] = [];
-    const bundledFirstPartyPlugins: InstallableRegistryContribution[] = [];
-    const externalPlugins: InstallableRegistryContribution[] = [];
+    const candidateByOwnerAndKey = new Map<string, ResolvedExecutableManagedDependency>();
+    const targetContributions = candidates.filter((candidate) => !isExecutableManagedDependency(candidate));
 
     for (const candidate of candidates) {
-        const contribution = toInstallableRegistryContribution(candidate);
+        if (!isExecutableManagedDependency(candidate)) continue;
+        const contribution = toExecutableManagedDependencyRegistryContribution(candidate);
         candidateByOwnerAndKey.set(`${contribution.owner.ownerId}:${contribution.descriptor.key}`, candidate);
-        if (contribution.owner.provenance === 'built_in') {
-            builtIns.push(contribution);
-        } else if (contribution.owner.provenance === 'bundled_first_party_plugin') {
-            bundledFirstPartyPlugins.push(contribution);
-        } else {
-            externalPlugins.push(contribution);
-        }
     }
 
-    const resolved = resolveInstallablesRegistry({
-        builtIns,
-        bundledFirstPartyPlugins,
-        externalPlugins,
-    });
+    const resolved = resolveExecutableManagedDependenciesRegistry(candidates);
     for (const diagnostic of resolved.diagnostics) {
         const pluginId = diagnostic.disabledPluginId ?? 'unknown';
         diagnosticsByPluginId[pluginId] = diagnosticsByPluginId[pluginId] ?? [];
@@ -605,12 +541,13 @@ function resolveInstallableContributions(
     }
 
     return {
-        managedDependencies: Object.freeze(
-            resolved.descriptors.flatMap((entry) => {
+        managedDependencies: Object.freeze([
+            ...resolved.descriptors.flatMap((entry) => {
                 const candidate = candidateByOwnerAndKey.get(`${entry.owner.ownerId}:${entry.descriptor.key}`);
                 return candidate ? [candidate] : [];
             }),
-        ),
+            ...targetContributions,
+        ]),
         pluginDiagnosticsByPluginId: freezePluginDiagnostics(diagnosticsByPluginId),
     };
 }
@@ -644,9 +581,7 @@ function withScmHostingProviderIdentity(
         ...candidate,
         identity: createPluginContributionIdentity({
             pluginId: candidate.pluginId,
-            family: 'scmHostingProviders',
-            contributionId: candidate.id,
-            provenance: candidate.provenance,
+            localId: candidate.id,
         }),
     });
 }
@@ -654,7 +589,7 @@ function withScmHostingProviderIdentity(
 function formatScmHostingProviderContributionKey(candidate: ResolvedScmHostingProviderContribution): string {
     return candidate.identity
         ? buildQualifiedPluginContributionKey(candidate.identity)
-        : `${candidate.pluginId ?? 'unknown'}:scmHostingProviders:${candidate.id}`;
+        : `${candidate.pluginId ?? 'unknown'}/${candidate.id}`;
 }
 
 function resolveScmHostingProviderContributions(
@@ -670,18 +605,12 @@ function resolveScmHostingProviderContributions(
     const activeProviders: ResolvedScmHostingProviderContribution[] = [];
 
     for (const candidate of candidates.map(withScmHostingProviderIdentity).sort(compareScmHostingProviderPriority)) {
-        const existing = providersById.get(candidate.id);
-        if (!existing) {
-            providersById.set(candidate.id, candidate);
-            activeProviders.push(candidate);
-            continue;
+        const key = formatScmHostingProviderContributionKey(candidate);
+        if (providersById.has(key)) {
+            throw new Error(`Duplicate SCM hosting-provider contribution '${key}'`);
         }
-
-        const message = `Duplicate ScmHostingProvider id '${candidate.id}' from '${formatScmHostingProviderContributionKey(candidate)}' conflicts with '${formatScmHostingProviderContributionKey(existing)}'`;
-        appendScmHostingProviderDiagnostic(diagnosticsByPluginId, candidate.pluginId, {
-            code: 'scm_hosting_provider_duplicate',
-            message,
-        });
+        providersById.set(key, candidate);
+        activeProviders.push(candidate);
     }
 
     return {
@@ -720,9 +649,7 @@ function withScmBackendIdentity(
         ...candidate,
         identity: createPluginContributionIdentity({
             pluginId: candidate.pluginId,
-            family: 'scmBackends',
-            contributionId: candidate.id,
-            provenance: candidate.provenance,
+            localId: candidate.id,
         }),
     });
 }
@@ -730,7 +657,7 @@ function withScmBackendIdentity(
 function formatScmBackendContributionKey(candidate: ResolvedScmBackendContribution): string {
     return candidate.identity
         ? buildQualifiedPluginContributionKey(candidate.identity)
-        : `${candidate.pluginId ?? 'unknown'}:scmBackends:${candidate.id}`;
+        : `${candidate.pluginId ?? 'unknown'}/${candidate.id}`;
 }
 
 function resolveScmBackendContributions(
@@ -746,18 +673,12 @@ function resolveScmBackendContributions(
     const activeBackends: ResolvedScmBackendContribution[] = [];
 
     for (const candidate of candidates.map(withScmBackendIdentity).sort(compareScmBackendPriority)) {
-        const existing = backendsById.get(candidate.id);
-        if (!existing) {
-            backendsById.set(candidate.id, candidate);
-            activeBackends.push(candidate);
-            continue;
+        const key = formatScmBackendContributionKey(candidate);
+        if (backendsById.has(key)) {
+            throw new Error(`Duplicate SCM backend contribution '${key}'`);
         }
-
-        const message = `Duplicate ScmBackend id '${candidate.id}' from '${formatScmBackendContributionKey(candidate)}' conflicts with '${formatScmBackendContributionKey(existing)}'`;
-        appendScmHostingProviderDiagnostic(diagnosticsByPluginId, candidate.pluginId, {
-            code: 'scm_backend_duplicate',
-            message,
-        });
+        backendsById.set(key, candidate);
+        activeBackends.push(candidate);
     }
 
     return {
@@ -784,25 +705,37 @@ export async function resolveMergedContributionRegistry(
     const { resolvePluginContributes } = await import('./resolvePluginContributions');
     const plugin = await resolvePluginContributes({
         happyHomeDir: params?.happyHomeDir,
-        existingProviderIds: new Set(builtIn.agents.map((agent) => agent.id)),
-        existingBackendIds: new Set(builtIn.agentRuntimes.map((agentRuntime) => agentRuntime.id)),
+        existingAgentIds: new Set(builtIn.agents.map((agent) => agent.id)),
     });
 
+    return createMergedContributionRegistry(plugin, builtIn);
+}
+
+export function createMergedContributionRegistry(
+    plugin: ResolvedContributionInputs,
+    builtIn: ResolvedContributionInputs = resolveBuiltInContributions(),
+): ResolvedContributionRegistry {
     return createResolvedContributionRegistry({
-        agents: Object.freeze([...builtIn.agents, ...(plugin.agents ?? [])]),
-        agentRuntimes: Object.freeze([...builtIn.agentRuntimes, ...(plugin.agentRuntimes ?? [])]),
+        introspectionContributions: Object.freeze([
+            ...(builtIn.introspectionContributions ?? []),
+            ...(plugin.introspectionContributions ?? []),
+        ]),
+        agents: Object.freeze([...(builtIn.agents ?? []), ...(plugin.agents ?? [])]),
+        providers: Object.freeze([...(builtIn.providers ?? []), ...(plugin.providers ?? [])]),
         catalogEntries: Object.freeze([...(builtIn.catalogEntries ?? []), ...(plugin.catalogEntries ?? [])]),
         actions: Object.freeze([...(builtIn.actions ?? []), ...(plugin.actions ?? [])]),
         tools: Object.freeze([...(builtIn.tools ?? []), ...(plugin.tools ?? [])]),
         commands: Object.freeze([...(builtIn.commands ?? []), ...(plugin.commands ?? [])]),
         resources: Object.freeze([...(builtIn.resources ?? []), ...(plugin.resources ?? [])]),
-        uiDescriptors: Object.freeze([...(builtIn.uiDescriptors ?? []), ...(plugin.uiDescriptors ?? [])]),
+        promptAssets: Object.freeze([...(builtIn.promptAssets ?? []), ...(plugin.promptAssets ?? [])]),
+        uiViewsV2: Object.freeze([...(builtIn.uiViewsV2 ?? []), ...(plugin.uiViewsV2 ?? [])]),
+        uiRenderersV2: Object.freeze([...(builtIn.uiRenderersV2 ?? []), ...(plugin.uiRenderersV2 ?? [])]),
+        uiTranslationsV2: Object.freeze([...(builtIn.uiTranslationsV2 ?? []), ...(plugin.uiTranslationsV2 ?? [])]),
         uiTranslations: Object.freeze([...(builtIn.uiTranslations ?? []), ...(plugin.uiTranslations ?? [])]),
         structuredMessages: Object.freeze([...(builtIn.structuredMessages ?? []), ...(plugin.structuredMessages ?? [])]),
         sessionHeaderActions: Object.freeze([...(builtIn.sessionHeaderActions ?? []), ...(plugin.sessionHeaderActions ?? [])]),
         surfacePlacements: Object.freeze([...(builtIn.surfacePlacements ?? []), ...(plugin.surfacePlacements ?? [])]),
         hostedWeb: Object.freeze([...(builtIn.hostedWeb ?? []), ...(plugin.hostedWeb ?? [])]),
-        embeddedWebBundles: Object.freeze([...(builtIn.embeddedWebBundles ?? []), ...(plugin.embeddedWebBundles ?? [])]),
         reactNativeBundles: Object.freeze([...(builtIn.reactNativeBundles ?? []), ...(plugin.reactNativeBundles ?? [])]),
         uiArtifacts: Object.freeze([...(builtIn.uiArtifacts ?? []), ...(plugin.uiArtifacts ?? [])]),
         browserTargets: Object.freeze([...(builtIn.browserTargets ?? []), ...(plugin.browserTargets ?? [])]),
@@ -812,14 +745,20 @@ export async function resolveMergedContributionRegistry(
         notificationChannels: Object.freeze([...(builtIn.notificationChannels ?? []), ...(plugin.notificationChannels ?? [])]),
         events: Object.freeze([...(builtIn.events ?? []), ...(plugin.events ?? [])]),
         executionRunProfiles: Object.freeze([...(builtIn.executionRunProfiles ?? []), ...(plugin.executionRunProfiles ?? [])]),
+        mcpServers: Object.freeze([...(builtIn.mcpServers ?? []), ...(plugin.mcpServers ?? [])]),
+        mcpDiscoveryProviders: Object.freeze([
+            ...(builtIn.mcpDiscoveryProviders ?? []),
+            ...(plugin.mcpDiscoveryProviders ?? []),
+        ]),
         managedDependencies: Object.freeze([...(builtIn.managedDependencies ?? []), ...(plugin.managedDependencies ?? [])]),
+        systemTools: Object.freeze([...(builtIn.systemTools ?? []), ...(plugin.systemTools ?? [])]),
         requestInterceptors: Object.freeze([...(builtIn.requestInterceptors ?? []), ...(plugin.requestInterceptors ?? [])]),
         scmHostingProviders: Object.freeze([...(builtIn.scmHostingProviders ?? []), ...(plugin.scmHostingProviders ?? [])]),
         scmBackends: Object.freeze([...(builtIn.scmBackends ?? []), ...(plugin.scmBackends ?? [])]),
         connectedAccountDescriptors: Object.freeze([...(builtIn.connectedAccountDescriptors ?? []), ...(plugin.connectedAccountDescriptors ?? [])]),
+        voiceModelPacks: Object.freeze([...(builtIn.voiceModelPacks ?? []), ...(plugin.voiceModelPacks ?? [])]),
+        voiceProviders: Object.freeze([...(builtIn.voiceProviders ?? []), ...(plugin.voiceProviders ?? [])]),
         activationTargets: Object.freeze([...(builtIn.activationTargets ?? []), ...(plugin.activationTargets ?? [])]),
-        hookRegistrations: Object.freeze([...(builtIn.hookRegistrations ?? []), ...(plugin.hookRegistrations ?? [])]),
-        lifecycleHandlers: Object.freeze([...(builtIn.lifecycleHandlers ?? []), ...(plugin.lifecycleHandlers ?? [])]),
         pluginDiagnosticsByPluginId: Object.freeze({
             ...(builtIn.pluginDiagnosticsByPluginId ?? {}),
             ...(plugin.pluginDiagnosticsByPluginId ?? {}),
@@ -835,18 +774,18 @@ export async function primeResolvedContributionRegistry(
     return merged;
 }
 
-function assertAgentContributionAligned(provider: ResolvedAgentContribution): void {
-    if (provider.definition.kindVersion !== 1) {
-        throw new Error(`Agent definition version mismatch for contribution '${provider.id}'`);
+function assertAgentContributionAligned(agent: ResolvedAgentContribution): void {
+    if (agent.definition.kindVersion !== 1) {
+        throw new Error(`Agent definition version mismatch for contribution '${agent.id}'`);
     }
-    if (provider.definition.id !== provider.id) {
-        throw new Error(`Agent definition id mismatch for contribution '${provider.id}'`);
+    if (agent.definition.id !== agent.id) {
+        throw new Error(`Agent definition id mismatch for contribution '${agent.id}'`);
     }
-    if (provider.catalogEntry && provider.catalogEntry.id !== provider.id) {
-        throw new Error(`catalog entry id mismatch for agent contribution '${provider.id}'`);
+    if (agent.catalogEntry && agent.catalogEntry.id !== agent.id) {
+        throw new Error(`catalog entry id mismatch for agent contribution '${agent.id}'`);
     }
-    if (provider.catalogEntry && provider.catalogEntry.cliSubcommand !== provider.id) {
-        throw new Error(`catalog entry cliSubcommand mismatch for agent contribution '${provider.id}'`);
+    if (agent.catalogEntry && agent.catalogEntry.cliSubcommand !== agent.id) {
+        throw new Error(`catalog entry cliSubcommand mismatch for agent contribution '${agent.id}'`);
     }
 }
 
@@ -854,34 +793,6 @@ function assertCatalogEntryAligned(catalogEntry: ResolvedCatalogEntry): void {
     if (catalogEntry.id !== catalogEntry.cliSubcommand) {
         throw new Error(`Catalog entry id/cliSubcommand mismatch for catalog entry contribution '${catalogEntry.id}'`);
     }
-}
-
-function assertBackendContributionAligned(backend: ResolvedAgentRuntimeContribution): void {
-    if (backend.definition.kindVersion !== 1) {
-        throw new Error(`Backend definition version mismatch for contribution '${backend.id}'`);
-    }
-    if (backend.definition.id !== backend.id) {
-        throw new Error(`Backend definition id mismatch for contribution '${backend.id}'`);
-    }
-    if (backend.definition.agentId !== backend.agentId) {
-        throw new Error(`Agent runtime agent id mismatch for contribution '${backend.id}'`);
-    }
-}
-
-function isProviderlessReviewExecutionRunBackend(backend: ResolvedAgentRuntimeContribution): boolean {
-    const session = backend.capabilities?.session;
-    const executionRun = backend.capabilities?.executionRun;
-    return Boolean(session)
-        && typeof session === 'object'
-        && !Array.isArray(session)
-        && session.supported === false
-        && Boolean(executionRun)
-        && typeof executionRun === 'object'
-        && !Array.isArray(executionRun)
-        && executionRun.supported !== false
-        && Boolean(executionRun.review)
-        && typeof executionRun.review === 'object'
-        && !Array.isArray(executionRun.review);
 }
 
 function compareActionContributes(left: ResolvedActionContribution, right: ResolvedActionContribution): number {
@@ -932,16 +843,12 @@ function compareResourceContributes(left: ResolvedResourceContribution, right: R
     return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
 }
 
-function compareUiDescriptorContributes(left: ResolvedUiDescriptorContribution, right: ResolvedUiDescriptorContribution): number {
-    if (left.definition.id !== right.definition.id) {
-        return left.definition.id.localeCompare(right.definition.id);
-    }
-    const leftPluginId = left.pluginId ?? '';
-    const rightPluginId = right.pluginId ?? '';
-    if (leftPluginId !== rightPluginId) {
-        return leftPluginId.localeCompare(rightPluginId);
-    }
-    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+function comparePromptAssetContributes(left: ResolvedPromptAssetContribution, right: ResolvedPromptAssetContribution): number {
+    const priority = (left.definition.priority ?? 0) - (right.definition.priority ?? 0);
+    if (priority !== 0) return priority;
+    return buildQualifiedPluginContributionKey(left.identity).localeCompare(
+        buildQualifiedPluginContributionKey(right.identity),
+    );
 }
 
 function resolvePluginUiContributionRegistryId(
@@ -986,6 +893,21 @@ function compareUiTranslationsContributes(
     return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
 }
 
+function compareUiTranslationsV2Contributes(
+    left: ResolvedUiTranslationBundleV2Contribution,
+    right: ResolvedUiTranslationBundleV2Contribution,
+): number {
+    if (left.pluginId !== right.pluginId) {
+        return left.pluginId.localeCompare(right.pluginId);
+    }
+    if (left.definition.locale !== right.definition.locale) {
+        return left.definition.locale.localeCompare(right.definition.locale);
+    }
+    const leftOwner = `${left.manifestPath ?? ''}\0${left.manifestDigest ?? ''}\0${JSON.stringify(left.definition)}`;
+    const rightOwner = `${right.manifestPath ?? ''}\0${right.manifestDigest ?? ''}\0${JSON.stringify(right.definition)}`;
+    return leftOwner.localeCompare(rightOwner);
+}
+
 function compareStructuredMessageContributes(
     left: ResolvedStructuredMessageContribution,
     right: ResolvedStructuredMessageContribution,
@@ -1010,13 +932,6 @@ function compareSurfacePlacementContributes(
 function compareHostedWebContributes(
     left: ResolvedHostedWebContribution,
     right: ResolvedHostedWebContribution,
-): number {
-    return comparePluginUiContributionById(left, right);
-}
-
-function compareEmbeddedWebBundleContributes(
-    left: ResolvedEmbeddedWebBundleContribution,
-    right: ResolvedEmbeddedWebBundleContribution,
 ): number {
     return comparePluginUiContributionById(left, right);
 }
@@ -1101,7 +1016,7 @@ function compareRequestInterceptorContributes(
     left: ResolvedRequestInterceptorContribution,
     right: ResolvedRequestInterceptorContribution,
 ): number {
-    const orderDelta = (left.definition.order ?? 0) - (right.definition.order ?? 0);
+    const orderDelta = (left.definition.priority ?? 0) - (right.definition.priority ?? 0);
     if (orderDelta !== 0) {
         return orderDelta;
     }
@@ -1120,43 +1035,34 @@ function compareActivationTargets(left: ResolvedActivationTarget, right: Resolve
     if (left.pluginId !== right.pluginId) {
         return left.pluginId.localeCompare(right.pluginId);
     }
-    return left.daemonEntryPath.localeCompare(right.daemonEntryPath);
+    return (left.daemonEntryPath ?? '').localeCompare(right.daemonEntryPath ?? '');
 }
 
-function compareLifecycleHandlerContributes(
-    left: ResolvedLifecycleHandlerContribution,
-    right: ResolvedLifecycleHandlerContribution,
-): number {
-    if (left.definition.id !== right.definition.id) {
-        return left.definition.id.localeCompare(right.definition.id);
-    }
-    const priorityDelta = right.definition.priority - left.definition.priority;
-    if (priorityDelta !== 0) {
-        return priorityDelta;
-    }
-    const leftPluginId = left.pluginId ?? '';
-    const rightPluginId = right.pluginId ?? '';
-    if (leftPluginId !== rightPluginId) {
-        return leftPluginId.localeCompare(rightPluginId);
-    }
-    return (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '');
+function resolveIntrospectionCandidateSortKey(candidate: NonNullable<ResolvedContributionInputs['introspectionContributions']>[number]): string {
+    const identity = candidate.identity;
+    const identityValue = identity.kind === 'localId'
+        ? identity.localId
+        : identity.kind === 'locale'
+            ? identity.locale
+            : identity.domainId;
+    return `${candidate.pluginId}/${candidate.family}/${identityValue}`;
 }
 
 function buildRegistryGenerationId(params: Readonly<{
     agents: readonly ResolvedAgentContribution[];
-    agentRuntimes: readonly ResolvedAgentRuntimeContribution[];
+    providers: readonly ResolvedProviderContribution[];
     catalogEntries?: readonly ResolvedCatalogEntry[];
     actions: readonly ResolvedActionContribution[];
     tools: readonly ResolvedToolContribution[];
     commands: readonly ResolvedCommandContribution[];
     resources: readonly ResolvedResourceContribution[];
-    uiDescriptors: readonly ResolvedUiDescriptorContribution[];
+    promptAssets: readonly ResolvedPromptAssetContribution[];
+    uiTranslationsV2: readonly ResolvedUiTranslationBundleV2Contribution[];
     uiTranslations: readonly ResolvedUiTranslationsContribution[];
     structuredMessages: readonly ResolvedStructuredMessageContribution[];
     sessionHeaderActions: readonly ResolvedSessionHeaderActionContribution[];
     surfacePlacements: readonly ResolvedSurfacePlacementContribution[];
     hostedWeb: readonly ResolvedHostedWebContribution[];
-    embeddedWebBundles: readonly ResolvedEmbeddedWebBundleContribution[];
     reactNativeBundles: readonly ResolvedReactNativeBundleContribution[];
     uiArtifacts: readonly ResolvedUiArtifactContribution[];
     browserTargets: readonly ResolvedBrowserTargetContribution[];
@@ -1169,64 +1075,59 @@ function buildRegistryGenerationId(params: Readonly<{
     mcpServers: readonly ResolvedMcpServerContribution[];
     mcpDiscoveryProviders: readonly ResolvedMcpDiscoveryProviderContribution[];
     managedDependencies: readonly ResolvedInstallableContribution[];
+    systemTools: readonly ResolvedSystemToolContribution[];
     requestInterceptors: readonly ResolvedRequestInterceptorContribution[];
     scmHostingProviders: readonly ResolvedScmHostingProviderContribution[];
     scmBackends: readonly ResolvedScmBackendContribution[];
     connectedAccountDescriptors: readonly ResolvedConnectedAccountDescriptorContribution[];
+    voiceModelPacks: readonly ResolvedVoiceModelPackContribution[];
+    voiceProviders: readonly ResolvedVoiceProviderContribution[];
     activationTargets: readonly ResolvedActivationTarget[];
-    hookRegistrations: ResolvedContributionInputs['hookRegistrations'];
-    lifecycleHandlers: readonly ResolvedLifecycleHandlerContribution[];
 }>): string {
+    const v2TranslationPluginIds = new Set(params.uiTranslationsV2.map((bundle) => bundle.pluginId));
     const parts = [
         ...params.agents.map((agent) => `agent:${agent.provenance}:${agent.source.kind}:${agent.id}:${agent.manifestDigest ?? ''}`),
-        ...params.agentRuntimes.map((agentRuntime) => `agentRuntime:${agentRuntime.provenance}:${agentRuntime.source.kind}:${agentRuntime.id}:${agentRuntime.manifestDigest ?? ''}`),
+        ...params.providers.map((provider) => `provider:${buildQualifiedPluginContributionKey(provider.identity)}:${provider.manifestDigest ?? ''}`),
         ...(params.catalogEntries ?? []).map((catalogEntry) => `catalog:${catalogEntry.id}:${catalogEntry.cliSubcommand}`),
-        ...params.actions.map((action) => `action:${action.provenance}:${action.source.kind}:${action.definition.id}:${action.manifestDigest ?? ''}`),
-        ...params.tools.map((tool) => `tool:${tool.provenance}:${tool.source.kind}:${tool.definition.id}:${tool.definition.name}:${tool.manifestDigest ?? ''}`),
-        ...params.commands.map((command) => `command:${command.provenance}:${command.source.kind}:${command.definition.id}:${command.definition.command}:${command.manifestDigest ?? ''}`),
+        ...params.actions.map((action) => `action:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${action.manifestDigest ?? ''}`),
+        ...params.tools.map((tool) => `tool:${tool.provenance}:${tool.source.kind}:${tool.pluginId ?? ''}:${tool.definition.id}:${tool.definition.name}:${tool.manifestDigest ?? ''}`),
+        ...params.commands.map((command) => `command:${command.provenance}:${command.source.kind}:${command.pluginId ?? ''}:${command.definition.id}:${command.definition.path.join('/')}:${command.manifestDigest ?? ''}`),
         ...params.resources.map((resource) => `resource:${resource.provenance}:${resource.source.kind}:${resource.definition.id}:${resource.manifestDigest ?? ''}`),
-        ...params.uiDescriptors.map((uiDescriptor) => `ui:${uiDescriptor.provenance}:${uiDescriptor.source.kind}:${uiDescriptor.definition.id}:${uiDescriptor.manifestDigest ?? ''}`),
-        ...params.uiTranslations.map((bundle) => `uiTranslations:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.manifestDigest ?? ''}`),
+        ...params.promptAssets.map((asset) => `promptAsset:${buildQualifiedPluginContributionKey(asset.identity)}:${asset.manifestDigest}`),
+        ...params.uiTranslationsV2.map((bundle) => `uiTranslationsV2:${bundle.pluginId}:${bundle.definition.locale}:${bundle.manifestDigest ?? ''}:${JSON.stringify(bundle.definition.messages)}`),
+        ...params.uiTranslations
+            .filter((bundle) => !bundle.pluginId || !v2TranslationPluginIds.has(bundle.pluginId))
+            .map((bundle) => `uiTranslations:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.manifestDigest ?? ''}`),
         ...params.structuredMessages.map((message) => `structuredMessage:${message.provenance}:${message.source.kind}:${message.pluginId ?? ''}:${message.definition.id}:${message.definition.kind}:${message.manifestDigest ?? ''}`),
         ...params.sessionHeaderActions.map((action) => `sessionHeaderAction:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${action.manifestDigest ?? ''}`),
         ...params.surfacePlacements.map((placement) => `surfacePlacement:${placement.provenance}:${placement.source.kind}:${placement.pluginId ?? ''}:${placement.definition.id}:${placement.definition.placement}:${placement.manifestDigest ?? ''}`),
         ...params.hostedWeb.map((web) => `hostedWeb:${web.provenance}:${web.source.kind}:${web.pluginId ?? ''}:${web.definition.id}:${web.manifestDigest ?? ''}`),
-        ...params.embeddedWebBundles.map((bundle) => `embeddedWebBundle:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.definition.id}:${resolveEmbeddedWebBundleIdentity(bundle.definition.bundle)}:${bundle.manifestDigest ?? ''}`),
         ...params.reactNativeBundles.map((bundle) => `reactNativeBundle:${bundle.provenance}:${bundle.source.kind}:${bundle.pluginId ?? ''}:${bundle.definition.id}:${resolveReactNativeBundleIdentity(bundle.definition.bundle)}:${bundle.manifestDigest ?? ''}`),
         ...params.uiArtifacts.map((artifact) => `uiArtifact:${artifact.provenance}:${artifact.source.kind}:${artifact.pluginId ?? ''}:${artifact.definition.id}:${resolveUiArtifactIdentity(artifact)}:${artifact.manifestDigest ?? ''}`),
-        ...params.browserTargets.map((target) => `browserTarget:${target.provenance}:${target.source.kind}:${target.pluginId ?? ''}:${target.definition.id}:${target.definition.target.kind}:${target.manifestDigest ?? ''}`),
-        ...params.browserActions.map((action) => `browserAction:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${action.definition.kind}:${action.definition.target.kind}:${action.manifestDigest ?? ''}`),
+        ...params.browserTargets.map((target) => `browserTarget:${target.provenance}:${target.source.kind}:${target.pluginId ?? ''}:${target.definition.id}:${target.definition.url}:${target.manifestDigest ?? ''}`),
+        ...params.browserActions.map((action) => `browserAction:${action.provenance}:${action.source.kind}:${action.pluginId ?? ''}:${action.definition.id}:${JSON.stringify(action.definition.target)}:${action.manifestDigest ?? ''}`),
         ...params.settings.map((setting) => `settings:${setting.provenance}:${setting.source.kind}:${setting.definition.id}:${setting.manifestDigest ?? ''}`),
         ...params.notifications.map((notification) => `notification:${notification.provenance}:${notification.source.kind}:${notification.definition.id}:${notification.manifestDigest ?? ''}`),
         ...params.notificationChannels.map((channel) => `notificationChannel:${channel.provenance}:${channel.source.kind}:${channel.definition.id}:${channel.manifestDigest ?? ''}`),
         ...params.events.map((event) => `event:${event.provenance}:${event.source.kind}:${event.definition.id}:${event.manifestDigest ?? ''}`),
         ...params.executionRunProfiles.map((profile) => `executionRunProfile:${profile.provenance}:${profile.source.kind}:${profile.definition.id}:${profile.manifestDigest ?? ''}`),
-        ...params.mcpServers.map((server) => `mcpServer:${server.provenance}:${server.source.kind}:${server.definition.id}:${server.definition.name}:${server.manifestDigest ?? ''}`),
+        ...params.mcpServers.map((server) => `mcpServer:${server.provenance}:${server.source.kind}:${server.definition.id}:${server.manifestDigest ?? ''}`),
         ...params.mcpDiscoveryProviders.map((provider) => `mcpDiscoveryProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
-        ...params.managedDependencies.map((installable) => `managedDependency:${installable.provenance}:${installable.source.kind}:${installable.definition.key}:${installable.definition.capabilityId}:${installable.manifestDigest ?? ''}`),
-        ...params.requestInterceptors.map((interceptor) => `requestInterceptor:${interceptor.provenance}:${interceptor.source.kind}:${interceptor.definition.id}:${interceptor.definition.order ?? 0}:${interceptor.manifestDigest ?? ''}`),
+        ...params.managedDependencies.map((installable) => `managedDependency:${installable.provenance}:${installable.source.kind}:${installable.pluginId ?? ''}:${installable.definition.id}:${JSON.stringify(installable.definition)}:${installable.manifestDigest ?? ''}`),
+        ...params.systemTools.map((tool) => `systemTool:${tool.provenance}:${tool.source.kind}:${tool.definition.id}:${JSON.stringify(tool.definition)}:${tool.manifestDigest ?? ''}`),
+        ...params.requestInterceptors.map((interceptor) => `requestInterceptor:${interceptor.provenance}:${interceptor.source.kind}:${interceptor.definition.id}:${interceptor.definition.priority ?? 0}:${interceptor.manifestDigest ?? ''}`),
         ...params.scmHostingProviders.map((provider) => `scmHostingProvider:${provider.provenance}:${provider.source.kind}:${provider.definition.id}:${provider.manifestDigest ?? ''}`),
         ...params.scmBackends.map((backend) => `scmBackend:${backend.provenance}:${backend.source.kind}:${backend.definition.id}:${backend.manifestDigest ?? ''}`),
         ...params.connectedAccountDescriptors.map((descriptor) => `connectedAccount:${descriptor.provenance}:${descriptor.source.kind}:${descriptor.definition.id}:${descriptor.manifestDigest ?? ''}`),
+        ...params.voiceModelPacks.map((pack) => `voiceModelPack:${buildQualifiedPluginContributionKey(pack.identity)}:${pack.manifestDigest ?? ''}`),
+        ...params.voiceProviders.map((provider) => `voiceProvider:${buildQualifiedPluginContributionKey(provider.identity)}:${provider.manifestDigest ?? ''}`),
         ...params.activationTargets.map((target) => `activate:${target.provenance}:${target.source.kind}:${target.pluginId}:${target.manifestDigest}:${target.daemonEntryPath}`),
-        ...(params.hookRegistrations ?? []).map((hook) => `hook:${hook.provenance}:${hook.source.kind}:${hook.definition.id}:${hook.manifestDigest}`),
-        ...params.lifecycleHandlers.map((handler) => `lifecycle:${handler.provenance}:${handler.source.kind}:${handler.definition.id}:${handler.definition.event}:${handler.manifestDigest ?? ''}`),
     ].sort();
     return `registry:${parts.join('|')}`;
 }
 
 function resolveReactNativeBundleIdentity(
     bundle: ResolvedReactNativeBundleContribution['definition']['bundle'],
-): string {
-    return bundle.integrity?.digest ?? `devHotReload:${bundle.platform}:${bundle.channel}`;
-}
-
-// F-UI-4: embeddedWeb's bundle.integrity is now optional too (protocol
-// `PluginEmbeddedWebBundleContributionV1Schema` grew the same local
-// development-hot-reload carve-out reactNative already had), so the registry
-// generation fingerprint needs the identical devHotReload fallback identity.
-function resolveEmbeddedWebBundleIdentity(
-    bundle: ResolvedEmbeddedWebBundleContribution['definition']['bundle'],
 ): string {
     return bundle.integrity?.digest ?? `devHotReload:${bundle.platform}:${bundle.channel}`;
 }
@@ -1261,13 +1162,18 @@ function compareConnectedAccountDescriptorContributes(
     return left.definition.id.localeCompare(right.definition.id);
 }
 
+function compareVoiceModelPackContributes(
+    left: ResolvedVoiceModelPackContribution,
+    right: ResolvedVoiceModelPackContribution,
+): number {
+    return buildQualifiedPluginContributionKey(left.identity)
+        .localeCompare(buildQualifiedPluginContributionKey(right.identity));
+}
+
 function compareExecutionRunProfileContributes(
     left: ResolvedExecutionRunProfileContribution,
     right: ResolvedExecutionRunProfileContribution,
 ): number {
-    if (left.definition.intent !== right.definition.intent) {
-        return left.definition.intent.localeCompare(right.definition.intent);
-    }
     return left.definition.id.localeCompare(right.definition.id);
 }
 

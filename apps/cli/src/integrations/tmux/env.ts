@@ -1,4 +1,4 @@
-import { buildPosixShellCommand } from '@/utils/posixShellCommand';
+import { buildPosixShellCommand } from '@happier-dev/agents/process/shellCommand';
 
 export function readNonNegativeIntegerEnv(name: string, fallback: number): number {
   const raw = process.env[name];

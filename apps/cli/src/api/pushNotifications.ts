@@ -223,7 +223,6 @@ export class PushNotificationClient {
             {
                 headers: {
                     'Authorization': `Bearer ${this.token}`,
-                    'Content-Type': 'application/json'
                 },
                 timeout: readPushFetchTokensTimeoutMs(),
             }

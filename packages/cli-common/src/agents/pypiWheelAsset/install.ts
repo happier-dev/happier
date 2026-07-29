@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { extractExactWheelAsset } from './extract.js';
 import {
@@ -97,6 +97,33 @@ function isInstalledMetadata(value: unknown): value is InstalledPypiWheelAssetMe
     && typeof record.executablePath === 'string';
 }
 
+function isPathInsideRoot(rootPath: string, candidatePath: string): boolean {
+  const relativePath = relative(rootPath, candidatePath);
+  return relativePath === ''
+    || (relativePath !== '..' && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath));
+}
+
+async function resolveContainedInstalledExecutable(
+  installRoot: string,
+  executablePath: string,
+): Promise<string | null> {
+  const resolvedRoot = resolve(installRoot);
+  const resolvedExecutable = resolve(executablePath);
+  if (!isPathInsideRoot(resolvedRoot, resolvedExecutable)) return null;
+
+  try {
+    const [canonicalRoot, canonicalExecutable, executableStats] = await Promise.all([
+      realpath(resolvedRoot),
+      realpath(resolvedExecutable),
+      stat(resolvedExecutable),
+    ]);
+    if (!executableStats.isFile() || !isPathInsideRoot(canonicalRoot, canonicalExecutable)) return null;
+    return canonicalExecutable;
+  } catch {
+    return null;
+  }
+}
+
 export async function readInstalledPypiWheelAsset(installRoot: string): Promise<InstalledPypiWheelAsset | null> {
   const metadataPath = currentMetadataPath(installRoot);
   let metadata: InstalledPypiWheelAssetMetadata;
@@ -108,8 +135,11 @@ export async function readInstalledPypiWheelAsset(installRoot: string): Promise<
     return null;
   }
 
+  const executablePath = await resolveContainedInstalledExecutable(installRoot, metadata.executablePath);
+  if (!executablePath) return null;
+
   return {
-    executablePath: metadata.executablePath,
+    executablePath,
     metadataPath,
     version: metadata.version,
     metadata,

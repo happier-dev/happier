@@ -3,7 +3,6 @@ export async function launch() {
         sessionId: 'bundled-first-party-session',
         runtime: {
             beginTurnLifecycle() {},
-            async startOrLoadSession() {},
             async sendTurnPrompt() {},
             async steerInFlightTurn() {},
             async waitForTurnCompletion() {},

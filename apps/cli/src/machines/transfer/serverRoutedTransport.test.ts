@@ -405,15 +405,26 @@ describe('server routed machine transfer', () => {
     }
   });
 
-  it('does not leak responder-side errors in abort reasons', async () => {
+  it('does not leak responder-side errors or transfer authority into abort reasons or retained logs', async () => {
+    const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const previousLogLevel = process.env.HAPPIER_LOG_LEVEL;
+    const logHomeDir = await mkdtemp(join(tmpdir(), 'happier-server-routed-transfer-log-privacy-'));
+    process.env.HAPPIER_HOME_DIR = logHomeDir;
+    process.env.HAPPIER_LOG_LEVEL = 'debug';
+    vi.resetModules();
+
     const { source, target, sentEnvelopes } = createLoopbackChannels();
     const { registerServerRoutedTransferResponder } = await import('./serverRoutedTransport');
     const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+    const { logger } = await import('@/ui/logger');
+    const hostilePath = '/tmp/private/path';
+    const hostileUrl = 'https://user:secret@example.test/private?token=secret';
+    const transferId = 'transfer_error_leak';
 
     const unregister = registerServerRoutedTransferResponder({
       machineTransferChannel: source,
       loadTransferPayloadSource: (_request) => {
-        throw new Error('secret-details:/tmp/private/path');
+        throw new Error(`secret-details:${hostilePath} ${hostileUrl}`);
       },
       chunkBytes: 4,
     });
@@ -425,7 +436,7 @@ describe('server routed machine transfer', () => {
       target.sendEnvelope({
         targetMachineId: 'machine_source',
         envelope: {
-          transferId: 'transfer_error_leak',
+          transferId,
           kind: 'open',
           manifestHash: 'sha256:test',
           recipientPublicKeyBase64,
@@ -437,7 +448,7 @@ describe('server routed machine transfer', () => {
           (entry) =>
             entry.targetMachineId === 'machine_target'
             && entry.envelope.kind === 'abort'
-            && entry.envelope.transferId === 'transfer_error_leak',
+            && entry.envelope.transferId === transferId,
         );
         expect(abort).toBeTruthy();
         if (!abort || abort.envelope.kind !== 'abort') {
@@ -445,10 +456,35 @@ describe('server routed machine transfer', () => {
         }
         expect(abort.envelope.reason).toBe('internal_error');
         expect(abort.envelope.reason).not.toContain('secret-details');
-        expect(abort.envelope.reason).not.toContain('transfer_error_leak');
+        expect(abort.envelope.reason).not.toContain(transferId);
       });
+
+      let log = '';
+      await vi.waitFor(async () => {
+        logger.flushSync();
+        log = await readFile(logger.getLogPath(), 'utf8').catch(() => '');
+        expect(log.length).toBeGreaterThan(0);
+      });
+      expect(log).toContain('server_routed_transfer_responder_failed');
+      expect(log).toContain('"failureClass":"exception"');
+      expect(log).not.toContain('secret-details');
+      expect(log).not.toContain(hostilePath);
+      expect(log).not.toContain(hostileUrl);
+      expect(log).not.toContain(transferId);
+      expect(log).not.toContain(recipientPublicKeyBase64);
     } finally {
       unregister();
+      if (previousHomeDir === undefined) {
+        delete process.env.HAPPIER_HOME_DIR;
+      } else {
+        process.env.HAPPIER_HOME_DIR = previousHomeDir;
+      }
+      if (previousLogLevel === undefined) {
+        delete process.env.HAPPIER_LOG_LEVEL;
+      } else {
+        process.env.HAPPIER_LOG_LEVEL = previousLogLevel;
+      }
+      await rm(logHomeDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
 

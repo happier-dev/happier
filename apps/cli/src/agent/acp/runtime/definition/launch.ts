@@ -1,12 +1,13 @@
-import type { AcpTransportSpecV1 } from '@happier-dev/plugin-sdk';
-import type { ExecRuntimeServiceV1, PluginContextV1 } from '@happier-dev/plugin-sdk';
-import type { SystemToolLaunchGrantV1 } from '@happier-dev/plugin-sdk';
-import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+import type {
+  ExecRuntimeServiceV1,
+  SystemToolLaunchGrantV1,
+} from '@/plugins/runtime/exec/privateContract';
 
-import type { CatalogAgentLookupId } from '@/backends/types';
-import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+import type { CatalogAgentLookupId } from '@/agent/catalog/types';
+import { requireAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 
-import type { AcpRuntimeDefinitionV1 } from './_types';
+import type { AcpRuntimeDefinition, HostAcpTransportSpec } from './_types';
 import { withAcpLaunchEnvDefaults } from './env';
 import { assertAcpRuntimeDefinitionSupported } from './support';
 import {
@@ -26,8 +27,6 @@ export type AcpExecutableLaunch = Readonly<{
     runtimeArgsPrefix: readonly string[];
   }>;
 }>;
-
-const MAX_AUTH_ENV_ERROR_DIAGNOSTIC_CHARS = 500;
 
 export function mergeDefinedStringEnv(
   ...sources: ReadonlyArray<Readonly<Record<string, string | undefined>> | undefined>
@@ -51,13 +50,12 @@ function hasOwnDefined(record: Readonly<Record<string, unknown>> | undefined, ke
 }
 
 function requireStdioLaunch(
-  definition: AcpRuntimeDefinitionV1,
+  definition: AcpRuntimeDefinition,
   cwd: string,
-  pluginContext: PluginContextV1 | undefined,
   exec: Pick<ExecRuntimeServiceV1, 'systemTools'> | undefined,
   processEnv: NodeJS.ProcessEnv = process.env,
 ): MaybePromise<AcpExecutableLaunch> {
-  const transport: AcpTransportSpecV1 = definition.transport;
+  const transport: HostAcpTransportSpec = definition.transport;
   if (transport.kind !== 'stdio') {
     throw new Error(`ACP backend '${definition.backendId}' uses unsupported ${transport.kind} transport in the current host runtime.`);
   }
@@ -72,7 +70,7 @@ function requireStdioLaunch(
     };
   }
   if (transport.launch.kind === 'system-tool') {
-    const systemTools = exec?.systemTools ?? pluginContext?.exec.systemTools;
+    const systemTools = exec?.systemTools;
     if (!systemTools) {
       throw new Error(
         `ACP backend '${definition.backendId}' system-tool launch requires a plugin runtime context or exec bridge.`,
@@ -92,7 +90,7 @@ function requireStdioLaunch(
     }));
   }
 
-  const launch = requireProviderCliLaunchSpec(transport.launch.agentId as CatalogAgentLookupId, { processEnv });
+  const launch = requireAgentCliLaunchSpec(transport.launch.agentId as CatalogAgentLookupId, { processEnv });
   const runtimeArgsPrefix = [...launch.args];
   return {
     command: launch.command,
@@ -112,7 +110,7 @@ function requireStdioLaunch(
 }
 
 function buildSystemToolLaunch(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   grant: SystemToolLaunchGrantV1;
   launchArgs: readonly string[];
   launchEnv: Readonly<Record<string, string>>;
@@ -138,7 +136,7 @@ function buildSystemToolLaunch(params: Readonly<{
 
 function appendPermissionModeArgs(
   args: readonly string[],
-  definition: AcpRuntimeDefinitionV1,
+  definition: AcpRuntimeDefinition,
   permissionMode?: string,
 ): readonly string[] {
   const mode = typeof permissionMode === 'string' ? permissionMode.trim() : '';
@@ -154,86 +152,30 @@ function appendPermissionModeArgs(
   return [...args, spec.flag, mapped];
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function sanitizeAuthEnvDiagnostic(error: unknown): string {
-  const redacted = redactBugReportSensitiveText(errorMessage(error))
-    .replace(/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD)[A-Z0-9_]*)=([^\s,;]+)/gi, '$1=<redacted>');
-  return redacted.length > MAX_AUTH_ENV_ERROR_DIAGNOSTIC_CHARS
-    ? `${redacted.slice(0, MAX_AUTH_ENV_ERROR_DIAGNOSTIC_CHARS)}...`
-    : redacted;
-}
-
-function validateAuthEnv(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
-  value: unknown;
-}>): Readonly<Record<string, string>> {
-  if (!params.value || typeof params.value !== 'object' || Array.isArray(params.value)) {
-    throw new Error(`ACP backend '${params.definition.backendId}' auth.buildAuthEnv callback returned an invalid environment record.`);
-  }
-  const env: Record<string, string> = {};
-  for (const [key, value] of Object.entries(params.value)) {
-    if (typeof value !== 'string') {
-      throw new Error(`ACP backend '${params.definition.backendId}' auth.buildAuthEnv callback returned a non-string environment value.`);
-    }
-    env[key] = value;
-  }
-  return Object.freeze(env);
-}
-
-function resolveAcpAuthEnv(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
-  pluginContext?: PluginContextV1;
-}>): Readonly<Record<string, string>> {
-  const callback = params.definition.auth?.buildAuthEnv;
-  if (!callback) {
-    return Object.freeze({});
-  }
-  if (!params.pluginContext) {
-    throw new Error(
-      `ACP backend '${params.definition.backendId}' auth.buildAuthEnv callback requires a plugin runtime context.`,
-    );
-  }
-  try {
-    return validateAuthEnv({
-      definition: params.definition,
-      value: callback(params.pluginContext),
-    });
-  } catch (error) {
-    throw new Error(
-      `ACP backend '${params.definition.backendId}' auth.buildAuthEnv callback failed: ${sanitizeAuthEnvDiagnostic(error)}`,
-      { cause: error },
-    );
-  }
-}
-
 export function resolveAcpRuntimeLaunch(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   cwd: string;
   permissionMode?: string;
   env?: Readonly<Record<string, string | undefined>>;
+  unsetEnvKeys?: readonly string[];
   processEnv?: NodeJS.ProcessEnv;
-  pluginContext?: PluginContextV1;
   exec?: Pick<ExecRuntimeServiceV1, 'systemTools'>;
 }>): MaybePromise<AcpExecutableLaunch> {
   assertAcpRuntimeDefinitionSupported(params.definition);
   const launch = requireStdioLaunch(
     params.definition,
     params.cwd,
-    params.pluginContext,
     params.exec,
-    params.processEnv ?? mergeDefinedStringEnv(process.env, params.env),
+    params.processEnv ?? buildScopedProcessEnv({
+      baseEnv: process.env,
+      explicitEnv: params.env,
+      unsetEnvKeys: params.unsetEnvKeys,
+    }),
   );
   const resolveLaunch = (resolvedLaunch: AcpExecutableLaunch): MaybePromise<AcpExecutableLaunch> => {
     const launchEnv = mergeDefinedStringEnv(
       params.env,
       resolvedLaunch.env,
-      resolveAcpAuthEnv({
-        definition: params.definition,
-        pluginContext: params.pluginContext,
-      }),
     );
     const baseArgs = appendPermissionModeArgs(resolvedLaunch.args, params.definition, params.permissionMode);
     const buildLaunch = (resolvedArgs: readonly string[], resolvedEnv: Readonly<Record<string, string>>): AcpExecutableLaunch => ({

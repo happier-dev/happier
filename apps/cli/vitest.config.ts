@@ -34,6 +34,7 @@ export default defineConfig({
         // Multiple CLI unit tests mutate `process.env.HAPPIER_HOME_DIR` / config at runtime.
         // Running them in isolated forked processes prevents cross-file env races.
         pool: 'forks',
+        maxWorkers: 6,
         globals: false,
         environment: 'node',
         // CLI "unit" tests include real filesystem/process work; 5s default is too tight under fork pools.

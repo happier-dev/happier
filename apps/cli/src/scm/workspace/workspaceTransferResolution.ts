@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 
-import { resolveScmBackendRegistry } from '../scmBackendCatalog';
+import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
 import {
@@ -50,14 +50,14 @@ async function resolveWorkspaceTransferStateWithScmWorkspace(
     input: Readonly<{
         sourcePath: string;
         workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequestInput;
-        registry?: ScmBackendRegistry;
+        registry: ScmBackendRegistry;
     }>,
 ): Promise<Readonly<{
     transfer: ScmWorkspaceIntegrationWorkspaceTransferResult | null;
     isNestedRepoSourcePath: boolean;
     registry: ScmBackendRegistry;
 }>> {
-    const registry = await resolveScmBackendRegistry(input.registry);
+    const registry = input.registry;
     const resolved = await resolveScmSelection({
         workingDirectory: input.sourcePath,
         cwd: input.sourcePath,
@@ -161,12 +161,13 @@ export async function assertPortableWorkspaceTransferEntriesWithScmWorkspace(inp
     entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
     registry?: ScmBackendRegistry;
 }>): Promise<void> {
-    const registry = await resolveScmBackendRegistry(input.registry);
-    for (const entry of input.entries) {
-        if (classifyPortableWorkspaceTransferEntryWithScmWorkspace({ entry, registry }) === 'non_portable') {
-            throw buildNonPortableWorkspacePathError(entry.relativePath);
+    await runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        for (const entry of input.entries) {
+            if (classifyPortableWorkspaceTransferEntryWithScmWorkspace({ entry, registry }) === 'non_portable') {
+                throw buildNonPortableWorkspacePathError(entry.relativePath);
+            }
         }
-    }
+    });
 }
 
 export async function resolveWorkspaceTransferWithScmWorkspace(input: Readonly<{
@@ -174,7 +175,11 @@ export async function resolveWorkspaceTransferWithScmWorkspace(input: Readonly<{
     workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequestInput;
     registry?: ScmBackendRegistry;
 }>): Promise<ScmWorkspaceIntegrationWorkspaceTransferResult | null> {
-    return (await resolveWorkspaceTransferStateWithScmWorkspace(input)).transfer;
+    return runWithScmBackendRegistryLease(input.registry, async (registry) =>
+        (await resolveWorkspaceTransferStateWithScmWorkspace({
+            ...input,
+            registry,
+        })).transfer);
 }
 
 export async function resolveWorkspaceTransferEntriesWithScmWorkspace(input: Readonly<{
@@ -259,44 +264,49 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
     workspaceTransfer: ScmWorkspaceIntegrationWorkspaceTransferRequestInput;
     registry?: ScmBackendRegistry;
 }>): Promise<ScmWorkspaceIntegrationWorkspaceReplicationSourceInputs> {
-    const resolved = await resolveWorkspaceTransferStateWithScmWorkspace(input);
+    return runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        const resolved = await resolveWorkspaceTransferStateWithScmWorkspace({
+            ...input,
+            registry,
+        });
 
-    if (resolved.transfer && !(resolved.isNestedRepoSourcePath && resolved.transfer.entries.length === 0)) {
-        const entries = resolved.transfer.entries.map((entry) => createScmWorkspaceIntegrationWorkspaceTransferEntry(entry));
-        await assertPortableWorkspaceTransferEntriesWithScmWorkspace({
-            entries,
-            registry: resolved.registry,
+        if (resolved.transfer && !(resolved.isNestedRepoSourcePath && resolved.transfer.entries.length === 0)) {
+            const entries = resolved.transfer.entries.map((entry) => createScmWorkspaceIntegrationWorkspaceTransferEntry(entry));
+            await assertPortableWorkspaceTransferEntriesWithScmWorkspace({
+                entries,
+                registry: resolved.registry,
+            });
+            return {
+                entries,
+                workspaceIntegrationMetadata: resolved.transfer.metadata ?? null,
+                safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry),
+                isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
+            };
+        }
+
+        try {
+            await readdir(input.sourcePath, { withFileTypes: true });
+        } catch (error) {
+            if (isIgnorableWorkspaceExportAccessError(error)) {
+                throw new WorkspaceTransferSourcePathError({
+                    sourcePath: input.sourcePath,
+                    cause: error,
+                });
+            }
+            throw error;
+        }
+
+        const entries = await listWorkspaceExportFallbackEntries({
+            root: input.sourcePath,
+            readDirectory: async (directory) => await readdir(directory, { withFileTypes: true }),
         });
         return {
             entries,
-            workspaceIntegrationMetadata: resolved.transfer.metadata ?? null,
-            safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry),
+            workspaceIntegrationMetadata: null,
+            safeFilterPolicy: entries.length > 0
+                ? await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry)
+                : DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
             isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
         };
-    }
-
-    try {
-        await readdir(input.sourcePath, { withFileTypes: true });
-    } catch (error) {
-        if (isIgnorableWorkspaceExportAccessError(error)) {
-            throw new WorkspaceTransferSourcePathError({
-                sourcePath: input.sourcePath,
-                cause: error,
-            });
-        }
-        throw error;
-    }
-
-    const entries = await listWorkspaceExportFallbackEntries({
-        root: input.sourcePath,
-        readDirectory: async (directory) => await readdir(directory, { withFileTypes: true }),
     });
-    return {
-        entries,
-        workspaceIntegrationMetadata: null,
-        safeFilterPolicy: entries.length > 0
-            ? await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry)
-            : DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
-        isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
-    };
 }

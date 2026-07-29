@@ -49,8 +49,8 @@ export function createCliActionExecutorHarness(
   });
   const rawDeps: MutableActionExecutorDeps = {
     ...baseDeps,
-    approvalsWaitForDecision: async (args: ApprovalWaitForDecisionArgs) =>
-      await coordinator.waitForDecision({
+    approvalsWaitForDecision: async (args: ApprovalWaitForDecisionArgs) => {
+      const result = await coordinator.waitForDecision({
         artifactId: args.artifactId,
         request: args.request,
         serverId: args.serverId,
@@ -60,7 +60,9 @@ export function createCliActionExecutorHarness(
           const getApproval = rawDeps.approvalsGet ?? baseDeps.approvalsGet;
           return getApproval ? await getApproval({ artifactId: args.artifactId, serverId: args.serverId ?? null }) : null;
         },
-      }),
+      });
+      return { ...result, request: args.request };
+    },
     approvalsResolveBlockingDecision: async (args: ApprovalResolveBlockingDecisionArgs) =>
       await coordinator.resolveBlockingDecision({
         artifactId: args.artifactId,

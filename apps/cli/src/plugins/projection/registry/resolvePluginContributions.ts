@@ -1,48 +1,32 @@
-import type {
-    ActionDefinitionV1,
-    AgentDefinitionV1,
-    BackendDefinitionV1,
-    PluginBackendCapabilitiesV1,
-    BackendSurfaceDeclarationV1,
-} from '@happier-dev/protocol';
-import { BackendSurfaceOperationCatalogV1 } from '@happier-dev/protocol';
-import type {
-    BackendDefinitionContractV1,
-    ProviderDefinitionContractV1 as AgentDefinitionContractV1,
-} from '@happier-dev/agents';
-import type { ProviderCliRuntimeDescriptor } from '@happier-dev/cli-common/providers';
-import type { BackendRuntimeOwnerTakeoverMarker } from '@/agent/runtime/registry/engineRegistryTypes';
-
 import { loadInstalledPlugins } from '../../discovery/load/installed';
-import type { CanonicalPluginAgentRuntimeDefinition } from '../../manifest/types';
 import type { PluginCompatibilityDiagnostic } from '../../validation/diagnostics/types';
 import { buildPluginContributionRegistry } from './normalize/package';
-import { createPluginRuntimeCoreFactory } from '../../runtime/runtimeCore/plugin';
+import { loadBundledPluginLocators } from './builtIn/locators';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from './sources/generatedBundledPlugins';
+import { collectNormalizedRegistryIntrospectionCandidates } from '@/plugins/projection/introspection/normalizedRegistry';
 import {
-    normalizeBuiltInAgentId,
-    resolveContributionProviderAgentId,
-} from './resolveContributionProviderAgentId';
+    createNativeAgentCliCatalogEntry,
+    projectNativeAgentCliRuntimeDescriptor,
+} from './agentCliMetadata';
 
 import type {
     ResolvedActionContribution,
-    ResolvedAgentRuntimeContribution,
     ResolvedBrowserActionContribution,
     ResolvedBrowserTargetContribution,
-    ResolvedCatalogEntry,
     ResolvedCommandContribution,
     ResolvedConnectedAccountDescriptorContribution,
-    ResolvedEmbeddedWebBundleContribution,
     ResolvedContributionInputs,
+    ResolvedContributionProvenance,
     ResolvedExecutionRunProfileContribution,
     ResolvedEventContribution,
     ResolvedHostedWebContribution,
-    ResolvedHookRegistration,
     ResolvedInstallableContribution,
-    ResolvedLifecycleHandlerContribution,
     ResolvedMcpDiscoveryProviderContribution,
     ResolvedMcpServerContribution,
     ResolvedNotificationCategoryContribution,
     ResolvedNotificationChannelContribution,
+    ResolvedProviderContribution,
+    ResolvedPromptAssetContribution,
     ResolvedReactNativeBundleContribution,
     ResolvedRequestInterceptorContribution,
     ResolvedScmBackendContribution,
@@ -53,38 +37,38 @@ import type {
     ResolvedSessionHeaderActionContribution,
     ResolvedSurfacePlacementContribution,
     ResolvedStructuredMessageContribution,
+    ResolvedSystemToolContribution,
     ResolvedToolContribution,
     ResolvedUiArtifactContribution,
-    ResolvedUiDescriptorContribution,
     ResolvedUiTranslationsContribution,
+    ResolvedUiRendererV2Contribution,
+    ResolvedUiTranslationBundleV2Contribution,
+    ResolvedUiViewV2Contribution,
     ResolvedActivationTarget,
+    ResolvedVoiceModelPackContribution,
+    ResolvedVoiceProviderContribution,
 } from './types';
 
 type ResolvePluginContributesParams = Readonly<{
     happyHomeDir?: string;
-    existingProviderIds?: ReadonlySet<string>;
-    existingBackendIds?: ReadonlySet<string>;
+    existingAgentIds?: ReadonlySet<string>;
 }>;
 
 type PluginResolvedAgentContribution = ResolvedAgentContribution & Readonly<{
-    provenance: 'external';
+    identity: NonNullable<ResolvedAgentContribution['identity']>;
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
-type PluginResolvedAgentRuntimeContribution = ResolvedAgentRuntimeContribution & Readonly<{
-    provenance: 'external';
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-    surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
+type PluginResolvedProviderContribution = ResolvedProviderContribution & Readonly<{
+    provenance: ResolvedContributionProvenance;
 }>;
 
 type PluginResolvedActionContribution = ResolvedActionContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -92,7 +76,7 @@ type PluginResolvedActionContribution = ResolvedActionContribution & Readonly<{
 }>;
 
 type PluginResolvedToolContribution = ResolvedToolContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -100,7 +84,7 @@ type PluginResolvedToolContribution = ResolvedToolContribution & Readonly<{
 }>;
 
 type PluginResolvedCommandContribution = ResolvedCommandContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -108,23 +92,20 @@ type PluginResolvedCommandContribution = ResolvedCommandContribution & Readonly<
 }>;
 
 type PluginResolvedResourceContribution = ResolvedResourceContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
+    pluginRootPath: string;
     manifestPath: string;
     manifestDigest: string;
     daemonEntryPath: string | null;
 }>;
 
-type PluginResolvedUiDescriptorContribution = ResolvedUiDescriptorContribution & Readonly<{
-    provenance: 'external';
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
+type PluginResolvedPromptAssetContribution = ResolvedPromptAssetContribution & Readonly<{
+    provenance: ResolvedContributionProvenance;
 }>;
 
 type PluginResolvedUiTranslationsContribution = ResolvedUiTranslationsContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -132,7 +113,7 @@ type PluginResolvedUiTranslationsContribution = ResolvedUiTranslationsContributi
 }>;
 
 type PluginResolvedStructuredMessageContribution = ResolvedStructuredMessageContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -140,7 +121,7 @@ type PluginResolvedStructuredMessageContribution = ResolvedStructuredMessageCont
 }>;
 
 type PluginResolvedSessionHeaderActionContribution = ResolvedSessionHeaderActionContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -148,7 +129,7 @@ type PluginResolvedSessionHeaderActionContribution = ResolvedSessionHeaderAction
 }>;
 
 type PluginResolvedSurfacePlacementContribution = ResolvedSurfacePlacementContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -156,15 +137,7 @@ type PluginResolvedSurfacePlacementContribution = ResolvedSurfacePlacementContri
 }>;
 
 type PluginResolvedHostedWebContribution = ResolvedHostedWebContribution & Readonly<{
-    provenance: 'external';
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
-type PluginResolvedEmbeddedWebBundleContribution = ResolvedEmbeddedWebBundleContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -172,7 +145,7 @@ type PluginResolvedEmbeddedWebBundleContribution = ResolvedEmbeddedWebBundleCont
 }>;
 
 type PluginResolvedReactNativeBundleContribution = ResolvedReactNativeBundleContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -180,7 +153,7 @@ type PluginResolvedReactNativeBundleContribution = ResolvedReactNativeBundleCont
 }>;
 
 type PluginResolvedUiArtifactContribution = ResolvedUiArtifactContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -188,7 +161,7 @@ type PluginResolvedUiArtifactContribution = ResolvedUiArtifactContribution & Rea
 }>;
 
 type PluginResolvedBrowserTargetContribution = ResolvedBrowserTargetContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -196,7 +169,7 @@ type PluginResolvedBrowserTargetContribution = ResolvedBrowserTargetContribution
 }>;
 
 type PluginResolvedBrowserActionContribution = ResolvedBrowserActionContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -204,7 +177,7 @@ type PluginResolvedBrowserActionContribution = ResolvedBrowserActionContribution
 }>;
 
 type PluginResolvedNotificationCategoryContribution = ResolvedNotificationCategoryContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -212,7 +185,7 @@ type PluginResolvedNotificationCategoryContribution = ResolvedNotificationCatego
 }>;
 
 type PluginResolvedNotificationChannelContribution = ResolvedNotificationChannelContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -220,7 +193,7 @@ type PluginResolvedNotificationChannelContribution = ResolvedNotificationChannel
 }>;
 
 type PluginResolvedEventContribution = ResolvedEventContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -228,7 +201,7 @@ type PluginResolvedEventContribution = ResolvedEventContribution & Readonly<{
 }>;
 
 type PluginResolvedSettingsContribution = ResolvedSettingsContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -236,7 +209,7 @@ type PluginResolvedSettingsContribution = ResolvedSettingsContribution & Readonl
 }>;
 
 type PluginResolvedExecutionRunProfileContribution = ResolvedExecutionRunProfileContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -244,7 +217,7 @@ type PluginResolvedExecutionRunProfileContribution = ResolvedExecutionRunProfile
 }>;
 
 type PluginResolvedMcpServerContribution = ResolvedMcpServerContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -252,7 +225,7 @@ type PluginResolvedMcpServerContribution = ResolvedMcpServerContribution & Reado
 }>;
 
 type PluginResolvedMcpDiscoveryProviderContribution = ResolvedMcpDiscoveryProviderContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -260,7 +233,15 @@ type PluginResolvedMcpDiscoveryProviderContribution = ResolvedMcpDiscoveryProvid
 }>;
 
 type PluginResolvedInstallableContribution = ResolvedInstallableContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
+    pluginId: string;
+    manifestPath: string;
+    manifestDigest: string;
+    daemonEntryPath: string | null;
+}>;
+
+type PluginResolvedSystemToolContribution = ResolvedSystemToolContribution & Readonly<{
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -268,7 +249,7 @@ type PluginResolvedInstallableContribution = ResolvedInstallableContribution & R
 }>;
 
 type PluginResolvedRequestInterceptorContribution = ResolvedRequestInterceptorContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -277,23 +258,15 @@ type PluginResolvedRequestInterceptorContribution = ResolvedRequestInterceptorCo
 
 type PluginResolvedConnectedAccountDescriptorContribution =
     ResolvedConnectedAccountDescriptorContribution & Readonly<{
-        provenance: 'external';
+        provenance: ResolvedContributionProvenance;
         pluginId: string;
         manifestPath: string;
         manifestDigest: string;
         daemonEntryPath: string | null;
     }>;
 
-type PluginResolvedLifecycleHandlerContribution = ResolvedLifecycleHandlerContribution & Readonly<{
-    provenance: 'external';
-    pluginId: string;
-    manifestPath: string;
-    manifestDigest: string;
-    daemonEntryPath: string | null;
-}>;
-
 type PluginResolvedScmHostingProviderContribution = ResolvedScmHostingProviderContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -301,7 +274,7 @@ type PluginResolvedScmHostingProviderContribution = ResolvedScmHostingProviderCo
 }>;
 
 type PluginResolvedScmBackendContribution = ResolvedScmBackendContribution & Readonly<{
-    provenance: 'external';
+    provenance: ResolvedContributionProvenance;
     pluginId: string;
     manifestPath: string;
     manifestDigest: string;
@@ -321,427 +294,51 @@ function appendDiagnostic(
     diagnosticsByPluginId[pluginId] = [diagnostic];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-}
-
-function isStringArray(value: unknown): value is readonly string[] {
-    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
-}
-
-function isProviderCliInstallCommand(value: unknown): boolean {
-    if (!isRecord(value)) {
-        return false;
-    }
-    return typeof value.cmd === 'string'
-        && isStringArray(value.args)
-        && (value.requiresAdmin === undefined || typeof value.requiresAdmin === 'boolean')
-        && (value.note === undefined || value.note === null || typeof value.note === 'string');
-}
-
-function isProviderCliManagedInstallSpec(
-    value: unknown,
-): value is NonNullable<ProviderCliRuntimeDescriptor['managedInstall']> {
-    if (!isRecord(value)) {
-        return false;
-    }
-    if (value.kind === 'github_release_binary') {
-        return typeof value.githubRepo === 'string'
-            && typeof value.binaryName === 'string';
-    }
-    if (value.kind === 'managed_package') {
-        return typeof value.packageName === 'string'
-            && typeof value.binaryName === 'string';
-    }
-    return false;
-}
-
-function isProviderCliManualInstallRecipes(
-    value: unknown,
-): value is ProviderCliRuntimeDescriptor['manualInstallRecipes'] {
-    if (value === null) {
-        return true;
-    }
-    if (!isRecord(value)) {
-        return false;
-    }
-    return ['darwin', 'linux', 'win32'].every((platform) => {
-        const commands = value[platform];
-        return commands === undefined
-            || (Array.isArray(commands) && commands.every(isProviderCliInstallCommand));
-    });
-}
-
-function isProviderCliRuntimeDescriptor(value: unknown): value is ProviderCliRuntimeDescriptor {
-    if (!isRecord(value)) {
-        return false;
-    }
-    return typeof value.id === 'string'
-        && typeof value.title === 'string'
-        && typeof value.binaryName === 'string'
-        && (value.alternativeBinaryNames === undefined || isStringArray(value.alternativeBinaryNames))
-        && (
-            value.alternativeBinaryFallbackEnabledEnvVar === undefined
-            || value.alternativeBinaryFallbackEnabledEnvVar === null
-            || typeof value.alternativeBinaryFallbackEnabledEnvVar === 'string'
-        )
-        && (
-            value.knownUserBinDirSuffixes === undefined
-            || value.knownUserBinDirSuffixes === null
-            || isStringArray(value.knownUserBinDirSuffixes)
-        )
-        && (value.sourcePreferenceDefault === 'system-first' || value.sourcePreferenceDefault === 'managed-first')
-        && (value.managedInstall === null || isProviderCliManagedInstallSpec(value.managedInstall))
-        && (
-            value.manualInstallKind === 'command'
-            || value.manualInstallKind === 'vendor_recipe'
-            || value.manualInstallKind === 'none'
-        )
-        && isProviderCliManualInstallRecipes(value.manualInstallRecipes)
-        && typeof value.acceptsJavaScriptFileOverride === 'boolean'
-        && (value.installGuideUrl === undefined || value.installGuideUrl === null || typeof value.installGuideUrl === 'string')
-        && (value.docsUrl === undefined || value.docsUrl === null || typeof value.docsUrl === 'string');
-}
-
-function readPluginCatalogEntry(params: Readonly<{
-    pluginId: string;
-    agentId: string;
-    definition: AgentDefinitionV1;
-    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>;
-}>): ResolvedCatalogEntry | null {
-    // `catalogEntry` passthrough remains an internal host projection seam in this
-    // wave. Keep it strictly validated and provider-id aligned, but do not treat
-    // it as a public plugin ABI contract.
-    const rawProvider = params.definition as Record<string, unknown>;
-    const rawCatalogEntry = rawProvider.catalogEntry;
-    if (rawCatalogEntry === undefined || rawCatalogEntry === null) {
-        return null;
-    }
-    if (!isRecord(rawCatalogEntry)) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${params.agentId}' has a non-object catalogEntry`,
-        });
-        return null;
-    }
-
-    const entryId = typeof rawCatalogEntry.id === 'string' ? rawCatalogEntry.id.trim() : '';
-    const cliSubcommand = typeof rawCatalogEntry.cliSubcommand === 'string' ? rawCatalogEntry.cliSubcommand.trim() : '';
-    if (entryId.length === 0 || cliSubcommand.length === 0) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${params.agentId}' catalogEntry requires non-empty id and cliSubcommand`,
-        });
-        return null;
-    }
-    if (entryId !== params.agentId || cliSubcommand !== params.agentId) {
-        appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${params.agentId}' catalogEntry id/cliSubcommand must both match the provider id`,
-        });
-        return null;
-    }
-
-    const rawVendorResumeSupport = rawCatalogEntry.vendorResumeSupport;
-    const vendorResumeSupport = rawVendorResumeSupport === 'supported'
-        || rawVendorResumeSupport === 'experimental'
-        || rawVendorResumeSupport === 'unsupported'
-        ? rawVendorResumeSupport
-        : 'unsupported';
-
-    return {
-        id: entryId,
-        cliSubcommand,
-        vendorResumeSupport,
-    };
-}
-
-function readPluginAgentCliRuntime(
-    pluginId: string,
-    agentId: string,
-    definition: AgentDefinitionV1,
-    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>,
-): ProviderCliRuntimeDescriptor | null {
-    const runtime = readExternalPluginAgentCliRuntimeWithLegacyProviderFallback(definition);
-    if (!runtime) {
-        return null;
-    }
-    if (!isProviderCliRuntimeDescriptor(runtime)) {
-        appendDiagnostic(diagnosticsByPluginId, pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin agent '${agentId}' runtime descriptor must match the provider CLI runtime contract`,
-        });
-        return null;
-    }
-    if (runtime.id !== agentId) {
-        appendDiagnostic(diagnosticsByPluginId, pluginId, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin agent '${agentId}' runtime descriptor id must match the agent id`,
-        });
-        return null;
-    }
-    return {
-        ...runtime,
-        id: runtime.id,
-    };
-}
-
-function readExternalPluginAgentCliRuntimeWithLegacyProviderFallback(
-    definition: AgentDefinitionV1,
-): unknown {
-    if (definition.agentCliRuntime !== undefined) {
-        return definition.agentCliRuntime;
-    }
-
-    const legacyDefinition = definition as AgentDefinitionV1 & Readonly<{
-        providerCliRuntime?: unknown;
-    }>;
-    return legacyDefinition.providerCliRuntime;
-}
-
-function clonePluginAgentDefinition(definition: AgentDefinitionV1): AgentDefinitionV1 {
-    return {
-        ...definition,
-        ownedBackendIds: [...(definition.ownedBackendIds ?? [])],
-    };
-}
-
-function clonePluginBackendDefinition(
-    definition: CanonicalPluginAgentRuntimeDefinition,
-): Omit<BackendDefinitionV1, 'capabilities' | 'surfaceHandlers'> & Readonly<{
-    capabilities: PluginBackendCapabilitiesV1;
-    surfaceHandlers: readonly BackendSurfaceDeclarationV1[];
-}> {
-    return {
-        ...definition,
-        capabilities: clonePluginBackendCapabilities(definition.capabilities),
-        surfaceHandlers: [...readSurfaceHandlers(definition)],
-    };
-}
-
-function clonePluginBackendCapabilities(capabilities: PluginBackendCapabilitiesV1): PluginBackendCapabilitiesV1 {
-    return Object.freeze({
-        ...capabilities,
-        executionRun: Object.freeze({
-            ...capabilities.executionRun,
-        }),
-    });
-}
-
-function readSurfaceHandlers(definition: Readonly<Record<string, unknown>>): readonly BackendSurfaceDeclarationV1[] {
-    return Array.isArray(definition.surfaceHandlers)
-        ? definition.surfaceHandlers as readonly BackendSurfaceDeclarationV1[]
-        : [];
-}
-
-function sanitizeBuiltInCompatibilityAgentIds<TDefinition extends Readonly<Record<string, unknown>> & {
-    catalogAgentId?: string | null;
-    iconAgentId?: string;
-}>(params: Readonly<{
-    pluginId: string;
-    subjectLabel: string;
-    definition: TDefinition;
-    diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]>;
-}>): TDefinition {
-    const sanitized = { ...params.definition } as TDefinition;
-    if (!isValidBuiltInCompatibilityAgentId(sanitized.catalogAgentId)) {
-        if (typeof sanitized.catalogAgentId === 'string' && sanitized.catalogAgentId.trim().length > 0) {
-            appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `${params.subjectLabel} catalogAgentId must be an exact built-in agent id`,
-            });
-        }
-        delete sanitized.catalogAgentId;
-    }
-    if (!isValidBuiltInCompatibilityAgentId(sanitized.iconAgentId)) {
-        if (typeof sanitized.iconAgentId === 'string' && sanitized.iconAgentId.trim().length > 0) {
-            appendDiagnostic(params.diagnosticsByPluginId, params.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `${params.subjectLabel} iconAgentId must be an exact built-in agent id`,
-            });
-        }
-        delete sanitized.iconAgentId;
-    }
-    return sanitized;
-}
-
-function isValidBuiltInCompatibilityAgentId(value: unknown): boolean {
-    return normalizeBuiltInAgentId(value) !== null;
-}
-
-function readOptionalString(value: unknown): string | null {
-    if (typeof value !== 'string') {
-        return null;
-    }
-    const normalized = value.trim();
-    return normalized.length > 0 ? normalized : null;
-}
-
-function readBackendRuntimeOwnerTakeoverMarker(value: unknown): BackendRuntimeOwnerTakeoverMarker | undefined {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return undefined;
-    }
-    const record = value as Readonly<Record<string, unknown>>;
-    return record.selectedOwner === 'plugin_engine'
-        && typeof record.acceptedBy === 'string'
-        && record.acceptedBy.trim().length > 0
-        ? {
-            selectedOwner: 'plugin_engine',
-            acceptedBy: record.acceptedBy.trim(),
-        }
-        : undefined;
-}
-
-function readRequiredString(value: unknown): string {
-    return typeof value === 'string' ? value : '';
-}
-
-function readStringArray(value: unknown): readonly string[] {
-    return Array.isArray(value)
-        ? value.filter((entry): entry is string => typeof entry === 'string')
-        : [];
-}
-
-function buildSyntheticActionDefinitionFromTool(definition: PluginResolvedToolContribution['definition']): ActionDefinitionV1 {
-    return {
-        kindVersion: 1,
-        id: definition.actionId,
-        title: definition.title,
-        description: definition.description ?? null,
-        safety: definition.safety,
-        placements: [],
-        slash: null,
-        bindings: {
-            mcpToolName: definition.name,
-        },
-        examples: definition.examples ?? null,
-        surfaces: {
-            ui: false,
-            voice: false,
-            agent: definition.surfaces.agent,
-            mcp: definition.surfaces.mcp,
-            cli: definition.surfaces.cli,
-            rpc: false,
-            sdk: false,
-        },
-        inputHints: definition.inputHints ?? null,
-        inputSchema: definition.inputSchema ?? {},
-        ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
-        ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
-        ...(definition.execution ? { execution: definition.execution } : {}),
-    };
-}
-
-function buildSyntheticActionDefinitionFromCommand(definition: PluginResolvedCommandContribution['definition']): ActionDefinitionV1 {
-    return {
-        kindVersion: 1,
-        id: definition.actionId,
-        title: definition.rootHelpLabel ?? definition.command,
-        description: definition.rootHelpDescription ?? null,
-        safety: 'safe',
-        placements: [],
-        slash: null,
-        bindings: null,
-        examples: null,
-        surfaces: {
-            ui: false,
-            voice: false,
-            agent: false,
-            mcp: false,
-            cli: true,
-            rpc: false,
-            sdk: false,
-        },
-        inputHints: null,
-        inputSchema: {
-            type: 'object',
-            properties: {
-                argv: {
-                    type: 'array',
-                },
-                rawArgv: {
-                    type: 'array',
-                },
-            },
-            additionalProperties: true,
-        },
-    };
-}
-
-function readAgentSettingsBackendId(definition: AgentDefinitionV1): string | null {
-    return readOptionalString(definition.settingsBackendId);
-}
-
-function withAgentSettingsBackendId(
-    provider: PluginResolvedAgentContribution,
-    settingsBackendId: string | null,
-): PluginResolvedAgentContribution {
-    if (provider.richDefinition?.provenance !== 'external') {
-        return provider;
-    }
-
-    const definition = { ...provider.richDefinition.definition };
-    if (settingsBackendId) {
-        definition.settingsBackendId = settingsBackendId;
-    } else {
-        delete definition.settingsBackendId;
-    }
-
-    return {
-        ...provider,
-        richDefinition: {
-            provenance: 'external',
-            definition,
-        },
-    };
-}
-
-function hasTerminalRuntimeLaunchSurface(surfaceHandlers: readonly BackendSurfaceDeclarationV1[]): boolean {
-    return surfaceHandlers.some((surfaceHandler) => (
-        surfaceHandler.kind === 'terminalRuntime'
-        && surfaceHandler.operation === BackendSurfaceOperationCatalogV1.terminalRuntime.launch
-    ));
-}
-
-function isProviderlessReviewExecutionRunBackend(definition: Readonly<{
-    capabilities?: PluginBackendCapabilitiesV1;
-    surfaceHandlers?: readonly BackendSurfaceDeclarationV1[];
-}>): boolean {
-    if (!definition.capabilities) {
-        return false;
-    }
-    const session = definition.capabilities.session;
-    const executionRun = definition.capabilities.executionRun;
-    return isRecord(session)
-        && session.supported === false
-        && isRecord(executionRun)
-        && executionRun.supported !== false
-        && isRecord(executionRun.review)
-        && !hasTerminalRuntimeLaunchSurface(definition.surfaceHandlers ?? []);
-}
-
 export async function resolvePluginContributes(
     params: ResolvePluginContributesParams = {},
 ): Promise<ResolvedContributionInputs> {
     const loadResult = await loadInstalledPlugins({ happyHomeDir: params.happyHomeDir });
-    const pluginRegistry = buildPluginContributionRegistry({ loadedPlugins: loadResult.loadedPlugins });
+    return projectLoadedPluginContributes({
+        loadResult,
+        provenance: 'external',
+        existingAgentIds: params.existingAgentIds,
+    });
+}
+
+export function projectLoadedPluginContributes(
+    params: Omit<ResolvePluginContributesParams, 'happyHomeDir'> & Readonly<{
+        loadResult: Awaited<ReturnType<typeof loadInstalledPlugins>>;
+        provenance: ResolvedContributionProvenance;
+    }>,
+): ResolvedContributionInputs {
+    const { loadResult } = params;
+    const pluginRegistry = buildPluginContributionRegistry({
+        loadedPlugins: loadResult.loadedPlugins,
+        ...(params.provenance === 'external'
+            ? {
+                referencePlugins: loadBundledPluginLocators(
+                    BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
+                ),
+            }
+            : {}),
+    });
     const diagnosticsByPluginId: Record<string, PluginCompatibilityDiagnostic[]> = {};
-    const knownAgentIds = new Set(params.existingProviderIds ?? []);
-    const knownBackendIds = new Set(params.existingBackendIds ?? []);
-    const pluginAgentOwnerById = new Map<string, string>();
+    const knownAgentIds = new Set(params.existingAgentIds ?? []);
+    const uiViewV2Candidates: ResolvedUiViewV2Contribution[] = [];
+    const uiRendererV2Candidates: ResolvedUiRendererV2Contribution[] = [];
+    const uiTranslationV2Candidates: ResolvedUiTranslationBundleV2Contribution[] = [];
     const agentCandidates: PluginResolvedAgentContribution[] = [];
-    const backendCandidates: PluginResolvedAgentRuntimeContribution[] = [];
+    const providerCandidates: PluginResolvedProviderContribution[] = [];
     const actionCandidates: PluginResolvedActionContribution[] = [];
     const toolCandidates: PluginResolvedToolContribution[] = [];
     const commandCandidates: PluginResolvedCommandContribution[] = [];
     const resourceCandidates: PluginResolvedResourceContribution[] = [];
-    const uiDescriptorCandidates: PluginResolvedUiDescriptorContribution[] = [];
+    const promptAssetCandidates: PluginResolvedPromptAssetContribution[] = [];
     const uiTranslationCandidates: PluginResolvedUiTranslationsContribution[] = [];
     const structuredMessageCandidates: PluginResolvedStructuredMessageContribution[] = [];
     const sessionHeaderActionCandidates: PluginResolvedSessionHeaderActionContribution[] = [];
     const surfacePlacementCandidates: PluginResolvedSurfacePlacementContribution[] = [];
     const hostedWebCandidates: PluginResolvedHostedWebContribution[] = [];
-    const embeddedWebBundleCandidates: PluginResolvedEmbeddedWebBundleContribution[] = [];
     const reactNativeBundleCandidates: PluginResolvedReactNativeBundleContribution[] = [];
     const uiArtifactCandidates: PluginResolvedUiArtifactContribution[] = [];
     const browserTargetCandidates: PluginResolvedBrowserTargetContribution[] = [];
@@ -757,21 +354,76 @@ export async function resolvePluginContributes(
     const scmBackendCandidates: PluginResolvedScmBackendContribution[] = [];
     const connectedAccountDescriptorCandidates: PluginResolvedConnectedAccountDescriptorContribution[] = [];
     const managedDependencyCandidates: PluginResolvedInstallableContribution[] = [];
+    const systemToolCandidates: PluginResolvedSystemToolContribution[] = [];
     const requestInterceptorCandidates: PluginResolvedRequestInterceptorContribution[] = [];
-    const lifecycleHandlerCandidates: PluginResolvedLifecycleHandlerContribution[] = [];
+    const voiceModelPackCandidates: ResolvedVoiceModelPackContribution[] = [];
+    const voiceProviderCandidates: ResolvedVoiceProviderContribution[] = [];
+
+    for (const contribution of pluginRegistry.uiViewsV2) {
+        uiViewV2Candidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.uiRenderersV2) {
+        uiRendererV2Candidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            pluginVersion: contribution.pluginVersion,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            pluginRootPath: contribution.pluginRootPath,
+            ...(contribution.generatedUiArtifactsManifest
+                ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest }
+                : {}),
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.uiTranslationsV2) {
+        uiTranslationV2Candidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            localeIdentity: contribution.localeIdentity,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            definition: contribution.definition,
+        });
+    }
+    for (const contribution of pluginRegistry.providers) {
+        providerCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
     const activationTargets: ResolvedActivationTarget[] = [];
-    const hookRegistrations: ResolvedHookRegistration[] = [];
 
     for (const [pluginId, diagnostics] of Object.entries(loadResult.diagnosticsByPluginId)) {
         diagnosticsByPluginId[pluginId] = [...diagnostics];
     }
 
     for (const plugin of loadResult.loadedPlugins) {
-        if (!plugin.daemonEntryPath) {
+        if (!plugin.daemonEntryPath && !plugin.devDaemonEntryPath) {
             continue;
         }
         activationTargets.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: plugin.sourceSpec.kind },
             pluginId: plugin.pluginId,
             manifestPath: plugin.manifestPath,
@@ -779,12 +431,13 @@ export async function resolvePluginContributes(
             daemonEntryPath: plugin.daemonEntryPath,
             devDaemonEntryPath: plugin.devDaemonEntryPath,
             sourceSpec: plugin.sourceSpec,
-            activationEvents: plugin.manifest.activationEvents,
+            activationEvents: plugin.manifest.activation?.events.map((event) => event.kind) ?? [],
+            manifest: plugin.manifest,
         });
     }
 
     for (const contribution of pluginRegistry.agents) {
-        const agentId = readRequiredString(contribution.definition.id);
+        const agentId = contribution.definition.id;
         if (knownAgentIds.has(agentId)) {
             appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
                 code: 'plugin_manifest_semantic_invalid',
@@ -794,109 +447,44 @@ export async function resolvePluginContributes(
         }
 
         knownAgentIds.add(agentId);
-        pluginAgentOwnerById.set(agentId, contribution.pluginId);
-        const catalogEntry = readPluginCatalogEntry({
-            pluginId: contribution.pluginId,
-            agentId: agentId,
-            definition: contribution.definition,
-            diagnosticsByPluginId,
-        });
-        const runtimeSpec = readPluginAgentCliRuntime(
-            contribution.pluginId,
-            agentId,
-            contribution.definition,
-            diagnosticsByPluginId,
-        );
-        const richDefinition = sanitizeBuiltInCompatibilityAgentIds({
-            pluginId: contribution.pluginId,
-            subjectLabel: `Plugin agent '${agentId}'`,
-            definition: clonePluginAgentDefinition(contribution.definition),
-            diagnosticsByPluginId,
-        });
+        const pluginHostAccess = loadResult.loadedPlugins.find((plugin) => (
+            plugin.pluginId === contribution.pluginId
+        ))?.manifest.hostAccess;
+        if (!pluginHostAccess) {
+            throw new Error(`Missing cold-manifest host access for Agent '${contribution.pluginId}/${agentId}'`);
+        }
+        const cliMetadata = contribution.definition.cli ?? null;
         agentCandidates.push({
             id: agentId,
-            provenance: 'external',
+            identity: contribution.identity!,
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             definition: Object.freeze({
                 kindVersion: 1,
                 id: agentId,
-                ownedBackendIds: Object.freeze(readStringArray(contribution.definition.ownedBackendIds)),
-            }) satisfies AgentDefinitionContractV1,
+                ownedBackendIds: Object.freeze([]),
+                ...(contribution.definition.providerRequirements
+                    ? { providerRequirements: contribution.definition.providerRequirements }
+                    : {}),
+            }),
             richDefinition: {
-                provenance: 'external',
-                definition: richDefinition,
+                provenance: params.provenance,
+                definition: contribution.definition,
             },
-            runtimeSpec,
-            catalogEntry,
+            runtimeSpec: cliMetadata
+                ? projectNativeAgentCliRuntimeDescriptor({
+                    agentId,
+                    title: contribution.definition.title,
+                    cli: cliMetadata,
+                })
+                : null,
+            cliMetadata,
+            catalogEntry: cliMetadata
+                ? createNativeAgentCliCatalogEntry({ agentId, cli: cliMetadata })
+                : null,
             sourceSpec: contribution.sourceSpec,
             pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-        });
-    }
-
-    for (const contribution of pluginRegistry.agentRuntimes) {
-        const backendId = readRequiredString(contribution.definition.id);
-        const agentId = readRequiredString(contribution.definition.agentId);
-        if (knownBackendIds.has(backendId)) {
-            appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin agent runtime '${backendId}' collides with an existing agent runtime id`,
-            });
-            continue;
-        }
-
-        const providerOwnerPluginId = pluginAgentOwnerById.get(agentId);
-        const surfaceHandlers = readSurfaceHandlers(contribution.definition);
-        const providerlessReviewBackend = isProviderlessReviewExecutionRunBackend({
-            capabilities: contribution.definition.capabilities,
-            surfaceHandlers,
-        });
-        if (!providerlessReviewBackend && providerOwnerPluginId !== contribution.pluginId) {
-            appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin agent runtime '${backendId}' references agent '${agentId}' not owned by the same plugin`,
-            });
-            continue;
-        }
-
-        if (!providerlessReviewBackend && !knownAgentIds.has(agentId)) {
-            appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin agent runtime '${backendId}' references missing agent '${agentId}'`,
-            });
-            continue;
-        }
-
-        knownBackendIds.add(backendId);
-        const richDefinition = sanitizeBuiltInCompatibilityAgentIds({
-            pluginId: contribution.pluginId,
-            subjectLabel: `Plugin backend '${backendId}'`,
-            definition: clonePluginBackendDefinition(contribution.definition),
-            diagnosticsByPluginId,
-        });
-        backendCandidates.push({
-            id: backendId,
-            agentId,
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            definition: Object.freeze({
-                kindVersion: 1,
-                id: backendId,
-                agentId,
-            }) satisfies ResolvedAgentRuntimeContribution['definition'],
-            richDefinition: {
-                provenance: 'external',
-                definition: richDefinition,
-            },
-            runtimeKind: readOptionalString(contribution.definition.runtimeKind),
-            capabilities: clonePluginBackendCapabilities(contribution.definition.capabilities),
-            surfaceHandlers: Object.freeze([...surfaceHandlers]),
-            runtimeOwner: readBackendRuntimeOwnerTakeoverMarker(contribution.definition.runtimeOwner),
-            sourceSpec: contribution.sourceSpec,
-            pluginId: contribution.pluginId,
+            hostAccess: pluginHostAccess,
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
@@ -906,7 +494,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.actions) {
         actionCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -920,7 +508,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.tools) {
         toolCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -929,23 +517,12 @@ export async function resolvePluginContributes(
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
-        });
-        actionCandidates.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: buildSyntheticActionDefinitionFromTool(contribution.definition),
         });
     }
 
     for (const contribution of pluginRegistry.commands) {
         commandCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -954,39 +531,15 @@ export async function resolvePluginContributes(
             devDaemonEntryPath: contribution.devDaemonEntryPath,
             sourceSpec: contribution.sourceSpec,
             definition: contribution.definition,
-        });
-        actionCandidates.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: buildSyntheticActionDefinitionFromCommand(contribution.definition),
         });
     }
 
     for (const contribution of pluginRegistry.resources) {
         resourceCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
-    for (const contribution of pluginRegistry.uiDescriptors) {
-        uiDescriptorCandidates.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
+            pluginRootPath: contribution.pluginRootPath,
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
@@ -998,7 +551,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.uiTranslations) {
         uiTranslationCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1012,7 +565,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.structuredMessages) {
         structuredMessageCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1026,7 +579,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.sessionHeaderActions) {
         sessionHeaderActionCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1040,7 +593,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.surfacePlacements) {
         surfacePlacementCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1054,21 +607,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.hostedWeb) {
         hostedWebCandidates.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
-    for (const contribution of pluginRegistry.embeddedWebBundles) {
-        embeddedWebBundleCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1082,7 +621,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.reactNativeBundles) {
         reactNativeBundleCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1096,7 +635,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.uiArtifacts) {
         uiArtifactCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1110,7 +649,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.browserTargets) {
         browserTargetCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1124,7 +663,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.browserActions) {
         browserActionCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1138,7 +677,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.settings) {
         settingsCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1150,9 +689,24 @@ export async function resolvePluginContributes(
         });
     }
 
+    for (const contribution of pluginRegistry.promptAssets) {
+        promptAssetCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            identity: contribution.identity!,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
     for (const contribution of pluginRegistry.notifications) {
         notificationCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1166,7 +720,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.notificationChannels) {
         notificationChannelCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1180,7 +734,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.events) {
         eventCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1194,7 +748,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.executionRunProfiles) {
         executionRunProfileCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1208,7 +762,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.mcpServers) {
         mcpServerCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1222,7 +776,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.mcpDiscoveryProviders) {
         mcpDiscoveryProviderCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1237,7 +791,7 @@ export async function resolvePluginContributes(
     for (const contribution of pluginRegistry.scmHostingProviders) {
         scmHostingProviderCandidates.push({
             id: contribution.definition.id,
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1252,7 +806,7 @@ export async function resolvePluginContributes(
     for (const contribution of pluginRegistry.scmBackends) {
         scmBackendCandidates.push({
             id: contribution.definition.id,
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             identity: contribution.identity,
             pluginId: contribution.pluginId,
@@ -1267,7 +821,7 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.connectedAccountDescriptors) {
         connectedAccountDescriptorCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1281,7 +835,21 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.managedDependencies) {
         managedDependencyCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+        });
+    }
+
+    for (const contribution of pluginRegistry.systemTools) {
+        systemToolCandidates.push({
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
             manifestPath: contribution.manifestPath,
@@ -1295,9 +863,24 @@ export async function resolvePluginContributes(
 
     for (const contribution of pluginRegistry.requestInterceptors) {
         requestInterceptorCandidates.push({
-            provenance: 'external',
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            manifestPath: contribution.manifestPath,
+            manifestDigest: contribution.manifestDigest,
+            daemonEntryPath: contribution.daemonEntryPath,
+            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            sourceSpec: contribution.sourceSpec,
+            definition: contribution.definition,
+      });
+    }
+
+    for (const contribution of pluginRegistry.voiceModelPacks) {
+        voiceModelPackCandidates.push({
+            provenance: params.provenance,
+            source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId,
+            identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
             daemonEntryPath: contribution.daemonEntryPath,
@@ -1307,160 +890,41 @@ export async function resolvePluginContributes(
         });
     }
 
-    for (const contribution of pluginRegistry.lifecycleHandlers) {
-        lifecycleHandlerCandidates.push({
-            provenance: 'external',
+    for (const contribution of pluginRegistry.voiceProviders) {
+        voiceProviderCandidates.push({
+            provenance: params.provenance,
             source: { kind: contribution.sourceSpec.kind },
             pluginId: contribution.pluginId,
+            identity: contribution.identity!,
             manifestPath: contribution.manifestPath,
             manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
+            pluginRootPath: contribution.pluginRootPath,
             sourceSpec: contribution.sourceSpec,
+            ...(contribution.generatedUiArtifactsManifest
+                ? { generatedUiArtifactsManifest: contribution.generatedUiArtifactsManifest }
+                : {}),
             definition: contribution.definition,
         });
     }
 
-    const availableBackendAgentIds = new Map<string, string>();
-    for (const backend of backendCandidates) {
-        availableBackendAgentIds.set(backend.id, backend.agentId);
-    }
-
-    const normalizedAgentCandidates = agentCandidates.map((provider) => {
-        const resolvedOwnedBackendIds = provider.definition.ownedBackendIds.filter((backendId) => (
-            availableBackendAgentIds.get(backendId) === provider.id
-        ));
-        const declaredSettingsBackendId = provider.richDefinition?.provenance === 'external'
-            ? readAgentSettingsBackendId(provider.richDefinition.definition)
-            : null;
-
-        if (declaredSettingsBackendId) {
-            if (resolvedOwnedBackendIds.includes(declaredSettingsBackendId)) {
-                return withAgentSettingsBackendId(provider, declaredSettingsBackendId);
-            }
-
-            appendDiagnostic(diagnosticsByPluginId, provider.pluginId ?? provider.id, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin provider '${provider.id}' settingsBackendId must resolve to one of its owned backends`,
-            });
-            return withAgentSettingsBackendId(provider, null);
-        }
-
-        if (resolvedOwnedBackendIds.length === 1) {
-            return withAgentSettingsBackendId(provider, resolvedOwnedBackendIds[0] ?? null);
-        }
-
-        if (resolvedOwnedBackendIds.length > 1) {
-            appendDiagnostic(diagnosticsByPluginId, provider.pluginId ?? provider.id, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin provider '${provider.id}' owns multiple backends and must declare settingsBackendId for provider settings binding`,
-            });
-        }
-
-        return withAgentSettingsBackendId(provider, null);
-    });
-
-    const invalidAgentIds = new Set<string>();
-    for (const provider of normalizedAgentCandidates) {
-        const ownedBackendIds = provider.definition.ownedBackendIds;
-        const hasInvalidOwnedBackend = ownedBackendIds.some((backendId) => {
-            const ownerProviderId = availableBackendAgentIds.get(backendId);
-            return ownerProviderId === undefined || ownerProviderId !== provider.id;
-        });
-
-        if (!hasInvalidOwnedBackend) {
-            continue;
-        }
-
-        invalidAgentIds.add(provider.id);
-        appendDiagnostic(diagnosticsByPluginId, provider.pluginId ?? provider.id, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin provider '${provider.id}' declares owned backend ids that do not resolve to that provider`,
-        });
-    }
-
-    const agents = normalizedAgentCandidates.filter((provider) => !invalidAgentIds.has(provider.id));
-    const agentById = new Map(agents.map((provider) => [provider.id, provider] as const));
-    const backends = backendCandidates.flatMap((backend) => {
-        if (isProviderlessReviewExecutionRunBackend(backend)) {
-            return [backend];
-        }
-
-        if (!invalidAgentIds.has(backend.agentId)) {
-            const provider = agentById.get(backend.agentId);
-            if (!provider) {
-                appendDiagnostic(diagnosticsByPluginId, backend.pluginId ?? backend.id, {
-                    code: 'plugin_manifest_semantic_invalid',
-                    message: `Plugin agent runtime '${backend.id}' is excluded because agent '${backend.agentId}' is missing after validation`,
-                });
-                return [];
-            }
-
-            const runtimeBindingRequiresCompatibilityCarrier = hasTerminalRuntimeLaunchSurface(backend.surfaceHandlers);
-            const compatibilityCarrier = resolveContributionProviderAgentId({
-                backend,
-                provider,
-            });
-            if (runtimeBindingRequiresCompatibilityCarrier && compatibilityCarrier === null) {
-                appendDiagnostic(diagnosticsByPluginId, backend.pluginId ?? backend.id, {
-                    code: 'plugin_manifest_semantic_invalid',
-                    message: `Plugin backend '${backend.id}' cannot become a live session runtime because no exact built-in providerAgentId compatibility carrier resolves`,
-                });
-                return [backend];
-            }
-
-            return [{
-                ...backend,
-                getRuntimeCore: async () => createPluginRuntimeCoreFactory({
-                    backend,
-                    provider,
-                }),
-            }];
-        }
-
-        appendDiagnostic(diagnosticsByPluginId, backend.pluginId ?? backend.id, {
-            code: 'plugin_manifest_semantic_invalid',
-            message: `Plugin agent runtime '${backend.id}' is excluded because agent '${backend.agentId}' is invalid`,
-        });
-        return [];
-    });
-
-    for (const contribution of pluginRegistry.hooks) {
-        if (!contribution.daemonEntryPath) {
-            appendDiagnostic(diagnosticsByPluginId, contribution.pluginId, {
-                code: 'plugin_manifest_semantic_invalid',
-                message: `Plugin hook '${contribution.definition.id}' requires a daemon entry target`,
-            });
-            continue;
-        }
-
-        hookRegistrations.push({
-            provenance: 'external',
-            source: { kind: contribution.sourceSpec.kind },
-            pluginId: contribution.pluginId,
-            manifestPath: contribution.manifestPath,
-            manifestDigest: contribution.manifestDigest,
-            daemonEntryPath: contribution.daemonEntryPath,
-            devDaemonEntryPath: contribution.devDaemonEntryPath,
-            sourceSpec: contribution.sourceSpec,
-            definition: contribution.definition,
-        });
-    }
-
+    const agents = agentCandidates;
     return {
+        introspectionContributions: collectNormalizedRegistryIntrospectionCandidates(pluginRegistry),
+        uiViewsV2: Object.freeze(uiViewV2Candidates),
+        uiRenderersV2: Object.freeze(uiRendererV2Candidates),
+        uiTranslationsV2: Object.freeze(uiTranslationV2Candidates),
         agents: Object.freeze(agents),
-        agentRuntimes: Object.freeze(backends),
+        providers: Object.freeze(providerCandidates),
         actions: Object.freeze(actionCandidates),
         tools: Object.freeze(toolCandidates),
         commands: Object.freeze(commandCandidates),
         resources: Object.freeze(resourceCandidates),
-        uiDescriptors: Object.freeze(uiDescriptorCandidates),
+        promptAssets: Object.freeze(promptAssetCandidates),
         uiTranslations: Object.freeze(uiTranslationCandidates),
         structuredMessages: Object.freeze(structuredMessageCandidates),
         sessionHeaderActions: Object.freeze(sessionHeaderActionCandidates),
         surfacePlacements: Object.freeze(surfacePlacementCandidates),
         hostedWeb: Object.freeze(hostedWebCandidates),
-        embeddedWebBundles: Object.freeze(embeddedWebBundleCandidates),
         reactNativeBundles: Object.freeze(reactNativeBundleCandidates),
         uiArtifacts: Object.freeze(uiArtifactCandidates),
         browserTargets: Object.freeze(browserTargetCandidates),
@@ -1476,10 +940,11 @@ export async function resolvePluginContributes(
         scmBackends: Object.freeze(scmBackendCandidates),
         connectedAccountDescriptors: Object.freeze(connectedAccountDescriptorCandidates),
         managedDependencies: Object.freeze(managedDependencyCandidates),
+        systemTools: Object.freeze(systemToolCandidates),
         requestInterceptors: Object.freeze(requestInterceptorCandidates),
+        voiceModelPacks: Object.freeze(voiceModelPackCandidates),
+        voiceProviders: Object.freeze(voiceProviderCandidates),
         activationTargets: Object.freeze(activationTargets),
-        hookRegistrations: Object.freeze(hookRegistrations),
-        lifecycleHandlers: Object.freeze(lifecycleHandlerCandidates),
         pluginDiagnosticsByPluginId: Object.freeze(diagnosticsByPluginId),
     };
 }

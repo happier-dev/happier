@@ -4,31 +4,60 @@ import {
   SPAWN_SESSION_ERROR_CODES,
   type SpawnSessionOptions,
   type SpawnSessionResult,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { listExecutionRunMarkers } from '@/daemon/executionRunRegistry';
-import psList from 'ps-list';
+import { listProcessSnapshot } from '@/daemon/processSnapshotCache';
+import {
+  StopSessionResultSchema,
+  type StopSessionResult,
+} from '@/daemon/sessions/stopSessionContract';
 import type { DaemonExecutionRunEntry, DaemonExecutionRunProcessInfo } from '@happier-dev/protocol';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
-import { registerMachineVoiceInferenceRpcHandlers } from './rpcHandlers.voiceInference';
+import {
+  registerMachineVoiceInferenceRpcHandlers,
+  type MachineVoiceInferenceRpcRegistration,
+} from './rpcHandlers.voiceInference';
+import {
+  registerMachineVoiceOpenAiCompatRpcHandlers,
+  type MachineVoiceOpenAiCompatRpcRegistration,
+} from './rpcHandlers.voiceOpenAiCompat';
+import {
+  registerMachineVoiceSpeechRpcHandlers,
+  type MachineVoiceSpeechRpcRegistration,
+} from './rpcHandlers.voiceSpeech';
+import { createVoiceCredentialResolver } from '@/daemon/voice/credentials/resolver';
+import { createOpenAiCompatVoiceClient } from '@/daemon/voice/openAiCompat/client';
 import { registerMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
-import { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
+import {
+  registerMachineProviderRpcHandlers,
+  type MachineProviderRpcServices,
+} from './rpcHandlers.providers';
+import {
+  registerMachineExternalSessionsRpcHandlers,
+  type ExternalSessionArchivedStateChange,
+} from './rpcHandlers.externalSessions';
 import {
   registerMachineSessionHandoffRpcHandlers,
   type SessionHandoffDirectPeerTransferHandle,
 } from './sessionHandoff/handlers';
 import { registerMachinePromptAssetsRpcHandlers } from './rpcHandlers.promptAssets';
-import { registerMachinePromptAssetTransferRpcHandlers } from './rpcHandlers.promptAssetTransfers';
+import {
+  registerMachinePromptAssetTransferRpcHandlers,
+  type MachinePromptAssetTransferRpcRegistration,
+} from './rpcHandlers.promptAssetTransfers';
 import { registerMachineMarketplaceSourcesRpcHandlers } from './rpcHandlers.marketplaceSources';
 import { registerMachinePromptRegistriesRpcHandlers } from './rpcHandlers.promptRegistries';
-import { registerMachinePromptRegistryTransferRpcHandlers } from './rpcHandlers.promptRegistryTransfers';
+import {
+  registerMachinePromptRegistryTransferRpcHandlers,
+  type MachinePromptRegistryTransferRpcRegistration,
+} from './rpcHandlers.promptRegistryTransfers';
 import { registerPetRpcHandlers } from '@/pets/rpc/registerPetRpcHandlers';
 import { registerMachineDirectTransferImportRpcHandlers } from './rpcHandlers.directTransferImports';
 import {
@@ -38,9 +67,29 @@ import {
 import { registerMachineDiagnosticsRpcHandlers } from './rpcHandlers.diagnostics';
 import { registerMachineSessionRpcHandlers } from './rpcHandlers.sessions';
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
+import { registerMachineConnectedServiceQuotaRpcHandlers } from './rpcHandlers.connectedServiceQuotas';
+import {
+  registerMachineNpmRegistryProfileRpcHandlers,
+  type NpmRegistryProfileRpcService,
+} from './rpcHandlers.npmRegistryProfiles';
 import { registerMachineServerWorkRpcHandlers } from './rpcHandlers.serverWork';
 import type { DaemonServerWorkScheduler } from '@/daemon/serverWork';
 import type {
+  ExternalSessionStatusDemandChannel,
+} from '@/daemon/machine/externalSessionStatusDemandBinding';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import type { DaemonUsageLimitRecoveryFieldMutation } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import type { PersistedTakeoverAdmissionWaiter } from '@/daemon/spawn/persistedTakeoverAdmission';
+import type {
+  ExternalSessionPersistedTakeoverAdmissionOwner,
+} from '@/session/actions/externalSessions/persistedTakeoverAdmission';
+import type {
+  ExternalSessionHostOperationInstallation,
+  ExternalSessionHostOperationSet,
+} from '@/session/external/hostOperationOwner';
+import type {
+  CancelConnectedServiceRuntimeAuthRecovery,
   CancelInactiveSessionUsageLimitRecoveryCheck,
   ResumeInactiveSessionWhenUsageLimitReady,
   RetryTemporaryThrottleNow,
@@ -52,6 +101,7 @@ import { registerSessionLifecycleRpcHandlers } from '@/rpc/handlers/sessionLifec
 import { MACHINE_SESSION_STOP_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import { registerSubagentRpcHandlers } from '@/rpc/handlers/subagents';
 import { createMachineSessionStopLifecycleActionExecutor } from '@/session/actions/sessionLifecycleActions';
+import type { SessionLifecycleMachineDeps } from '@/session/actions/lifecycle/sessionLifecycleTypes';
 import { registerTransferRelayV2DownloadSessionResponder } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import type { TransferRelayV2DownloadSessionOwner } from '@/machines/transfer/transferRelayV2DownloadSessionTransport';
 import { runReplaySummaryForDialog } from '@/session/replay/summary/runReplaySummaryForDialog';
@@ -61,25 +111,35 @@ import type {
   AccountPetCreateRequestV1,
   AccountPetCreateResponseV1,
   ConnectedServiceBindingsV1,
-  ExternalSessionTranscriptDeltaEphemeral,
+  ExternalSessionOperationSocketCommandV1,
+  ExternalSessionOperationSocketResponseV1,
+  ExternalSessionTranscriptInvalidationV1,
   MachineTransferReceiveEnvelope,
   MachineTransferSendEnvelope,
   TransferEndpointCandidate,
   TransferRelayV2SendEnvelope,
 } from '@happier-dev/protocol';
-import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol';
+import {
+  RestartAllSessionRunnersRequestV1Schema,
+  RestartSessionRunnerRequestV1Schema,
+  SessionConnectedServiceAuthSwitchRpcParamsSchema,
+  SessionRunnerStatusGetRequestV1Schema,
+} from '@happier-dev/protocol';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
 import type { DirectTransferImportOpenRequest } from '@/machines/transfer/directTransferImportSession';
 import { createTransferSessionLifecycle } from '@/transfers/core/transferSessionLifecycle';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { requestDaemonSessionConnectedServiceAuthSwitch } from '@/daemon/controlClient';
+import type { TerminalProcessRegistry } from '@/daemon/local/services/inventory/terminalRegistry';
+import {
+  getDaemonSessionRunnerStatus,
+  requestDaemonSessionConnectedServiceAuthSwitch,
+  requestDaemonSessionRunnerRestart,
+  restartAllDaemonSessionRunners,
+} from '@/daemon/controlClient';
 
 const transferRelayV2DownloadResponderCleanupByManager = new WeakMap<RpcHandlerManager, () => void>();
-const machineDirectTransferRpcMethodsToReset = [
-  RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_PREPARE,
-  RPC_METHODS.DAEMON_DIRECT_TRANSFER_EXPORT_PREPARE,
-] as const;
+const MACHINE_RPC_HANDLER_OWNER = 'machine-rpc-surface';
 
 function parseSessionConnectedServiceAuthSwitchRpcParams(raw: unknown): Readonly<{
   sessionId: string;
@@ -91,27 +151,15 @@ function parseSessionConnectedServiceAuthSwitchRpcParams(raw: unknown): Readonly
   return parsed.success ? parsed.data : null;
 }
 
-function removeRegisteredMachineRpcMethods(
-  rpcHandlerManager: RpcHandlerManager,
-  methods: readonly string[],
-): void {
-  const manager = rpcHandlerManager as unknown as Readonly<{
-    handlers?: Map<string, unknown>;
-    scopePrefix?: string;
-    socket?: {
-      emit: (event: string, payload: Readonly<{ method: string }>) => void;
-    } | null;
-  }>;
-  if (!manager.handlers || !manager.scopePrefix) {
-    return;
-  }
+type MachineStopSessionHandlerResult = StopSessionResult | boolean;
 
-  for (const method of methods) {
-    const prefixedMethod = `${manager.scopePrefix}:${method}`;
-    if (manager.handlers.delete(prefixedMethod) && manager.socket) {
-      manager.socket.emit(SOCKET_RPC_EVENTS.UNREGISTER, { method: prefixedMethod });
-    }
+function normalizeMachineStopSessionResult(result: MachineStopSessionHandlerResult): StopSessionResult {
+  if (typeof result === 'boolean') {
+    // Compatibility for older in-process registrars: boolean success proves only
+    // request acceptance. Current daemon registrations return the strict result.
+    return result ? { status: 'requested' } : { status: 'not_found' };
   }
+  return StopSessionResultSchema.parse(result);
 }
 
 export type MachineRpcHandlers = {
@@ -122,7 +170,11 @@ export type MachineRpcHandlers = {
     | { status: 'not_found' }
     | { status: 'unsupported' }
   >;
-  stopSession: (sessionId: string) => Promise<boolean>;
+  abandonSpawnSessionByNonce?: (spawnNonce: string) => Promise<
+    | { status: 'completed'; sessionId: string }
+    | { status: 'pending' | 'not_found' | 'unsupported' | 'failed' }
+  >;
+  stopSession: (sessionId: string) => Promise<MachineStopSessionHandlerResult>;
   isSessionActive?: (sessionId: string) => Promise<boolean>;
   loadLocalSessionMetadata?: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
   savePreparedTargetLocalMetadata?: (input: Readonly<{
@@ -153,6 +205,9 @@ export type MachineRpcHandlers = {
       expiresAt: number;
       endpointCandidates: readonly TransferEndpointCandidate[];
     }>>;
+    abortImportSession: (
+      input: Readonly<{ uploadId: string }>,
+    ) => Promise<void | Readonly<{ aborted: boolean }>>;
   }>;
   directTransferExport?: Readonly<{
     prepareExportSession: (input: DirectTransferExportPrepareRequest) => Promise<Readonly<{
@@ -164,36 +219,99 @@ export type MachineRpcHandlers = {
 };
 
 export type MachineRpcHandlerDeps = Readonly<{
+  npmRegistryProfiles?: Readonly<{
+    machineId: string;
+    service: NpmRegistryProfileRpcService;
+  }>;
+  providerRpc?: Readonly<{
+    machineId: string;
+    services: MachineProviderRpcServices;
+    featureGate: Readonly<{ isEnabled(featureId: 'providers'): boolean }>;
+  }>;
   runReplaySummaryForDialog?: typeof runReplaySummaryForDialog;
+  resolveExecutionSurfaces?: SessionLifecycleMachineDeps['resolveExecutionSurfaces'];
+  awaitAgentSessionOpen?: SessionLifecycleMachineDeps['awaitAgentSessionOpen'];
   promptAssetsHomedir?: () => string;
   promptAssetsHappierHomeDir?: () => string;
   workingDirectory?: string;
   filesystemAccessPolicy?: FilesystemAccessPolicy;
+  terminalRegistry?: TerminalProcessRegistry;
   getAdditionalAllowedWriteDirs?: () => ReadonlyArray<string>;
   transientMediaReadAllowance?: TransientSessionMediaReadAllowance;
   extraTransferRelayV2DownloadOwners?: readonly TransferRelayV2DownloadSessionOwner[];
-  emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptDeltaEphemeral) => void;
+  emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptInvalidationV1) => void | Promise<void>;
+  executeExternalSessionHistoricalImportCommand?: (
+    command: ExternalSessionOperationSocketCommandV1,
+  ) => Promise<ExternalSessionOperationSocketResponseV1>;
+  persistedTakeoverAdmissionWaiter?: PersistedTakeoverAdmissionWaiter;
+  attachPersistedTakeoverAdmissionOwner?: (
+    owner: ExternalSessionPersistedTakeoverAdmissionOwner,
+  ) => () => void;
+  installExternalSessionHostOperations?: (
+    operations: ExternalSessionHostOperationSet,
+  ) => Promise<ExternalSessionHostOperationInstallation>;
   createAccountPet?: (request: AccountPetCreateRequestV1) => Promise<AccountPetCreateResponseV1>;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
+  cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
+  currentMachineId?: string;
+  externalSessionStatusDemandChannel?: ExternalSessionStatusDemandChannel;
+  subscribeSessionArchivedStateChanges?: (
+    listener: (
+      change: ExternalSessionArchivedStateChange,
+    ) => void | Promise<void>,
+  ) => () => void;
+  subscribeConnectedAccountInvalidations?: (listener: () => void) => () => void;
+  getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
+  stageUsageLimitRecoveryMutation?: (input: Readonly<{
+    mutation: DaemonUsageLimitRecoveryFieldMutation;
+    rawSession: RawSessionRecord;
+  }>) => Promise<void>;
+}>;
+
+export type MachineRpcLifecycleRegistration = Readonly<{
+  connectivityResources: readonly Readonly<{
+    name: string;
+    pause(): void | Promise<void>;
+    resume(): void | Promise<void>;
+  }>[];
+  transferRelayV2DownloadOwners: readonly TransferRelayV2DownloadSessionOwner[];
+  promptAssetTransfers: MachinePromptAssetTransferRpcRegistration;
+  promptRegistryTransfers: MachinePromptRegistryTransferRpcRegistration;
+  voiceInference?: MachineVoiceInferenceRpcRegistration;
+  voiceOpenAiCompat: MachineVoiceOpenAiCompatRpcRegistration;
+  voiceSpeech: MachineVoiceSpeechRpcRegistration;
+  dispose: () => Promise<void>;
 }>;
 
 export function registerMachineRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   handlers: MachineRpcHandlers;
   deps?: MachineRpcHandlerDeps;
-}>): Readonly<{
-  transferRelayV2DownloadOwners: readonly TransferRelayV2DownloadSessionOwner[];
-}> {
+}>): MachineRpcLifecycleRegistration {
+  if (typeof params.rpcHandlerManager.replaceOwnedHandlers === 'function') {
+    return params.rpcHandlerManager.replaceOwnedHandlers(
+      MACHINE_RPC_HANDLER_OWNER,
+      () => registerMachineRpcHandlersOnce(params),
+    );
+  }
+  return registerMachineRpcHandlersOnce(params);
+}
+
+function registerMachineRpcHandlersOnce(params: Readonly<{
+  rpcHandlerManager: RpcHandlerManager;
+  handlers: MachineRpcHandlers;
+  deps?: MachineRpcHandlerDeps;
+}>): MachineRpcLifecycleRegistration {
   const { rpcHandlerManager, handlers } = params;
   transferRelayV2DownloadResponderCleanupByManager.get(rpcHandlerManager)?.();
   transferRelayV2DownloadResponderCleanupByManager.delete(rpcHandlerManager);
-  removeRegisteredMachineRpcMethods(rpcHandlerManager, machineDirectTransferRpcMethodsToReset);
   const { spawnSession, stopSession, requestShutdown } = handlers;
   const memoryWorker = handlers.memory ?? null;
   const voiceInferenceWorker = handlers.voiceInference ?? null;
+  let transferRelayV2ResponderCleanup: (() => void) | null = null;
 
   registerMachineSessionRpcHandlers({
     rpcHandlerManager,
@@ -206,9 +324,13 @@ export function registerMachineRpcHandlers(params: Readonly<{
       resumeInactiveSessionWhenUsageLimitReady: params.deps?.resumeInactiveSessionWhenUsageLimitReady,
       scheduleInactiveSessionUsageLimitRecoveryCheck: params.deps?.scheduleInactiveSessionUsageLimitRecoveryCheck,
       cancelInactiveSessionUsageLimitRecoveryCheck: params.deps?.cancelInactiveSessionUsageLimitRecoveryCheck,
+      cancelConnectedServiceRuntimeAuthRecovery: params.deps?.cancelConnectedServiceRuntimeAuthRecovery,
       retryTemporaryThrottleNow: params.deps?.retryTemporaryThrottleNow,
+      currentMachineId: params.deps?.currentMachineId,
+      stageUsageLimitRecoveryMutation: params.deps?.stageUsageLimitRecoveryMutation,
     },
   });
+  registerMachineConnectedServiceQuotaRpcHandlers({ rpcHandlerManager });
   registerApprovalRpcHandlers({ rpcHandlerManager });
   registerSessionPermissionRpcHandlers({ rpcHandlerManager });
   registerSubagentRpcHandlers({ rpcHandlerManager });
@@ -227,21 +349,49 @@ export function registerMachineRpcHandlers(params: Readonly<{
     });
   }
 
-  if (voiceInferenceWorker) {
-    registerMachineVoiceInferenceRpcHandlers({
+  const voiceInferenceRegistration = voiceInferenceWorker
+    ? registerMachineVoiceInferenceRpcHandlers({
       rpcHandlerManager,
       voiceInferenceWorker,
+    })
+    : null;
+
+  const voiceCredentialResolver = createVoiceCredentialResolver({
+    machineId: params.deps?.currentMachineId ?? params.deps?.providerRpc?.machineId ?? 'machine_unavailable',
+  });
+  const voiceOpenAiCompatRegistration = registerMachineVoiceOpenAiCompatRpcHandlers({
+    rpcHandlerManager,
+    client: createOpenAiCompatVoiceClient({ credentialResolver: voiceCredentialResolver }),
+  });
+  const voiceSpeechRegistration = registerMachineVoiceSpeechRpcHandlers({
+      rpcHandlerManager,
+      credentialResolver: voiceCredentialResolver,
     });
-  }
 
   registerMachineTerminalRpcHandlers({
     rpcHandlerManager,
     deps: {
       workingDirectory: params.deps?.workingDirectory,
       accessPolicy: params.deps?.filesystemAccessPolicy,
+      ...(params.deps?.terminalRegistry ? { terminalRegistry: params.deps.terminalRegistry } : {}),
     },
   });
   registerMachineMcpServersRpcHandlers({ rpcHandlerManager });
+  if (params.deps?.providerRpc) {
+    registerMachineProviderRpcHandlers({
+      rpcHandlerManager,
+      machineId: params.deps.providerRpc.machineId,
+      services: params.deps.providerRpc.services,
+      featureGate: params.deps.providerRpc.featureGate,
+    });
+  }
+  if (params.deps?.npmRegistryProfiles) {
+    registerMachineNpmRegistryProfileRpcHandlers({
+      rpcHandlerManager,
+      machineId: params.deps.npmRegistryProfiles.machineId,
+      service: params.deps.npmRegistryProfiles.service,
+    });
+  }
   const promptAssetAdapterRegistry = createPromptAssetAdapterRegistry({
     homedir: params.deps?.promptAssetsHomedir,
     happierHomeDir: params.deps?.promptAssetsHappierHomeDir,
@@ -296,7 +446,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
     },
   ];
   if (handlers.transferRelayV2Channel) {
-    transferRelayV2DownloadResponderCleanupByManager.set(rpcHandlerManager, registerTransferRelayV2DownloadSessionResponder({
+    transferRelayV2ResponderCleanup = registerTransferRelayV2DownloadSessionResponder({
       machineId: handlers.transferRelayV2Channel.machineId,
       transferRelayChannel: handlers.transferRelayV2Channel,
       resolveSessionOwner: (transferId) => {
@@ -307,14 +457,47 @@ export function registerMachineRpcHandlers(params: Readonly<{
         }
         return null;
       },
-    }));
+    });
+    transferRelayV2DownloadResponderCleanupByManager.set(rpcHandlerManager, transferRelayV2ResponderCleanup);
   }
-  registerMachineExternalSessionsRpcHandlers({
+  const externalSessionsRegistration = registerMachineExternalSessionsRpcHandlers({
     rpcHandlerManager,
     spawnSession,
-    stopSession,
+    stopSession: async (sessionId) => (
+      normalizeMachineStopSessionResult(await stopSession(sessionId)).status === 'stopped'
+    ),
     emitExternalSessionTranscriptUpdate: params.deps?.emitExternalSessionTranscriptUpdate,
+    executeExternalSessionHistoricalImportCommand:
+      params.deps?.executeExternalSessionHistoricalImportCommand,
+    persistedTakeoverAdmissionWaiter:
+      params.deps?.persistedTakeoverAdmissionWaiter,
+    attachPersistedTakeoverAdmissionOwner:
+      params.deps?.attachPersistedTakeoverAdmissionOwner,
+    installExternalSessionHostOperations:
+      params.deps?.installExternalSessionHostOperations,
     transientMediaReadAllowance: params.deps?.transientMediaReadAllowance,
+    getServerFeaturesSnapshot: params.deps?.getServerFeaturesSnapshot,
+    machineId: params.deps?.currentMachineId,
+    ...(params.deps?.subscribeSessionArchivedStateChanges
+      ? {
+          subscribeSessionArchivedStateChanges:
+            params.deps.subscribeSessionArchivedStateChanges,
+        }
+      : {}),
+    ...(params.deps?.currentMachineId && params.deps.externalSessionStatusDemandChannel
+      ? {
+          statusDemand: {
+            channel: params.deps.externalSessionStatusDemandChannel,
+            machineId: params.deps.currentMachineId,
+            ...(params.deps.subscribeConnectedAccountInvalidations
+              ? {
+                  subscribeConnectedAccountInvalidations:
+                    params.deps.subscribeConnectedAccountInvalidations,
+                }
+              : {}),
+          },
+        }
+      : {}),
   });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_CONNECTED_SERVICE_AUTH_SWITCH, async (raw: unknown) => {
     const parsed = parseSessionConnectedServiceAuthSwitchRpcParams(raw);
@@ -323,16 +506,40 @@ export function registerMachineRpcHandlers(params: Readonly<{
     }
     return await requestDaemonSessionConnectedServiceAuthSwitch(parsed);
   });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART, async (raw: unknown) => {
+    const request = RestartSessionRunnerRequestV1Schema.parse(raw);
+    return await requestDaemonSessionRunnerRestart(request);
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_RESTART_ALL, async (raw: unknown) => {
+    const request = RestartAllSessionRunnersRequestV1Schema.parse(raw);
+    return await restartAllDaemonSessionRunners(request);
+  });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_RUNNER_STATUS_GET, async (raw: unknown) => {
+    const request = SessionRunnerStatusGetRequestV1Schema.parse(raw);
+    return await getDaemonSessionRunnerStatus(request);
+  });
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SPAWN_SESSION_RESOLVE_BY_NONCE, async (input: { spawnNonce?: unknown }) => {
     const spawnNonce = typeof input?.spawnNonce === 'string' ? input.spawnNonce.trim() : '';
     if (!spawnNonce) return { status: 'not_found' };
     if (!handlers.resolveSpawnSessionByNonce) return { status: 'unsupported' };
     return await handlers.resolveSpawnSessionByNonce(spawnNonce);
   });
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SPAWN_SESSION_ABANDON, async (input: { spawnNonce?: unknown }) => {
+    const spawnNonce = typeof input?.spawnNonce === 'string' ? input.spawnNonce.trim() : '';
+    if (!spawnNonce) return { status: 'not_found' as const };
+    if (!handlers.abandonSpawnSessionByNonce) return { status: 'unsupported' as const };
+    try {
+      return await handlers.abandonSpawnSessionByNonce(spawnNonce);
+    } catch {
+      return { status: 'failed' as const };
+    }
+  });
   if (handlers.directTransferImport) {
     registerMachineDirectTransferImportRpcHandlers({
       rpcHandlerManager,
       prepareImportSession: handlers.directTransferImport.prepareImportSession,
+      abortImportSession: handlers.directTransferImport.abortImportSession,
     });
   }
   if (handlers.directTransferExport) {
@@ -348,7 +555,9 @@ export function registerMachineRpcHandlers(params: Readonly<{
       if (!isActive) {
         return 'already_inactive';
       }
-      return (await stopSession(sessionId)) ? 'stopped' : 'failed';
+      return normalizeMachineStopSessionResult(await stopSession(sessionId)).status === 'stopped'
+        ? 'stopped'
+        : 'failed';
     },
     ...(handlers.loadLocalSessionMetadata ? { loadLocalSessionMetadata: handlers.loadLocalSessionMetadata } : {}),
     ...(handlers.savePreparedTargetLocalMetadata ? { savePreparedTargetLocalMetadata: handlers.savePreparedTargetLocalMetadata } : {}),
@@ -362,7 +571,7 @@ export function registerMachineRpcHandlers(params: Readonly<{
 
     let processIndex = new Map<number, DaemonExecutionRunProcessInfo>();
     try {
-      const processes = await psList();
+      const processes = await listProcessSnapshot();
 	      processIndex = new Map(
 	        processes.map((proc) => [
 	          proc.pid,
@@ -408,6 +617,30 @@ export function registerMachineRpcHandlers(params: Readonly<{
   });
 
   return {
+    connectivityResources: externalSessionsRegistration.connectivityResource
+      ? [externalSessionsRegistration.connectivityResource]
+      : [],
     transferRelayV2DownloadOwners,
+    promptAssetTransfers,
+    promptRegistryTransfers,
+    voiceOpenAiCompat: voiceOpenAiCompatRegistration,
+    voiceSpeech: voiceSpeechRegistration,
+    ...(voiceInferenceRegistration ? { voiceInference: voiceInferenceRegistration } : {}),
+    dispose: async () => {
+      const cleanup = transferRelayV2ResponderCleanup;
+      transferRelayV2ResponderCleanup = null;
+      cleanup?.();
+      if (cleanup && transferRelayV2DownloadResponderCleanupByManager.get(rpcHandlerManager) === cleanup) {
+        transferRelayV2DownloadResponderCleanupByManager.delete(rpcHandlerManager);
+      }
+      await Promise.all([
+        Promise.resolve(externalSessionsRegistration.dispose()),
+        promptAssetTransfers.dispose(),
+        promptRegistryTransfers.dispose(),
+        voiceOpenAiCompatRegistration.dispose(),
+        voiceSpeechRegistration.dispose(),
+        ...(voiceInferenceRegistration ? [voiceInferenceRegistration.dispose()] : []),
+      ]);
+    },
   };
 }

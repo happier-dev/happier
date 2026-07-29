@@ -39,6 +39,80 @@ const classifiedFailure = {
 } as const;
 
 describe('runtimeAuthFailureReportOutbox', () => {
+  it('keeps reports from different credential revisions independently durable', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-outbox-revision-');
+    try {
+      for (const expectedCredentialRevision of [
+        'csr_abcdefghijklmnopqrstuv',
+        'csr_bcdefghijklmnopqrstuvw',
+      ] as const) {
+        await enqueueRuntimeAuthFailureReportOutboxItem({
+          outboxDir,
+          report: {
+            sessionId: 'session-revision',
+            classification: { ...classifiedFailure, expectedCredentialRevision },
+          },
+        });
+      }
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toHaveLength(2);
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+  it('persists one stable report id across repeated refresh attempts', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-outbox-report-id-');
+    try {
+      const report = {
+        reportId: 'runtime-auth-report:stable-1',
+        originDaemonExecutionGenerationV1: 'legacy-launcher-daemon',
+        sessionId: 'session-report-id',
+        classification: classifiedFailure,
+      } as const;
+      const first = await enqueueRuntimeAuthFailureReportOutboxItem({ outboxDir, report, nowMs: () => 1 });
+      const second = await enqueueRuntimeAuthFailureReportOutboxItem({ outboxDir, report, nowMs: () => 2 });
+
+      expect(first).toMatchObject({ status: 'enqueued', item: { reportId: report.reportId, attemptCount: 1 } });
+      expect(second).toMatchObject({ status: 'enqueued', item: { reportId: report.reportId, attemptCount: 2 } });
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+  it('ignores a legacy daemon-generation field when coalescing one durable failure', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-outbox-generation-');
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        nowMs: () => 1_000,
+        report: {
+          originDaemonExecutionGenerationV1: 'daemon-old',
+          sessionId: 'session-generation',
+          classification: classifiedFailure,
+        },
+      });
+      const current = await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        nowMs: () => 1_001,
+        report: {
+          originDaemonExecutionGenerationV1: 'daemon-current',
+          sessionId: 'session-generation',
+          classification: classifiedFailure,
+        },
+      });
+      expect(current).toMatchObject({
+        status: 'enqueued',
+        enqueue: 'coalesced',
+        item: {
+          attemptCount: 2,
+          createdAtMs: 1_000,
+        },
+      });
+      const items = await readRuntimeAuthFailureReportOutboxItems({ outboxDir });
+      expect(items).toHaveLength(1);
+      expect(items[0]).not.toHaveProperty('originDaemonExecutionGenerationV1');
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
   it('stores only sanitized non-secret report fields', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-');
     try {
@@ -286,6 +360,62 @@ describe('runtimeAuthFailureReportOutbox', () => {
     }
   });
 
+  it('does not remove a same-key report refreshed while an older delivery is in flight', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-refresh-race-');
+    let releaseDelivery!: () => void;
+    const deliveryReleased = new Promise<void>((resolve) => {
+      releaseDelivery = resolve;
+    });
+    let markDeliveryStarted!: () => void;
+    const deliveryStarted = new Promise<void>((resolve) => {
+      markDeliveryStarted = resolve;
+    });
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'sess_refresh_race',
+          switchesThisTurn: 1,
+          classification: classifiedFailure,
+        },
+        nowMs: () => 1_700_000_000_000,
+      });
+
+      const drain = drainRuntimeAuthFailureReportOutboxItems({
+        outboxDir,
+        deliver: async () => {
+          markDeliveryStarted();
+          await deliveryReleased;
+          return { status: 'delivered' as const };
+        },
+      });
+      await deliveryStarted;
+
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'sess_refresh_race',
+          switchesThisTurn: 2,
+          classification: classifiedFailure,
+        },
+        nowMs: () => 1_700_000_000_200,
+      });
+
+      releaseDelivery();
+      await expect(drain).resolves.toEqual({ delivered: 1, dropped: 0, retried: 0 });
+      expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([
+        expect.objectContaining({
+          sessionId: 'sess_refresh_race',
+          switchesThisTurn: 2,
+          attemptCount: 2,
+        }),
+      ]);
+    } finally {
+      releaseDelivery?.();
+      await removeTempDir(outboxDir);
+    }
+  });
+
   it('drops stale reports when the drain owner marks them superseded', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-drop-');
     try {
@@ -341,6 +471,54 @@ describe('runtimeAuthFailureReportOutbox', () => {
       const remaining = await readRuntimeAuthFailureReportOutboxItems({ outboxDir });
       expect(remaining).toHaveLength(1);
       expect(remaining[0].sessionId).toBe('sess_other');
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('preserves reports created after a lifecycle supersession boundary', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-boundary-');
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'sess_superseded',
+          switchesThisTurn: 1,
+          classification: {
+            ...classifiedFailure,
+            expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuv',
+          },
+        },
+        nowMs: () => 100,
+      });
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'sess_superseded',
+          switchesThisTurn: 1,
+          classification: {
+            ...classifiedFailure,
+            expectedCredentialRevision: 'csr_bcdefghijklmnopqrstuvw',
+          },
+        },
+        nowMs: () => 300,
+      });
+
+      await removeRuntimeAuthFailureReportOutboxItemsForSession({
+        outboxDir,
+        sessionId: 'sess_superseded',
+        updatedBeforeMs: 200,
+      });
+
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toEqual([
+        expect.objectContaining({
+          sessionId: 'sess_superseded',
+          updatedAtMs: 300,
+          classification: expect.objectContaining({
+            expectedCredentialRevision: 'csr_bcdefghijklmnopqrstuvw',
+          }),
+        }),
+      ]);
     } finally {
       await removeTempDir(outboxDir);
     }

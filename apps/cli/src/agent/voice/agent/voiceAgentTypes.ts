@@ -1,9 +1,10 @@
-import type { AgentId } from '@/agent/core/AgentBackend';
+import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { VoiceAgentOutputEventV1, VoiceAssistantAction } from '@happier-dev/protocol';
 import type { ExecutionRunResumeHandle } from '@happier-dev/protocol';
+import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
+import type { PermissionIntent } from '@happier-dev/agents';
 
-export type PermissionPolicy = 'no_tools' | 'read_only';
 export type Verbosity = 'short' | 'balanced';
 
 export type VoiceAgentStartParams = Readonly<{
@@ -18,12 +19,19 @@ export type VoiceAgentStartParams = Readonly<{
   chatModelId: string;
   commitModelId: string;
   commitIsolation?: boolean;
-  permissionPolicy: PermissionPolicy;
+  permissionIntent: PermissionIntent;
   idleTtlSeconds: number;
   initialContext: string;
   initialContextMode?: 'bootstrap' | 'first_turn';
   verbosity?: Verbosity;
   resumeHandle?: ExecutionRunResumeHandle | null;
+  /**
+   * Connected-services selection for the voice run's backends. Threaded to the backend factory so
+   * a voice run with an explicit selection materializes its connected-service auth env instead of
+   * silently running on the runner's native account (R3-2 fail-closed). `null` opts out (native);
+   * `undefined` defers to session-mirrored defaulting inside the run runtime resolver.
+   */
+  connectedServices?: ConnectedServiceBindingsV1 | null;
   disabledActionIds?: readonly string[];
   /**
    * Optional one-time bootstrap behavior for newly created (non-resumed) sessions.
@@ -43,15 +51,17 @@ export type VoiceAgentStartResult = Readonly<{
   effective: {
     chatModelId: string;
     commitModelId: string;
-    permissionPolicy: PermissionPolicy;
+    permissionIntent: PermissionIntent;
   };
 }>;
 
 export type VoiceAgentSendTurnResult = Readonly<{ assistantText: string; actions?: VoiceAssistantAction[] }>;
 export type VoiceAgentCommitResult = Readonly<{ commitText: string }>;
 export type VoiceAgentTurnStreamEvent =
+  | Readonly<{ t: 'voice_output'; output: VoiceAgentOutputEventV1 }>
   | Readonly<{ t: 'delta'; textDelta: string }>
   | Readonly<{ t: 'done'; assistantText: string; actions?: VoiceAssistantAction[] }>
+  | Readonly<{ t: 'cancelled' }>
   | Readonly<{ t: 'error'; error: string; errorCode?: string }>;
 export type VoiceAgentTurnStreamStartResult = Readonly<{ streamId: string }>;
 export type VoiceAgentTurnStreamReadResult = Readonly<{
@@ -59,12 +69,16 @@ export type VoiceAgentTurnStreamReadResult = Readonly<{
   events: VoiceAgentTurnStreamEvent[];
   nextCursor: number;
   done: boolean;
+  /** Canonical terminal record, independent of the caller's pagination page. */
+  terminalEvent?: VoiceAgentTurnStreamEvent;
 }>;
 
 export class VoiceAgentError extends Error {
   readonly code:
     | 'VOICE_AGENT_NOT_FOUND'
     | 'VOICE_AGENT_BUSY'
+    | 'VOICE_AGENT_INVALID_CURSOR'
+    | 'VOICE_AGENT_TURN_COMPLETED'
     | 'VOICE_AGENT_UNSUPPORTED'
     | 'VOICE_AGENT_START_FAILED';
 
@@ -77,8 +91,9 @@ export class VoiceAgentError extends Error {
 export type BackendFactory = (opts: {
   agentId: AgentId;
   modelId: string;
-  permissionPolicy: PermissionPolicy;
+  permissionIntent: PermissionIntent;
   start?: Readonly<{ intent: 'voice_agent' }>;
+  connectedServices?: ConnectedServiceBindingsV1 | null;
 }) => ExecutionRunHostRuntime;
 
 export type ResolveVoiceSystemAppendBlocksArgs = Readonly<{
@@ -98,23 +113,29 @@ export type VoiceAgentTurnStreamState = {
   completedHistory: boolean;
   cancelled: boolean;
   deltaHold: string;
+  outputSpeechBuffer: string;
+  outputSpeechChars: number;
   suppressActionDeltas: boolean;
+  outputSeq: number;
+  outputSegmentIndex: number;
 };
 
 export type VoiceAgentInstance = {
   id: string;
   agentId: AgentId;
+  createRuntime: BackendFactory;
   chatBackend: ExecutionRunHostRuntime;
   chatSessionId: string;
   commitIsolation: boolean;
   commitBackend: ExecutionRunHostRuntime | null;
   commitSessionId: string | null;
   commitResumeSessionId: string | null;
-  permissionPolicy: PermissionPolicy;
+  permissionIntent: PermissionIntent;
   verbosity: Verbosity;
   chatModelId: string;
   commitModelId: string;
   initialContext: string;
+  connectedServices?: ConnectedServiceBindingsV1 | null;
   disabledActionIds: readonly string[];
   memoryRecallGuidanceEnabled: boolean;
   systemAppendBlocks: readonly string[];
@@ -123,10 +144,13 @@ export type VoiceAgentInstance = {
   lastUsedAt: number;
   idleTtlMs: number;
   inFlight: Promise<unknown> | null;
+  lifecycleInFlight: Promise<void> | null;
+  chatGeneration: number;
   chatBuffer: string;
   commitBuffer: string;
   clearChatBuffer: () => void;
   clearCommitBuffer: () => void;
+  unsubscribeChatMessages: () => void;
   activeTurnStream: VoiceAgentTurnStreamState | null;
   dispose: () => Promise<void>;
 };

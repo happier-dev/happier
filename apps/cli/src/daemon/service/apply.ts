@@ -3,7 +3,7 @@ import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { buildServiceCommandEnv } from '@happier-dev/cli-common/service';
+import { buildServiceCommandEnv, isBenignServiceAbsenceFailure } from '@happier-dev/cli-common/service';
 
 import type { DaemonServiceInstallPlan, DaemonServiceUninstallPlan, DaemonServicePlannedCommand } from './plan';
 import { commandExistsInPath } from './commandExistsInPath';
@@ -15,7 +15,9 @@ function formatDaemonServiceCommand(command: DaemonServicePlannedCommand): strin
   return `${command.cmd} ${command.args.join(' ')}`.trim();
 }
 
-function runCommand(command: DaemonServicePlannedCommand): { ok: boolean; out: string | null } {
+type CommandResult = Readonly<{ ok: boolean; out: string | null; status: number | null }>;
+
+function runCommand(command: DaemonServicePlannedCommand): CommandResult {
   try {
     const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_SERVICE_COMMAND_TIMEOUT_MS', 30_000);
     const res = spawnSync(command.cmd, [...command.args], {
@@ -25,9 +27,9 @@ function runCommand(command: DaemonServicePlannedCommand): { ok: boolean; out: s
     });
     const ok = (res.status ?? 1) === 0;
     const out = `${res.stdout ? String(res.stdout) : ''}${res.stderr ? String(res.stderr) : ''}`.trim();
-    return { ok, out: out.length > 0 ? out : null };
+    return { ok, out: out.length > 0 ? out : null, status: typeof res.status === 'number' ? res.status : null };
   } catch {
-    return { ok: false, out: null };
+    return { ok: false, out: null, status: null };
   }
 }
 
@@ -57,7 +59,7 @@ function refreshLaunchctlBootstrapPath(command: DaemonServicePlannedCommand): vo
 
 function isBenignLaunchctlFailure(
   command: DaemonServicePlannedCommand,
-  result: Readonly<{ ok: boolean; out: string | null }>,
+  result: CommandResult,
 ): boolean {
   if (result.ok || command.cmd !== 'launchctl') {
     return false;
@@ -65,8 +67,14 @@ function isBenignLaunchctlFailure(
 
   const action = String(command.args[0] ?? '').trim().toLowerCase();
   const output = String(result.out ?? '').trim().toLowerCase();
-  if (action === 'bootout' || action === 'disable') {
-    return output.includes('no such process') || output.includes('could not find service');
+  if (isBenignServiceAbsenceFailure({
+    cmd: command.cmd,
+    args: command.args,
+    status: result.status,
+    stdout: result.out,
+    stderr: '',
+  })) {
+    return true;
   }
 
   if (action === 'kickstart') {
@@ -90,7 +98,7 @@ function isBenignLaunchctlFailure(
 
 function isBenignSystemctlFailure(
   command: DaemonServicePlannedCommand,
-  result: Readonly<{ ok: boolean; out: string | null }>,
+  result: CommandResult,
 ): boolean {
   if (result.ok || command.cmd !== 'systemctl') {
     return false;
@@ -108,8 +116,13 @@ function isBenignSystemctlFailure(
     return false;
   }
 
-  const output = String(result.out ?? '').trim().toLowerCase();
-  return output.includes('does not exist') || output.includes('not loaded') || output.includes('not found');
+  return isBenignServiceAbsenceFailure({
+    cmd: command.cmd,
+    args: command.args,
+    status: result.status,
+    stdout: result.out,
+    stderr: '',
+  });
 }
 
 /**
@@ -120,7 +133,7 @@ function isBenignSystemctlFailure(
  * it runs too close on the heels. Short retry loop gives launchd a moment
  * to finish the prior operation.
  */
-function runLaunchctlWithRetry(command: DaemonServicePlannedCommand): { ok: boolean; out: string | null } {
+function runLaunchctlWithRetry(command: DaemonServicePlannedCommand): CommandResult {
   const delaysMs = [150, 300, 600];
   let result = runCommand(command);
   if (result.ok) return result;

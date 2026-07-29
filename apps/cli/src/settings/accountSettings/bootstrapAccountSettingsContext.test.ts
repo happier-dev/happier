@@ -1,10 +1,13 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import type { Credentials } from '@/persistence';
 
 import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from './bootstrapAccountSettingsContext';
+import { getActiveAccountSettingsSnapshot, setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
+import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';
 
 function createCredentialsStub(): Credentials {
   return {
@@ -481,6 +484,115 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(res.settingsVersion).toBe(11);
     expect(res.settings.notificationsSettingsV1.ready).toBe(false);
     expect(applySideEffects).toHaveBeenCalledWith(expect.objectContaining({ source: 'network', settingsVersion: 11 }));
+  });
+
+  it('does not let a delayed older fetch publish its values while reapplying the accepted winner for the caller', async () => {
+    const credentials = createCredentialsStub();
+    const cachePath = '/tmp/server/account.settings.cache.json';
+    let finishDecrypt: (value: Record<string, unknown>) => void = () => {};
+    const decryptCiphertext = vi.fn(() => new Promise<Record<string, unknown>>((resolve) => {
+      finishDecrypt = resolve;
+    }));
+    const writeCache = vi.fn(async () => {});
+    const applySideEffects = vi.fn();
+
+    const pending = bootstrapAccountSettingsContext({
+      credentials,
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 100,
+      deps: {
+        resolveCachePath: () => cachePath,
+        readCache: async () => null,
+        fetchFromServer: async () => ({ settingsCiphertext: 'older', settingsVersion: 3 }),
+        decryptCiphertext,
+        writeCache,
+        applySideEffects,
+      },
+    });
+    await vi.waitFor(() => expect(decryptCiphertext).toHaveBeenCalled());
+
+    const winner = {
+      source: 'network' as const,
+      settings: accountSettingsParse({ sessionPendingQueueDeliveryTiming: 'after_runtime_idle' }),
+      settingsVersion: 5,
+      loadedAtMs: 200,
+      settingsSecretsReadKeys: [],
+      scopeKey: createAccountSettingsScopeKey({ cachePath, token: credentials.token }),
+    };
+    setActiveAccountSettingsSnapshot(winner);
+    finishDecrypt({ sessionPendingQueueDeliveryTiming: 'after_foreground_ready' });
+
+    await expect(pending).resolves.toMatchObject({
+      settingsVersion: 5,
+      settings: expect.objectContaining({ sessionPendingQueueDeliveryTiming: 'after_runtime_idle' }),
+    });
+    expect(getActiveAccountSettingsSnapshot()).toBe(winner);
+    expect(writeCache).not.toHaveBeenCalled();
+    expect(applySideEffects).toHaveBeenCalledTimes(1);
+    expect(applySideEffects).toHaveBeenCalledWith(expect.objectContaining({
+      settingsVersion: 5,
+      settings: expect.objectContaining({ sessionPendingQueueDeliveryTiming: 'after_runtime_idle' }),
+    }));
+
+    const reused = await bootstrapAccountSettingsContext({
+      credentials,
+      mode: 'blocking',
+      refresh: 'auto',
+      nowMs: 201,
+      ttlMs: 60_000,
+      deps: {
+        resolveCachePath: () => cachePath,
+        readCache: async () => { throw new Error('winner should be reused from memory'); },
+        fetchFromServer: async () => { throw new Error('winner should not refetch'); },
+        decryptCiphertext: async () => ({}),
+        writeCache: async () => {},
+        applySideEffects: vi.fn(),
+      },
+    });
+    expect(reused.settingsVersion).toBe(5);
+  });
+
+  it('returns a newer same-scope winner that arrives while the accepted candidate cache write is in flight', async () => {
+    const credentials = createCredentialsStub();
+    const cachePath = '/tmp/server/account.settings.cache.json';
+    let finishWrite: () => void = () => {};
+    const writeCache = vi.fn(() => new Promise<void>((resolve) => {
+      finishWrite = resolve;
+    }));
+
+    const pending = bootstrapAccountSettingsContext({
+      credentials,
+      mode: 'blocking',
+      refresh: 'force',
+      nowMs: 100,
+      deps: {
+        resolveCachePath: () => cachePath,
+        readCache: async () => null,
+        fetchFromServer: async () => ({
+          settingsContent: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_foreground_ready' } },
+          settingsVersion: 3,
+        }),
+        decryptCiphertext: async () => ({}),
+        writeCache,
+        applySideEffects: vi.fn(),
+      },
+    });
+    await vi.waitFor(() => expect(writeCache).toHaveBeenCalled());
+
+    const newer = {
+      source: 'network' as const,
+      settings: accountSettingsParse({ sessionPendingQueueDeliveryTiming: 'after_runtime_idle' }),
+      settingsVersion: 4,
+      loadedAtMs: 200,
+      settingsSecretsReadKeys: [],
+      scopeKey: createAccountSettingsScopeKey({ cachePath, token: credentials.token }),
+    };
+    setActiveAccountSettingsSnapshot(newer);
+    finishWrite();
+
+    await expect(pending).resolves.toMatchObject({ settingsVersion: 4 });
+    expect(getActiveAccountSettingsSnapshot()).toBe(newer);
   });
 
   it('fast mode returns immediately and exposes whenRefreshed for stale cache', async () => {

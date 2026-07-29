@@ -1,12 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
-  AcpBackendSpecV1,
-  AcpTransportLaunchInputV1,
-  PluginContextV1,
   SystemToolLaunchGrantV1,
   SystemToolResolveRequestV1,
-} from '@happier-dev/plugin-sdk';
+} from '@/plugins/runtime/exec/privateContract';
 import {
   createAcpBackendFromDefinition,
   createAcpTransportHandlerFromDefinition,
@@ -18,10 +15,35 @@ import {
 } from '../index';
 import type { ResolvedConfiguredAcpBackend } from '../../../catalog/configured/resolveBackend';
 import type { AcpPermissionHandler } from '../../../permissions/acpPermissionHandler';
+import type { HostAcpBackendSpec } from '../_types';
 
 describe('ACP runtime definitions', () => {
+  it('threads canonical unset keys into the final ACP backend spawn owner', async () => {
+    const definition = normalizePluginAcpDefinition({
+      pluginId: 'acme.plugin',
+      spec: {
+        backendId: 'acme.plugin.env',
+        transport: {
+          kind: 'stdio',
+          launch: { kind: 'executable', command: process.execPath },
+        },
+      },
+    });
+
+    const backend = await createAcpBackendFromDefinition({
+      definition,
+      cwd: '/tmp',
+      env: { EXPLICIT: 'value' },
+      unsetEnvKeys: ['OPENAI_API_KEY'],
+    });
+
+    expect((backend as unknown as {
+      options: { unsetEnv?: readonly string[] };
+    }).options.unsetEnv).toEqual(['OPENAI_API_KEY']);
+  });
+
   it('normalizes built-in ACP capability hints into the runtime definition contract', () => {
-    const definition = normalizeBuiltInAcpDefinition('kiro');
+    const definition = normalizeBuiltInAcpDefinition('ohMyPi');
 
     expect(definition.capabilities).toMatchObject({
       supportsResume: true,
@@ -38,6 +60,7 @@ describe('ACP runtime definitions', () => {
   it('normalizes configured ACP backends into a host-internal definition shape', () => {
     const backend = {
       backendId: 'custom-acp',
+      source: { kind: 'account_configured' },
       name: 'custom-acp',
       title: 'Custom ACP',
       command: 'acme-agent',
@@ -298,23 +321,20 @@ describe('ACP runtime definitions', () => {
       pluginId: 'acme.plugin',
       backend: {
         id: 'acme.plugin.full',
-        providerId: 'acme.plugin.provider',
-        engine: {
+        agentId: 'acme.plugin.provider',
+        runtime: {
           kind: 'acp',
-        transport: {
-          kind: 'stdio',
-          launch: {
-            kind: 'executable',
-            command: 'acme-agent',
+          transport: {
+            kind: 'stdio',
+            executable: { kind: 'systemTool', id: 'acme-agent' },
             args: ['acp'],
             env: {
               TRANSPORT_TOKEN: 'transport-token',
             },
+            timeouts: {
+              initializeMs: 5000,
+            },
           },
-          timeouts: {
-            initMs: 5000,
-          },
-        },
           launchEnv: {
             ENGINE_TOKEN: 'engine-token',
           },
@@ -368,6 +388,17 @@ describe('ACP runtime definitions', () => {
       mcp: {
         policy: 'drop',
       },
+      transport: {
+        kind: 'stdio',
+        launch: {
+          kind: 'system-tool',
+          toolId: 'acme-agent',
+          purpose: 'Launch ACP backend acme.plugin.full',
+          args: ['acp'],
+          env: { TRANSPORT_TOKEN: 'transport-token' },
+        },
+        timeouts: { initMs: 5000 },
+      },
     });
     expect(definition.capabilities).toMatchObject({
       supportsStreaming: true,
@@ -382,6 +413,34 @@ describe('ACP runtime definitions', () => {
     expect(definition.timeouts).toEqual({
       initMs: 5000,
     });
+  });
+
+  it('resolves same-plugin system-tool references and rejects cross-plugin ACP executable references', () => {
+    const backend = {
+      id: 'acme-agent',
+      title: 'Acme Agent',
+      runtime: {
+        kind: 'acp',
+        transport: {
+          kind: 'stdio',
+          executable: {
+            kind: 'systemTool',
+            id: { pluginId: 'acme.plugin', localId: 'acme-cli' },
+          },
+        },
+      },
+    };
+    expect(normalizePluginBackendContributionAcpDefinition({
+      pluginId: 'acme.plugin',
+      backend,
+    }).transport).toMatchObject({
+      kind: 'stdio',
+      launch: { kind: 'system-tool', toolId: 'acme-cli' },
+    });
+    expect(() => normalizePluginBackendContributionAcpDefinition({
+      pluginId: 'other.plugin',
+      backend,
+    })).toThrow(/cross-plugin system-tool reference/);
   });
 
   it('resolves plugin-owned ACP system-tool launches through the bound plugin exec service', async () => {
@@ -404,16 +463,14 @@ describe('ACP runtime definitions', () => {
       },
       expiresAt: null,
     } satisfies SystemToolLaunchGrantV1;
-    const pluginContext = {
-      exec: {
-        systemTools: {
-          resolve: async (request: SystemToolResolveRequestV1) => {
-            requests.push(request);
-            return grant;
-          },
+    const exec = {
+      systemTools: {
+        resolve: async (request: SystemToolResolveRequestV1) => {
+          requests.push(request);
+          return grant;
         },
       },
-    } as unknown as PluginContextV1;
+    };
     const definition = normalizePluginAcpDefinition({
       pluginId: 'acme.plugin',
       spec: {
@@ -427,7 +484,7 @@ describe('ACP runtime definitions', () => {
             preferredCommand: 'acme-agent',
             args: ['--acp'],
             env: { FROM_LAUNCH: 'yes' },
-          } satisfies AcpTransportLaunchInputV1,
+          },
         },
       },
     });
@@ -438,11 +495,11 @@ describe('ACP runtime definitions', () => {
     const launch = await (resolveLaunch as (input: {
       definition: typeof definition;
       cwd: string;
-      pluginContext: PluginContextV1;
+      exec: typeof exec;
     }) => Promise<{ command: string; args: readonly string[]; env: Readonly<Record<string, string>> }>)({
       definition,
       cwd: '/workspace',
-      pluginContext,
+      exec,
     });
 
     expect(requests).toEqual([expect.objectContaining({
@@ -473,7 +530,7 @@ describe('ACP runtime definitions', () => {
         },
         auth: {
           methodId: 'openai-api-key',
-        } as unknown as AcpBackendSpecV1['auth'],
+        } as unknown as HostAcpBackendSpec['auth'],
       },
     });
 
@@ -484,48 +541,6 @@ describe('ACP runtime definitions', () => {
     const options = (backend as unknown as { options: { authMethodId?: string } }).options;
 
     expect(options.authMethodId).toBe('openai-api-key');
-  });
-
-  it('passes provider-authored ACP authenticate metadata into the created ACP backend', async () => {
-    const authenticateMeta = {
-      gateway: {
-        baseUrl: 'https://gateway.example.test/v1',
-        headers: {
-          Authorization: 'Bearer gateway-token',
-        },
-      },
-    };
-    const pluginContext = {
-      acp: {
-        defineAcpBackend: vi.fn(),
-      },
-    } as unknown as PluginContextV1;
-    const definition = normalizePluginAcpDefinition({
-      pluginId: 'acme.plugin',
-      spec: {
-        backendId: 'acme.plugin.gateway',
-        transport: {
-          kind: 'stdio',
-          launch: {
-            kind: 'executable',
-            command: 'acme-agent',
-          },
-        },
-        auth: {
-          methodId: 'gateway',
-          buildAuthenticateMeta: () => authenticateMeta,
-        } as unknown as AcpBackendSpecV1['auth'],
-      },
-    });
-
-    const backend = await createAcpBackendFromDefinition({
-      definition,
-      cwd: '/workspace',
-      pluginContext,
-    });
-    const options = (backend as unknown as { options: { authMeta?: Record<string, unknown> } }).options;
-
-    expect(options.authMeta).toEqual(authenticateMeta);
   });
 
   it('builds generic transport tool-name inference from provider-owned ACP definitions', async () => {
@@ -559,8 +574,8 @@ describe('ACP runtime definitions', () => {
               ? 'mcp__server__tool'
               : null
           ),
-        } as unknown as AcpBackendSpecV1['callbacks'],
-      } as unknown as AcpBackendSpecV1,
+        } as unknown as HostAcpBackendSpec['callbacks'],
+      } as unknown as HostAcpBackendSpec,
     });
 
     const transport = (createTransport as (input: typeof definition) => {
@@ -683,7 +698,7 @@ describe('ACP runtime definitions', () => {
             inputFields: ['prompt'],
           }],
           unknownToolNames: ['other', 'Unknown tool'],
-          hintInputFields: ['tool_name', 'toolName', 'name'],
+          hintInputFields: ['tool_name', 'toolName', 'name', 'title', 'description'],
           shellBridgeHint: true,
           investigationToolIdPatterns: ['task'],
           investigationToolKinds: ['task'],
@@ -698,7 +713,7 @@ describe('ACP runtime definitions', () => {
             detail: 'Plugin setup failed. Re-run the provider CLI from your terminal, then retry.',
           }],
         },
-      } as unknown as AcpBackendSpecV1,
+      } as unknown as HostAcpBackendSpec,
     });
 
     const transport = (createTransport as (input: typeof definition) => {
@@ -726,6 +741,13 @@ describe('ACP runtime definitions', () => {
     expect(transport.determineToolName?.('other', 'tool-1', { tool_name: 'read_file' }, {
       recentPromptHadChangeTitle: false,
       toolCallCountSincePrompt: 1,
+    })).toBe('read');
+    expect(transport.determineToolName?.('other', 'tool-2', {
+      title: 'read_file',
+      target_file: '/workspace/README.md',
+    }, {
+      recentPromptHadChangeTitle: false,
+      toolCallCountSincePrompt: 2,
     })).toBe('read');
     expect(transport.determineToolName?.('read', 'task-123', { path: 'README.md' }, {
       recentPromptHadChangeTitle: false,
@@ -936,7 +958,7 @@ describe('ACP runtime definitions', () => {
             return params.env.FROM_SESSION === '1'
               ? [...params.baseArgs, '--from-session-env']
               : [...params.baseArgs];
-          }) as NonNullable<AcpBackendSpecV1['callbacks']>['argvBuilder'],
+          }) as NonNullable<HostAcpBackendSpec['callbacks']>['argvBuilder'],
         },
       },
     });
@@ -1241,7 +1263,18 @@ describe('ACP runtime definitions', () => {
     const permissionDecision = ((request: { toolName: string }) => {
       const { toolName } = request;
       if (toolName === 'read') {
-        return { kind: 'allow', rationale: 'read-only' };
+        return {
+          kind: 'allow',
+          rationale: 'read-only',
+          followUpPrompt: {
+            prompt: 'Continue with the approved read.',
+            delivery: 'followUp',
+          },
+          persistAllowRule: {
+            scope: 'session',
+            toolName: 'read',
+          },
+        };
       }
       if (toolName === 'write') {
         return { kind: 'defer' };
@@ -1280,10 +1313,26 @@ describe('ACP runtime definitions', () => {
     expect(wrappedHandler?.getImmediateDecision?.('tool-1', 'read', {})).toEqual({
       decision: 'approved',
       rationale: 'read-only',
+      followUpPrompt: {
+        prompt: 'Continue with the approved read.',
+        delivery: 'followUp',
+      },
+      persistAllowRule: {
+        scope: 'session',
+        toolName: 'read',
+      },
     });
     await expect(wrappedHandler?.handleToolCall('tool-1', 'read', {})).resolves.toEqual({
       decision: 'approved',
       rationale: 'read-only',
+      followUpPrompt: {
+        prompt: 'Continue with the approved read.',
+        delivery: 'followUp',
+      },
+      persistAllowRule: {
+        scope: 'session',
+        toolName: 'read',
+      },
     });
     await expect(wrappedHandler?.handleToolCall('tool-2', 'write', {})).resolves.toEqual({
       decision: 'denied',
@@ -1291,7 +1340,38 @@ describe('ACP runtime definitions', () => {
     await expect(wrappedHandler?.handleToolCall('tool-3', 'unknown', {})).resolves.toEqual({
       decision: 'denied',
     });
-    expect(baseHandler.handleToolCall).toHaveBeenCalledTimes(2);
+    await expect(
+      wrappedHandler?.handleToolCall('host-fs-write', 'read', {}, { origin: 'host_acp_fs_write' }),
+    ).resolves.toEqual({
+      decision: 'denied',
+    });
+    expect(baseHandler.handleToolCall).toHaveBeenCalledTimes(3);
+
+    const fallbackWithoutPreview = {
+      handleToolCall: vi.fn(async () => ({ decision: 'approved' as const })),
+    } satisfies AcpPermissionHandler;
+    const backendWithoutPreview = await createAcpBackendFromDefinition({
+      definition,
+      cwd: '/workspace',
+      permissionHandler: fallbackWithoutPreview,
+    });
+    const wrappedWithoutPreview = (backendWithoutPreview as unknown as {
+      options: {
+        permissionHandler?: AcpPermissionHandler;
+      };
+    }).options.permissionHandler;
+    await expect(
+      wrappedWithoutPreview?.handleToolCall('host-fs-write-no-preview', 'read', {}, {
+        origin: 'host_acp_fs_write',
+      }),
+    ).resolves.toEqual({
+      decision: 'approved',
+    });
+    expect(
+      wrappedWithoutPreview?.getImmediateDecision?.('host-fs-write-no-preview', 'read', {}, {
+        origin: 'host_acp_fs_write',
+      }),
+    ).toBeNull();
   });
 
   it('fails closed when permissionDecision returns invalid output without a fallback permission handler', async () => {
@@ -1369,15 +1449,14 @@ describe('ACP runtime definitions', () => {
     });
   });
 
-  it('fails closed when runtime definitions carry unsupported executable hooks', async () => {
-    const runtimeCore = await import('../runtimeCore');
-    const assertSupported = (runtimeCore as Record<string, unknown>).assertAcpRuntimeDefinitionSupported;
-    expect(assertSupported).toEqual(expect.any(Function));
-
+  it('publishes configured ACP session metadata from runtime plans launched as configured targets', async () => {
     const definition = normalizePluginAcpDefinition({
       pluginId: 'acme.plugin',
       spec: {
-        backendId: 'acme.plugin.custom',
+        backendId: 'acme.plugin-backed-acp.backend',
+        ux: {
+          title: 'Plugin Review Bot',
+        },
         transport: {
           kind: 'stdio',
           launch: {
@@ -1385,29 +1464,46 @@ describe('ACP runtime definitions', () => {
             command: 'acme-agent',
           },
         },
-        transportLifecycle: {
-          handshake: async () => undefined,
-        },
-        ux: {
-          title: 'Acme Agent',
-        },
       },
     });
 
-    expect(() => (assertSupported as (input: typeof definition) => void)(definition)).toThrow(/handshake/);
+    const adapter = createAcpRuntimeCoreFromDefinition(definition);
+    const plan = await adapter.runtimeCore.createSessionRuntime({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'acme.plugin-backed-acp.backend',
+        configuredBackendId: 'acme.plugin-backed-acp.backend',
+        sourceKind: 'configured',
+      },
+    });
+
+    expect(plan.config.flavor).toBe('acp:acme.plugin-backed-acp.backend');
+    expect(plan.config.agentMessageType).toBe('acp:acme.plugin-backed-acp.backend');
+    expect(plan.config.runtimeActivityApplicability).toBe('not_applicable');
+    expect(plan.config.augmentSessionMetadata?.({
+      path: '/workspace',
+      flavor: plan.config.flavor,
+    } as never)).toMatchObject({
+      flavor: 'acp:acme.plugin-backed-acp.backend',
+      acpConfiguredBackendV1: {
+        v: 1,
+        backendId: 'acme.plugin-backed-acp.backend',
+        title: 'Plugin Review Bot',
+      },
+    });
   });
 
   it('rejects legacy plugin ACP wire instead of preserving a loose .acp compatibility path', () => {
     expect(() => normalizePluginBackendContributionAcpDefinition({
-      pluginId: 'acme.plugin',
-      backend: {
-        id: 'acme.plugin.acp',
-        providerId: 'acme.plugin',
-        runtimeKind: 'acp',
-        acp: {
-          command: 'acme-agent',
+        pluginId: 'acme.plugin',
+        backend: {
+          id: 'acme.plugin.acp',
+          agentId: 'acme.plugin',
+          runtimeKind: 'acp',
+          acp: {
+            command: 'acme-agent',
+          },
         },
-      },
-    })).toThrow(/backends\[\]\.engine\.kind/);
+    })).toThrow(/agents\[\]\.runtime\.kind/);
   });
 });

@@ -5,6 +5,7 @@ import { HttpStatusError } from '../client/httpStatusError';
 
 import { ApiSessionClient } from './sessionClient';
 import * as startupCatchUpRuntime from './client/lifecycle/startupCatchUpRuntime';
+import { createSessionClientRecoveryRuntime } from './client/lifecycle/createSessionClientRecoveryRuntime';
 import type { SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 
 function createOnlineConnectionState() {
@@ -28,106 +29,27 @@ describe('ApiSessionClient startup transcript catch-up retries', () => {
         vi.useRealTimers();
     });
 
-    it('keeps retrying startup transcript catch-up after messages have already been observed', async () => {
-        const client = Object.create(ApiSessionClient.prototype) as {
-            closed: boolean;
-            lastObservedMessageSeq: number;
-            startupMessageCatchUpInitialAfterSeq: number;
-            startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null;
-            startupMessageCatchUpRetryIndex: number;
-            catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
-            shouldRunStartupTranscriptCatchUp: () => boolean;
-            scheduleNextStartupMessageCatchUpRetry: () => void;
-        };
-
-        client.closed = false;
-        client.lastObservedMessageSeq = 1;
-        client.startupMessageCatchUpInitialAfterSeq = 1;
-        client.startupMessageCatchUpRetryTimer = null;
-        client.startupMessageCatchUpRetryIndex = 0;
-        client.catchUpSessionMessages = vi.fn(async () => {});
-        client.shouldRunStartupTranscriptCatchUp = vi.fn(() => true);
-
-        client.scheduleNextStartupMessageCatchUpRetry();
-
-        await vi.advanceTimersByTimeAsync(300);
-        await Promise.resolve();
-
-        expect(client.catchUpSessionMessages).toHaveBeenCalledTimes(1);
-        expect((client.catchUpSessionMessages as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toEqual({
-            afterSeq: 1,
-            authorization: 'startup_recovery',
-        });
-    });
-
-    it('retries startup transcript catch-up from the initial afterSeq even if a local echo advances the live cursor', async () => {
-        const client = Object.create(ApiSessionClient.prototype) as {
-            closed: boolean;
-            lastObservedMessageSeq: number;
-            startupMessageCatchUpInitialAfterSeq: number;
-            startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null;
-            startupMessageCatchUpRetryIndex: number;
-            catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
-            shouldRunStartupTranscriptCatchUp: () => boolean;
-            scheduleNextStartupMessageCatchUpRetry: () => void;
-        };
-
-        client.closed = false;
-        client.lastObservedMessageSeq = 1;
-        client.startupMessageCatchUpInitialAfterSeq = 0;
-        client.startupMessageCatchUpRetryTimer = null;
-        client.startupMessageCatchUpRetryIndex = 0;
-        client.catchUpSessionMessages = vi.fn(async () => {});
-        client.shouldRunStartupTranscriptCatchUp = vi.fn(() => true);
-
-        client.scheduleNextStartupMessageCatchUpRetry();
-
-        await vi.advanceTimersByTimeAsync(300);
-        await Promise.resolve();
-
-        expect(client.catchUpSessionMessages).toHaveBeenCalledTimes(1);
-        expect((client.catchUpSessionMessages as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toEqual({
-            afterSeq: 0,
-            authorization: 'startup_recovery',
-        });
-    });
-
-    it('does not schedule another startup transcript retry after catch-up succeeds', async () => {
-        const client = Object.create(ApiSessionClient.prototype) as {
-            closed: boolean;
-            lastObservedMessageSeq: number;
-            startupMessageCatchUpInitialAfterSeq: number;
-            startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null;
-            startupMessageCatchUpRetryIndex: number;
-            catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
-            shouldRunStartupTranscriptCatchUp: () => boolean;
-            scheduleNextStartupMessageCatchUpRetry: () => void;
-        };
-
-        client.closed = false;
-        client.lastObservedMessageSeq = 0;
-        client.startupMessageCatchUpInitialAfterSeq = 0;
-        client.startupMessageCatchUpRetryTimer = null;
-        client.startupMessageCatchUpRetryIndex = 0;
-        client.catchUpSessionMessages = vi.fn(async () => {});
-        client.shouldRunStartupTranscriptCatchUp = vi.fn(() => true);
-
-        client.scheduleNextStartupMessageCatchUpRetry();
-
-        await vi.advanceTimersByTimeAsync(300);
-        await Promise.resolve();
-        await vi.advanceTimersByTimeAsync(1_200);
-        await Promise.resolve();
-
-        expect(client.catchUpSessionMessages).toHaveBeenCalledTimes(1);
-        expect((client.catchUpSessionMessages as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toEqual({
-            afterSeq: 0,
-            authorization: 'startup_recovery',
-        });
-    });
-
     it('keeps startup user-message attachment owned by the interaction API', () => {
         expect(startupCatchUpRuntime).not.toHaveProperty('attachSessionUserMessageHandler');
+    });
+
+    it('requires the canonical recovery runtime instead of retaining a direct transport fallback', async () => {
+        const axiosGet = vi.spyOn(axios, 'get').mockResolvedValueOnce({ data: { messages: [] } });
+
+        await expect(startupCatchUpRuntime.catchUpSessionMessagesViaPort({
+            token: 'token',
+            sessionId: 's1',
+            sessionConnectionSupervisor: null,
+            handleCatchUpUpdate: vi.fn(),
+        } as never, { afterSeq: 0 })).rejects.toThrow('requires recoveryRuntime');
+        expect(axiosGet).not.toHaveBeenCalled();
+        axiosGet.mockRestore();
+    });
+
+    it('requires the canonical recovery runtime instead of retaining a retry-timer fallback', () => {
+        expect(() => startupCatchUpRuntime.scheduleNextStartupCatchUpRetryViaPort(
+            {} as never,
+        )).toThrow('requires recoveryRuntime');
     });
 
     it('reports terminal auth failures from transcript catch-up into the session supervisor', async () => {
@@ -142,6 +64,7 @@ describe('ApiSessionClient startup transcript catch-up retries', () => {
                 reportProbeResult: ReturnType<typeof vi.fn>;
             };
             handleUpdate: ReturnType<typeof vi.fn>;
+            recoveryRuntime: ReturnType<typeof createSessionClientRecoveryRuntime>;
             catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
         };
 
@@ -152,10 +75,28 @@ describe('ApiSessionClient startup transcript catch-up retries', () => {
             reportProbeResult,
         };
         client.handleUpdate = vi.fn();
+        client.recoveryRuntime = createSessionClientRecoveryRuntime({
+            startupMessageCatchUpRetryDelaysMs: [],
+            token: client.token,
+            sessionId: client.sessionId,
+            getClosed: () => false,
+            getSessionConnectionSupervisor: () => client.sessionConnectionSupervisor as never,
+            getCurrentConnectionState: () => createOnlineConnectionState(),
+            getStartedByDaemonProcess: () => false,
+            getMetadataStartedBy: () => null,
+            getMetadataStartedFromDaemon: () => false,
+            getStartupMessageCatchUpRetryIndex: () => 0,
+            setStartupMessageCatchUpRetryIndex: () => {},
+            getStartupMessageCatchUpInitialAfterSeq: () => 0,
+            getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => false,
+            getLastObservedMessageSeq: () => 0,
+            handleUpdate: (update) => client.handleUpdate(update),
+            syncSessionSnapshotFromServer: async () => true,
+            applyPendingQueueState: () => {},
+        });
 
         await expect(client.catchUpSessionMessages({
             afterSeq: 10,
-            authorization: 'startup_recovery',
         })).rejects.toMatchObject({
             name: 'HttpStatusError',
             code: 'not_authenticated',
@@ -167,76 +108,4 @@ describe('ApiSessionClient startup transcript catch-up retries', () => {
         }));
     });
 
-    it('does not keep retrying startup transcript catch-up after terminal auth', async () => {
-        const client = Object.create(ApiSessionClient.prototype) as {
-            closed: boolean;
-            currentConnectionState: ReturnType<typeof createOnlineConnectionState>;
-            startupMessageCatchUpInitialAfterSeq: number;
-            startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null;
-            startupMessageCatchUpRetryIndex: number;
-            catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
-            shouldRunStartupTranscriptCatchUp: () => boolean;
-            scheduleNextStartupMessageCatchUpRetry: () => void;
-        };
-
-        client.closed = false;
-        client.currentConnectionState = createOnlineConnectionState();
-        client.startupMessageCatchUpInitialAfterSeq = 0;
-        client.startupMessageCatchUpRetryTimer = null;
-        client.startupMessageCatchUpRetryIndex = 0;
-        client.catchUpSessionMessages = vi.fn(async () => {
-            throw new HttpStatusError(401, 'expired token');
-        });
-        client.shouldRunStartupTranscriptCatchUp = vi.fn(() => true);
-
-        client.scheduleNextStartupMessageCatchUpRetry();
-
-        await vi.advanceTimersByTimeAsync(300);
-        await Promise.resolve();
-        await vi.advanceTimersByTimeAsync(1_200);
-        await Promise.resolve();
-
-        expect(client.catchUpSessionMessages).toHaveBeenCalledTimes(1);
-    });
-
-    it('keeps retrying startup transcript catch-up after non-auth failures', async () => {
-        const client = Object.create(ApiSessionClient.prototype) as {
-            closed: boolean;
-            currentConnectionState: ReturnType<typeof createOnlineConnectionState>;
-            startupMessageCatchUpInitialAfterSeq: number;
-            startupMessageCatchUpRetryTimer: ReturnType<typeof setTimeout> | null;
-            startupMessageCatchUpRetryIndex: number;
-            catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
-            shouldRunStartupTranscriptCatchUp: () => boolean;
-            scheduleNextStartupMessageCatchUpRetry: () => void;
-        };
-
-        client.closed = false;
-        client.currentConnectionState = createOnlineConnectionState();
-        client.startupMessageCatchUpInitialAfterSeq = 0;
-        client.startupMessageCatchUpRetryTimer = null;
-        client.startupMessageCatchUpRetryIndex = 0;
-        client.catchUpSessionMessages = vi
-            .fn()
-            .mockRejectedValueOnce(new Error('temporary server failure'))
-            .mockResolvedValue(undefined);
-        client.shouldRunStartupTranscriptCatchUp = vi.fn(() => true);
-
-        client.scheduleNextStartupMessageCatchUpRetry();
-
-        await vi.advanceTimersByTimeAsync(300);
-        await Promise.resolve();
-        await vi.advanceTimersByTimeAsync(1_200);
-        await Promise.resolve();
-
-        expect(client.catchUpSessionMessages).toHaveBeenCalledTimes(2);
-        expect((client.catchUpSessionMessages as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toEqual({
-            afterSeq: 0,
-            authorization: 'startup_recovery',
-        });
-        expect((client.catchUpSessionMessages as ReturnType<typeof vi.fn>).mock.calls[1]?.[0]).toEqual({
-            afterSeq: 0,
-            authorization: 'startup_recovery',
-        });
-    });
 });

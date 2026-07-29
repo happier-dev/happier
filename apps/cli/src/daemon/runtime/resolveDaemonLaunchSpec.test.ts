@@ -1,4 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { dirname, join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+
+import cliDistBuildManifest from '@happier-dev/cli-common/cliDistBuildManifest';
+import { CLI_RUNTIME_SIDECAR_ENTRIES } from '@happier-dev/cli-common/componentArtifacts/cliRuntimeSidecars';
+import { withTempDir } from '@/testkit/fs/tempDir';
 
 const {
   ensureJavaScriptRuntimeExecutableMock,
@@ -20,10 +26,56 @@ vi.mock('@/packagedRuntime/resolvePackagedRuntimeEntrypoint', () => ({
   resolvePackagedRuntimeEntrypoint: resolvePackagedRuntimeEntrypointMock,
 }));
 
-vi.mock('@/utils/spawnHappyCLI', () => ({
-  resolveTsxImportHookSpecifier: resolveTsxImportHookSpecifierMock,
-  resolveCliTsxTsconfigPath: resolveCliTsxTsconfigPathMock,
-}));
+vi.mock('@/utils/spawnHappyCLI', async () => {
+  const actual = await vi.importActual<typeof import('@/utils/spawnHappyCLI')>('@/utils/spawnHappyCLI');
+  return {
+    ...actual,
+    resolveTsxImportHookSpecifier: resolveTsxImportHookSpecifierMock,
+    resolveCliTsxTsconfigPath: resolveCliTsxTsconfigPathMock,
+  };
+});
+
+function writeAdmittedDaemonStartupClosure(root: string, marker = 'admitted'): Readonly<{
+  entrypoint: string;
+  fingerprint: string;
+  runtimeStatePath: string;
+}> {
+  const distDir = join(root, 'dist');
+  mkdirSync(distDir, { recursive: true });
+  writeFileSync(join(distDir, 'chunk.mjs'), `export const marker = ${JSON.stringify(marker)};\n`, 'utf8');
+  const entrypoint = join(distDir, 'index.mjs');
+  writeFileSync(entrypoint, 'import "./chunk.mjs";\nexport {};\n', 'utf8');
+
+  const scriptsDir = join(root, 'scripts');
+  mkdirSync(scriptsDir, { recursive: true });
+  for (const relativePath of CLI_RUNTIME_SIDECAR_ENTRIES) {
+    const targetPath = join(scriptsDir, ...relativePath);
+    if (relativePath[0] === 'runtime' || relativePath[0] === 'shims') {
+      mkdirSync(targetPath, { recursive: true });
+      continue;
+    }
+    writeFileSync(
+      targetPath,
+      `module.exports = ${JSON.stringify(relativePath.at(-1))};\n`,
+      'utf8',
+    );
+  }
+  const toolsDir = join(root, 'tools', 'unpacked');
+  mkdirSync(toolsDir, { recursive: true });
+  writeFileSync(join(toolsDir, 'rg'), '#!/bin/sh\nexit 0\n', 'utf8');
+
+  const fingerprint = cliDistBuildManifest.writeCliDistBuildManifest(entrypoint, {
+    outputDir: dirname(entrypoint),
+    builtAt: '2026-07-26T00:00:00.000Z',
+  }).manifest.fingerprint;
+  const runtimeStatePath = join(root, 'stack.runtime.json');
+  writeFileSync(runtimeStatePath, JSON.stringify({
+    version: 1,
+    stackName: 'qa-agent-1',
+    daemon: {},
+  }) + '\n', 'utf8');
+  return { entrypoint, fingerprint, runtimeStatePath };
+}
 
 describe('resolveDaemonLaunchSpec', () => {
   afterEach(() => {
@@ -32,6 +84,10 @@ describe('resolveDaemonLaunchSpec', () => {
     delete process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK;
     delete process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT;
     delete process.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX;
+    delete process.env.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT;
+    delete process.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT;
+    delete process.env.HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH;
+    delete process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME;
     delete process.env.HAPPIER_STACK_REPO_DIR;
     delete process.env.HAPPIER_STACK_CLI_ROOT_DIR;
     delete process.env.HAPPIER_STACK_STACK;
@@ -302,6 +358,69 @@ describe('resolveDaemonLaunchSpec', () => {
       env: {
         TSX_TSCONFIG_PATH: '/opt/happier/apps/cli/tsconfig.json',
       },
+    });
+  });
+
+  it('starts the initial stack daemon from its admitted pinned dist closure', async () => {
+    await withTempDir('happier-daemon-launch-admitted-', async (root) => {
+      const closure = writeAdmittedDaemonStartupClosure(root);
+      process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME = 'node';
+      process.env.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT = closure.entrypoint;
+      process.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT = closure.fingerprint;
+      process.env.HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH = closure.runtimeStatePath;
+      process.env.HAPPIER_STACK_REPO_DIR = '/repo';
+      process.env.HAPPIER_STACK_STACK = 'qa-agent-1';
+      process.env.HAPPIER_VARIANT = 'dev';
+
+      const mod = await import('./resolveDaemonLaunchSpec');
+      const result = await mod.resolveDaemonLaunchSpec(['daemon', 'start-sync']);
+
+      expect(result.filePath).toMatch(/[\\/]node(?:\.exe)?$/i);
+      expect(result.args).toEqual(expect.arrayContaining([
+        expect.stringMatching(
+          /[\\/]\.runner-snapshots[\\/][a-f0-9]{16}-package-dist-v1[\\/]package-dist[\\/]index\.mjs$/,
+        ),
+        'daemon',
+        'start-sync',
+      ]));
+      expect(result.args).not.toContain('--import');
+    });
+  });
+
+  it('resolves a self-restart from the successor environment instead of the incumbent process environment', async () => {
+    await withTempDir('happier-daemon-launch-successor-', async (root) => {
+      const incumbent = writeAdmittedDaemonStartupClosure(join(root, 'incumbent'), 'incumbent');
+      const successor = writeAdmittedDaemonStartupClosure(join(root, 'successor'), 'successor');
+      process.env.HAPPIER_CLI_SUBPROCESS_RUNTIME = 'node';
+      process.env.HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT = incumbent.entrypoint;
+      process.env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT = incumbent.fingerprint;
+      process.env.HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH = incumbent.runtimeStatePath;
+      process.env.HAPPIER_STACK_REPO_DIR = '/repo/incumbent';
+      process.env.HAPPIER_STACK_STACK = 'qa-agent-incumbent';
+      process.env.HAPPIER_VARIANT = 'dev';
+
+      const successorEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        HAPPIER_CLI_SUBPROCESS_DIST_ENTRYPOINT: successor.entrypoint,
+        HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT: successor.fingerprint,
+        HAPPIER_CLI_SUBPROCESS_STACK_RUNTIME_STATE_PATH: successor.runtimeStatePath,
+        HAPPIER_STACK_REPO_DIR: '/repo/successor',
+        HAPPIER_STACK_STACK: 'qa-agent-successor',
+      };
+
+      const mod = await import('./resolveDaemonLaunchSpec');
+      const result = await Reflect.apply(
+        mod.resolveDaemonLaunchSpec,
+        undefined,
+        [['daemon', 'start-sync'], successorEnv],
+      );
+
+      expect(result.args).toEqual(expect.arrayContaining([
+        expect.stringContaining(
+          `.runner-snapshots${process.platform === 'win32' ? '\\' : '/'}${successor.fingerprint}-package-dist-v1`,
+        ),
+      ]));
+      expect(result.args.join(' ')).not.toContain(incumbent.fingerprint);
     });
   });
 

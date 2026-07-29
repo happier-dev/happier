@@ -7,17 +7,17 @@ import {
   buildBackendTargetKeyV2,
   getActionSpec,
   RuntimeDescriptorV1Schema,
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionAgentSpawnPolicyV1Schema,
   SessionMcpSelectionV1Schema,
   SessionModelSelectionV1Schema,
   SessionModelSelectionResolutionError,
   ProviderConnectionIdSchema,
+  resolveExplicitSessionSpawnMachineTarget,
   resolveSessionModelSelectionInputRefV1,
-  SessionUsageLimitRecoveryV1Schema,
   mergeSpawnConfigOptionAliases,
   readBackendTargetRefV2,
   readRuntimeDescriptorV1FromMetadata,
+  resolveActionBackendTargetSelection,
   type ConnectedServiceBindingsV1,
   type SessionAgentSpawnPolicyV1,
   type SpawnConfigOptionValue,
@@ -44,6 +44,7 @@ import {
   type AgentId,
   type PermissionIntent,
 } from '@happier-dev/agents';
+import { configuration } from '@/configuration';
 import { getPreferredHostName } from '@/daemon/machine/metadata';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { readSettings, type Credentials } from '@/persistence';
@@ -89,24 +90,18 @@ import {
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { fetchSessionById, fetchSessionByIdCompat, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { routeSessionCatalogControl } from '@/session/catalogControls/sessionCatalogControlRouter';
 import { routeSessionGoalControl } from '@/session/goalControls/sessionGoalControlRouter';
 import {
-  routeSessionUsageLimitRecoveryCheckNow,
-  routeSessionUsageLimitRecoveryWaitResumeCancel,
-  routeSessionUsageLimitRecoveryWaitResumeEnable,
-} from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter';
-import {
   normalizeUsageLimitRecoveryOperationResult,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
-import { routeSessionUsageLimitRecoverySwitchAccountNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow';
 import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import {
   isConcreteBackendTargetCompatId,
-  isLegacyCustomAcpSessionAgentId,
 } from '@/session/backendTargets/compat/customAcp';
 import {
   resolveBackendTargetFromSessionMetadata,
@@ -160,10 +155,14 @@ export type ScheduleInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
 
 export type CancelInactiveSessionUsageLimitRecoveryCheck = (input: Readonly<{
   sessionId: string;
-}>) => void;
+  issueFingerprint: string;
+  armedAtMs: number;
+  runtimeAuthRecoveryAttemptId?: string;
+}>) => Promise<void> | void;
 
 export type CancelConnectedServiceRuntimeAuthRecovery = (input: Readonly<{
   sessionId: string;
+  attemptId: string;
 }>) => Promise<unknown> | unknown;
 
 export type RetryTemporaryThrottleNow = (input: Readonly<{
@@ -339,16 +338,6 @@ async function resolveSpawnConnectedServicesDefaultPayload(params: Readonly<{
   });
 }
 
-function readUsageLimitRecoveryFromControlResult(result: unknown): SessionUsageLimitRecoveryV1 | null {
-  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
-  const metadata = (result as Record<string, unknown>).metadata;
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
-  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(
-    (metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY],
-  );
-  return parsed.success ? parsed.data : null;
-}
-
 type PendingAgentRequestKind = 'permission' | 'user_action';
 
 function permissionRequestNotFoundResult(sessionId: string) {
@@ -399,11 +388,6 @@ export function createCliActionDeps(params: Readonly<{
   getCurrentSessionBackendTarget?: (() => BackendTargetRefV2 | null | undefined) | null;
   happyHomeDir?: string;
   isUsageLimitRecoveryEnabled?: (() => Promise<boolean> | boolean) | null;
-  resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
-  scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
-  cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
-  cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
-  retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
 }>): ActionExecutorDeps {
   const inventoryDeps = createCliActionInventoryDeps(params);
   const approvalsStore = params.credentials ? createCliApprovalsArtifactStore({ credentials: params.credentials }) : null;
@@ -418,8 +402,14 @@ export function createCliActionDeps(params: Readonly<{
     ctx: SessionEncryptionContext;
     mode: SessionStoredContentEncryptionMode;
   }>;
+  type LifecycleHookSessionContext = Readonly<{
+    machineId?: string;
+    cwd?: string;
+    workspaceId?: string;
+  }>;
 
   const sessionTransportCache = new Map<string, ResolvedSessionTransport>();
+  const ambiguousSpawnActionRequestIds = new Set<string>();
 
   const readCurrentSessionMetadata = async (): Promise<Record<string, unknown> | null> => {
     if (currentSessionMetadata) return currentSessionMetadata;
@@ -565,10 +555,61 @@ export function createCliActionDeps(params: Readonly<{
     }
   };
 
+  const normalizeLifecycleHookSessionContext = (context: Readonly<{
+    machineId?: unknown;
+    cwd?: unknown;
+    workspaceId?: unknown;
+  }>): LifecycleHookSessionContext => {
+    const machineId = normalizeStringValue(context.machineId);
+    const cwd = normalizeStringValue(context.cwd);
+    const workspaceId = normalizeStringValue(context.workspaceId);
+    return {
+      ...(machineId ? { machineId } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(workspaceId ? { workspaceId } : {}),
+    };
+  };
+
+  const resolveLifecycleHookSessionContext = async (event: Readonly<{
+    happySessionId: string;
+    exactSessionContext?: LifecycleHookSessionContext;
+  }>): Promise<LifecycleHookSessionContext> => {
+    if (event.exactSessionContext !== undefined) {
+      return normalizeLifecycleHookSessionContext(event.exactSessionContext);
+    }
+
+    if (event.happySessionId === params.sessionId) {
+      const metadata = await readCurrentSessionMetadata();
+      return normalizeLifecycleHookSessionContext({
+        machineId: await resolveCurrentSessionValue('machineId'),
+        cwd: await resolveCurrentSessionValue('path'),
+        workspaceId: metadata?.workspaceId,
+      });
+    }
+
+    try {
+      const transport = await resolveTransportForSession(event.happySessionId);
+      if (!transport.ok) return {};
+      const metadata = readSessionMetadata({
+        rawSession: transport.rawSession,
+        mode: transport.mode,
+        ctx: transport.ctx,
+      });
+      return normalizeLifecycleHookSessionContext({
+        machineId: normalizeStringValue(transport.rawSession.machineId) ?? metadata?.machineId,
+        cwd: normalizeStringValue(transport.rawSession.path) ?? metadata?.path,
+        workspaceId: metadata?.workspaceId,
+      });
+    } catch {
+      return {};
+    }
+  };
+
   const dispatchSessionLifecycleHookEvent = async (event: Readonly<{
     eventId: SessionBridgeLifecycleHookEventIdV1;
     happySessionId: string;
     backendTarget?: string;
+    exactSessionContext?: LifecycleHookSessionContext;
     payload: Record<string, unknown>;
   }>): Promise<void> => {
     const happyHomeDir = typeof params.happyHomeDir === 'string' && params.happyHomeDir.trim().length > 0
@@ -577,20 +618,13 @@ export function createCliActionDeps(params: Readonly<{
     if (!happyHomeDir) {
       return;
     }
-    const machineId = await resolveCurrentSessionValue('machineId');
-    const cwd = await resolveCurrentSessionValue('path');
-    const metadata = await readCurrentSessionMetadata();
-    const workspaceId = typeof metadata?.workspaceId === 'string' && metadata.workspaceId.trim().length > 0
-      ? metadata.workspaceId.trim()
-      : undefined;
+    const sessionContext = await resolveLifecycleHookSessionContext(event);
 
     await getSessionHostBridge().emitLifecycleHookEvent({
       happyHomeDir,
       eventId: event.eventId,
       happySessionId: event.happySessionId,
-      ...(machineId ? { machineId } : {}),
-      ...(cwd ? { cwd } : {}),
-      ...(workspaceId ? { workspaceId } : {}),
+      ...sessionContext,
       ...(event.backendTarget ? { backendTarget: event.backendTarget } : {}),
       payload: event.payload,
     });
@@ -724,28 +758,6 @@ export function createCliActionDeps(params: Readonly<{
     });
   };
 
-  const scheduleUsageLimitRecoveryCheckFromResult = async (
-    sessionId: string,
-    result: unknown,
-  ): Promise<void> => {
-    const recovery = readUsageLimitRecoveryFromControlResult(result);
-    if (!recovery || recovery.status !== 'waiting') return;
-    await params.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
-      sessionId,
-      recovery,
-      runCheckNow: async () => await callRoutedUsageLimitRecoveryControl(
-        sessionId,
-        'checkNow',
-        {
-          sessionId,
-          ...(readResumePromptMode(recovery.resumePromptMode)
-            ? { resumePromptMode: recovery.resumePromptMode }
-            : {}),
-        },
-      ),
-    });
-  };
-
   const callRoutedUsageLimitRecoveryControl = async (
     sessionId: string,
     operation: 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow' | 'consumeResetCredit',
@@ -775,22 +787,8 @@ export function createCliActionDeps(params: Readonly<{
       mode: transport.mode,
       ctx: transport.ctx,
     });
-    const currentMachineIdentity = await readCurrentMachineControlIdentity();
-    const routeParams = {
-      token: params.credentials.token,
-      credentials: params.credentials,
-      sessionId: transport.sessionId,
-      rawSession: transport.rawSession,
-      metadata,
-      currentMachineId: currentMachineIdentity.machineId,
-      currentMachineHost: currentMachineIdentity.host,
-      currentMachineHomeDir: currentMachineIdentity.homeDir,
-      ctx: transport.ctx,
-      mode: transport.mode,
-      ...(params.retryTemporaryThrottleNow
-        ? { retryTemporaryThrottleNow: params.retryTemporaryThrottleNow }
-        : {}),
-      callLiveSessionRpc: async () => await callSessionRpcForTransport(
+    if (transport.rawSession.active === true) {
+      return normalizeUsageLimitRecoveryOperationResult(await callSessionRpcForTransport(
         transport,
         operation === 'enable'
           ? SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE
@@ -800,64 +798,48 @@ export function createCliActionDeps(params: Readonly<{
               ? SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT
               : SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW,
         request,
-      ),
-    } as const;
+      ), { sessionId: transport.sessionId });
+    }
 
-    if (operation === 'enable') {
-      const result = await routeSessionUsageLimitRecoveryWaitResumeEnable({
-        ...routeParams,
-        request: request as {
-          sessionId: string;
-          issueFingerprint?: string;
-          remember?: boolean;
-          rememberPreference?: boolean;
-          resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
-        },
-      });
-      await scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
-      return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
+    const rawMachineId = normalizeStringValue(transport.rawSession.machineId);
+    const metadataMachineId = normalizeStringValue(metadata?.machineId);
+    if (rawMachineId && metadataMachineId && rawMachineId !== metadataMachineId) {
+      return normalizeUsageLimitRecoveryOperationResult({
+        ok: false,
+        errorCode: 'session_usage_limit_recovery_control_target_machine_mismatch',
+        error: 'session_usage_limit_recovery_control_target_machine_mismatch',
+      }, { sessionId: transport.sessionId });
     }
-    if (operation === 'cancel') {
-      const result = await routeSessionUsageLimitRecoveryWaitResumeCancel({
-        ...routeParams,
-        request: request as { sessionId: string; issueFingerprint?: string | null },
-      });
-      const normalized = normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
-      if (normalized.ok === true) {
-        params.cancelInactiveSessionUsageLimitRecoveryCheck?.({ sessionId: transport.sessionId });
-        try {
-          await params.cancelConnectedServiceRuntimeAuthRecovery?.({ sessionId: transport.sessionId });
-        } catch {
-          // The routed cancel already cleared user-visible wait metadata; scheduler cleanup is best-effort.
-        }
-      }
-      return normalized;
+    const machineId = rawMachineId ?? metadataMachineId;
+    if (!machineId) {
+      return normalizeUsageLimitRecoveryOperationResult({
+        ok: false,
+        errorCode: 'session_usage_limit_recovery_control_target_machine_unavailable',
+        error: 'session_usage_limit_recovery_control_target_machine_unavailable',
+      }, { sessionId: transport.sessionId });
     }
-    if (operation === 'switchAccountNow') {
-      return normalizeUsageLimitRecoveryOperationResult(await routeSessionUsageLimitRecoverySwitchAccountNow({
-        ...routeParams,
-        request: request as {
-          sessionId: string;
-          provider?: string;
-          resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
-        },
+
+    const method = operation === 'enable'
+      ? RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE
+      : operation === 'cancel'
+        ? RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL
+        : operation === 'consumeResetCredit'
+          ? RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT
+          : RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW;
+    try {
+      return normalizeUsageLimitRecoveryOperationResult(await callMachineRpc({
+        credentials: params.credentials,
+        machineId,
+        method,
+        request,
       }), { sessionId: transport.sessionId });
+    } catch {
+      return normalizeUsageLimitRecoveryOperationResult({
+        ok: false,
+        errorCode: 'session_usage_limit_recovery_control_target_machine_unavailable',
+        error: 'session_usage_limit_recovery_control_target_machine_unavailable',
+      }, { sessionId: transport.sessionId });
     }
-    const result = await routeSessionUsageLimitRecoveryCheckNow({
-      ...routeParams,
-      request: request as {
-        sessionId: string;
-        provider?: string;
-        issueFingerprint?: string;
-        operation?: 'check_now' | 'switch_account_now' | 'consume_reset_credit';
-        resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
-      },
-      ...(params.resumeInactiveSessionWhenUsageLimitReady
-        ? { resumeInactiveSessionWhenReady: params.resumeInactiveSessionWhenUsageLimitReady }
-        : {}),
-    });
-    await scheduleUsageLimitRecoveryCheckFromResult(transport.sessionId, result);
-    return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: transport.sessionId });
   };
 
   return {
@@ -1008,6 +990,8 @@ export function createCliActionDeps(params: Readonly<{
       callerSurface,
       callerPermissionMode,
       sessionAgentSpawnPolicyV1,
+      actionRequestId,
+      resumeActionRequest,
     }) => {
       if (!params.credentials) {
         notSupported();
@@ -1055,10 +1039,31 @@ export function createCliActionDeps(params: Readonly<{
       }
 
       const requestedHost = typeof host === 'string' ? host.trim() : '';
-      const currentHost = await resolveCurrentSessionValue('host');
+      const explicitMachineId = typeof machineId === 'string' ? machineId.trim() : '';
       const currentMachineId = await resolveCurrentSessionValue('machineId');
+      let resolvedMachineId = currentMachineId;
 
-      if (requestedHost) {
+      if (explicitMachineId) {
+        const requestedServerId = typeof serverId === 'string' ? serverId.trim() : '';
+        const activeServerId = String(configuration.activeServerId ?? '').trim();
+        if (requestedServerId && requestedServerId !== activeServerId) {
+          return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+        }
+
+        const currentMachineIdentity = await readCurrentMachineControlIdentity();
+        const explicitTarget = resolveExplicitSessionSpawnMachineTarget({
+          machineId: explicitMachineId,
+          host: requestedHost,
+          machines: currentMachineIdentity.machineId
+            ? [{ machineId: currentMachineIdentity.machineId, host: currentMachineIdentity.host }]
+            : [],
+        });
+        if (explicitTarget.kind !== 'resolved') {
+          return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+        }
+        resolvedMachineId = explicitTarget.machineId;
+      } else if (requestedHost) {
+        const currentHost = await resolveCurrentSessionValue('host');
         if (!currentHost || requestedHost !== currentHost || !currentMachineId) {
           return { type: 'error', errorCode: 'host_not_found', errorMessage: 'host_not_found', host: requestedHost };
         }
@@ -1071,7 +1076,9 @@ export function createCliActionDeps(params: Readonly<{
           : '';
       const directory = explicitDirectory
         ? explicitDirectory
-        : await resolveCurrentSessionValue('path');
+        : explicitMachineId && explicitMachineId !== currentMachineId
+          ? null
+          : await resolveCurrentSessionValue('path');
       if (!directory) {
         return { type: 'error', errorCode: 'spawn_target_missing', errorMessage: 'spawn_target_missing' };
       }
@@ -1092,11 +1099,21 @@ export function createCliActionDeps(params: Readonly<{
         const parsed = RuntimeDescriptorV1Schema.safeParse(runtimeDescriptorV1);
         return parsed.success ? parsed.data : undefined;
       })();
-      const inheritedRuntimeDescriptorV1 = runtimeDescriptorV1 === undefined
-        ? readRuntimeDescriptorV1FromMetadata(currentMetadata) ?? undefined
-        : undefined;
+      if (runtimeDescriptorV1 !== undefined && explicitRuntimeDescriptorV1 === undefined) {
+        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      }
+      const hasExplicitBackendTargetInput = requestedBackendTarget != null
+        || rawBackendTargetKey.length > 0
+        || normalizedAgentId.length > 0;
+      const inheritedRuntimeDescriptorV1 = (() => {
+        if (runtimeDescriptorV1 !== undefined || hasExplicitBackendTargetInput) return undefined;
+        const inherited = readRuntimeDescriptorV1FromMetadata(currentMetadata) ?? undefined;
+        if (!inherited) return undefined;
+        return resolveActionBackendTargetSelection({ runtimeDescriptorV1: inherited }).ok
+          ? inherited
+          : undefined;
+      })();
       const normalizedRuntimeDescriptorV1 = explicitRuntimeDescriptorV1 ?? inheritedRuntimeDescriptorV1;
-      const requestedHookBackendTarget = rawBackendTargetKey || (normalizedAgentId ? `agent:${normalizedAgentId}` : '');
       const explicitBackendTarget = (() => {
         if (requestedBackendTarget == null) return { ok: true as const, value: null };
         const parsed = BackendTargetRefV2Schema.safeParse(requestedBackendTarget);
@@ -1106,31 +1123,21 @@ export function createCliActionDeps(params: Readonly<{
         return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
       }
 
-      const backendTarget = (() => {
-        if (explicitBackendTarget.value) return explicitBackendTarget.value;
-        if (rawBackendTargetKey) {
-          try {
-            const parsed = readBackendTargetRefV2(rawBackendTargetKey);
-            const isConfiguredTarget = parsed.sourceKind === 'configured' || Boolean(parsed.configuredBackendId);
-            const isCanonicalBackendKey = rawBackendTargetKey.startsWith('backend:');
-            const requiresExplicitRuntimeCarrier =
-              isCanonicalBackendKey
-              && !isConfiguredTarget
-              && !AGENT_IDS.includes(parsed.backendId as AgentId);
+      const resolvedExplicitTargetSelection = resolveActionBackendTargetSelection({
+        ...(canonicalAgentId || normalizedAgentId
+          ? { agentId: canonicalAgentId ?? normalizedAgentId }
+          : {}),
+        ...(rawBackendTargetKey ? { backendTargetKey: rawBackendTargetKey } : {}),
+        ...(explicitBackendTarget.value ? { backendTarget: explicitBackendTarget.value } : {}),
+        ...(explicitRuntimeDescriptorV1 ? { runtimeDescriptorV1: explicitRuntimeDescriptorV1 } : {}),
+      });
+      if (!resolvedExplicitTargetSelection.ok) {
+        return { type: 'error', errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters' };
+      }
 
-            if (isConfiguredTarget) {
-              return !normalizedAgentId || isLegacyCustomAcpSessionAgentId(normalizedAgentId) ? parsed : null;
-            }
-            if (requiresExplicitRuntimeCarrier) {
-              return canonicalAgentId ? parsed : null;
-            }
-            if (!isConcreteBackendTargetCompatId(parsed.backendId)) {
-              return null;
-            }
-            return !normalizedAgentId || canonicalAgentId === parsed.backendId ? parsed : null;
-          } catch {
-            return null;
-          }
+      const backendTarget = (() => {
+        if (resolvedExplicitTargetSelection.selection.canonicalBackendTarget) {
+          return resolvedExplicitTargetSelection.selection.canonicalBackendTarget;
         }
         if (normalizedAgentId) {
           if (!canonicalAgentId) return null;
@@ -1172,7 +1179,7 @@ export function createCliActionDeps(params: Readonly<{
       if (backendTarget.sourceKind === 'built_in' && normalizedAgentId && !AGENT_IDS.includes(normalizedAgentId as AgentId)) {
         return { type: 'error', errorCode: 'agent_not_found', errorMessage: 'agent_not_found' };
       }
-      const hookBackendTarget = requestedHookBackendTarget || buildBackendTargetKeyV2(backendTarget);
+      const hookBackendTarget = buildBackendTargetKeyV2(backendTarget);
       const inheritedMetadataBackendTarget = params.getCurrentSessionBackendTarget?.()
         ?? resolveExplicitBackendTargetFromSessionMetadata(currentMetadata);
       let inheritedSpawn: ReturnType<typeof resolveSessionAgentSpawnInheritedOverridesFromMetadata>['spawn'];
@@ -1197,9 +1204,6 @@ export function createCliActionDeps(params: Readonly<{
             backendTarget,
           })
         : null;
-      const resolvedMachineId = typeof machineId === 'string' && machineId.trim().length > 0
-        ? machineId.trim()
-        : currentMachineId;
       const resolvedCallerPermissionMode = sessionAgentCaller
         ? applyPermissionCeiling({
             callerMode: await resolveCallerPermissionMode(callerPermissionMode),
@@ -1311,57 +1315,99 @@ export function createCliActionDeps(params: Readonly<{
         return parsed.success ? parsed.data : undefined;
       })();
 
-      const created = await createSpawnedSession({
-        credentials: params.credentials,
-        directory,
-        ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
-        backendTarget,
-        ...(connectedServicesDefaults ?? {}),
-        ...(resolvedConnectedServices !== undefined ? { connectedServices: resolvedConnectedServices } : {}),
-        ...(typeof connectedServicesUpdatedAt === 'number'
-          ? { connectedServicesUpdatedAt }
-          : connectedServices === undefined && typeof inheritedSpawn.connectedServicesUpdatedAt === 'number'
-            ? { connectedServicesUpdatedAt: inheritedSpawn.connectedServicesUpdatedAt }
-            : {}),
-        ...(normalizedTag ? { tag: normalizedTag } : {}),
-        ...(normalizedTitle ? { title: normalizedTitle } : {}),
-        ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
-        ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
-        ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
-        ...(typeof normalizedPermissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt } : {}),
-        ...(typeof resolvedAgentModeId === 'string' ? { agentModeId: resolvedAgentModeId } : {}),
-        ...(typeof resolvedAgentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: resolvedAgentModeUpdatedAt } : {}),
-        ...(normalizedSessionConfigOptionOverrides ? { sessionConfigOptionOverrides: normalizedSessionConfigOptionOverrides } : {}),
-        ...(typeof resolvedProfileId === 'string' ? { profileId: resolvedProfileId } : {}),
-        ...(normalizedEnvironmentVariables ? { environmentVariables: normalizedEnvironmentVariables } : {}),
-        ...(normalizedMcpSelection ? { mcpSelection: normalizedMcpSelection } : {}),
-        ...(transcriptStorage === 'persisted' || transcriptStorage === 'direct' ? { transcriptStorage } : {}),
-        ...(normalizedTerminal ? { terminal: normalizedTerminal } : {}),
-        ...(windowsRemoteSessionLaunchMode !== undefined ? { windowsRemoteSessionLaunchMode } : {}),
-        ...(windowsRemoteSessionConsole !== undefined ? { windowsRemoteSessionConsole } : {}),
-        ...(typeof windowsTerminalWindowName === 'string' ? { windowsTerminalWindowName } : {}),
-        ...(normalizedRuntimeDescriptorV1 ? { runtimeDescriptorV1: normalizedRuntimeDescriptorV1 } : {}),
-      });
+      const normalizedActionRequestId = typeof actionRequestId === 'string' && actionRequestId.trim().length > 0
+        ? actionRequestId.trim()
+        : null;
+      const spawnNonce = normalizedActionRequestId
+        ? `session.spawn_new:${params.sessionId}:${normalizedActionRequestId}`
+        : null;
+      const resumeOnly = Boolean(
+        spawnNonce
+        && (resumeActionRequest === true || ambiguousSpawnActionRequestIds.has(spawnNonce)),
+      );
+      if (spawnNonce && !resumeOnly) ambiguousSpawnActionRequestIds.add(spawnNonce);
 
+      let created: Awaited<ReturnType<typeof createSpawnedSession>>;
       try {
-        await dispatchSessionLifecycleHookEvent({
-          eventId: 'session.spawned',
-          happySessionId: created.sessionId,
-          backendTarget: hookBackendTarget,
-          payload: {
-            sessionId: created.sessionId,
-            path: directory,
-            ...(requestedHost ? { host: requestedHost } : {}),
-            ...(normalizedTag ? { tag: normalizedTag } : {}),
-            ...(normalizedTitle ? { title: normalizedTitle } : {}),
-            ...(normalizedAgentId ? { agentId: normalizedAgentId } : {}),
-            ...(rawBackendTargetKey ? { backendTargetKey: rawBackendTargetKey } : {}),
-            ...(resolvedModelSelection ? { modelId: resolvedModelSelection.ref.modelId } : {}),
-            ...(normalizedInitialMessage ? { initialMessageLength: normalizedInitialMessage.length } : {}),
-          },
+        created = await createSpawnedSession({
+          credentials: params.credentials,
+          directory,
+          ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
+          backendTarget,
+          ...(connectedServicesDefaults ?? {}),
+          ...(resolvedConnectedServices !== undefined ? { connectedServices: resolvedConnectedServices } : {}),
+          ...(typeof connectedServicesUpdatedAt === 'number'
+            ? { connectedServicesUpdatedAt }
+            : connectedServices === undefined && typeof inheritedSpawn.connectedServicesUpdatedAt === 'number'
+              ? { connectedServicesUpdatedAt: inheritedSpawn.connectedServicesUpdatedAt }
+              : {}),
+          ...(normalizedTag ? { tag: normalizedTag } : {}),
+          ...(normalizedTitle ? { title: normalizedTitle } : {}),
+          ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
+          ...(resolvedModelSelection ? { modelSelection: resolvedModelSelection } : {}),
+          ...(normalizedPermissionMode ? { permissionMode: normalizedPermissionMode } : {}),
+          ...(typeof normalizedPermissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt } : {}),
+          ...(typeof resolvedAgentModeId === 'string' ? { agentModeId: resolvedAgentModeId } : {}),
+          ...(typeof resolvedAgentModeUpdatedAt === 'number' ? { agentModeUpdatedAt: resolvedAgentModeUpdatedAt } : {}),
+          ...(normalizedSessionConfigOptionOverrides ? { sessionConfigOptionOverrides: normalizedSessionConfigOptionOverrides } : {}),
+          ...(typeof resolvedProfileId === 'string' ? { profileId: resolvedProfileId } : {}),
+          ...(normalizedEnvironmentVariables ? { environmentVariables: normalizedEnvironmentVariables } : {}),
+          ...(normalizedMcpSelection ? { mcpSelection: normalizedMcpSelection } : {}),
+          ...(transcriptStorage === 'persisted' || transcriptStorage === 'direct' ? { transcriptStorage } : {}),
+          ...(normalizedTerminal ? { terminal: normalizedTerminal } : {}),
+          ...(windowsRemoteSessionLaunchMode !== undefined ? { windowsRemoteSessionLaunchMode } : {}),
+          ...(windowsRemoteSessionConsole !== undefined ? { windowsRemoteSessionConsole } : {}),
+          ...(typeof windowsTerminalWindowName === 'string' ? { windowsTerminalWindowName } : {}),
+          ...(normalizedRuntimeDescriptorV1 ? { runtimeDescriptorV1: normalizedRuntimeDescriptorV1 } : {}),
+          ...(spawnNonce ? { spawnNonce } : {}),
+          ...(resumeOnly ? { resumeOnly: true } : {}),
         });
-      } catch {
-        // Hook dispatch is best-effort so a misbehaving plugin cannot break session creation.
+      } catch (error) {
+        const details = error && typeof error === 'object'
+          ? (error as { details?: unknown }).details
+          : null;
+        const ambiguousNonce = details && typeof details === 'object'
+          && typeof (details as { spawnNonce?: unknown }).spawnNonce === 'string'
+          ? (details as { spawnNonce: string }).spawnNonce
+          : null;
+        if (spawnNonce && ambiguousNonce !== spawnNonce) ambiguousSpawnActionRequestIds.delete(spawnNonce);
+        throw error;
+      }
+      if (spawnNonce) ambiguousSpawnActionRequestIds.delete(spawnNonce);
+
+      const isConfiguredBackendTarget = backendTarget.sourceKind === 'configured'
+        || Boolean(backendTarget.configuredBackendId);
+      const backendTargetAgentId = isConfiguredBackendTarget
+        ? null
+        : resolveCanonicalAgentIdFromFlavor(backendTarget.backendId);
+      const lifecycleAgentId = normalizedRuntimeDescriptorV1?.agentId
+        ?? canonicalAgentId
+        ?? backendTargetAgentId;
+      if (lifecycleAgentId) {
+        try {
+          await dispatchSessionLifecycleHookEvent({
+            eventId: 'session.spawned',
+            happySessionId: created.sessionId,
+            backendTarget: hookBackendTarget,
+            exactSessionContext: {
+              ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
+              cwd: directory,
+            },
+            payload: {
+              sessionId: created.sessionId,
+              agentId: lifecycleAgentId,
+              runtimeTarget: backendTarget,
+              cwd: directory,
+              ...(requestedHost ? { host: requestedHost } : {}),
+              ...(normalizedTag ? { tag: normalizedTag } : {}),
+              ...(resolvedModelSelection ? { modelId: resolvedModelSelection.ref.modelId } : {}),
+              ...(normalizedInitialMessage ? { initialMessage: normalizedInitialMessage } : {}),
+              ...(resolvedMachineId ? { machineId: resolvedMachineId } : {}),
+            },
+          });
+        } catch {
+          // Hook dispatch is best-effort so a misbehaving plugin cannot break session creation.
+        }
       }
 
       return {
@@ -1463,18 +1509,8 @@ export function createCliActionDeps(params: Readonly<{
           happySessionId: canonicalSessionId,
           payload: {
             sessionId: canonicalSessionId,
-            messageLength: String(message ?? '').length,
-            wait: normalizedWait,
-            timeoutSeconds: normalizedTimeoutSeconds,
-            ...(normalizedPermissionModeOverride
-              ? { permissionModeOverride: normalizedPermissionModeOverride }
-              : {}),
-            ...(normalizedProviderConnectionId !== undefined && normalizedModelOverride !== undefined
-              ? {
-                  modelOverride: normalizedModelOverride,
-                  providerConnectionId: normalizedProviderConnectionId,
-                }
-              : {}),
+            text: String(message ?? ''),
+            source: callerSurface === 'agent' ? 'plugin' : 'user',
           },
         });
       } catch {
@@ -1550,24 +1586,45 @@ export function createCliActionDeps(params: Readonly<{
       if (!normalizedModelId) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
-      const updatedAt = Date.now();
       const res = await setSessionModel({
         credentials: params.credentials,
         idOrPrefix: sessionId,
         modelId: normalizedModelId,
         ...(providerConnectionId !== undefined ? { providerConnectionId } : {}),
-        updatedAt,
       });
       if (!res.ok) {
+        const errorCode = 'code' in res ? res.code : res.status;
         return {
           ok: false,
-          errorCode: res.code,
-          error: res.code,
+          errorCode,
+          error: errorCode,
           ...('candidates' in res && res.candidates ? { candidates: res.candidates } : {}),
-          ...('providerError' in res ? { details: res.providerError } : {}),
+          ...('status' in res
+            ? {
+                details: {
+                  status: res.status,
+                  activeSelection: res.activeSelection,
+                  requestedSelection: res.requestedSelection,
+                  ...('reason' in res && res.reason ? { reason: res.reason } : {}),
+                },
+              }
+            : {}),
         };
       }
-      return { ok: true, sessionId: res.sessionId, modelId: normalizedModelId, updatedAt };
+      if (res.status === 'intent_updated') {
+        return {
+          ok: true,
+          status: res.status,
+          sessionId: res.sessionId,
+          modelId: res.selection.modelId,
+          selection: res.selection,
+          updatedAt: res.updatedAt,
+        };
+      }
+      return {
+        ...res,
+        modelId: res.activeSelection.modelId,
+      };
     },
 
     sessionArchiveSet: async ({ sessionId, archived }) => {
@@ -1591,6 +1648,14 @@ export function createCliActionDeps(params: Readonly<{
     sessionTerminalComposerClear: async ({ sessionId, expectedStateAtMs }) => {
       return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR, {
         sessionId,
+        ...(typeof expectedStateAtMs === 'number' ? { expectedStateAtMs } : {}),
+      });
+    },
+
+    sessionPendingInputInterruptAndRun: async ({ sessionId, localId, expectedStateAtMs }) => {
+      return await callResolvedSessionRpc(sessionId, SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN, {
+        sessionId,
+        localId,
         ...(typeof expectedStateAtMs === 'number' ? { expectedStateAtMs } : {}),
       });
     },
@@ -1625,13 +1690,19 @@ export function createCliActionDeps(params: Readonly<{
       return await callRoutedUsageLimitRecoveryControl(sessionId, 'enable', request);
     },
 
-    sessionUsageLimitWaitResumeCancel: async ({ sessionId, issueFingerprint }) => {
+    sessionUsageLimitWaitResumeCancel: async ({ sessionId, issueFingerprint, armedAtMs, runtimeAuthRecoveryAttemptId }) => {
       if (!await isUsageLimitRecoveryEnabled()) {
         return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), { sessionId });
       }
       const request = {
         sessionId,
         ...(issueFingerprint !== undefined ? { issueFingerprint } : {}),
+        ...(typeof armedAtMs === 'number' && Number.isFinite(armedAtMs)
+          ? { armedAtMs: Math.trunc(armedAtMs) }
+          : {}),
+        ...(typeof runtimeAuthRecoveryAttemptId === 'string' && runtimeAuthRecoveryAttemptId.trim().length > 0
+          ? { runtimeAuthRecoveryAttemptId: runtimeAuthRecoveryAttemptId.trim() }
+          : {}),
       };
       return await callRoutedUsageLimitRecoveryControl(sessionId, 'cancel', request);
     },
@@ -1657,6 +1728,7 @@ export function createCliActionDeps(params: Readonly<{
       const normalizedResumePromptMode = readResumePromptMode(resumePromptMode);
       return await callRoutedUsageLimitRecoveryControl(sessionId, 'switchAccountNow', {
         sessionId,
+        operation: 'switch_account_now',
         ...(normalizedAgentId.length > 0 ? { agentId: normalizedAgentId } : {}),
         ...(normalizedResumePromptMode ? { resumePromptMode: normalizedResumePromptMode } : {}),
       });
@@ -1904,15 +1976,13 @@ export function createCliActionDeps(params: Readonly<{
         return permissionRequestNotFoundResult(transport.sessionId);
       }
 
-      const normalizedAnswers = Object.fromEntries(
-        (Array.isArray(answers) ? answers : [])
-          .map((entry: any) => ({
-            question: String(entry?.question ?? '').trim(),
-            answer: String(entry?.answer ?? '').trim(),
-          }))
-          .filter((entry) => entry.question.length > 0 && entry.answer.length > 0)
-          .map((entry) => [entry.question, entry.answer] as const),
-      );
+      const normalizedAnswers = Object.create(null) as Record<string, readonly string[]>;
+      for (const entry of Array.isArray(answers) ? answers : []) {
+        const question = String(entry?.question ?? '');
+        if (question.trim().length > 0 && entry.values.length > 0) {
+          normalizedAnswers[question] = [...entry.values];
+        }
+      }
       if (!decision && Object.keys(normalizedAnswers).length === 0) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId: transport.sessionId };
       }

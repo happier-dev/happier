@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { SessionHandoffWorkspaceTransfer } from '@happier-dev/protocol';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import {
   createWorkspaceReplicationBlobPackBlobRecordHeaderBuffer,
   createWorkspaceReplicationBlobPackEndMarkerBuffer,
@@ -22,6 +23,8 @@ import { buildWorkspaceReplicationBlobPacks } from '@/workspaces/replication/tra
 import type { SessionHandoffWorkspaceReplicationMetadata } from './metadata';
 
 import { prepareSessionHandoffWorkspaceTarget } from './adapter';
+
+const scmRegistry = createScmBackendRegistry([]);
 
 function sha256DigestOfString(value: string): string {
   return `sha256:${createHash('sha256').update(value).digest('hex')}`;
@@ -177,6 +180,7 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         targetPath: targetWorkspaceRoot,
+        scmRegistry,
         workspaceTransfer,
         metadata,
         directPeerManifestEndpointCandidates: [
@@ -314,6 +318,7 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
 	        sourceMachineId: 'machine_source',
 	        targetMachineId: 'machine_target',
 	        targetPath: targetWorkspaceRoot,
+	        scmRegistry,
 	        workspaceTransfer,
 	        metadata,
 	        directPeerManifestEndpointCandidates: [
@@ -451,6 +456,7 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         targetPath: targetWorkspaceRoot,
+        scmRegistry,
         workspaceTransfer,
         metadata,
         directPeerManifestEndpointCandidates: [
@@ -515,6 +521,7 @@ async function writeWorkspaceReplicationBlobPackFile(input: Readonly<{
         sourceMachineId: 'machine_source',
         targetMachineId: 'machine_target',
         targetPath: targetWorkspaceRoot,
+        scmRegistry,
         workspaceTransfer,
         metadata: undefined,
         transfers,

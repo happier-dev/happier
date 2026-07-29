@@ -81,6 +81,32 @@ describe('createConnectedServicesAuthUpdatedRestartHandler', () => {
     }));
   });
 
+  it('uses the shared gated restart path for a surviving reattached runner', async () => {
+    const restartRequestedPids = new Set<number>();
+    const requestRestartSignal = vi.fn(async () => ({ signaled: true }));
+    const tracked = {
+      pid: 41,
+      startedBy: 'daemon' as const,
+      happySessionId: 'reattached-session',
+      reattachedFromDiskMarker: true,
+    } satisfies TrackedSession;
+    const handler = createConnectedServicesAuthUpdatedRestartHandler({
+      restartRequestedPids,
+      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartAgentIds: new Set(['pi']),
+      requestRestartSignal,
+      restartSignalDelayMs: 0,
+    });
+
+    await handler({
+      binding: { serviceId: 'openai-codex', profileId: 'work' },
+      affectedTargets: [{ pid: tracked.pid, agentId: 'pi' }],
+    });
+
+    expect(requestRestartSignal).toHaveBeenCalledOnce();
+    expect(restartRequestedPids).toContain(tracked.pid);
+  });
+
   it('reserves the pid ONLY when the gated restart actually signalled', async () => {
     // A gated restart can resolve successfully WITHOUT signalling (e.g. the deferred restart was
     // superseded by a newer switch — `switch_cancelled`). Reserving the pid unconditionally would
@@ -179,5 +205,50 @@ describe('createConnectedServicesAuthUpdatedRestartHandler', () => {
     }).not.toThrow();
 
     expect(restartRequestedPids.size).toBe(0);
+  });
+
+  it.each([
+    { stopResult: { status: 'stopped' as const }, label: 'stopped' },
+    { stopResult: { status: 'not_found' as const }, label: 'not_found' },
+  ])('acknowledges credential deletion only after a $label target is positively absent', async ({ stopResult }) => {
+    let present = true;
+    const stopSession = vi.fn(async () => {
+      present = false;
+      return stopResult;
+    });
+    const handler = createConnectedServicesAuthUpdatedRestartHandler({
+      restartRequestedPids: new Set(),
+      pidToTrackedSession: new Map(),
+      restartAgentIds: new Set(),
+      stopSession,
+      isCredentialTargetPresent: () => present,
+    });
+
+    await expect(handler({
+      binding: { serviceId: 'openai-codex', profileId: 'deleted' },
+      credentialPresence: { status: 'absent' },
+      affectedTargets: [{ pid: 42, agentId: 'codex', sessionId: 'session-42' }],
+    })).resolves.toBeUndefined();
+    expect(stopSession).toHaveBeenCalledWith('session-42');
+  });
+
+  it.each([
+    { status: 'requested' as const },
+    { status: 'incomplete' as const, reason: 'runner_exit_timeout' as const },
+    { status: 'not_found' as const },
+  ])('rejects credential deletion when lifecycle settlement is $status or the exact target survives', async (stopResult) => {
+    const handler = createConnectedServicesAuthUpdatedRestartHandler({
+      restartRequestedPids: new Set(),
+      pidToTrackedSession: new Map(),
+      restartAgentIds: new Set(),
+      stopSession: vi.fn(async () => stopResult),
+      isCredentialTargetPresent: () => true,
+    });
+
+    await expect(handler({
+      binding: { serviceId: 'openai-codex', profileId: 'deleted' },
+      credentialPresence: { status: 'absent' },
+      affectedTargets: [{ pid: 42, agentId: 'codex', sessionId: 'session-42' }],
+    })).rejects.toThrow(`connected_service_credential_deletion_not_settled:${stopResult.status}`);
   });
 });

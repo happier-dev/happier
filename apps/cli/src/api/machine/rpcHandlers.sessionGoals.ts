@@ -3,17 +3,21 @@ import {
   DaemonSessionGoalGetRequestV1Schema,
   DaemonSessionGoalSetRequestV1Schema,
   SessionUsageLimitCheckNowRequestV1Schema,
+  SessionUsageLimitConsumeResetCreditRequestV1Schema,
   DaemonSessionSkillCatalogListRequestV1Schema,
   SessionUsageLimitWaitResumeCancelRequestV1Schema,
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
   DaemonSessionVendorPluginCatalogListRequestV1Schema,
   type ActionExecutorDeps,
+  SessionUsageLimitRecoveryV1Schema,
+  type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { readCredentials, type Credentials } from '@/persistence';
 import {
   createCliActionDeps,
+  type CancelConnectedServiceRuntimeAuthRecovery,
   type CancelInactiveSessionUsageLimitRecoveryCheck,
   type ResumeInactiveSessionWhenUsageLimitReady,
   type RetryTemporaryThrottleNow,
@@ -31,6 +35,17 @@ import {
   buildUsageLimitRecoveryOperationError,
   normalizeUsageLimitRecoveryOperationResult,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
+import {
+  routeSessionUsageLimitRecoveryCheckNow,
+  routeSessionUsageLimitRecoveryWaitResumeCancel,
+  routeSessionUsageLimitRecoveryWaitResumeEnable,
+} from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter';
+import { routeSessionUsageLimitRecoverySwitchAccountNow } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow';
+import type { DaemonUsageLimitRecoveryFieldMutation } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import { readSessionMetadata } from '@/session/actions/cliActionDeps/sessionStateReaders';
+import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getConnectedServiceAuthGroup } from '@/api/client/connectedServiceAuthGroupApi';
+import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 
 import type { RpcHandlerRegistrar } from '../rpc/types';
 
@@ -48,6 +63,7 @@ type RegisterMachineSessionGoalRpcHandlersDeps = Readonly<{
     | 'sessionUsageLimitWaitResumeCancel'
     | 'sessionUsageLimitCheckNow'
     | 'sessionUsageLimitSwitchAccountNow'
+    | 'sessionUsageLimitConsumeResetCredit'
     | 'sessionVendorPluginCatalogList'
     | 'sessionSkillCatalogList'
   >;
@@ -55,12 +71,18 @@ type RegisterMachineSessionGoalRpcHandlersDeps = Readonly<{
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   scheduleInactiveSessionUsageLimitRecoveryCheck?: ScheduleInactiveSessionUsageLimitRecoveryCheck;
   cancelInactiveSessionUsageLimitRecoveryCheck?: CancelInactiveSessionUsageLimitRecoveryCheck;
+  cancelConnectedServiceRuntimeAuthRecovery?: CancelConnectedServiceRuntimeAuthRecovery;
   retryTemporaryThrottleNow?: RetryTemporaryThrottleNow;
+  currentMachineId?: string;
+  stageUsageLimitRecoveryMutation?: (input: Readonly<{
+    mutation: DaemonUsageLimitRecoveryFieldMutation;
+    rawSession: RawSessionRecord;
+  }>) => Promise<void>;
 }>;
 
 type GoalOperation = 'get' | 'set' | 'clear';
 type CatalogOperation = 'vendorPlugins' | 'skills';
-type UsageLimitOperation = 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow';
+type UsageLimitOperation = 'enable' | 'cancel' | 'checkNow' | 'switchAccountNow' | 'consumeResetCredit';
 
 function invalidParameters(): Readonly<{ ok: false; errorCode: 'invalid_parameters'; error: 'invalid_parameters' }> {
   return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
@@ -109,12 +131,75 @@ async function resolveActionDeps(params: Readonly<{
     rawSession: transport.rawSession,
     ctx: transport.ctx,
     mode: transport.mode,
-    resumeInactiveSessionWhenUsageLimitReady: params.deps?.resumeInactiveSessionWhenUsageLimitReady,
-    scheduleInactiveSessionUsageLimitRecoveryCheck: params.deps?.scheduleInactiveSessionUsageLimitRecoveryCheck,
-    cancelInactiveSessionUsageLimitRecoveryCheck: params.deps?.cancelInactiveSessionUsageLimitRecoveryCheck,
-    retryTemporaryThrottleNow: params.deps?.retryTemporaryThrottleNow,
   });
   return { ok: true, sessionId: transport.sessionId, actionDeps };
+}
+
+async function resolveLocalUsageLimitContext(params: Readonly<{
+  sessionId: string;
+  deps?: RegisterMachineSessionGoalRpcHandlersDeps;
+}>): Promise<
+  | Readonly<{
+      ok: true;
+      credentials: Credentials;
+      sessionId: string;
+      rawSession: RawSessionRecord;
+      metadata: Record<string, unknown> | null;
+      ctx: Extract<ResolveSessionTransportContextResult, { ok: true }>['ctx'];
+      mode: Extract<ResolveSessionTransportContextResult, { ok: true }>['mode'];
+    }>
+  | Readonly<{ ok: false; result: unknown }>
+> {
+  const credentials = await (params.deps?.readCredentials ?? readCredentials)();
+  if (!credentials) return { ok: false, result: notAuthenticated() };
+  const transport = await (params.deps?.resolveSessionTransportContext ?? resolveSessionTransportContext)({
+    credentials,
+    idOrPrefix: params.sessionId,
+  });
+  if (!transport.ok) return { ok: false, result: transportError(transport) };
+  if (transport.rawSession.active === true) {
+    return {
+      ok: false,
+      result: buildUsageLimitRecoveryOperationError({
+        errorCode: 'session_usage_limit_recovery_control_active_runner_owned',
+        status: 'session_unreachable',
+        sessionId: transport.sessionId,
+      }),
+    };
+  }
+  if (!params.deps?.stageUsageLimitRecoveryMutation) {
+    return {
+      ok: false,
+      result: buildUsageLimitRecoveryOperationError({
+        errorCode: 'daemon_usage_limit_recovery_custody_unavailable',
+        status: 'unsupported',
+        sessionId: transport.sessionId,
+      }),
+    };
+  }
+  return {
+    ok: true,
+    credentials,
+    sessionId: transport.sessionId,
+    rawSession: transport.rawSession,
+    metadata: readSessionMetadata({
+      rawSession: transport.rawSession,
+      mode: transport.mode,
+      ctx: transport.ctx,
+    }),
+    ctx: transport.ctx,
+    mode: transport.mode,
+  };
+}
+
+function readRecoveryFromUsageLimitResult(result: unknown): SessionUsageLimitRecoveryV1 | null {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return null;
+  const metadata = (result as Record<string, unknown>).metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const parsed = SessionUsageLimitRecoveryV1Schema.safeParse(
+    (metadata as Record<string, unknown>).sessionUsageLimitRecoveryV1,
+  );
+  return parsed.success ? parsed.data : null;
 }
 
 async function isUsageLimitRecoveryEnabled(
@@ -200,80 +285,13 @@ async function executeUsageLimitControl(params: Readonly<{
   raw: unknown;
   deps?: RegisterMachineSessionGoalRpcHandlersDeps;
 }>): Promise<unknown> {
-  if (params.operation === 'checkNow' || params.operation === 'switchAccountNow') {
-    const parsed = SessionUsageLimitCheckNowRequestV1Schema.safeParse(params.raw);
-    if (!parsed.success) {
-      return buildUsageLimitRecoveryOperationError({
-        errorCode: 'invalid_parameters',
-        status: 'malformed_response',
-      });
-    }
-    if (!await isUsageLimitRecoveryEnabled(params.deps)) {
-      return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), {
-        sessionId: parsed.data.sessionId,
-      });
-    }
-    const resolved = await resolveActionDeps({ sessionId: parsed.data.sessionId, deps: params.deps });
-    if (!resolved.ok) {
-      return normalizeUsageLimitRecoveryOperationResult(resolved.result, {
-        sessionId: parsed.data.sessionId,
-      });
-    }
-    const effectiveOperation = parsed.data.operation === 'switch_account_now'
-      ? 'switchAccountNow'
-      : params.operation;
-    if (effectiveOperation === 'switchAccountNow') {
-      return normalizeUsageLimitRecoveryOperationResult(resolved.actionDeps.sessionUsageLimitSwitchAccountNow
-        ? await resolved.actionDeps.sessionUsageLimitSwitchAccountNow({
-          sessionId: resolved.sessionId,
-          ...(typeof parsed.data.provider === 'string' ? { provider: parsed.data.provider } : {}),
-          ...(parsed.data.resumePromptMode ? { resumePromptMode: parsed.data.resumePromptMode } : {}),
-        })
-        : { ok: false, errorCode: 'action_not_supported', error: 'action_not_supported' }, {
-        sessionId: resolved.sessionId,
-      });
-    }
-    return normalizeUsageLimitRecoveryOperationResult(resolved.actionDeps.sessionUsageLimitCheckNow
-      ? await resolved.actionDeps.sessionUsageLimitCheckNow({
-        sessionId: resolved.sessionId,
-        ...(typeof parsed.data.provider === 'string' ? { provider: parsed.data.provider } : {}),
-        ...(parsed.data.resumePromptMode ? { resumePromptMode: parsed.data.resumePromptMode } : {}),
-      })
-      : { ok: false, errorCode: 'action_not_supported', error: 'action_not_supported' }, {
-      sessionId: resolved.sessionId,
-    });
-  }
-
-  if (params.operation === 'cancel') {
-    const parsed = SessionUsageLimitWaitResumeCancelRequestV1Schema.safeParse(params.raw);
-    if (!parsed.success) {
-      return buildUsageLimitRecoveryOperationError({
-        errorCode: 'invalid_parameters',
-        status: 'malformed_response',
-      });
-    }
-    if (!await isUsageLimitRecoveryEnabled(params.deps)) {
-      return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), {
-        sessionId: parsed.data.sessionId,
-      });
-    }
-    const resolved = await resolveActionDeps({ sessionId: parsed.data.sessionId, deps: params.deps });
-    if (!resolved.ok) {
-      return normalizeUsageLimitRecoveryOperationResult(resolved.result, {
-        sessionId: parsed.data.sessionId,
-      });
-    }
-    return normalizeUsageLimitRecoveryOperationResult(resolved.actionDeps.sessionUsageLimitWaitResumeCancel
-      ? await resolved.actionDeps.sessionUsageLimitWaitResumeCancel({
-        sessionId: resolved.sessionId,
-        ...(parsed.data.issueFingerprint !== undefined ? { issueFingerprint: parsed.data.issueFingerprint } : {}),
-      })
-      : { ok: false, errorCode: 'action_not_supported', error: 'action_not_supported' }, {
-      sessionId: resolved.sessionId,
-    });
-  }
-
-  const parsed = SessionUsageLimitWaitResumeEnableRequestV1Schema.safeParse(params.raw);
+  const parsed = params.operation === 'enable'
+    ? SessionUsageLimitWaitResumeEnableRequestV1Schema.safeParse(params.raw)
+    : params.operation === 'cancel'
+      ? SessionUsageLimitWaitResumeCancelRequestV1Schema.safeParse(params.raw)
+      : params.operation === 'consumeResetCredit'
+        ? SessionUsageLimitConsumeResetCreditRequestV1Schema.safeParse(params.raw)
+        : SessionUsageLimitCheckNowRequestV1Schema.safeParse(params.raw);
   if (!parsed.success) {
     return buildUsageLimitRecoveryOperationError({
       errorCode: 'invalid_parameters',
@@ -285,22 +303,127 @@ async function executeUsageLimitControl(params: Readonly<{
       sessionId: parsed.data.sessionId,
     });
   }
-  const resolved = await resolveActionDeps({ sessionId: parsed.data.sessionId, deps: params.deps });
+  const resolved = await resolveLocalUsageLimitContext({ sessionId: parsed.data.sessionId, deps: params.deps });
   if (!resolved.ok) {
     return normalizeUsageLimitRecoveryOperationResult(resolved.result, {
       sessionId: parsed.data.sessionId,
     });
   }
-  return normalizeUsageLimitRecoveryOperationResult(resolved.actionDeps.sessionUsageLimitWaitResumeEnable
-    ? await resolved.actionDeps.sessionUsageLimitWaitResumeEnable({
+
+  const stageDaemonMutation = params.deps?.stageUsageLimitRecoveryMutation;
+  if (!stageDaemonMutation) {
+    return buildUsageLimitRecoveryOperationError({
+      errorCode: 'daemon_usage_limit_recovery_custody_unavailable',
+      status: 'unsupported',
       sessionId: resolved.sessionId,
-      ...(parsed.data.issueFingerprint !== undefined ? { issueFingerprint: parsed.data.issueFingerprint } : {}),
-      ...((parsed.data.remember === true || parsed.data.rememberPreference === true) ? { remember: true } : {}),
-      ...(parsed.data.resumePromptMode ? { resumePromptMode: parsed.data.resumePromptMode } : {}),
-    })
-    : { ok: false, errorCode: 'action_not_supported', error: 'action_not_supported' }, {
+    });
+  }
+  const stageUsageLimitRecoveryMutation = async (mutation: DaemonUsageLimitRecoveryFieldMutation) => {
+    await stageDaemonMutation({ mutation, rawSession: resolved.rawSession });
+  };
+  const common = {
+    token: resolved.credentials.token,
+    credentials: resolved.credentials,
     sessionId: resolved.sessionId,
-  });
+    rawSession: resolved.rawSession,
+    metadata: resolved.metadata,
+    currentMachineId: params.deps?.currentMachineId ?? null,
+    ctx: resolved.ctx,
+    mode: resolved.mode,
+    callLiveSessionRpc: async () => buildUsageLimitRecoveryOperationError({
+      errorCode: 'session_usage_limit_recovery_control_active_runner_owned',
+      status: 'session_unreachable',
+      sessionId: resolved.sessionId,
+    }),
+    stageUsageLimitRecoveryMutation,
+    resumePromptTierSources: {
+      accountSettings: getActiveAccountSettingsSnapshot()?.settings ?? null,
+      loadGroupPolicy: async (selectedAuth: SessionUsageLimitRecoveryV1['selectedAuth'] | null) => {
+        if (selectedAuth?.kind !== 'group') return null;
+        return (await getConnectedServiceAuthGroup({
+          token: resolved.credentials.token,
+          serviceId: selectedAuth.serviceId,
+          groupId: selectedAuth.groupId,
+        }))?.policy ?? null;
+      },
+    },
+    ...(params.deps?.retryTemporaryThrottleNow
+      ? { retryTemporaryThrottleNow: params.deps.retryTemporaryThrottleNow }
+      : {}),
+  } as const;
+
+  let result: unknown;
+  if (params.operation === 'enable') {
+    const request = SessionUsageLimitWaitResumeEnableRequestV1Schema.parse(params.raw);
+    result = await routeSessionUsageLimitRecoveryWaitResumeEnable({ ...common, request });
+  } else if (params.operation === 'cancel') {
+    const request = SessionUsageLimitWaitResumeCancelRequestV1Schema.parse(params.raw);
+    result = await routeSessionUsageLimitRecoveryWaitResumeCancel({ ...common, request });
+    const normalized = normalizeUsageLimitRecoveryOperationResult(result, { sessionId: resolved.sessionId });
+    if (
+      normalized.ok
+      && request.issueFingerprint
+      && typeof request.armedAtMs === 'number'
+    ) {
+      await params.deps?.cancelInactiveSessionUsageLimitRecoveryCheck?.({
+        sessionId: resolved.sessionId,
+        issueFingerprint: request.issueFingerprint,
+        armedAtMs: request.armedAtMs,
+        ...(request.runtimeAuthRecoveryAttemptId
+          ? { runtimeAuthRecoveryAttemptId: request.runtimeAuthRecoveryAttemptId }
+          : {}),
+      });
+      if (request.runtimeAuthRecoveryAttemptId) {
+        await params.deps?.cancelConnectedServiceRuntimeAuthRecovery?.({
+          sessionId: resolved.sessionId,
+          attemptId: request.runtimeAuthRecoveryAttemptId,
+        });
+      }
+    }
+  } else {
+    const request = params.operation === 'consumeResetCredit'
+      ? SessionUsageLimitConsumeResetCreditRequestV1Schema.parse(params.raw)
+      : SessionUsageLimitCheckNowRequestV1Schema.parse(params.raw);
+    const effectiveSwitch = params.operation === 'switchAccountNow'
+      || ('operation' in request && request.operation === 'switch_account_now');
+    result = effectiveSwitch
+      ? await routeSessionUsageLimitRecoverySwitchAccountNow({
+          sessionId: resolved.sessionId,
+          rawSession: resolved.rawSession,
+          request: {
+            sessionId: resolved.sessionId,
+            ...(request.agentId ? { provider: request.agentId } : {}),
+            ...(request.resumePromptMode ? { resumePromptMode: request.resumePromptMode } : {}),
+          },
+        })
+      : await routeSessionUsageLimitRecoveryCheckNow({
+          ...common,
+          request: {
+            ...request,
+            ...(params.operation === 'consumeResetCredit' ? { operation: 'consume_reset_credit' as const } : {}),
+          },
+          ...(params.deps?.resumeInactiveSessionWhenUsageLimitReady
+            ? { resumeInactiveSessionWhenReady: params.deps.resumeInactiveSessionWhenUsageLimitReady }
+            : {}),
+        });
+  }
+
+  const recovery = readRecoveryFromUsageLimitResult(result);
+  if (recovery?.status === 'waiting') {
+    await params.deps?.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
+      sessionId: resolved.sessionId,
+      recovery,
+      runCheckNow: async () => await executeUsageLimitControl({
+        operation: 'checkNow',
+        raw: {
+          sessionId: resolved.sessionId,
+          ...(recovery.resumePromptMode ? { resumePromptMode: recovery.resumePromptMode } : {}),
+        },
+        deps: params.deps,
+      }),
+    });
+  }
+  return normalizeUsageLimitRecoveryOperationResult(result, { sessionId: resolved.sessionId });
 }
 
 export function registerMachineSessionGoalRpcHandlers(params: Readonly<{
@@ -330,5 +453,8 @@ export function registerMachineSessionGoalRpcHandlers(params: Readonly<{
   ));
   params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW, async (raw: unknown) => (
     await executeUsageLimitControl({ operation: 'checkNow', raw, deps: params.deps })
+  ));
+  params.rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT, async (raw: unknown) => (
+    await executeUsageLimitControl({ operation: 'consumeResetCredit', raw, deps: params.deps })
   ));
 }

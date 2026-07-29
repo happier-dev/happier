@@ -46,6 +46,7 @@ export function createNormalizedRuntimeEventWriter(params: Readonly<{
   identity: NormalizedRuntimeEventPublicationInput;
 }>): RuntimeEventWriterState {
   let lastRuntimeDescriptor: RuntimeDescriptorV1 | null = null;
+  let runtimeDescriptorSource: 'none' | 'fallback' | 'upstream' = 'none';
   let runtimeCapabilitiesPublished = false;
   let runtimeFacetsPublished = false;
 
@@ -55,7 +56,9 @@ export function createNormalizedRuntimeEventWriter(params: Readonly<{
   const publishRuntimeDescriptor = (
     message: RuntimeEventMessage & Readonly<{ name: 'runtime.descriptor' }>,
     descriptor: RuntimeDescriptorV1,
+    source: Exclude<typeof runtimeDescriptorSource, 'none'>,
   ): void => {
+    runtimeDescriptorSource = source;
     if (lastRuntimeDescriptor && isDeepStrictEqual(lastRuntimeDescriptor, descriptor)) return;
     lastRuntimeDescriptor = descriptor;
     params.dispatch({
@@ -68,7 +71,7 @@ export function createNormalizedRuntimeEventWriter(params: Readonly<{
     if (isRuntimeDescriptorEvent(message)) {
       const normalizedDescriptor = readRuntimeDescriptorV1(message.payload);
       if (!normalizedDescriptor) return;
-      publishRuntimeDescriptor(message, normalizedDescriptor);
+      publishRuntimeDescriptor(message, normalizedDescriptor, 'upstream');
       return;
     }
     if (isRuntimeCapabilitiesEvent(message)) {
@@ -92,12 +95,12 @@ export function createNormalizedRuntimeEventWriter(params: Readonly<{
 
   const publishFallbackIdentity = (): void => {
     const identity = readIdentity();
-    if (!lastRuntimeDescriptor && identity.runtimeDescriptor) {
+    if (runtimeDescriptorSource !== 'upstream' && identity.runtimeDescriptor) {
       publishRuntimeDescriptor({
         type: 'event',
         name: 'runtime.descriptor',
         payload: identity.runtimeDescriptor,
-      }, identity.runtimeDescriptor);
+      }, identity.runtimeDescriptor, 'fallback');
     }
     if (!runtimeCapabilitiesPublished && identity.runtimeCapabilities !== null && identity.runtimeCapabilities !== undefined) {
       runtimeCapabilitiesPublished = true;

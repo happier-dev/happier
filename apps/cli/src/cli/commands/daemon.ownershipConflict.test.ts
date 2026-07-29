@@ -45,11 +45,16 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
     const envScope = createEnvKeyScope([
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_SERVER_URL',
+        'HAPPIER_LOCAL_SERVER_URL',
+        'HAPPIER_PUBLIC_SERVER_URL',
+        'HAPPIER_WEBAPP_URL',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
         'HAPPIER_DAEMON_SERVICE_PLATFORM',
         'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_CHANNEL',
+        'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
     ]);
 
     afterEach(() => {
@@ -67,6 +72,10 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_LOCAL_SERVER_URL: undefined,
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
             vi.resetModules();
@@ -157,6 +166,10 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_LOCAL_SERVER_URL: undefined,
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
             vi.resetModules();
@@ -277,11 +290,16 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_LOCAL_SERVER_URL: undefined,
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                 HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
                 HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
-                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             });
             vi.resetModules();
 
@@ -299,8 +317,9 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
                     description: 'Happier Daemon',
                     execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
                     env: {
-                        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
                         HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+                        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+                        HAPPIER_HOME_DIR: homeDir,
                         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                     },
                     wantedBy: 'default.target',
@@ -337,11 +356,16 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_LOCAL_SERVER_URL: undefined,
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                 HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
                 HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
-                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             });
             vi.resetModules();
 
@@ -356,8 +380,9 @@ describe('handleDaemonCliCommand ownership conflicts', () => {
                     description: 'Happier Daemon',
                     execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
                     env: {
-                        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
                         HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+                        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+                        HAPPIER_HOME_DIR: homeDir,
                         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                     },
                     wantedBy: 'default.target',

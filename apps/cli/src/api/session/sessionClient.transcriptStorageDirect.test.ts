@@ -218,7 +218,7 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     );
   });
 
-  it('delivers a server-echoed user message to the agent queue even when the localId was committed locally (prevents deadlocks)', async () => {
+  it('keeps a server-echoed user message observation-only even when the localId was committed locally', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
@@ -266,13 +266,10 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
       },
     });
 
-    expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining({
-      role: 'user',
-      localId: 'local-1',
-    }));
+    expect(onUserMessage).not.toHaveBeenCalled();
   });
 
-  it('does not double-deliver a user message that was already enqueued locally before committing it', async () => {
+  it('does not let direct enqueue or its transcript echo bypass Pending materialization', async () => {
     vi.resetModules();
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
@@ -295,7 +292,7 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
       },
     } as any);
 
-    expect(onUserMessage).toHaveBeenCalledTimes(1);
+    expect(onUserMessage).not.toHaveBeenCalled();
 
     sessionSocketStub.trigger('update', {
       id: 'u2',
@@ -323,7 +320,7 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
       },
     });
 
-    expect(onUserMessage).toHaveBeenCalledTimes(1);
+    expect(onUserMessage).not.toHaveBeenCalled();
   });
 
   it('includes machineId in the session-scoped socket bootstrap when session metadata declares it', async () => {
@@ -399,6 +396,38 @@ describe('ApiSessionClient (HAPPIER_TRANSCRIPT_STORAGE=direct)', () => {
     expect(supervisorOnConnected).not.toBeNull();
     await expect(supervisorOnConnected?.()).resolves.toBeUndefined();
     expect(currentConnectionState.isOffline()).toBe(false);
+  });
+
+  it('durably publishes the fresh idle presence before using volatile idle heartbeats', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({ connected: true });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+
+    vi.stubEnv('HAPPIER_TRANSCRIPT_STORAGE', 'direct');
+
+    const { ApiSessionClient } = await import('./sessionClient');
+
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+    createdClients.push(client);
+
+    client.keepAlive(false, 'remote');
+
+    expect(sessionSocketStub.emit).toHaveBeenCalledWith('session-alive', expect.objectContaining({
+      sid: 's1',
+      thinking: false,
+      mode: 'remote',
+    }));
+    expect(sessionSocketStub.volatile.emit).not.toHaveBeenCalledWith('session-alive', expect.anything());
+
+    sessionSocketStub.emit.mockClear();
+    client.keepAlive(false, 'remote');
+
+    expect(sessionSocketStub.emit).not.toHaveBeenCalledWith('session-alive', expect.anything());
+    expect(sessionSocketStub.volatile.emit).toHaveBeenCalledWith('session-alive', expect.objectContaining({
+      sid: 's1',
+      thinking: false,
+      mode: 'remote',
+    }));
   });
 
   it('replays the latest session presence after the supervised session transport reconnects', async () => {

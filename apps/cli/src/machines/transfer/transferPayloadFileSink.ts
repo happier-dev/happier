@@ -1,6 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, open, rename, rm, type FileHandle } from 'node:fs/promises';
+import { mkdir, open, rm, stat, type FileHandle } from 'node:fs/promises';
 import { dirname } from 'node:path';
+
+import {
+  CrossDeviceMoveSourceCleanupError,
+  moveFileWithCrossDeviceFallback,
+} from '@/utils/fs/moveFileWithCrossDeviceFallback';
+import { writeFileHandleFully } from '@/utils/fs/writeFileHandleFully';
 
 export type TransferPayloadFileResult = Readonly<{
   destinationPath: string;
@@ -37,8 +43,12 @@ export async function createTransferPayloadFileSink(input: Readonly<{
       if (isClosed) {
         throw new Error(`Transfer payload sink already closed for ${input.destinationPath}`);
       }
+      await writeFileHandleFully({
+        fileHandle,
+        buffer: chunk,
+        position: sizeBytes,
+      });
       hash.update(chunk);
-      await fileHandle.write(chunk, 0, chunk.length, sizeBytes);
       sizeBytes += chunk.length;
     },
     async finalize(expectedManifestHash) {
@@ -48,14 +58,28 @@ export async function createTransferPayloadFileSink(input: Readonly<{
         if (manifestHash !== expectedManifestHash) {
           throw new Error(`Transfer payload manifest mismatch for ${input.destinationPath}`);
         }
-        await rename(temporaryPath, input.destinationPath);
+        const destinationStats = await stat(input.destinationPath).catch((error: unknown) => {
+          const code = typeof error === 'object' && error !== null && 'code' in error
+            ? (error as { code?: unknown }).code
+            : null;
+          if (code === 'ENOENT') {
+            return null;
+          }
+          throw error;
+        });
+        if (destinationStats?.isDirectory()) {
+          throw new Error(`Transfer payload destination is a directory: ${input.destinationPath}`);
+        }
+        await moveFileWithCrossDeviceFallback(temporaryPath, input.destinationPath);
         return {
           destinationPath: input.destinationPath,
           manifestHash,
           sizeBytes,
         };
       } catch (error) {
-        await rm(temporaryPath, { force: true }).catch(() => {});
+        if (!(error instanceof CrossDeviceMoveSourceCleanupError)) {
+          await rm(temporaryPath, { force: true }).catch(() => {});
+        }
         throw error;
       }
     },

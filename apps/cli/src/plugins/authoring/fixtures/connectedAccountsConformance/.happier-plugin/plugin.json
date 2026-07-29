@@ -1,0 +1,251 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.connected-accounts-conformance",
+  "version": "1.0.0",
+  "displayName": "Connected Accounts Conformance",
+  "description": "Packed third-party conformance consumer for the public Connected Accounts API.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "fixed",
+        "capability": "connectedAccounts",
+        "reason": "Use the fixed conformance account.",
+        "scope": {
+          "serviceRefs": [
+            "vault"
+          ],
+          "operations": [
+            "select",
+            "use"
+          ],
+          "materializationKinds": [
+            "httpHeaders",
+            "environment",
+            "files"
+          ]
+        }
+      },
+      {
+        "id": "group",
+        "capability": "connectedAccounts",
+        "reason": "Use the conformance account group.",
+        "scope": {
+          "serviceRefs": [
+            "vault"
+          ],
+          "operations": [
+            "select",
+            "use"
+          ],
+          "materializationKinds": [
+            "environment"
+          ]
+        }
+      },
+      {
+        "id": "multi",
+        "capability": "connectedAccounts",
+        "reason": "Choose one service for a multi-service purpose.",
+        "scope": {
+          "serviceRefs": [
+            "vault",
+            "archive"
+          ],
+          "operations": [
+            "select",
+            "use"
+          ]
+        }
+      },
+      {
+        "id": "select-only",
+        "capability": "connectedAccounts",
+        "reason": "Exercise selection-only authorization.",
+        "scope": {
+          "serviceRefs": [
+            "vault"
+          ],
+          "operations": [
+            "select"
+          ]
+        }
+      },
+      {
+        "id": "use-only",
+        "capability": "connectedAccounts",
+        "reason": "Exercise use-only authorization.",
+        "scope": {
+          "serviceRefs": [
+            "vault"
+          ],
+          "operations": [
+            "use"
+          ]
+        }
+      },
+      {
+        "id": "replaceable",
+        "capability": "connectedAccounts",
+        "reason": "Exercise binding replacement.",
+        "scope": {
+          "serviceRefs": [
+            "vault"
+          ],
+          "operations": [
+            "select",
+            "use"
+          ],
+          "materializationKinds": [
+            "environment"
+          ]
+        }
+      },
+      {
+        "id": "revocable",
+        "capability": "connectedAccounts",
+        "reason": "Exercise binding revocation.",
+        "scope": {
+          "serviceRefs": [
+            "vault"
+          ],
+          "operations": [
+            "select",
+            "use"
+          ],
+          "materializationKinds": [
+            "environment"
+          ]
+        }
+      },
+      {
+        "id": "rotating",
+        "capability": "connectedAccounts",
+        "reason": "Exercise materializer replacement.",
+        "scope": {
+          "serviceRefs": [
+            "vault"
+          ],
+          "operations": [
+            "select",
+            "use"
+          ],
+          "materializationKinds": [
+            "environment"
+          ]
+        }
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "connectedAccountDescriptors": [
+      {
+        "id": "vault",
+        "title": "Acme Vault conformance account",
+        "authentication": {
+          "defaultModeId": "manual",
+          "modes": [
+            {
+              "id": "manual",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "fields": [
+                {
+                  "id": "token",
+                  "title": "Acme Vault conformance token",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "secret": true
+                }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "id": "archive",
+        "title": "Acme Archive conformance account",
+        "authentication": {
+          "defaultModeId": "manual",
+          "modes": [
+            {
+              "id": "manual",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "fields": [
+                {
+                  "id": "token",
+                  "title": "Acme Archive conformance token",
+                  "schema": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "secret": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "actions": [
+      {
+        "id": "verify",
+        "title": "Verify Connected Accounts",
+        "description": "Exercises the stable Connected Accounts service through the real invocation host.",
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli"
+        ],
+        "placement": "commandPalette",
+        "dangerLevel": "safe",
+        "hostAccess": [
+          "fixed",
+          "group",
+          "multi",
+          "select-only",
+          "use-only",
+          "replaceable",
+          "revocable",
+          "rotating"
+        ]
+      },
+      {
+        "id": "verify-removal-readd",
+        "title": "Verify Connected Accounts Removal and Re-add",
+        "description": "Proves removed durable selection does not resurrect after the purpose is re-published.",
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli"
+        ],
+        "placement": "commandPalette",
+        "dangerLevel": "safe",
+        "hostAccess": [
+          "fixed"
+        ]
+      }
+    ]
+  }
+}

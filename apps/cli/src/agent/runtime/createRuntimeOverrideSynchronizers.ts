@@ -1,4 +1,5 @@
 import type { Metadata, PermissionMode } from '@/api/types';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
 import {
   isRuntimeConfigUpdateOutcomeApplied,
   type RuntimeConfigUpdateOutcomeV1,
@@ -6,7 +7,7 @@ import {
 
 import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
 import { createSessionModeOverrideSynchronizer } from './sessionModeOverrideSync';
-import { createModelOverrideSynchronizer } from './modelOverrideSync';
+import { createModelTransitionMetadataObserver } from './modelTransitionMetadataObserver';
 import { resolvePermissionIntentFromMetadataSnapshot } from './permissions/modeFromMetadata';
 
 export type RuntimeOverrideTarget = Readonly<{
@@ -15,7 +16,7 @@ export type RuntimeOverrideTarget = Readonly<{
     configId: string,
     valueId: string | number | boolean | null,
   ) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
-  setSessionModel: (modelId: string) => Promise<void>;
+  setSessionModelSelection: (selection: ProviderBoundModelRef) => Promise<void>;
   setPermissionMode?: (permissionMode: PermissionMode) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
 }>;
 
@@ -108,7 +109,7 @@ export function createRuntimeOverrideSynchronizers(params: Readonly<{
     runtime: params.runtime,
     isStarted: params.isStarted,
   });
-  const modelSync = createModelOverrideSynchronizer({
+  const modelSync = createModelTransitionMetadataObserver({
     agentTargetKey: params.agentTargetKey,
     session: params.session,
     runtime: params.runtime,
@@ -129,7 +130,6 @@ export function createRuntimeOverrideSynchronizers(params: Readonly<{
     await modeSync.flushPendingAfterStart();
     permissionModeSync.syncFromMetadata();
     await permissionModeSync.flushPendingAfterStart();
-    modelSync.syncFromMetadata();
     await modelSync.flushPendingAfterStart();
     configOptionSync.syncFromMetadata();
     await configOptionSync.flushPendingAfterStart();
@@ -154,6 +154,7 @@ export function createRuntimeOverrideSynchronizers(params: Readonly<{
 
   return {
     syncFromMetadata: () => {
+      modelSync.syncFromMetadata();
       requestOrderedSync();
     },
     flushPendingAfterStart: async () => {

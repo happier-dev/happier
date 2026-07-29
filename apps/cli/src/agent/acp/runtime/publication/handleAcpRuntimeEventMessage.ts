@@ -47,9 +47,9 @@ function normalizeContextCompactionPayload(
     if (!phase) return null;
 
     const source =
-        payloadRecord.source === 'provider-event'
-        || payloadRecord.source === 'provider-status'
-        || payloadRecord.source === 'provider-hook'
+        payloadRecord.source === 'agent-event'
+        || payloadRecord.source === 'agent-status'
+        || payloadRecord.source === 'agent-hook'
         || payloadRecord.source === 'transcript-inference'
         || payloadRecord.source === 'user-command'
         || payloadRecord.source === 'runtime'
@@ -70,8 +70,8 @@ function normalizeContextCompactionPayload(
     const retryAttempt = readFiniteNumber(payloadRecord.retryAttempt);
     const sanitizedErrorPreview = readNonEmptyString(payloadRecord.sanitizedErrorPreview);
     const continuation = payloadRecord.continuation === 'paused' ? 'paused' : undefined;
-    const pauseReason = payloadRecord.pauseReason === 'provider-idle-after-compaction'
-        ? 'provider-idle-after-compaction'
+    const pauseReason = payloadRecord.pauseReason === 'agent-idle-after-compaction'
+        ? 'agent-idle-after-compaction'
         : undefined;
 
     const backendId = readNonEmptyString(payloadRecord.backendId) ?? readNonEmptyString(backendIdFallback);
@@ -84,8 +84,8 @@ function normalizeContextCompactionPayload(
         ...(readNonEmptyString(payloadRecord.agentId) ? { agentId: readNonEmptyString(payloadRecord.agentId) } : {}),
         ...(trigger ? { trigger } : {}),
         ...(source ? { source } : {}),
-        ...(readNonEmptyString(payloadRecord.providerEventId) ? { providerEventId: readNonEmptyString(payloadRecord.providerEventId) } : {}),
-        ...(readNonEmptyString(payloadRecord.providerSessionId) ? { providerSessionId: readNonEmptyString(payloadRecord.providerSessionId) } : {}),
+        ...(readNonEmptyString(payloadRecord.agentEventId) ? { agentEventId: readNonEmptyString(payloadRecord.agentEventId) } : {}),
+        ...(readNonEmptyString(payloadRecord.agentSessionId) ? { agentSessionId: readNonEmptyString(payloadRecord.agentSessionId) } : {}),
         ...(readNonEmptyString(payloadRecord.turnId) ? { turnId: readNonEmptyString(payloadRecord.turnId) } : {}),
         ...(tokenCountBefore !== undefined ? { tokenCountBefore } : {}),
         ...(tokenCountAfter !== undefined ? { tokenCountAfter } : {}),
@@ -110,8 +110,8 @@ function buildContextCompactionRuntimeEvent(
         ...(payload.backendId ? { backendId: payload.backendId } : {}),
         ...(payload.agentId ? { agentId: payload.agentId } : {}),
         ...(payload.trigger ? { trigger: payload.trigger } : {}),
-        ...(payload.providerEventId ? { providerEventId: payload.providerEventId } : {}),
-        ...(payload.providerSessionId ? { providerSessionId: payload.providerSessionId } : {}),
+        ...(payload.agentEventId ? { agentEventId: payload.agentEventId } : {}),
+        ...(payload.agentSessionId ? { agentSessionId: payload.agentSessionId } : {}),
         ...(payload.turnId ? { turnId: payload.turnId } : {}),
         ...(payload.tokenCountBefore !== undefined ? { tokenCountBefore: payload.tokenCountBefore } : {}),
         ...(payload.tokenCountAfter !== undefined ? { tokenCountAfter: payload.tokenCountAfter } : {}),
@@ -299,7 +299,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
                 (metadata) => {
                     const sessionModes = {
                         v: 1 as const,
-                        provider: params.provider,
+                        agentId: params.provider,
                         updatedAt: Date.now(),
                         currentModeId,
                         availableModes,
@@ -341,7 +341,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
                     ...metadata,
                     acpSessionModelsV1: {
                         v: 1,
-                        provider: params.provider,
+                        agentId: params.provider,
                         updatedAt: Date.now(),
                         currentModelId,
                         availableModels,
@@ -393,7 +393,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
                     ...metadata,
                     acpConfigOptionsV1: {
                         v: 1,
-                        provider: params.provider,
+                        agentId: params.provider,
                         updatedAt: now,
                         configOptions,
                     },
@@ -402,7 +402,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
                 if (derivedModels) {
                     next.acpSessionModelsV1 = {
                         v: 1,
-                        provider: params.provider,
+                        agentId: params.provider,
                         updatedAt: now,
                         currentModelId: derivedModels.currentModelId,
                         availableModels: derivedModels.availableModels,
@@ -428,7 +428,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
                     const availableModes = Array.isArray(prev?.availableModes) ? prev.availableModes : [];
                     const sessionModes = {
                         v: 1 as const,
-                        provider: params.provider,
+                        agentId: params.provider,
                         updatedAt: Date.now(),
                         currentModeId,
                         availableModes,
@@ -459,7 +459,7 @@ export function handleAcpRuntimeEventMessage(params: Readonly<{
                         ...metadata,
                         acpSessionModelsV1: {
                             v: 1,
-                            provider: params.provider,
+                            agentId: params.provider,
                             updatedAt: Date.now(),
                             currentModelId,
                             availableModels,

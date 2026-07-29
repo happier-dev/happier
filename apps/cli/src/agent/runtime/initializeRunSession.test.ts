@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession'
 import type { ApiSessionClient } from '@/api/session/sessionClient'
 import type { AgentState, Metadata, Session } from '@/api/types'
+import type { SetupOfflineReconnectionResult } from '@/api/offline/setupOfflineReconnection'
 
 function createSessionStub(overrides: Partial<ApiSessionClient> = {}): ApiSessionClient {
   return {
@@ -28,6 +29,211 @@ function createSessionResponse(id: string, metadata: Metadata, state: AgentState
 }
 
 describe('initialize run session', () => {
+  it('passes cancellation to session creation and fences late creation from startup effects', async () => {
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const controller = new AbortController()
+    let resolveSession!: (session: Session) => void
+    const pendingSession = new Promise<Session>((resolve) => {
+      resolveSession = resolve
+    })
+    let observedSignal: AbortSignal | undefined
+    const primeAgentStateForUiFn = vi.fn()
+    const reportSessionToDaemonIfRunningFn = vi.fn(async () => {})
+    const persistTerminalAttachmentInfoIfNeededFn = vi.fn(async () => {})
+    const sendTerminalFallbackMessageIfNeededFn = vi.fn()
+    const session = createSessionStub({ close: vi.fn(async () => undefined) })
+
+    const initializing = initializeBackendRunSession(
+      {
+        api: {
+          getOrCreateSession: async (options) => {
+            observedSignal = options.signal
+            return await pendingSession
+          },
+          sessionSyncClient: () => session,
+        },
+        sessionTag: 'tag-cancel-create',
+        metadata,
+        state,
+        uiLogPrefix: '[Test]',
+        signal: controller.signal,
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+      },
+      {
+        primeAgentStateForUiFn,
+        reportSessionToDaemonIfRunningFn,
+        persistTerminalAttachmentInfoIfNeededFn,
+        sendTerminalFallbackMessageIfNeededFn,
+      },
+    )
+    controller.abort('carrier retired')
+    resolveSession(createSessionResponse('late-created-session', metadata, state))
+
+    await expect(initializing).rejects.toBe('carrier retired')
+    expect(observedSignal).toBe(controller.signal)
+    expect(primeAgentStateForUiFn).not.toHaveBeenCalled()
+    expect(reportSessionToDaemonIfRunningFn).not.toHaveBeenCalled()
+    expect(persistTerminalAttachmentInfoIfNeededFn).not.toHaveBeenCalled()
+    expect(sendTerminalFallbackMessageIfNeededFn).not.toHaveBeenCalled()
+  })
+
+  it('disposes acquired resources once when cancellation wins during startup effects', async () => {
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const controller = new AbortController()
+    let reportStarted!: () => void
+    const reportStartedPromise = new Promise<void>((resolve) => {
+      reportStarted = resolve
+    })
+    let releaseReport!: () => void
+    const reportGate = new Promise<void>((resolve) => {
+      releaseReport = resolve
+    })
+    const sessionClose = vi.fn(async () => undefined)
+    const session = createSessionStub({ close: sessionClose })
+    const reconnectionCancel = vi.fn()
+    const persistTerminalAttachmentInfoIfNeededFn = vi.fn(async () => undefined)
+    const sendTerminalFallbackMessageIfNeededFn = vi.fn()
+
+    const initializing = initializeBackendRunSession(
+      {
+        api: {
+          getOrCreateSession: async () => createSessionResponse('session-acquired', metadata, state),
+          sessionSyncClient: () => session,
+        },
+        sessionTag: 'tag-cancel-effects',
+        metadata,
+        state,
+        uiLogPrefix: '[Test]',
+        signal: controller.signal,
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+      },
+      {
+        setupOfflineReconnectionFn: () => ({
+          session,
+          reconnectionHandle: { cancel: reconnectionCancel },
+          isOffline: false,
+        // Boundary fixture only supplies the cancellation surface exercised by this test.
+        } as unknown as SetupOfflineReconnectionResult),
+        primeAgentStateForUiFn: vi.fn(),
+        reportSessionToDaemonIfRunningFn: async () => {
+          reportStarted()
+          await reportGate
+        },
+        persistTerminalAttachmentInfoIfNeededFn,
+        sendTerminalFallbackMessageIfNeededFn,
+      },
+    )
+    await reportStartedPromise
+    controller.abort('carrier retired')
+    releaseReport()
+
+    await expect(initializing).rejects.toBe('carrier retired')
+    expect(reconnectionCancel).toHaveBeenCalledOnce()
+    expect(sessionClose).toHaveBeenCalledOnce()
+    expect(persistTerminalAttachmentInfoIfNeededFn).not.toHaveBeenCalled()
+    expect(sendTerminalFallbackMessageIfNeededFn).not.toHaveBeenCalled()
+  })
+
+  it('fences an already-cancelled attach before metadata loading', async () => {
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const controller = new AbortController()
+    controller.abort('carrier retired')
+    const createBaseSessionForAttachFn = vi.fn(async () =>
+      createSessionResponse('attach-session', metadata, state),
+    )
+    const ensureMetadataSnapshot = vi.fn(async () => ({} as Metadata))
+    const session = createSessionStub({ ensureMetadataSnapshot })
+
+    await expect(initializeBackendRunSession(
+      {
+        api: {
+          getOrCreateSession: async () => null,
+          sessionSyncClient: () => session,
+        },
+        sessionTag: 'tag-cancel-attach',
+        metadata,
+        state,
+        existingSessionId: 'attach-session',
+        uiLogPrefix: '[Test]',
+        signal: controller.signal,
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+      },
+      { createBaseSessionForAttachFn },
+    )).rejects.toBe('carrier retired')
+
+    expect(createBaseSessionForAttachFn).not.toHaveBeenCalled()
+    expect(ensureMetadataSnapshot).not.toHaveBeenCalled()
+  })
+
+  it('stops attach metadata retries and readiness after cancellation during the first update', async () => {
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const controller = new AbortController()
+    let firstUpdateStarted!: () => void
+    const firstUpdateStartedPromise = new Promise<void>((resolve) => {
+      firstUpdateStarted = resolve
+    })
+    let releaseFirstUpdate!: () => void
+    const firstUpdateGate = new Promise<void>((resolve) => {
+      releaseFirstUpdate = resolve
+    })
+    const applyStartupMetadataUpdateToSessionFn = vi.fn(async () => {
+      firstUpdateStarted()
+      await firstUpdateGate
+    })
+    const onAttachMetadataSnapshotReady = vi.fn(async () => undefined)
+    const session = createSessionStub({
+      ensureMetadataSnapshot: async () => ({ path: '/tmp/project' } as unknown as Metadata),
+      getMetadataSnapshot: () => ({ path: '/tmp/stale' } as unknown as Metadata),
+      close: vi.fn(async () => undefined),
+    })
+
+    const initializing = initializeBackendRunSession(
+      {
+        api: {
+          getOrCreateSession: async () => null,
+          sessionSyncClient: () => session,
+        },
+        sessionTag: 'tag-cancel-attach-update',
+        metadata,
+        state,
+        existingSessionId: 'attach-session',
+        uiLogPrefix: '[Test]',
+        signal: controller.signal,
+        attachMetadataIdentityPolicy: 'replace_with_runtime_identity',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+        onAttachMetadataSnapshotReady,
+      },
+      {
+        createBaseSessionForAttachFn: async () =>
+          createSessionResponse('attach-session', metadata, state),
+        applyStartupMetadataUpdateToSessionFn,
+        primeAgentStateForUiFn: vi.fn(),
+        reportSessionToDaemonIfRunningFn: vi.fn(async () => undefined),
+        persistTerminalAttachmentInfoIfNeededFn: vi.fn(async () => undefined),
+        sendTerminalFallbackMessageIfNeededFn: vi.fn(),
+      },
+    )
+    await firstUpdateStartedPromise
+    controller.abort('carrier retired')
+    releaseFirstUpdate()
+
+    await expect(initializing).rejects.toBe('carrier retired')
+    expect(applyStartupMetadataUpdateToSessionFn).toHaveBeenCalledOnce()
+    expect(onAttachMetadataSnapshotReady).not.toHaveBeenCalled()
+  })
+
   it('attaches to an existing session, applies startup metadata update, and runs startup side effects', async () => {
     const metadata = { terminal: { mode: 'tmux' } } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
@@ -551,7 +757,7 @@ describe('initialize run session', () => {
   })
 
   it('creates a new session and reports daemon startup side effects', async () => {
-    const metadata = { terminal: { mode: 'tmux' } } as unknown as Metadata
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
     const initialSession = createSessionStub()
     const swappedSession = createSessionStub()
@@ -561,7 +767,7 @@ describe('initialize run session', () => {
       sessionSyncClient: () => initialSession,
     }
 
-    const daemonReports: string[] = []
+    const daemonReports: Array<{ sessionId: string; requireDaemonAck?: boolean }> = []
     const persisted: string[] = []
     let fallbackCount = 0
     let onSessionSwapCount = 0
@@ -593,7 +799,10 @@ describe('initialize run session', () => {
         },
         primeAgentStateForUiFn: () => {},
         reportSessionToDaemonIfRunningFn: async (opts) => {
-          daemonReports.push(opts.sessionId)
+          daemonReports.push({
+            sessionId: opts.sessionId,
+            ...(opts.requireDaemonAck ? { requireDaemonAck: true } : {}),
+          })
         },
         persistTerminalAttachmentInfoIfNeededFn: async (opts) => {
           persisted.push(opts.sessionId)
@@ -607,7 +816,7 @@ describe('initialize run session', () => {
     expect(result.attachedToExistingSession).toBe(false)
     expect(result.reportedSessionId).toBe('new-session')
     expect(result.session).toBe(initialSession)
-    expect(daemonReports).toEqual(['new-session'])
+    expect(daemonReports).toEqual([{ sessionId: 'new-session', requireDaemonAck: true }])
     expect(persisted).toEqual(['new-session'])
     expect(fallbackCount).toBe(1)
     expect(onSessionSwapCount).toBe(0)
@@ -647,6 +856,56 @@ describe('initialize run session', () => {
 
     expect(setupResult.session).toBe(initialSession)
     expect(onSessionSwapCount).toBe(1)
+  })
+
+  it('fails a daemon-started fresh session before terminal side effects when required acknowledgement is refused', async () => {
+    const metadata = {
+      terminal: { mode: 'tmux' },
+      startedBy: 'daemon',
+    } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const session = createSessionStub()
+    const requiredAckFailure =
+      new Error('Daemon session readiness was not acknowledged')
+    const persistTerminalAttachmentInfoIfNeededFn = vi.fn(async () => {})
+    const sendTerminalFallbackMessageIfNeededFn = vi.fn()
+
+    await expect(initializeBackendRunSession(
+      {
+        api: {
+          getOrCreateSession: async () =>
+            createSessionResponse('fresh-refused-session', metadata, state),
+          sessionSyncClient: () => session,
+        },
+        sessionTag: 'fresh-refused-tag',
+        metadata,
+        state,
+        uiLogPrefix: '[Pi]',
+        startupMetadataOverrides: {
+          permissionModeOverride: { mode: 'default', updatedAt: 100 },
+        },
+      },
+      {
+        setupOfflineReconnectionFn: () => ({
+          session,
+          reconnectionHandle: null,
+          isOffline: false,
+        }),
+        primeAgentStateForUiFn: () => {},
+        reportSessionToDaemonIfRunningFn: async (report) => {
+          expect(report).toMatchObject({
+            sessionId: 'fresh-refused-session',
+            requireDaemonAck: true,
+          })
+          throw requiredAckFailure
+        },
+        persistTerminalAttachmentInfoIfNeededFn,
+        sendTerminalFallbackMessageIfNeededFn,
+      },
+    )).rejects.toBe(requiredAckFailure)
+
+    expect(persistTerminalAttachmentInfoIfNeededFn).not.toHaveBeenCalled()
+    expect(sendTerminalFallbackMessageIfNeededFn).not.toHaveBeenCalled()
   })
 
   it('throws when a new session cannot be created and offline stubs are not allowed', async () => {
@@ -718,7 +977,7 @@ describe('initialize run session', () => {
   })
 
   it('does not block existing-session attach completion on daemon report retries', async () => {
-    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'terminal' } as unknown as Metadata
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
     const session = createSessionStub({
       ensureMetadataSnapshot: async () => ({ path: '/tmp/project' } as unknown as Metadata),
@@ -765,7 +1024,8 @@ describe('initialize run session', () => {
         sendTerminalFallbackMessageIfNeededFn: () => {
           events.push('fallback')
         },
-        reportSessionToDaemonIfRunningFn: async () => {
+        reportSessionToDaemonIfRunningFn: async (report) => {
+          expect(report.requireDaemonAck).toBeUndefined()
           events.push('report-start')
           await daemonReportBlocked
           events.push('report-end')
@@ -791,7 +1051,7 @@ describe('initialize run session', () => {
   })
 
   it('runs startup side effects after offline reconnection swaps in a real session', async () => {
-    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'terminal' } as unknown as Metadata
+    const metadata = { terminal: { mode: 'tmux' }, startedBy: 'daemon' } as unknown as Metadata
     const state = { controlledByUser: false } as AgentState
     const offlineSession = createSessionStub({ sessionId: 'offline-tag' })
     const realSession = createSessionStub({ sessionId: 'real-session' })
@@ -801,7 +1061,7 @@ describe('initialize run session', () => {
       sessionSyncClient: () => offlineSession,
     }
 
-    const daemonReports: string[] = []
+    const daemonReports: Array<{ sessionId: string; requireDaemonAck?: boolean }> = []
     const persisted: string[] = []
     let fallbackCount = 0
     const primed: string[] = []
@@ -837,7 +1097,10 @@ describe('initialize run session', () => {
           primed.push(session.sessionId)
         },
         reportSessionToDaemonIfRunningFn: async (opts) => {
-          daemonReports.push(opts.sessionId)
+          daemonReports.push({
+            sessionId: opts.sessionId,
+            ...(opts.requireDaemonAck ? { requireDaemonAck: true } : {}),
+          })
         },
         persistTerminalAttachmentInfoIfNeededFn: async (opts) => {
           persisted.push(opts.sessionId)
@@ -873,7 +1136,10 @@ describe('initialize run session', () => {
 
     expect(userOnSwapCount).toBe(1)
     expect(primed).toEqual(['offline-tag', 'real-session'])
-    expect(daemonReports).toEqual(['real-session'])
+    expect(daemonReports).toEqual([{
+      sessionId: 'real-session',
+      requireDaemonAck: true,
+    }])
     expect(persisted).toEqual(['real-session'])
     expect(fallbackCount).toBe(1)
   })

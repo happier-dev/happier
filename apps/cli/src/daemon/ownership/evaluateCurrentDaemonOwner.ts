@@ -14,6 +14,10 @@ import {
   type DaemonStartupSource,
 } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { projectPath } from '@/projectPath';
+import {
+  normalizeProcessCommandPathValue,
+  processCommandContainsPathFragment,
+} from '@/subprocess/processCommandPathMatch';
 
 import type { DaemonLocallyPersistedState } from '@/persistence';
 
@@ -42,10 +46,6 @@ function resolveCurrentCliVersion(): string {
   });
 }
 
-function normalizePathFragment(value: string): string {
-  return value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
-}
-
 function normalizeScopeValue(value: string | null | undefined): string {
   return String(value ?? '').trim();
 }
@@ -70,10 +70,25 @@ function daemonProcessMatchesCurrentScope(processInfo: HappyProcessInfo): boolea
   const env = processInfo.daemonOwnershipEnvironmentVariables;
   if (!env) return true;
 
-  if (!processEnvValueMatchesCurrent(env.HAPPIER_HOME_DIR, configuration.happyHomeDir, normalizePathFragment)) {
+  if (!processEnvValueMatchesCurrent(
+    env.HAPPIER_HOME_DIR,
+    configuration.happyHomeDir,
+    normalizeProcessCommandPathValue,
+  )) {
     return false;
   }
-  if (!processEnvValueMatchesCurrent(env.HAPPIER_ACTIVE_SERVER_ID, configuration.activeServerId)) {
+  const processLifecycleScopeId = normalizeScopeValue(env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID);
+  const currentLifecycleScopeId = normalizeScopeValue(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID);
+  if (processLifecycleScopeId) {
+    // Explicit lifecycle scope is the canonical owner identity. Endpoint profiles and URLs are
+    // independently mutable connection facts and must not disqualify that exact owner.
+    return Boolean(currentLifecycleScopeId && processLifecycleScopeId === currentLifecycleScopeId);
+  }
+
+  // Released stack daemons predate the explicit lifecycle-scope variable. Only that old shape may
+  // fall back to the active-server identity and endpoint URL comparison.
+  const currentFallbackScope = currentLifecycleScopeId || configuration.activeServerId;
+  if (!processEnvValueMatchesCurrent(env.HAPPIER_ACTIVE_SERVER_ID, currentFallbackScope)) {
     return false;
   }
 
@@ -96,8 +111,17 @@ export function isDaemonProcessForCurrentRuntimeRoot(processInfo: HappyProcessIn
   if (processInfo.pid === process.pid) return false;
   if (processInfo.type !== 'daemon' && processInfo.type !== 'dev-daemon') return false;
 
-  const command = normalizePathFragment(processInfo.command);
-  if (!command.includes(currentRuntimeRoot)) return false;
+  const command = normalizeProcessCommandPathValue(processInfo.command);
+  if (!processCommandContainsPathFragment(command, currentRuntimeRoot)) return false;
+
+  // The public Node wrappers re-exec through `_importRuntimeEntrypoint.mjs` so warning handles
+  // cannot leak into the runtime process. During that synchronous re-exec, the parent command
+  // still ends in `<wrapper> daemon start-sync`; it is only a bootstrapper, not a relay owner.
+  // The imported child includes additional runtime arguments between the wrapper path and
+  // `daemon start-sync`, so it remains visible as the real owner.
+  if (/\/bin\/happier(?:-dev)?\.mjs["']?\s+daemon\s+start-sync(?:\s|$)/u.test(command)) {
+    return false;
+  }
 
   // The process classifier labels both the transient `daemon start` launcher and the actual
   // `daemon start-sync` daemon as `daemon`/`dev-daemon`. Only `start-sync` is a real, long-lived
@@ -113,7 +137,7 @@ async function findStateLessDaemonProcessForCurrentRuntimeRoot(): Promise<HappyP
     return null;
   }
 
-  const currentRuntimeRoot = normalizePathFragment(projectPath());
+  const currentRuntimeRoot = normalizeProcessCommandPathValue(projectPath());
   const matching = (await findAllHappyProcesses())
     .filter((processInfo) => isDaemonProcessForCurrentRuntimeRoot(processInfo, currentRuntimeRoot))
     .filter((processInfo) => daemonProcessMatchesCurrentScope(processInfo))
@@ -147,6 +171,9 @@ export async function evaluateCurrentDaemonOwner(): Promise<DaemonOwnerEvaluatio
       };
       return { kind: 'conflict', owner };
     }
+    return { kind: 'none' };
+  }
+  if (!('state' in inspection)) {
     return { kind: 'none' };
   }
 

@@ -150,6 +150,8 @@ function createParentRawSessionFixture(): ForkLifecycleRawSession {
 describe('fork connected-service child materialization identity', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.cleanupForkChildBestEffort.mockResolvedValue(undefined);
+    mocks.archiveSessionBestEffort.mockResolvedValue(undefined);
     mocks.dispatchProviderNativeFork.mockImplementation(async (params: {
       forkSurface?: ForkSurfaceV1 | null;
       parentSessionId: string;
@@ -304,11 +306,181 @@ describe('fork connected-service child materialization identity', () => {
     expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
   });
 
+  it('does not fall back after provider-native auto fork commits but spawn returns a non-ambiguous error', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'codex-child-thread',
+      launch: {},
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'spawn rejected after vendor fork',
+      });
+
+    const result = await attemptProviderNativeFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentSession: createParentRawSessionFixture(),
+      parentMetadata: {},
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' as const },
+      targetSeqInclusive: 10,
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'native-error-nonce',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: { fork } satisfies ForkSurfaceV1,
+      spawnSession,
+      stopSession: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'spawn rejected after vendor fork',
+    });
+    expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+    expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back after provider-native child finalization reaches a terminal archive failure', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'codex-child-thread',
+      launch: {},
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({ type: 'success', sessionId: 'child-native' });
+    const stopSession = vi.fn();
+    mocks.updateSessionMetadataWithRetry.mockRejectedValueOnce(
+      new Error('metadata finalization failed'),
+    );
+    mocks.archiveSessionBestEffort.mockRejectedValueOnce(
+      Object.assign(new Error('still active'), { code: 'session_active' }),
+    );
+
+    const result = await attemptProviderNativeFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentSession: createParentRawSessionFixture(),
+      parentMetadata: {},
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' as const },
+      targetSeqInclusive: 10,
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'native-finalization-failure',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: { fork } satisfies ForkSurfaceV1,
+      spawnSession,
+      stopSession,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorMessage: 'metadata finalization failed',
+    });
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledOnce();
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledWith({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      fallbackStopSession: stopSession,
+      sessionId: 'child-native',
+    });
+    expect(mocks.archiveSessionBestEffort).toHaveBeenCalledOnce();
+    expect(mocks.archiveSessionBestEffort).toHaveBeenCalledWith('token', 'child-native');
+    expect(mocks.cleanupForkChildBestEffort.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.archiveSessionBestEffort.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('waits for one machine-local stop before propagating a provider-native post-spawn authentication error', async () => {
+    const authenticationError = Object.assign(new Error('expired credentials'), {
+      response: { status: 401 },
+    });
+    mocks.fetchForkChildSessionOrThrow.mockRejectedValueOnce(authenticationError);
+    let releaseCleanup: (() => void) | undefined;
+    mocks.cleanupForkChildBestEffort.mockImplementationOnce(
+      async (input: Readonly<{
+        fallbackStopSession: (sessionId: string) => Promise<unknown>;
+        sessionId: string;
+      }>) => {
+        await input.fallbackStopSession(input.sessionId);
+        await new Promise<void>((resolve) => {
+          releaseCleanup = resolve;
+        });
+      },
+    );
+    const stopSession = vi.fn();
+    const attempt = attemptProviderNativeFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentSession: createParentRawSessionFixture(),
+      parentMetadata: {},
+      directory: '/tmp/project',
+      forkPoint: { type: 'latest' as const },
+      targetSeqInclusive: 10,
+      effectiveCutoffSeqInclusive: 10,
+      spawnNonce: 'native-auth-failure',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: {
+        fork: vi.fn().mockResolvedValue({
+          providerSessionId: 'codex-child-thread',
+          launch: {},
+        }),
+      } satisfies ForkSurfaceV1,
+      spawnSession: vi.fn<ForkSpawnSession>()
+        .mockResolvedValue({ type: 'success', sessionId: 'child-native' }),
+      stopSession,
+    });
+    let settled = false;
+    void attempt.finally(() => {
+      settled = true;
+    }).catch(() => undefined);
+
+    await vi.waitFor(() => {
+      expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledOnce();
+    });
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledWith({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      fallbackStopSession: stopSession,
+      sessionId: 'child-native',
+    });
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith('child-native');
+    expect(settled).toBe(false);
+    expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+
+    releaseCleanup?.();
+    await expect(attempt).rejects.toBe(authenticationError);
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledOnce();
+  });
+
   it('preserves non-Codex runtime backend mode in provider-native fork spawn and metadata', async () => {
     const runtimeDescriptorV1 = {
       v: 1,
       agentId: 'opencode',
-      provider: {
+      agent: {
         backendMode: 'server',
         providerSessionId: 'opencode-child-thread',
       },
@@ -536,5 +708,169 @@ describe('fork connected-service child materialization identity', () => {
     });
     expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
     expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back after ACP latest auto fork commits but spawn returns a non-ambiguous error', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'vendor-child-surface',
+      launch: {},
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+        errorMessage: 'ACP spawn rejected after vendor fork',
+      });
+
+    const result = await attemptAcpLatestFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/project',
+      effectiveCutoffSeqInclusive: 10,
+      forkIsConfiguredAcp: false,
+      spawnNonce: 'acp-error-nonce',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: { fork } satisfies ForkSurfaceV1,
+      spawnSession,
+      stopSession: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+      errorMessage: 'ACP spawn rejected after vendor fork',
+    });
+    expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+    expect(mocks.cleanupForkChildBestEffort).not.toHaveBeenCalled();
+  });
+
+  it('does not fall back after ACP child finalization reaches a terminal archive failure', async () => {
+    const fork = vi.fn().mockResolvedValue({
+      providerSessionId: 'vendor-child-surface',
+      launch: {},
+    });
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({ type: 'success', sessionId: 'child-acp' });
+    const stopSession = vi.fn();
+    mocks.updateSessionMetadataWithRetry.mockRejectedValueOnce(
+      new Error('metadata finalization failed'),
+    );
+    mocks.archiveSessionBestEffort.mockRejectedValueOnce(
+      Object.assign(new Error('still active'), { code: 'session_active' }),
+    );
+
+    const result = await attemptAcpLatestFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/project',
+      effectiveCutoffSeqInclusive: 10,
+      forkIsConfiguredAcp: false,
+      spawnNonce: 'acp-finalization-failure',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: { fork } satisfies ForkSurfaceV1,
+      spawnSession,
+      stopSession,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+      errorMessage: 'metadata finalization failed',
+    });
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledOnce();
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledWith({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      fallbackStopSession: stopSession,
+      sessionId: 'child-acp',
+    });
+    expect(mocks.archiveSessionBestEffort).toHaveBeenCalledOnce();
+    expect(mocks.archiveSessionBestEffort).toHaveBeenCalledWith('token', 'child-acp');
+    expect(mocks.cleanupForkChildBestEffort.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.archiveSessionBestEffort.mock.invocationCallOrder[0]!,
+    );
+  });
+
+  it('waits for one machine-local stop before propagating an ACP post-spawn authentication error', async () => {
+    const authenticationError = Object.assign(new Error('expired credentials'), {
+      response: { status: 403 },
+    });
+    mocks.fetchForkChildSessionOrThrow.mockRejectedValueOnce(authenticationError);
+    let releaseCleanup: (() => void) | undefined;
+    mocks.cleanupForkChildBestEffort.mockImplementationOnce(
+      async (input: Readonly<{
+        fallbackStopSession: (sessionId: string) => Promise<unknown>;
+        sessionId: string;
+      }>) => {
+        await input.fallbackStopSession(input.sessionId);
+        await new Promise<void>((resolve) => {
+          releaseCleanup = resolve;
+        });
+      },
+    );
+    const stopSession = vi.fn();
+    const attempt = attemptAcpLatestFork({
+      requestedStrategy: 'auto',
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: {},
+      directory: '/tmp/project',
+      effectiveCutoffSeqInclusive: 10,
+      forkIsConfiguredAcp: false,
+      spawnNonce: 'acp-auth-failure',
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {},
+      },
+      forkSurface: {
+        fork: vi.fn().mockResolvedValue({
+          providerSessionId: 'vendor-child-surface',
+          launch: {},
+        }),
+      } satisfies ForkSurfaceV1,
+      spawnSession: vi.fn<ForkSpawnSession>()
+        .mockResolvedValue({ type: 'success', sessionId: 'child-acp' }),
+      stopSession,
+    });
+    let settled = false;
+    void attempt.finally(() => {
+      settled = true;
+    }).catch(() => undefined);
+
+    await vi.waitFor(() => {
+      expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledOnce();
+    });
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledWith({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+      },
+      fallbackStopSession: stopSession,
+      sessionId: 'child-acp',
+    });
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith('child-acp');
+    expect(settled).toBe(false);
+    expect(mocks.archiveSessionBestEffort).not.toHaveBeenCalled();
+
+    releaseCleanup?.();
+    await expect(attempt).rejects.toBe(authenticationError);
+    expect(mocks.cleanupForkChildBestEffort).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledOnce();
   });
 });

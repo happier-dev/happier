@@ -5,19 +5,21 @@ import {
   type ResolvedMcpServerV1,
 } from '@happier-dev/protocol';
 import type {
-  McpResolveForSessionInputV1,
-  McpResolvedScopeV1,
-  McpResolvedServerTransportV1,
   McpServerSpecV1,
   McpServerTransportV1,
-  ResolvedMcpServerSpecV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/mcp';
 
 import { readMcpServersSettingsFromAccountSettings } from './readMcpServersSettingsFromAccountSettings';
 import { resolveManagedSessionMcpSelectionForDirectory } from './resolveManagedSessionMcpSelectionForDirectory';
+import type {
+  McpSessionResolutionInput,
+  ResolvedSessionMcpScope,
+  ResolvedSessionMcpServer,
+  ResolvedSessionMcpTransport,
+} from '../runtimeTypes';
 
 export type ResolvePluginMcpServersForSessionParams = Readonly<{
-  input: McpResolveForSessionInputV1;
+  input: McpSessionResolutionInput;
   accountSettings: AccountSettings | null;
   machineId: string;
   directory: string;
@@ -31,7 +33,7 @@ function readTrimmedString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function createScope(input: McpResolveForSessionInputV1, directory: string): McpResolvedScopeV1 | null {
+function createScope(input: McpSessionResolutionInput, directory: string): ResolvedSessionMcpScope | null {
   const sessionId = readTrimmedString(input.sessionId);
   if (!sessionId) return null;
   return Object.freeze({
@@ -40,7 +42,7 @@ function createScope(input: McpResolveForSessionInputV1, directory: string): Mcp
   });
 }
 
-function sanitizePluginTransport(transport: McpServerTransportV1): McpResolvedServerTransportV1 | null {
+function sanitizePluginTransport(transport: McpServerTransportV1): ResolvedSessionMcpTransport | null {
   if (transport.kind === 'hosted') {
     return Object.freeze({ kind: 'hosted' });
   }
@@ -63,7 +65,7 @@ function sanitizePluginTransport(transport: McpServerTransportV1): McpResolvedSe
   return null;
 }
 
-function resolveManagedTransport(config: McpServerCatalogEntryV1): McpResolvedServerTransportV1 | null {
+function resolveManagedTransport(config: McpServerCatalogEntryV1): ResolvedSessionMcpTransport | null {
   if (config.transport === 'stdio') {
     if (!config.stdio) return null;
     return Object.freeze({ kind: 'stdio' });
@@ -80,8 +82,8 @@ function resolveManagedTransport(config: McpServerCatalogEntryV1): McpResolvedSe
 
 function resolveManagedServerSpec(
   server: ResolvedMcpServerV1,
-  scope: McpResolvedScopeV1,
-): ResolvedMcpServerSpecV1 | null {
+  scope: ResolvedSessionMcpScope,
+): ResolvedSessionMcpServer | null {
   const transport = resolveManagedTransport(server.config);
   if (!transport) return null;
   return Object.freeze({
@@ -96,8 +98,8 @@ function resolveManagedServerSpec(
 
 function resolvePluginServerSpec(
   server: McpServerSpecV1,
-  scope: McpResolvedScopeV1,
-): ResolvedMcpServerSpecV1 | null {
+  scope: ResolvedSessionMcpScope,
+): ResolvedSessionMcpServer | null {
   const transport = sanitizePluginTransport(server.transport);
   if (!transport) return null;
   return Object.freeze({
@@ -110,13 +112,13 @@ function resolvePluginServerSpec(
   });
 }
 
-function compareResolvedMcpServers(left: ResolvedMcpServerSpecV1, right: ResolvedMcpServerSpecV1): number {
+function compareResolvedMcpServers(left: ResolvedSessionMcpServer, right: ResolvedSessionMcpServer): number {
   return left.id.localeCompare(right.id) || left.name.localeCompare(right.name);
 }
 
 export function resolvePluginMcpServersForSession(
   params: ResolvePluginMcpServersForSessionParams,
-): readonly ResolvedMcpServerSpecV1[] {
+): readonly ResolvedSessionMcpServer[] {
   const directory = readTrimmedString(params.directory);
   const machineId = readTrimmedString(params.machineId);
   if (!params.accountSettings || !directory || !machineId) return Object.freeze([]);
@@ -133,7 +135,7 @@ export function resolvePluginMcpServersForSession(
     selection,
   });
 
-  const resolved: ResolvedMcpServerSpecV1[] = [];
+  const resolved: ResolvedSessionMcpServer[] = [];
   for (const server of Object.values(resolvedSelection.selectedServersByName)) {
     const spec = resolveManagedServerSpec(server, scope);
     if (spec) resolved.push(spec);

@@ -1,8 +1,10 @@
 import { z } from 'zod'
 import { UsageSchema } from './usage'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc'
-import { SentFromSchema } from '@happier-dev/protocol'
+import { ACCEPTED_PENDING_SETTLEMENT_EVENT_V1, SentFromSchema } from '@happier-dev/protocol'
 import type {
+  AcceptedPendingSettlementRequestV1,
+  AcceptedPendingSettlementResponseV1,
   ContentPublicKeyFingerprint,
   ExecutionRunPublicState,
   MachineReplacementReason,
@@ -25,14 +27,21 @@ import type {
   ConnectedServiceBindingsV1,
   ExternalSessionsSource,
   ModelOverrideV1,
+  SessionAppliedModelV1,
+  SessionModelSelectionIntentV1,
   RuntimeDescriptorMetadataCarrier,
-  SessionContinuationRecoveryV1,
   SessionRollbackRangesV1,
   SessionTerminalMetadata,
+  SessionRunnerRuntimeStateV1,
   SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol'
-import { SESSION_PERMISSION_MODES, createSessionPermissionModeSchema } from '@happier-dev/protocol'
+import {
+  SESSION_PERMISSION_MODES,
+  SESSION_RUNNER_RUNTIME_METADATA_KEY,
+  createSessionPermissionModeSchema,
+} from '@happier-dev/protocol'
 import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol'
+import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc'
 
 export {
   EphemeralUpdateSchema,
@@ -131,6 +140,9 @@ export type SessionBroadcast = SessionBroadcastContainer
 export interface SocketRpcRequestPayload {
   method: string
   params: unknown
+  authorization?: SocketRpcAuthorizationContext
+  timeoutMs?: number
+  transportResponseEnvelopeVersion?: 1
 }
 
 export interface SocketRpcCallPayload extends SocketRpcRequestPayload {
@@ -150,6 +162,7 @@ export interface SocketRpcCallResponse {
 export interface ServerToClientEvents {
   update: (data: Update) => void
   session: (data: SessionBroadcast) => void
+  'server:restarting': (data: { retryAfterMs?: number }) => void
   [SOCKET_RPC_EVENTS.REQUEST]: (data: SocketRpcRequestPayload, callback: (response: unknown) => void) => void
   [SOCKET_RPC_EVENTS.REGISTERED]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTERED]: (data: { method: string }) => void
@@ -164,6 +177,10 @@ export interface ServerToClientEvents {
  * Socket events from client to server
  */
 export interface ClientToServerEvents {
+  [ACCEPTED_PENDING_SETTLEMENT_EVENT_V1]: (
+    data: AcceptedPendingSettlementRequestV1,
+    cb?: (answer: AcceptedPendingSettlementResponseV1) => void
+  ) => void
   message: (
     data: { sid: string, message: string | SessionMessageContent, localId?: string | null, sidechainId?: string | null, messageRole?: 'user' | 'agent' | 'event' | 'unknown', echoToSender?: boolean },
     cb?: (answer: MessageAckResponse) => void
@@ -173,20 +190,25 @@ export interface ClientToServerEvents {
     time: number;
     thinking: boolean;
     mode?: 'local' | 'remote';
+    latestTurnStatus?: PrimaryTurnStatusV1;
+    latestTurnStatusObservedAt?: number;
   }) => void
   'session-end': (data: { sid: string, time: number }, cb?: (answer: SessionEndAckResponse) => void) => void,
-  'pending-materialize-next': (data: { sid: string; pendingVersion?: number }, cb?: (answer: {
+  'pending-materialize-next': (data: { sid: string; pendingVersion?: number; deliveryState?: 'provider'; deliveryTiming?: 'after_runtime_idle'; expectedRuntimeActivityRevision?: number }, cb?: (answer: {
     ok: boolean;
     didMaterialize?: boolean;
     didWrite?: boolean;
     pendingCount?: number;
+    pendingBlockedCount?: number;
     pendingVersion?: number;
+    deliveryState?: { mode?: string; unresolved?: boolean };
     message?: {
-      id?: string;
-      seq?: number;
+      id?: string | null;
+      seq?: number | null;
       localId?: string;
-      messageRole?: 'user' | 'agent' | 'event' | 'unknown';
+      messageRole?: 'user' | 'agent' | 'event' | 'unknown' | null;
       content?: SessionMessageContent;
+      deliveryState?: { mode?: string; unresolved?: boolean };
       createdAt?: number;
       updatedAt?: number;
     };
@@ -195,6 +217,21 @@ export interface ClientToServerEvents {
   'session-turn-mutation': (
     data: SessionTurnMutationV1,
     cb?: (answer: { ok?: boolean; result?: string; status?: string; error?: string; errorCode?: string; code?: string; message?: string }) => void
+  ) => void,
+  'runtime-activity-snapshot': (
+    data: {
+      sid: string,
+      state: 'active' | 'idle' | 'unknown',
+      runtimeActivityActiveCount: number,
+    },
+    cb?: (answer: {
+      result: 'success' | 'invalid-params' | 'forbidden' | 'session-not-found' | 'error',
+      didWrite?: boolean,
+      runtimeActivityState?: 'active' | 'idle' | 'unknown',
+      runtimeActivityActiveCount?: number,
+      runtimeActivityObservedAt?: number | null,
+      runtimeActivityRevision?: number,
+    }) => void
   ) => void,
   'execution-run-updated': (data: {
     sid: string;
@@ -206,6 +243,23 @@ export interface ClientToServerEvents {
       localId: string;
       sidechainId?: string | null;
       messageRole?: 'user' | 'agent' | 'event' | 'unknown';
+      /** Live-stream tick this full snapshot corresponds to (delta-chaining checkpoint anchor). */
+      tick?: number;
+      content: string | SessionMessageContent;
+      createdAt: number;
+      updatedAt: number;
+    };
+  }) => void
+  'transcript-stream-segment-delta': (data: {
+    sid: string;
+    message: {
+      localId: string;
+      sidechainId?: string | null;
+      messageRole?: 'user' | 'agent' | 'event' | 'unknown';
+      /** Per-segment live emission sequence (1-based, includes snapshot emissions). */
+      tick: number;
+      /** Accumulated text length (UTF-16 code units) BEFORE applying this delta. */
+      baseLength: number;
       content: string | SessionMessageContent;
       createdAt: number;
       updatedAt: number;
@@ -219,6 +273,7 @@ export interface ClientToServerEvents {
     activitySummaryV1?: {
       pendingPermissionRequestCount: number,
       pendingUserActionRequestCount: number,
+      pendingRequestNewestCreatedAt: number | null,
     },
   }, cb: (answer: UpdateStateAckResponse) => void) => void,
   'update-read-cursor': (data: {
@@ -231,7 +286,7 @@ export interface ClientToServerEvents {
     didChange?: boolean,
     readState?: 'read' | 'unread' | 'empty',
   }) => void) => void,
-  'ping': (callback: () => void) => void
+  'ping': (callback: (response: unknown) => void) => void
   [SOCKET_RPC_EVENTS.REGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.UNREGISTER]: (data: { method: string }) => void
   [SOCKET_RPC_EVENTS.CALL]: (data: SocketRpcCallPayload, callback: (response: SocketRpcCallResponse) => void) => void
@@ -257,13 +312,21 @@ type SessionSharedFields = Readonly<{
   seq: number;
   initialTranscriptAfterSeq?: number;
   metadata: Metadata;
+  metadataLayoutVersion?: number;
+  ownerMetadata?: import('@happier-dev/protocol').SessionOwnerMetadataV1 | null;
+  ownerMetadataCiphertext?: string | null;
   metadataVersion: number;
   agentState: AgentState | null;
   agentStateVersion: number;
   pendingCount?: number;
+  pendingBlockedCount?: number;
   pendingVersion?: number;
   latestTurnStatus?: PrimaryTurnStatusV1 | null;
   latestTurnStatusObservedAt?: number | null;
+  runtimeActivityState?: 'active' | 'idle' | 'unknown';
+  runtimeActivityActiveCount?: number;
+  runtimeActivityObservedAt?: number | null;
+  runtimeActivityRevision?: number;
 }>;
 
 export type Session =
@@ -279,7 +342,8 @@ export const MachineMetadataSchema = z.object({
   happyCliVersion: z.string(),
   homeDir: z.string(),
   happyHomeDir: z.string(),
-  happyLibDir: z.string()
+  happyLibDir: z.string(),
+  daemonTerminalSessionAttachSupported: z.boolean().optional(),
 })
 
 export type MachineMetadata = z.infer<typeof MachineMetadataSchema>
@@ -322,7 +386,6 @@ export const DaemonTransferRuntimeStateSchema = z.object({
   }),
   listenerClasses: z.object({
     loopback_http: DaemonTransferListenerStateSchema,
-    lan_http: DaemonTransferListenerStateSchema,
     tailscale_serve_https: DaemonTransferListenerStateSchema,
   }),
   lifecycle: z.object({
@@ -483,7 +546,7 @@ export type MessageContent = z.infer<typeof MessageContentSchema>
 
 export type ExternalSessionMetadataV1 = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   v: 1,
-  providerId: string,
+  agentId: string,
   machineId: string,
   remoteSessionId: string,
   source: ExternalSessionsSource,
@@ -506,7 +569,7 @@ export type ExternalSessionMetadataV1 = Readonly<Partial<RuntimeDescriptorMetada
 
 export type ExternalHistoryImportMetadataV1 = {
   v: 1,
-  providerId: string,
+  agentId: string,
   remoteSessionId: string,
   importedAtMs: number,
   source: ExternalSessionsSource,
@@ -516,11 +579,13 @@ export type SessionHandoffMetadataV1 = {
   v: 1,
   sourceMachineId: string,
   targetMachineId: string,
-  providerId: string,
+  agentId: string,
   sessionStorageBefore: 'direct' | 'persisted',
   sessionStorageAfter: 'direct' | 'persisted',
   transportStrategy: 'direct_peer' | 'server_routed_stream',
   completedAtMs: number,
+  sourceWorkspaceRootPath?: string,
+  targetWorkspaceRootPath?: string,
 };
 
 export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
@@ -545,6 +610,9 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
     updatedAt: number
   },
   machineId?: string,
+  /** Durable connected-service generation reconciliation state; parsed fail-closed by its owner. */
+  connectedServicePendingAuthGroupGenerationsV1?: unknown,
+  locallyConsumedUserMessageSeqsV1?: number[],
   claudeSessionId?: string, // Claude Code session ID
   claudeTranscriptPath?: string | null, // Claude Code transcript path (hooks)
   claudeLastCheckpointId?: string | null, // Claude SDK file checkpoint UUID (remote)
@@ -552,6 +620,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   codexSessionId?: string, // Codex session/conversation ID (uuid)
   codexBackendMode?: 'mcp' | 'acp' | 'appServer',
   geminiSessionId?: string, // Gemini ACP session ID (opaque)
+  grokSessionId?: string, // Grok ACP session ID (opaque)
   opencodeSessionId?: string, // OpenCode ACP session ID (opaque)
   opencodeBackendMode?: 'server' | 'acp',
   opencodeServerBaseUrl?: string,
@@ -576,14 +645,14 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   }>,
   acpHistoryImportV1?: {
     v: 1,
-    provider: 'gemini' | 'codex' | 'opencode' | string,
+    agentId: 'gemini' | 'codex' | 'opencode' | string,
     remoteSessionId: string,
     importedAt: number,
     lastImportedFingerprint?: string
   },
   acpTransportV1?: {
     v: 1,
-    provider: string
+    agentId: string
   },
   /**
    * ACP session modes (if supported by the provider's ACP agent).
@@ -592,7 +661,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
    */
   acpSessionModesV1?: {
     v: 1,
-    provider: string,
+    agentId: string,
     updatedAt: number,
     currentModeId: string,
     availableModes: Array<{
@@ -603,7 +672,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   },
   sessionModesV1?: {
     v: 1,
-    provider: string,
+    agentId: string,
     updatedAt: number,
     currentModeId: string,
     availableModes: Array<{
@@ -613,6 +682,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
     }>,
   },
   sessionUsageLimitRecoveryV1?: SessionUsageLimitRecoveryV1,
+  [SESSION_RUNNER_RUNTIME_METADATA_KEY]?: SessionRunnerRuntimeStateV1,
   /**
    * ACP session models (if supported by the provider's ACP agent).
    *
@@ -622,13 +692,14 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
    */
   acpSessionModelsV1?: {
     v: 1,
-    provider: string,
+    agentId: string,
     updatedAt: number,
     currentModelId: string,
     availableModels: Array<{
       id: string,
       name: string,
       description?: string,
+      contextWindowTokens?: number,
       modelOptions?: Array<{
         id: string,
         name: string,
@@ -645,13 +716,14 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   },
   sessionModelsV1?: {
     v: 1,
-    provider: string,
+    agentId: string,
     updatedAt: number,
     currentModelId: string,
     availableModels: Array<{
       id: string,
       name: string,
       description?: string,
+      contextWindowTokens?: number,
       modelOptions?: Array<{
         id: string,
         name: string,
@@ -673,7 +745,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
    */
   acpConfigOptionsV1?: {
     v: 1,
-    provider: string,
+    agentId: string,
     updatedAt: number,
     configOptions: Array<{
       id: string,
@@ -690,7 +762,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   },
   sessionConfigOptionsV1?: {
     v: 1,
-    provider: string,
+    agentId: string,
     updatedAt: number,
     configOptions: Array<{
       id: string,
@@ -741,7 +813,6 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
   /** Timestamp (ms) for permissionMode, used for "latest wins" arbitration across devices. */
   permissionModeUpdatedAt?: number,
   sessionRollbackRangesV1?: SessionRollbackRangesV1,
-  sessionContinuationRecoveryV1?: SessionContinuationRecoveryV1,
   /**
    * Session-scoped connected-service auth binding selected for this agent.
    *
@@ -757,6 +828,8 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & {
    * (some agents support live model switching; others may require a new session).
    */
   modelOverrideV1?: ModelOverrideV1,
+  modelSelectionIntentV1?: SessionModelSelectionIntentV1,
+  sessionAppliedModelV1?: SessionAppliedModelV1,
 };
 
 /**
@@ -808,6 +881,14 @@ export type AgentState = {
     inFlightSteerUnavailableReason?: InFlightSteerUnavailableReason | null | undefined
     /** Timestamp (ms) of the last steerability evaluation — staleness guard for the UI. */
     inFlightSteerStateAt?: number | null | undefined
+    /** Whether the provider terminal currently contains an unsent user draft. */
+    terminalComposerDraftPresent?: boolean | null | undefined
+    /** Whether this runtime can clear its provider terminal composer on explicit user request. */
+    terminalComposerClearSupported?: boolean | null | undefined
+    pendingInputInterruptAndRunLocalId?: string | null | undefined
+    pendingInputInterruptAndRunStateAt?: number | null | undefined
+    /** Whether permission-intent updates can be applied to the active provider turn. */
+    inFlightConfigApplySupported?: boolean | null | undefined
     localPermissionBridgeInLocalMode?: boolean | null | undefined
   } | null | undefined
       requests?: {

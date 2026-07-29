@@ -11,6 +11,16 @@ type ExternalSessionViewerLeaseRegistryParams = Readonly<{
   randomId?: () => string;
 }>;
 
+const MAX_ACTIVE_VIEWER_LEASES_PER_SESSION = 64;
+
+export class ExternalSessionViewerLeaseCapacityExceededError extends Error {
+  readonly name = 'ExternalSessionViewerLeaseCapacityExceededError';
+
+  constructor() {
+    super('External Session viewer lease capacity exceeded');
+  }
+}
+
 export function createExternalSessionViewerLeaseRegistry(params?: ExternalSessionViewerLeaseRegistryParams) {
   const now = params?.now ?? Date.now;
   const randomId = params?.randomId ?? randomUUID;
@@ -44,6 +54,9 @@ export function createExternalSessionViewerLeaseRegistry(params?: ExternalSessio
         ? input.leaseId.trim()
         : null;
       const existing = requestedLeaseId ? sessionLeases.get(requestedLeaseId) ?? null : null;
+      if (!existing && sessionLeases.size >= MAX_ACTIVE_VIEWER_LEASES_PER_SESSION) {
+        throw new ExternalSessionViewerLeaseCapacityExceededError();
+      }
       const leaseId = existing?.leaseId ?? requestedLeaseId ?? randomId();
       const lease: ExternalSessionViewerLease = {
         leaseId,

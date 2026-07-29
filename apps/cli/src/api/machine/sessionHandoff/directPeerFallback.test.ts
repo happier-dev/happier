@@ -11,8 +11,41 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { MachineTransferChannel } from '../../../machines/transfer/serverRoutedTransport';
 import { createEncryptedTransferChunkEnvelope } from '../../../machines/transfer/transferChunkEncryption';
 import { disposeTransferPayloadSource } from '../../../machines/transfer/transferPayloadSource';
-import { registerMachineSessionHandoffRpcHandlers } from './handlers';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createSessionHandoffWorkspaceReplicationAdapter } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
+import { registerMachineSessionHandoffRpcHandlers as registerMachineSessionHandoffRpcHandlersImpl } from './handlers';
 import { createWorkspaceReplicationManifestPayloadSource } from '../../../workspaces/replication/transport/workspaceReplicationManifestTransferV1';
+
+type RegisterSessionHandoffHandlersInput = Parameters<typeof registerMachineSessionHandoffRpcHandlersImpl>[0];
+type SessionHandoffWorkspaceReplicationAdapter = ReturnType<
+    typeof createSessionHandoffWorkspaceReplicationAdapter
+>;
+
+const scmRegistry = createScmBackendRegistry([]);
+
+function createWorkspaceReplicationAdapterForTest(): SessionHandoffWorkspaceReplicationAdapter {
+    const adapter = createSessionHandoffWorkspaceReplicationAdapter();
+    return {
+        ...adapter,
+        createState: (input) => adapter.createState({ ...input, scmRegistry }),
+        prepareTargetWorkspace: (input) => adapter.prepareTargetWorkspace({ ...input, scmRegistry }),
+        prepareSourceWorkspaceTransfer: (input) => adapter.prepareSourceWorkspaceTransfer({
+            ...input,
+            scmRegistry,
+        }),
+    };
+}
+
+function registerMachineSessionHandoffRpcHandlers(input: RegisterSessionHandoffHandlersInput): void {
+    registerMachineSessionHandoffRpcHandlersImpl({
+        ...input,
+        runtimeDependencies: {
+            ...input.runtimeDependencies,
+            workspaceReplicationAdapter: input.runtimeDependencies?.workspaceReplicationAdapter
+                ?? createWorkspaceReplicationAdapterForTest(),
+        },
+    });
+}
 
 describe('rpcHandlers (session handoff direct-peer fallback)', () => {
     function buildDirectPeerEndpointCandidate(params: Readonly<{
@@ -153,9 +186,9 @@ function requireFileTransferPayloadSourcePath(
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates:provider-bundle-file';
         const serverRoutedPayload = Buffer.from(JSON.stringify({
-            providerId: 'claude',
+            agentId: 'claude',
             remoteSessionId: 'claude_session_source',
             transcriptBase64: 'e30K',
         }), 'utf8');
@@ -173,8 +206,8 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [expiredCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
-                    transferId: providerBundleTransferId,
+                agentBundleTransferPublication: {
+                    transferId: agentBundleTransferId,
                     sizeBytes: serverRoutedPayload.byteLength,
                     manifestHash: computeManifestHash(serverRoutedPayload),
                     endpointCandidates: [expiredCandidate],
@@ -184,7 +217,7 @@ function requireFileTransferPayloadSourcePath(
 
         const recipientPublicKeyBase64 = await expectOpenEnvelopeWithRecipient(
             sendEnvelope,
-            providerBundleTransferId,
+            agentBundleTransferId,
         );
         expect(requestPayloadFile).not.toHaveBeenCalled();
 
@@ -193,11 +226,11 @@ function requireFileTransferPayloadSourcePath(
                 sourceMachineId: 'machine_source',
                 targetMachineId: 'machine_target',
                 envelope: {
-                    transferId: providerBundleTransferId,
+                    transferId: agentBundleTransferId,
                     kind: 'chunk',
                     sequence: 0,
                     ...createEncryptedTransferChunkEnvelope({
-                        transferId: providerBundleTransferId,
+                        transferId: agentBundleTransferId,
                         sequence: 0,
                         payload: serverRoutedPayload,
                         recipientPublicKeyBase64,
@@ -209,7 +242,7 @@ function requireFileTransferPayloadSourcePath(
                 sourceMachineId: 'machine_source',
                 targetMachineId: 'machine_target',
                 envelope: {
-                    transferId: providerBundleTransferId,
+                    transferId: agentBundleTransferId,
                     kind: 'finish',
                     manifestHash: computeManifestHash(serverRoutedPayload),
                 },
@@ -219,11 +252,10 @@ function requireFileTransferPayloadSourcePath(
         const prepared = await preparePromise;
         expect(prepared).toMatchObject({
             handoffId: 'handoff_direct_peer_expired_candidates',
-            status: expect.objectContaining({
-                transportStrategy: 'server_routed_stream',
-            }),
         });
 
+        // PREPARE_TARGET may return its initial pending snapshot while the background
+        // job persists the server-routed fallback; RESULT_GET owns the final assertion.
         let ready = prepared;
         if (ready.status.status !== 'ready_for_cutover') {
             await vi.waitFor(async () => {
@@ -268,7 +300,7 @@ function requireFileTransferPayloadSourcePath(
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates_no_fallback:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_expired_candidates_no_fallback:provider-bundle-file';
         const expiredCandidate = buildDirectPeerEndpointCandidate({
             transferId: 'handoff_direct_peer',
             expiresAt: Date.now() - 1,
@@ -283,8 +315,8 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [expiredCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
-                    transferId: providerBundleTransferId,
+                agentBundleTransferPublication: {
+                    transferId: agentBundleTransferId,
                     sizeBytes: 0,
                     manifestHash: `sha256:${'0'.repeat(64)}`,
                     endpointCandidates: [expiredCandidate],
@@ -340,7 +372,7 @@ function requireFileTransferPayloadSourcePath(
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_legacy_only_adapter:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_legacy_only_adapter:provider-bundle-file';
         const endpointCandidate = buildDirectPeerEndpointCandidate({
             transferId: 'handoff_direct_peer_legacy_only_adapter',
             expiresAt: Date.now() + 30_000,
@@ -355,8 +387,8 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
-                    transferId: providerBundleTransferId,
+                agentBundleTransferPublication: {
+                    transferId: agentBundleTransferId,
                     sizeBytes: 0,
                     manifestHash: `sha256:${'0'.repeat(64)}`,
                     endpointCandidates: [endpointCandidate],
@@ -410,7 +442,7 @@ function requireFileTransferPayloadSourcePath(
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_failed_no_fallback:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_failed_no_fallback:provider-bundle-file';
         const endpointCandidate = buildDirectPeerEndpointCandidate({
             transferId: 'handoff_direct_peer',
             expiresAt: Date.now() + 30_000,
@@ -425,8 +457,8 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
-                    transferId: providerBundleTransferId,
+                agentBundleTransferPublication: {
+                    transferId: agentBundleTransferId,
                     sizeBytes: 0,
                     manifestHash: `sha256:${'0'.repeat(64)}`,
                     endpointCandidates: [endpointCandidate],
@@ -494,7 +526,7 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     transferId: 'session-handoff:handoff_direct_peer_cached_retry_a:provider-bundle-file',
                     sizeBytes: 0,
                     manifestHash: `sha256:${'0'.repeat(64)}`,
@@ -520,7 +552,7 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     transferId: 'session-handoff:handoff_direct_peer_cached_retry_b:provider-bundle-file',
                     sizeBytes: 0,
                     manifestHash: `sha256:${'0'.repeat(64)}`,
@@ -570,8 +602,8 @@ function requireFileTransferPayloadSourcePath(
                 claudeSessionId: 'claude_session_1',
             }),
             exportSessionBundle: async () => ({
-                providerBundle: {
-                    providerId: 'claude',
+                agentBundle: {
+                    agentId: 'claude',
                     remoteSessionId: 'claude_session_1',
                     transcriptBase64: 'e30K',
                 },
@@ -605,7 +637,7 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     transferId: 'session-handoff:handoff_direct_peer_route_cache_reset_a:provider-bundle-file',
                     sizeBytes: 0,
                     manifestHash: `sha256:${'0'.repeat(64)}`,
@@ -640,7 +672,7 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     transferId: 'session-handoff:handoff_direct_peer_route_cache_reset_b:provider-bundle-file',
                     sizeBytes: 0,
                     manifestHash: `sha256:${'0'.repeat(64)}`,
@@ -672,8 +704,8 @@ function requireFileTransferPayloadSourcePath(
 
     it('does not reuse a cached direct-peer failure across handoffs when the machine transfer channel has no server id', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const providerBundlePayload = Buffer.from(JSON.stringify({
-            providerId: 'claude',
+        const agentBundlePayload = Buffer.from(JSON.stringify({
+            agentId: 'claude',
             remoteSessionId: 'claude_session_target',
             transcriptBase64: 'e30K',
         }), 'utf8');
@@ -683,7 +715,7 @@ function requireFileTransferPayloadSourcePath(
             if (requestCount === 1) {
                 throw new Error('direct peer unavailable');
             }
-            await writeFile(destinationPath, providerBundlePayload);
+            await writeFile(destinationPath, agentBundlePayload);
             return { destinationPath };
         });
         const rpcHandlerManager = {
@@ -705,8 +737,8 @@ function requireFileTransferPayloadSourcePath(
                 claudeSessionId: 'claude_session_1',
             }),
             exportSessionBundle: async () => ({
-                providerBundle: {
-                    providerId: 'claude',
+                agentBundle: {
+                    agentId: 'claude',
                     remoteSessionId: 'claude_session_target',
                     transcriptBase64: 'e30K',
                 },
@@ -752,10 +784,10 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     transferId: 'session-handoff:handoff_direct_peer_unknown_server_a:provider-bundle-file',
-                    sizeBytes: providerBundlePayload.byteLength,
-                    manifestHash: computeManifestHash(providerBundlePayload),
+                    sizeBytes: agentBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(agentBundlePayload),
                     endpointCandidates: [endpointCandidate],
                 },
             },
@@ -789,10 +821,10 @@ function requireFileTransferPayloadSourcePath(
             targetPath: '/repo',
             endpointCandidates: [endpointCandidate],
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     transferId: 'session-handoff:handoff_direct_peer_unknown_server_b:provider-bundle-file',
-                    sizeBytes: providerBundlePayload.byteLength,
-                    manifestHash: computeManifestHash(providerBundlePayload),
+                    sizeBytes: agentBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(agentBundlePayload),
                     endpointCandidates: [endpointCandidate],
                 },
             },
@@ -836,8 +868,8 @@ function requireFileTransferPayloadSourcePath(
 
     it('retries a cached-unavailable direct-peer route after a fresh prepare-target request for the same machine pair', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const providerBundlePayload = Buffer.from(JSON.stringify({
-            providerId: 'claude',
+        const agentBundlePayload = Buffer.from(JSON.stringify({
+            agentId: 'claude',
             remoteSessionId: 'claude_session_target',
             transcriptBase64: 'e30K',
         }), 'utf8');
@@ -859,8 +891,8 @@ function requireFileTransferPayloadSourcePath(
                 claudeSessionId: 'claude_session_1',
             }),
             exportSessionBundle: async () => ({
-                providerBundle: {
-                    providerId: 'claude',
+                agentBundle: {
+                    agentId: 'claude',
                     remoteSessionId: 'claude_session_target',
                     transcriptBase64: 'e30K',
                 },
@@ -891,7 +923,7 @@ function requireFileTransferPayloadSourcePath(
         expect(prepare).toBeDefined();
         expect(resultGet).toBeDefined();
 
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_a:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_a:provider-bundle-file';
         const endpointCandidate = buildDirectPeerEndpointCandidate({
             transferId: 'handoff_direct_peer_prepare_retry',
             expiresAt: Date.now() + 30_000,
@@ -948,10 +980,10 @@ function requireFileTransferPayloadSourcePath(
                 ignoredIncludeGlobs: [],
             },
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
-                    transferId: providerBundleTransferId,
-                    sizeBytes: providerBundlePayload.byteLength,
-                    manifestHash: computeManifestHash(providerBundlePayload),
+                agentBundleTransferPublication: {
+                    transferId: agentBundleTransferId,
+                    sizeBytes: agentBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(agentBundlePayload),
                     endpointCandidates: [endpointCandidate],
                 },
                 workspaceReplicationSourceRootPath: '/repo-prepare-retry',
@@ -978,10 +1010,10 @@ function requireFileTransferPayloadSourcePath(
                 ignoredIncludeGlobs: [],
             },
             handoffMetadataV2: {
-                providerBundleTransferPublication: {
+                agentBundleTransferPublication: {
                     transferId: 'session-handoff:handoff_direct_peer_prepare_retry_b:provider-bundle-file',
-                    sizeBytes: providerBundlePayload.byteLength,
-                    manifestHash: computeManifestHash(providerBundlePayload),
+                    sizeBytes: agentBundlePayload.byteLength,
+                    manifestHash: computeManifestHash(agentBundlePayload),
                     endpointCandidates: [endpointCandidate],
                 },
                 workspaceReplicationSourceRootPath: '/repo',
@@ -997,10 +1029,10 @@ function requireFileTransferPayloadSourcePath(
 
     it('recovers a direct-peer handoff when the provider bundle and workspace manifest are briefly unavailable during prepare-target', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_ready:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_ready:provider-bundle-file';
         const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_ready:workspace-manifest';
-        const providerBundlePayload = Buffer.from(JSON.stringify({
-            providerId: 'claude',
+        const agentBundlePayload = Buffer.from(JSON.stringify({
+            agentId: 'claude',
             remoteSessionId: 'claude_session_target',
             transcriptBase64: 'e30K',
         }), 'utf8');
@@ -1023,8 +1055,8 @@ function requireFileTransferPayloadSourcePath(
                     throw new Error('Direct peer transfer unavailable');
                 }
 
-                if (input.transferId === providerBundleTransferId) {
-                    await writeFile(input.destinationPath, providerBundlePayload);
+                if (input.transferId === agentBundleTransferId) {
+                    await writeFile(input.destinationPath, agentBundlePayload);
                     return { destinationPath: input.destinationPath };
                 }
                 if (input.transferId === workspaceManifestTransferId) {
@@ -1036,8 +1068,8 @@ function requireFileTransferPayloadSourcePath(
                 }
                 throw new Error(`Unexpected direct peer transfer: ${input.transferId}`);
             });
-            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
-                transferId: providerBundleTransferId,
+            const agentBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: agentBundleTransferId,
                 expiresAt: Date.now() + 30_000,
             });
             const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
@@ -1059,8 +1091,8 @@ function requireFileTransferPayloadSourcePath(
                     claudeSessionId: 'claude_session_1',
                 }),
                 exportSessionBundle: async () => ({
-                    providerBundle: {
-                        providerId: 'claude',
+                    agentBundle: {
+                        agentId: 'claude',
                         remoteSessionId: 'claude_session_target',
                         transcriptBase64: 'e30K',
                     },
@@ -1096,7 +1128,7 @@ function requireFileTransferPayloadSourcePath(
                 negotiatedTransportStrategy: 'direct_peer',
                 sourceSessionStorageMode: 'persisted',
                 targetPath: '/repo-prepare-retry-ready',
-                endpointCandidates: [providerBundleEndpointCandidate],
+                endpointCandidates: [agentBundleEndpointCandidate],
                 workspaceTransfer: {
                     enabled: true,
                     strategy: 'sync_changes',
@@ -1105,11 +1137,11 @@ function requireFileTransferPayloadSourcePath(
                     ignoredIncludeGlobs: [],
                 },
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
-                        transferId: providerBundleTransferId,
-                        sizeBytes: providerBundlePayload.byteLength,
-                        manifestHash: computeManifestHash(providerBundlePayload),
-                        endpointCandidates: [providerBundleEndpointCandidate],
+                    agentBundleTransferPublication: {
+                        transferId: agentBundleTransferId,
+                        sizeBytes: agentBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(agentBundlePayload),
+                        endpointCandidates: [agentBundleEndpointCandidate],
                     },
                     workspaceReplicationSourceRootPath: '/repo-prepare-retry-ready',
                     workspaceReplicationManifestTransferPublication: {
@@ -1127,7 +1159,7 @@ function requireFileTransferPayloadSourcePath(
             });
 
             await vi.waitFor(() => {
-                expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(2);
+                expect(requestAttemptsByTransferId.get(agentBundleTransferId)).toBe(2);
                 expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBe(2);
             });
         } finally {
@@ -1137,10 +1169,10 @@ function requireFileTransferPayloadSourcePath(
 
     it('keeps retrying workspace direct-peer requests through a second transient failure before succeeding', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_three_attempts:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_three_attempts:provider-bundle-file';
         const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_three_attempts:workspace-manifest';
-        const providerBundlePayload = Buffer.from(JSON.stringify({
-            providerId: 'claude',
+        const agentBundlePayload = Buffer.from(JSON.stringify({
+            agentId: 'claude',
             remoteSessionId: 'claude_session_target',
             transcriptBase64: 'e30K',
         }), 'utf8');
@@ -1163,8 +1195,8 @@ function requireFileTransferPayloadSourcePath(
                     throw new Error('Direct peer transfer unavailable');
                 }
 
-                if (input.transferId === providerBundleTransferId) {
-                    await writeFile(input.destinationPath, providerBundlePayload);
+                if (input.transferId === agentBundleTransferId) {
+                    await writeFile(input.destinationPath, agentBundlePayload);
                     return { destinationPath: input.destinationPath };
                 }
                 if (input.transferId === workspaceManifestTransferId) {
@@ -1176,8 +1208,8 @@ function requireFileTransferPayloadSourcePath(
                 }
                 throw new Error(`Unexpected direct peer transfer: ${input.transferId}`);
             });
-            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
-                transferId: providerBundleTransferId,
+            const agentBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: agentBundleTransferId,
                 expiresAt: Date.now() + 30_000,
             });
             const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
@@ -1224,7 +1256,7 @@ function requireFileTransferPayloadSourcePath(
                 negotiatedTransportStrategy: 'direct_peer',
                 sourceSessionStorageMode: 'persisted',
                 targetPath: '/repo-prepare-retry-three',
-                endpointCandidates: [providerBundleEndpointCandidate],
+                endpointCandidates: [agentBundleEndpointCandidate],
                 workspaceTransfer: {
                     enabled: true,
                     strategy: 'sync_changes',
@@ -1233,11 +1265,11 @@ function requireFileTransferPayloadSourcePath(
                     ignoredIncludeGlobs: [],
                 },
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
-                        transferId: providerBundleTransferId,
-                        sizeBytes: providerBundlePayload.byteLength,
-                        manifestHash: computeManifestHash(providerBundlePayload),
-                        endpointCandidates: [providerBundleEndpointCandidate],
+                    agentBundleTransferPublication: {
+                        transferId: agentBundleTransferId,
+                        sizeBytes: agentBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(agentBundlePayload),
+                        endpointCandidates: [agentBundleEndpointCandidate],
                     },
                     workspaceReplicationSourceRootPath: '/repo-prepare-retry-three',
                     workspaceReplicationManifestTransferPublication: {
@@ -1270,7 +1302,7 @@ function requireFileTransferPayloadSourcePath(
                     }),
                 });
             }, { timeout: 5_000 });
-            expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(3);
+            expect(requestAttemptsByTransferId.get(agentBundleTransferId)).toBe(3);
             expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBe(3);
         } finally {
             await disposeTransferPayloadSource(workspaceManifestSource);
@@ -1279,10 +1311,10 @@ function requireFileTransferPayloadSourcePath(
 
     it('keeps retrying workspace direct-peer requests through a sixth transient failure before succeeding', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_four_attempts:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_four_attempts:provider-bundle-file';
         const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_prepare_retry_four_attempts:workspace-manifest';
-        const providerBundlePayload = Buffer.from(JSON.stringify({
-            providerId: 'claude',
+        const agentBundlePayload = Buffer.from(JSON.stringify({
+            agentId: 'claude',
             remoteSessionId: 'claude_session_target',
             transcriptBase64: 'e30K',
         }), 'utf8');
@@ -1305,8 +1337,8 @@ function requireFileTransferPayloadSourcePath(
                     throw new Error('Direct peer transfer unavailable');
                 }
 
-                if (input.transferId === providerBundleTransferId) {
-                    await writeFile(input.destinationPath, providerBundlePayload);
+                if (input.transferId === agentBundleTransferId) {
+                    await writeFile(input.destinationPath, agentBundlePayload);
                     return { destinationPath: input.destinationPath };
                 }
                 if (input.transferId === workspaceManifestTransferId) {
@@ -1318,8 +1350,8 @@ function requireFileTransferPayloadSourcePath(
                 }
                 throw new Error(`Unexpected direct peer transfer: ${input.transferId}`);
             });
-            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
-                transferId: providerBundleTransferId,
+            const agentBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: agentBundleTransferId,
                 expiresAt: Date.now() + 30_000,
             });
             const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
@@ -1366,7 +1398,7 @@ function requireFileTransferPayloadSourcePath(
                 negotiatedTransportStrategy: 'direct_peer',
                 sourceSessionStorageMode: 'persisted',
                 targetPath: '/repo-prepare-retry-six',
-                endpointCandidates: [providerBundleEndpointCandidate],
+                endpointCandidates: [agentBundleEndpointCandidate],
                 workspaceTransfer: {
                     enabled: true,
                     strategy: 'sync_changes',
@@ -1375,11 +1407,11 @@ function requireFileTransferPayloadSourcePath(
                     ignoredIncludeGlobs: [],
                 },
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
-                        transferId: providerBundleTransferId,
-                        sizeBytes: providerBundlePayload.byteLength,
-                        manifestHash: computeManifestHash(providerBundlePayload),
-                        endpointCandidates: [providerBundleEndpointCandidate],
+                    agentBundleTransferPublication: {
+                        transferId: agentBundleTransferId,
+                        sizeBytes: agentBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(agentBundlePayload),
+                        endpointCandidates: [agentBundleEndpointCandidate],
                     },
                     workspaceReplicationSourceRootPath: '/repo-prepare-retry-six',
                     workspaceReplicationManifestTransferPublication: {
@@ -1398,7 +1430,7 @@ function requireFileTransferPayloadSourcePath(
             });
 
             await vi.waitFor(() => {
-                expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(7);
+                expect(requestAttemptsByTransferId.get(agentBundleTransferId)).toBe(7);
             }, { timeout: 10_000 });
 
             await vi.waitFor(async () => {
@@ -1417,7 +1449,7 @@ function requireFileTransferPayloadSourcePath(
                 });
             }, { timeout: 20_000 });
 
-            expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBe(7);
+            expect(requestAttemptsByTransferId.get(agentBundleTransferId)).toBe(7);
             expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBe(7);
         } finally {
             await disposeTransferPayloadSource(workspaceManifestSource);
@@ -1426,10 +1458,10 @@ function requireFileTransferPayloadSourcePath(
 
     it('waits for a workspace direct-peer requestPayloadFile handle to become available before failing prepare-target', async () => {
         const registered = new Map<string, (params: unknown) => Promise<any>>();
-        const providerBundleTransferId = 'session-handoff:handoff_direct_peer_request_payload_handle_late:provider-bundle-file';
+        const agentBundleTransferId = 'session-handoff:handoff_direct_peer_request_payload_handle_late:provider-bundle-file';
         const workspaceManifestTransferId = 'session-handoff:handoff_direct_peer_request_payload_handle_late:workspace-manifest';
-        const providerBundlePayload = Buffer.from(JSON.stringify({
-            providerId: 'claude',
+        const agentBundlePayload = Buffer.from(JSON.stringify({
+            agentId: 'claude',
             remoteSessionId: 'claude_session_target',
             transcriptBase64: 'e30K',
         }), 'utf8');
@@ -1461,8 +1493,8 @@ function requireFileTransferPayloadSourcePath(
                     }>) => {
                         const attemptNumber = (requestAttemptsByTransferId.get(input.transferId) ?? 0) + 1;
                         requestAttemptsByTransferId.set(input.transferId, attemptNumber);
-                        if (input.transferId === providerBundleTransferId) {
-                            await writeFile(input.destinationPath, providerBundlePayload);
+                        if (input.transferId === agentBundleTransferId) {
+                            await writeFile(input.destinationPath, agentBundlePayload);
                             return { destinationPath: input.destinationPath };
                         }
                         if (input.transferId === workspaceManifestTransferId) {
@@ -1477,8 +1509,8 @@ function requireFileTransferPayloadSourcePath(
                 },
             });
 
-            const providerBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
-                transferId: providerBundleTransferId,
+            const agentBundleEndpointCandidate = buildDirectPeerEndpointCandidate({
+                transferId: agentBundleTransferId,
                 expiresAt: Date.now() + 30_000,
             });
             const workspaceManifestEndpointCandidate = buildDirectPeerEndpointCandidate({
@@ -1521,7 +1553,7 @@ function requireFileTransferPayloadSourcePath(
                 negotiatedTransportStrategy: 'direct_peer',
                 sourceSessionStorageMode: 'persisted',
                 targetPath: '/repo-request-handle',
-                endpointCandidates: [providerBundleEndpointCandidate],
+                endpointCandidates: [agentBundleEndpointCandidate],
                 workspaceTransfer: {
                     enabled: true,
                     strategy: 'sync_changes',
@@ -1530,11 +1562,11 @@ function requireFileTransferPayloadSourcePath(
                     ignoredIncludeGlobs: [],
                 },
                 handoffMetadataV2: {
-                    providerBundleTransferPublication: {
-                        transferId: providerBundleTransferId,
-                        sizeBytes: providerBundlePayload.byteLength,
-                        manifestHash: computeManifestHash(providerBundlePayload),
-                        endpointCandidates: [providerBundleEndpointCandidate],
+                    agentBundleTransferPublication: {
+                        transferId: agentBundleTransferId,
+                        sizeBytes: agentBundlePayload.byteLength,
+                        manifestHash: computeManifestHash(agentBundlePayload),
+                        endpointCandidates: [agentBundleEndpointCandidate],
                     },
                     workspaceReplicationSourceRootPath: '/repo-request-handle',
                     workspaceReplicationManifestTransferPublication: {
@@ -1569,7 +1601,7 @@ function requireFileTransferPayloadSourcePath(
             }, { timeout: 15_000 });
 
             expect(requestPayloadFileAccessCount).toBeGreaterThanOrEqual(4);
-            expect(requestAttemptsByTransferId.get(providerBundleTransferId)).toBeGreaterThanOrEqual(1);
+            expect(requestAttemptsByTransferId.get(agentBundleTransferId)).toBeGreaterThanOrEqual(1);
             expect(requestAttemptsByTransferId.get(workspaceManifestTransferId)).toBeGreaterThanOrEqual(1);
         } finally {
             await disposeTransferPayloadSource(workspaceManifestSource);
@@ -1609,7 +1641,7 @@ function requireFileTransferPayloadSourcePath(
       const prepare = registered.get(RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET);
       expect(prepare).toBeDefined();
 
-            const providerBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_payload:provider-bundle-file';
+            const agentBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_payload:provider-bundle-file';
             const endpointCandidate = buildDirectPeerEndpointCandidate({
                 transferId: 'handoff_direct_peer',
                 expiresAt: Date.now() + 30_000,
@@ -1624,8 +1656,8 @@ function requireFileTransferPayloadSourcePath(
         targetPath: '/repo',
         endpointCandidates: [endpointCandidate],
         handoffMetadataV2: {
-          providerBundleTransferPublication: {
-            transferId: providerBundleTransferId,
+          agentBundleTransferPublication: {
+            transferId: agentBundleTransferId,
             sizeBytes: 0,
             manifestHash: `sha256:${'0'.repeat(64)}`,
             endpointCandidates: [endpointCandidate],
@@ -1646,6 +1678,11 @@ function requireFileTransferPayloadSourcePath(
       }
 
       expect(requestPayloadFile).toHaveBeenCalledTimes(1);
+      expect(requestPayloadFile).toHaveBeenCalledWith(expect.objectContaining({
+        transferId: agentBundleTransferId,
+        expectedSizeBytes: 0,
+        expectedManifestHash: `sha256:${'0'.repeat(64)}`,
+      }));
       expect(sendEnvelope).not.toHaveBeenCalled();
         } finally {
             await dispose();
@@ -1687,7 +1724,7 @@ function requireFileTransferPayloadSourcePath(
       expect(prepare).toBeDefined();
       expect(resultGet).toBeDefined();
 
-      const providerBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_json_payload:provider-bundle-file';
+      const agentBundleTransferId = 'session-handoff:handoff_direct_peer_invalid_json_payload:provider-bundle-file';
       const endpointCandidates = [
         buildDirectPeerEndpointCandidate({
           transferId: 'candidate-1',
@@ -1710,8 +1747,8 @@ function requireFileTransferPayloadSourcePath(
         targetPath: '/repo',
         endpointCandidates,
         handoffMetadataV2: {
-          providerBundleTransferPublication: {
-            transferId: providerBundleTransferId,
+          agentBundleTransferPublication: {
+            transferId: agentBundleTransferId,
             sizeBytes: 0,
             manifestHash: `sha256:${'0'.repeat(64)}`,
             endpointCandidates,
@@ -1750,8 +1787,8 @@ function requireFileTransferPayloadSourcePath(
       onEnvelope: () => () => {},
       sendEnvelope: vi.fn(),
     } as MachineTransferChannel & { serverId: string };
-    const providerBundlePayload = Buffer.from(JSON.stringify({
-      providerId: 'claude',
+    const agentBundlePayload = Buffer.from(JSON.stringify({
+      agentId: 'claude',
       remoteSessionId: 'claude_session_source',
       transcriptBase64: 'e30K',
     }), 'utf8');
@@ -1759,7 +1796,7 @@ function requireFileTransferPayloadSourcePath(
       if (machineTransferChannel.serverId === 'server_a') {
         throw new Error('direct peer unavailable on server_a');
       }
-      await writeFile(destinationPath, providerBundlePayload);
+      await writeFile(destinationPath, agentBundlePayload);
       return { destinationPath };
     });
 
@@ -1791,7 +1828,7 @@ function requireFileTransferPayloadSourcePath(
     expect(prepare).toBeDefined();
     expect(resultGet).toBeDefined();
 
-    const providerBundleTransferId = 'session-handoff:handoff_direct_peer_server_scoped_cache:provider-bundle-file';
+    const agentBundleTransferId = 'session-handoff:handoff_direct_peer_server_scoped_cache:provider-bundle-file';
     const endpointCandidate = buildDirectPeerEndpointCandidate({
       transferId: 'handoff_direct_peer_server_scoped_cache',
       expiresAt: Date.now() + 30_000,
@@ -1807,10 +1844,10 @@ function requireFileTransferPayloadSourcePath(
       targetPath: '/repo',
       endpointCandidates: [endpointCandidate],
       handoffMetadataV2: {
-        providerBundleTransferPublication: {
-          transferId: providerBundleTransferId,
-          sizeBytes: providerBundlePayload.byteLength,
-          manifestHash: computeManifestHash(providerBundlePayload),
+        agentBundleTransferPublication: {
+          transferId: agentBundleTransferId,
+          sizeBytes: agentBundlePayload.byteLength,
+          manifestHash: computeManifestHash(agentBundlePayload),
           endpointCandidates: [endpointCandidate],
         },
       },
@@ -1846,10 +1883,10 @@ function requireFileTransferPayloadSourcePath(
       targetPath: '/repo',
       endpointCandidates: [endpointCandidate],
       handoffMetadataV2: {
-        providerBundleTransferPublication: {
-          transferId: providerBundleTransferId,
-          sizeBytes: providerBundlePayload.byteLength,
-          manifestHash: computeManifestHash(providerBundlePayload),
+        agentBundleTransferPublication: {
+          transferId: agentBundleTransferId,
+          sizeBytes: agentBundlePayload.byteLength,
+          manifestHash: computeManifestHash(agentBundlePayload),
           endpointCandidates: [endpointCandidate],
         },
       },

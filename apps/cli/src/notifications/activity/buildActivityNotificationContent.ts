@@ -1,7 +1,6 @@
 import {
   buildAgentRequestNotificationContent,
   buildReadyNotificationContent,
-  getConnectedAccountDescriptor,
   redactBugReportSensitiveText,
 } from '@happier-dev/protocol';
 
@@ -55,15 +54,6 @@ function sanitizeNotificationAction(
   }
 }
 
-const CONNECTED_SERVICE_PROVIDER_DISPLAY_NAMES_BY_KEY: Readonly<Record<string, string>> = {
-  'connectedServices.serviceNames.openaiCodex': 'OpenAI',
-  'connectedServices.serviceNames.openai': 'OpenAI',
-  'connectedServices.serviceNames.anthropic': 'Claude',
-  'connectedServices.serviceNames.claudeSubscription': 'Claude',
-  'connectedServices.serviceNames.gemini': 'Gemini',
-  'connectedServices.serviceNames.github': 'GitHub',
-};
-
 function resolveDisplayText(value: string | null | undefined): string | null {
   const normalized = typeof value === 'string' ? value.replace(/\s+/gu, ' ').trim() : '';
   return normalized ? normalized : null;
@@ -72,11 +62,7 @@ function resolveDisplayText(value: string | null | undefined): string | null {
 function resolveConnectedServiceDisplayName(serviceId: string, explicit?: string | null): string {
   const normalizedExplicit = resolveDisplayText(explicit);
   if (normalizedExplicit) return normalizedExplicit;
-  const descriptor = getConnectedAccountDescriptor(serviceId);
-  const descriptorName = descriptor
-    ? CONNECTED_SERVICE_PROVIDER_DISPLAY_NAMES_BY_KEY[descriptor.displayKey]
-    : undefined;
-  return resolveDisplayText(descriptorName) ?? resolveDisplayText(serviceId) ?? 'Provider';
+  return resolveDisplayText(serviceId) ?? 'Provider';
 }
 
 function buildSwitchReasonSentence(reason: string, serviceDisplayName: string): string {

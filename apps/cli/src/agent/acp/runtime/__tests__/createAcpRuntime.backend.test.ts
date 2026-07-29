@@ -27,8 +27,8 @@ describe('createAcpRuntime (ensureBackend)', () => {
       ensureBackend,
     });
 
-    const first = runtime.startOrLoad({ resumeId: null });
-    const second = runtime.startOrLoad({ resumeId: null });
+    const first = runtime.sendTurnPrompt('first');
+    const second = runtime.sendTurnPrompt('second');
     await Promise.resolve();
     expect(ensureBackend).toHaveBeenCalledTimes(1);
     backendReady.resolve(undefined);

@@ -40,6 +40,12 @@ describe('happier session run action (action executor)', () => {
       expect(output.json()).toEqual(expect.objectContaining({
         ok: true,
         kind: 'session_run_action',
+        data: expect.objectContaining({
+          sessionId: 'sess-1',
+          runId: 'run-1',
+          actionId: 'action-1',
+          output: {},
+        }),
       }));
     } finally {
       output.restore();

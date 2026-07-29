@@ -33,4 +33,15 @@ describe('focusWindowsTerminalWindow', () => {
       expect.objectContaining({ shell: false }),
     );
   });
+
+  it('refuses the launch-only new-window selector without spawning collateral', async () => {
+    const child = createFakeChildProcess();
+    vi.mocked(spawn).mockReturnValue(child as unknown as ReturnType<typeof spawn>);
+
+    const pending = focusWindowsTerminalWindow({ windowId: ' NEW ' });
+    child.emit('exit', 0);
+
+    await expect(pending).resolves.toBe(1);
+    expect(spawn).not.toHaveBeenCalled();
+  });
 });

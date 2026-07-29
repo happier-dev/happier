@@ -198,7 +198,11 @@ async function normalizeRuntimeTranscribeInput(
 function createRuntimeFromEngine(engine: VoiceInferenceRuntimeEngine): VoiceInferenceRuntime {
   return {
     ...(engine.warmModel ? { warmModel: engine.warmModel } : {}),
+    ...(engine.primeModel ? { primeModel: engine.primeModel } : {}),
     ...(engine.releaseModel ? { releaseModel: engine.releaseModel } : {}),
+    ...(engine.createStreamingTranscriptionSession
+      ? { createStreamingTranscriptionSession: engine.createStreamingTranscriptionSession }
+      : {}),
     synthesizeTts: async (input) => await engine.synthesizeTts(input),
     transcribeAudio: async (input) => {
       const normalizedInput = await normalizeRuntimeTranscribeInput(engine, input);

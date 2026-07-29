@@ -24,5 +24,18 @@ describe('abortAcpRuntimeTurnIfNeeded', () => {
 
     expect(cancel).toHaveBeenCalledTimes(1);
   });
-});
 
+  it('ignores stale aborts when no ACP turn is in-flight', async () => {
+    const helper = (acpRuntimeModule as unknown as { abortAcpRuntimeTurnIfNeeded?: unknown })
+      .abortAcpRuntimeTurnIfNeeded;
+    const cancel = vi.fn(async () => {});
+    const runtime: MinimalAcpRuntime = {
+      isTurnInFlight: () => false,
+      cancel,
+    };
+
+    await expect((helper as (runtime: MinimalAcpRuntime) => Promise<boolean>)(runtime)).resolves.toBe(false);
+
+    expect(cancel).not.toHaveBeenCalled();
+  });
+});

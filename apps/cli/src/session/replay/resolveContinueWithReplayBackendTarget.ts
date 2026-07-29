@@ -1,5 +1,5 @@
 import type { BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input } from '@happier-dev/protocol';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
+import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
   isLegacyConfiguredBackendAgentCompatible,
@@ -15,7 +15,7 @@ export type ContinueWithReplayBackendTargetResolution =
       backendTargetV2: BackendTargetRefV2;
       backendTarget: BackendTargetRefV1;
       replayFlavor: string;
-      providerHintProviderId: string;
+      agentHintAgentId: string;
     }>
   | Readonly<{
       ok: false;
@@ -54,7 +54,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
           backendTargetV2: refs.backendTargetV2,
           backendTarget: refs.backendTarget,
           replayFlavor: refs.backendTargetV2.backendId,
-          providerHintProviderId: refs.backendTargetV2.backendId,
+          agentHintAgentId: refs.backendTargetV2.backendId,
         };
       }
       return {
@@ -62,7 +62,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
         backendTargetV2: refs.backendTargetV2,
         backendTarget: refs.backendTarget,
         replayFlavor: `acp:${configuredBackendId}`,
-        providerHintProviderId: `acp:${configuredBackendId}`,
+        agentHintAgentId: `acp:${configuredBackendId}`,
       };
     }
     if (isLegacyConfiguredBackendSentinelId(legacyAgent)) {
@@ -80,7 +80,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
       },
       backendTarget: { kind: 'builtInAgent', agentId: legacyAgent },
       replayFlavor: legacyAgent,
-      providerHintProviderId: legacyAgent,
+      agentHintAgentId: legacyAgent,
     };
   }
 
@@ -97,7 +97,7 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
       backendTargetV2: backendTarget.backendTargetV2,
       backendTarget: backendTarget.backendTarget,
       replayFlavor: backendId,
-      providerHintProviderId: backendId,
+      agentHintAgentId: backendId,
     };
   }
 
@@ -115,6 +115,6 @@ export function resolveContinueWithReplayBackendTarget(params: Readonly<{
     backendTargetV2: backendTarget.backendTargetV2,
     backendTarget: backendTarget.backendTarget,
     replayFlavor: `acp:${configuredBackendId}`,
-    providerHintProviderId: `acp:${configuredBackendId}`,
+    agentHintAgentId: `acp:${configuredBackendId}`,
   };
 }

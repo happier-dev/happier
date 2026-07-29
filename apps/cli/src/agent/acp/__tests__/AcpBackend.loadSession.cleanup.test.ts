@@ -58,6 +58,11 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
           continue;
         }
 
+        if (method === 'session/new') {
+          err(id, 'Internal error', 'Unable to create an ACP session.');
+          continue;
+        }
+
         ok(id, {});
       }
     });
@@ -86,6 +91,29 @@ describe('AcpBackend loadSession cleanup on failure', () => {
 
         await expect(backend.loadSession('resume-1')).rejects.toThrow(/No previous sessions found for this project/);
         await expect(backend.loadSession('resume-1')).rejects.toThrow(/No previous sessions found for this project/);
+      } finally {
+        try {
+          await backend?.dispose();
+        } catch {}
+      }
+    });
+  }, 20_000);
+
+  it('allows a second startSession attempt after an upstream new-session failure without staying initialized', async () => {
+    await withTempDir('happier-acp-new-cleanup-', async (dir) => {
+      const scriptPath = writeFakeAcpAgentScript({ dir });
+      let backend: AcpBackend | null = null;
+
+      try {
+        backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+        });
+
+        await expect(backend.startSession()).rejects.toThrow(/Unable to create an ACP session/);
+        await expect(backend.startSession()).rejects.toThrow(/Unable to create an ACP session/);
       } finally {
         try {
           await backend?.dispose();

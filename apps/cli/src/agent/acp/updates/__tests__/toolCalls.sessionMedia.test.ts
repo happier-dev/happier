@@ -4,35 +4,14 @@ vi.mock('@/ui/logger', () => {
   return { logger: { debug: vi.fn(), warn: vi.fn() } };
 });
 
-import type { AgentMessage } from '@/agent/core';
-import type { TransportHandler } from '@/agent/transport';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
+import { handleToolCallUpdate } from '../../toolCalls/legacy/handlers';
+import { createLegacyHandlerContextFixture } from '../../__tests__/legacyToolRuntimeFixture';
 
-import { handleToolCallUpdate } from '../toolCalls';
-import type { HandlerContext } from '../types';
-
-function createHandlerContext(): Readonly<{ ctx: HandlerContext; emitted: AgentMessage[] }> {
+function createHandlerContext() {
   const emitted: AgentMessage[] = [];
-  const transport: TransportHandler = {
-    agentName: 'test',
-    getInitTimeout: () => 1_000,
-    getToolPatterns: () => [],
-  };
-  const ctx: HandlerContext = {
-    transport,
-    activeToolCalls: new Set<string>(['tool-1']),
-    finalizedToolCalls: new Set<string>(),
-    toolCallLifecycleStates: new Map([['tool-1', 'running']]),
-    toolCallStartTimes: new Map<string, number>(),
-    toolCallTimeouts: new Map<string, NodeJS.Timeout>(),
-    toolCallIdToNameMap: new Map<string, string>([['tool-1', 'mcp__images__generate']]),
-    toolCallIdToInputMap: new Map<string, Record<string, unknown>>(),
-    idleTimeout: null,
-    toolCallCountSincePrompt: 1,
-    emit: (msg) => emitted.push(msg),
-    emitIdleStatus: () => {},
-    clearIdleTimeout: () => {},
-    setIdleTimeout: () => {},
-  };
+  const ctx = createLegacyHandlerContextFixture({ emit: (msg) => emitted.push(msg) });
+  ctx.toolCalls.observePermission({ toolCallId: 'tool-1', toolName: 'mcp__images__generate', input: {} });
 
   return { ctx, emitted };
 }
@@ -61,7 +40,7 @@ describe('ACP tool call session media mapping', () => {
       type: 'event',
       name: 'session_media',
       payload: expect.objectContaining({
-        localId: 'acp-media-tool-1',
+        localId: expect.stringMatching(/^acp-media-acp-result-v1:/u),
         role: 'output',
         category: 'tool-artifact',
         media: [

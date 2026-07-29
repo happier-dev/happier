@@ -1,0 +1,171 @@
+import {
+  PROVIDER_ENDPOINT_SAFETY_LIMITS,
+  ProviderCatalogParserV1Schema,
+  ProviderCatalogProbeModelV1Schema,
+  type ProviderCatalogParserV1,
+  type ProviderCatalogProbeModelV1,
+  type ProviderModelLoadStateV1,
+} from '@happier-dev/protocol';
+
+export type ParsedProviderCatalogResponse = Readonly<{
+  models: readonly ProviderCatalogProbeModelV1[];
+  loadStates: readonly Readonly<{
+    modelId: string;
+    loadState: ProviderModelLoadStateV1;
+  }>[];
+}>;
+
+function ownDataProperty(value: unknown, key: string): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Provider catalog response must be an object');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor || !descriptor.enumerable || !('value' in descriptor)) {
+    throw new TypeError(`Provider catalog response is missing ${key}`);
+  }
+  return descriptor.value;
+}
+
+function boundedArray(value: unknown, label: string): readonly unknown[] {
+  if (!Array.isArray(value)) throw new TypeError(`${label} must be an array`);
+  if (value.length > PROVIDER_ENDPOINT_SAFETY_LIMITS.maxModels) {
+    throw new TypeError(`${label} exceeds the model limit`);
+  }
+  return value;
+}
+
+function optionalOwnString(value: unknown, key: string): string | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Provider model row must be an object');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!descriptor.enumerable || !('value' in descriptor) || typeof descriptor.value !== 'string') {
+    throw new TypeError(`Provider model ${key} must be a string`);
+  }
+  return descriptor.value;
+}
+
+function requiredOwnString(value: unknown, key: string): string {
+  const output = optionalOwnString(value, key);
+  if (output === undefined) throw new TypeError(`Provider model is missing ${key}`);
+  return output;
+}
+
+function optionalOwnStringArray(
+  value: unknown,
+  key: string,
+  options: Readonly<{ maxItems: number; maxItemLength: number }>,
+): readonly string[] | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError('Provider model row must be an object');
+  }
+  const descriptor = Object.getOwnPropertyDescriptor(value, key);
+  if (!descriptor) return undefined;
+  if (!descriptor.enumerable || !('value' in descriptor) || !Array.isArray(descriptor.value)
+    || descriptor.value.length > options.maxItems) {
+    throw new TypeError(`Provider model ${key} must be a bounded string array`);
+  }
+  return descriptor.value.map((_entry, index) => {
+    const item = Object.getOwnPropertyDescriptor(descriptor.value, String(index));
+    if (!item || !item.enumerable || !('value' in item)
+      || typeof item.value !== 'string' || item.value.length > options.maxItemLength) {
+      throw new TypeError(`Provider model ${key} must be a bounded string array`);
+    }
+    return item.value;
+  });
+}
+
+function normalizeModels(models: readonly ProviderCatalogProbeModelV1[]): readonly ProviderCatalogProbeModelV1[] {
+  const parsed = models.map((model) => ProviderCatalogProbeModelV1Schema.parse(model));
+  const seen = new Set<string>();
+  for (const model of parsed) {
+    if (seen.has(model.id)) throw new TypeError('Duplicate provider model id');
+    seen.add(model.id);
+  }
+  return parsed;
+}
+
+function parseOpenAiModels(input: unknown): ParsedProviderCatalogResponse {
+  const rows = boundedArray(ownDataProperty(input, 'data'), 'OpenAI model list');
+  return {
+    models: normalizeModels(rows.map((row) => {
+      const id = requiredOwnString(row, 'id');
+      const name = optionalOwnString(row, 'name');
+      return name === undefined ? { id } : { id, name };
+    })),
+    loadStates: [],
+  };
+}
+
+function parseOllamaTags(input: unknown): ParsedProviderCatalogResponse {
+  const rows = boundedArray(ownDataProperty(input, 'models'), 'Ollama model list');
+  return {
+    models: normalizeModels(rows.flatMap((row) => {
+      const capabilities = optionalOwnStringArray(row, 'capabilities', {
+        maxItems: 32,
+        maxItemLength: 64,
+      });
+      // Newer Ollama versions expose exact model capabilities on /api/tags.
+      // A row explicitly lacking completion support cannot serve a coding-agent
+      // session. Older versions omit this field, so absence remains unknown and
+      // the model stays visible rather than being guessed incompatible.
+      if (capabilities !== undefined && !capabilities.includes('completion')) return [];
+      return [{
+        id: optionalOwnString(row, 'model') ?? requiredOwnString(row, 'name'),
+        ...(capabilities === undefined
+          ? {}
+          : {
+              capabilities: {
+                toolRoundTrips: capabilities.includes('tools') ? 'supported' as const : 'unsupported' as const,
+                reasoningControls: capabilities.includes('thinking') ? 'supported' as const : 'unsupported' as const,
+              },
+            }),
+      }];
+    })),
+    loadStates: [],
+  };
+}
+
+function parseLmStudioModels(input: unknown): ParsedProviderCatalogResponse {
+  const rows = boundedArray(ownDataProperty(input, 'models'), 'LM Studio model list');
+  const loadStates: Array<{ modelId: string; loadState: ProviderModelLoadStateV1 }> = [];
+  const models = normalizeModels(rows.flatMap((row) => {
+    const type = optionalOwnString(row, 'type');
+    if (type !== undefined && type !== 'llm' && type !== 'embedding') {
+      throw new TypeError('LM Studio model type must be llm or embedding');
+    }
+    // The native list includes embedding models, which cannot serve any coding
+    // agent's chat/responses protocol. Preserve legacy rows that predate the
+    // type field, but exclude rows explicitly identified as embeddings.
+    if (type === 'embedding') return [];
+    const id = requiredOwnString(row, 'key');
+    const name = optionalOwnString(row, 'display_name');
+    const loadedInstancesDescriptor = typeof row === 'object' && row !== null
+      ? Object.getOwnPropertyDescriptor(row, 'loaded_instances')
+      : undefined;
+    if (loadedInstancesDescriptor) {
+      if (!loadedInstancesDescriptor.enumerable || !('value' in loadedInstancesDescriptor)
+        || !Array.isArray(loadedInstancesDescriptor.value)) {
+        throw new TypeError('LM Studio loaded_instances must be an array');
+      }
+      loadStates.push({
+        modelId: id,
+        loadState: loadedInstancesDescriptor.value.length > 0 ? 'loaded' : 'unloaded',
+      });
+    }
+    return [name === undefined ? { id } : { id, name }];
+  }));
+  return { models, loadStates };
+}
+
+export function parseProviderCatalogResponse(
+  parser: ProviderCatalogParserV1,
+  input: unknown,
+): ParsedProviderCatalogResponse {
+  switch (ProviderCatalogParserV1Schema.parse(parser)) {
+    case 'openai-models': return parseOpenAiModels(input);
+    case 'ollama-tags': return parseOllamaTags(input);
+    case 'lmstudio-native-models': return parseLmStudioModels(input);
+  }
+}

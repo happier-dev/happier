@@ -2,16 +2,20 @@ import {
   getPluginHookDefinitionV1,
   readHookEventEnvelopeV1,
   validatePluginHookPayloadV1,
+  validatePluginHookResultV1,
+  type PluginHookDecisionResultV1,
   type PluginHookAggregationKindV1,
   type PluginHookFailureModeV1,
   type HookEventEnvelopeV1,
 } from '@happier-dev/protocol';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import type { ResolvedHookRegistration } from '@/plugins/projection/registry/types';
+import type { ResolvedActivationTarget } from '@/plugins/projection/registry/types';
 
-import { matchesHookRegistrationFilters } from '@/plugins/projection/hooks/matchesHookRegistrationFilters';
-import { publishHostPluginEvent } from '@/plugins/runtime/context/events';
+import {
+  matchesHookDefinitionFilters,
+  matchesHookRegistrationFilters,
+} from '@/plugins/projection/hooks/matchesHookRegistrationFilters';
 import { logger } from '@/ui/logger';
 
 export type DispatchedPluginHookOutcomeV1 = Readonly<{
@@ -45,11 +49,25 @@ type HookRuntimeRegistry = Pick<
   ResolvedExecutablePluginRuntimeRegistry,
   'hookHandlersByHookId' | 'readHookEventEnvelopeV1'
 > & Readonly<{
-  activatePluginsByEvent?: ResolvedExecutablePluginRuntimeRegistry['activatePluginsByEvent'];
+  activateContributionsOnDemand?: ResolvedExecutablePluginRuntimeRegistry['activateContributionsOnDemand'];
   contributes?: Readonly<{
-    hookRegistrations?: readonly ResolvedHookRegistration[];
+    activationTargets?: readonly ResolvedActivationTarget[];
   }>;
 }>;
+
+type PluginHookFailureClassification =
+  | 'plugin_hook_handler_failed'
+  | 'plugin_hook_handler_timed_out'
+  | 'plugin_hook_result_invalid';
+
+class PluginHookHandlerTimeoutError extends Error {
+  constructor() {
+    super('plugin_hook_handler_timed_out');
+    this.name = 'PluginHookHandlerTimeoutError';
+  }
+}
+
+const pluginHookHandlerTimeoutErrors = new WeakSet<object>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -86,31 +104,26 @@ function aggregateHookResults(
   }
 
   if (aggregation === 'firstDecision') {
-    const firstOutcome = outcomes[0];
-    const decisionResult = firstOutcome?.status === 'fulfilled'
-      ? firstOutcome.result
-      : false;
-    const denied = decisionResult === false
-      || (isRecord(decisionResult) && decisionResult.allow === false)
-      || (isRecord(decisionResult) && decisionResult.allowed === false)
-      || hasFailClosedRejection;
+    const decision = hasFailClosedRejection
+      ? { decision: 'deny' as const }
+      : fulfilledResults.find((result): result is PluginHookDecisionResultV1 => (
+          isRecord(result)
+          && (result.decision === 'allow' || result.decision === 'deny')
+        )) ?? { decision: 'abstain' as const };
     return {
       executionKind,
-      result: Object.freeze({ allowed: !denied && firstOutcome?.status !== 'rejected' }),
+      result: Object.freeze(decision),
     };
   }
 
   if (aggregation === 'allDecisions') {
     const rejected = hasFailClosedRejection
       || outcomes.some((outcome) => outcome.status === 'rejected');
-    const denied = fulfilledResults.some((result) => (
-      result === false
-      || (isRecord(result) && result.allow === false)
-      || (isRecord(result) && result.allowed === false)
-    ));
+    const denied = fulfilledResults.some((result) => isRecord(result) && result.decision === 'deny');
+    const allowed = fulfilledResults.some((result) => isRecord(result) && result.decision === 'allow');
     return {
       executionKind,
-      result: Object.freeze({ allowed: !denied && !rejected }),
+      result: Object.freeze({ decision: denied || rejected ? 'deny' : allowed ? 'allow' : 'abstain' }),
     };
   }
 
@@ -130,8 +143,7 @@ function aggregateHookResults(
 function withHookTimeout<TResult>(params: Readonly<{
   promise: Promise<TResult>;
   timeoutMs?: number;
-  pluginId: string;
-  hookId: string;
+  timeoutController?: AbortController;
 }>): Promise<TResult> {
   const timeoutMs = params.timeoutMs;
   if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
@@ -139,7 +151,10 @@ function withHookTimeout<TResult>(params: Readonly<{
   }
   return new Promise<TResult>((resolve, reject) => {
     const timeout = setTimeout(() => {
-      reject(new Error(`Plugin hook '${params.hookId}' handler for plugin '${params.pluginId}' timed out after ${Math.trunc(timeoutMs)}ms`));
+      const error = new PluginHookHandlerTimeoutError();
+      pluginHookHandlerTimeoutErrors.add(error);
+      params.timeoutController?.abort(error);
+      reject(error);
     }, Math.trunc(timeoutMs));
     timeout.unref?.();
     params.promise.then(
@@ -155,17 +170,58 @@ function withHookTimeout<TResult>(params: Readonly<{
   });
 }
 
+function createTimedHookContext(params: Readonly<{
+  context: unknown;
+  timeoutMs?: number;
+}>): Readonly<{
+  context: unknown;
+  timeoutController?: AbortController;
+  dispose(): void;
+}> {
+  const timeoutMs = params.timeoutMs;
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return { context: params.context, dispose: () => {} };
+  }
+
+  const timeoutController = new AbortController();
+  const source = isRecord(params.context) ? params.context : {};
+  const callerSignal = source.signal instanceof AbortSignal ? source.signal : null;
+  let removeCallerAbortListener = () => {};
+  if (callerSignal) {
+    const abortFromCaller = () => timeoutController.abort(callerSignal.reason);
+    if (callerSignal.aborted) {
+      abortFromCaller();
+    } else {
+      callerSignal.addEventListener('abort', abortFromCaller, { once: true });
+      removeCallerAbortListener = () => callerSignal.removeEventListener('abort', abortFromCaller);
+    }
+  }
+  return {
+    context: Object.freeze({ ...source, signal: timeoutController.signal }),
+    timeoutController,
+    dispose: removeCallerAbortListener,
+  };
+}
+
 function buildRejectedOutcome(params: Readonly<{
   pluginId: string;
   hookId: string;
-  error: unknown;
+  error: PluginHookFailureClassification;
 }>): DispatchedPluginHookOutcomeV1 {
   return {
     pluginId: params.pluginId,
     hookId: params.hookId,
     status: 'rejected',
-    error: params.error instanceof Error ? params.error.message : String(params.error ?? 'hook_dispatch_failed'),
+    error: params.error,
   };
+}
+
+function classifyPluginHookHandlerFailure(error: unknown): PluginHookFailureClassification {
+  return typeof error === 'object'
+    && error !== null
+    && pluginHookHandlerTimeoutErrors.has(error)
+    ? 'plugin_hook_handler_timed_out'
+    : 'plugin_hook_handler_failed';
 }
 
 async function publishHookObservation(params: Readonly<{
@@ -177,12 +233,11 @@ async function publishHookObservation(params: Readonly<{
       await params.publishHookObservation(params.observation);
       return;
     }
-    await publishHostPluginEvent('@happier/runtime/plugin-hook', params.observation);
   } catch (error) {
     logger.debug('[plugins] Failed to publish plugin hook observation', {
       pluginId: params.observation.pluginId,
       hookId: params.observation.hookId,
-      error,
+      error: 'plugin_hook_observation_publish_failed',
     });
   }
 }
@@ -207,19 +262,14 @@ function shouldStopDispatchAfterOutcome(params: Readonly<{
     return true;
   }
   if (params.outcome.status === 'fulfilled' && params.aggregation === 'firstDecision') {
-    return true;
+    return isRecord(params.outcome.result)
+      && (params.outcome.result.decision === 'allow' || params.outcome.result.decision === 'deny');
   }
   return false;
 }
 
-function buildHookRegistrationKey(registration: ResolvedHookRegistration): string {
-  return [
-    registration.pluginId,
-    registration.manifestPath,
-    registration.daemonEntryPath ?? '',
-    registration.definition.id,
-    registration.definition.handler.exportName ?? 'default',
-  ].join('\0');
+function buildCurrentHookDeclarationKey(pluginId: string, localId: string): string {
+  return `current\0${pluginId}\0${localId}`;
 }
 
 export async function dispatchPluginHookEvent(params: Readonly<{
@@ -229,9 +279,7 @@ export async function dispatchPluginHookEvent(params: Readonly<{
   handlerTimeoutMs?: number;
   publishHookObservation?: (record: PluginHookDispatchObservationV1) => Promise<void> | void;
 }>): Promise<DispatchPluginHookEventResultV1> {
-  const envelope = params.runtimeRegistry.readHookEventEnvelopeV1
-    ? params.runtimeRegistry.readHookEventEnvelopeV1(params.event)
-    : readHookEventEnvelopeV1(params.event);
+  const envelope = readHookEventEnvelopeV1(params.event);
   if (!envelope) {
     return {
       eventId: null,
@@ -240,8 +288,6 @@ export async function dispatchPluginHookEvent(params: Readonly<{
     };
   }
 
-  await params.runtimeRegistry.activatePluginsByEvent?.(`onHook:${envelope.eventId}`);
-  const handlers = params.runtimeRegistry.hookHandlersByHookId.get(envelope.eventId) ?? [];
   const hookDefinition = getPluginHookDefinitionV1(envelope.eventId);
   const payloadValidation = validatePluginHookPayloadV1({
     hookId: envelope.eventId,
@@ -259,26 +305,52 @@ export async function dispatchPluginHookEvent(params: Readonly<{
         ? {
             aggregate: {
               executionKind,
-              result: Object.freeze({ allowed: false }),
+              result: Object.freeze({ decision: 'deny' as const }),
             },
           }
-        : {}),
+      : {}),
     };
   }
+  const hookActivationDemands = (params.runtimeRegistry.contributes?.activationTargets ?? []).flatMap((target) => (
+    target.manifest.contributes.hooks.flatMap((hook) => (
+      hook.on === envelope.eventId
+      && matchesHookDefinitionFilters(envelope, hook)
+        ? [{ pluginId: target.pluginId, family: 'hooks', localId: hook.id }]
+        : []
+    ))
+  ));
+  await params.runtimeRegistry.activateContributionsOnDemand?.(hookActivationDemands);
+  const handlers = params.runtimeRegistry.hookHandlersByHookId.get(envelope.eventId) ?? [];
   const outcomes: DispatchedPluginHookOutcomeV1[] = [];
   let matchedExecutionKind: string | null = null;
   const aggregation = hookDefinition?.aggregation ?? null;
   const failureMode = hookDefinition?.failureMode ?? null;
+  const initialReplacementPayload = payloadValidation.payload;
   let currentReplacementPayload = payloadValidation.payload;
-  const matchingFailClosedRegistrations = failureMode === 'failClosed'
-    ? (params.runtimeRegistry.contributes?.hookRegistrations ?? []).filter((registration) => (
-        registration.definition.id === envelope.eventId
-        && matchesHookRegistrationFilters(envelope, registration)
+  let replacementFailed = false;
+  const matchingCurrentFailClosedDeclarations = failureMode === 'failClosed'
+    ? (params.runtimeRegistry.contributes?.activationTargets ?? []).flatMap((target) => (
+        target.manifest.contributes.hooks.flatMap((declaration) => (
+          declaration.on === envelope.eventId
+          && matchesHookDefinitionFilters(envelope, declaration)
+            ? [Object.freeze({
+                key: buildCurrentHookDeclarationKey(target.pluginId, declaration.id),
+                pluginId: target.pluginId,
+                hookId: declaration.on,
+                executionKind: declaration.executionKind,
+              })]
+            : []
+        ))
       ))
     : [];
+  const matchingFailClosedDeclarations = matchingCurrentFailClosedDeclarations;
   const matchingHandlers = handlers.filter((handler) => matchesHookRegistrationFilters(envelope, handler.registration));
   const availableRegistrationKeys = new Set(
-    matchingHandlers.map((handler) => buildHookRegistrationKey(handler.registration)),
+    matchingHandlers.flatMap((handler) => (
+      handler.localId
+        ? [buildCurrentHookDeclarationKey(handler.pluginId, handler.localId)]
+        : []
+    )),
   );
 
   for (const handler of matchingHandlers) {
@@ -289,23 +361,29 @@ export async function dispatchPluginHookEvent(params: Readonly<{
       const dispatchEnvelope = aggregation === 'replace'
         ? Object.freeze({ ...envelope, payload: currentReplacementPayload })
         : envelope;
-      const result = await withHookTimeout({
-        promise: Promise.resolve(handler.handler(dispatchEnvelope, params.context)),
+      const timedContext = createTimedHookContext({
+        context: params.context,
         timeoutMs: params.handlerTimeoutMs,
-        pluginId: handler.pluginId,
-        hookId: handler.hookId,
       });
-      const replacementValidation = aggregation === 'replace' && typeof result !== 'undefined'
-        ? validatePluginHookPayloadV1({
-            hookId: envelope.eventId,
-            payload: result,
-          })
-        : { success: true as const, payload: currentReplacementPayload };
-      if (!replacementValidation.success) {
+      let result: unknown;
+      try {
+        result = await withHookTimeout({
+          promise: Promise.resolve(handler.handler(dispatchEnvelope, timedContext.context)),
+          timeoutMs: params.handlerTimeoutMs,
+          timeoutController: timedContext.timeoutController,
+        });
+      } finally {
+        timedContext.dispose();
+      }
+      const resultValidation = validatePluginHookResultV1({
+        hookId: envelope.eventId,
+        result,
+      });
+      if (!resultValidation.success) {
         const outcome = buildRejectedOutcome({
           pluginId: handler.pluginId,
           hookId: handler.hookId,
-          error: replacementValidation.message,
+          error: 'plugin_hook_result_invalid',
         });
         outcomes.push(outcome);
         logRejectedHookOutcome(outcome);
@@ -319,13 +397,17 @@ export async function dispatchPluginHookEvent(params: Readonly<{
           },
           publishHookObservation: params.publishHookObservation,
         });
+        if (aggregation === 'replace') {
+          replacementFailed = true;
+          break;
+        }
         if (shouldStopDispatchAfterOutcome({ aggregation, failureMode, outcome })) {
           break;
         }
         continue;
       }
       if (aggregation === 'replace' && typeof result !== 'undefined') {
-        currentReplacementPayload = replacementValidation.payload;
+        currentReplacementPayload = resultValidation.result;
       }
       const outcome: DispatchedPluginHookOutcomeV1 = {
         pluginId: handler.pluginId,
@@ -333,7 +415,7 @@ export async function dispatchPluginHookEvent(params: Readonly<{
         status: 'fulfilled',
         ...(aggregation === 'replace'
           ? { result: currentReplacementPayload }
-          : typeof result === 'undefined' ? {} : { result }),
+          : typeof resultValidation.result === 'undefined' ? {} : { result: resultValidation.result }),
       };
       outcomes.push(outcome);
       await publishHookObservation({
@@ -352,7 +434,7 @@ export async function dispatchPluginHookEvent(params: Readonly<{
       const outcome: DispatchedPluginHookOutcomeV1 = buildRejectedOutcome({
         pluginId: handler.pluginId,
         hookId: handler.hookId,
-        error,
+        error: classifyPluginHookHandlerFailure(error),
       });
       outcomes.push(outcome);
       logRejectedHookOutcome(outcome);
@@ -366,23 +448,27 @@ export async function dispatchPluginHookEvent(params: Readonly<{
         },
         publishHookObservation: params.publishHookObservation,
       });
+      if (aggregation === 'replace') {
+        replacementFailed = true;
+        break;
+      }
       if (shouldStopDispatchAfterOutcome({ aggregation, failureMode, outcome })) {
         break;
       }
     }
   }
 
-  if (failureMode === 'failClosed' && matchingFailClosedRegistrations.length > 0) {
-    const unavailableRegistration = matchingFailClosedRegistrations.find(
-      (registration) => !availableRegistrationKeys.has(buildHookRegistrationKey(registration)),
+  if (failureMode === 'failClosed' && matchingFailClosedDeclarations.length > 0) {
+    const unavailableDeclaration = matchingFailClosedDeclarations.find(
+      (declaration) => !availableRegistrationKeys.has(declaration.key),
     );
-    if (unavailableRegistration) {
-      matchedExecutionKind ??= unavailableRegistration.definition.executionKind;
+    if (unavailableDeclaration) {
+      matchedExecutionKind ??= unavailableDeclaration.executionKind;
       outcomes.push({
-        pluginId: unavailableRegistration.pluginId,
-        hookId: unavailableRegistration.definition.id,
+        pluginId: unavailableDeclaration.pluginId,
+        hookId: unavailableDeclaration.hookId,
         status: 'rejected',
-        error: `Plugin hook '${unavailableRegistration.definition.id}' declared by plugin '${unavailableRegistration.pluginId}' is unavailable.`,
+        error: `Plugin hook '${unavailableDeclaration.hookId}' declared by plugin '${unavailableDeclaration.pluginId}' is unavailable.`,
       });
     }
   }
@@ -392,7 +478,9 @@ export async function dispatchPluginHookEvent(params: Readonly<{
     matchedExecutionKind,
     aggregation,
     failureMode,
-    aggregation === 'replace' ? currentReplacementPayload : undefined,
+    aggregation === 'replace'
+      ? replacementFailed ? initialReplacementPayload : currentReplacementPayload
+      : undefined,
   );
   return {
     eventId: envelope.eventId,

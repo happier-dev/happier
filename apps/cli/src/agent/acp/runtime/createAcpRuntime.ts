@@ -7,9 +7,12 @@ import { createStreamedTranscriptWriter } from '@/api/session/streamedTranscript
 import type { TranscriptSessionPort } from '@/api/session/transcriptPort';
 import type { AgentState } from '@/api/types';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
-import { createAcpPendingQueuePump, type AcpRuntimePendingQueue } from './createAcpPendingQueuePump';
 import { createBoundedToolCallNameCache } from './createBoundedToolCallNameCache';
-import type { RuntimeTurnConfigUpdate, RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import type {
+  RuntimeTurnConfigUpdate,
+  RuntimeTurnOperations,
+  RuntimeTurnSessionOpenIntent,
+} from '@/agent/runtime/turns/runtimeTurnOperations';
 import type { RuntimeEventV1 } from '@happier-dev/protocol';
 import { createAcpRuntimeLifecycleMethods } from './createAcpRuntimeLifecycleMethods';
 import { attachAcpRuntimeMessageHandler } from './attachAcpRuntimeMessageHandler';
@@ -29,7 +32,6 @@ export type AcpRuntime = Readonly<{
   beginTurn: () => void;
   cancel: () => Promise<void>;
   reset: () => Promise<void>;
-  startOrLoad: (opts: { resumeId?: string | null; importHistory?: boolean }) => Promise<string>;
   /**
    * Request a provider-native ACP session mode change (e.g. "plan" vs "code") when supported.
    * No-op when unsupported or when the session has not been started/loaded.
@@ -67,8 +69,13 @@ export async function abortAcpRuntimeTurnIfNeeded(
   return true;
 }
 
+const CREATE_ACP_SESSION_INTENT: RuntimeTurnSessionOpenIntent = Object.freeze({
+  kind: 'create',
+});
+
 export function createAcpRuntime(params: {
   provider: string;
+  transcriptProvider?: string;
   directory: string;
   happierSessionId?: string;
   session: AcpRuntimeSessionClient;
@@ -78,6 +85,7 @@ export function createAcpRuntime(params: {
   permissionHandler: AcpPermissionHandler;
   onThinkingChange: (thinking: boolean) => void;
   ensureBackend: () => Promise<AcpRuntimeBackend>;
+  sessionOpenIntent?: RuntimeTurnSessionOpenIntent;
   /**
    * Defensive controls for the tool-call name cache (callId -> toolName).
    *
@@ -105,11 +113,6 @@ export function createAcpRuntime(params: {
   inFlightSteer?: {
     enabled?: boolean;
   };
-  /**
-   * Optional pending-queue integration used to materialize server-backed pending messages
-   * while a steer-capable turn is in-flight.
-   */
-  pendingQueue?: AcpRuntimePendingQueue;
   /**
    * Optional lifecycle hooks for per-provider turn processing.
    *
@@ -171,6 +174,7 @@ export function createAcpRuntime(params: {
     turnInFlight: false,
     currentRuntimeTurnId: null as string | null,
     currentTurnId: null as string | null,
+    nextSessionOpenIntent: params.sessionOpenIntent ?? CREATE_ACP_SESSION_INTENT,
   };
   const runtimeEventSubscribers = new Set<(event: RuntimeEventV1) => void>();
   const readRuntimeSessionId = (): string => {
@@ -230,10 +234,7 @@ export function createAcpRuntime(params: {
       .toLowerCase();
     return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on';
   })();
-  const pendingQueuePump = createAcpPendingQueuePump({
-    enabled: inFlightSteerEnabled,
-    pendingQueue: params.pendingQueue,
-  });
+  const transcriptProvider = params.transcriptProvider ?? params.provider;
 
   const toolCallCacheMaxEntries = Math.max(1, params.toolCallCache?.maxEntries ?? 1_000);
   const toolCallCacheTtlMs = Math.max(1, params.toolCallCache?.ttlMs ?? 10 * 60_000);
@@ -242,7 +243,7 @@ export function createAcpRuntime(params: {
     ttlMs: toolCallCacheTtlMs,
   });
   const streamedTranscriptWriter = createStreamedTranscriptWriter({
-    provider: params.provider,
+    provider: transcriptProvider,
     session: params.transcriptSession ?? params.session,
   });
 
@@ -257,6 +258,7 @@ export function createAcpRuntime(params: {
     attachAcpRuntimeMessageHandler({
       backend: b,
       provider: params.provider,
+      transcriptProvider,
       happierSessionId: params.happierSessionId ?? null,
       directory: params.directory,
       session: params.session,
@@ -295,6 +297,7 @@ export function createAcpRuntime(params: {
 
   const lifecycleMethods = createAcpRuntimeLifecycleMethods({
     provider: params.provider,
+    transcriptProvider,
     session: params.session,
     permissionHandler: params.permissionHandler,
     hooks: params.hooks,
@@ -305,11 +308,21 @@ export function createAcpRuntime(params: {
     state,
     inFlightSteerEnabled,
     acpTraceMarkersEnabled,
-    pendingQueuePump,
     streamedTranscriptWriter,
     onThinkingChange: params.onThinkingChange,
     publishRuntimeEvent,
   });
+  const openSessionForNextUse = async (
+    opts: Readonly<{
+      resumeId?: string | null;
+      importHistory?: boolean;
+      currentPromptText?: string | null;
+    }>,
+  ): Promise<string> => {
+    const sessionId = await lifecycleMethods.openSession(opts);
+    state.nextSessionOpenIntent = CREATE_ACP_SESSION_INTENT;
+    return sessionId;
+  };
 
   const runtime: AcpRuntimeWithTurnOperations = {
     getSessionId: () => state.sessionId,
@@ -318,13 +331,20 @@ export function createAcpRuntime(params: {
     beginTurnLifecycle: () => {
       runtime.beginTurn();
     },
-    async startOrLoadSession(opts) {
-      await runtime.startOrLoad({
-        resumeId: opts?.resumeId ?? null,
-        ...(typeof opts?.importHistory === 'boolean' ? { importHistory: opts.importHistory } : {}),
-      });
-    },
     async sendTurnPrompt(prompt: string) {
+      if (runtime.getSessionId() === null) {
+        const intent = state.nextSessionOpenIntent;
+        await openSessionForNextUse(intent.kind === 'resume'
+          ? {
+              resumeId: intent.providerSessionId,
+              importHistory: intent.importHistory,
+              currentPromptText: prompt,
+            }
+          : {
+              resumeId: null,
+              currentPromptText: prompt,
+            });
+      }
       await runtime.sendPrompt(prompt);
     },
     async steerInFlightTurn(prompt: string) {
@@ -342,7 +362,6 @@ export function createAcpRuntime(params: {
         runtimeEventSubscribers.delete(runtimeEventHandler);
       };
     },
-    async respondToPermission() {},
     async cancelTurn() {
       await runtime.cancel();
     },
@@ -360,8 +379,9 @@ export function createAcpRuntime(params: {
         await runtime.setSessionConfigOption(update.configOption.id, update.configOption.value);
       }
     },
-    async resetOrDisposeRuntime() {
+    async resetOrDisposeRuntime(_reason, nextSessionOpenIntent) {
       await runtime.reset();
+      state.nextSessionOpenIntent = nextSessionOpenIntent ?? CREATE_ACP_SESSION_INTENT;
     },
     beginTurn: () => {
       publishInFlightSteerCapabilities(true);
@@ -377,11 +397,11 @@ export function createAcpRuntime(params: {
     reset: async () => {
       try {
         await lifecycleMethods.reset();
+        state.nextSessionOpenIntent = CREATE_ACP_SESSION_INTENT;
       } finally {
         publishInFlightSteerCapabilities(false);
       }
     },
-    startOrLoad: lifecycleMethods.startOrLoad,
     setSessionMode: lifecycleMethods.setSessionMode,
     setSessionModel: lifecycleMethods.setSessionModel,
     setSessionConfigOption: lifecycleMethods.setSessionConfigOption,

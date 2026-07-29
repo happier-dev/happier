@@ -43,7 +43,7 @@ export async function waitForExistingSessionExitIfStopRequested(params: Readonly
   isSessionRunnerActive: (sessionId: string) => Promise<boolean>;
   timeoutMs: number;
   pollIntervalMs: number;
-  onExitObserved?: (pid: number, exit: ExitObservation) => void;
+  onExitObserved?: (pid: number, exit: ExitObservation) => void | Promise<void>;
 }>): Promise<void> {
   const normalizedSessionId = String(params.sessionId ?? '').trim();
   if (!normalizedSessionId) return;
@@ -64,7 +64,7 @@ export async function waitForExistingSessionExitIfStopRequested(params: Readonly
         pidToTrackedSession: params.pidToTrackedSession,
       });
       for (const pid of matchingPids) {
-        params.onExitObserved?.(pid, { reason: 'process-missing', code: null, signal: null });
+        await params.onExitObserved?.(pid, { reason: 'process-missing', code: null, signal: null });
       }
       return;
     }

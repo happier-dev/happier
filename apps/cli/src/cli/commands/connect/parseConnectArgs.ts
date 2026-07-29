@@ -1,5 +1,7 @@
 export type ConnectParsedOptions = Readonly<{
   profileId: string;
+  accountId: string | null;
+  modeId: string | null;
   paste: boolean;
   device: boolean;
   noOpen: boolean;
@@ -26,6 +28,10 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
 
   const profileFlagIdx = args.findIndex((a) => a === '--profile');
   const profileId = profileFlagIdx !== -1 ? String(args[profileFlagIdx + 1] ?? '').trim() : '';
+  const accountFlagIdx = args.findIndex((a) => a === '--account');
+  const accountId = accountFlagIdx !== -1 ? String(args[accountFlagIdx + 1] ?? '').trim() : '';
+  const modeFlagIdx = args.findIndex((a) => a === '--mode');
+  const modeId = modeFlagIdx !== -1 ? String(args[modeFlagIdx + 1] ?? '').trim() : '';
 
   const timeoutFlagIdx = args.findIndex((a) => a === '--timeout');
   const timeoutRaw = timeoutFlagIdx !== -1 ? String(args[timeoutFlagIdx + 1] ?? '').trim() : '';
@@ -45,10 +51,14 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
     '--api_key',
     '--token',
     '--profile',
+    '--account',
+    '--mode',
     '--timeout',
   ]);
   const valuesConsumedByFlags = new Set<number>([
     profileFlagIdx !== -1 ? profileFlagIdx + 1 : -1,
+    accountFlagIdx !== -1 ? accountFlagIdx + 1 : -1,
+    modeFlagIdx !== -1 ? modeFlagIdx + 1 : -1,
     timeoutFlagIdx !== -1 ? timeoutFlagIdx + 1 : -1,
   ]);
 
@@ -63,6 +73,8 @@ export function parseConnectArgs(args: ReadonlyArray<string>): Readonly<{
     subcommand,
     options: {
       profileId: profileId || 'default',
+      accountId: accountId || null,
+      modeId: modeId || null,
       paste,
       device,
       noOpen,

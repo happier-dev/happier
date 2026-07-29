@@ -9,21 +9,37 @@ import axios from 'axios';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import type { ForkResultV1, ForkSurfaceV1 } from '@happier-dev/agents';
 import { accountSettingsParse, sealEncryptedDataKeyEnvelopeV1, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol';
-import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
+import {
+  buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor,
+  buildOpenCodeAgentRuntimeDescriptorV1 as buildOpenCodeAgentRuntimeDescriptor,
+} from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 import { encrypt, encodeBase64 } from '@/api/encryption';
 import { collectBugReportMachineDiagnosticsSnapshot } from '@/diagnostics/bugReportMachineDiagnostics';
 import { removeExecutionRunMarker, writeExecutionRunMarker } from '@/daemon/executionRunRegistry';
-import { registerMachineRpcHandlers } from './rpcHandlers';
+import { registerMachineRpcHandlers as registerMachineRpcHandlersImpl } from './rpcHandlers';
+import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import { registerMachineMemoryRpcHandlers } from './rpcHandlers.memory';
 import type { Credentials } from '@/persistence';
 import { DEFAULT_MEMORY_SETTINGS } from '@/settings/memorySettings';
 import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createAuthenticationHttpStatusError } from '@/api/client/httpStatusError';
 
-const { readCredentialsMock, psListMock } = vi.hoisted(() => ({
+const {
+  readCredentialsMock,
+  psListMock,
+  resolveExecutionSurfacesMock,
+  evaluateAgentSessionCapabilitySupportMock,
+} = vi.hoisted(() => ({
   readCredentialsMock: vi.fn<() => Promise<Credentials | null>>(async () => null),
   psListMock: vi.fn(async () => [] as any[]),
+  resolveExecutionSurfacesMock: vi.fn<
+    (backendId?: string | null) => Promise<BackendExecutionSurfaces>
+  >(),
+  evaluateAgentSessionCapabilitySupportMock: vi.fn<() => 'supported' | 'unsupported'>(
+    () => 'unsupported',
+  ),
 }));
 
 const { updateSessionMetadataWithRetryMock } = vi.hoisted(() => ({
@@ -31,18 +47,6 @@ const { updateSessionMetadataWithRetryMock } = vi.hoisted(() => ({
     version: Number(args?.rawSession?.metadataVersion ?? 0) + 1,
     metadata: (args?.updater ? args.updater({}) : {}) as Record<string, unknown>,
   })),
-}));
-
-const { dispatchProviderNativeForkMock } = vi.hoisted(() => ({
-  dispatchProviderNativeForkMock: vi.fn(async () => null as any),
-}));
-
-const { createCatalogAcpBackendMock } = vi.hoisted(() => ({
-  createCatalogAcpBackendMock: vi.fn(async () => null as any),
-}));
-
-const { createConfiguredAcpBackendMock } = vi.hoisted(() => ({
-  createConfiguredAcpBackendMock: vi.fn(() => null as any),
 }));
 
 const { createCodexAppServerClientMock } = vi.hoisted(() => ({
@@ -102,18 +106,6 @@ vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
   updateSessionMetadataWithRetry: updateSessionMetadataWithRetryMock,
 }));
 
-vi.mock('@/session/fork/providerNativeForkDispatch', () => ({
-  dispatchProviderNativeFork: dispatchProviderNativeForkMock,
-}));
-
-vi.mock('@/agent/acp/createCatalogAcpBackend', () => ({
-  createCatalogAcpBackend: createCatalogAcpBackendMock,
-}));
-
-vi.mock('@/agent/acp/catalog/configured/createConfiguredAcpBackend', () => ({
-  createConfiguredAcpBackend: createConfiguredAcpBackendMock,
-}));
-
 vi.mock('@happier-dev/plugins-codex/agent/runtime/appServer/client', () => ({
   createCodexAppServerClient: createCodexAppServerClientMock,
 }));
@@ -122,6 +114,172 @@ vi.mock('@/features/serverFeaturesClient', () => ({
   fetchServerFeaturesSnapshot: fetchServerFeaturesSnapshotMock,
 }));
 
+vi.mock('@happier-dev/agents', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@happier-dev/agents')>(),
+  evaluateAgentSessionCapabilitySupport: evaluateAgentSessionCapabilitySupportMock,
+}));
+
+vi.mock('@/daemon/controlClient', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/daemon/controlClient')>(),
+}));
+
+function emptyExecutionSurfaces(
+  overrides: Partial<BackendExecutionSurfaces> = {},
+): BackendExecutionSurfaces {
+  return {
+    terminalRuntime: null,
+    externalSession: null,
+    attach: null,
+    handoff: null,
+    fork: null,
+    checkpoint: null,
+    ...overrides,
+  };
+}
+
+function mockForkSurfaceOnce(
+  implementation: NonNullable<ForkSurfaceV1['fork']>,
+): NonNullable<ForkSurfaceV1['fork']> {
+  const fork = vi.fn(implementation);
+  resolveExecutionSurfacesMock.mockResolvedValueOnce(emptyExecutionSurfaces({
+    fork: { fork },
+  }));
+  return fork;
+}
+
+function mockReplayChildLaunchSurfaceOnce(
+  implementation: NonNullable<ForkSurfaceV1['resolveReplayChildLaunch']>,
+): NonNullable<ForkSurfaceV1['resolveReplayChildLaunch']> {
+  const resolveReplayChildLaunch = vi.fn(implementation);
+  resolveExecutionSurfacesMock.mockResolvedValueOnce(emptyExecutionSurfaces({
+    fork: { resolveReplayChildLaunch },
+  }));
+  return resolveReplayChildLaunch;
+}
+
+function createOpenCodeForkResult(params: Readonly<{
+  providerSessionId: string;
+  backendMode?: 'acp' | 'server';
+  serverBaseUrl?: string;
+  serverBaseUrlExplicit?: boolean;
+  environmentVariables?: Record<string, string>;
+}>): ForkResultV1 {
+  const backendMode = params.backendMode ?? 'server';
+  return {
+    providerSessionId: params.providerSessionId,
+    launch: {
+      ...(params.environmentVariables
+        ? { environmentVariables: params.environmentVariables }
+        : {}),
+      sessionStateUpdates: [
+        {
+          fieldId: 'identity.runtimeDescriptor',
+          value: buildOpenCodeAgentRuntimeDescriptor({
+            backendMode,
+            providerSessionId: params.providerSessionId,
+            serverBaseUrl: params.serverBaseUrl,
+            serverBaseUrlExplicit: params.serverBaseUrlExplicit,
+          }),
+        },
+        {
+          fieldId: 'identity.providerSessionId',
+          value: params.providerSessionId,
+        },
+      ],
+    },
+  };
+}
+
+function createCodexForkResult(params: Readonly<{
+  providerSessionId: string;
+  backendMode?: 'acp' | 'appServer';
+  home?: 'connectedService' | 'user';
+  connectedServiceId?: string;
+  connectedServiceProfileId?: string;
+  connectedServiceGroupId?: string;
+  homePath?: string;
+  environmentVariables?: Record<string, string>;
+}>): ForkResultV1 {
+  return {
+    providerSessionId: params.providerSessionId,
+    launch: {
+      ...(params.environmentVariables
+        ? { environmentVariables: params.environmentVariables }
+        : {}),
+      sessionStateUpdates: [
+        {
+          fieldId: 'identity.runtimeDescriptor',
+          value: buildCodexAgentRuntimeDescriptor({
+            backendMode: params.backendMode ?? 'appServer',
+            providerSessionId: params.providerSessionId,
+            home: params.home,
+            connectedServiceId: params.connectedServiceId,
+            connectedServiceProfileId: params.connectedServiceProfileId,
+            connectedServiceGroupId: params.connectedServiceGroupId,
+            homePath: params.homePath,
+          }),
+        },
+        {
+          fieldId: 'identity.providerSessionId',
+          value: params.providerSessionId,
+        },
+      ],
+    },
+  };
+}
+
+function mockAxiosGetSequenceWithSystemRecordMiss(
+  responses: readonly unknown[],
+) {
+  let responseIndex = 0;
+  return vi.spyOn(axios, 'get').mockImplementation(async (url: unknown) => {
+    if (String(url).includes('/system-records/latest')) {
+      return { status: 200, data: { record: null } } as any;
+    }
+    const response = responses[responseIndex];
+    responseIndex += 1;
+    if (response === undefined) {
+      throw new Error(`Unexpected axios.get request in RPC fixture: ${String(url)}`);
+    }
+    return response as any;
+  });
+}
+
+function registerMachineRpcHandlers(
+  params: Parameters<typeof registerMachineRpcHandlersImpl>[0],
+): ReturnType<typeof registerMachineRpcHandlersImpl> {
+  let latestSpawnOptions: Record<string, any> | null = null;
+  return registerMachineRpcHandlersImpl({
+    ...params,
+    handlers: {
+      ...params.handlers,
+      spawnSession: async (options) => {
+        latestSpawnOptions = options as Record<string, any>;
+        return await params.handlers.spawnSession(options);
+      },
+    },
+    deps: {
+      ...params.deps,
+      resolveExecutionSurfaces: resolveExecutionSurfacesMock,
+      awaitAgentSessionOpen: params.deps?.awaitAgentSessionOpen ?? (async ({ sessionId }) => {
+        const nativeForkSource = latestSpawnOptions?.nativeForkSource;
+        if (!nativeForkSource) {
+          return { status: 'timeout' as const };
+        }
+        return {
+          status: 'opened' as const,
+          request: {
+            kind: 'fork' as const,
+            sessionId,
+            cwd: latestSpawnOptions?.directory,
+            source: nativeForkSource,
+          },
+        };
+      }),
+    },
+  });
+}
+
 describe('registerMachineRpcHandlers', () => {
   beforeEach(() => {
     // Many tests spy on axios.get; restore between tests so mockResolvedValueOnce
@@ -129,10 +287,11 @@ describe('registerMachineRpcHandlers', () => {
     vi.restoreAllMocks();
     readCredentialsMock.mockReset();
     psListMock.mockReset();
+    resolveExecutionSurfacesMock.mockReset();
+    resolveExecutionSurfacesMock.mockResolvedValue(emptyExecutionSurfaces());
+    evaluateAgentSessionCapabilitySupportMock.mockReset();
+    evaluateAgentSessionCapabilitySupportMock.mockReturnValue('unsupported');
     updateSessionMetadataWithRetryMock.mockClear();
-    dispatchProviderNativeForkMock.mockReset();
-    createCatalogAcpBackendMock.mockReset();
-    createConfiguredAcpBackendMock.mockReset();
     createCodexAppServerClientMock.mockReset();
     createCodexAppServerClientMock.mockResolvedValue({
       request: vi.fn(async () => ({ threadId: 'codex-thread-forked' })),
@@ -196,7 +355,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(resolveSpawnSessionByNonce).toHaveBeenCalledWith('spawn-nonce-1');
   });
 
-  it('normalizes empty modelId to undefined when spawning a session', async () => {
+  it('drops empty legacy model input when spawning a session', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -204,7 +363,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -224,7 +383,10 @@ describe('registerMachineRpcHandlers', () => {
       modelUpdatedAt: 123,
     });
 
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ modelId: undefined, modelUpdatedAt: 123 }));
+    const [spawnOptions] = spawnSession.mock.calls[0] ?? [];
+    expect(spawnOptions).toEqual(expect.objectContaining({ modelSelection: undefined }));
+    expect(spawnOptions).not.toHaveProperty('modelId');
+    expect(spawnOptions).not.toHaveProperty('modelUpdatedAt');
   });
 
   it('forwards account settings version hints when spawning a session', async () => {
@@ -235,7 +397,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -259,7 +421,7 @@ describe('registerMachineRpcHandlers', () => {
     }));
   });
 
-  it('normalizes whitespace-only modelId to undefined when resuming a session', async () => {
+  it('drops whitespace-only legacy model input when resuming a session', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
       registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
@@ -267,7 +429,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -289,7 +451,10 @@ describe('registerMachineRpcHandlers', () => {
       modelUpdatedAt: 456,
     });
 
-    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ modelId: undefined, modelUpdatedAt: 456 }));
+    const [spawnOptions] = spawnSession.mock.calls[0] ?? [];
+    expect(spawnOptions).toEqual(expect.objectContaining({ modelSelection: undefined }));
+    expect(spawnOptions).not.toHaveProperty('modelId');
+    expect(spawnOptions).not.toHaveProperty('modelUpdatedAt');
   });
 
   it('passes through environmentVariables when resuming a session', async () => {
@@ -300,7 +465,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -341,7 +506,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -406,7 +571,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -749,7 +914,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -783,7 +948,6 @@ describe('registerMachineRpcHandlers', () => {
       directory: '/tmp',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       spawnNonce: 'spawn-nonce-1',
-      initialPrompt: 'Summarize the repo',
       connectedServices: {
         v: 1,
         bindingsByServiceId: {
@@ -793,6 +957,8 @@ describe('registerMachineRpcHandlers', () => {
       transcriptStorage: 'direct',
       windowsTerminalWindowName: 'happier-qa',
     }));
+    const [spawnOptions] = spawnSession.mock.calls[0] ?? [];
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
     const firstSpawnCall = spawnSession.mock.calls.at(0) as [unknown] | undefined;
     const forwardedSpawn = firstSpawnCall?.[0] as
       | {
@@ -806,6 +972,41 @@ describe('registerMachineRpcHandlers', () => {
     expect(forwardedSpawn?.workspaceCheckoutId).toBeUndefined();
   });
 
+  it('generates a recoverable nonce without leaking legacy prompt input into daemon spawn', async () => {
+    const registered = new Map<string, (params: any) => Promise<any>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (params: any) => Promise<any>) => {
+        registered.set(method, handler);
+      },
+    } as any;
+
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
+    registerMachineRpcHandlers({
+      rpcHandlerManager,
+      handlers: {
+        spawnSession,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+      },
+    });
+
+    const handler = registered.get(RPC_METHODS.SPAWN_HAPPY_SESSION);
+    expect(handler).toBeDefined();
+
+    const result = await handler!({
+      directory: '/tmp',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      initialPrompt: 'Summarize the repo',
+    });
+
+    expect(result).toEqual({ type: 'success', sessionId: 's1' });
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
+      spawnNonce: expect.stringMatching(/\S/),
+    }));
+    const [spawnOptions] = spawnSession.mock.calls[0] ?? [];
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
+  });
+
   it('passes canonical transport-backed spawn fields through when resuming a session and preserves sessionId aliasing', async () => {
     const registered = new Map<string, (params: any) => Promise<any>>();
     const rpcHandlerManager = {
@@ -814,7 +1015,7 @@ describe('registerMachineRpcHandlers', () => {
       },
     } as any;
 
-    const spawnSession = vi.fn(async () => ({ type: 'success', sessionId: 's1' } as const));
+    const spawnSession = vi.fn(async (_options: unknown) => ({ type: 'success', sessionId: 's1' } as const));
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
@@ -833,7 +1034,6 @@ describe('registerMachineRpcHandlers', () => {
       directory: '/tmp',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       spawnNonce: 'resume-nonce-1',
-      initialPrompt: 'Resume from here',
       profileId: 'profile-work',
       agentModeId: 'plan',
       agentModeUpdatedAt: 654,
@@ -856,7 +1056,6 @@ describe('registerMachineRpcHandlers', () => {
       directory: '/tmp',
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       spawnNonce: 'resume-nonce-1',
-      initialPrompt: 'Resume from here',
       profileId: 'profile-work',
       terminal: {
         mode: 'tmux',
@@ -871,6 +1070,8 @@ describe('registerMachineRpcHandlers', () => {
       },
       transcriptStorage: 'direct',
     }));
+    const [spawnOptions] = spawnSession.mock.calls[0] ?? [];
+    expect(spawnOptions).not.toHaveProperty('initialPrompt');
     const firstResumeCall = spawnSession.mock.calls.at(0) as [unknown] | undefined;
     const resumedSpawn = firstResumeCall?.[0] as
       | {
@@ -952,7 +1153,7 @@ describe('registerMachineRpcHandlers', () => {
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'mcp',
           providerSessionId: 'codex-session-legacy',
@@ -976,11 +1177,11 @@ describe('registerMachineRpcHandlers', () => {
       codexBackendMode: 'appServer',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'mcp',
           providerSessionId: 'codex-session-legacy',
-          providerExtra: {
+          agentExtra: {
             owner: 'codex',
             schemaId: 'codex.agentRuntimeDescriptorExtra',
             v: 1,
@@ -1446,7 +1647,7 @@ describe('registerMachineRpcHandlers', () => {
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
     expect(createdMeta.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_prev', parentCutoffSeqInclusive: 3, strategy: 'replay' });
-    expect(createdMeta.forkV1.providerHint).toMatchObject({ providerId: 'acp:review-bot' });
+    expect(createdMeta.forkV1.agentHint).toMatchObject({ agentId: 'acp:review-bot' });
     expect(createdMeta.replaySeedV1).toMatchObject({ v: 1, sourceSessionId: 'sess_prev', sourceCutoffSeqInclusive: 3 });
     expect(createdMeta.flavor).toBe('acp:review-bot');
     expect(String(createdMeta.replaySeedV1.seedText ?? '')).toContain('User: three');
@@ -1694,8 +1895,8 @@ describe('registerMachineRpcHandlers', () => {
       return { createdAt: n, content: { t: 'encrypted', c: encrypted } };
     });
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
+    const getSpy = vi.spyOn(axios, 'get');
     getSpy
       .mockResolvedValueOnce({
         status: 200,
@@ -1809,10 +2010,9 @@ describe('registerMachineRpcHandlers', () => {
       encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'two' } }),
     );
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
-    getSpy
-      .mockResolvedValueOnce({
+    const getSpy = mockAxiosGetSequenceWithSystemRecordMiss([
+      {
         status: 200,
         data: {
           session: {
@@ -1829,8 +2029,8 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: encodeBase64(envelope),
           },
         },
-      } as any)
-      .mockResolvedValueOnce({
+      },
+      {
         status: 200,
         data: {
           messages: [
@@ -1838,7 +2038,8 @@ describe('registerMachineRpcHandlers', () => {
             { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
           ],
         },
-      } as any);
+      },
+    ]);
 
     postSpy.mockResolvedValueOnce({
       status: 200,
@@ -1924,11 +2125,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'dataKey', machineKey, publicKey },
     });
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
-    getSpy
-      // fetch parent session record (for fork handler)
-      .mockResolvedValueOnce({
+    const getSpy = mockAxiosGetSequenceWithSystemRecordMiss([
+      // Fetch the parent session record for the fork handler.
+      {
         status: 200,
         data: {
           session: {
@@ -1946,9 +2146,9 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: null,
           },
         },
-      } as any)
-      // hydrateReplayDialogFromForkChain -> fetchSessionById(startingSessionId)
-      .mockResolvedValueOnce({
+      },
+      // Hydrate the starting session.
+      {
         status: 200,
         data: {
           session: {
@@ -1966,9 +2166,9 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: null,
           },
         },
-      } as any)
-      // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages
-      .mockResolvedValueOnce({
+      },
+      // Hydrate transcript messages.
+      {
         status: 200,
         data: {
           messages: [
@@ -1976,7 +2176,8 @@ describe('registerMachineRpcHandlers', () => {
             { seq: 2, createdAt: 2, content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'two' } } } },
           ],
         },
-      } as any);
+      },
+    ]);
 
     postSpy.mockResolvedValueOnce({
       status: 200,
@@ -2029,11 +2230,12 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession: async () => true,
+        stopSession,
         requestShutdown: () => {},
       },
     });
@@ -2219,12 +2421,20 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
+    const authError = createAuthenticationHttpStatusError(401, 'OpenCode native fork auth failed');
+    evaluateAgentSessionCapabilitySupportMock.mockReturnValue('supported');
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession: async () => true,
+        stopSession,
         requestShutdown: () => {},
+      },
+      deps: {
+        awaitAgentSessionOpen: async () => {
+          throw authError;
+        },
       },
     });
 
@@ -2235,10 +2445,6 @@ describe('registerMachineRpcHandlers', () => {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
-    dispatchProviderNativeForkMock.mockRejectedValueOnce(
-      createAuthenticationHttpStatusError(401, 'OpenCode native fork auth failed'),
-    );
-
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 200,
       data: {
@@ -2265,18 +2471,18 @@ describe('registerMachineRpcHandlers', () => {
         },
       },
     } as any);
+    const archiveSpy = vi.spyOn(axios, 'post');
 
     await expect(handler!({
       v: 1,
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'provider_native',
-    })).rejects.toMatchObject({
-      name: 'HttpStatusError',
-      response: { status: 401 },
-      code: 'not_authenticated',
-    });
-    expect(spawnSession).not.toHaveBeenCalled();
+    })).rejects.toBe(authError);
+    expect(spawnSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith('sess_child');
+    expect(archiveSpy).not.toHaveBeenCalled();
   });
 
   it('forks a session by replaying transcript context and storing forkV1/replaySeedV1 in child metadata', async () => {
@@ -2288,12 +2494,11 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
-    const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession,
+        stopSession: async () => true,
         requestShutdown: () => {},
       },
     });
@@ -2330,10 +2535,9 @@ describe('registerMachineRpcHandlers', () => {
       );
     }
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
+    const getSpy = vi.spyOn(axios, 'get');
     getSpy
-      // fetch parent session record (for fork handler)
       .mockResolvedValueOnce({
         status: 200,
         data: {
@@ -2602,7 +2806,7 @@ describe('registerMachineRpcHandlers', () => {
       v: 1,
       parentSessionId: 'sess_parent',
       strategy: 'replay',
-      providerHint: { providerId: 'acp:review-bot' },
+      agentHint: { agentId: 'acp:review-bot' },
     });
   });
 
@@ -2715,6 +2919,9 @@ describe('registerMachineRpcHandlers', () => {
         stopSession,
         requestShutdown: () => {},
       },
+      deps: {
+        runReplaySummaryForDialog: async () => '',
+      },
     });
 
     const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
@@ -2753,11 +2960,10 @@ describe('registerMachineRpcHandlers', () => {
       );
     }
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
-    getSpy
-      // fetch parent session record (for fork handler)
-      .mockResolvedValueOnce({
+    const getSpy = mockAxiosGetSequenceWithSystemRecordMiss([
+      // Fetch the parent session record for the fork handler.
+      {
         status: 200,
         data: {
           session: {
@@ -2774,9 +2980,8 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: encodeBase64(envelope),
           },
         },
-      } as any)
-      // hydrateReplayDialogFromTranscript -> fetchSessionById(previousSessionId)
-      .mockResolvedValueOnce({
+      },
+      {
         status: 200,
         data: {
           session: {
@@ -2793,9 +2998,8 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: encodeBase64(envelope),
           },
         },
-      } as any)
-      // hydrateReplayDialogFromTranscript -> fetchEncryptedTranscriptMessages
-      .mockResolvedValueOnce({
+      },
+      {
         status: 200,
         data: {
           messages: [
@@ -2806,7 +3010,8 @@ describe('registerMachineRpcHandlers', () => {
             })),
           ],
         },
-      } as any);
+      },
+    ]);
 
     postSpy.mockResolvedValueOnce({
       status: 200,
@@ -2900,10 +3105,9 @@ describe('registerMachineRpcHandlers', () => {
       encrypt(sessionEncryptionKey, 'dataKey', { role: 'agent', content: { type: 'text', text: 'two' } }),
     );
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
-    getSpy
-      .mockResolvedValueOnce({
+    const getSpy = mockAxiosGetSequenceWithSystemRecordMiss([
+      {
         status: 200,
         data: {
           session: {
@@ -2920,8 +3124,8 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: encodeBase64(envelope),
           },
         },
-      } as any)
-      .mockResolvedValueOnce({
+      },
+      {
         status: 200,
         data: {
           messages: [
@@ -2929,7 +3133,8 @@ describe('registerMachineRpcHandlers', () => {
             { createdAt: 2, content: { t: 'encrypted', c: encryptedTwo } },
           ],
         },
-      } as any);
+      },
+    ]);
 
     postSpy.mockResolvedValueOnce({
       status: 200,
@@ -2998,11 +3203,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'dataKey', machineKey, publicKey },
     });
 
-    const getSpy = vi.spyOn(axios, 'get');
     const postSpy = vi.spyOn(axios, 'post');
-    getSpy
-      // fetch parent session record (for fork handler)
-      .mockResolvedValueOnce({
+    const getSpy = mockAxiosGetSequenceWithSystemRecordMiss([
+      // Fetch the parent session record for the fork handler.
+      {
         status: 200,
         data: {
           session: {
@@ -3020,9 +3224,9 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: null,
           },
         },
-      } as any)
-      // hydrateReplayDialogFromForkChain -> fetchSessionById(startingSessionId)
-      .mockResolvedValueOnce({
+      },
+      // Hydrate the starting session.
+      {
         status: 200,
         data: {
           session: {
@@ -3040,9 +3244,9 @@ describe('registerMachineRpcHandlers', () => {
             dataEncryptionKey: null,
           },
         },
-      } as any)
-      // hydrateReplayDialogFromForkChain -> fetchEncryptedTranscriptMessages
-      .mockResolvedValueOnce({
+      },
+      // Exercise transcript synopsis compatibility after the canonical record lookup misses.
+      {
         status: 200,
         data: {
           messages: [
@@ -3070,7 +3274,8 @@ describe('registerMachineRpcHandlers', () => {
             },
           ],
         },
-      } as any);
+      },
+    ]);
 
     postSpy.mockResolvedValueOnce({
       status: 200,
@@ -3292,12 +3497,12 @@ describe('registerMachineRpcHandlers', () => {
         codexSessionId: 'codex_parent',
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: { backendMode: 'acp', providerSessionId: 'codex_parent' },
         },
         acpSessionModelsV1: {
           v: 1,
-          provider: 'codex',
+          agentId: 'codex',
           updatedAt: 1,
           currentModelId: 'model-1',
           availableModels: [{ id: 'model-1', name: 'Model 1' }],
@@ -3347,13 +3552,21 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    const backend = {
-      loadSession: vi.fn(async () => ({ sessionId: 'codex_parent' })),
-      forkSession: vi.fn(async () => ({ sessionId: 'codex_forked' })),
-      dispose: vi.fn(async () => {}),
-    };
-
-    createCatalogAcpBackendMock.mockResolvedValueOnce({ backend } as any);
+    const fork = vi.fn(async () => ({
+      providerSessionId: 'codex_forked',
+      launch: {
+        sessionStateUpdates: [{
+          fieldId: 'identity.runtimeDescriptor' as const,
+          value: buildCodexAgentRuntimeDescriptor({
+            backendMode: 'acp',
+            providerSessionId: 'codex_forked',
+          }),
+        }],
+      },
+    }));
+    resolveExecutionSurfacesMock.mockResolvedValueOnce(emptyExecutionSurfaces({
+      fork: { fork },
+    }));
 
     const result = await handler!({
       v: 1,
@@ -3362,8 +3575,13 @@ describe('registerMachineRpcHandlers', () => {
       strategy: 'auto',
     });
 
-    expect(backend.loadSession).toHaveBeenCalledWith('codex_parent');
-    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'codex_parent' });
+    expect(resolveExecutionSurfacesMock).toHaveBeenCalledWith('codex');
+    expect(fork).toHaveBeenCalledTimes(1);
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 'sess_parent',
+      directory: '/repo',
+      forkPoint: { kind: 'latest' },
+    }));
 
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -3379,9 +3597,13 @@ describe('registerMachineRpcHandlers', () => {
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'codex' });
-    expect(updated.codexBackendMode).toBe('acp');
+    expect(updated.runtimeDescriptorV1).toMatchObject({
+      v: 1,
+      agentId: 'codex',
+      agent: { backendMode: 'acp', providerSessionId: 'codex_forked' },
+    });
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
-    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', providerSessionId: 'codex_forked' });
+    expect(updated.forkV1.agentHint).toMatchObject({ agentId: 'codex', backendMode: 'acp', providerSessionId: 'codex_forked' });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
@@ -3394,11 +3616,12 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession: async () => true,
+        stopSession,
         requestShutdown: () => {},
       },
     });
@@ -3427,12 +3650,13 @@ describe('registerMachineRpcHandlers', () => {
         codexSessionId: 'codex_parent',
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: { backendMode: 'acp', providerSessionId: 'codex_parent' },
         },
       }),
     );
 
+    const authError = createAuthenticationHttpStatusError(403, 'ACP child fetch auth failed');
     const getSpy = vi.spyOn(axios, 'get');
     getSpy
       .mockResolvedValueOnce({
@@ -3453,29 +3677,26 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
-      .mockResolvedValueOnce({ status: 403, data: {} } as any);
+      .mockRejectedValueOnce(authError);
 
-    createCatalogAcpBackendMock.mockResolvedValueOnce({
-      backend: {
-        loadSession: vi.fn(async () => ({ sessionId: 'codex_parent' })),
-        forkSession: vi.fn(async () => ({ sessionId: 'codex_forked' })),
-        dispose: vi.fn(async () => {}),
-      },
-    } as any);
+    mockForkSurfaceOnce(async () => ({
+      providerSessionId: 'codex_forked',
+      launch: {},
+    }));
+    const archiveSpy = vi.spyOn(axios, 'post');
 
     await expect(handler!({
       v: 1,
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'acp_fork_latest',
-    })).rejects.toMatchObject({
-      name: 'HttpStatusError',
-      response: { status: 403 },
-      code: 'not_authenticated',
-    });
+    })).rejects.toBe(authError);
 
-    expect(getSpy).toHaveBeenCalledTimes(2);
+    expect(getSpy.mock.calls.some(([url]) => String(url).includes('/sessions/sess_child'))).toBe(true);
     expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith('sess_child');
+    expect(archiveSpy).not.toHaveBeenCalled();
   });
 
   it('propagates ACP child metadata update auth failures instead of returning a generic fork error', async () => {
@@ -3559,14 +3780,12 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    const backend = {
-      loadSession: vi.fn(async () => ({ sessionId: 'op_parent' })),
-      forkSession: vi.fn(async () => ({ sessionId: 'op_forked' })),
-      dispose: vi.fn(async () => {}),
-    };
-
-    createCatalogAcpBackendMock.mockResolvedValueOnce({ backend } as any);
+    mockForkSurfaceOnce(async () => ({
+      providerSessionId: 'op_forked',
+      launch: {},
+    }));
     updateSessionMetadataWithRetryMock.mockRejectedValueOnce(authError);
+    const archiveSpy = vi.spyOn(axios, 'post');
 
     await expect(
       handler!({
@@ -3578,7 +3797,9 @@ describe('registerMachineRpcHandlers', () => {
     ).rejects.toBe(authError);
 
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
-    expect(stopSession).not.toHaveBeenCalled();
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith('sess_child');
+    expect(archiveSpy).not.toHaveBeenCalled();
   });
 
   it('propagates ACP fork auth failures instead of falling back to replay', async () => {
@@ -3633,28 +3854,20 @@ describe('registerMachineRpcHandlers', () => {
     } as any);
 
     const authError = createAuthenticationHttpStatusError(401, 'ACP load auth failed');
-    createCatalogAcpBackendMock.mockResolvedValueOnce({
-      backend: {
-        loadSession: vi.fn(async () => {
-          throw authError;
-        }),
-        forkSession: vi.fn(async () => ({ sessionId: 'op_forked' })),
-        dispose: vi.fn(async () => {}),
-      },
-    } as any);
+    mockForkSurfaceOnce(async () => {
+      throw authError;
+    });
+    const archiveSpy = vi.spyOn(axios, 'post');
 
     await expect(handler!({
       v: 1,
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
-      strategy: 'auto',
-    })).rejects.toMatchObject({
-      name: 'HttpStatusError',
-      response: { status: 401 },
-      code: 'not_authenticated',
-    });
+      strategy: 'acp_fork_latest',
+    })).rejects.toBe(authError);
 
     expect(spawnSession).not.toHaveBeenCalled();
+    expect(archiveSpy).not.toHaveBeenCalled();
   });
 
   it('forks latest configured ACP sessions through the configured backend runtime and preserves configured backend identity', async () => {
@@ -3740,7 +3953,7 @@ describe('registerMachineRpcHandlers', () => {
               },
               agentRuntimeDescriptorV1: {
                 v: 1,
-                providerId: 'acp:review-bot',
+                agentId: 'acp:review-bot',
                 provider: {
                   providerSessionId: 'review_parent',
                 },
@@ -3773,12 +3986,15 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    const backend = {
-      loadSession: vi.fn(async () => ({ sessionId: 'review_parent' })),
-      forkSession: vi.fn(async () => ({ sessionId: 'review_forked' })),
-      dispose: vi.fn(async () => {}),
-    };
-    createConfiguredAcpBackendMock.mockReturnValueOnce(backend as any);
+    const fork = mockForkSurfaceOnce(async () => ({
+      providerSessionId: 'review_forked',
+      launch: {
+        sessionStateUpdates: [{
+          fieldId: 'identity.providerSessionId' as const,
+          value: 'review_forked',
+        }],
+      },
+    }));
 
     const result = await handler!({
       v: 1,
@@ -3788,9 +4004,11 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
-    expect(backend.loadSession).toHaveBeenCalledWith('review_parent');
-    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'review_parent' });
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
+      parentSessionId: 'sess_parent',
+      directory: '/repo',
+      forkPoint: { kind: 'latest' },
+    }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo',
       backendTarget: {
@@ -3814,7 +4032,7 @@ describe('registerMachineRpcHandlers', () => {
       v: 1,
       parentSessionId: 'sess_parent',
       strategy: 'acp_fork_latest',
-      providerHint: { providerId: 'acp:review-bot', providerSessionId: 'review_forked' },
+      agentHint: { agentId: 'acp:review-bot', providerSessionId: 'review_forked' },
     });
     expect(updated.replaySeedV1).toBeUndefined();
   });
@@ -3854,7 +4072,7 @@ describe('registerMachineRpcHandlers', () => {
       opencodeServerBaseUrlExplicit: true,
       acpSessionModelsV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 1,
         currentModelId: 'openai/gpt-5.2',
         availableModels: [{ id: 'openai/gpt-5.2', name: 'GPT-5.2' }],
@@ -3902,13 +4120,31 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    const backend = {
-      loadSession: vi.fn(async () => ({ sessionId: 'op_parent' })),
-      forkSession: vi.fn(async () => ({ sessionId: 'op_forked' })),
-      dispose: vi.fn(async () => {}),
-    };
-
-    createCatalogAcpBackendMock.mockResolvedValueOnce({ backend } as any);
+    const fork = mockForkSurfaceOnce(async () => ({
+      providerSessionId: 'op_forked',
+      launch: {
+        environmentVariables: {
+          HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+          HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+          HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+        },
+        sessionStateUpdates: [
+          {
+            fieldId: 'identity.runtimeDescriptor' as const,
+            value: buildOpenCodeAgentRuntimeDescriptor({
+              backendMode: 'acp',
+              providerSessionId: 'op_forked',
+              serverBaseUrl: 'http://127.0.0.1:4096/',
+              serverBaseUrlExplicit: true,
+            }),
+          },
+          {
+            fieldId: 'identity.providerSessionId' as const,
+            value: 'op_forked',
+          },
+        ],
+      },
+    }));
 
     const result = await handler!({
       v: 1,
@@ -3917,8 +4153,7 @@ describe('registerMachineRpcHandlers', () => {
       strategy: 'auto',
     });
 
-    expect(backend.loadSession).toHaveBeenCalledWith('op_parent');
-    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'op_parent' });
+    expect(fork).toHaveBeenCalledTimes(1);
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         directory: '/repo',
@@ -3938,11 +4173,17 @@ describe('registerMachineRpcHandlers', () => {
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'opencode' });
     expect(updated.opencodeSessionId).toBe('op_forked');
-    expect(updated.opencodeBackendMode).toBe('acp');
-    expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4096/');
-    expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
+    expect(updated.runtimeDescriptorV1).toMatchObject({
+      agentId: 'opencode',
+      agent: {
+        backendMode: 'acp',
+        providerSessionId: 'op_forked',
+        serverBaseUrl: 'http://127.0.0.1:4096/',
+        serverBaseUrlExplicit: true,
+      },
+    });
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
-    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'opencode', backendMode: 'acp', providerSessionId: 'op_forked' });
+    expect(updated.forkV1.agentHint).toMatchObject({ agentId: 'opencode', backendMode: 'acp', providerSessionId: 'op_forked' });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
@@ -3987,7 +4228,7 @@ describe('registerMachineRpcHandlers', () => {
         codexSessionId: 'codex_parent',
         agentRuntimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           provider: { backendMode: 'acp', providerSessionId: 'codex_parent' },
         },
       }),
@@ -4032,13 +4273,24 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
 
-    const backend = {
-      loadSession: vi.fn(async () => ({ sessionId: 'codex_parent' })),
-      forkSession: vi.fn(async () => ({ sessionId: 'codex_forked' })),
-      dispose: vi.fn(async () => {}),
-    };
-
-    createCatalogAcpBackendMock.mockResolvedValueOnce({ backend } as any);
+    const fork = mockForkSurfaceOnce(async () => ({
+      providerSessionId: 'codex_forked',
+      launch: {
+        sessionStateUpdates: [
+          {
+            fieldId: 'identity.runtimeDescriptor' as const,
+            value: buildCodexAgentRuntimeDescriptor({
+              backendMode: 'acp',
+              providerSessionId: 'codex_forked',
+            }),
+          },
+          {
+            fieldId: 'identity.providerSessionId' as const,
+            value: 'codex_forked',
+          },
+        ],
+      },
+    }));
 
     const result = await handler!({
       v: 1,
@@ -4047,8 +4299,7 @@ describe('registerMachineRpcHandlers', () => {
       strategy: 'auto',
     });
 
-    expect(backend.loadSession).toHaveBeenCalledWith('codex_parent');
-    expect(backend.forkSession).toHaveBeenCalledWith({ sessionId: 'codex_parent' });
+    expect(fork).toHaveBeenCalledTimes(1);
     expect(spawnSession).toHaveBeenCalledWith(
       expect.objectContaining({
         directory: '/repo',
@@ -4063,9 +4314,12 @@ describe('registerMachineRpcHandlers', () => {
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'codex' });
-    expect(updated.codexBackendMode).toBe('acp');
+    expect(updated.runtimeDescriptorV1).toMatchObject({
+      agentId: 'codex',
+      agent: { backendMode: 'acp', providerSessionId: 'codex_forked' },
+    });
     expect(updated.forkV1).toMatchObject({ v: 1, parentSessionId: 'sess_parent', strategy: 'acp_fork_latest' });
-    expect(updated.forkV1.providerHint).toMatchObject({ providerId: 'codex', backendMode: 'acp', providerSessionId: 'codex_forked' });
+    expect(updated.forkV1.agentHint).toMatchObject({ agentId: 'codex', backendMode: 'acp', providerSessionId: 'codex_forked' });
     expect(updated.replaySeedV1).toBeUndefined();
   });
 
@@ -4212,7 +4466,7 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
+    expect(resolveExecutionSurfacesMock).toHaveBeenCalledWith('codex');
     expect(postSpy).toHaveBeenCalledTimes(1);
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
@@ -4447,24 +4701,17 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    const fork = mockForkSurfaceOnce(async () => createOpenCodeForkResult({
       providerSessionId: 'op_ses_forked',
-      spawn: {
-        resume: 'op_ses_forked',
-        environmentVariables: {
-          HAPPIER_OPENCODE_BACKEND_MODE: 'server',
-          HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
-          HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
-        },
+      backendMode: 'server',
+      serverBaseUrl: 'http://127.0.0.1:4096/',
+      serverBaseUrlExplicit: true,
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+        HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
       },
-      metadata: {
-        opencodeSessionId: 'op_ses_forked',
-        opencodeBackendMode: 'server',
-        opencodeServerBaseUrl: 'http://127.0.0.1:4096/',
-        opencodeServerBaseUrlExplicit: true,
-      },
-      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
-    });
+    }));
 
     const parentMetadataPlain = JSON.stringify({
       path: '/repo',
@@ -4538,10 +4785,9 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(dispatchProviderNativeForkMock).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'opencode',
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
       parentSessionId: 'sess_parent',
-      forkPoint: { type: 'latest' },
+      forkPoint: { kind: 'latest' },
     }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo',
@@ -4557,15 +4803,21 @@ describe('registerMachineRpcHandlers', () => {
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'opencode' });
     expect(updated.opencodeSessionId).toBe('op_ses_forked');
-    expect(updated.opencodeBackendMode).toBe('server');
-    expect(updated.opencodeServerBaseUrl).toBe('http://127.0.0.1:4096/');
-    expect(updated.opencodeServerBaseUrlExplicit).toBe(true);
+    expect(updated.runtimeDescriptorV1).toMatchObject({
+      agentId: 'opencode',
+      agent: {
+        backendMode: 'server',
+        providerSessionId: 'op_ses_forked',
+        serverBaseUrl: 'http://127.0.0.1:4096/',
+        serverBaseUrlExplicit: true,
+      },
+    });
     expect(updated.forkV1).toMatchObject({
       v: 1,
       parentSessionId: 'sess_parent',
       parentCutoffSeqInclusive: 5,
       strategy: 'provider_native',
-      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
+      agentHint: { agentId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
     });
   });
 
@@ -4578,12 +4830,28 @@ describe('registerMachineRpcHandlers', () => {
     } as any;
 
     const spawnSession = vi.fn(async (_opts: any) => ({ type: 'success', sessionId: 'sess_child' } as const));
+    const stopSession = vi.fn(async () => true);
     registerMachineRpcHandlers({
       rpcHandlerManager,
       handlers: {
         spawnSession,
-        stopSession: async () => true,
+        stopSession,
         requestShutdown: () => {},
+      },
+      deps: {
+        awaitAgentSessionOpen: async () => ({
+          status: 'opened',
+          request: {
+            kind: 'fork',
+            sessionId: 'sess_child',
+            cwd: '/repo',
+            source: {
+              sessionId: 'sess_parent',
+              providerSessionId: 'op_ses_parent',
+              cwd: '/repo',
+            },
+          },
+        }),
       },
     });
 
@@ -4595,13 +4863,12 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    mockForkSurfaceOnce(async () => createOpenCodeForkResult({
       providerSessionId: 'op_ses_forked',
-      spawn: {},
-      metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
-    });
+      backendMode: 'server',
+    }));
 
+    const authError = createAuthenticationHttpStatusError(401, 'Provider-native child fetch auth failed');
     const getSpy = vi.spyOn(axios, 'get');
     getSpy
       .mockResolvedValueOnce({
@@ -4628,21 +4895,21 @@ describe('registerMachineRpcHandlers', () => {
           },
         },
       } as any)
-      .mockResolvedValueOnce({ status: 401, data: {} } as any);
+      .mockRejectedValueOnce(authError);
+    const archiveSpy = vi.spyOn(axios, 'post');
 
     await expect(handler!({
       v: 1,
       parentSessionId: 'sess_parent',
       forkPoint: { type: 'latest' },
       strategy: 'provider_native',
-    })).rejects.toMatchObject({
-      name: 'HttpStatusError',
-      response: { status: 401 },
-      code: 'not_authenticated',
-    });
+    })).rejects.toBe(authError);
 
-    expect(getSpy).toHaveBeenCalledTimes(2);
+    expect(getSpy.mock.calls.some(([url]) => String(url).includes('/sessions/sess_child'))).toBe(true);
     expect(updateSessionMetadataWithRetryMock).not.toHaveBeenCalled();
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith('sess_child');
+    expect(archiveSpy).not.toHaveBeenCalled();
   });
 
   it('propagates provider-native child metadata update auth failures instead of returning a generic fork error', async () => {
@@ -4662,6 +4929,21 @@ describe('registerMachineRpcHandlers', () => {
         stopSession,
         requestShutdown: () => {},
       },
+      deps: {
+        awaitAgentSessionOpen: async () => ({
+          status: 'opened',
+          request: {
+            kind: 'fork',
+            sessionId: 'sess_child',
+            cwd: '/repo',
+            source: {
+              sessionId: 'sess_parent',
+              providerSessionId: 'op_ses_parent',
+              cwd: '/repo',
+            },
+          },
+        }),
+      },
     });
 
     const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
@@ -4672,12 +4954,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    mockForkSurfaceOnce(async () => createOpenCodeForkResult({
       providerSessionId: 'op_ses_forked',
-      spawn: {},
-      metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
-    });
+      backendMode: 'server',
+    }));
 
     const parentMetadataPlain = JSON.stringify({
       path: '/repo',
@@ -4733,6 +5013,7 @@ describe('registerMachineRpcHandlers', () => {
         },
       } as any);
     updateSessionMetadataWithRetryMock.mockRejectedValueOnce(authError);
+    const archiveSpy = vi.spyOn(axios, 'post');
 
     await expect(
       handler!({
@@ -4744,7 +5025,9 @@ describe('registerMachineRpcHandlers', () => {
     ).rejects.toBe(authError);
 
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(1);
-    expect(stopSession).not.toHaveBeenCalled();
+    expect(stopSession).toHaveBeenCalledOnce();
+    expect(stopSession).toHaveBeenCalledWith('sess_child');
+    expect(archiveSpy).not.toHaveBeenCalled();
   });
 
   it('forks a Codex app-server session via provider-native conversation fork', async () => {
@@ -4773,12 +5056,15 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    const fork = mockForkSurfaceOnce(async () => createCodexForkResult({
       providerSessionId: 'codex-thread-forked',
-      spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
-    });
+      backendMode: 'appServer',
+      home: 'connectedService',
+      connectedServiceId: 'openai-codex',
+      connectedServiceGroupId: 'happier',
+      connectedServiceProfileId: 'codex1',
+      homePath: '/tmp/codex-home',
+    }));
 
     const parentMetadataPlain = JSON.stringify({
       path: '/repo',
@@ -4851,11 +5137,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(dispatchProviderNativeForkMock).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'codex',
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
       parentSessionId: 'sess_parent',
       directory: '/repo',
-      forkPoint: { type: 'latest' },
+      forkPoint: { kind: 'latest' },
     }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       directory: '/repo',
@@ -4878,7 +5163,13 @@ describe('registerMachineRpcHandlers', () => {
     const updater = (updateSessionMetadataWithRetryMock as any).mock.calls[0][0].updater as (m: any) => any;
     const updated = updater({ path: '/repo', flavor: 'codex' });
     expect(updated.codexSessionId).toBe('codex-thread-forked');
-    expect(updated.codexBackendMode).toBe('appServer');
+    expect(updated.runtimeDescriptorV1).toMatchObject({
+      agentId: 'codex',
+      agent: {
+        backendMode: 'appServer',
+        providerSessionId: 'codex-thread-forked',
+      },
+    });
     expect(updated.connectedServices).toEqual({
       v: 1,
       bindingsByServiceId: {
@@ -4895,7 +5186,7 @@ describe('registerMachineRpcHandlers', () => {
       parentSessionId: 'sess_parent',
       parentCutoffSeqInclusive: 5,
       strategy: 'provider_native',
-      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
+      agentHint: { agentId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
     });
     expect(updated.replaySeedV1).toBeUndefined();
   });
@@ -4926,12 +5217,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    const fork = mockForkSurfaceOnce(async () => createCodexForkResult({
       providerSessionId: 'codex-thread-forked',
-      spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
-    });
+      backendMode: 'appServer',
+    }));
 
     const parentMetadataPlain = JSON.stringify({
       path: '/repo',
@@ -4991,11 +5280,10 @@ describe('registerMachineRpcHandlers', () => {
     });
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
-    expect(dispatchProviderNativeForkMock).toHaveBeenCalledWith(expect.objectContaining({
-      agentId: 'codex',
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
       parentSessionId: 'sess_parent',
       directory: '/repo',
-      forkPoint: { type: 'latest' },
+      forkPoint: { kind: 'latest' },
     }));
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
@@ -5031,12 +5319,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    mockForkSurfaceOnce(async () => createCodexForkResult({
       providerSessionId: 'codex-thread-forked',
-      spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
-    });
+      backendMode: 'appServer',
+    }));
 
     const getSpy = vi.spyOn(axios, 'get');
     getSpy.mockResolvedValueOnce({
@@ -5170,12 +5456,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    mockForkSurfaceOnce(async () => createCodexForkResult({
       providerSessionId: 'codex-thread-forked',
-      spawn: { resume: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      metadata: { codexSessionId: 'codex-thread-forked', codexBackendMode: 'appServer' },
-      providerHint: { providerId: 'codex', backendMode: 'appServer', providerSessionId: 'codex-thread-forked' },
-    });
+      backendMode: 'appServer',
+    }));
 
     vi.spyOn(axios, 'get').mockResolvedValueOnce({
       status: 200,
@@ -5242,12 +5526,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    const fork = mockForkSurfaceOnce(async () => createOpenCodeForkResult({
       providerSessionId: 'op_ses_forked',
-      spawn: {},
-      metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
-    });
+      backendMode: 'server',
+    }));
 
     const parentMetadataPlain = JSON.stringify({
       path: '/repo',
@@ -5259,7 +5541,7 @@ describe('registerMachineRpcHandlers', () => {
       modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
       acpSessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 460,
         currentModeId: 'build',
         availableModes: [
@@ -5269,7 +5551,7 @@ describe('registerMachineRpcHandlers', () => {
       },
       acpSessionModelsV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 461,
         currentModelId: 'openai/gpt-5.2',
         availableModels: [
@@ -5278,7 +5560,7 @@ describe('registerMachineRpcHandlers', () => {
       },
       acpConfigOptionsV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 462,
         configOptions: [
           {
@@ -5368,11 +5650,10 @@ describe('registerMachineRpcHandlers', () => {
 
     expect(result).toMatchObject({ ok: true, childSessionId: 'sess_child' });
 
-    // Provider-native fork uses the clicked message seq to resolve vendor message ids (OpenCode exclusive fork cursor).
-    expect(dispatchProviderNativeForkMock).toHaveBeenCalledWith(expect.objectContaining({
+    // The canonical provider surface receives the clicked message sequence.
+    expect(fork).toHaveBeenCalledWith(expect.objectContaining({
       parentSessionId: 'sess_parent',
-      forkPoint: { type: 'seq', upToSeqInclusive: 3 },
-      targetSeqInclusive: 3,
+      forkPoint: { kind: 'message_seq', upToSeqInclusive: 3 },
     }));
 
     // Stored fork lineage uses an exclusive cutoff when the fork target is a user message.
@@ -5409,12 +5690,10 @@ describe('registerMachineRpcHandlers', () => {
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
     });
 
-    dispatchProviderNativeForkMock.mockResolvedValueOnce({
+    mockForkSurfaceOnce(async () => createOpenCodeForkResult({
       providerSessionId: 'op_ses_forked',
-      spawn: {},
-      metadata: {},
-      providerHint: { providerId: 'opencode', backendMode: 'server', providerSessionId: 'op_ses_forked' },
-    });
+      backendMode: 'server',
+    }));
 
     const parentMetadataPlain = JSON.stringify({
       path: '/repo',
@@ -5426,7 +5705,7 @@ describe('registerMachineRpcHandlers', () => {
       modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
       acpSessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 460,
         currentModeId: 'build',
         availableModes: [
@@ -5436,7 +5715,7 @@ describe('registerMachineRpcHandlers', () => {
       },
       acpSessionModelsV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 461,
         currentModelId: 'openai/gpt-5.2',
         availableModels: [
@@ -5445,7 +5724,7 @@ describe('registerMachineRpcHandlers', () => {
       },
       acpConfigOptionsV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 462,
         configOptions: [
           {
@@ -5537,8 +5816,15 @@ describe('registerMachineRpcHandlers', () => {
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       permissionMode: 'yolo',
       permissionModeUpdatedAt: 123,
-      modelId: 'gpt-test',
-      modelUpdatedAt: 456,
+      modelSelection: {
+        v: 1,
+        updatedAt: 456,
+        ref: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: null,
+          modelId: 'gpt-test',
+        },
+      },
     }));
 
     // The first user message should not be treated as a "branch-and-edit" fork point.
@@ -5548,10 +5834,19 @@ describe('registerMachineRpcHandlers', () => {
     expect(updated.forkV1).toMatchObject({ parentCutoffSeqInclusive: 1, strategy: 'provider_native' });
     expect(updated.permissionMode).toBe('yolo');
     expect(updated.permissionModeUpdatedAt).toBe(123);
+    expect(updated.modelSelectionIntentV1).toEqual({
+      v: 1,
+      updatedAt: 456,
+      selection: {
+        agentTargetKey: 'backend:opencode',
+        providerConnectionId: null,
+        modelId: 'gpt-test',
+      },
+    });
     expect(updated.modelOverrideV1).toEqual({ v: 1, updatedAt: 456, modelId: 'gpt-test' });
     expect(updated.acpSessionModesV1).toEqual({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       updatedAt: 460,
       currentModeId: 'build',
       availableModes: [
@@ -5561,7 +5856,7 @@ describe('registerMachineRpcHandlers', () => {
     });
     expect(updated.acpSessionModelsV1).toEqual({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       updatedAt: 461,
       currentModelId: 'openai/gpt-5.2',
       availableModels: [
@@ -5570,7 +5865,7 @@ describe('registerMachineRpcHandlers', () => {
     });
     expect(updated.acpConfigOptionsV1).toEqual({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       updatedAt: 462,
       configOptions: [
         {
@@ -5611,6 +5906,13 @@ describe('registerMachineRpcHandlers', () => {
 
     const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
     expect(handler).toBeDefined();
+    mockReplayChildLaunchSurfaceOnce(async () => ({
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
+        HAPPIER_OPENCODE_SERVER_URL: 'http://127.0.0.1:4096/',
+        HAPPIER_OPENCODE_SERVER_URL_EXPLICIT: '1',
+      },
+    }));
 
     readCredentialsMock.mockResolvedValueOnce({
       token: 'token-1',
@@ -5629,7 +5931,7 @@ describe('registerMachineRpcHandlers', () => {
       modelOverrideV1: { v: 1, updatedAt: 456, modelId: 'gpt-test' },
       acpSessionModesV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 460,
         currentModeId: 'build',
         availableModes: [
@@ -5639,7 +5941,7 @@ describe('registerMachineRpcHandlers', () => {
       },
       acpSessionModelsV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 461,
         currentModelId: 'openai/gpt-5.2',
         availableModels: [
@@ -5648,7 +5950,7 @@ describe('registerMachineRpcHandlers', () => {
       },
       acpConfigOptionsV1: {
         v: 1,
-        provider: 'opencode',
+        agentId: 'opencode',
         updatedAt: 462,
         configOptions: [
           {
@@ -5774,22 +6076,38 @@ describe('registerMachineRpcHandlers', () => {
       },
       permissionMode: 'yolo',
       permissionModeUpdatedAt: 123,
-      modelId: 'gpt-test',
-      modelUpdatedAt: 456,
+      modelSelection: {
+        v: 1,
+        updatedAt: 456,
+        ref: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: null,
+          modelId: 'gpt-test',
+        },
+      },
     }));
     expect(updateSessionMetadataWithRetryMock).toHaveBeenCalledTimes(0);
     expect(postSpy).toHaveBeenCalledTimes(1);
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
-    expect(createdMeta.opencodeBackendMode).toBe('acp');
-    expect(createdMeta.opencodeServerBaseUrl).toBe('http://127.0.0.1:4096/');
-    expect(createdMeta.opencodeServerBaseUrlExplicit).toBe(true);
+    expect(createdMeta.opencodeBackendMode).toBeUndefined();
+    expect(createdMeta.opencodeServerBaseUrl).toBeUndefined();
+    expect(createdMeta.opencodeServerBaseUrlExplicit).toBeUndefined();
     expect(createdMeta.permissionMode).toBe('yolo');
     expect(createdMeta.permissionModeUpdatedAt).toBe(123);
+    expect(createdMeta.modelSelectionIntentV1).toEqual({
+      v: 1,
+      updatedAt: 456,
+      selection: {
+        agentTargetKey: 'backend:opencode',
+        providerConnectionId: null,
+        modelId: 'gpt-test',
+      },
+    });
     expect(createdMeta.modelOverrideV1).toEqual({ v: 1, updatedAt: 456, modelId: 'gpt-test' });
     expect(createdMeta.acpSessionModesV1).toEqual({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       updatedAt: 460,
       currentModeId: 'build',
       availableModes: [
@@ -5799,7 +6117,7 @@ describe('registerMachineRpcHandlers', () => {
     });
     expect(createdMeta.acpSessionModelsV1).toEqual({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       updatedAt: 461,
       currentModelId: 'openai/gpt-5.2',
       availableModels: [
@@ -5808,7 +6126,7 @@ describe('registerMachineRpcHandlers', () => {
     });
     expect(createdMeta.acpConfigOptionsV1).toEqual({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       updatedAt: 462,
       configOptions: [
         {
@@ -5849,6 +6167,11 @@ describe('registerMachineRpcHandlers', () => {
 
     const handler = registered.get((RPC_METHODS as any).SESSION_FORK);
     expect(handler).toBeDefined();
+    mockReplayChildLaunchSurfaceOnce(async () => ({
+      environmentVariables: {
+        HAPPIER_OPENCODE_BACKEND_MODE: 'server',
+      },
+    }));
 
     readCredentialsMock.mockResolvedValueOnce({
       token: 'token-1',
@@ -5951,7 +6274,7 @@ describe('registerMachineRpcHandlers', () => {
     }));
     const posted = (postSpy as any).mock.calls[0][1] as any;
     const createdMeta = JSON.parse(String(posted.metadata)) as any;
-    expect(createdMeta.opencodeBackendMode).toBe('server');
+    expect(createdMeta.opencodeBackendMode).toBeUndefined();
     expect(createdMeta.opencodeServerBaseUrl).toBeUndefined();
     expect(createdMeta.opencodeServerBaseUrlExplicit).toBeUndefined();
   });
@@ -6510,7 +6833,7 @@ describe('registerMachineRpcHandlers', () => {
     expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER)).toBe(true);
     expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TAKEOVER)).toBe(true);
-    expect(registered.has((RPC_METHODS as any).DAEMON_EXTERNAL_SESSION_TAKEOVER_PERSIST)).toBe(true);
+    expect(registered.has(RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY)).toBe(true);
   });
 
   it('drops stale direct transfer handlers when the machine rpc surface is re-registered without transfer capability', async () => {
@@ -6538,6 +6861,7 @@ describe('registerMachineRpcHandlers', () => {
             expiresAt: 5_000,
             endpointCandidates: [],
           }),
+          abortImportSession: async () => {},
         },
         directTransferExport: {
           prepareExportSession: async () => ({

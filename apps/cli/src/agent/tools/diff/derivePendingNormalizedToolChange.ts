@@ -48,7 +48,7 @@ function readCanonicalDiffFiles(input: Record<string, unknown>): ReadonlyArray<R
     source?: TurnChangeSet['files'][number]['source'];
     confidence?: TurnChangeSet['files'][number]['confidence'];
     provider?: string;
-    providerTurnId?: string | null;
+    agentTurnId?: string | null;
     providerMessageId?: string | null;
     description?: string;
 }>> {
@@ -83,10 +83,10 @@ function readCanonicalDiffFiles(input: Record<string, unknown>): ReadonlyArray<R
                 source,
                 confidence,
                 provider: typeof entry.provider === 'string' && entry.provider.trim().length > 0 ? entry.provider : undefined,
-                providerTurnId: typeof entry.provider_turn_id === 'string'
+                agentTurnId: typeof entry.provider_turn_id === 'string'
                     ? entry.provider_turn_id
-                    : typeof entry.providerTurnId === 'string'
-                        ? entry.providerTurnId
+                    : typeof entry.agentTurnId === 'string'
+                        ? entry.agentTurnId
                         : undefined,
                 providerMessageId: typeof entry.provider_message_id === 'string'
                     ? entry.provider_message_id

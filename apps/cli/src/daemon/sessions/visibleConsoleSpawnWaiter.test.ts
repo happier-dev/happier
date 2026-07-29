@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { ChildExit } from './onChildExited';
 import type { TrackedSession } from '../types';
 
@@ -76,6 +77,77 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     });
   });
 
+  it('labels an exit observed while the webhook request is pending', async () => {
+    vi.useFakeTimers();
+
+    const aliveRef = { alive: true };
+    installProcessKillMock(aliveRef);
+    const pid = 12347;
+    const { pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = createWaiterState();
+    const promise = waitForVisibleConsoleSessionWebhook({
+      pid,
+      pollMs: 10,
+      pidToAwaiter,
+      pidToSpawnResultResolver,
+      pidToSpawnWebhookTimeout,
+      onChildExited,
+    });
+
+    aliveRef.alive = false;
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(promise).resolves.toEqual(expect.objectContaining({
+      type: 'error',
+      errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK',
+    }));
+    expect(onChildExited).toHaveBeenCalledWith(pid, {
+      reason: 'process-exited-before-webhook',
+      code: null,
+      signal: null,
+    });
+  });
+
+  it('awaits canonical exit cleanup and reports incomplete retirement when it rejects', async () => {
+    vi.useFakeTimers();
+
+    const aliveRef = { alive: true };
+    installProcessKillMock(aliveRef);
+    const pid = 12348;
+    const {
+      pidToAwaiter,
+      pidToSpawnResultResolver,
+      pidToSpawnWebhookTimeout,
+    } = createWaiterState();
+    let rejectCleanup!: (error: Error) => void;
+    const cleanup = new Promise<void>((_resolve, reject) => {
+      rejectCleanup = reject;
+    });
+    const onChildExited = vi.fn(async () => await cleanup);
+    const promise = waitForVisibleConsoleSessionWebhook({
+      pid,
+      pollMs: 10,
+      pidToAwaiter,
+      pidToSpawnResultResolver,
+      pidToSpawnWebhookTimeout,
+      onChildExited,
+    });
+    const settled = vi.fn();
+    void promise.then(settled);
+
+    aliveRef.alive = false;
+    await vi.advanceTimersByTimeAsync(10);
+    expect(onChildExited).toHaveBeenCalledOnce();
+    expect(settled).not.toHaveBeenCalled();
+
+    rejectCleanup(new Error('provider retirement failed'));
+    await expect(promise).resolves.toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+      errorMessage:
+        'startup_retirement_incomplete:exit_cleanup_incomplete',
+    });
+  });
+
   it('keeps exit polling active after webhook success so cleanup can run on process exit', async () => {
     vi.useFakeTimers();
 
@@ -147,7 +219,7 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
     });
   });
 
-  it('keeps waiting for webhook proof when a canonical session id hint is already available', async () => {
+  it('keeps waiting for webhook proof before resolving success', async () => {
     vi.useFakeTimers();
 
     const aliveRef = { alive: true };
@@ -163,7 +235,6 @@ describe('waitForVisibleConsoleSessionWebhook', () => {
       pidToSpawnResultResolver,
       pidToSpawnWebhookTimeout,
       onChildExited,
-      resolveExistingSessionId: () => 'session-visible-9876',
     });
 
     expect(pidToAwaiter.size).toBe(1);

@@ -14,7 +14,7 @@ describe('createSpawnNewSessionLifecycleActionHandler dev adaptation', () => {
       sessionId: 'session-rich',
     } as const));
     const handler = createSpawnNewSessionLifecycleActionHandler({ spawnSession });
-    const runtimeDescriptorV1 = {
+    const legacyRuntimeDescriptorV1 = {
       v: 1,
       agentId: 'codex',
       provider: {
@@ -71,7 +71,7 @@ describe('createSpawnNewSessionLifecycleActionHandler dev adaptation', () => {
         ...mcpSelection,
       },
       transcriptStorage: 'persisted',
-      runtimeDescriptorV1,
+      runtimeDescriptorV1: legacyRuntimeDescriptorV1,
       terminal: { mode: 'tmux' },
       windowsTerminalWindowName: 'Happier Test',
     });
@@ -87,8 +87,15 @@ describe('createSpawnNewSessionLifecycleActionHandler dev adaptation', () => {
       permissionModeUpdatedAt: 1710000000001,
       agentModeId: 'plan',
       agentModeUpdatedAt: 1710000000002,
-      modelId: 'gpt-5',
-      modelUpdatedAt: 1710000000003,
+      modelSelection: {
+        v: 1,
+        updatedAt: 1710000000003,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: null,
+          modelId: 'gpt-5',
+        },
+      },
       sessionConfigOptionOverrides: {
         v: 1,
         updatedAt: expect.any(Number),
@@ -107,7 +114,18 @@ describe('createSpawnNewSessionLifecycleActionHandler dev adaptation', () => {
         ...mcpSelection,
       },
       transcriptStorage: 'persisted',
-      runtimeDescriptorV1,
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          agentExtra: {
+            owner: 'happier',
+            schemaId: 'codex-runtime',
+            v: 1,
+          },
+          backendMode: 'appServer',
+        },
+      },
       terminal: { mode: 'tmux' },
       windowsTerminalWindowName: 'Happier Test',
     }));

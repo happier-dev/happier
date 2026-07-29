@@ -1,12 +1,12 @@
-import type { ExecRuntimeServiceV1, PluginContextV1 } from '@happier-dev/plugin-sdk';
+import type { ExecRuntimeServiceV1 } from '@/plugins/runtime/exec/privateContract';
 
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import { createAcpBackend } from '@/agent/acp/createAcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
-import type { McpServerConfig } from '@/agent/core';
+import type { McpServerConfig } from '@/agent/core/AgentTypes';
 
-import type { AcpRuntimeDefinitionV1 } from './_types';
-import { resolveAcpAuthenticateMeta } from './auth';
+import type { AcpRuntimeDefinition } from './_types';
+import { resolveAcpAuthMethodId } from './auth';
 import { mergeDefinedStringEnv, resolveAcpRuntimeLaunch } from './launch';
 import { createAcpTransportHandlerFromDefinition } from './transport';
 import {
@@ -18,13 +18,13 @@ import {
 } from './tier2Callbacks';
 
 export function createAcpBackendFromDefinition(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   cwd: string;
   env?: Readonly<Record<string, string | undefined>>;
+  unsetEnvKeys?: readonly string[];
   permissionMode?: string;
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
-  pluginContext?: PluginContextV1;
   exec?: Pick<ExecRuntimeServiceV1, 'systemTools'>;
 }>): MaybePromise<AcpBackend> {
   const launch = resolveAcpRuntimeLaunch({
@@ -32,27 +32,28 @@ export function createAcpBackendFromDefinition(params: Readonly<{
     cwd: params.cwd,
     ...(params.permissionMode ? { permissionMode: params.permissionMode } : {}),
     ...(params.env ? { env: params.env } : {}),
-    ...(params.pluginContext ? { pluginContext: params.pluginContext } : {}),
+    ...(params.unsetEnvKeys ? { unsetEnvKeys: params.unsetEnvKeys } : {}),
     ...(params.exec ? { exec: params.exec } : {}),
   });
   const mcpServers = params.definition.mcp.policy === 'drop'
     ? undefined
     : params.mcpServers;
-  const authMeta = resolveAcpAuthenticateMeta({
-    definition: params.definition,
-    ...(params.pluginContext ? { pluginContext: params.pluginContext } : {}),
-  });
   const createBackend = (resolvedLaunch: Awaited<typeof launch>): MaybePromise<AcpBackend> => {
     const preflight = runAcpTier2Preflight({
       definition: params.definition,
       cwd: params.cwd,
+    });
+    const backendEnv = mergeDefinedStringEnv(params.env, resolvedLaunch.env);
+    const authMethodId = resolveAcpAuthMethodId({
+      definition: params.definition,
     });
     return mapMaybePromise(preflight, () => createAcpBackend({
       agentName: params.definition.backendId,
       cwd: params.cwd,
       command: resolvedLaunch.command,
       args: [...resolvedLaunch.args],
-      env: mergeDefinedStringEnv(params.env, resolvedLaunch.env),
+      env: backendEnv,
+      ...(params.unsetEnvKeys ? { unsetEnv: params.unsetEnvKeys } : {}),
       ...(mcpServers ? { mcpServers } : {}),
       ...(typeof params.definition.fsEnabled === 'boolean' ? { fsEnabled: params.definition.fsEnabled } : {}),
       permissionHandler: composeAcpTier2PermissionHandler({
@@ -60,8 +61,7 @@ export function createAcpBackendFromDefinition(params: Readonly<{
         permissionHandler: params.permissionHandler,
       }),
       transportHandler: createAcpTransportHandlerFromDefinition(params.definition),
-      ...(params.definition.auth?.methodId ? { authMethodId: params.definition.auth.methodId } : {}),
-      ...(authMeta ? { authMeta } : {}),
+      ...(authMethodId ? { authMethodId } : {}),
     }));
   };
 
@@ -71,13 +71,13 @@ export function createAcpBackendFromDefinition(params: Readonly<{
 }
 
 export function createSynchronousAcpBackendFromDefinition(params: Readonly<{
-  definition: AcpRuntimeDefinitionV1;
+  definition: AcpRuntimeDefinition;
   cwd: string;
   env?: Readonly<Record<string, string | undefined>>;
+  unsetEnvKeys?: readonly string[];
   permissionMode?: string;
   mcpServers?: Record<string, McpServerConfig>;
   permissionHandler?: AcpPermissionHandler;
-  pluginContext?: PluginContextV1;
   exec?: Pick<ExecRuntimeServiceV1, 'systemTools'>;
 }>): AcpBackend {
   if (

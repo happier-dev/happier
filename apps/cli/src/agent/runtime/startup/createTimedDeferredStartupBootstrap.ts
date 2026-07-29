@@ -1,6 +1,9 @@
 import { logger } from '@/ui/logger';
 
-import type { DeferredStartupBootstrapResult } from './deferredStartupTypes';
+import type {
+  DeferredStartupBootstrapResult,
+  DeferredStartupStartOptions,
+} from './deferredStartupTypes';
 import type { StartupTiming } from './startupSpec';
 
 const DEFAULT_TIMING_INCLUDE_IDS = [
@@ -23,7 +26,9 @@ export function createTimedDeferredStartupBootstrap<TBootstrap extends DeferredS
 }>): TimedDeferredStartupBootstrapResult<TBootstrap> {
   let startPromise: Promise<void> | null = null;
 
-  const start = async (): Promise<void> => {
+  const start = async (
+    options: DeferredStartupStartOptions = {},
+  ): Promise<void> => {
     if (startPromise) {
       await startPromise;
       return;
@@ -33,7 +38,7 @@ export function createTimedDeferredStartupBootstrap<TBootstrap extends DeferredS
       const stopApiSpan = params.timing.startSpan('initialize_backend_api_context');
       const stopSessionSpan = params.timing.startSpan('initialize_backend_run_session');
       try {
-        await params.bootstrap.start?.();
+        await params.bootstrap.start?.(options);
       } finally {
         stopSessionSpan();
         stopApiSpan();

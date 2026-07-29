@@ -15,6 +15,7 @@ const runtimeControlKeys = [
   'checkUsageLimitRecoveryNow',
   'consumeUsageLimitResetCredit',
   'clearTerminalComposer',
+  'interruptPendingInputAndRun',
   'handleUserMessage',
 ] as const satisfies readonly (keyof SessionRuntimeControls)[];
 

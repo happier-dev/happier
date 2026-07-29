@@ -1,9 +1,16 @@
+import { SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2 } from '@happier-dev/protocol';
+
 import type { Credentials } from '@/persistence';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
-import { fetchSessionById, fetchSessionsPage } from '@/session/transport/http/sessionsHttp';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+  fetchSessionById,
+  fetchSessionsPage,
+  lookupSessionsByTags,
+  type RawSessionRecord,
+} from '@/session/transport/http/sessionsHttp';
 
 export type ResolveSessionIdResult =
-  | { ok: true; sessionId: string }
+  | { ok: true; sessionId: string; rawSession?: RawSessionRecord }
   | { ok: false; code: 'session_not_found' | 'session_id_ambiguous' | 'unsupported'; candidates?: string[] };
 
 function normalizeIdOrPrefix(value: string): string {
@@ -22,7 +29,32 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   if (input.length >= 12) {
     const exact = await fetchSessionById({ token: params.credentials.token, sessionId: input });
     if (exact) {
-      return { ok: true, sessionId: input };
+      return { ok: true, sessionId: input, rawSession: exact };
+    }
+  }
+
+  const indexedTagLookup = input.length <= SESSION_LOOKUP_BY_TAGS_TAG_MAX_CODE_UNITS_V2
+    ? await lookupSessionsByTags({
+        token: params.credentials.token,
+        tags: [input],
+      })
+    : null;
+  if (indexedTagLookup?.state === 'available') {
+    const indexedMatches = new Map(
+      indexedTagLookup.sessions.map((session) => [session.id, session]),
+    );
+    if (indexedMatches.size === 1) {
+      const rawSession = indexedMatches.values().next().value;
+      if (rawSession) {
+        return { ok: true, sessionId: rawSession.id, rawSession };
+      }
+    }
+    if (indexedMatches.size > 1) {
+      return {
+        ok: false,
+        code: 'session_id_ambiguous',
+        candidates: Array.from(indexedMatches.keys()).slice(0, 10),
+      };
     }
   }
 
@@ -31,13 +63,19 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   const maxPages = Number.isFinite(maxPagesParsed) && maxPagesParsed > 0 ? Math.min(50, maxPagesParsed) : 10;
 
   let cursor: string | undefined;
-  const matches = new Set<string>();
+  const prefixMatches = new Set<string>();
+  const fallbackTagMatches = new Set<string>();
+  const useOldServerTagFallback = indexedTagLookup?.state === 'unavailable';
 
-  const recordMatch = (id: string): ResolveSessionIdResult | null => {
-    if (matches.has(id)) return null;
-    matches.add(id);
-    if (matches.size > 1) {
-      return { ok: false, code: 'session_id_ambiguous', candidates: Array.from(matches).slice(0, 10) };
+  const recordPrefixMatch = (id: string): ResolveSessionIdResult | null => {
+    if (prefixMatches.has(id)) return null;
+    prefixMatches.add(id);
+    if (!useOldServerTagFallback && prefixMatches.size > 1) {
+      return {
+        ok: false,
+        code: 'session_id_ambiguous',
+        candidates: Array.from(prefixMatches).slice(0, 10),
+      };
     }
     return null;
   };
@@ -49,16 +87,19 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
       for (const row of page.sessions) {
         const id = row.id;
         if (id.startsWith(input)) {
-          const res = recordMatch(id);
+          const res = recordPrefixMatch(id);
           if (res) return res;
         }
 
-        // Also support resolving by exact tag match when metadata is decryptable.
-        const meta = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: row });
-        const tag = meta && typeof meta.tag === 'string' ? meta.tag.trim() : '';
-        if (tag && tag === input) {
-          const res = recordMatch(id);
-          if (res) return res;
+        if (useOldServerTagFallback) {
+          const metadata = tryDecryptSessionOwnerMetadataView({
+            credentials: params.credentials,
+            rawSession: row,
+          });
+          const tag = typeof metadata?.tag === 'string' ? metadata.tag.trim() : '';
+          if (tag === input) {
+            fallbackTagMatches.add(id);
+          }
         }
       }
       if (!page.hasNext || !page.nextCursor) break;
@@ -72,7 +113,23 @@ export async function resolveSessionIdOrPrefix(params: Readonly<{
   const archivedScan = await scan(true);
   if (archivedScan) return archivedScan;
 
-  if (matches.size === 1) return { ok: true, sessionId: Array.from(matches)[0]! };
-  if (matches.size === 0) return { ok: false, code: 'session_not_found' };
-  return { ok: false, code: 'session_id_ambiguous', candidates: Array.from(matches).slice(0, 10) };
+  if (fallbackTagMatches.size === 1) {
+    return { ok: true, sessionId: Array.from(fallbackTagMatches)[0]! };
+  }
+  if (fallbackTagMatches.size > 1) {
+    return {
+      ok: false,
+      code: 'session_id_ambiguous',
+      candidates: Array.from(fallbackTagMatches).slice(0, 10),
+    };
+  }
+  if (prefixMatches.size === 1) {
+    return { ok: true, sessionId: Array.from(prefixMatches)[0]! };
+  }
+  if (prefixMatches.size === 0) return { ok: false, code: 'session_not_found' };
+  return {
+    ok: false,
+    code: 'session_id_ambiguous',
+    candidates: Array.from(prefixMatches).slice(0, 10),
+  };
 }

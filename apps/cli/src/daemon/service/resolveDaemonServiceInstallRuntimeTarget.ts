@@ -5,6 +5,7 @@ import {
   resolveDesiredShimTargets,
   resolveInstalledFirstPartyComponentPaths,
 } from '@happier-dev/cli-common/firstPartyRuntime';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
 import { buildMissingJavaScriptRuntimeMessage } from '@/packagedRuntime/js/buildMissingJavaScriptRuntimeMessage';
 import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable';
@@ -12,16 +13,18 @@ import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJa
 import type { DaemonServiceTargetMode } from './plan';
 import { resolveDaemonServiceRuntimeTarget } from './runtimeTarget';
 
-async function resolveDefaultFollowingManagedShimPath(processEnv: NodeJS.ProcessEnv): Promise<string | null> {
-  const defaultReleaseChannel = await readDefaultManagedReleaseChannel({ processEnv });
+async function resolveManagedReleaseChannelShimPath(params: Readonly<{
+  channel: PublicReleaseRingId;
+  processEnv: NodeJS.ProcessEnv;
+}>): Promise<string | null> {
   const defaultShimPath = (await resolveDesiredShimTargets({
     componentId: 'happier-daemon',
-    channel: defaultReleaseChannel,
-    processEnv,
+    channel: params.channel,
+    processEnv: params.processEnv,
   }))[0]?.shimPath ?? resolveInstalledFirstPartyComponentPaths({
     componentId: 'happier-daemon',
-    channel: defaultReleaseChannel,
-    processEnv,
+    channel: params.channel,
+    processEnv: params.processEnv,
   }).shimPaths[0];
   if (!defaultShimPath) {
     return null;
@@ -35,12 +38,21 @@ async function resolveDefaultFollowingManagedShimPath(processEnv: NodeJS.Process
   }
 }
 
+async function resolveDefaultFollowingManagedShimPath(processEnv: NodeJS.ProcessEnv): Promise<string | null> {
+  const defaultReleaseChannel = await readDefaultManagedReleaseChannel({ processEnv });
+  return await resolveManagedReleaseChannelShimPath({
+    channel: defaultReleaseChannel,
+    processEnv,
+  });
+}
+
 export async function resolveDaemonServiceInstallRuntimeTarget(options: Readonly<{
   currentExecPath?: string | null;
   explicitNodePath?: string | null;
   explicitEntryPath?: string | null;
   allowBootstrap?: boolean;
   targetMode?: DaemonServiceTargetMode;
+  channel?: PublicReleaseRingId | null;
   processEnv?: NodeJS.ProcessEnv;
 }> = {}): Promise<Readonly<{
   nodePath: string;
@@ -59,6 +71,19 @@ export async function resolveDaemonServiceInstallRuntimeTarget(options: Readonly
       return resolveDaemonServiceRuntimeTarget({
         currentExecPath,
         explicitNodePath: managedDefaultShimPath,
+      });
+    }
+  }
+
+  if (!explicitNodePath && !explicitEntryPath && targetMode === 'pinned' && options.channel) {
+    const managedChannelShimPath = await resolveManagedReleaseChannelShimPath({
+      channel: options.channel,
+      processEnv,
+    });
+    if (managedChannelShimPath) {
+      return resolveDaemonServiceRuntimeTarget({
+        currentExecPath,
+        explicitNodePath: managedChannelShimPath,
       });
     }
   }

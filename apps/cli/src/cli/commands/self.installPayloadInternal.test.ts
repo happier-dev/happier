@@ -56,6 +56,7 @@ describe('happier self __install-payload', () => {
         channel: 'stable',
         componentId: 'happier-cli',
         payloadRoot: '/tmp/payload',
+        payloadRootAlreadyFiltered: true,
         processEnv: process.env,
         versionId: '1.2.3',
       });
@@ -86,6 +87,7 @@ describe('happier self __install-payload', () => {
         channel: 'publicdev',
         componentId: 'happier-cli',
         payloadRoot: '/tmp/payload',
+        payloadRootAlreadyFiltered: true,
         processEnv: process.env,
         versionId: '1.2.3-dev.4',
       });
@@ -125,6 +127,38 @@ describe('happier self __install-payload', () => {
         commandPath: 'happier self migrate',
       });
     } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it('skips post-promotion runtime migration when the installer owns repair', async () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const previousSkipMigration = process.env.HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION;
+    process.env.HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION = '1';
+
+    try {
+      const { handleSelfCliCommand } = await import('./self');
+      await handleSelfCliCommand({
+        args: ['self', '__install-payload', '--component', 'happier-cli', '--payload-root', '/tmp/payload', '--version', '1.2.3-preview.4', '--channel', 'preview'],
+        rawArgv: ['hprev', 'self', '__install-payload', '--component', 'happier-cli', '--payload-root', '/tmp/payload', '--version', '1.2.3-preview.4', '--channel', 'preview'],
+        terminalRuntime: null,
+      });
+
+      expect(installVersionedPayloadMock).toHaveBeenCalledWith({
+        channel: 'preview',
+        componentId: 'happier-cli',
+        payloadRoot: '/tmp/payload',
+        payloadRootAlreadyFiltered: true,
+        processEnv: process.env,
+        versionId: '1.2.3-preview.4',
+      });
+      expect(maybeRunVersionGatedRuntimeMigrationMock).not.toHaveBeenCalled();
+    } finally {
+      if (previousSkipMigration === undefined) {
+        delete process.env.HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION;
+      } else {
+        process.env.HAPPIER_CLI_SKIP_INSTALL_PAYLOAD_MIGRATION = previousSkipMigration;
+      }
       logSpy.mockRestore();
     }
   });

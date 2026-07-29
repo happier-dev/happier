@@ -5,7 +5,7 @@ import { join } from 'node:path';
 
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { createPluginStateStore } from '@/plugins/store/state';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
 import { resolveConfiguredAcpProbeCacheVariant } from './configuredAcpProbeCacheVariant';
 
@@ -53,13 +53,10 @@ async function writePluginFixture(rootDir: string): Promise<void> {
               kind: 'acp',
               transport: {
                 kind: 'stdio',
-                launch: {
-                  kind: 'executable',
-                  command: 'plugin-variant-cli',
-                  args: ['acp'],
-                  env: {
-                    REGION: 'eu',
-                  },
+                executable: { kind: 'systemTool', id: 'plugin-variant-cli' },
+                args: ['acp'],
+                env: {
+                  REGION: 'eu',
                 },
               },
               ux: {
@@ -78,6 +75,12 @@ async function writePluginFixture(rootDir: string): Promise<void> {
             },
           },
           ],
+          systemTools: [{
+            toolId: 'plugin-variant-cli',
+            displayName: 'Plugin Variant CLI',
+            lookupNames: ['plugin-variant-cli'],
+            defaultArgs: [],
+          }],
         },
       }),
       null,

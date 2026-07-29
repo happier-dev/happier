@@ -1,12 +1,32 @@
-import { writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import fs, { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
+import {
+  bundleInstalledPackageWithRuntimeDependencies as canonicalBundleInstalledPackageWithRuntimeDependencies,
+} from '../../../../packages/cli-common/src/workspaces/index';
 import { createTempDirSync } from '../../src/testkit/fs/tempDir';
-import { packTarball } from '../packTarball.mjs';
+import { packTarball as packTarballImpl } from '../packTarball.mjs';
+
+const loadCliCommonWorkspacesModuleFromSource = async () => ({
+  bundleInstalledPackageWithRuntimeDependencies:
+    canonicalBundleInstalledPackageWithRuntimeDependencies,
+});
+
+const packTarball = (options: Parameters<typeof packTarballImpl>[0]) => packTarballImpl({
+  ...options,
+  npmCliExistsSync: options.npmCliExistsSync ?? (() => true),
+  assertInputCurrentnessImpl: async () => undefined,
+  loadCliCommonWorkspacesModuleImpl:
+    options.loadCliCommonWorkspacesModuleImpl ?? loadCliCommonWorkspacesModuleFromSource,
+});
 
 const noopBundleWorkspaceDeps = async () => undefined;
+
+function preserveCommandInvocation(params: Readonly<{ command: string; args: string[] }>) {
+  return { command: params.command, args: params.args };
+}
 
 function createPackageDistFsAdapter(baseExists: (targetPath: unknown) => boolean) {
   const syntheticPaths = new Set<string>();
@@ -33,52 +53,435 @@ function createPackageDistFsAdapter(baseExists: (targetPath: unknown) => boolean
   };
 }
 
+function createRealArtifactFsAdapter(packageRoot: string) {
+  return createPackageDistFsAdapter((targetPath) => (
+    String(targetPath) === join(packageRoot, 'dist') || existsSync(String(targetPath))
+  ));
+}
+
 describe('packTarball (npmExecpath)', () => {
-  it('ignores non-npm npm_execpath values (e.g. yarn) and uses npm on PATH', async () => {
+  it('rejects a CLI dist whose recorded runtime inputs do not match the current source tree', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const distDir = join(packageRoot, 'dist');
+    mkdirSync(distDir, { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package.json'],
+    }), 'utf8');
+    writeFileSync(join(distDir, 'index.mjs'), 'export const built = true;\n', 'utf8');
+    const cliDistManifest = await import('../../../../packages/cli-common/cliDistBuildManifest.cjs');
+    cliDistManifest.default.writeCliDistBuildManifest(join(distDir, 'index.mjs'), {
+      outputDir: distDir,
+      inputFingerprint: 'a'.repeat(64),
+    });
+    const spawn = vi.fn();
+
+    await expect(packTarballImpl({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/runtime input fingerprint.*does not match/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('uses bounded npm filename output and still requires a zero process status for the exact artifact', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    writeFileSync(join(destDir, 'unrelated-existing.tgz'), '', 'utf8');
+
+    const spawn = vi.fn((_command: unknown, args: unknown) => {
+      expect(args).toEqual(expect.arrayContaining(['pack', '--silent', '--ignore-scripts']));
+      expect(args).not.toEqual(expect.arrayContaining(['--json']));
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+
+    const result = await packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: spawn,
+      ...createPackageDistFsAdapter(() => true),
+      env: {},
+    });
+    expect(result.tarballName).toBe(tarballName);
+    expect(result.tarballPath).toBe(join(destDir, tarballName));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 9, signal: null, stdout: `${tarballName}\n`, stderr: '' }),
+      ...createPackageDistFsAdapter(() => true),
+      env: {},
+    })).rejects.toThrow(/status: 9/);
+  });
+
+  it('rejects a signaled npm pack process even when stdout names an existing tarball', async () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
-    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({
+        status: null,
+        signal: 'SIGTERM',
+        error: undefined,
+        stdout: `${tarballName}\n`,
+        stderr: '',
+      }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/signal: SIGTERM/);
+  });
+
+  it('rejects npm output that traverses outside the requested destination', async () => {
+    const packRoot = createTempDirSync('happier-cli-pack-tarball-parent-');
+    const destDir = join(packRoot, 'destination');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    writeFileSync(join(packRoot, 'outside.tgz'), '', 'utf8');
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({
+        status: 0,
+        signal: null,
+        stdout: '../outside.tgz\n',
+        stderr: '',
+      }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/outside.*destination/i);
+  });
+
+  it('rejects a tarball path that escapes the destination through a directory symlink', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const outsideDir = createTempDirSync('happier-cli-pack-tarball-outside-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const linkedDirName = 'linked-outside';
+    writeFileSync(join(outsideDir, 'artifact.tgz'), '', 'utf8');
+    symlinkSync(
+      outsideDir,
+      join(destDir, linkedDirName),
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({
+        status: 0,
+        signal: null,
+        stdout: `${linkedDirName}/artifact.tgz\n`,
+        stderr: '',
+      }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/outside.*destination/i);
+  });
+
+  it('rejects a tarball path reached through a directory symlink inside the destination', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const realArtifactDir = join(destDir, 'real-artifacts');
+    const linkedArtifactDir = join(destDir, 'linked-artifacts');
+    mkdirSync(realArtifactDir);
+    writeFileSync(join(realArtifactDir, 'artifact.tgz'), '', 'utf8');
+    symlinkSync(
+      realArtifactDir,
+      linkedArtifactDir,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 0, signal: null, stdout: 'linked-artifacts/artifact.tgz\n', stderr: '' }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/regular file|symbolic link/i);
+  });
+
+  it('rejects a directory even when npm reports it with a tarball filename', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(destDir, tarballName));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/regular file/i);
+  });
+
+  it('rejects a regular non-tarball file reported by npm', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    writeFileSync(join(destDir, 'package.json'), '{}', 'utf8');
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 0, signal: null, stdout: 'package.json\n', stderr: '' }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/tarball/i);
+  });
+
+  it('rejects a symlink even when it points to a regular file inside the destination', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    const targetPath = join(destDir, 'target.tgz');
+    writeFileSync(targetPath, '', 'utf8');
+    symlinkSync(targetPath, join(destDir, tarballName), 'file');
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/regular file/i);
+  });
+
+  it('accepts absolute npm output when the artifact is owned by the destination', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballPath = join(destDir, 'artifact.tgz');
+    writeFileSync(tarballPath, '', 'utf8');
+
+    const result = await packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 0, signal: null, stdout: `${tarballPath}\n`, stderr: '' }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    });
+
+    expect(result.tarballPath).toBe(tarballPath);
+  });
+
+  it('rejects absolute npm output in a sibling directory with a shared prefix', async () => {
+    const packRoot = createTempDirSync('happier-cli-pack-tarball-parent-');
+    const destDir = join(packRoot, 'destination');
+    const siblingDir = join(packRoot, 'destination-sibling');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    mkdirSync(siblingDir, { recursive: true });
+    const siblingTarballPath = join(siblingDir, 'artifact.tgz');
+    writeFileSync(siblingTarballPath, '', 'utf8');
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 0, signal: null, stdout: `${siblingTarballPath}\n`, stderr: '' }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/outside.*destination/i);
+  });
+
+  it('rejects backslash traversal regardless of the host path separator', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    writeFileSync(join(destDir, '..\\outside.tgz'), '', 'utf8');
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({ status: 0, signal: null, stdout: '..\\outside.tgz\n', stderr: '' }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/outside.*destination/i);
+  });
+
+  it('uses the npm CLI owned by the active Node runtime and strips ambient package-authoring injection', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    const nodeExecPath = '/owned/runtime/bin/node';
+    const ownedNpmCliPath = '/owned/runtime/lib/node_modules/npm/bin/npm-cli.js';
+    const hostileNpmCliPath = '/attacker/npm-cli.js';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' }));
+
+    await packTarball({
+      packageRoot,
+      destDir,
+      npmExecpath: hostileNpmCliPath,
+      platform: 'linux',
+      processExecPath: nodeExecPath,
+      npmCliExistsSync: (targetPath: unknown) => String(targetPath) === ownedNpmCliPath,
+      resolveCommandInvocation: preserveCommandInvocation,
+      spawnSync: spawn,
+      ...createPackageDistFsAdapter(() => true),
+      env: {
+        PATH: '/owned/runtime/bin:/usr/bin',
+        HOME: '/home/builder',
+        TMPDIR: '/tmp/builder',
+        HTTPS_PROXY: 'https://proxy.example',
+        NODE_EXTRA_CA_CERTS: '/etc/ssl/private-ca.pem',
+        HAPPIER_SERVER_URL: 'https://api.example',
+        NODE_OPTIONS: '--import /attacker/inject.mjs',
+        dyld_insert_libraries: '/attacker/inject.dylib',
+        LD_PRELOAD: '/attacker/inject.so',
+        OPENSSL_CONF: '/attacker/openssl.cnf',
+        openssl_modules: '/attacker/providers',
+        npm_config_userconfig: '/attacker/npmrc',
+        NPM_CONFIG__AUTHTOKEN: 'must-not-leak',
+        NODE_AUTH_TOKEN: 'must-not-leak',
+        NPM_TOKEN: 'must-not-leak',
+        npm_execpath: hostileNpmCliPath,
+        npm_lifecycle_event: 'prepack',
+        COREPACK_HOME: '/attacker/corepack',
+        COREPACK_ENABLE_STRICT: '0',
+        YARN_RC_FILENAME: '/attacker/yarnrc',
+        YARN_WRAP_OUTPUT: 'false',
+        BUN_OPTIONS: '--preload=/attacker/inject.mjs',
+        happier_cli_subprocess_node_options: '--require=/attacker/inject.cjs',
+      },
+    });
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    const [command, args, options] = spawn.mock.calls[0];
+    expect(command).toBe(nodeExecPath);
+    expect(args).toEqual([
+      ownedNpmCliPath,
+      'pack',
+      '--silent',
+      '--ignore-scripts',
+      '--pack-destination',
+      expect.stringContaining(destDir),
+    ]);
+    expect(args).not.toContain(hostileNpmCliPath);
+    const childEnv = options.env as Record<string, string>;
+    expect(childEnv).toEqual(expect.objectContaining({
+      PATH: '/owned/runtime/bin:/usr/bin',
+      HOME: '/home/builder',
+      TMPDIR: '/tmp/builder',
+      HTTPS_PROXY: 'https://proxy.example',
+      NODE_EXTRA_CA_CERTS: '/etc/ssl/private-ca.pem',
+      HAPPIER_SERVER_URL: 'https://api.example',
+      npm_lifecycle_event: 'prepack',
+      COREPACK_ENABLE_STRICT: '0',
+      YARN_WRAP_OUTPUT: 'false',
+    }));
+    const normalizedChildKeys = Object.keys(childEnv).map((key) => key.toUpperCase());
+    for (const hostileKey of [
+      'NODE_OPTIONS',
+      'DYLD_INSERT_LIBRARIES',
+      'LD_PRELOAD',
+      'OPENSSL_CONF',
+      'OPENSSL_MODULES',
+      'NPM_CONFIG_USERCONFIG',
+      'NPM_CONFIG__AUTHTOKEN',
+      'NODE_AUTH_TOKEN',
+      'NPM_TOKEN',
+      'NPM_EXECPATH',
+      'COREPACK_HOME',
+      'YARN_RC_FILENAME',
+      'BUN_OPTIONS',
+      'HAPPIER_CLI_SUBPROCESS_NODE_OPTIONS',
+    ]) {
+      expect(normalizedChildKeys).not.toContain(hostileKey);
+    }
+    expect(isAbsolute(childEnv.npm_config_cache)).toBe(true);
+  });
+
+  it('ignores non-npm npm_execpath values and uses the npm CLI beside the active Node runtime', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    const nodeExecPath = '/owned/runtime/bin/node';
+    const npmCliPath = '/owned/runtime/lib/node_modules/npm/bin/npm-cli.js';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
 
     await packTarball({
       packageRoot,
       destDir,
       npmExecpath: '/somewhere/yarn.js',
+      platform: 'linux',
+      processExecPath: nodeExecPath,
+      resolveCommandInvocation: preserveCommandInvocation,
       spawnSync: spawn,
       ...createPackageDistFsAdapter(() => true),
       env: {},
     });
 
     expect(spawn).toHaveBeenCalledWith(
-      'npm',
-      ['pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      nodeExecPath,
+      [npmCliPath, 'pack', '--silent', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
       expect.any(Object),
     );
   });
 
-  it('uses node + npm-cli.js when npm_execpath points at npm-cli.js', async () => {
+  it('ignores a basename-matching ambient npm_execpath outside the active Node runtime', async () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
     const tarballName = 'artifact.tgz';
+    const nodeExecPath = '/owned/runtime/bin/node';
+    const ownedNpmCliPath = '/owned/runtime/lib/node_modules/npm/bin/npm-cli.js';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
-    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
 
     const npmCliPath = '/somewhere/node_modules/npm/bin/npm-cli.js';
     await packTarball({
       packageRoot,
       destDir,
       npmExecpath: npmCliPath,
+      platform: 'linux',
+      processExecPath: nodeExecPath,
+      resolveCommandInvocation: preserveCommandInvocation,
       spawnSync: spawn,
       ...createPackageDistFsAdapter(() => true),
       env: {},
     });
 
     expect(spawn).toHaveBeenCalledWith(
-      process.execPath,
-      [npmCliPath, 'pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      nodeExecPath,
+      [ownedNpmCliPath, 'pack', '--silent', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      expect.any(Object),
+    );
+  });
+
+  it('uses the active Windows Node installation instead of an explicit ambient npm-cli.js', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    const nodeExecPath = 'C:\\Managed Runtime\\node.exe';
+    const npmCliPath = 'C:\\Custom npm\\npm-cli.js';
+    const ownedNpmCliPath = 'C:\\Managed Runtime\\node_modules\\npm\\bin\\npm-cli.js';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
+    await packTarball({
+      packageRoot,
+      destDir,
+      npmExecpath: npmCliPath,
+      platform: 'win32',
+      processExecPath: nodeExecPath,
+      resolveCommandInvocation: preserveCommandInvocation,
+      spawnSync: spawn,
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      nodeExecPath,
+      [ownedNpmCliPath, 'pack', '--silent', '--ignore-scripts', '--pack-destination', destDir],
       expect.any(Object),
     );
   });
@@ -89,7 +492,7 @@ describe('packTarball (npmExecpath)', () => {
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
-    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
     const nodeExecPath = 'C:\\Program Files\\nodejs\\node.exe';
     const npmCliPath = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
 
@@ -110,37 +513,105 @@ describe('packTarball (npmExecpath)', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       nodeExecPath,
-      [npmCliPath, 'pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      [npmCliPath, 'pack', '--silent', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
       expect.any(Object),
     );
   });
 
-  it('falls back to npm.cmd on Windows when npm-cli.js cannot be resolved from node.exe', async () => {
+  it('uses Windows path semantics for a forward-slash Windows executable path', async () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
     const tarballName = 'artifact.tgz';
+    const nodeExecPath = 'C:/Managed Runtime/node.exe';
+    const npmCliPath = 'C:\\Managed Runtime\\node_modules\\npm\\bin\\npm-cli.js';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
-    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
-
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
     await packTarball({
       packageRoot,
       destDir,
       npmExecpath: '/somewhere/yarn.js',
       platform: 'win32',
+      processExecPath: nodeExecPath,
+      resolveCommandInvocation: preserveCommandInvocation,
+      spawnSync: spawn,
+      ...createPackageDistFsAdapter((targetPath) => (
+        String(targetPath) === npmCliPath
+        || String(targetPath) === join(packageRoot, 'dist')
+        || existsSync(String(targetPath))
+      )),
+      env: {},
+    });
+
+    expect(spawn).toHaveBeenCalledWith(
+      nodeExecPath,
+      [npmCliPath, 'pack', '--silent', '--ignore-scripts', '--pack-destination', destDir],
+      expect.any(Object),
+    );
+  });
+
+  it('fails closed on Windows when npm-cli.js cannot be resolved from node.exe', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      npmExecpath: '/somewhere/yarn.js',
+      platform: 'win32',
       processExecPath: 'C:\\Program Files\\nodejs\\node.exe',
+      npmCliExistsSync: () => false,
       spawnSync: spawn,
       ...createPackageDistFsAdapter((targetPath) => {
         const normalized = String(targetPath).replaceAll('\\', '/').toLowerCase();
         return normalized.endsWith(`/${tarballName}`) || normalized.endsWith('/dist');
       }),
       env: {},
+    })).rejects.toThrow(/npm CLI owned by the active Node runtime is unavailable/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('routes the owned Windows Node invocation through the canonical command resolver', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const nodeExecPath = 'C:\\Program Files\\nodejs\\node.exe';
+    const npmCliPath = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
+    const wrappedArgs = [npmCliPath, 'pack'];
+    const resolveCommandInvocation = vi.fn(() => ({
+      command: 'C:\\Windows\\System32\\cmd.exe',
+      args: wrappedArgs,
+      windowsVerbatimArguments: true,
+    }));
+    const spawn = vi.fn(() => ({ status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' }));
+
+    await packTarball({
+      packageRoot,
+      destDir,
+      npmExecpath: '/somewhere/yarn.js',
+      platform: 'win32',
+      processExecPath: nodeExecPath,
+      resolveCommandInvocation,
+      spawnSync: spawn,
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
     });
 
+    expect(resolveCommandInvocation).toHaveBeenCalledWith(expect.objectContaining({
+      command: nodeExecPath,
+      args: [npmCliPath, 'pack', '--silent', '--ignore-scripts', '--pack-destination', destDir],
+      resolveCommandOnPath: false,
+    }));
     expect(spawn).toHaveBeenCalledWith(
-      'npm.cmd',
-      ['pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
-      expect.any(Object),
+      'C:\\Windows\\System32\\cmd.exe',
+      wrappedArgs,
+      expect.objectContaining({ windowsVerbatimArguments: true }),
     );
   });
 
@@ -150,7 +621,7 @@ describe('packTarball (npmExecpath)', () => {
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
-    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
     const nodeExecPath = 'C:\\Program Files\\nodejs\\node.exe';
     const npmCliPath = 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js';
 
@@ -171,12 +642,12 @@ describe('packTarball (npmExecpath)', () => {
 
     expect(spawn).toHaveBeenCalledWith(
       nodeExecPath,
-      [npmCliPath, 'pack', '--json', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
+      [npmCliPath, 'pack', '--silent', '--ignore-scripts', '--pack-destination', expect.stringContaining(destDir)],
       expect.any(Object),
     );
   });
 
-  it('parses npm pack --json output even when prepack logs are mixed into stdout', async () => {
+  it('rejects malformed npm stdout that merely mentions an existing tarball', async () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
     const tarballName = 'artifact.tgz';
@@ -184,29 +655,38 @@ describe('packTarball (npmExecpath)', () => {
 
     const spawn = vi.fn(() => ({
       status: 0,
-      stdout: [
-        '> @happier-dev/cli@0.1.0 prepack',
-        '> yarn -s build && node scripts/bundleWorkspaceDeps.mjs',
-        'Generated an empty chunk: "index".',
-        '[',
-        `  { "filename": "${tarballName}" }`,
-        ']',
-        '',
-      ].join('\n'),
+      stdout: `warning: retained previous ${tarballName}\n`,
       stderr: '',
     }));
 
-    const result = await packTarball({
+    await expect(packTarball({
       packageRoot,
       destDir,
       npmInvocation: { command: 'npm', args: [] },
       spawnSync: spawn,
-      ...createPackageDistFsAdapter(() => true),
+      ...createRealArtifactFsAdapter(packageRoot),
       env: {},
-    });
+    })).rejects.toThrow(/did not report a tarball filename/i);
+  });
 
-    expect(result.tarballName).toBe(tarballName);
-    expect(result.tarballPath).toContain(join(destDir, tarballName));
+  it('rejects an arbitrary JSON log object that names an existing tarball', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: () => ({
+        status: 0,
+        signal: null,
+        stdout: JSON.stringify({ level: 'warn', filename: tarballName }),
+        stderr: '',
+      }),
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/did not report a tarball filename/i);
   });
 
   it('applies a bounded timeout to npm pack invocations to prevent indefinite hangs', async () => {
@@ -215,7 +695,7 @@ describe('packTarball (npmExecpath)', () => {
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
-    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
 
     await packTarball({
       packageRoot,
@@ -236,6 +716,191 @@ describe('packTarball (npmExecpath)', () => {
     );
   });
 
+  it('uses an explicit npm cache directory instead of an inherited npm_config_cache', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const explicitCacheDir = join(destDir, 'explicit-cache');
+    const inheritedCacheDir = join(destDir, 'inherited-cache');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' }));
+    await packTarball({
+      packageRoot,
+      destDir,
+      npmCacheDir: explicitCacheDir,
+      spawnSync: spawn,
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {
+        npm_config_cache: inheritedCacheDir,
+        NPM_CONFIG_CACHE: `${inheritedCacheDir}-uppercase`,
+      },
+    });
+
+    const spawnEnv = spawn.mock.calls[0]?.[2]?.env as Readonly<Record<string, string>>;
+    expect(spawnEnv.npm_config_cache).toBe(explicitCacheDir);
+    expect(Object.keys(spawnEnv).filter((key) => key.toLowerCase() === 'npm_config_cache'))
+      .toEqual(['npm_config_cache']);
+  });
+
+  it('resolves an explicit relative npm cache once before creation and spawn', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const existingCacheDir = createTempDirSync('happier-cli-pack-explicit-cache-');
+    const relativeCacheDir = relative(process.cwd(), existingCacheDir);
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' }));
+    await packTarball({
+      packageRoot,
+      destDir,
+      npmCacheDir: relativeCacheDir,
+      spawnSync: spawn,
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    });
+
+    const spawnEnv = spawn.mock.calls[0]?.[2]?.env as Readonly<Record<string, string>>;
+    expect(isAbsolute(spawnEnv.npm_config_cache)).toBe(true);
+    expect(spawnEnv.npm_config_cache).toBe(resolve(relativeCacheDir));
+  });
+
+  it('ignores ambient cache variants and removes an owned cache outside the pack destination by default', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const ambientCacheDir = join(destDir, 'ambient-cache');
+    const ambientUppercaseCacheDir = join(destDir, 'ambient-uppercase-cache');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    let observedCacheDir = '';
+    const spawn = vi.fn((_command: unknown, _args: unknown, options: { env: Record<string, unknown> }) => {
+      observedCacheDir = String(options.env.npm_config_cache);
+      expect(observedCacheDir).not.toBe(ambientCacheDir);
+      expect(observedCacheDir).not.toBe(ambientUppercaseCacheDir);
+      expect(Object.keys(options.env).filter((key) => key.toLowerCase() === 'npm_config_cache'))
+        .toEqual(['npm_config_cache']);
+      expect(existsSync(observedCacheDir)).toBe(true);
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+    await packTarball({
+      packageRoot,
+      destDir,
+      spawnSync: spawn,
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {
+        npm_config_cache: ambientCacheDir,
+        NPM_CONFIG_CACHE: ambientUppercaseCacheDir,
+      },
+    });
+
+    const cacheRelativeToDestination = relative(destDir, observedCacheDir);
+    expect(cacheRelativeToDestination === '..' || cacheRelativeToDestination.startsWith(`..${sep}`)).toBe(true);
+    expect(observedCacheDir).toContain('happier-npm-cache-');
+    expect(existsSync(observedCacheDir)).toBe(false);
+    expect(existsSync(ambientCacheDir)).toBe(false);
+    expect(existsSync(ambientUppercaseCacheDir)).toBe(false);
+  });
+
+  it('preserves the primary npm failure when owned-cache cleanup also fails', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    let observedCacheDir = '';
+    const removeOwnedCacheDir = fs.rmSync;
+    const removeOwnedCacheSpy = vi.spyOn(fs, 'rmSync').mockImplementation(() => {
+      throw new Error('cache-cleanup-locked');
+    });
+    let error: unknown = null;
+    try {
+      error = await packTarball({
+        packageRoot,
+        destDir,
+        spawnSync: (_command: unknown, _args: unknown, options: { env: Record<string, unknown> }) => {
+          observedCacheDir = String(options.env.npm_config_cache);
+          return {
+            status: 9,
+            signal: null,
+            stdout: '',
+            stderr: 'primary-pack-diagnostic',
+          };
+        },
+        ...createRealArtifactFsAdapter(packageRoot),
+        env: {},
+      }).then(
+        () => null,
+        (rejection: unknown) => rejection,
+      );
+    } finally {
+      removeOwnedCacheSpy.mockRestore();
+      if (observedCacheDir) {
+        removeOwnedCacheDir(observedCacheDir, { recursive: true, force: true });
+      }
+    }
+
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(String((error as Error).message)).toContain('status: 9');
+    expect(String((error as Error).message)).toContain('primary-pack-diagnostic');
+    expect(String((error as Error).message)).toContain('cache-cleanup-locked');
+  });
+
+  it('surfaces an owned-cache cleanup failure after an otherwise successful pack', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    let observedCacheDir = '';
+    const removeOwnedCacheDir = fs.rmSync;
+    const removeOwnedCacheSpy = vi.spyOn(fs, 'rmSync').mockImplementation(() => {
+      throw new Error('cache-cleanup-locked-after-success');
+    });
+    let error: unknown = null;
+    try {
+      error = await packTarball({
+        packageRoot,
+        destDir,
+        spawnSync: (_command: unknown, _args: unknown, options: { env: Record<string, unknown> }) => {
+          observedCacheDir = String(options.env.npm_config_cache);
+          return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+        },
+        ...createRealArtifactFsAdapter(packageRoot),
+        env: {},
+      }).then(
+        () => null,
+        (rejection: unknown) => rejection,
+      );
+    } finally {
+      removeOwnedCacheSpy.mockRestore();
+      if (observedCacheDir) {
+        removeOwnedCacheDir(observedCacheDir, { recursive: true, force: true });
+      }
+    }
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(AggregateError);
+    expect(String((error as Error).message)).toContain('cache-cleanup-locked-after-success');
+  });
+
+  it('rejects an owned cache temp root inside the package source tree', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const nestedTempRoot = join(packageRoot, '.tmp');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(nestedTempRoot);
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+
+    const spawn = vi.fn(() => ({ status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' }));
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      tmpdir: () => nestedTempRoot,
+      spawnSync: spawn,
+      ...createRealArtifactFsAdapter(packageRoot),
+      env: {},
+    })).rejects.toThrow(/cache.*outside|temporary.*outside/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
   it('runs the canonical bundled workspace dependency closure before npm pack', async () => {
     const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
     const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
@@ -245,7 +910,7 @@ describe('packTarball (npmExecpath)', () => {
     const events: string[] = [];
     const spawn = vi.fn(() => {
       events.push('pack');
-      return { status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' };
+      return { status: 0, stdout: `${tarballName}\n`, stderr: '' };
     });
     const bundleWorkspaceDeps = vi.fn(async () => {
       events.push('bundle');
@@ -260,8 +925,639 @@ describe('packTarball (npmExecpath)', () => {
       env: {},
     });
 
-    expect(bundleWorkspaceDeps).toHaveBeenCalledWith({ packageRoot });
+    expect(bundleWorkspaceDeps).toHaveBeenCalledWith(expect.objectContaining({
+      publicationMode: 'artifact',
+      repoRoot: resolve(packageRoot, '..', '..'),
+    }));
+    expect(bundleWorkspaceDeps.mock.calls[0]?.[0]?.packageRoot).not.toBe(packageRoot);
     expect(events).toEqual(['bundle', 'pack']);
+  });
+
+  it('packs a private sanitized snapshot when a source sync wins immediately after artifact bundling', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    const lockPath = join(packageRoot, '.workspace-bundle.lock');
+    const inspectorPackageJsonPath = join(
+      packageRoot,
+      'node_modules',
+      '@happier-dev',
+      'plugins-inspector',
+      'package.json',
+    );
+    const tweetnaclPackageJsonPath = join(packageRoot, 'node_modules', 'tweetnacl', 'package.json');
+    const rawInspectorPackageJson = {
+      name: '@happier-dev/plugins-inspector',
+      version: '0.0.0',
+      scripts: { build: 'tsx scripts/build.ts' },
+      dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+    };
+    const sanitizedInspectorPackageJson = {
+      name: '@happier-dev/plugins-inspector',
+      version: '0.2.10',
+      dependencies: {},
+    };
+
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(join(packageRoot, 'package-dist'), { recursive: true });
+    mkdirSync(join(packageRoot, 'tools', 'archives'), { recursive: true });
+    mkdirSync(join(packageRoot, 'tools', 'unpacked'), { recursive: true });
+    mkdirSync(join(packageRoot, 'node_modules', '@happier-dev', 'undeclared'), { recursive: true });
+    mkdirSync(join(inspectorPackageJsonPath, '..'), { recursive: true });
+    mkdirSync(join(tweetnaclPackageJsonPath, '..'), { recursive: true });
+    writeFileSync(join(packageRoot, 'tools', 'archives', 'runtime.tar.gz'), 'packed', 'utf8');
+    writeFileSync(join(packageRoot, 'tools', 'unpacked', 'runtime'), 'must-not-snapshot', 'utf8');
+    writeFileSync(
+      join(packageRoot, 'node_modules', '@happier-dev', 'undeclared', 'package.json'),
+      '{"name":"@happier-dev/undeclared"}\n',
+      'utf8',
+    );
+    writeFileSync(tweetnaclPackageJsonPath, '{"name":"tweetnacl","version":"1.0.3"}\n', 'utf8');
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'tools/archives', 'package.json'],
+      dependencies: { tweetnacl: '^1.0.3' },
+      bundledDependencies: ['@happier-dev/plugins-inspector', 'tweetnacl'],
+    })}\n`, 'utf8');
+
+    const bundleWorkspaceDeps = vi.fn(async ({
+      env,
+      packageRoot: bundlePackageRoot,
+    }: {
+      env: Record<string, string>;
+      packageRoot: string;
+    }) => {
+      expect(existsSync(lockPath)).toBe(true);
+      expect(env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD).toBeTruthy();
+      expect(bundlePackageRoot).not.toBe(packageRoot);
+      const bundledInspectorPackageJsonPath = join(
+        bundlePackageRoot,
+        'node_modules',
+        '@happier-dev',
+        'plugins-inspector',
+        'package.json',
+      );
+      mkdirSync(join(bundledInspectorPackageJsonPath, '..'), { recursive: true });
+      writeFileSync(
+        bundledInspectorPackageJsonPath,
+        `${JSON.stringify(sanitizedInspectorPackageJson)}\n`,
+        'utf8',
+      );
+      queueMicrotask(() => {
+        writeFileSync(inspectorPackageJsonPath, `${JSON.stringify(rawInspectorPackageJson)}\n`, 'utf8');
+      });
+    });
+    const spawn = vi.fn((_command: unknown, _args: unknown, options: { cwd: string }) => {
+      expect(existsSync(lockPath)).toBe(false);
+      expect(existsSync(join(options.cwd, 'tools', 'archives', 'runtime.tar.gz'))).toBe(true);
+      expect(existsSync(join(options.cwd, 'tools', 'unpacked', 'runtime'))).toBe(false);
+      expect(existsSync(join(
+        options.cwd,
+        'node_modules',
+        '@happier-dev',
+        'undeclared',
+        'package.json',
+      ))).toBe(false);
+      expect(existsSync(join(options.cwd, 'node_modules', 'tweetnacl', 'package.json'))).toBe(true);
+      expect(JSON.parse(readFileSync(inspectorPackageJsonPath, 'utf8'))).toEqual(rawInspectorPackageJson);
+      const packedInspectorPackageJson = JSON.parse(
+        readFileSync(join(
+          options.cwd,
+          'node_modules',
+          '@happier-dev',
+          'plugins-inspector',
+          'package.json',
+        ), 'utf8'),
+      );
+      expect(packedInspectorPackageJson).toEqual(sanitizedInspectorPackageJson);
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+
+    await packTarball({
+      packageRoot,
+      destDir,
+      lockPath,
+      bundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    });
+  });
+
+  it('fails closed before npm pack when artifact workspace publication leaves a raw package manifest', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      bundledDependencies: ['@happier-dev/plugins-inspector'],
+    })}\n`, 'utf8');
+
+    const bundleWorkspaceDeps = vi.fn(async ({ packageRoot: bundlePackageRoot }: { packageRoot: string }) => {
+      const bundledInspectorDir = join(
+        bundlePackageRoot,
+        'node_modules',
+        '@happier-dev',
+        'plugins-inspector',
+      );
+      mkdirSync(bundledInspectorDir, { recursive: true });
+      writeFileSync(join(bundledInspectorDir, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugins-inspector',
+        version: '0.0.0',
+        scripts: { build: 'must-not-pack' },
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+        devDependencies: { vite: '7.3.1' },
+      }), 'utf8');
+    });
+    const spawn = vi.fn();
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/unsanitized.*artifact workspace publication.*plugins-inspector/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before npm pack when a declared bundled dependency is missing from the artifact tree', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      bundledDependencies: ['missing-runtime'],
+    })}\n`, 'utf8');
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    const spawn = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: `${tarballName}\n`,
+      stderr: '',
+    }));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/missing.*bundled dependency.*missing-runtime/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a non-workspace bundle has no dependency declaration', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const bundledPackageRoot = join(packageRoot, 'node_modules', 'tweetnacl');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(bundledPackageRoot, { recursive: true });
+    writeFileSync(join(bundledPackageRoot, 'package.json'), JSON.stringify({
+      name: 'tweetnacl',
+      version: '1.0.3',
+      main: 'index.js',
+    }), 'utf8');
+    writeFileSync(join(bundledPackageRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      bundledDependencies: ['tweetnacl'],
+    })}\n`, 'utf8');
+    const spawn = vi.fn(() => {
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return {
+        status: 0,
+        signal: null,
+        stdout: `${tarballName}\n`,
+        stderr: '',
+      };
+    });
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/missing.*dependency declaration.*tweetnacl/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('localizes a hoisted non-workspace bundled dependency and its production closure', async () => {
+    const repoRoot = createTempDirSync('happier-cli-pack-tarball-repo-');
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = join(repoRoot, 'apps', 'cli');
+    const hoistedLockRoot = join(repoRoot, 'node_modules', 'proper-lockfile');
+    const hoistedGracefulFsRoot = join(repoRoot, 'node_modules', 'graceful-fs');
+    const hoistedRetryRoot = join(repoRoot, 'node_modules', 'retry');
+    const hoistedRetryHelperRoot = join(repoRoot, 'node_modules', 'retry-helper');
+    const hoistedSignalExitRoot = join(repoRoot, 'node_modules', 'signal-exit');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(hoistedLockRoot, { recursive: true });
+    mkdirSync(hoistedGracefulFsRoot, { recursive: true });
+    mkdirSync(hoistedRetryRoot, { recursive: true });
+    mkdirSync(hoistedRetryHelperRoot, { recursive: true });
+    mkdirSync(hoistedSignalExitRoot, { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      dependencies: { 'proper-lockfile': '4.1.2' },
+      bundledDependencies: ['proper-lockfile'],
+    })}\n`, 'utf8');
+    writeFileSync(join(hoistedLockRoot, 'package.json'), `${JSON.stringify({
+      name: 'proper-lockfile',
+      version: '4.1.2',
+      main: 'index.js',
+      dependencies: {
+        'graceful-fs': '^4.2.4',
+        retry: '^0.12.0',
+        'signal-exit': '^3.0.2',
+      },
+    })}\n`, 'utf8');
+    writeFileSync(join(hoistedLockRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(hoistedGracefulFsRoot, 'package.json'), `${JSON.stringify({
+      name: 'graceful-fs',
+      version: '4.2.11',
+      main: 'index.js',
+    })}\n`, 'utf8');
+    writeFileSync(join(hoistedGracefulFsRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(hoistedRetryRoot, 'package.json'), `${JSON.stringify({
+      name: 'retry',
+      version: '0.12.0',
+      main: 'index.js',
+      dependencies: { 'retry-helper': '^1.0.0' },
+    })}\n`, 'utf8');
+    writeFileSync(join(hoistedRetryRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(hoistedRetryHelperRoot, 'package.json'), `${JSON.stringify({
+      name: 'retry-helper',
+      version: '1.0.0',
+      main: 'index.js',
+    })}\n`, 'utf8');
+    writeFileSync(join(hoistedRetryHelperRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(hoistedSignalExitRoot, 'package.json'), `${JSON.stringify({
+      name: 'signal-exit',
+      version: '3.0.7',
+      main: 'index.js',
+    })}\n`, 'utf8');
+    writeFileSync(join(hoistedSignalExitRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    const loadCliCommonWorkspacesModule = vi.fn(async () => ({
+      bundleInstalledPackageWithRuntimeDependencies:
+        canonicalBundleInstalledPackageWithRuntimeDependencies,
+    }));
+    const spawn = vi.fn((_command: unknown, _args: unknown, options: { cwd: string }) => {
+      expect(JSON.parse(readFileSync(
+        join(options.cwd, 'node_modules', 'proper-lockfile', 'package.json'),
+        'utf8',
+      ))).toMatchObject({ name: 'proper-lockfile', version: '4.1.2' });
+      expect(JSON.parse(readFileSync(
+        join(
+          options.cwd,
+          'node_modules',
+          'proper-lockfile',
+          'node_modules',
+          'graceful-fs',
+          'package.json',
+        ),
+        'utf8',
+      ))).toMatchObject({ name: 'graceful-fs', version: '4.2.11' });
+      expect(JSON.parse(readFileSync(
+        join(
+          options.cwd,
+          'node_modules',
+          'proper-lockfile',
+          'node_modules',
+          'retry',
+          'package.json',
+        ),
+        'utf8',
+      ))).toMatchObject({ name: 'retry', version: '0.12.0' });
+      expect(JSON.parse(readFileSync(
+        join(
+          options.cwd,
+          'node_modules',
+          'proper-lockfile',
+          'node_modules',
+          'retry',
+          'node_modules',
+          'retry-helper',
+          'package.json',
+        ),
+        'utf8',
+      ))).toMatchObject({ name: 'retry-helper', version: '1.0.0' });
+      expect(JSON.parse(readFileSync(
+        join(
+          options.cwd,
+          'node_modules',
+          'proper-lockfile',
+          'node_modules',
+          'signal-exit',
+          'package.json',
+        ),
+        'utf8',
+      ))).toMatchObject({ name: 'signal-exit', version: '3.0.7' });
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+
+    await packTarball({
+      packageRoot,
+      repoRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      loadCliCommonWorkspacesModuleImpl: loadCliCommonWorkspacesModule,
+      spawnSync: spawn,
+      env: {},
+    });
+    expect(loadCliCommonWorkspacesModule).toHaveBeenCalledOnce();
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it('accepts an npm alias declaration when the canonical package identity satisfies its target spec', async () => {
+    const repoRoot = createTempDirSync('happier-cli-pack-tarball-repo-');
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = join(repoRoot, 'apps', 'cli');
+    const aliasPackageRoot = join(repoRoot, 'node_modules', 'string-width-cjs');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(aliasPackageRoot, { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      dependencies: { 'string-width-cjs': 'npm:string-width@^4.2.0' },
+      bundledDependencies: ['string-width-cjs'],
+    })}\n`, 'utf8');
+    writeFileSync(join(aliasPackageRoot, 'package.json'), `${JSON.stringify({
+      name: 'string-width',
+      version: '4.2.3',
+      main: 'index.js',
+    })}\n`, 'utf8');
+    writeFileSync(join(aliasPackageRoot, 'index.js'), 'module.exports = () => 0;\n', 'utf8');
+    const spawn = vi.fn((_command: unknown, _args: unknown, options: { cwd: string }) => {
+      expect(JSON.parse(readFileSync(
+        join(options.cwd, 'node_modules', 'string-width-cjs', 'package.json'),
+        'utf8',
+      ))).toMatchObject({ name: 'string-width', version: '4.2.3' });
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return { status: 0, signal: null, stdout: `${tarballName}\n`, stderr: '' };
+    });
+
+    await packTarball({
+      packageRoot,
+      repoRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    });
+    expect(spawn).toHaveBeenCalledOnce();
+  });
+
+  it('fails closed when the canonical bundler resolves a package outside the source repository', async () => {
+    const repoRoot = createTempDirSync('happier-cli-pack-tarball-repo-');
+    const outsideRoot = createTempDirSync('happier-cli-pack-tarball-outside-');
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = join(repoRoot, 'apps', 'cli');
+    const bundledPackageRoot = join(repoRoot, 'node_modules', 'proper-lockfile');
+    const linkedTransitivePackageRoot = join(repoRoot, 'node_modules', 'retry');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(bundledPackageRoot, { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      dependencies: { 'proper-lockfile': '4.1.2' },
+      bundledDependencies: ['proper-lockfile'],
+    })}\n`, 'utf8');
+    writeFileSync(join(bundledPackageRoot, 'package.json'), `${JSON.stringify({
+      name: 'proper-lockfile',
+      version: '4.1.2',
+      main: 'index.js',
+      dependencies: { retry: '^0.12.0' },
+    })}\n`, 'utf8');
+    writeFileSync(join(bundledPackageRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(join(outsideRoot, 'package.json'), `${JSON.stringify({
+      name: 'retry',
+      version: '0.12.0',
+      main: 'index.js',
+    })}\n`, 'utf8');
+    writeFileSync(join(outsideRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    symlinkSync(
+      outsideRoot,
+      linkedTransitivePackageRoot,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const spawn = vi.fn(() => {
+      writeFileSync(join(destDir, tarballName), '', 'utf8');
+      return {
+        status: 0,
+        signal: null,
+        stdout: `${tarballName}\n`,
+        stderr: '',
+      };
+    });
+
+    await expect(packTarball({
+      packageRoot,
+      repoRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/bundled dependency.*outside.*source repository.*retry/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a bundled package contains a dereferenced symlink outside the repository', async () => {
+    const repoRoot = createTempDirSync('happier-cli-pack-tarball-repo-');
+    const outsideRoot = createTempDirSync('happier-cli-pack-tarball-outside-');
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = join(repoRoot, 'apps', 'cli');
+    const bundledPackageRoot = join(repoRoot, 'node_modules', 'proper-lockfile');
+    const outsideFile = join(outsideRoot, 'secret.txt');
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(bundledPackageRoot, { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      dependencies: { 'proper-lockfile': '4.1.2' },
+      bundledDependencies: ['proper-lockfile'],
+    })}\n`, 'utf8');
+    writeFileSync(join(bundledPackageRoot, 'package.json'), `${JSON.stringify({
+      name: 'proper-lockfile',
+      version: '4.1.2',
+      main: 'index.js',
+    })}\n`, 'utf8');
+    writeFileSync(join(bundledPackageRoot, 'index.js'), 'module.exports = {};\n', 'utf8');
+    writeFileSync(outsideFile, 'must-not-pack\n', 'utf8');
+    symlinkSync(outsideFile, join(bundledPackageRoot, 'linked-secret.txt'), 'file');
+    const spawn = vi.fn();
+
+    await expect(packTarball({
+      packageRoot,
+      repoRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/bundled dependency.*dereferenced symlink target.*escapes copy source root/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before npm pack when a non-workspace bundled dependency has the wrong package identity', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const bundledPackageRoot = join(packageRoot, 'node_modules', 'tweetnacl');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(bundledPackageRoot, { recursive: true });
+    writeFileSync(join(bundledPackageRoot, 'package.json'), JSON.stringify({
+      name: 'not-tweetnacl',
+      version: '1.0.3',
+    }), 'utf8');
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      dependencies: { tweetnacl: '^1.0.3' },
+      bundledDependencies: ['tweetnacl'],
+    })}\n`, 'utf8');
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    const spawn = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: `${tarballName}\n`,
+      stderr: '',
+    }));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/bundled dependency identity.*tweetnacl/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before npm pack when a non-workspace bundled dependency version violates its declaration', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const bundledPackageRoot = join(packageRoot, 'node_modules', 'tweetnacl');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(bundledPackageRoot, { recursive: true });
+    writeFileSync(join(bundledPackageRoot, 'package.json'), JSON.stringify({
+      name: 'tweetnacl',
+      version: '2.0.0',
+    }), 'utf8');
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      dependencies: { tweetnacl: '^1.0.3' },
+      bundledDependencies: ['tweetnacl'],
+    })}\n`, 'utf8');
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    const spawn = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: `${tarballName}\n`,
+      stderr: '',
+    }));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/bundled dependency identity.*tweetnacl.*2\.0\.0.*\^1\.0\.3/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when artifact bundling omits a declared internal workspace classification', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    const inspectorPackageJsonPath = join(
+      packageRoot,
+      'node_modules',
+      '@happier-dev',
+      'plugins-inspector',
+      'package.json',
+    );
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    mkdirSync(join(inspectorPackageJsonPath, '..'), { recursive: true });
+    writeFileSync(inspectorPackageJsonPath, JSON.stringify({
+      name: '@happier-dev/plugins-inspector',
+      version: '0.0.0',
+      scripts: { build: 'must-not-copy-live' },
+    }), 'utf8');
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      bundledDependencies: ['@happier-dev/plugins-inspector'],
+    })}\n`, 'utf8');
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    const spawn = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: `${tarballName}\n`,
+      stderr: '',
+    }));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/missing.*artifact workspace publication.*plugins-inspector/i);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('rejects a malformed declared bundled dependency before snapshot writes or npm pack', async () => {
+    const destDir = createTempDirSync('happier-cli-pack-tarball-dest-');
+    const packageRoot = createTempDirSync('happier-cli-pack-tarball-root-');
+    const tarballName = 'artifact.tgz';
+    mkdirSync(join(packageRoot, 'dist'), { recursive: true });
+    writeFileSync(join(packageRoot, 'package.json'), `${JSON.stringify({
+      name: '@happier-dev/cli',
+      version: '0.2.10',
+      files: ['package-dist', 'package-dist/**', 'package.json'],
+      bundledDependencies: ['../../escape'],
+    })}\n`, 'utf8');
+    writeFileSync(join(destDir, tarballName), '', 'utf8');
+    const spawn = vi.fn(() => ({
+      status: 0,
+      signal: null,
+      stdout: `${tarballName}\n`,
+      stderr: '',
+    }));
+
+    await expect(packTarball({
+      packageRoot,
+      destDir,
+      bundleWorkspaceDeps: noopBundleWorkspaceDeps,
+      spawnSync: spawn,
+      env: {},
+    })).rejects.toThrow(/invalid.*bundled dependency/i);
+    expect(spawn).not.toHaveBeenCalled();
   });
 
   it('does not mask incomplete package-dist filesystem adapters', async () => {
@@ -270,7 +1566,7 @@ describe('packTarball (npmExecpath)', () => {
     const tarballName = 'artifact.tgz';
     writeFileSync(join(destDir, tarballName), '', 'utf8');
 
-    const spawn = vi.fn(() => ({ status: 0, stdout: JSON.stringify([{ filename: tarballName }]), stderr: '' }));
+    const spawn = vi.fn(() => ({ status: 0, stdout: `${tarballName}\n`, stderr: '' }));
 
     await expect(
       packTarball({

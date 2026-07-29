@@ -12,6 +12,39 @@ const envScope = createEnvKeyScope([
 ]);
 
 describe('createBaseSessionForAttach', () => {
+  it('prefers the typed attach path without reading or mutating ambient process state', async () => {
+    const dir = await createTempDir('happy-base-attach-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: '/ambient/must-not-be-read.json',
+      });
+      vi.resetModules();
+      const { createBaseSessionForAttach } = await import('./createBaseSessionForAttach');
+      const attachDir = join(dir, 'tmp', 'session-attach');
+      await mkdir(attachDir, { recursive: true });
+      const filePath = join(attachDir, 'typed-attach.json');
+      await writeFile(filePath, JSON.stringify({
+        v: 2,
+        encryptionMode: 'plain',
+        lastObservedMessageSeq: 9,
+      }), { mode: 0o600 });
+
+      const session = await createBaseSessionForAttach({
+        existingSessionId: 'session-typed-attach',
+        metadata: createTestMetadata(),
+        state: { controlledByUser: false },
+        sessionAttachFilePath: filePath,
+      });
+
+      expect(session.seq).toBe(9);
+      expect(process.env.HAPPIER_SESSION_ATTACH_FILE).toBe('/ambient/must-not-be-read.json');
+    } finally {
+      envScope.restore();
+      await removeTempDir(dir);
+    }
+  });
+
   it('seeds the attached ApiSession seq from the attach payload', async () => {
     const dir = await createTempDir('happy-base-attach-');
     try {
@@ -172,6 +205,135 @@ describe('createBaseSessionForAttach', () => {
       expect(session.metadataVersion).toBe(7);
       expect(session.agentState).toEqual({ controlledByUser: true });
       expect(session.agentStateVersion).toBe(3);
+    } finally {
+      envScope.restore();
+      await removeTempDir(dir);
+    }
+  });
+
+  it('materializes strict owner categories for the resumed local runtime without treating shared metadata as authority', async () => {
+    const dir = await createTempDir('happy-base-attach-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
+      vi.resetModules();
+      const { createBaseSessionForAttach } = await import('./createBaseSessionForAttach');
+      const attachDir = join(dir, 'tmp', 'session-attach');
+      await mkdir(attachDir, { recursive: true });
+      const filePath = join(attachDir, 'attach-layout-v1.json');
+      await writeFile(filePath, JSON.stringify({
+        v: 2,
+        encryptionMode: 'plain',
+        snapshot: {
+          metadataLayoutVersion: 1,
+          metadata: {
+            v: 1,
+            summary: { text: 'Safe summary', updatedAt: 1 },
+            agentPresentation: { agentId: 'codex' },
+          },
+          ownerMetadata: {
+            v: 1,
+            workspace: {
+              path: '/private/worktree',
+              host: 'private-host',
+              homeDir: '/private/home',
+            },
+            nativeSession: {
+              codexSessionId: 'private-vendor-id',
+              runtimeDescriptorV1: {
+                v: 1,
+                agentId: 'codex',
+                backendMode: 'appServer',
+                providerSessionId: 'private-vendor-id',
+              },
+            },
+            runtime: {
+              tools: ['Read', 'Bash'],
+            },
+          },
+          ownerMetadataCiphertext: 'selected-owner-ciphertext',
+          metadataVersion: 3,
+          agentState: { controlledByUser: false },
+          agentStateVersion: 2,
+        },
+      }), { mode: 0o600 });
+
+      const session = await createBaseSessionForAttach({
+        existingSessionId: 'session-layout-v1',
+        metadata: createTestMetadata({ path: '/unsafe-fallback' }),
+        state: { controlledByUser: true },
+        sessionAttachFilePath: filePath,
+      });
+
+      expect(session).toMatchObject({
+        metadataLayoutVersion: 1,
+        ownerMetadataCiphertext: 'selected-owner-ciphertext',
+        ownerMetadata: {
+          v: 1,
+          workspace: {
+            path: '/private/worktree',
+            host: 'private-host',
+            homeDir: '/private/home',
+          },
+        },
+        metadataVersion: 3,
+        metadata: {
+          path: '/private/worktree',
+          host: 'private-host',
+          homeDir: '/private/home',
+          codexSessionId: 'private-vendor-id',
+          tools: ['Read', 'Bash'],
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'codex',
+            agent: {
+              backendMode: 'appServer',
+              providerSessionId: 'private-vendor-id',
+            },
+          },
+          summary: { text: 'Safe summary', updatedAt: 1 },
+        },
+      });
+      expect(JSON.stringify(session.metadata)).not.toContain('/unsafe-fallback');
+      expect(session.metadata).not.toHaveProperty('ownerMetadata');
+    } finally {
+      envScope.restore();
+      await removeTempDir(dir);
+    }
+  });
+
+  it('rejects a layout-v1 attach snapshot without owner authority', async () => {
+    const dir = await createTempDir('happy-base-attach-');
+    try {
+      envScope.patch({
+        HAPPIER_HOME_DIR: dir,
+        HAPPIER_SESSION_ATTACH_FILE: undefined,
+      });
+      vi.resetModules();
+      const { createBaseSessionForAttach } = await import('./createBaseSessionForAttach');
+      const attachDir = join(dir, 'tmp', 'session-attach');
+      await mkdir(attachDir, { recursive: true });
+      const filePath = join(attachDir, 'attach-layout-v1-no-owner.json');
+      await writeFile(filePath, JSON.stringify({
+        v: 2,
+        encryptionMode: 'plain',
+        snapshot: {
+          metadataLayoutVersion: 1,
+          metadata: { v: 1 },
+          metadataVersion: 1,
+          agentState: null,
+          agentStateVersion: 1,
+        },
+      }), { mode: 0o600 });
+
+      await expect(createBaseSessionForAttach({
+        existingSessionId: 'session-layout-v1',
+        metadata: createTestMetadata(),
+        state: { controlledByUser: false },
+        sessionAttachFilePath: filePath,
+      })).rejects.toThrow('missing owner metadata envelope');
     } finally {
       envScope.restore();
       await removeTempDir(dir);

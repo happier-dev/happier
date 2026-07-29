@@ -1,6 +1,10 @@
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
-import type { MessageBatch } from '@/agent/runtime/session/input/_types';
+import type {
+  MessageBatch,
+  SessionProviderInputConsumer,
+  SessionProviderInputConsumerSession,
+} from '@/agent/runtime/session/input/_types';
 import { createSessionProviderInputConsumer } from '@/agent/runtime/session/input/sessionProviderInputConsumer';
 import type { SessionPendingQueueDeliveryTiming } from '@happier-dev/protocol';
 
@@ -13,33 +17,53 @@ export async function waitForNextPermissionModeMessage<Mode, Message>(opts: {
   onMetadataUpdate?: (() => void | Promise<void>) | null;
   pendingDrainMaxPopPerWake?: number;
   pendingQueueDeliveryTiming?: SessionPendingQueueDeliveryTiming;
+  inputConsumer?: SessionProviderInputConsumer<Mode, Message>;
 }): Promise<MessageBatch<Mode, Message> | null> {
-  const materializeNextPendingMessageSafely = opts.session.materializeNextPendingMessageSafely;
-  return await createSessionProviderInputConsumer({
+  const inputConsumer = opts.inputConsumer ?? createSessionProviderInputConsumer({
     messageQueue: opts.messageQueue,
-    session: {
-      waitForMetadataUpdate: (signal) => opts.session.waitForMetadataUpdate(signal),
-      ...(materializeNextPendingMessageSafely
-        ? { materializeNextPendingMessageSafely: (materializeOpts) => materializeNextPendingMessageSafely.call(opts.session, materializeOpts) }
-        : {}),
-      getMetadataSnapshot: () => opts.session.getMetadataSnapshot(),
-      popPendingMessage: () => opts.session.popPendingMessage(),
-      ...(opts.session.blockPendingMessageDelivery
-        ? { blockPendingMessageDelivery: (blockOpts) => opts.session.blockPendingMessageDelivery!(blockOpts) }
-        : {}),
-      shouldAttemptPendingMaterialization: (attemptOpts) =>
-        opts.session.shouldAttemptPendingMaterialization?.(attemptOpts) ?? true,
-      reconcilePendingQueueState: async (reconcileOpts) => {
-        await opts.session.reconcilePendingQueueState?.(reconcileOpts);
-      },
-    },
-    beforeCollectQueuedBatch: opts.beforeCollectQueuedBatch,
-    beforePendingMaterialize: opts.beforePendingMaterialize,
-    onMetadataUpdate: opts.onMetadataUpdate,
+    session: createSessionProviderInputConsumerSessionAdapter(opts.session),
     reconcileWhenEmpty: 'skip',
-    activeTurnDeliveryPolicy: 'allow_live_delivery',
     pendingQueueDeliveryTiming: opts.pendingQueueDeliveryTiming,
     refreshBeforeQueuedBatch: false,
     pendingDrainMaxPopPerWake: opts.pendingDrainMaxPopPerWake,
-  }).waitForNextInput({ abortSignal: opts.abortSignal });
+  });
+  return await inputConsumer.waitForNextInput({
+    abortSignal: opts.abortSignal,
+    beforeCollectQueuedBatch: opts.beforeCollectQueuedBatch,
+    beforePendingMaterialize: opts.beforePendingMaterialize,
+    onMetadataUpdate: opts.onMetadataUpdate,
+  });
+}
+
+export function createSessionProviderInputConsumerSessionAdapter(
+  session: ApiSessionClient,
+): SessionProviderInputConsumerSession {
+  const materializeNextPendingMessageSafely = session.materializeNextPendingMessageSafely;
+  return {
+    waitForMetadataUpdate: (signal) => session.waitForMetadataUpdate(signal),
+    ...(session.readRuntimeActivitySnapshotTail
+      ? { readRuntimeActivitySnapshotTail: () => session.readRuntimeActivitySnapshotTail!() }
+      : {}),
+    ...(session.waitForRuntimeActivitySnapshotTailChange
+      ? {
+          waitForRuntimeActivitySnapshotTailChange: (sequence, signal) =>
+            session.waitForRuntimeActivitySnapshotTailChange!(sequence, signal),
+        }
+      : {}),
+    ...(materializeNextPendingMessageSafely
+      ? { materializeNextPendingMessageSafely: (materializeOpts) => materializeNextPendingMessageSafely.call(session, materializeOpts) }
+      : {}),
+    getMetadataSnapshot: () => session.getMetadataSnapshot(),
+    shouldAttemptPendingMaterialization: () =>
+      session.shouldAttemptPendingMaterialization?.() ?? true,
+    ...(session.reconcilePendingProviderInputCustodyBeforeMaterialization
+      ? {
+          reconcilePendingProviderInputCustodyBeforeMaterialization: () =>
+            session.reconcilePendingProviderInputCustodyBeforeMaterialization(),
+        }
+      : {}),
+    reconcilePendingQueueState: async (reconcileOpts) => {
+      await session.reconcilePendingQueueState?.(reconcileOpts);
+    },
+  };
 }

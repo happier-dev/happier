@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { combinePermissionModeQueuedPrompts } from './queuedPrompt';
+import {
+  combinePermissionModeQueuedPrompts,
+  normalizePermissionModeQueuedPromptLocalIds,
+} from './queuedPrompt';
 
 describe('combinePermissionModeQueuedPrompts', () => {
   it('joins prompt texts and keeps the first localId', () => {
@@ -12,7 +15,7 @@ describe('combinePermissionModeQueuedPrompts', () => {
     expect(combined.localId).toBe('a');
   });
 
-  it('aggregates every localId in the batch for provider acceptance identity joins', () => {
+  it('aggregates every localId in an ordinary non-Pending batch', () => {
     const combined = combinePermissionModeQueuedPrompts([
       { text: 'one', localId: 'a' },
       { text: 'two', localId: 'b' },
@@ -26,7 +29,15 @@ describe('combinePermissionModeQueuedPrompts', () => {
     });
   });
 
-  it('carries exact committed user-message seqs plus their batch max (HF-1 watermark custody)', () => {
+  it('preserves whitespace-distinct opaque local ids for exact provider outcome correlation', () => {
+    expect(normalizePermissionModeQueuedPromptLocalIds({
+      text: 'opaque ids',
+      localId: ' local-id ',
+      localIds: ['local-id', ' local-id ', '   '],
+    })).toEqual([' local-id ', 'local-id']);
+  });
+
+  it('carries exact committed user-message seqs for host-consumed command replay suppression', () => {
     const combined = combinePermissionModeQueuedPrompts([
       { text: 'one', localId: 'a', userMessageSeq: 5 },
       { text: 'two', localId: 'b' },

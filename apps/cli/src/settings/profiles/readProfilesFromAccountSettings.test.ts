@@ -51,6 +51,26 @@ describe('readProfilesFromAccountSettings', () => {
     expect(readProfilesFromAccountSettings({}).profiles).toEqual([]);
   });
 
+  it('does not let a persisted historical Gemini row restore the obsolete model pin', () => {
+    const result = readProfilesFromAccountSettings({
+      profiles: [{
+        id: 'gemini-api-key',
+        name: 'Gemini (API key)',
+        environmentVariables: [
+          { name: 'GEMINI_MODEL', value: 'gemini-2.5-pro' },
+          { name: 'TEAM_FLAG', value: '1' },
+        ],
+        createdAt: 1,
+        updatedAt: 1,
+      }],
+      lastUsedProfile: 'gemini-api-key',
+    });
+
+    const visible = result.visibleProfiles.find((profile) => profile.id === 'gemini-api-key');
+    expect(visible && !('v' in visible) ? visible.environmentVariables : [])
+      .toEqual([{ name: 'TEAM_FLAG', value: '1' }]);
+  });
+
   it('projects one migration-aware post-demotion catalog for list, resolver, and actions', () => {
     const result = readProfilesFromAccountSettings({
       lastUsedProfile: 'azure-openai',

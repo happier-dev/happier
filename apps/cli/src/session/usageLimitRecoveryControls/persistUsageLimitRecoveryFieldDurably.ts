@@ -1,66 +1,79 @@
-import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY } from '@happier-dev/protocol';
-import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
-import { createSessionClientDurableMutationOutbox } from '@/api/session/client/transport/mutations/createSessionClientDurableMutationOutbox';
-import type { Metadata } from '@/api/types';
+import {
+  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SessionStateUsageLimitRecoveryValueSchema,
+} from '@happier-dev/protocol';
+import type {
+  DaemonUsageLimitRecoveryFieldMutation,
+  RegisteredSessionStateFieldMutationV1,
+} from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import { splitDurableRegisteredSessionStateMetadata } from '@/agent/runtime/registry/pluginMetadataDurability';
-import type { Credentials } from '@/persistence';
-import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
-import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { mergeUsageLimitRecoveryFieldIntoMetadata } from './mergeUsageLimitRecoveryFieldIntoMetadata';
+export { mergeUsageLimitRecoveryFieldIntoMetadata } from './mergeUsageLimitRecoveryFieldIntoMetadata';
+
+export type StageUsageLimitRecoveryMutation = (
+  mutation: DaemonUsageLimitRecoveryFieldMutation,
+) => Promise<void>;
+
+function isExactDaemonUsageLimitRecoveryMutation(
+  mutation: RegisteredSessionStateFieldMutationV1 | undefined,
+): mutation is DaemonUsageLimitRecoveryFieldMutation {
+  return mutation?.fieldId === 'runtime.usageLimitRecovery'
+    && mutation.source === 'daemon'
+    && mutation.deliveryClass === 'durable_required';
+}
 
 export async function persistUsageLimitRecoveryFieldDurably(params: Readonly<{
-  token: string;
-  credentials: Credentials;
   sessionId: string;
-  rawSession: RawSessionRecord;
   currentMetadata: Record<string, unknown>;
   nextMetadata: Record<string, unknown>;
+  mode?: 'converge' | 'rearm' | 'explicit_rearm' | 'cancel';
+  stageUsageLimitRecoveryMutation: StageUsageLimitRecoveryMutation;
 }>): Promise<Record<string, unknown>> {
+  const durableCandidate = mergeUsageLimitRecoveryFieldIntoMetadata({
+    latestMetadata: params.currentMetadata,
+    baseMetadata: params.currentMetadata,
+    candidateMetadata: params.nextMetadata,
+    ...(params.mode ? { mode: params.mode } : {}),
+  });
   const candidateForSplit = (
     Object.prototype.hasOwnProperty.call(params.currentMetadata, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY)
-    && !Object.prototype.hasOwnProperty.call(params.nextMetadata, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY)
+    && !Object.prototype.hasOwnProperty.call(durableCandidate, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY)
   )
     ? {
-        ...params.nextMetadata,
+        ...durableCandidate,
         [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: null,
       }
-    : params.nextMetadata;
+    : durableCandidate;
   const split = splitDurableRegisteredSessionStateMetadata({
     sessionId: params.sessionId,
     current: params.currentMetadata,
     candidate: candidateForSplit,
     source: 'daemon',
   });
-  if (split.mutations.length === 0) {
-    return params.nextMetadata;
+  const mutation = split.mutations[0];
+  const candidateChangedUsageLimitField = (
+    Object.prototype.hasOwnProperty.call(params.nextMetadata, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY)
+    || Object.prototype.hasOwnProperty.call(params.currentMetadata, SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY)
+  );
+  if (split.mutations.length === 0 && candidateChangedUsageLimitField) {
+    const nextValue = params.nextMetadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY];
+    const currentValue = params.currentMetadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY];
+    const validNoop = (
+      nextValue === null
+        ? currentValue === undefined
+        : SessionStateUsageLimitRecoveryValueSchema.safeParse(nextValue).success
+          && JSON.stringify(nextValue) === JSON.stringify(currentValue)
+    );
+    if (validNoop) return durableCandidate;
+  }
+  if (
+    split.mutations.length !== 1
+    || !isExactDaemonUsageLimitRecoveryMutation(mutation)
+    || !candidateChangedUsageLimitField
+  ) {
+    throw new Error('invalid_daemon_usage_limit_recovery_mutation');
   }
 
-  const outbox = createSessionClientDurableMutationOutbox({
-    token: params.token,
-    sessionId: params.sessionId,
-    getSocket: () => null,
-    requestReconnect: () => undefined,
-    deliverRegisteredSessionStateFieldMutation: async (mutation) => {
-      await updateSessionMetadataWithRetry({
-        token: params.token,
-        credentials: params.credentials,
-        sessionId: params.sessionId,
-        rawSession: params.rawSession,
-        updater: (metadata) => applyRegisteredSessionStateFieldMutationToMetadata(
-          metadata as Metadata,
-          mutation,
-        ),
-      });
-      return true;
-    },
-  });
-
-  try {
-    for (const mutation of split.mutations) {
-      await outbox.enqueueRegisteredSessionStateFieldMutation(mutation);
-    }
-  } finally {
-    await outbox.close();
-  }
-
-  return params.nextMetadata;
+  await params.stageUsageLimitRecoveryMutation(mutation);
+  return durableCandidate;
 }

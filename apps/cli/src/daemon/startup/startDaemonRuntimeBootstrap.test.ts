@@ -2,6 +2,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startDaemonRuntimeBootstrap } from './startDaemonRuntimeBootstrap';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
+import { resolveConnectedServicesQuotasDaemonEnabled } from '../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
+import { startConnectedServiceQuotasLoop } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
+import { startConnectedServiceRefreshLoop } from '../connectedServices/refresh/startConnectedServiceRefreshLoop';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+
+const sessionsHttp = vi.hoisted(() => ({
+  fetchSessionByIdCompat: vi.fn(),
+}));
+
+vi.mock('@/session/transport/http/sessionsHttp', () => sessionsHttp);
 
 vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
@@ -10,14 +21,24 @@ vi.mock('@/persistence', () => ({
 vi.mock('../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled', () => ({
   resolveConnectedServicesQuotasDaemonEnabled: vi.fn(async () => false),
 }));
+vi.mock('../connectedServices/quotas/startConnectedServiceQuotasLoop', () => ({
+  startConnectedServiceQuotasLoop: vi.fn(() => ({ stop: vi.fn(), pause: vi.fn(), resume: vi.fn() })),
+}));
+vi.mock('@/settings/accountSettings/warmActiveAccountSettingsSnapshot', () => ({
+  warmActiveAccountSettingsSnapshotBestEffort: vi.fn(async () => true),
+}));
 
 // K3: capture how the refresh restart handler is wired without standing up the real
 // refresh subsystem (network/timers). We only need to inspect the injected
 // requestRestartSignal to prove bootstrap wires the GATED adapter (not a raw signal).
 const createConnectedServicesAuthUpdatedRestartHandlerMock =
-  vi.fn((_params: { requestRestartSignal?: unknown }) => vi.fn());
+  vi.fn((_params: {
+    requestRestartSignal?: unknown;
+  }) => vi.fn());
 vi.mock('../connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler', () => ({
-  createConnectedServicesAuthUpdatedRestartHandler: (params: { requestRestartSignal?: unknown }) =>
+  createConnectedServicesAuthUpdatedRestartHandler: (params: {
+    requestRestartSignal?: unknown;
+  }) =>
     createConnectedServicesAuthUpdatedRestartHandlerMock(params),
 }));
 vi.mock('../connectedServices/refresh/ConnectedServiceRefreshCoordinator', () => ({
@@ -33,6 +54,143 @@ describe('startDaemonRuntimeBootstrap', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.clearAllMocks();
+    sessionsHttp.fetchSessionByIdCompat.mockReset();
+  });
+
+  it('keeps quota automation disabled when authoritative current-source hydration fails', async () => {
+    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled).mockResolvedValueOnce(true);
+    vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
+    vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const result = await startDaemonRuntimeBootstrap({
+      api: {
+        listConnectedServiceProfiles: async () => { throw new Error('inventory unavailable'); },
+        listConnectedServiceAuthGroups: async () => [],
+      } as never,
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
+      logger,
+      processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
+      controlPort: 41233,
+      machineId: 'machine-1',
+      machineIdProvider: () => 'machine-1',
+      runtimeId: 'runtime-1',
+      cliVersion: '0.0.0-test',
+      startupSource: 'manual',
+      serviceLabel: undefined,
+      daemonLogPath: '/tmp/happier-daemon.log',
+      controlToken: 'control-token',
+      happyHomeDir: '/tmp/happy-home',
+      activeServerDir: '/tmp/happy-active-server',
+      filesystemAccessPolicy: { kind: 'osUser' },
+      publicReleaseChannel: 'dev',
+      connectedServicesRestartRequestedPids: new Set(),
+      pidToTrackedSession: new Map(),
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+      },
+      requestConnectedServiceRefreshRestartSignal: vi.fn(async () => ({ signaled: true })),
+      connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore: createProviderAccountUsageStore(),
+      connectedServiceQuotaFetcherDescriptors: [{
+        id: 'openai-codex',
+        createFetcher: () => ({ serviceId: 'openai-codex', loadQuota: async () => null }),
+      }],
+    });
+    expect(result.connectedServiceQuotasCoordinator).toBeNull();
+    expect(startConnectedServiceRefreshLoop).not.toHaveBeenCalled();
+    expect(startConnectedServiceQuotasLoop).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('quota automation disabled'),
+      expect.any(Error),
+    );
+  });
+
+  it('delegates scheduler enablement to the canonical gates instead of inferring a server-wide legacy mode', async () => {
+    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled)
+      .mockResolvedValueOnce(true);
+    vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
+    const listConnectedServiceProfiles = vi.fn(async ({ serviceId }: { serviceId: 'openai-codex' }) => ({
+      serviceId,
+      profiles: [],
+    }));
+    const getServerFeaturesSnapshot = vi.fn(async () => ({
+      status: 'ready' as const,
+      features: {
+        features: {
+          sharing: {
+            pendingQueueV2: { enabled: true },
+          },
+        },
+        capabilities: {},
+      },
+    }));
+    const loadQuota = vi.fn();
+    const result = await startDaemonRuntimeBootstrap({
+      api: {
+        getServerFeaturesSnapshot,
+        listConnectedServiceProfiles,
+        listConnectedServiceAuthGroups: async () => [],
+        resolveProviderAccountUsageSource: async () => null,
+        push: () => ({}),
+      } as never,
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array(32).fill(7),
+        },
+      },
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      processEnv: {
+        HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'true',
+      },
+      controlPort: 41234,
+      machineId: 'machine-1',
+      machineIdProvider: () => 'machine-1',
+      runtimeId: 'runtime-1',
+      cliVersion: '0.0.0-test',
+      startupSource: 'manual',
+      serviceLabel: undefined,
+      daemonLogPath: '/tmp/happier-daemon.log',
+      controlToken: 'control-token',
+      happyHomeDir: '/tmp/happy-home',
+      activeServerDir: '/tmp/happy-active-server',
+      filesystemAccessPolicy: { kind: 'osUser' },
+      publicReleaseChannel: 'dev',
+      connectedServicesRestartRequestedPids: new Set(),
+      pidToTrackedSession: new Map(),
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        switchBeforeTurn: vi.fn(async () => ({
+          status: 'session_not_found' as const,
+        })),
+        applyCommittedGeneration: vi.fn(async (input) => ({
+          status: 'session_not_found',
+          generation: input.generation,
+        })),
+      },
+      requestConnectedServiceRefreshRestartSignal:
+        vi.fn(async () => ({ signaled: true })),
+      connectedServiceRuntimeQuotaSnapshots:
+        new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore: createProviderAccountUsageStore(),
+      connectedServiceQuotaFetcherDescriptors: [{
+        id: 'openai-codex',
+        createFetcher: () => ({
+          serviceId: 'openai-codex',
+          loadQuota,
+        }),
+      }],
+    });
+
+    expect(result.connectedServiceRefreshCoordinator).not.toBeNull();
+    expect(result.connectedServiceQuotasCoordinator).not.toBeNull();
+    expect(resolveConnectedServicesQuotasDaemonEnabled).toHaveBeenCalledOnce();
+    expect(getServerFeaturesSnapshot).not.toHaveBeenCalled();
+    expect(startConnectedServiceRefreshLoop).toHaveBeenCalledOnce();
+    expect(startConnectedServiceQuotasLoop).toHaveBeenCalledOnce();
+    expect(listConnectedServiceProfiles).toHaveBeenCalled();
+    expect(loadQuota).not.toHaveBeenCalled();
   });
 
   it('creates daemon server-work with a connection gate and logger', async () => {
@@ -45,7 +203,11 @@ describe('startDaemonRuntimeBootstrap', () => {
     };
 
     const result = await startDaemonRuntimeBootstrap({
-      api: {} as never,
+      api: {
+        listConnectedServiceProfiles: async ({ serviceId }: { serviceId: 'github' }) => ({ serviceId, profiles: [] }),
+        listConnectedServiceAuthGroups: async () => [],
+        resolveProviderAccountUsageSource: async () => null,
+      } as never,
       credentials: {
         token: 'token',
         encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
@@ -71,9 +233,11 @@ describe('startDaemonRuntimeBootstrap', () => {
       pidToTrackedSession: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
       },
       requestConnectedServiceRefreshRestartSignal: vi.fn(async () => ({ signaled: true })),
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore: createProviderAccountUsageStore(),
     });
     const gateHandle = result as typeof result & {
       setDaemonServerWorkOnline?: (online: boolean) => void;
@@ -151,9 +315,11 @@ describe('startDaemonRuntimeBootstrap', () => {
       pidToTrackedSession: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: {
         switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
       },
       requestConnectedServiceRefreshRestartSignal,
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore: createProviderAccountUsageStore(),
     });
 
     // The refresh restart handler must be wired with the GATED adapter (turn-deferral +
@@ -161,5 +327,183 @@ describe('startDaemonRuntimeBootstrap', () => {
     expect(createConnectedServicesAuthUpdatedRestartHandlerMock).toHaveBeenCalledTimes(1);
     const handlerParams = createConnectedServicesAuthUpdatedRestartHandlerMock.mock.calls[0]?.[0];
     expect(handlerParams?.requestRestartSignal).toBe(requestConnectedServiceRefreshRestartSignal);
+  });
+
+  it('keeps legacy-unfenced persisted identity out of same-account fanout authority', async () => {
+    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled).mockResolvedValueOnce(true);
+    vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
+    vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
+    sessionsHttp.fetchSessionByIdCompat.mockResolvedValue({ id: 'session-1' });
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1_000,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      expiresAt: null,
+      oauth: {
+        accessToken: 'legacy-access',
+        refreshToken: 'legacy-refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'provider-account',
+        providerEmail: null,
+      },
+    });
+    const result = await startDaemonRuntimeBootstrap({
+      api: {
+        push: () => ({}),
+        listConnectedServiceProfiles: async ({ serviceId }: { serviceId: 'openai-codex' }) => ({
+          serviceId,
+          profiles: [],
+        }),
+        listConnectedServiceAuthGroups: async () => [],
+        resolveProviderAccountUsageSource: async () => null,
+        getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+        getConnectedServiceCredentialPlain: vi.fn(async () => ({
+          content: { t: 'plain' as const, v: record },
+          revisionSemantics: 'legacy_unfenced' as const,
+          credentialRevision: null,
+        })),
+      } as never,
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array(32).fill(7),
+        },
+      },
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      processEnv: {
+        HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false',
+      },
+      controlPort: 41237,
+      machineId: 'machine-1',
+      machineIdProvider: () => 'machine-1',
+      runtimeId: 'runtime-1',
+      cliVersion: '0.0.0-test',
+      startupSource: 'manual',
+      serviceLabel: undefined,
+      daemonLogPath: '/tmp/happier-daemon.log',
+      controlToken: 'control-token',
+      happyHomeDir: '/tmp/happy-home',
+      activeServerDir: '/tmp/happy-active-server',
+      filesystemAccessPolicy: { kind: 'osUser' },
+      publicReleaseChannel: 'dev',
+      connectedServicesRestartRequestedPids: new Set(),
+      pidToTrackedSession: new Map(),
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        switchBeforeTurn: vi.fn(async () => ({
+          status: 'session_not_found' as const,
+        })),
+        applyCommittedGeneration: vi.fn(async (input) => ({
+          status: 'session_not_found',
+          generation: input.generation,
+        })),
+      },
+      requestConnectedServiceRefreshRestartSignal:
+        vi.fn(async () => ({ signaled: true })),
+      connectedServiceRuntimeQuotaSnapshots:
+        new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore: createProviderAccountUsageStore(),
+      connectedServiceQuotaFetcherDescriptors: [{
+        id: 'openai-codex',
+        createFetcher: () => ({
+          serviceId: 'openai-codex',
+          loadQuota: async () => null,
+        }),
+      }],
+    });
+    const fanoutReader = (result.connectedServiceQuotasCoordinator as unknown as {
+      readPersistedSessionAccountIdentity(input: Readonly<{
+        sessionId: string;
+        serviceId: 'openai-codex';
+        profileId: string;
+        groupId: string;
+        expectedGroupGeneration: number;
+      }>): Promise<unknown>;
+    }).readPersistedSessionAccountIdentity;
+
+    await expect(fanoutReader({
+      sessionId: 'session-1',
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      groupId: 'team',
+      expectedGroupGeneration: 1,
+    })).resolves.toBeNull();
+  });
+
+  it('wires exact live runtime identity reader into connected-service quota fanout', async () => {
+    vi.mocked(resolveConnectedServicesQuotasDaemonEnabled).mockResolvedValueOnce(true);
+    vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
+    vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
+    const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
+    const connectedServiceRuntimeAuthApplyCapabilityResolver = vi.fn(async () => ({ directLiveHotAuth: 'unsupported' as const }));
+    const providerAccountUsageStore = createProviderAccountUsageStore();
+
+    const input = {
+      api: {
+        listConnectedServiceProfiles: async ({ serviceId }: { serviceId: 'github' }) => ({ serviceId, profiles: [] }),
+        listConnectedServiceAuthGroups: async () => [],
+        resolveProviderAccountUsageSource: async () => null,
+      } as never,
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) },
+      },
+      logger,
+      processEnv: {
+        HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false',
+      },
+      controlPort: 41236,
+      machineId: 'machine-1',
+      machineIdProvider: () => 'machine-1',
+      runtimeId: 'runtime-1',
+      cliVersion: '0.0.0-test',
+      startupSource: 'manual',
+      serviceLabel: undefined,
+      daemonLogPath: '/tmp/happier-daemon.log',
+      controlToken: 'control-token',
+      happyHomeDir: '/tmp/happy-home',
+      activeServerDir: '/tmp/happy-active-server',
+      filesystemAccessPolicy: { kind: 'osUser' },
+      publicReleaseChannel: 'dev',
+      connectedServicesRestartRequestedPids: new Set(),
+      pidToTrackedSession: new Map(),
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+        applyCommittedGeneration: vi.fn(async (input) => ({ status: 'session_not_found', generation: input.generation })),
+      },
+      requestConnectedServiceRefreshRestartSignal: vi.fn(async () => ({ signaled: true })),
+      connectedServiceRuntimeAuthApplyCapabilityResolver,
+      connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore,
+      connectedServiceQuotaFetcherDescriptors: [{
+        id: 'github',
+        createFetcher: () => ({
+          serviceId: 'github',
+          loadQuota: async () => null,
+        }),
+      }],
+    } satisfies Parameters<typeof startDaemonRuntimeBootstrap>[0] & {
+      providerAccountUsageStore: ReturnType<typeof createProviderAccountUsageStore>;
+    };
+
+    const result = await startDaemonRuntimeBootstrap(input);
+
+    expect(logger.warn.mock.calls).toEqual([]);
+    expect(result.connectedServiceQuotasCoordinator).not.toBeNull();
+    expect((result.connectedServiceQuotasCoordinator as unknown as {
+      readRuntimeAccountIdentityForFanout?: unknown;
+    }).readRuntimeAccountIdentityForFanout).toEqual(expect.any(Function));
+    expect((result.connectedServiceQuotasCoordinator as unknown as {
+      runtimeAuthApplyCapabilityResolver?: unknown;
+    }).runtimeAuthApplyCapabilityResolver).toBe(connectedServiceRuntimeAuthApplyCapabilityResolver);
+    expect((result.connectedServiceQuotasCoordinator as unknown as {
+      accountUsageStore?: unknown;
+    }).accountUsageStore).toBe(providerAccountUsageStore);
+    expect((result.connectedServiceQuotasCoordinator as unknown as {
+      quotaFetchersByServiceId?: ReadonlyMap<string, unknown>;
+    }).quotaFetchersByServiceId?.has('github')).toBe(true);
   });
 });

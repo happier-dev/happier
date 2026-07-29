@@ -3,29 +3,30 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 
-import { acquireAuthoritativePluginRuntimeRegistryLease } from './runtimeLease';
+import {
+    acquireAuthoritativePluginRuntimeRegistryLease,
+    createEphemeralPluginRuntimeRegistryLease,
+    tryAcquireAuthoritativePluginRuntimeRegistryLease,
+} from './runtimeLease';
 
 function createRuntimeRegistry(label: string): ResolvedExecutablePluginRuntimeRegistry {
     return {
         contributes: {
             agents: Object.freeze([]),
-            agentRuntimes: Object.freeze([]),
-            actions: Object.freeze([]),
+                        actions: Object.freeze([]),
             resources: Object.freeze([]),
-            uiDescriptors: Object.freeze([]),
+            uiViewsV2: Object.freeze([]),
+            uiRenderersV2: Object.freeze([]),
+            uiTranslationsV2: Object.freeze([]),
             activationTargets: Object.freeze([]),
-            hookRegistrations: Object.freeze([]),
-            surfaceHandlersByBackendId: new Map(),
-            catalogEntriesById: Object.freeze({}),
+                        catalogEntriesById: Object.freeze({}),
             agentDefinitionsById: new Map(),
-            agentRuntimeDefinitionsById: new Map(),
-            pluginDiagnosticsByPluginId: Object.freeze({}),
+                        pluginDiagnosticsByPluginId: Object.freeze({}),
             generationId: `registry:${label}`,
         },
-        actionHandlersByActionId: new Map(),
         hookHandlersByHookId: new Map(),
-        runtimeCoreHandlersByBackendId: new Map(),
         agentRuntimesByAgentId: new Map(),
         daemonAuthBridgesByServiceId: new Map(),
         scmHostingProvidersById: new Map(),
@@ -33,9 +34,12 @@ function createRuntimeRegistry(label: string): ResolvedExecutablePluginRuntimeRe
         processSpawnAllowedPathsByPluginId: new Map(),
         pluginDiagnosticsByPluginId: Object.freeze({}),
         activatedPluginIds: new Set(),
-        activatePluginsByEvent: async () => [],
+        activateContributionsOnDemand: async () => [],
+        resolvePromptAssetBlocks: async () => [],
         addRuntimeDisposable: (_pluginId, disposable) => disposable,
+        createAgentInvocationServices: () => createUnavailablePluginServices(),
         readHookEventEnvelopeV1,
+        retireConsumers: () => {},
         dispose: async () => {},
     };
 }
@@ -51,7 +55,7 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
     it('delegates to the controller runtime lease when an active registry exists', async () => {
         const activeRegistry = createRuntimeRegistry('active');
         const release = vi.fn().mockResolvedValue(undefined);
-        const acquireRuntimeRegistry = vi.fn().mockResolvedValue({
+        const tryAcquireRuntimeRegistry = vi.fn().mockReturnValue({
             registry: activeRegistry,
             source: 'active',
             release,
@@ -65,15 +69,15 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
                     activeRegistry,
                     lastResult: null,
                 }),
-                reload: vi.fn(),
-                acquireRuntimeRegistry,
+                acquireRuntimeRegistry: vi.fn(),
+                tryAcquireRuntimeRegistry,
             } as never,
             resolveRuntimeRegistry,
         });
 
         expect(lease.registry).toBe(activeRegistry);
         expect(lease.source).toBe('active');
-        expect(acquireRuntimeRegistry).toHaveBeenCalledTimes(1);
+        expect(tryAcquireRuntimeRegistry).toHaveBeenCalledTimes(1);
         expect(resolveRuntimeRegistry).not.toHaveBeenCalled();
 
         await lease.release();
@@ -81,28 +85,58 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
         expect(release).toHaveBeenCalledTimes(1);
     });
 
-    it('disposes an ephemeral runtime registry when no active registry exists', async () => {
-        const ephemeralRegistry = createRuntimeRegistry('ephemeral');
-        const disposeSpy = vi.spyOn(ephemeralRegistry, 'dispose');
-        const resolveRuntimeRegistry = vi.fn().mockResolvedValue(ephemeralRegistry);
+    it('does not start plugin runtime resolution when an advisory consumer only accepts an active lease', async () => {
+        const acquireRuntimeRegistry = vi.fn();
+        const resolveRuntimeRegistry = vi.fn();
+        const tryAcquireRuntimeRegistry = vi.fn().mockReturnValue(null);
 
-        const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+        const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease({
+            controller: {
+                getState: vi.fn().mockReturnValue({ generation: 0, activeRegistry: null, lastResult: null }),
+                acquireRuntimeRegistry,
+                tryAcquireRuntimeRegistry,
+            } as never,
+            resolveRuntimeRegistry,
+        });
+
+        expect(lease).toBeNull();
+        expect(tryAcquireRuntimeRegistry).toHaveBeenCalledOnce();
+        expect(acquireRuntimeRegistry).not.toHaveBeenCalled();
+        expect(resolveRuntimeRegistry).not.toHaveBeenCalled();
+    });
+
+    it('does not construct a second process-local runtime when the daemon-applied lease is unavailable', async () => {
+        const resolveRuntimeRegistry = vi.fn().mockResolvedValue(createRuntimeRegistry('ephemeral'));
+        const acquireRuntimeRegistry = vi.fn();
+
+        await expect(acquireAuthoritativePluginRuntimeRegistryLease({
             controller: {
                 getState: () => ({
                     generation: 0,
                     activeRegistry: null,
                     lastResult: null,
                 }),
-                reload: vi.fn(),
+                acquireRuntimeRegistry,
+                tryAcquireRuntimeRegistry: () => null,
             } as never,
             resolveRuntimeRegistry,
+        })).rejects.toMatchObject({
+            code: 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE',
         });
 
-        expect(lease.registry).toBe(ephemeralRegistry);
-        expect(lease.source).toBe('ephemeral');
+        expect(acquireRuntimeRegistry).not.toHaveBeenCalled();
+        expect(resolveRuntimeRegistry).not.toHaveBeenCalled();
+    });
+
+    it('gives direct ephemeral hook registries the same one-shot release contract', async () => {
+        const registry = createRuntimeRegistry('direct-ephemeral');
+        const disposeSpy = vi.spyOn(registry, 'dispose');
+        const lease = createEphemeralPluginRuntimeRegistryLease(registry);
 
         await lease.release();
+        await lease.release();
 
+        expect(lease.source).toBe('ephemeral');
         expect(disposeSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -111,7 +145,7 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
 
         const activeRegistry = createRuntimeRegistry('configured-home');
         const release = vi.fn().mockResolvedValue(undefined);
-        const acquireRuntimeRegistry = vi.fn().mockResolvedValue({
+        const tryAcquireRuntimeRegistry = vi.fn().mockReturnValue({
             registry: activeRegistry,
             source: 'active',
             release,
@@ -126,8 +160,7 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
         vi.doMock('./singleton', () => ({
             pluginReloadController: {
                 getState: vi.fn(),
-                reload: vi.fn(),
-                acquireRuntimeRegistry,
+                tryAcquireRuntimeRegistry,
             },
         }));
 
@@ -140,7 +173,7 @@ describe('acquireAuthoritativePluginRuntimeRegistryLease', () => {
 
         expect(lease.registry).toBe(activeRegistry);
         expect(lease.source).toBe('active');
-        expect(acquireRuntimeRegistry).toHaveBeenCalledTimes(1);
+        expect(tryAcquireRuntimeRegistry).toHaveBeenCalledTimes(1);
         expect(resolveRuntimeRegistry).not.toHaveBeenCalled();
 
         await lease.release();

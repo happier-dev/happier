@@ -1,12 +1,12 @@
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2, SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayload';
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
+import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
 import {
   normalizeDaemonBackendTargetV2Input,
   resolveDaemonCatalogAgentIdFromBackendTarget,
 } from '../backendTargetRouting';
 import { readCredentials, type Credentials } from '@/persistence';
-import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import {
   resolveExistingSessionAttachContext,
   type ExistingSessionAttachContextFailureReason,
@@ -14,6 +14,7 @@ import {
 import {
   resolveConcreteCompatBackendTargetRefs,
 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
+import { readSessionHandoffAgentId } from '@/session/handoff/metadata/sessionHandoffMetadataV1';
 
 function isConcreteBuiltInCatalogAgentId(value: string): value is CatalogAgentId {
   return value !== 'customAcp' && (CATALOG_AGENT_IDS as readonly string[]).includes(value);
@@ -57,23 +58,30 @@ function mapExistingSessionAttachFailureToSpawnError(reason: ExistingSessionAtta
         errorCode: SPAWN_SESSION_ERROR_CODES.RESUME_MISSING_ENCRYPTION_KEY,
         errorMessage: 'Failed to open session encryption key for resume.',
       };
+    case 'invalidOwnerMetadata':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'Owner session metadata is unavailable for resume.',
+      };
+    case 'linkedResumeIdentityUnavailable':
+      return {
+        type: 'error',
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'Linked session Agent identity is unavailable for resume.',
+      };
   }
 }
 
 function resolveBackendTargetFromLocalHandoffOverlay(metadata: Record<string, unknown> | null): BackendTargetRefV2 | null {
   const handoff = metadata?.handoffV1;
-  if (!handoff || typeof handoff !== 'object' || Array.isArray(handoff)) {
+  const agentId = readSessionHandoffAgentId(handoff);
+  if (!agentId) {
     return null;
   }
 
-  const providerIdValue = 'providerId' in handoff ? (handoff as { providerId?: unknown }).providerId : null;
-  const providerId = typeof providerIdValue === 'string' ? providerIdValue.trim() : '';
-  if (!providerId) {
-    return null;
-  }
-
-  if (providerId.startsWith('acp:')) {
-    const backendId = providerId.slice(4).trim();
+  if (agentId.startsWith('acp:')) {
+    const backendId = agentId.slice(4).trim();
     return backendId
       ? resolveConcreteCompatBackendTargetRefs({
           kind: 'configuredAcpBackend',
@@ -82,10 +90,10 @@ function resolveBackendTargetFromLocalHandoffOverlay(metadata: Record<string, un
       : null;
   }
 
-  if (isConcreteBuiltInCatalogAgentId(providerId)) {
+  if (isConcreteBuiltInCatalogAgentId(agentId)) {
     return resolveConcreteCompatBackendTargetRefs({
       kind: 'builtInAgent',
-      agentId: providerId,
+      agentId,
     })?.backendTargetV2 ?? null;
   }
 
@@ -99,6 +107,8 @@ type ResolveSpawnBackendIdentitySuccess = Readonly<{
   effectiveBackendTargetV2: BackendTargetRefV2;
   sessionAttachPayload: SessionAttachFilePayload | null;
   catalogAgentId: CatalogAgentId | null;
+  ownerMetadata: SessionOwnerMetadataV1 | null;
+  existingSessionWorkspacePath: string | null;
 }>;
 
 type ResolveSpawnBackendIdentityFailure = Readonly<{
@@ -118,6 +128,8 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
   const hasBackendTargetInput = params.backendTarget !== undefined;
   let effectiveBackendTargetV2 = normalizeDaemonBackendTargetV2Input(params.backendTarget);
   let sessionAttachPayload: SessionAttachFilePayload | null = null;
+  let ownerMetadata: SessionOwnerMetadataV1 | null = null;
+  let existingSessionWorkspacePath: string | null = null;
 
   if (normalizedExistingSessionId) {
     const effectiveCredentials = params.credentials ?? (await readCredentials().catch(() => null));
@@ -138,13 +150,21 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     }
 
     sessionAttachPayload = attachContext.attachPayload;
+    ownerMetadata = attachContext.ownerMetadata ?? null;
+    existingSessionWorkspacePath =
+      attachContext.existingSessionWorkspacePath ?? null;
     if (attachContext.backendTarget) {
       const attachedBackendTarget = resolveConcreteCompatBackendTargetRefs(attachContext.backendTarget);
       if (attachedBackendTarget) {
         effectiveBackendTargetV2 = attachedBackendTarget.backendTargetV2;
       }
     }
-    if (!effectiveResume) {
+    const linkedVendorResumeId = typeof attachContext.linkedVendorResumeId === 'string'
+      ? attachContext.linkedVendorResumeId.trim()
+      : '';
+    if (linkedVendorResumeId) {
+      effectiveResume = linkedVendorResumeId;
+    } else if (!effectiveResume) {
       const derivedResume = typeof attachContext.vendorResumeId === 'string' ? attachContext.vendorResumeId.trim() : '';
       if (derivedResume) {
         effectiveResume = derivedResume;
@@ -193,5 +213,7 @@ export async function resolveSpawnBackendIdentity(params: Readonly<{
     effectiveBackendTargetV2: resolvedBackendTargetV2,
     sessionAttachPayload,
     catalogAgentId,
+    ownerMetadata,
+    existingSessionWorkspacePath,
   };
 }

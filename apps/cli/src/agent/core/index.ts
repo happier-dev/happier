@@ -7,7 +7,20 @@
  */
 
 // ============================================================================
-// AgentBackend - Core interface and types
+// Agent configuration types
+// ============================================================================
+
+export type {
+  AcpAgentConfig,
+  AgentBackendConfig,
+  AgentId,
+  AgentTransport,
+  McpServerConfig,
+  StartSessionResult,
+} from './AgentTypes';
+
+// ============================================================================
+// AgentMessage - Detailed message types with type guards
 // ============================================================================
 
 export type {
@@ -15,26 +28,6 @@ export type {
   ToolCallId,
   AgentMessage,
   AgentMessageHandler,
-  AgentBackend,
-  AgentBackendConfig,
-  AcpAgentConfig,
-  McpServerConfig,
-  AgentTransport,
-  AgentId,
-  StartSessionResult,
-} from './AgentBackend';
-
-// ============================================================================
-// AgentFactory - Factory types (catalog-driven)
-// ============================================================================
-
-export type { AgentFactory, AgentFactoryOptions } from './AgentFactory';
-
-// ============================================================================
-// AgentMessage - Detailed message types with type guards
-// ============================================================================
-
-export type {
   AgentStatus,
   ModelOutputMessage,
   StatusMessage,

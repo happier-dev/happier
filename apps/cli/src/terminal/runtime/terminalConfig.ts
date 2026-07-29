@@ -1,6 +1,6 @@
 import { posix as pathPosix } from 'node:path';
 
-export type TerminalMode = 'plain' | 'tmux' | 'windows_terminal' | 'windows_console';
+export type TerminalMode = 'plain' | 'tmux' | 'zellij' | 'windows_terminal' | 'windows_console';
 
 export type TerminalTmuxSpawnOptions = {
   /**

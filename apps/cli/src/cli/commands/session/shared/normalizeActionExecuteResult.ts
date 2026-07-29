@@ -10,7 +10,12 @@ export type NormalizedCliActionExecuteResult =
     errorCode: string;
     errorMessage?: string;
     candidates?: readonly string[];
+    details?: unknown;
   }>;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
 function normalizeErrorCode(value: unknown): string | null {
   const raw = typeof value === 'string' ? value.trim() : '';
@@ -28,6 +33,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
       ok: false,
       errorCode: result.errorCode,
       ...(result.error ? { errorMessage: result.error } : {}),
+      ...(result.details !== undefined ? { details: result.details } : {}),
     };
   }
 
@@ -40,13 +46,28 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
       ?? normalizeErrorMessage(dataObj.message)
       ?? undefined;
     const candidates = Array.isArray(dataObj.candidates) ? (dataObj.candidates.map((v) => String(v)) as string[]) : undefined;
+    const details = dataObj.details;
     return {
       ok: false,
       errorCode,
       ...(errorMessage ? { errorMessage } : {}),
       ...(candidates && candidates.length > 0 ? { candidates } : {}),
+      ...(details !== undefined ? { details } : {}),
     };
   }
 
   return { ok: true, data };
+}
+
+export function unwrapCliActionSuccessPayload(data: unknown): unknown {
+  if (!isRecord(data) || data.ok !== true) {
+    return data;
+  }
+
+  if (Object.hasOwn(data, 'data')) {
+    return data.data;
+  }
+
+  const { ok: _ok, ...payload } = data;
+  return payload;
 }

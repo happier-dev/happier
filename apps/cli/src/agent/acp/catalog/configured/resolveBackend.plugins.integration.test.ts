@@ -5,9 +5,12 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { createPluginStateStore } from '@/plugins/store/state';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
-import { resolveConfiguredAcpBackendFromAccountSettingsOrPlugins } from './resolveBackend';
+import {
+  listConfiguredAcpBackendsFromAccountSettingsOrPlugins,
+  resolveConfiguredAcpBackendFromAccountSettingsOrPlugins,
+} from './resolveBackend';
 
 async function writePluginFixture(rootDir: string): Promise<void> {
   const manifestDir = join(rootDir, '.happier-plugin');
@@ -17,54 +20,25 @@ async function writePluginFixture(rootDir: string): Promise<void> {
     join(manifestDir, 'plugin.json'),
     JSON.stringify(
       createPluginManifestV2Fixture({
-        schemaVersion: 2,
         id: 'acme.integration.plugin',
-        version: '1.0.0',
         displayName: 'Acme Integration Plugin',
         description: 'Contributes an ACP backend via local-path plugin state',
-        engines: {
-          happier: '^0.2.0',
-        },
-        runtime: {
-          apiVersion: 1,
-          capabilities: ['providers', 'backends'],
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        permissions: [],
-        contributions: [
+        uses: ['agents'],
+        contributes: {
+          agents: [
           {
-            kind: 'provider',
-            kindVersion: 1,
-            id: 'acme.integration.provider',
-            display: {
-              name: 'Acme Integration Provider',
-              tags: ['plugin'],
-            },
-            ownedBackendIds: [
-              'acme.integration.backend',
-              'acme.integration.agent-cli.backend',
-            ],
-          },
-          {
-            kind: 'backend',
-            kindVersion: 1,
             id: 'acme.integration.backend',
-            providerId: 'acme.integration.provider',
-            engine: {
+            runtime: {
               kind: 'acp',
               transport: {
                 kind: 'stdio',
-                launch: {
-                  kind: 'executable',
-                  command: 'plugin-acp-cli',
-                  args: ['acp', '--session'],
-                  env: {
-                    ACP_REGION: 'eu',
-                  },
+                executable: {
+                  kind: 'systemTool',
+                  id: 'plugin-acp-cli',
+                },
+                args: ['acp', '--session'],
+                env: {
+                  ACP_REGION: 'eu',
                 },
               },
               ux: {
@@ -92,36 +66,16 @@ async function writePluginFixture(rootDir: string): Promise<void> {
             capabilities: {
               externalSessions: true,
             },
-            runtimeAdapters: [],
           },
-          {
-            kind: 'backend',
-            kindVersion: 1,
-            id: 'acme.integration.agent-cli.backend',
-            providerId: 'acme.integration.provider',
-            engine: {
-              kind: 'acp',
-              transport: {
-                kind: 'stdio',
-                launch: {
-                  kind: 'agent-cli',
-                  agentId: 'kiro',
-                  args: ['--acp'],
-                },
-              },
-              ux: {
-                title: 'Agent CLI ACP Backend',
-              },
-              capabilities: {
-                supportsResume: true,
-              },
-            },
-            capabilities: {
-              externalSessions: true,
-            },
-            runtimeAdapters: [],
-          },
-        ],
+          ],
+          systemTools: [{
+            toolId: 'plugin-acp-cli',
+            displayName: 'Plugin ACP CLI',
+            source: 'system',
+            lookupNames: ['plugin-acp-cli'],
+            defaultArgs: [],
+          }],
+        },
       }),
       null,
       2,
@@ -180,6 +134,15 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
       description: 'Runs ACP through plugin declarative metadata',
       command: 'plugin-acp-cli',
       args: ['acp', '--session'],
+      source: {
+        kind: 'plugin_contributed',
+        pluginId: 'acme.integration.plugin',
+      },
+      launch: {
+        kind: 'system-tool',
+        toolId: 'plugin-acp-cli',
+        args: ['acp', '--session'],
+      },
       transportProfile: 'generic',
       defaultMode: 'plan',
       defaultModel: 'plugin-pro',
@@ -197,6 +160,23 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
       supportsConfigOptions: 'unknown',
       promptImageSupport: 'no',
     });
+
+    await expect(listConfiguredAcpBackendsFromAccountSettingsOrPlugins({
+      settings: {},
+      happyHomeDir,
+    })).resolves.toEqual([
+      expect.objectContaining({
+        backendId: 'acme.integration.backend',
+        source: expect.objectContaining({
+          kind: 'plugin_contributed',
+          pluginId: 'acme.integration.plugin',
+        }),
+        launch: expect.objectContaining({
+          kind: 'system-tool',
+          toolId: 'plugin-acp-cli',
+        }),
+      }),
+    ]);
   });
 
   it('keeps account settings as the canonical first match when both account settings and plugins define the same backend id', async () => {
@@ -273,56 +253,4 @@ describe('resolveConfiguredAcpBackendFromAccountSettingsOrPlugins (integration)'
     });
   });
 
-  it('keeps final plugin ACP agent-cli launch definitions discoverable for runtime normalization', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-configured-acp-plugin-home-'));
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-configured-acp-plugin-root-'));
-    const store = createPluginStateStore({ happyHomeDir });
-
-    await writePluginFixture(pluginRoot);
-    await store.write({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
-        'acme.integration.plugin': {
-          source: {
-            kind: 'path',
-            locator: pluginRoot,
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-            resolvedPath: pluginRoot,
-            manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
-          },
-          compatibility: {
-            status: 'unknown',
-            diagnostics: [],
-          },
-          install: {
-            mode: 'link',
-            manifestVersion: '1.0.0',
-            manifestDigest: null,
-            installedPath: null,
-          },
-          state: {
-            enabled: true,
-          },
-        },
-      },
-    });
-
-    const resolved = await resolveConfiguredAcpBackendFromAccountSettingsOrPlugins({
-      settings: {},
-      backendId: 'acme.integration.agent-cli.backend',
-      happyHomeDir,
-    });
-
-    expect(resolved).toMatchObject({
-      backendId: 'acme.integration.agent-cli.backend',
-      title: 'Agent CLI ACP Backend',
-      launch: {
-        kind: 'agent-cli',
-        agentId: 'kiro',
-        args: ['--acp'],
-      },
-    });
-  });
 });

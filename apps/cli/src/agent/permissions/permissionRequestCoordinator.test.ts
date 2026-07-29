@@ -15,15 +15,44 @@ class FakeSession {
         return this.agentState;
     }
 
-    updateAgentState(updater: (state: AgentState) => AgentState) {
+    updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void> {
         this.agentState = updater(this.agentState);
+    }
+}
+
+class DeferredUpdateSession extends FakeSession {
+    private deferNext = false;
+    private applyDeferredUpdate: (() => void) | null = null;
+
+    deferNextUpdate(): void {
+        this.deferNext = true;
+    }
+
+    resolveDeferredUpdate(): void {
+        const apply = this.applyDeferredUpdate;
+        this.applyDeferredUpdate = null;
+        apply?.();
+    }
+
+    override updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void> {
+        if (!this.deferNext) {
+            super.updateAgentState(updater);
+            return;
+        }
+
+        this.deferNext = false;
+        return new Promise<void>((resolve) => {
+            this.applyDeferredUpdate = () => {
+                this.agentState = updater(this.agentState);
+                resolve();
+            };
+        });
     }
 }
 
 type TestPermissionResult = Readonly<{ decision: string; answers?: Readonly<Record<string, string>> }>;
 
-function createHarness() {
-    const session = new FakeSession();
+function createHarness(session: FakeSession = new FakeSession()) {
     const store = new AgentStateRequestStore({
         session,
         logPrefix: '[CoordinatorTest]',
@@ -89,7 +118,7 @@ describe('PermissionRequestCoordinator', () => {
             }),
         });
 
-        expect(handled).toBe(true);
+        await expect(handled).resolves.toBe(true);
         await expect(first).resolves.toEqual(approve());
         await expect(second).resolves.toEqual(approve());
         expect(session.agentState.requests![bashRequest.requestId]).toBeUndefined();
@@ -100,6 +129,143 @@ describe('PermissionRequestCoordinator', () => {
                 decision: 'approved',
             }),
         );
+    });
+
+    it('does not resolve an approved waiter before its exact AgentState completion update settles', async () => {
+        const session = new DeferredUpdateSession();
+        const { coordinator } = createHarness(session);
+        const pendingDecision = coordinator.requestDecision(bashRequest);
+
+        session.deferNextUpdate();
+        const handled = Promise.resolve(coordinator.handleResponse({
+            requestId: bashRequest.requestId,
+            buildCompletion: (context) => ({
+                result: approve(context.requestId),
+                completedRequest: {
+                    status: 'approved',
+                    decision: 'approved',
+                },
+            }),
+        }));
+
+        let didHandleResponse = false;
+        let didResolveDecision = false;
+        void handled.then(() => {
+            didHandleResponse = true;
+        });
+        void pendingDecision.then(() => {
+            didResolveDecision = true;
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(didHandleResponse).toBe(false);
+        expect(didResolveDecision).toBe(false);
+        expect(session.agentState.requests![bashRequest.requestId]).toBeDefined();
+        expect(session.agentState.completedRequests![bashRequest.requestId]).toBeUndefined();
+
+        session.resolveDeferredUpdate();
+
+        await expect(handled).resolves.toBe(true);
+        await expect(pendingDecision).resolves.toEqual(approve());
+        expect(session.agentState.requests![bashRequest.requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests![bashRequest.requestId]).toEqual(
+            expect.objectContaining({ status: 'approved', decision: 'approved' }),
+        );
+    });
+
+    it('lets plugin cancellation supersede an in-flight approval for the exact owned request', async () => {
+        const session = new DeferredUpdateSession();
+        const { coordinator } = createHarness(session);
+        const pluginRequest = {
+            ...bashRequest,
+            requestId: 'plugin-a-in-flight-approval',
+            owner: {
+                kind: 'plugin',
+                pluginId: 'plugin-a',
+                runtimeId: 'runtime-a',
+            },
+        } as const;
+        const pendingDecision = coordinator.requestDecision(pluginRequest);
+
+        session.deferNextUpdate();
+        const handled = coordinator.handleResponse({
+            requestId: pluginRequest.requestId,
+            buildCompletion: (context) => ({
+                result: approve(context.requestId),
+                completedRequest: {
+                    status: 'approved',
+                    decision: 'approved',
+                },
+            }),
+        });
+        const canceled = coordinator.cancelByPlugin('plugin-a', 'plugin_deactivated');
+
+        await expect(pendingDecision).rejects.toThrow('plugin_deactivated');
+        expect(await settledState(handled)).toBe('pending');
+        expect(await settledState(canceled)).toBe('pending');
+
+        session.resolveDeferredUpdate();
+
+        await expect(handled).resolves.toBe(true);
+        await expect(canceled).resolves.toBeUndefined();
+        expect(session.agentState.requests![pluginRequest.requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests![pluginRequest.requestId]).toEqual(
+            expect.objectContaining({
+                status: 'canceled',
+                decision: 'abort',
+                reason: 'plugin_deactivated',
+                owner: pluginRequest.owner,
+            }),
+        );
+
+        const retryAbort = new AbortController();
+        const retry = coordinator.requestDecision(pluginRequest, { signal: retryAbort.signal });
+        expect(await settledState(retry)).toBe('pending');
+        retryAbort.abort();
+        await expect(retry).rejects.toThrow('Permission request aborted');
+    });
+
+    it('lets lifecycle cancellation supersede an in-flight approval for the exact live request', async () => {
+        const session = new DeferredUpdateSession();
+        const { coordinator } = createHarness(session);
+        const pendingDecision = coordinator.requestDecision(bashRequest);
+
+        session.deferNextUpdate();
+        const handled = coordinator.handleResponse({
+            requestId: bashRequest.requestId,
+            buildCompletion: (context) => ({
+                result: approve(context.requestId),
+                completedRequest: {
+                    status: 'approved',
+                    decision: 'approved',
+                },
+            }),
+        });
+        const canceled = Promise.resolve(coordinator.cancelAll('Session ended'));
+
+        await expect(pendingDecision).rejects.toThrow('Session ended');
+        expect(await settledState(handled)).toBe('pending');
+        expect(await settledState(canceled)).toBe('pending');
+
+        session.resolveDeferredUpdate();
+
+        await expect(handled).resolves.toBe(true);
+        await expect(canceled).resolves.toBeUndefined();
+        expect(session.agentState.requests![bashRequest.requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests![bashRequest.requestId]).toEqual(
+            expect.objectContaining({
+                status: 'canceled',
+                decision: 'abort',
+                reason: 'Session ended',
+            }),
+        );
+
+        const retryAbort = new AbortController();
+        const retry = coordinator.requestDecision(bashRequest, { signal: retryAbort.signal });
+        expect(await settledState(retry)).toBe('pending');
+        retryAbort.abort();
+        await expect(retry).rejects.toThrow('Permission request aborted');
     });
 
     it('removes only the aborted waiter while other waiters remain live', async () => {
@@ -121,7 +287,7 @@ describe('PermissionRequestCoordinator', () => {
             }),
         );
 
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: bashRequest.requestId,
                 buildCompletion: () => ({
@@ -129,9 +295,128 @@ describe('PermissionRequestCoordinator', () => {
                     completedRequest: { status: 'approved', decision: 'approved' },
                 }),
             }),
-        ).toBe(true);
+        ).resolves.toBe(true);
 
         await expect(second).resolves.toEqual(approve());
+    });
+
+    it('does not publish a plugin-owned request when its caller signal is already aborted', async () => {
+        const { coordinator, session } = createHarness();
+        const abort = new AbortController();
+        abort.abort();
+
+        await expect(coordinator.requestDecision({
+            ...bashRequest,
+            requestId: 'plugin-pre-aborted',
+            owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+        }, { signal: abort.signal })).rejects.toThrow('Permission request aborted');
+
+        expect(session.agentState.requests).toEqual({});
+        expect(session.agentState.completedRequests).toEqual({});
+    });
+
+    it('terminalizes the exact plugin-owned request when its last caller aborts', async () => {
+        const { coordinator, session } = createHarness();
+        const abort = new AbortController();
+        const request = {
+            ...bashRequest,
+            requestId: 'plugin-request-aborted-after-publish',
+            owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+        } as const;
+
+        const pending = coordinator.requestDecision(request, { signal: abort.signal });
+        expect(session.agentState.requests![request.requestId]).toEqual(expect.objectContaining({
+            owner: request.owner,
+        }));
+
+        abort.abort();
+
+        await expect(pending).rejects.toThrow('Permission request aborted');
+        expect(session.agentState.requests![request.requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests![request.requestId]).toEqual(expect.objectContaining({
+            status: 'canceled',
+            decision: 'abort',
+            reason: 'Permission request aborted',
+            owner: request.owner,
+        }));
+        expect(coordinator.getResponseContext(request.requestId)).toBeNull();
+        await expect(coordinator.handleResponse({
+            requestId: request.requestId,
+            buildCompletion: () => ({
+                result: approve(request.requestId),
+                completedRequest: { status: 'approved', decision: 'approved' },
+            }),
+        })).resolves.toBe(false);
+    });
+
+    it('keeps a plugin-owned request live while another waiter still needs the decision', async () => {
+        const { coordinator, session } = createHarness();
+        const firstAbort = new AbortController();
+        const request = {
+            ...bashRequest,
+            requestId: 'plugin-shared-waiters',
+            owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+        } as const;
+        const first = coordinator.requestDecision(request, { signal: firstAbort.signal });
+        const second = coordinator.requestDecision(request);
+
+        firstAbort.abort();
+
+        await expect(first).rejects.toThrow('Permission request aborted');
+        expect(session.agentState.requests![request.requestId]).toBeDefined();
+        expect(session.agentState.completedRequests![request.requestId]).toBeUndefined();
+        await expect(coordinator.handleResponse({
+            requestId: request.requestId,
+            buildCompletion: () => ({
+                result: approve(request.requestId),
+                completedRequest: { status: 'approved', decision: 'approved' },
+            }),
+        })).resolves.toBe(true);
+        await expect(second).resolves.toEqual(approve(request.requestId));
+        expect(session.agentState.completedRequests![request.requestId]).toEqual(expect.objectContaining({
+            status: 'approved',
+            decision: 'approved',
+        }));
+    });
+
+    it('lets an already-claimed plugin answer win an abort race without a second terminal result', async () => {
+        const session = new DeferredUpdateSession();
+        const { coordinator } = createHarness(session);
+        const abort = new AbortController();
+        const request = {
+            ...bashRequest,
+            requestId: 'plugin-answer-wins-abort-race',
+            owner: { kind: 'plugin', pluginId: 'plugin-a', runtimeId: 'runtime-a' },
+        } as const;
+        const pending = coordinator.requestDecision(request, { signal: abort.signal });
+        const pendingOutcome = pending.then(
+            () => null,
+            (error: unknown) => error,
+        );
+
+        session.deferNextUpdate();
+        const handled = coordinator.handleResponse({
+            requestId: request.requestId,
+            buildCompletion: () => ({
+                result: approve(request.requestId),
+                completedRequest: { status: 'approved', decision: 'approved' },
+            }),
+        });
+        abort.abort();
+        await Promise.resolve();
+        await Promise.resolve();
+        session.resolveDeferredUpdate();
+
+        await expect(handled).resolves.toBe(true);
+        await expect(pendingOutcome).resolves.toEqual(expect.objectContaining({
+            message: 'Permission request aborted',
+        }));
+        expect(session.agentState.requests![request.requestId]).toBeUndefined();
+        expect(session.agentState.completedRequests![request.requestId]).toEqual(expect.objectContaining({
+            status: 'approved',
+            decision: 'approved',
+        }));
+        expect(Object.keys(session.agentState.completedRequests ?? {})).toEqual([request.requestId]);
     });
 
     it('retains all-aborted requests as detached and satisfies a compatible same-id retry after late approval', async () => {
@@ -152,7 +437,7 @@ describe('PermissionRequestCoordinator', () => {
             }),
         );
 
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: bashRequest.requestId,
                 buildCompletion: (context) => ({
@@ -160,7 +445,7 @@ describe('PermissionRequestCoordinator', () => {
                     completedRequest: { status: 'approved', decision: 'approved' },
                 }),
             }),
-        ).toBe(true);
+        ).resolves.toBe(true);
 
         expect(session.agentState.requests![bashRequest.requestId]).toBeUndefined();
         expect(session.agentState.completedRequests![bashRequest.requestId]).toEqual(
@@ -179,7 +464,7 @@ describe('PermissionRequestCoordinator', () => {
         abort.abort();
         await expect(pending).rejects.toThrow('Permission request aborted');
 
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: bashRequest.requestId,
                 buildCompletion: () => ({
@@ -187,7 +472,7 @@ describe('PermissionRequestCoordinator', () => {
                     completedRequest: { status: 'approved', decision: 'approved' },
                 }),
             }),
-        ).toBe(true);
+        ).resolves.toBe(true);
 
         const retryAbort = new AbortController();
         const retry = coordinator.requestDecision(
@@ -211,7 +496,7 @@ describe('PermissionRequestCoordinator', () => {
         await expect(retry).rejects.toThrow('Permission request aborted');
     });
 
-    it('completes UI-only responses when agent state still has the request', () => {
+    it('completes UI-only responses when agent state still has the request', async () => {
         const { coordinator, session, store } = createHarness();
         const permissionSuggestions = [{ behavior: 'allow', tool: 'AskUserQuestion' }];
 
@@ -224,7 +509,7 @@ describe('PermissionRequestCoordinator', () => {
             permissionSuggestions,
         });
 
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: 'agent-state-only',
                 buildCompletion: (context) => {
@@ -247,7 +532,7 @@ describe('PermissionRequestCoordinator', () => {
                     };
                 },
             }),
-        ).toBe(true);
+        ).resolves.toBe(true);
 
         expect(session.agentState.requests!['agent-state-only']).toBeUndefined();
         expect(session.agentState.completedRequests!['agent-state-only']).toEqual(
@@ -294,7 +579,7 @@ describe('PermissionRequestCoordinator', () => {
             }),
         );
 
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: bashRequest.requestId,
                 buildCompletion: (context) => {
@@ -318,7 +603,7 @@ describe('PermissionRequestCoordinator', () => {
                     };
                 },
             }),
-        ).toBe(true);
+        ).resolves.toBe(true);
 
         await expect(pending).resolves.toEqual(approve());
         expect(session.agentState.completedRequests![bashRequest.requestId]).toEqual(
@@ -341,7 +626,7 @@ describe('PermissionRequestCoordinator', () => {
         const { coordinator, session } = createHarness();
 
         const first = coordinator.requestDecision(bashRequest);
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: bashRequest.requestId,
                 buildCompletion: () => ({
@@ -349,7 +634,7 @@ describe('PermissionRequestCoordinator', () => {
                     completedRequest: { status: 'approved', decision: 'approved' },
                 }),
             }),
-        ).toBe(true);
+        ).resolves.toBe(true);
 
         await expect(first).resolves.toEqual(approve());
         expect(session.agentState.requests![bashRequest.requestId]).toBeUndefined();
@@ -369,11 +654,11 @@ describe('PermissionRequestCoordinator', () => {
         await expect(retry).rejects.toThrow('Permission request aborted');
     });
 
-    it('ignores uncorrelated responses without building a completion', () => {
+    it('ignores uncorrelated responses without building a completion', async () => {
         const { coordinator, session } = createHarness();
         let built = false;
 
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: 'stale',
                 buildCompletion: () => {
@@ -384,7 +669,7 @@ describe('PermissionRequestCoordinator', () => {
                     };
                 },
             }),
-        ).toBe(false);
+        ).resolves.toBe(false);
 
         expect(built).toBe(false);
         expect(Object.keys(session.agentState.completedRequests ?? {})).toEqual([]);
@@ -398,7 +683,7 @@ describe('PermissionRequestCoordinator', () => {
         abort.abort();
         await expect(pending).rejects.toThrow('Permission request aborted');
 
-        expect(
+        await expect(
             coordinator.handleResponse({
                 requestId: bashRequest.requestId,
                 buildCompletion: () => ({
@@ -406,9 +691,9 @@ describe('PermissionRequestCoordinator', () => {
                     completedRequest: { status: 'approved', decision: 'approved' },
                 }),
             }),
-        ).toBe(true);
+        ).resolves.toBe(true);
 
-        coordinator.cancelAll('Session ended');
+        await coordinator.cancelAll('Session ended');
 
         const retryAbort = new AbortController();
         const retry = coordinator.requestDecision(bashRequest, { signal: retryAbort.signal });
@@ -422,7 +707,182 @@ describe('PermissionRequestCoordinator', () => {
 
         retryAbort.abort();
         await expect(retry).rejects.toThrow('Permission request aborted');
-        coordinator.dispose();
+        await coordinator.dispose();
+    });
+
+    it('cancels only pending requests owned by a deactivated plugin', async () => {
+        const { coordinator, session } = createHarness();
+        const pluginARequest = {
+            ...bashRequest,
+            requestId: 'plugin-a-request',
+            owner: {
+                kind: 'plugin',
+                pluginId: 'plugin-a',
+                runtimeId: 'runtime-a',
+            },
+        } as const;
+        const pluginBRequest = {
+            ...bashRequest,
+            requestId: 'plugin-b-request',
+            owner: {
+                kind: 'plugin',
+                pluginId: 'plugin-b',
+                runtimeId: 'runtime-b',
+            },
+        } as const;
+
+        const pluginAPending = coordinator.requestDecision(pluginARequest);
+        const pluginBPending = coordinator.requestDecision(pluginBRequest);
+
+        coordinator.cancelByPlugin('plugin-a', 'plugin_deactivated');
+
+        await expect(pluginAPending).rejects.toThrow('plugin_deactivated');
+        expect(await settledState(pluginBPending)).toBe('pending');
+        expect(Object.keys(session.agentState.requests ?? {}).sort()).toEqual(['plugin-b-request']);
+        expect(session.agentState.requests!['plugin-b-request']).toEqual(
+            expect.objectContaining({
+                tool: 'Bash',
+                owner: {
+                    kind: 'plugin',
+                    pluginId: 'plugin-b',
+                    runtimeId: 'runtime-b',
+                },
+            }),
+        );
+        expect(session.agentState.completedRequests!['plugin-a-request']).toEqual(
+            expect.objectContaining({
+                status: 'canceled',
+                reason: 'plugin_deactivated',
+                owner: {
+                    kind: 'plugin',
+                    pluginId: 'plugin-a',
+                    runtimeId: 'runtime-a',
+                },
+            }),
+        );
+
+        await expect(
+            coordinator.handleResponse({
+                requestId: 'plugin-b-request',
+                buildCompletion: () => ({
+                    result: approve('plugin-b-request'),
+                    completedRequest: { status: 'approved', decision: 'approved' },
+                }),
+            }),
+        ).resolves.toBe(true);
+        await expect(pluginBPending).resolves.toEqual(approve('plugin-b-request'));
+    });
+
+    it('does not merge duplicate request ids across different plugin owners', async () => {
+        const { coordinator, session } = createHarness();
+        const pluginARequest = {
+            ...bashRequest,
+            requestId: 'shared-request',
+            owner: {
+                kind: 'plugin',
+                pluginId: 'plugin-a',
+                runtimeId: 'runtime-a',
+            },
+        } as const;
+        const pluginBRequest = {
+            ...bashRequest,
+            requestId: 'shared-request',
+            owner: {
+                kind: 'plugin',
+                pluginId: 'plugin-b',
+                runtimeId: 'runtime-b',
+            },
+        } as const;
+
+        const first = coordinator.requestDecision(pluginARequest);
+        const second = coordinator.requestDecision(pluginBRequest);
+
+        await expect(second).rejects.toThrow('different owner or tool input');
+        expect(session.agentState.requests!['shared-request']).toEqual(
+            expect.objectContaining({
+                owner: {
+                    kind: 'plugin',
+                    pluginId: 'plugin-a',
+                    runtimeId: 'runtime-a',
+                },
+            }),
+        );
+
+        await coordinator.cancelAll('cleanup');
+        await Promise.allSettled([first, second]);
+    });
+
+    it('does not merge a source-owned request with a same-id request lacking that provenance', async () => {
+        const { coordinator } = createHarness();
+        const sourceOwned = coordinator.requestDecision({
+            ...bashRequest,
+            requestId: 'source-owned-request',
+            source: 'claude_unified_terminal_dialog_choice',
+        });
+        const unownedDuplicate = coordinator.requestDecision({
+            ...bashRequest,
+            requestId: 'source-owned-request',
+        });
+
+        await expect(unownedDuplicate).rejects.toThrow('different owner or tool input');
+
+        await coordinator.cancelAll('cleanup');
+        await Promise.allSettled([sourceOwned, unownedDuplicate]);
+    });
+
+    it('does not reuse a terminally cancelled plugin decision for a later request', async () => {
+        const { coordinator, session } = createHarness();
+        const abort = new AbortController();
+        const pluginARequest = {
+            ...bashRequest,
+            requestId: 'cached-shared-request',
+            owner: {
+                kind: 'plugin',
+                pluginId: 'plugin-a',
+                runtimeId: 'runtime-a',
+            },
+        } as const;
+        const pluginBRequest = {
+            ...bashRequest,
+            requestId: 'plugin-b-after-cancel',
+            owner: {
+                kind: 'plugin',
+                pluginId: 'plugin-b',
+                runtimeId: 'runtime-b',
+            },
+            createdAt: 300,
+        } as const;
+
+        const pending = coordinator.requestDecision(pluginARequest, { signal: abort.signal });
+        abort.abort();
+        await expect(pending).rejects.toThrow('Permission request aborted');
+
+        await expect(
+            coordinator.handleResponse({
+                requestId: pluginARequest.requestId,
+                buildCompletion: () => ({
+                    result: approve(pluginARequest.requestId),
+                    completedRequest: { status: 'approved', decision: 'approved' },
+                }),
+            }),
+        ).resolves.toBe(false);
+
+        const retry = coordinator.requestDecision(pluginBRequest);
+
+        expect(await settledState(retry)).toBe('pending');
+        expect(session.agentState.requests![pluginBRequest.requestId]).toEqual(
+            expect.objectContaining({
+                owner: {
+                    kind: 'plugin',
+                    pluginId: 'plugin-b',
+                    runtimeId: 'runtime-b',
+                },
+                createdAt: 300,
+            }),
+        );
+
+        await coordinator.cancelAll('cleanup');
+        await Promise.allSettled([retry]);
     });
 
     it('keeps pending requests unresolved until an explicit decision arrives even after timers advance', async () => {
@@ -441,7 +901,7 @@ describe('PermissionRequestCoordinator', () => {
             }),
         );
 
-        coordinator.cancelAll('Session ended');
+        await coordinator.cancelAll('Session ended');
         await expect(pending).rejects.toThrow('Session ended');
     });
 });

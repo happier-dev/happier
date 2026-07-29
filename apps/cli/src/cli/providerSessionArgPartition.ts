@@ -2,8 +2,17 @@ import chalk from 'chalk';
 
 import type { AgentId } from '@happier-dev/agents';
 import { PERMISSION_INTENTS, parsePermissionIntentAlias } from '@happier-dev/agents';
+import {
+  deserializeSessionModelSelectionV1,
+  ProviderConnectionIdSchema,
+  type SessionModelSelectionV1,
+} from '@happier-dev/protocol';
 
 import { isPermissionMode, type PermissionMode } from '@/api/types';
+import {
+  deserializeNativeForkSourceV1,
+  type NativeForkSource,
+} from '@/session/shared/spawnSessionContract';
 
 /**
  * Partitions raw provider command arguments into Happier-owned session options
@@ -15,14 +24,19 @@ export interface ProviderSessionArgPartitionResult {
   readonly startedBy: 'daemon' | 'terminal' | undefined;
   readonly refreshSettings: boolean;
   readonly profileQuery: string | undefined;
+  readonly connectedServicesAuthRaw: string | undefined;
+  readonly connectedServicesAuthJsonRaw: string | undefined;
   readonly permissionMode: PermissionMode | undefined;
   readonly permissionModeUpdatedAt: number | undefined;
   readonly sessionModeId: string | undefined;
   readonly sessionModeUpdatedAt: number | undefined;
   readonly modelId: string | undefined;
+  readonly providerConnectionId: string | undefined;
   readonly modelUpdatedAt: number | undefined;
+  readonly modelSelection: SessionModelSelectionV1 | undefined;
   readonly existingSessionId: string | undefined;
   readonly resume: string | undefined;
+  readonly nativeForkSource: NativeForkSource | undefined;
   readonly startingMode: string | undefined;
   readonly directory: string | undefined;
   readonly providerArgs: string[];
@@ -111,14 +125,19 @@ export function partitionProviderSessionArgs(
   let startedBy: 'daemon' | 'terminal' | undefined;
   let refreshSettings = false;
   let profileQuery: string | undefined;
+  let connectedServicesAuthRaw: string | undefined;
+  let connectedServicesAuthJsonRaw: string | undefined;
   let permissionMode: PermissionMode | undefined;
   let permissionModeUpdatedAt: number | undefined;
   let sessionModeId: string | undefined;
   let sessionModeUpdatedAt: number | undefined;
   let modelId: string | undefined;
+  let providerConnectionId: string | undefined;
   let modelUpdatedAt: number | undefined;
+  let modelSelection: SessionModelSelectionV1 | undefined;
   let existingSessionId: string | undefined;
   let resume: string | undefined;
+  let nativeForkSource: NativeForkSource | undefined;
   let startingMode: string | undefined;
   let directory: string | undefined;
   let helpRequested = false;
@@ -164,10 +183,32 @@ export function partitionProviderSessionArgs(
       continue;
     }
 
-    if (flag === '--profile') {
+    if (flag === '--profile' || flag === '--launch-profile') {
       const raw = equalsValue ?? input[i + 1];
       if (!equalsValue && typeof raw === 'string' && !raw.startsWith('-')) i += 1;
       profileQuery = equalsValue !== undefined ? normalizeOptionalValue(raw) : normalizeOptionalFlagValue(raw);
+      continue;
+    }
+
+    if (flag === '--auth' || flag === '--connected-services') {
+      if (connectedServicesAuthRaw !== undefined) {
+        console.error(chalk.red('Choose only one of --auth or --connected-services.'));
+        process.exit(1);
+      }
+      const raw = equalsValue ?? readRequiredNext(input, i, flag, 'default|native|cs:<id>');
+      if (equalsValue === undefined) i += 1;
+      connectedServicesAuthRaw = normalizeOptionalValue(raw) ?? exitWithMissingValue(flag, 'default|native|cs:<id>');
+      continue;
+    }
+
+    if (flag === '--auth-json' || flag === '--connected-services-json') {
+      if (connectedServicesAuthJsonRaw !== undefined) {
+        console.error(chalk.red('Choose only one of --auth-json or --connected-services-json.'));
+        process.exit(1);
+      }
+      const raw = equalsValue ?? readRequiredNext(input, i, flag, 'ConnectedServiceBindingsV1 JSON');
+      if (equalsValue === undefined) i += 1;
+      connectedServicesAuthJsonRaw = normalizeOptionalValue(raw) ?? exitWithMissingValue(flag, 'ConnectedServiceBindingsV1 JSON');
       continue;
     }
 
@@ -241,6 +282,30 @@ export function partitionProviderSessionArgs(
       continue;
     }
 
+    if (flag === '--provider-connection') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--provider-connection', 'provider connection id');
+      if (!equalsValue) i += 1;
+      const parsed = ProviderConnectionIdSchema.safeParse(raw);
+      if (!parsed.success) {
+        console.error(chalk.red('Invalid --provider-connection value'));
+        process.exit(1);
+      }
+      providerConnectionId = parsed.data;
+      continue;
+    }
+
+    if (flag === '--model-selection-v1') {
+      const raw = equalsValue ?? readRequiredNext(input, i, '--model-selection-v1', 'base64url model selection');
+      if (!equalsValue) i += 1;
+      try {
+        modelSelection = deserializeSessionModelSelectionV1(raw);
+      } catch {
+        console.error(chalk.red('Invalid --model-selection-v1 value: expected canonical base64url model selection'));
+        process.exit(1);
+      }
+      continue;
+    }
+
     if (flag === '--existing-session') {
       const raw = equalsValue ?? input[i + 1];
       if (!equalsValue && typeof raw === 'string' && !raw.startsWith('-')) i += 1;
@@ -261,6 +326,27 @@ export function partitionProviderSessionArgs(
         } else {
           providerArgs.push(arg);
         }
+      }
+      continue;
+    }
+
+    if (flag === '--native-fork-source-v1') {
+      if (nativeForkSource) {
+        console.error(chalk.red('--native-fork-source-v1 may only be provided once'));
+        process.exit(1);
+      }
+      const raw = equalsValue ?? readRequiredNext(
+        input,
+        i,
+        '--native-fork-source-v1',
+        'canonical native fork source',
+      );
+      if (!equalsValue) i += 1;
+      try {
+        nativeForkSource = deserializeNativeForkSourceV1(raw);
+      } catch {
+        console.error(chalk.red('Invalid --native-fork-source-v1 value'));
+        process.exit(1);
       }
       continue;
     }
@@ -288,18 +374,40 @@ export function partitionProviderSessionArgs(
     providerArgs.push(arg);
   }
 
+  if (providerConnectionId && !modelId) {
+    console.error(chalk.red('--provider-connection requires --model'));
+    process.exit(1);
+  }
+  if (providerConnectionId && modelSelection) {
+    console.error(chalk.red('--provider-connection cannot be combined with --model-selection-v1'));
+    process.exit(1);
+  }
+  if (connectedServicesAuthRaw !== undefined && connectedServicesAuthJsonRaw !== undefined) {
+    console.error(chalk.red('Choose only one connected-services auth option.'));
+    process.exit(1);
+  }
+  if (nativeForkSource && resume) {
+    console.error(chalk.red('--native-fork-source-v1 cannot be combined with --resume'));
+    process.exit(1);
+  }
+
   return {
     startedBy,
     refreshSettings,
     profileQuery,
+    connectedServicesAuthRaw,
+    connectedServicesAuthJsonRaw,
     permissionMode,
     permissionModeUpdatedAt,
     sessionModeId,
     sessionModeUpdatedAt,
     modelId,
+    providerConnectionId,
     modelUpdatedAt,
+    modelSelection,
     existingSessionId,
     resume,
+    nativeForkSource,
     startingMode,
     directory,
     providerArgs,

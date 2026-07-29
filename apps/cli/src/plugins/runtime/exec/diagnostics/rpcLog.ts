@@ -5,7 +5,7 @@ import type {
     ExecClientDiagnosticsV1,
     ExecClientHooksV1,
     JsonRpcMessageHookDecisionV1,
-} from '@happier-dev/plugin-sdk';
+} from '../privateContract';
 
 import { safeJsonStringify } from '@/utils/safeJson';
 

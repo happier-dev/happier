@@ -14,13 +14,15 @@ vi.mock('ps-list', () => ({
 }));
 
 describe('findAllHappyProcesses', () => {
-  afterEach(() => {
+  afterEach(async () => {
+    const { clearProcessSnapshotCacheForTests } = await import('./processSnapshotCache');
+    clearProcessSnapshotCacheForTests();
     vi.resetModules();
     execFileSyncMock.mockReset();
     psListMock.mockReset();
   });
 
-  it('coalesces concurrent process snapshots so callers share one full process scan', async () => {
+  it('coalesces concurrent classified process snapshots and reuses the fresh raw snapshot cache', async () => {
     let resolveProcessSnapshot!: (processes: unknown[]) => void;
     psListMock.mockImplementationOnce(
       () => new Promise((resolve) => {
@@ -32,6 +34,7 @@ describe('findAllHappyProcesses', () => {
     const first = findAllHappyProcesses();
     const second = findAllHappyProcesses();
 
+    await Promise.resolve();
     expect(psListMock).toHaveBeenCalledTimes(1);
 
     resolveProcessSnapshot([
@@ -50,6 +53,11 @@ describe('findAllHappyProcesses', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([expected, expected]);
 
     psListMock.mockResolvedValueOnce([]);
+    await expect(findAllHappyProcesses()).resolves.toEqual(expected);
+    expect(psListMock).toHaveBeenCalledTimes(1);
+
+    const { clearProcessSnapshotCacheForTests } = await import('./processSnapshotCache');
+    clearProcessSnapshotCacheForTests();
     await expect(findAllHappyProcesses()).resolves.toEqual([]);
     expect(psListMock).toHaveBeenCalledTimes(2);
   });

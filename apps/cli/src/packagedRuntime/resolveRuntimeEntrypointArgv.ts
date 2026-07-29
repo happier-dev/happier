@@ -51,6 +51,24 @@ export function resolveRunnerSnapshotRuntimeRootFromPath(pathLike: string | null
   return null;
 }
 
+export function resolveRunnerSnapshotBackingRuntimeRootFromPath(
+  pathLike: string | null | undefined,
+): string | null {
+  const normalized = normalizePathLike(String(pathLike ?? '')).replace(/\/+$/, '');
+  if (!normalized || isEmbeddedBunBundlePath(normalized)) {
+    return null;
+  }
+  for (const snapshotMarker of ['/dist/.runner-snapshots/', '/.runner-snapshots/']) {
+    const snapshotIndex = normalized.lastIndexOf(snapshotMarker);
+    if (snapshotIndex < 0) continue;
+    const afterMarker = normalized.slice(snapshotIndex + snapshotMarker.length);
+    const snapshotName = afterMarker.split('/')[0]?.trim();
+    if (!snapshotName) continue;
+    return normalized.slice(0, snapshotIndex);
+  }
+  return null;
+}
+
 export function isRunnerSnapshotRuntimeRoot(pathLike: string | null | undefined): boolean {
   const normalized = normalizePathLike(String(pathLike ?? '')).replace(/\/+$/, '');
   return resolveRunnerSnapshotRuntimeRootFromPath(normalized) === normalized;

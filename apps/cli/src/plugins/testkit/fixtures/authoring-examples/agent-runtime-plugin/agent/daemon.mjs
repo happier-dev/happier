@@ -3,7 +3,6 @@ export async function launch() {
         sessionId: 'examples-agent-runtime-session',
         runtime: {
             beginTurnLifecycle() {},
-            async startOrLoadSession() {},
             async sendTurnPrompt() {},
             async steerInFlightTurn() {},
             async waitForTurnCompletion() {},

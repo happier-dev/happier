@@ -3,7 +3,7 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 export type AcpSendFn = (
   provider: ACPProvider,
   body: ACPMessageData,
-  opts?: { meta?: Record<string, unknown> },
+  opts?: { meta?: Record<string, unknown>; localId?: string },
 ) => void;
 
 export function namespaceSidechainCallId(params: { sidechainId: string; toolCallId: string }): string {
@@ -18,6 +18,7 @@ export function forwardAcpToolCall(params: {
   toolName: string;
   input: unknown;
   id: string;
+  localId?: string;
   sidechainId?: string;
 }): void {
   params.sendAcp(params.provider, {
@@ -25,9 +26,9 @@ export function forwardAcpToolCall(params: {
     callId: params.callId,
     name: params.toolName,
     input: params.input,
-    id: params.id,
+    id: params.localId ?? params.id,
     ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
-  });
+  }, params.localId ? { localId: params.localId } : undefined);
 }
 
 export function forwardAcpToolResult(params: {
@@ -36,6 +37,7 @@ export function forwardAcpToolResult(params: {
   callId: string;
   output: unknown;
   id: string;
+  localId?: string;
   isError?: boolean;
   sidechainId?: string;
 }): void {
@@ -43,8 +45,8 @@ export function forwardAcpToolResult(params: {
     type: 'tool-result',
     callId: params.callId,
     output: params.output,
-    id: params.id,
+    id: params.localId ?? params.id,
     ...(params.isError !== undefined ? { isError: params.isError } : {}),
     ...(params.sidechainId ? { sidechainId: params.sidechainId } : {}),
-  });
+  }, params.localId ? { localId: params.localId } : undefined);
 }

@@ -5,6 +5,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 
+async function admitExistingWorkspaceBundles(_repoRoot, packageNames) {
+  return { ok: true, built: [], skipped: packageNames };
+}
+
 function writeWorkspacePackageFixture({ repoRoot, packageName, relativeDir }) {
   const packageDir = join(repoRoot, ...relativeDir);
   const distDir = join(packageDir, 'dist');
@@ -61,6 +65,17 @@ async function unpackTools(options = {}) {
 
 module.exports = { unpackTools };
 `, 'utf8');
+}
+
+function writeCliProxyApiManagedRuntimeFixture(repoRoot, target) {
+  const executablePath = join(repoRoot, '.test-fixtures', `happier-cliproxyapi-managed${target.exeExt}`);
+  mkdirSync(join(executablePath, '..'), { recursive: true });
+  writeFileSync(executablePath, 'signed managed runtime fixture\n', 'utf8');
+  const licenseDir = join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses');
+  mkdirSync(licenseDir, { recursive: true });
+  writeFileSync(join(licenseDir, 'CLIProxyAPI-LICENSE'), 'CLIProxyAPI license fixture\n', 'utf8');
+  writeFileSync(join(licenseDir, 'THIRD-PARTY-NOTICES'), 'CLIProxyAPI third-party notices fixture\n', 'utf8');
+  return executablePath;
 }
 
 function writeCliArtifactFixtures(repoRoot) {
@@ -135,6 +150,7 @@ function writeCliArtifactFixtures(repoRoot) {
   writeFileSync(join(cliScriptsDir, 'session_hook_forwarder.cjs'), 'console.log("session");\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'permission_hook_forwarder.cjs'), 'console.log("permission");\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'ripgrep_launcher.cjs'), 'require("./childProcessOptions.cjs");\n', 'utf8');
+  writeFileSync(join(cliScriptsDir, 'ripgrep_runtime_paths.cjs'), 'module.exports = { resolvePackagedRipgrepBinaryPath: () => undefined };\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'statusline_forwarder.cjs'), 'console.log("statusline");\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'terminal_launch_spec_runner.cjs'), 'console.log("terminal launch spec");\n', 'utf8');
   writeFileSync(join(cliScriptsDir, 'node_pty_relay.cjs'), 'console.log("node pty relay");\n', 'utf8');
@@ -223,6 +239,7 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const target = resolveHostCliBinaryTarget(artifacts);
     const executableName = artifacts.resolveExecutableName({ baseName: 'happier', target });
+    const cliProxyApiManagedRuntimeExecutablePath = writeCliProxyApiManagedRuntimeFixture(repoRoot, target);
 
     let releaseFirstBuild = null;
     const firstBuildRelease = new Promise((resolve) => {
@@ -246,17 +263,21 @@ test('buildCliBinaryArtifactPayload reuses the first completed dist build across
       repoRoot,
       payloadDir: payloadDirA,
       target,
+      cliProxyApiManagedRuntimeExecutablePath,
       commandProbe: () => true,
       runCommand,
       compileBinary,
+      ensureWorkspacePackagesBuiltByName: admitExistingWorkspaceBundles,
     });
     const second = artifacts.buildCliBinaryArtifactPayload({
       repoRoot,
       payloadDir: payloadDirB,
       target,
+      cliProxyApiManagedRuntimeExecutablePath,
       commandProbe: () => true,
       runCommand,
       compileBinary,
+      ensureWorkspacePackagesBuiltByName: admitExistingWorkspaceBundles,
     });
 
     for (let attempts = 0; attempts < 20 && runCalls.length === 0; attempts += 1) {

@@ -135,7 +135,7 @@ describe('importPetPackage', () => {
     expect(registryText).not.toContain(result.source.sourceKey);
   });
 
-  it('preserves safe nested spritesheet paths when importing into managed local storage', async () => {
+  it('rejects noncanonical nested spritesheet paths before importing into managed local storage', async () => {
     const root = tempRoot();
     const packagePath = join(root, 'codex-home', 'pets', 'blink');
     const managedRoot = join(root, 'happier-home', 'pets', 'imports');
@@ -149,12 +149,17 @@ describe('importPetPackage', () => {
       petsSyncEnabled: false,
     });
 
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error('expected local import to succeed');
-    await expect(readFile(join(result.source.packagePath, 'assets', 'spritesheet.png'))).resolves.toBeInstanceOf(Buffer);
-
-    const { validatePetPackage } = await import('../validation/validatePetPackage');
-    await expect(validatePetPackage({ packagePath: result.source.packagePath })).resolves.toMatchObject({ ok: true });
+    expect(result).toMatchObject({
+      ok: false,
+      errorCode: 'validation_failed',
+      validation: {
+        ok: false,
+        issues: expect.arrayContaining([
+          expect.objectContaining({ code: 'manifest_invalid_shape' }),
+        ]),
+      },
+    });
+    await expect(readdir(managedRoot)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('fails closed for account imports when pets sync is disabled', async () => {

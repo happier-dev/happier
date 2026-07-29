@@ -46,6 +46,24 @@ describe('normalizeCodeSearchResult (Kilo ACP shapes)', () => {
     expect(normalized.matches).toEqual([]);
   });
 
+  it('distinguishes aggregate positive results from a real zero-match result', () => {
+    expect(normalizeCodeSearchResult({ totalMatches: 3, truncated: false })).toEqual({
+      totalMatches: 3,
+      truncated: false,
+      detailsUnavailable: true,
+    });
+    expect(normalizeCodeSearchResult({ totalFiles: 2, truncated: true })).toEqual({
+      totalFiles: 2,
+      truncated: true,
+      detailsUnavailable: true,
+    });
+    expect(normalizeCodeSearchResult({ totalMatches: 0, truncated: false })).toEqual({
+      totalMatches: 0,
+      truncated: false,
+      matches: [],
+    });
+  });
+
   it('falls back to excerpt-only matches for non-structured string output', () => {
     const normalized = normalizeCodeSearchResult('just a plain message');
     const matches = expectMatches(normalized);

@@ -31,7 +31,12 @@ export function mapActionFailureToExternalSessionsError(
             : result.errorCode === 'invalid_request' || result.errorCode === 'invalid_parameters'
                 ? 'invalid_request'
                 : 'internal_error';
-    return externalSessionsError(errorCode, result.error);
+    return externalSessionsError(
+        errorCode,
+        result.error === 'external_session_takeover_failed'
+            ? result.error
+            : undefined,
+    );
 }
 
 function mapProviderFailureCodeToExternalSessionsErrorCode(code: string): ExternalSessionsErrorCode {
@@ -59,7 +64,7 @@ export function mapExternalSessionProviderFailureToExternalSessionsError(
     error: unknown,
 ): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } | null {
     if (!isExternalSessionProviderFailureError(error)) return null;
-    return externalSessionsError(mapProviderFailureCodeToExternalSessionsErrorCode(error.code), error.message);
+    return externalSessionsError(mapProviderFailureCodeToExternalSessionsErrorCode(error.code));
 }
 
 function mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(
@@ -86,7 +91,19 @@ function mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(
 function mapExternalTakeoverFailureToExternalSessionsError(
     result: Extract<ExternalSessionTakeoverResultV1, { ok: false }>,
 ): { ok: false; errorCode: ExternalSessionsErrorCode; error: string } {
-    return externalSessionsError(mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(result.errorCode, result.error), result.error);
+    const safeDetail = result.errorCode === 'capability_unsupported'
+        ? 'takeover_not_supported'
+        : result.errorCode === 'takeover_not_available'
+            && (result.error === 'takeover_not_supported' || result.error === 'not_authenticated')
+            ? result.error
+            : result.errorCode === 'invalid_external_source'
+                && result.error === 'session_metadata_unavailable'
+                ? result.error
+                : result.errorCode;
+    return externalSessionsError(
+        mapExternalTakeoverErrorCodeToExternalSessionsErrorCode(result.errorCode, result.error),
+        safeDetail,
+    );
 }
 
 export function mapExternalTakeoverResultToDirectTakeoverResponse(
@@ -107,35 +124,37 @@ export function mapExternalTakeoverResultToDirectTakeoverPersistResponse(
     return { ok: true, converted: parsed.data.converted } satisfies ExternalSessionTakeoverPersistResponse;
 }
 
-function stripErrorMessageFromStack(stack: string | undefined): string | undefined {
-    if (typeof stack !== 'string' || stack.trim().length === 0) return undefined;
-    const lines = stack.split('\n');
-    if (lines.length === 0) return stack;
-    const first = lines[0] ?? '';
-    const colon = first.indexOf(':');
-    lines[0] = colon >= 0 ? first.slice(0, colon) : first;
-    return lines.join('\n');
+function sanitizeExternalSessionsLogContext(context: string): string {
+    return /^[a-z][a-z0-9_.:-]{0,127}$/u.test(context)
+        ? context
+        : 'external_session.internal_error';
 }
 
 export function logExternalSessionsInternalError(context: string, error: unknown): void {
-    if (process.env.DEBUG) {
-        if (error instanceof Error) {
-            logger.debug('[externalSessions][internal_error]', {
-                context,
-                name: error.name,
-                stack: stripErrorMessageFromStack(error.stack),
-            });
-            return;
-        }
-        logger.debug('[externalSessions][internal_error]', { context, errorType: typeof error, error });
+    const safeContext = sanitizeExternalSessionsLogContext(context);
+    if (isExternalSessionProviderFailureError(error)) {
+        logger.debug('[externalSessions][internal_error]', {
+            context: safeContext,
+            errorCode: mapProviderFailureCodeToExternalSessionsErrorCode(error.code),
+            errorKind: 'agent_failure',
+            retryable: error.retryable === true,
+        });
         return;
     }
 
     if (error instanceof Error) {
-        logger.debug('[externalSessions][internal_error]', { context, name: error.name });
+        logger.debug('[externalSessions][internal_error]', {
+            context: safeContext,
+            errorCode: 'internal_error',
+            errorKind: 'error',
+        });
         return;
     }
-    logger.debug('[externalSessions][internal_error]', { context, errorType: typeof error });
+    logger.debug('[externalSessions][internal_error]', {
+        context: safeContext,
+        errorCode: 'internal_error',
+        errorKind: 'non_error',
+    });
 }
 
 export function internalErrorResponse(

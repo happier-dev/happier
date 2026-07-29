@@ -48,14 +48,14 @@ describe('syncDeepIndexForSessionsOnce', () => {
             seq: 2,
             createdAtMs: 1001,
             role: 'agent' as const,
-            content: { type: 'acp', provider: 'acp', data: { type: 'message', message: 'hidden acp assistant text' } },
+            content: { type: 'acp', agentId: 'acp', data: { type: 'message', message: 'hidden acp assistant text' } },
             meta: null,
           },
           {
             seq: 3,
             createdAtMs: 1002,
             role: 'agent' as const,
-            content: { type: 'acp', provider: 'acp', data: { type: 'reasoning', message: 'hidden acp reasoning trace' } },
+            content: { type: 'acp', agentId: 'acp', data: { type: 'reasoning', message: 'hidden acp reasoning trace' } },
             meta: null,
           },
           {

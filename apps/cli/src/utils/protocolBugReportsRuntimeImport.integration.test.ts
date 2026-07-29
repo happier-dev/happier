@@ -5,13 +5,13 @@ import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { projectPath } from '@/projectPath';
 
-function resolveProtocolBugReportsDistPath(): string {
-  return resolve(join(projectPath(), '..', '..', 'packages', 'protocol', 'dist', 'bugReports.js'));
+function resolveProtocolDistEntryPath(): string {
+  return resolve(join(projectPath(), '..', '..', 'packages', 'protocol', 'dist', 'index.js'));
 }
 
 describe('protocol dist runtime import', () => {
   it('loads bugReports dist module in Node ESM runtime', async () => {
-    const modulePath = resolveProtocolBugReportsDistPath();
+    const modulePath = resolveProtocolDistEntryPath();
     if (!existsSync(modulePath)) {
       throw new Error(`Expected built protocol module at ${modulePath}. Run "yarn --cwd packages/protocol build".`);
     }

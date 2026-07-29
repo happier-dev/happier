@@ -1,9 +1,11 @@
-import type { AgentMessageHandler, StartSessionResult } from '@/agent/core/AgentBackend';
+import type { AgentMessageHandler } from '@/agent/core/AgentMessage';
+import type { StartSessionResult } from '@/agent/core/AgentTypes';
 import type {
   ExecutionRunHostRuntimeMessageHandler,
   ExecutionRunSessionProvisionOptions,
   ExecutionRunSessionProvisionResult,
 } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import type { AcpPromptSubmissionResult } from '@/agent/acp/runtime/acpRuntimeBackendContract';
 
 type AcpExecutionRunResumeCapable = Readonly<{
   loadSession?: ((sessionId: string) => Promise<StartSessionResult>) | undefined;
@@ -11,7 +13,8 @@ type AcpExecutionRunResumeCapable = Readonly<{
 }>;
 
 type AcpExecutionRunSessionStarter = AcpExecutionRunResumeCapable & Readonly<{
-  startSession: (initialPrompt?: string) => Promise<StartSessionResult>;
+  startSession: () => Promise<StartSessionResult>;
+  sendPrompt: (sessionId: string, prompt: string) => Promise<AcpPromptSubmissionResult>;
 }>;
 
 type AcpExecutionRunMessageEmitter = Readonly<{
@@ -33,7 +36,16 @@ export async function provisionAcpBackendExecutionRunSession(
     return { sessionId: loaded.sessionId };
   }
 
-  const started = await backend.startSession(opts?.initialPrompt);
+  const started = await backend.startSession();
+  if (opts?.initialPrompt !== undefined) {
+    const submissionResult = await backend.sendPrompt(started.sessionId, opts.initialPrompt);
+    if (
+      submissionResult.kind === 'rejected_before_effect'
+      || submissionResult.kind === 'effect_may_have_occurred'
+    ) {
+      throw submissionResult.error;
+    }
+  }
   return { sessionId: started.sessionId };
 }
 

@@ -88,9 +88,9 @@ export function registerTransferDownloadRpcHandlers(
         kind: 'accepted',
         source: source.source,
         recipientPublicKeyBase64,
-        logContext: {
-          path: request.path,
-          asZip: Boolean(request.asZip),
+        diagnosticContext: {
+          transferKind: 'session_file',
+          archiveRequested: Boolean(request.asZip),
         },
       };
     },

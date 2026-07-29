@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readFile, readdir, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, readdir, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -171,6 +171,11 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             bundledDependencies: ['@happier-dev/cli-common'],
             dependencies: {
                 '@happier-dev/cli-common': '0.0.0',
+                '@huggingface/transformers': '0.0.0',
+                'ffmpeg-static': '0.0.0',
+                'sherpa-onnx-node': '0.0.0',
+                'node-pty': '0.0.0',
+                '@homebridge/node-pty-prebuilt-multiarch': '0.0.0',
             },
         }, null, 2)}\n`, older);
         await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), 'export default "cli-entrypoint";\n', newer);
@@ -184,6 +189,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             ['apps', 'cli', 'scripts', 'session_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'permission_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'ripgrep_launcher.cjs'],
+            ['apps', 'cli', 'scripts', 'ripgrep_runtime_paths.cjs'],
             ['apps', 'cli', 'scripts', 'statusline_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'terminal_launch_spec_runner.cjs'],
             ...staticRuntimeScriptAssets.map((segments) => ['apps', 'cli', 'scripts', ...segments]),
@@ -264,22 +270,53 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         }
 
         const compileObservedContents: string[] = [];
+        const compileObservedExternals: string[][] = [];
+        const prebuiltManagedRuntimePath = join(repoRoot, 'prebuilt', 'happier-cliproxyapi-managed');
+        await writeRepoFile(prebuiltManagedRuntimePath, 'signed managed runtime\n', older);
+        await writeRepoFile(
+            join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'CLIProxyAPI-LICENSE'),
+            'CLIProxyAPI license\n',
+            older,
+        );
+        await writeRepoFile(
+            join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'THIRD-PARTY-NOTICES'),
+            'CLIProxyAPI third-party notices\n',
+            older,
+        );
 
         await buildCliBinaryArtifactPayload({
             repoRoot,
             payloadDir,
+            externals: ['fixture-external', 'pino', 'fixture-external'],
+            cliProxyApiManagedRuntimeExecutablePath: prebuiltManagedRuntimePath,
+            ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => ({
+                ok: true,
+                built: [],
+                skipped: packageNames,
+            }),
             commandProbe: (command) => command === 'bun' || command === 'yarn',
             runCommand: () => {
                 throw new Error('buildCliBinaryArtifactPayload should not rebuild the cli dist in this scenario');
             },
-            compileBinary: async ({ outfile }) => {
+            compileBinary: async ({ outfile, externals }) => {
                 compileObservedContents.push(await readFile(bundledWorkspaceInstallPath, 'utf8'));
+                compileObservedExternals.push(externals ?? []);
                 await writeRepoFile(join(payloadDir, 'tools', 'js-runtime', 'bin', 'node'), 'managed runtime\n');
                 await writeRepoFile(outfile, 'compiled-binary');
             },
         });
 
         expect(compileObservedContents).toEqual([currentSourceContent]);
+        expect(compileObservedExternals).toEqual([[
+            '@huggingface/transformers',
+            'ffmpeg-static',
+            'sherpa-onnx-node',
+            'node-pty',
+            '@homebridge/node-pty-prebuilt-multiarch',
+            'pino',
+            'thread-stream',
+            'fixture-external',
+        ]]);
         await expect(readFile(join(payloadDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'firstPartyRuntime', 'installVersionedPayload.js'), 'utf8'))
             .resolves.toBe(currentSourceContent);
         for (const segments of staticRuntimeScriptAssets) {
@@ -288,10 +325,18 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
         }
         await expect(readFile(join(payloadDir, 'scripts', 'terminal_launch_spec_runner.cjs'), 'utf8'))
             .resolves.toBe('placeholder\n');
+        await expect(readFile(join(payloadDir, 'scripts', 'ripgrep_runtime_paths.cjs'), 'utf8'))
+            .resolves.toBe('placeholder\n');
         await expect(readFile(join(payloadDir, 'tools', 'unpacked', '.happier-tools-manifest.json'), 'utf8'))
             .resolves.toContain('"zellij"');
         await expect(readFile(join(payloadDir, 'tools', 'js-runtime', 'bin', 'node'), 'utf8'))
             .resolves.toBe('managed runtime\n');
+        await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'happier-cliproxyapi-managed'), 'utf8'))
+            .resolves.toBe('signed managed runtime\n');
+        await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'CLIProxyAPI-LICENSE'), 'utf8'))
+            .resolves.toBe('CLIProxyAPI license\n');
+        await expect(readFile(join(payloadDir, 'tools', 'unpacked', 'CLIProxyAPI-THIRD-PARTY-NOTICES'), 'utf8'))
+            .resolves.toBe('CLIProxyAPI third-party notices\n');
     });
 
     it('rebuilds the cli dist snapshot when tracked inputs are newer than the cli dist entrypoint', async () => {
@@ -310,6 +355,11 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             bundledDependencies: ['@happier-dev/cli-common'],
             dependencies: {
                 '@happier-dev/cli-common': '0.0.0',
+                '@huggingface/transformers': '0.0.0',
+                'ffmpeg-static': '0.0.0',
+                'sherpa-onnx-node': '0.0.0',
+                'node-pty': '0.0.0',
+                '@homebridge/node-pty-prebuilt-multiarch': '0.0.0',
             },
         }, null, 2)}\n`, older);
         await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), 'export default "stale-cli-entrypoint";\n', older);
@@ -322,6 +372,7 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             ['apps', 'cli', 'scripts', 'session_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'permission_hook_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'ripgrep_launcher.cjs'],
+            ['apps', 'cli', 'scripts', 'ripgrep_runtime_paths.cjs'],
             ['apps', 'cli', 'scripts', 'statusline_forwarder.cjs'],
             ['apps', 'cli', 'scripts', 'terminal_launch_spec_runner.cjs'],
             ['apps', 'cli', 'scripts', 'node_pty_relay.cjs'],
@@ -406,28 +457,78 @@ describe('buildCliBinaryArtifactPayload bundled workspace sync', () => {
             options?: { env?: NodeJS.ProcessEnv };
         }> = [];
         const compiledEntrypoints: string[] = [];
+        const prebuiltManagedRuntimePath = join(repoRoot, 'prebuilt', 'happier-cliproxyapi-managed');
+        await writeRepoFile(prebuiltManagedRuntimePath, 'signed managed runtime\n', older);
+        await writeRepoFile(
+            join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'CLIProxyAPI-LICENSE'),
+            'CLIProxyAPI license\n',
+            older,
+        );
+        await writeRepoFile(
+            join(repoRoot, 'packages', 'plugins', 'cliproxyapi', 'managed-runtime', 'licenses', 'THIRD-PARTY-NOTICES'),
+            'CLIProxyAPI third-party notices\n',
+            older,
+        );
+        const previousWorkspaceDistOutputDir = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+        const previousMixedCaseWorkspaceDistOutputDir =
+            process.env.Happier_Workspace_Dist_Output_Dir;
+        const previousMixedCaseWorkspaceLockLease =
+            process.env.Happier_Workspace_Dist_Build_Lock_Held;
+        process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR = join(repoRoot, '.dist.parent-stage');
+        process.env.Happier_Workspace_Dist_Output_Dir = join(repoRoot, '.dist.mixed-case-parent-stage');
+        process.env.Happier_Workspace_Dist_Build_Lock_Held = 'mixed-case-parent-lease';
 
-        await buildCliBinaryArtifactPayload({
-            repoRoot,
-            payloadDir,
-            commandProbe: (command) => command === 'bun' || command === 'yarn',
-            runCommand: async (cmd, args, options) => {
-                runCommandCalls.push({ cmd, args, options });
-                await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), rebuiltEntrypointContent, newer);
-            },
-            compileBinary: async ({ entrypoint, outfile }) => {
-                compiledEntrypoints.push(await readFile(entrypoint, 'utf8'));
-                await writeRepoFile(outfile, 'compiled-binary');
-            },
-        });
+        try {
+            await buildCliBinaryArtifactPayload({
+                repoRoot,
+                payloadDir,
+                cliProxyApiManagedRuntimeExecutablePath: prebuiltManagedRuntimePath,
+                ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => ({
+                    ok: true,
+                    built: [],
+                    skipped: packageNames,
+                }),
+                commandProbe: (command) => command === 'bun' || command === 'yarn',
+                runCommand: async (cmd, args, options) => {
+                    runCommandCalls.push({ cmd, args, options });
+                    await writeRepoFile(join(repoRoot, 'apps', 'cli', 'dist', 'index.mjs'), rebuiltEntrypointContent, newer);
+                },
+                compileBinary: async ({ entrypoint, outfile }) => {
+                    compiledEntrypoints.push(await readFile(entrypoint, 'utf8'));
+                    await writeRepoFile(outfile, 'compiled-binary');
+                },
+            });
+        } finally {
+            if (previousWorkspaceDistOutputDir === undefined) {
+                delete process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR;
+            } else {
+                process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR = previousWorkspaceDistOutputDir;
+            }
+            if (previousMixedCaseWorkspaceDistOutputDir === undefined) {
+                delete process.env.Happier_Workspace_Dist_Output_Dir;
+            } else {
+                process.env.Happier_Workspace_Dist_Output_Dir =
+                    previousMixedCaseWorkspaceDistOutputDir;
+            }
+            if (previousMixedCaseWorkspaceLockLease === undefined) {
+                delete process.env.Happier_Workspace_Dist_Build_Lock_Held;
+            } else {
+                process.env.Happier_Workspace_Dist_Build_Lock_Held =
+                    previousMixedCaseWorkspaceLockLease;
+            }
+        }
 
         expect(runCommandCalls).toHaveLength(1);
+        expect(runCommandCalls[0]?.options?.env?.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR).toBeUndefined();
+        expect(runCommandCalls[0]?.options?.env?.Happier_Workspace_Dist_Output_Dir).toBeUndefined();
+        expect(runCommandCalls[0]?.options?.env?.Happier_Workspace_Dist_Build_Lock_Held).toBeUndefined();
+        const canonicalRepoRoot = await realpath(repoRoot);
         expect(
             parseWorkspaceLockLeaseValue(
                 runCommandCalls[0]?.options?.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD,
             ),
         ).toMatchObject({
-            path: join(repoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
+            path: join(canonicalRepoRoot, '.project', 'tmp', 'cli-dist-build.lock'),
         });
         expect(compiledEntrypoints).toEqual([rebuiltEntrypointContent]);
     });

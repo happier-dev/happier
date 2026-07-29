@@ -32,4 +32,34 @@ describe('ElevenLabs public Voice settings declaration', () => {
       extra: true,
     }).success).toBe(false);
   });
+
+  it('declares bounded cursor pagination for provisioning tool discovery', () => {
+    const declaration = PLUGIN_MANIFEST.contributes.voiceProviders[0];
+    const toolsOperation = declaration.accountMediation?.operations.find(
+      (operation) => operation.id === 'tools',
+    );
+
+    expect(toolsOperation).toMatchObject({
+      request: {
+        queryTemplate: [{ name: 'page_size', value: '100' }],
+      },
+      parameters: {
+        schema: {
+          type: 'object',
+          properties: {
+            cursor: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 512,
+            },
+          },
+          additionalProperties: false,
+        },
+        mapping: [{
+          parameter: 'cursor',
+          target: { kind: 'query', name: 'cursor' },
+        }],
+      },
+    });
+  });
 });

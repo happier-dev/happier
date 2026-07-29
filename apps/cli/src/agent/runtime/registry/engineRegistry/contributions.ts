@@ -1,20 +1,19 @@
 import {
-    ExternalSessionsAgentIdSchema,
-    resolveInstallablesRegistry,
-    type InstallableRegistryContribution,
     type InstallablesRegistry,
 } from '@happier-dev/protocol';
 import type {
+    ResolvedAgentContribution,
     ResolvedAgentRuntimeContribution,
     ResolvedCatalogEntry,
     ResolvedContributionRegistry,
-    ResolvedInstallableContribution,
 } from '@/plugins/projection/registry/types';
+import {
+    resolveExecutableManagedDependenciesRegistry,
+} from '@/plugins/projection/registry/managedDependencyExecutables';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
     createEmptyBackendExecutionSurfaces,
     type BackendExecutionSurfaces,
-    type CliRuntimeCoreGetter,
     type EngineAdapterResolution,
     type EngineResolutionSelectedSource,
 } from '../engineRegistryTypes';
@@ -22,60 +21,73 @@ import type { RuntimeRegistryBackendEngineEntry } from './runtimeOwnerResolution
 
 export function readRuntimeRegistryBackendEngineEntry(
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry,
-    backendId: string,
+    backend: ResolvedAgentRuntimeContribution,
 ): RuntimeRegistryBackendEngineEntry | undefined {
     const registry = runtimeRegistry.agentRuntimesByAgentId;
-    return registry && typeof registry.get === 'function' ? registry.get(backendId) : undefined;
+    if (!registry || typeof registry.get !== 'function') return undefined;
+    const direct = registry.get(backend.id) ?? registry.get(backend.agentId);
+    if (direct) return direct;
+    if (!backend.pluginId) return undefined;
+    const owned = [...registry.values()].filter((entry) => entry.pluginId === backend.pluginId);
+    return owned.length === 1 ? owned[0] : undefined;
 }
 
-function toPluginExecInstallableRegistryContribution(
-    contribution: ResolvedInstallableContribution,
-): InstallableRegistryContribution {
-    const isBuiltIn = contribution.provenance === 'first_party'
-        && !contribution.pluginId
-        && !contribution.manifestPath
-        && !contribution.manifestDigest
-        && !contribution.daemonEntryPath
-        && !contribution.sourceSpec;
-    return {
-        owner: {
-            provenance: isBuiltIn
-                ? 'built_in'
-                : contribution.provenance === 'first_party'
-                    ? 'bundled_first_party_plugin'
-                    : 'external_plugin',
-            ownerId: contribution.pluginId ?? `${contribution.provenance}:${contribution.definition.key}`,
-            ...(contribution.pluginId ? { pluginId: contribution.pluginId } : {}),
-            ...(contribution.manifestPath ? { manifestPath: contribution.manifestPath } : {}),
-            ...(contribution.manifestDigest ? { manifestDigest: contribution.manifestDigest } : {}),
-        },
-        descriptor: contribution.definition,
-    };
+function readCurrentAgentRuntimeKind(agent: ResolvedAgentContribution): string | null {
+    const definition = agent.richDefinition?.definition;
+    if (!definition || typeof definition !== 'object' || Array.isArray(definition)) return null;
+    const runtime = Reflect.get(definition, 'runtime');
+    if (!runtime || typeof runtime !== 'object' || Array.isArray(runtime)) return null;
+    const kind = Reflect.get(runtime, 'kind');
+    return typeof kind === 'string' ? kind : null;
+}
+
+/**
+ * The engine registry still consumes a backend-shaped execution view, while
+ * Manifest V2 now declares one canonical Agent contribution. Keep that shape
+ * adaptation at this boundary instead of reviving a second projected runtime
+ * registry for current plugins.
+ */
+export function resolveEngineRuntimeContribution(
+    contributions: Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>,
+    agentId: string,
+): ResolvedAgentRuntimeContribution | null {
+    const agent = contributions.agentDefinitionsById.get(agentId);
+    if (!agent) return null;
+    const runtimeKind = readCurrentAgentRuntimeKind(agent);
+    return Object.freeze({
+        id: agent.id,
+        agentId: agent.id,
+        provenance: agent.provenance,
+        source: agent.source,
+        definition: Object.freeze({
+            kindVersion: 1,
+            id: agent.id,
+            agentId: agent.id,
+        }),
+        ...(runtimeKind ? { runtimeKind } : {}),
+        surfaceHandlers: Object.freeze([]),
+        ...(agent.sourceSpec ? { sourceSpec: agent.sourceSpec } : {}),
+        ...(agent.pluginId ? { pluginId: agent.pluginId } : {}),
+        ...(agent.manifestPath ? { manifestPath: agent.manifestPath } : {}),
+        ...(agent.manifestDigest ? { manifestDigest: agent.manifestDigest } : {}),
+        ...(agent.daemonEntryPath !== undefined ? { daemonEntryPath: agent.daemonEntryPath } : {}),
+        ...(agent.devDaemonEntryPath !== undefined ? { devDaemonEntryPath: agent.devDaemonEntryPath } : {}),
+    });
+}
+
+export function listEngineRuntimeContributionIds(
+    contributions: Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>,
+): readonly string[] {
+    return Object.freeze([...contributions.agentDefinitionsById.keys()]);
 }
 
 export function createPluginExecInstallablesRegistry(
     runtimeRegistry: ResolvedContributionRegistry | null | undefined,
 ): InstallablesRegistry | undefined {
-    const installables = runtimeRegistry?.managedDependencies ?? [];
-    if (installables.length === 0) return undefined;
-    const builtIns: InstallableRegistryContribution[] = [];
-    const bundledFirstPartyPlugins: InstallableRegistryContribution[] = [];
-    const externalPlugins: InstallableRegistryContribution[] = [];
-    for (const installable of installables) {
-        const contribution = toPluginExecInstallableRegistryContribution(installable);
-        if (contribution.owner.provenance === 'built_in') {
-            builtIns.push(contribution);
-        } else if (contribution.owner.provenance === 'bundled_first_party_plugin') {
-            bundledFirstPartyPlugins.push(contribution);
-        } else {
-            externalPlugins.push(contribution);
-        }
-    }
-    return resolveInstallablesRegistry({
-        builtIns,
-        bundledFirstPartyPlugins,
-        externalPlugins,
-    });
+    const registry = resolveExecutableManagedDependenciesRegistry(
+        runtimeRegistry?.managedDependencies ?? [],
+    );
+    return registry.descriptors.length > 0 ? registry : undefined;
 }
 
 type BackendSurfaceKind = NonNullable<ResolvedAgentRuntimeContribution['surfaceHandlers']>[number]['kind'];
@@ -112,18 +124,19 @@ async function resolveCatalogExecutionSurfacesForEntry(
     entry: ResolvedCatalogEntry,
     omissions: CatalogSurfaceOmissions = {},
 ): Promise<BackendExecutionSurfaces> {
-    const externalSession = !omissions.externalSession
-        && ExternalSessionsAgentIdSchema.safeParse(entry.id).success
-        && entry.getExternalSessionProviderOps
-        ? await entry.getExternalSessionProviderOps()
+    const replayChildLaunch = !omissions.fork && entry.resolveReplayChildLaunch
+        ? {
+            resolveReplayChildLaunch: async (
+                request: Parameters<NonNullable<NonNullable<BackendExecutionSurfaces['fork']>['resolveReplayChildLaunch']>>[0],
+            ) => await entry.resolveReplayChildLaunch!(request.parentMetadata),
+        }
         : null;
-
     return {
-        terminalRuntime: !omissions.terminalRuntime && entry.getTerminalRuntimeOps ? await entry.getTerminalRuntimeOps() : null,
-        externalSession,
+        terminalRuntime: null,
+        externalSession: null,
         attach: !omissions.attach && entry.getProviderAttachOps ? await entry.getProviderAttachOps() : null,
         handoff: !omissions.handoff && entry.getHandoffSurface ? await entry.getHandoffSurface() : null,
-        fork: !omissions.fork && entry.getForkSurface ? await entry.getForkSurface() : null,
+        fork: replayChildLaunch,
         // CHKPT-5 owns product checkpoint/restore orchestration. Catalog-only
         // backend entries must not claim checkpoint readiness from surface shape
         // existence; provider checkpoint leaves are consumed through declared
@@ -139,21 +152,4 @@ export async function resolveCatalogExecutionSurfacesForFirstPartyBackend(params
     return params.entry
         ? await resolveCatalogExecutionSurfacesForEntry(params.entry, resolveCatalogSurfaceOmissions(params.backend))
         : createEmptyBackendExecutionSurfaces();
-}
-
-function resolveRuntimeCoreGetter(entry: Readonly<{
-    getRuntimeCore?: CliRuntimeCoreGetter | undefined;
-}>): CliRuntimeCoreGetter | null {
-    return typeof entry.getRuntimeCore === 'function' ? entry.getRuntimeCore : null;
-}
-
-export function resolveContributionRuntimeCoreGetter(params: Readonly<{
-    backend: ResolvedAgentRuntimeContribution;
-    catalogEntry?: ResolvedCatalogEntry | null;
-}>): CliRuntimeCoreGetter | null {
-    if (params.backend.provenance !== 'first_party') {
-        return resolveRuntimeCoreGetter(params.backend);
-    }
-    return resolveRuntimeCoreGetter(params.catalogEntry ?? {})
-        ?? resolveRuntimeCoreGetter(params.backend);
 }

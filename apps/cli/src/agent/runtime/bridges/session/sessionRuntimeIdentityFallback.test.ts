@@ -11,7 +11,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
         codexSessionId: 'legacy-session',
         externalSessionV1: {
           v: 1,
-          providerId: 'codex',
+          agentId: 'codex',
           remoteSessionId: 'legacy-session',
           source: { kind: 'codexHome', home: 'user' },
           linkedAtMs: 1,
@@ -40,7 +40,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
         claudeSessionId: 'claude-session-1',
         externalSessionV1: {
           v: 1,
-          providerId: 'claude',
+          agentId: 'claude',
           remoteSessionId: 'claude-session-1',
           source: { kind: 'claudeConfig', configDir: '/tmp/claude' },
           linkedAtMs: 1,
@@ -75,7 +75,7 @@ describe('resolveSessionRuntimeIdentityFallback', () => {
         machineId: 'machine-source',
         externalSessionV1: {
           v: 1,
-          providerId: 'opencode',
+          agentId: 'opencode',
           machineId: 'machine-source',
           remoteSessionId: 'direct-runtime-session',
           source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096/' },

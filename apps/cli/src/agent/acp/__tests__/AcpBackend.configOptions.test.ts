@@ -68,6 +68,10 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
         if (method === 'session/set_config_option') {
           const configId = params && params.configId;
           const value = params && params.value;
+          if (configId === 'reject') {
+            send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'option rejected' } });
+            continue;
+          }
           if (configId === 'clear') {
             ok(id, { configOptions: [] });
             continue;
@@ -165,6 +169,38 @@ describe('AcpBackend session configOptions', () => {
         try {
           await backend?.dispose();
         } catch {}
+      }
+    });
+  });
+
+  it('does not publish or mutate model-scoped options when the provider rejects the change', async () => {
+    await withTempDir('happier-acp-config-option-rejected-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir })],
+      });
+      const events: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event') events.push(message);
+      });
+      try {
+        const started = await backend.startSession();
+        const before = backend.getSessionConfigOptionsState();
+        const updatesBefore = events.filter((event) => (
+          event.type === 'event' && event.name === 'config_options_update'
+        )).length;
+
+        await expect(backend.setSessionConfigOption(started.sessionId, 'reject', 'high'))
+          .rejects.toThrow(/option rejected/i);
+
+        expect(backend.getSessionConfigOptionsState()).toEqual(before);
+        expect(events.filter((event) => (
+          event.type === 'event' && event.name === 'config_options_update'
+        ))).toHaveLength(updatesBefore);
+      } finally {
+        await backend.dispose();
       }
     });
   });

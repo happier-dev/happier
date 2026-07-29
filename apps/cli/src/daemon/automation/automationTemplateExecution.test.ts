@@ -302,6 +302,75 @@ describe('parseAutomationTemplateExecution', () => {
     expect(parsed.value.agentModeId).toBe('plan');
   });
 
+  it('preserves a provider-bound model selection from an automation template', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Provider model',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+            modelSelection: {
+              v: 1,
+              updatedAt: 42,
+              ref: {
+                agentTargetKey: 'backend:codex',
+                providerConnectionId: 'pc_work',
+                modelId: 'default',
+              },
+            },
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed).toMatchObject({
+      ok: true,
+      value: {
+        modelSelection: {
+          v: 1,
+          updatedAt: 42,
+          ref: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_work',
+            modelId: 'default',
+          },
+        },
+      },
+    });
+  });
+
+  it('treats an explicit automatic selection as canonical over a legacy bare model', () => {
+    const parsed = parseAutomationTemplateExecution(
+      buildClaimedRun({
+        automation: {
+          id: 'a1',
+          name: 'Automatic model',
+          enabled: true,
+          targetType: 'new_session',
+          templateCiphertext: buildPlainTemplateCiphertext({
+            directory: '/tmp/project',
+            agent: 'codex',
+            modelSelection: null,
+            modelId: 'legacy-native',
+            modelUpdatedAt: 41,
+          }),
+        },
+      }),
+      undefined,
+    );
+
+    expect(parsed).toMatchObject({ ok: true });
+    if (!parsed.ok) return;
+    expect(parsed.value).not.toHaveProperty('modelSelection');
+    expect(parsed.value).not.toHaveProperty('modelId');
+    expect(parsed.value).not.toHaveProperty('modelUpdatedAt');
+  });
+
   it('parses codexBackendMode from plaintext templates', () => {
     const parsed = parseAutomationTemplateExecution(
       buildClaimedRun({

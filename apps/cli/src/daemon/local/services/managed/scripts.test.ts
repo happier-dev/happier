@@ -95,6 +95,29 @@ describe('discoverLocalServiceRunTargets', () => {
         expect('executablePath' in (targets[0]?.launchIntent ?? {})).toBe(false);
     });
 
+    it('keeps package-script target ids unique when sibling workspaces share a package name', async () => {
+        const root = await makeRepo();
+        await mkdir(join(root, 'apps', 'web'), { recursive: true });
+        await mkdir(join(root, 'examples', 'web'), { recursive: true });
+        for (const directory of [join(root, 'apps', 'web'), join(root, 'examples', 'web')]) {
+            await writeJson(join(directory, 'package.json'), {
+                name: 'web',
+                scripts: {
+                    dev: 'vite',
+                },
+            });
+        }
+
+        const targets = await discoverLocalServiceRunTargets({ roots: [root] });
+
+        expect(targets).toHaveLength(2);
+        expect(new Set(targets.map((target) => target.id)).size).toBe(targets.length);
+        expect(new Set(targets.map((target) => target.cwd))).toEqual(new Set([
+            join(root, 'apps', 'web'),
+            join(root, 'examples', 'web'),
+        ]));
+    });
+
     it('skips malformed package manifests without failing the whole discovery pass', async () => {
         const root = await makeRepo();
         await mkdir(join(root, 'broken'), { recursive: true });
@@ -107,5 +130,29 @@ describe('discoverLocalServiceRunTargets', () => {
         await writeFile(join(root, 'broken', 'package.json'), '{ this is not json', 'utf8');
 
         await expect(discoverLocalServiceRunTargets({ roots: [root] })).resolves.toHaveLength(1);
+    });
+
+    it('honors the directory traversal budget to keep discovery bounded', async () => {
+        const root = await makeRepo();
+        await mkdir(join(root, 'apps', 'web'), { recursive: true });
+        await writeJson(join(root, 'package.json'), {
+            name: 'repo-root',
+            scripts: {
+                dev: 'vite',
+            },
+        });
+        await writeJson(join(root, 'apps', 'web', 'package.json'), {
+            name: 'web',
+            scripts: {
+                dev: 'vite --host 127.0.0.1',
+            },
+        });
+
+        const targets = await discoverLocalServiceRunTargets({
+            roots: [root],
+            maxVisitedDirectories: 1,
+        });
+
+        expect(targets.map((target) => target.id)).toEqual(['repo-root:dev']);
     });
 });

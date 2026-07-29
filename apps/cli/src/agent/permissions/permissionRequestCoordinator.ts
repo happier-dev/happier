@@ -3,6 +3,11 @@ import type {
     AgentStateOutstandingRequest,
     AgentStateRequestResponseTarget,
 } from './agentStateRequestStore';
+import {
+    isPermissionRequestOwnedByPlugin,
+    normalizePermissionRequestOwner,
+    type PermissionRequestOwner,
+} from './permissionRequestOwner';
 
 export type PermissionRequestCoordinatorRequest = Readonly<{
     requestId: string;
@@ -16,6 +21,7 @@ export type PermissionRequestCoordinatorRequest = Readonly<{
     subagentRef?: unknown;
     sidechainId?: string | null;
     permissionSuggestions?: readonly unknown[] | null;
+    owner?: PermissionRequestOwner | null;
 }>;
 
 export type PermissionRequestCoordinatorContext = Readonly<{
@@ -30,6 +36,7 @@ export type PermissionRequestCoordinatorContext = Readonly<{
     subagentRef?: unknown;
     sidechainId?: string;
     permissionSuggestions?: readonly unknown[];
+    owner?: PermissionRequestOwner;
     correlation: 'record' | 'agent_state';
     status: 'live' | 'detached' | 'agent_state_only';
 }>;
@@ -61,6 +68,7 @@ export type PermissionRequestCoordinatorStore = Readonly<{
         subagentRef?: unknown;
         sidechainId?: string | null;
         permissionSuggestions?: readonly unknown[] | null;
+        owner?: PermissionRequestOwner | null;
     }>): void;
     completeRequest(params: Readonly<{
         requestId: string;
@@ -81,9 +89,20 @@ export type PermissionRequestCoordinatorStore = Readonly<{
             subagentRef?: unknown;
             sidechainId?: string | null;
             permissionSuggestions?: readonly unknown[] | null;
+            owner?: PermissionRequestOwner | null;
         }> | null;
-    }>): void;
-    cancelAllRequests?(params: Readonly<{ reason: string; decision?: string }>): void;
+    }>): void | Promise<void>;
+    cancelAllRequests?(params: Readonly<{
+        reason: string;
+        decision?: string;
+        requestIds: readonly string[];
+    }>): void | Promise<void>;
+    cancelRequestsByOwner?(params: Readonly<{
+        owner: PermissionRequestOwner;
+        reason: string;
+        decision?: string;
+        requestIds: readonly string[];
+    }>): void | Promise<void>;
     hasOutstandingRequest(requestId: string): boolean;
     readOutstandingRequest(requestId: string): AgentStateOutstandingRequest | null;
 }>;
@@ -113,14 +132,19 @@ type PendingPermissionRequest<TResult> = {
     subagentRef?: unknown;
     sidechainId?: string;
     permissionSuggestions?: readonly unknown[];
+    owner?: PermissionRequestOwner;
     status: 'live' | 'detached';
     waiters: Map<string, PendingPermissionWaiter<TResult>>;
+    cancelReason: string | null;
+    completionPersistence: Promise<void> | null;
 };
 
 type CachedPermissionDecision<TResult> = {
     result: TResult;
     toolName: string;
     toolInput: unknown;
+    source?: string;
+    owner?: PermissionRequestOwner;
 };
 
 export class PermissionRequestCoordinator<TResult> {
@@ -145,9 +169,12 @@ export class PermissionRequestCoordinator<TResult> {
 
         let entry = this.pendingRequests.get(request.requestId);
         if (entry) {
+            if (entry.cancelReason) {
+                return Promise.reject(createPermissionRequestAbortError(entry.cancelReason));
+            }
             if (!isCompatiblePendingRequest(entry, request)) {
                 return Promise.reject(
-                    new Error(`Permission request ${request.requestId} is already pending with different tool input`),
+                    new Error(`Permission request ${request.requestId} is already pending with different owner or tool input`),
                 );
             }
             entry.status = 'live';
@@ -162,6 +189,7 @@ export class PermissionRequestCoordinator<TResult> {
             }
         }
 
+        const owner = normalizePermissionRequestOwner(request.owner);
         entry = {
             requestId: request.requestId,
             toolName: request.toolName,
@@ -176,8 +204,11 @@ export class PermissionRequestCoordinator<TResult> {
             ...(Array.isArray(request.permissionSuggestions)
                 ? { permissionSuggestions: [...request.permissionSuggestions] }
                 : {}),
+            ...(owner ? { owner } : {}),
             status: 'live',
             waiters: new Map(),
+            cancelReason: null,
+            completionPersistence: null,
         };
 
         this.pendingRequests.set(request.requestId, entry);
@@ -192,6 +223,7 @@ export class PermissionRequestCoordinator<TResult> {
             ...(typeof entry.subagentRef !== 'undefined' ? { subagentRef: entry.subagentRef } : {}),
             ...(typeof entry.sidechainId === 'string' ? { sidechainId: entry.sidechainId } : {}),
             ...(typeof entry.permissionSuggestions !== 'undefined' ? { permissionSuggestions: entry.permissionSuggestions } : {}),
+            ...(entry.owner ? { owner: entry.owner } : {}),
         });
 
         return this.attachWaiter(entry, options?.signal);
@@ -215,6 +247,7 @@ export class PermissionRequestCoordinator<TResult> {
                 ...(Array.isArray(entry.permissionSuggestions)
                     ? { permissionSuggestions: [...entry.permissionSuggestions] }
                     : {}),
+                ...(entry.owner ? { owner: entry.owner } : {}),
                 sourceLocalId: entry.sourceLocalId,
                 correlation: 'record',
                 status: entry.status,
@@ -237,16 +270,17 @@ export class PermissionRequestCoordinator<TResult> {
             ...(Array.isArray(outstanding.permissionSuggestions)
                 ? { permissionSuggestions: [...outstanding.permissionSuggestions] }
                 : {}),
+            ...(outstanding.owner ? { owner: outstanding.owner } : {}),
             sourceLocalId: null,
             correlation: 'agent_state',
             status: 'agent_state_only',
         };
     }
 
-    handleResponse(params: Readonly<{
+    async handleResponse(params: Readonly<{
         requestId: string;
         buildCompletion: (context: PermissionRequestCoordinatorContext) => PermissionRequestCoordinatorCompletion<TResult>;
-    }>): boolean {
+    }>): Promise<boolean> {
         const context = this.getResponseContext(params.requestId);
         if (!context) return false;
 
@@ -256,40 +290,59 @@ export class PermissionRequestCoordinator<TResult> {
         });
     }
 
-    completeResponse(params: Readonly<{
+    async completeResponse(params: Readonly<{
         context: PermissionRequestCoordinatorContext;
         completion: PermissionRequestCoordinatorCompletion<TResult>;
-    }>): boolean {
+    }>): Promise<boolean> {
         const { context, completion } = params;
         const entry = this.pendingRequests.get(context.requestId);
         if (entry) {
-            this.store.completeRequest({
-                requestId: entry.requestId,
-                ...completion.completedRequest,
-                fallback: {
-                    toolName: entry.toolName,
-                    toolInput: entry.toolInput,
-                    createdAt: entry.createdAt,
-                    ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
-                    ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
-                    ...(entry.responseTarget ? { responseTarget: entry.responseTarget } : {}),
-                    ...(typeof entry.subagentRef !== 'undefined' ? { subagentRef: entry.subagentRef } : {}),
-                    ...(typeof entry.sidechainId === 'string' ? { sidechainId: entry.sidechainId } : {}),
-                    ...(typeof entry.permissionSuggestions !== 'undefined'
-                        ? { permissionSuggestions: entry.permissionSuggestions }
-                        : {}),
-                },
+            if (entry.cancelReason) return false;
+            if (entry.completionPersistence) return false;
+
+            const precedingPersistence = entry.completionPersistence ?? Promise.resolve();
+            const completionPersistence = precedingPersistence.then(async () => {
+                await this.store.completeRequest({
+                    requestId: entry.requestId,
+                    ...completion.completedRequest,
+                    fallback: {
+                        toolName: entry.toolName,
+                        toolInput: entry.toolInput,
+                        createdAt: entry.createdAt,
+                        ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
+                        ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
+                        ...(entry.responseTarget ? { responseTarget: entry.responseTarget } : {}),
+                        ...(typeof entry.subagentRef !== 'undefined' ? { subagentRef: entry.subagentRef } : {}),
+                        ...(typeof entry.sidechainId === 'string' ? { sidechainId: entry.sidechainId } : {}),
+                        ...(typeof entry.permissionSuggestions !== 'undefined'
+                            ? { permissionSuggestions: entry.permissionSuggestions }
+                            : {}),
+                        ...(entry.owner ? { owner: entry.owner } : {}),
+                    },
+                });
             });
+            entry.completionPersistence = completionPersistence;
+            try {
+                await completionPersistence;
+            } finally {
+                if (entry.completionPersistence === completionPersistence) {
+                    entry.completionPersistence = null;
+                }
+            }
+
+            if (entry.cancelReason) return true;
 
             const waiters = [...entry.waiters.values()];
             const hasLiveWaiters = waiters.some((waiter) => !waiter.aborted);
             entry.waiters.clear();
             this.pendingRequests.delete(entry.requestId);
-            if (!hasLiveWaiters) {
+            if (!hasLiveWaiters && !entry.owner) {
                 this.cachedDecisions.set(entry.requestId, {
                     result: completion.result,
                     toolName: entry.toolName,
                     toolInput: entry.toolInput,
+                    ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
+                    ...(entry.owner ? { owner: entry.owner } : {}),
                 });
             }
 
@@ -304,7 +357,7 @@ export class PermissionRequestCoordinator<TResult> {
 
         if (!this.store.hasOutstandingRequest(context.requestId)) return false;
 
-        this.store.completeRequest({
+        await this.store.completeRequest({
             requestId: context.requestId,
             ...completion.completedRequest,
         });
@@ -323,20 +376,78 @@ export class PermissionRequestCoordinator<TResult> {
         entry.waiters.clear();
     }
 
-    cancelAll(reason: string): void {
-        for (const requestId of [...this.pendingRequests.keys()]) {
-            this.cancelRequest(requestId, reason);
+    async cancelAll(reason: string): Promise<void> {
+        const entries = [...this.pendingRequests.values()];
+        for (const entry of entries) {
+            entry.cancelReason = reason;
+            for (const waiter of entry.waiters.values()) {
+                rejectWaiter(waiter, createPermissionRequestAbortError(reason));
+            }
+            entry.waiters.clear();
         }
         this.cachedDecisions.clear();
-        this.store.cancelAllRequests?.({ reason, decision: 'abort' });
+        const inFlightPersistence = entries
+            .map((entry) => entry.completionPersistence)
+            .filter((persistence): persistence is Promise<void> => persistence !== null);
+        if (inFlightPersistence.length > 0) {
+            await Promise.allSettled(inFlightPersistence);
+        }
+        await this.store.cancelAllRequests?.({
+            reason,
+            decision: 'abort',
+            requestIds: entries.map((entry) => entry.requestId),
+        });
+        for (const entry of entries) {
+            if (this.pendingRequests.get(entry.requestId) === entry) {
+                this.pendingRequests.delete(entry.requestId);
+            }
+        }
     }
 
-    reset(): void {
-        this.cancelAll('Permission coordinator reset');
+    async cancelByPlugin(pluginId: string, reason: string): Promise<void> {
+        const normalizedPluginId = pluginId.trim();
+        if (!normalizedPluginId) return;
+        const ownedEntries: PendingPermissionRequest<TResult>[] = [];
+        for (const [requestId, entry] of [...this.pendingRequests.entries()]) {
+            if (isPermissionRequestOwnedByPlugin(entry.owner, normalizedPluginId)) {
+                entry.cancelReason = reason;
+                ownedEntries.push(entry);
+                for (const waiter of entry.waiters.values()) {
+                    rejectWaiter(waiter, createPermissionRequestAbortError(reason));
+                }
+                entry.waiters.clear();
+                this.cachedDecisions.delete(requestId);
+            }
+        }
+        for (const [requestId, cached] of [...this.cachedDecisions.entries()]) {
+            if (isPermissionRequestOwnedByPlugin(cached.owner, normalizedPluginId)) {
+                this.cachedDecisions.delete(requestId);
+            }
+        }
+        await Promise.allSettled(
+            ownedEntries
+                .map((entry) => entry.completionPersistence)
+                .filter((persistence): persistence is Promise<void> => persistence !== null),
+        );
+        await this.store.cancelRequestsByOwner?.({
+            owner: { kind: 'plugin', pluginId: normalizedPluginId },
+            reason,
+            decision: 'abort',
+            requestIds: ownedEntries.map((entry) => entry.requestId),
+        });
+        for (const entry of ownedEntries) {
+            if (this.pendingRequests.get(entry.requestId) === entry) {
+                this.pendingRequests.delete(entry.requestId);
+            }
+        }
     }
 
-    dispose(): void {
-        this.cancelAll('Permission coordinator disposed');
+    async reset(): Promise<void> {
+        await this.cancelAll('Permission coordinator reset');
+    }
+
+    async dispose(): Promise<void> {
+        await this.cancelAll('Permission coordinator disposed');
     }
 
     private attachWaiter(entry: PendingPermissionRequest<TResult>, signal: AbortSignal | undefined): Promise<TResult> {
@@ -368,12 +479,23 @@ export class PermissionRequestCoordinator<TResult> {
     private abortWaiter(entry: PendingPermissionRequest<TResult>, waiter: PendingPermissionWaiter<TResult>): void {
         if (waiter.aborted) return;
         entry.waiters.delete(waiter.id);
-        rejectWaiter(waiter, createPermissionRequestAbortError());
 
         if (entry.waiters.size > 0) {
+            rejectWaiter(waiter, createPermissionRequestAbortError());
             entry.status = 'live';
             return;
         }
+
+        if (entry.owner) {
+            if (entry.completionPersistence) {
+                rejectWaiter(waiter, createPermissionRequestAbortError());
+                return;
+            }
+            this.cancelPluginOwnedRequestAfterLastWaiterAbort(entry, waiter);
+            return;
+        }
+
+        rejectWaiter(waiter, createPermissionRequestAbortError());
 
         if (this.store.hasOutstandingRequest(entry.requestId)) {
             entry.status = 'detached';
@@ -381,6 +503,54 @@ export class PermissionRequestCoordinator<TResult> {
         }
 
         this.pendingRequests.delete(entry.requestId);
+    }
+
+    private cancelPluginOwnedRequestAfterLastWaiterAbort(
+        entry: PendingPermissionRequest<TResult>,
+        waiter: PendingPermissionWaiter<TResult>,
+    ): void {
+        const error = createPermissionRequestAbortError();
+        entry.cancelReason = error.message;
+        waiter.aborted = true;
+        detachWaiter(waiter);
+
+        const cancellation = Promise.resolve(this.store.completeRequest({
+            requestId: entry.requestId,
+            status: 'canceled',
+            decision: 'abort',
+            reason: error.message,
+            fallback: {
+                toolName: entry.toolName,
+                toolInput: entry.toolInput,
+                createdAt: entry.createdAt,
+                ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
+                ...(typeof entry.source === 'string' ? { source: entry.source } : {}),
+                ...(entry.responseTarget ? { responseTarget: entry.responseTarget } : {}),
+                ...(typeof entry.subagentRef !== 'undefined' ? { subagentRef: entry.subagentRef } : {}),
+                ...(typeof entry.sidechainId === 'string' ? { sidechainId: entry.sidechainId } : {}),
+                ...(typeof entry.permissionSuggestions !== 'undefined'
+                    ? { permissionSuggestions: entry.permissionSuggestions }
+                    : {}),
+                owner: entry.owner,
+            },
+        }));
+        entry.completionPersistence = cancellation;
+        void cancellation.then(
+            () => {
+                if (this.pendingRequests.get(entry.requestId) === entry) {
+                    this.pendingRequests.delete(entry.requestId);
+                }
+                entry.completionPersistence = null;
+                waiter.reject(error);
+            },
+            (persistenceError: unknown) => {
+                if (this.pendingRequests.get(entry.requestId) === entry) {
+                    this.pendingRequests.delete(entry.requestId);
+                }
+                entry.completionPersistence = null;
+                waiter.reject(persistenceError instanceof Error ? persistenceError : error);
+            },
+        );
     }
 
     private pruneDetachedRecords(): void {
@@ -402,14 +572,37 @@ function isCompatibleCachedDecision<TResult>(
     cached: CachedPermissionDecision<TResult>,
     request: PermissionRequestCoordinatorRequest,
 ): boolean {
-    return cached.toolName === request.toolName && deepEqual(cached.toolInput, request.toolInput);
+    return cached.toolName === request.toolName
+        && deepEqual(cached.toolInput, request.toolInput)
+        && permissionSourcesEqual(cached.source, request.source)
+        && permissionOwnersEqual(cached.owner, normalizePermissionRequestOwner(request.owner));
 }
 
 function isCompatiblePendingRequest<TResult>(
     entry: PendingPermissionRequest<TResult>,
     request: PermissionRequestCoordinatorRequest,
 ): boolean {
-    return entry.toolName === request.toolName && deepEqual(entry.toolInput, request.toolInput);
+    return entry.toolName === request.toolName
+        && deepEqual(entry.toolInput, request.toolInput)
+        && permissionSourcesEqual(entry.source, request.source)
+        && permissionOwnersEqual(entry.owner, normalizePermissionRequestOwner(request.owner));
+}
+
+function permissionSourcesEqual(left: string | null | undefined, right: string | null | undefined): boolean {
+    const normalizedLeft = typeof left === 'string' ? left.trim() : '';
+    const normalizedRight = typeof right === 'string' ? right.trim() : '';
+    return normalizedLeft === normalizedRight;
+}
+
+function permissionOwnersEqual(
+    left: PermissionRequestOwner | null | undefined,
+    right: PermissionRequestOwner | null | undefined,
+): boolean {
+    const leftOwner = normalizePermissionRequestOwner(left);
+    const rightOwner = normalizePermissionRequestOwner(right);
+    if (!leftOwner && !rightOwner) return true;
+    if (!leftOwner || !rightOwner) return false;
+    return leftOwner.pluginId === rightOwner.pluginId && (leftOwner.runtimeId ?? '') === (rightOwner.runtimeId ?? '');
 }
 
 function detachWaiter<TResult>(waiter: PendingPermissionWaiter<TResult>): void {

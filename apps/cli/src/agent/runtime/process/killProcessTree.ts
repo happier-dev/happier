@@ -3,8 +3,11 @@ import { execFile } from 'node:child_process';
 
 import psList from 'ps-list';
 
+import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
+
 const DESCENDANT_DISCOVERY_TIMEOUT_MS = 150;
 const DESCENDANT_DISCOVERY_INTERVAL_MS = 25;
+const DIRECT_CHILD_COMMAND_TIMEOUT_MS = 500;
 
 function isAlive(pid: number): boolean {
   try {
@@ -15,8 +18,20 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function readDescendantPids(rootPid: number): Promise<number[]> {
-  const processes = await psList();
+async function readDescendantPids(rootPid: number, timeoutMs: number): Promise<number[] | null> {
+  const timedOut = Symbol('descendant-discovery-timeout');
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const processes = await Promise.race([
+    psList(),
+    new Promise<typeof timedOut>((resolve) => {
+      timer = setTimeout(() => resolve(timedOut), Math.max(1, timeoutMs));
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+  if (processes === timedOut) return null;
+
   const childrenByParent = new Map<number, number[]>();
   for (const p of processes) {
     if (typeof p.pid !== 'number' || typeof p.ppid !== 'number') continue;
@@ -46,7 +61,9 @@ async function resolveDescendantPids(rootPid: number): Promise<number[]> {
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < DESCENDANT_DISCOVERY_TIMEOUT_MS) {
-    const current = await readDescendantPids(rootPid);
+    const remainingMs = DESCENDANT_DISCOVERY_TIMEOUT_MS - (Date.now() - startedAt);
+    const current = await readDescendantPids(rootPid, remainingMs);
+    if (current === null) break;
     for (const pid of current) descendants.add(pid);
     if (descendants.size > 0) break;
     await new Promise((resolve) => setTimeout(resolve, DESCENDANT_DISCOVERY_INTERVAL_MS));
@@ -67,7 +84,31 @@ async function bestEffortSignalDirectChildren(parentPid: number, signal: NodeJS.
   if (process.platform === 'win32') return;
   const signalName = signal.replace(/^SIG/, '');
   await new Promise<void>((resolve) => {
-    execFile('pkill', [`-${signalName}`, '-P', String(parentPid)], { timeout: 500 }, () => resolve());
+    execFile(
+      'pkill',
+      [`-${signalName}`, '-P', String(parentPid)],
+      { timeout: DIRECT_CHILD_COMMAND_TIMEOUT_MS },
+      () => resolve(),
+    );
+  });
+}
+
+async function bestEffortReadDirectChildPids(parentPid: number): Promise<number[]> {
+  if (process.platform === 'win32') return [];
+
+  return await new Promise<number[]>((resolve) => {
+    execFile(
+      'pgrep',
+      ['-P', String(parentPid)],
+      { encoding: 'utf8', timeout: DIRECT_CHILD_COMMAND_TIMEOUT_MS },
+      (_error, stdout) => {
+        const childPids = String(stdout ?? '')
+          .split(/\s+/)
+          .map((value) => Number.parseInt(value, 10))
+          .filter((pid) => Number.isFinite(pid) && pid > 0 && pid !== parentPid);
+        resolve(Array.from(new Set(childPids)));
+      },
+    );
   });
 }
 
@@ -104,6 +145,7 @@ export async function killProcessTree(
   proc: ChildProcess,
   opts?: {
     graceMs?: number;
+    terminateWindowsTree?: typeof taskkillWindowsProcessTree;
   }
 ): Promise<void> {
   const pid = proc.pid;
@@ -114,13 +156,43 @@ export async function killProcessTree(
 
   // A detached POSIX child is its own process-group leader. Signal that group first so
   // late-forked descendants in the same group cannot escape the initial psList snapshot.
-  // Keep psList/pkill fallback for Windows and non-detached roots, where no group with
-  // this PID exists.
-  const descendants = await resolveDescendantPids(pid).catch(() => []);
-  const all = [...descendants, pid];
-
+  // Keep the platform subtree fallbacks for Windows and non-detached roots, where no
+  // group with this PID exists.
   if (shouldSignalProcessGroup) bestEffortKillProcessGroup(pid, 'SIGTERM');
-  for (const targetPid of all) await bestEffortSignalDirectChildren(targetPid, 'SIGTERM');
+  const descendants = await resolveDescendantPids(pid).catch(() => []);
+  let directChildren: number[] = [];
+  if (process.platform !== 'win32') {
+    // Retain direct-child identities before the root can exit and reparent them. Run the
+    // capture alongside the existing initial pkill slot rather than adding another wait phase.
+    [directChildren] = await Promise.all([
+      bestEffortReadDirectChildPids(pid),
+      bestEffortSignalDirectChildren(pid, 'SIGTERM'),
+    ]);
+  }
+  const all = Array.from(new Set([...descendants, ...directChildren, pid]));
+
+  if (process.platform === 'win32') {
+    const terminateWindowsTree = opts?.terminateWindowsTree ?? taskkillWindowsProcessTree;
+    try {
+      await terminateWindowsTree({ pid, force: false });
+    } catch {
+      for (const targetPid of all) bestEffortKillPid(targetPid, 'SIGTERM');
+    }
+    await waitForAllGone(all, graceMs);
+    const remaining = all.filter((targetPid) => isAlive(targetPid));
+    if (remaining.length === 0) return;
+    try {
+      await terminateWindowsTree({ pid, force: true });
+    } catch {
+      for (const targetPid of remaining) bestEffortKillPid(targetPid, 'SIGKILL');
+    }
+    await waitForAllGone(remaining, Math.min(250, graceMs));
+    return;
+  }
+
+  for (const targetPid of all) {
+    if (targetPid !== pid) await bestEffortSignalDirectChildren(targetPid, 'SIGTERM');
+  }
   for (const targetPid of all) bestEffortKillPid(targetPid, 'SIGTERM');
   await waitForAllGone(all, graceMs);
 

@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest';
 import unitConfig from '../../vitest.config';
 import integrationConfig from '../../vitest.integration.config';
 import slowConfig from '../../vitest.slow.config';
+import { workspacePackageSourcesPlugin } from '../vitestWorkspacePackageResolution';
 
 describe('Vitest lane separation', () => {
     it('uses lane-specific global setup entrypoints', () => {
@@ -49,15 +50,15 @@ describe('Vitest lane separation', () => {
             'vitest run --config vitest.config.ts',
         );
         expect(packageJson.scripts?.['test:unit']).toContain('test:import-cycles');
-        expect(packageJson.scripts?.['test:integration']).toBe(
+        expect(packageJson.scripts?.['test:integration']).toContain(
             'node scripts/runVitestShards.mjs --config vitest.integration.config.ts',
         );
         expect(fastScripts).not.toContain('runPkgrollBuild');
         expect(fastScripts).not.toContain('syncPackageDist');
 
-        // `yarn vitest ...` (without going through `yarn test:unit`) should still refresh internal
-        // workspace artifacts, but use the source-dev incremental sync path instead of a full rebuild.
-        expect(packageJson.scripts?.vitest).toBe('node scripts/syncSharedDepsForDev.mjs && vitest');
+        expect(packageJson.scripts?.vitest).toMatch(/(?:^|&& )vitest$/);
+        expect(packageJson.scripts?.pretest).toBeUndefined();
+        expect(packageJson.scripts?.pretypecheck).toBe('yarn -s prepare:declarations');
     });
 
     it('wires the CLI runtime import-cycle guard into root and CLI unit lanes', () => {
@@ -157,5 +158,38 @@ describe('Vitest lane separation', () => {
                 }),
             ]),
         );
+    });
+
+    it('resolves the protocol hooks public subpath to its source catalog', () => {
+        const expectedAlias = expect.objectContaining({
+            find: '@happier-dev/protocol/plugins/hooks',
+            replacement: expect.stringContaining('/packages/protocol/src/plugins/hooks/catalog'),
+        });
+
+        expect(unitConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
+        expect(integrationConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
+        expect(
+            workspacePackageSourcesPlugin.resolveId('@happier-dev/protocol/plugins/hooks'),
+        ).toEqual(expect.stringContaining('/packages/protocol/src/plugins/hooks/catalog.ts'));
+    });
+
+    it('resolves the CLI runtime sidecar catalog from its canonical source', () => {
+        expect(
+            workspacePackageSourcesPlugin.resolveId(
+                '@happier-dev/cli-common/componentArtifacts/cliRuntimeSidecars',
+            ),
+        ).toEqual(expect.stringContaining(
+            '/packages/cli-common/src/componentArtifacts/cliRuntimeSidecars.ts',
+        ));
+    });
+
+    it('resolves the private Plugin SDK lock bridge from its canonical source', () => {
+        const expectedAlias = expect.objectContaining({
+            find: '@happier-dev/plugin-sdk/internal/fs/json-owner-file-lock',
+            replacement: expect.stringContaining('/packages/plugin-sdk/src/internal/fs/jsonOwnerFileLock.ts'),
+        });
+
+        expect(unitConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
+        expect(integrationConfig.resolve?.alias).toEqual(expect.arrayContaining([expectedAlias]));
     });
 });

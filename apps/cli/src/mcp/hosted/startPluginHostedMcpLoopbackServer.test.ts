@@ -55,6 +55,14 @@ describe('startPluginHostedMcpLoopbackServer', () => {
                                 required: ['text'],
                                 additionalProperties: false,
                             },
+                            outputSchema: {
+                                type: 'object',
+                                properties: {
+                                    echoed: { type: 'string' },
+                                },
+                                required: ['echoed'],
+                                additionalProperties: false,
+                            },
                             handler: async (args, context) => {
                                 calls.push({ args, context });
                                 const text = typeof (args as { text?: unknown }).text === 'string'
@@ -85,6 +93,24 @@ describe('startPluginHostedMcpLoopbackServer', () => {
 
             const tools = await withTimeout(client.listTools(), 'list hosted MCP tools');
             expect((tools.tools ?? []).map((tool) => tool.name)).toContain('ext.acme.echo');
+            expect(tools.tools.find((tool) => tool.name === 'ext.acme.echo')).toMatchObject({
+                inputSchema: {
+                    type: 'object',
+                    properties: {
+                        text: { type: 'string' },
+                    },
+                    required: ['text'],
+                    additionalProperties: false,
+                },
+                outputSchema: {
+                    type: 'object',
+                    properties: {
+                        echoed: { type: 'string' },
+                    },
+                    required: ['echoed'],
+                    additionalProperties: false,
+                },
+            });
 
             const result = await withTimeout(
                 client.callTool({ name: 'ext.acme.echo', arguments: { text: 'hello' } }),

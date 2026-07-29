@@ -87,7 +87,6 @@ describe('resolveCliFeatureDecision', () => {
     const decision = resolveCliFeatureDecision({
       featureId: 'connectedServices.quotas',
       env: {
-        HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
         HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
       } as NodeJS.ProcessEnv,
       serverSnapshot: snapshot,
@@ -127,25 +126,108 @@ describe('resolveCliFeatureDecision', () => {
     expect(decision.blockerCode).toBe('dependency_disabled');
   });
 
-  it('keeps local service inventory opt-in through local CLI policy', () => {
+  it('treats server-represented local service inventory as fail-closed without a server snapshot', () => {
+    // localServices(.inventory) is now server-represented: with no server snapshot the decision
+    // is fail-closed (unknown / probe_failed), and the server bit is what enables it.
     expect(resolveCliFeatureDecision({
       featureId: 'localServices.inventory',
       env: {} as NodeJS.ProcessEnv,
     })).toMatchObject({
-      state: 'disabled',
-      blockedBy: 'dependency',
-      blockerCode: 'dependency_disabled',
+      state: 'unknown',
+      blockedBy: 'server',
+      blockerCode: 'probe_failed',
     });
 
+    const snapshot: CliServerFeaturesSnapshot = {
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: { localServices: { enabled: true, inventory: { enabled: true } } },
+        capabilities: {},
+      }),
+    };
     expect(resolveCliFeatureDecision({
       featureId: 'localServices.inventory',
-      env: {
-        HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED: '1',
-        HAPPIER_FEATURE_LOCAL_SERVICES_INVENTORY__ENABLED: '1',
-      } as NodeJS.ProcessEnv,
+      env: {} as NodeJS.ProcessEnv,
+      serverSnapshot: snapshot,
     })).toMatchObject({
       state: 'enabled',
       blockedBy: null,
+    });
+  });
+
+  it('disables server-represented local service inventory when the server bit is off', () => {
+    const snapshot: CliServerFeaturesSnapshot = {
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: { localServices: { enabled: false, inventory: { enabled: false } } },
+        capabilities: {},
+      }),
+    };
+    // The server can disable the product: the inventory gate reads its own server bit (off).
+    expect(resolveCliFeatureDecision({
+      featureId: 'localServices.inventory',
+      env: {} as NodeJS.ProcessEnv,
+      serverSnapshot: snapshot,
+    })).toMatchObject({
+      state: 'disabled',
+      blockedBy: 'server',
+      blockerCode: 'feature_disabled',
+    });
+  });
+
+  it('treats the server-represented React Native plugin UI tier as fail-closed without a server snapshot', () => {
+    // §4.1/§13.5.3: plugins.ui.reactNativeBundles migrated to server-represented + default-ALLOW
+    // kill-switch. CLI local policy no longer force-closes it; with no server snapshot the decision
+    // is fail-closed (unknown / probe_failed) and the server bit is what enables it.
+    expect(resolveCliFeatureDecision({
+      featureId: 'plugins.ui.reactNativeBundles',
+      env: {} as NodeJS.ProcessEnv,
+    })).toMatchObject({
+      state: 'unknown',
+      blockedBy: 'server',
+      blockerCode: 'probe_failed',
+    });
+
+    // With the server projecting the tier on (and its plugins + plugins.ui dependency closure on),
+    // the tier reads enabled — no local opt-in required.
+    const enabledSnapshot: CliServerFeaturesSnapshot = {
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: {
+          plugins: {
+            enabled: true,
+            ui: { enabled: true, reactNativeBundles: { enabled: true } },
+          },
+        },
+        capabilities: {},
+      }),
+    };
+    expect(resolveCliFeatureDecision({
+      featureId: 'plugins.ui.reactNativeBundles',
+      env: {} as NodeJS.ProcessEnv,
+      serverSnapshot: enabledSnapshot,
+    })).toMatchObject({
+      state: 'enabled',
+      blockedBy: null,
+    });
+  });
+
+  it('disables the server-represented React Native plugin UI tier when the server bit is off', () => {
+    // Fail-closed: a snapshot that omits the tier bit (old server) reads as disabled.
+    const tierOffSnapshot: CliServerFeaturesSnapshot = {
+      status: 'ready',
+      features: FeaturesResponseSchema.parse({
+        features: { plugins: { enabled: true, ui: { enabled: true } } },
+        capabilities: {},
+      }),
+    };
+    expect(resolveCliFeatureDecision({
+      featureId: 'plugins.ui.reactNativeBundles',
+      env: {} as NodeJS.ProcessEnv,
+      serverSnapshot: tierOffSnapshot,
+    })).toMatchObject({
+      state: 'disabled',
+      blockedBy: 'server',
     });
   });
 });

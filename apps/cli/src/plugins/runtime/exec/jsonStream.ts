@@ -2,7 +2,7 @@ import type {
     ExecProcessHandleV1,
     JsonStreamClientV1,
     JsonStreamRecordListenerV1,
-} from '@happier-dev/plugin-sdk';
+} from './privateContract';
 
 import { attachJsonlLineReader } from '@/agent/runtime/jsonl/attachJsonlLineReader';
 
@@ -10,6 +10,9 @@ import {
     PluginExecClientError,
     createPluginExecClientAbortError,
 } from './errors';
+import type { HostRuntimeLimitMeasurementRecorder } from '@/agent/runtime/state/runtimeLimitMeasurement';
+
+import { createPluginProtocolCallbackQueue } from './callbackQueue';
 
 type ReadableStreamControls = NodeJS.ReadableStream & Readonly<{
     pause?: () => unknown;
@@ -23,6 +26,7 @@ export type CreateJsonStreamProcessClientParams = Readonly<{
     encoding?: BufferEncoding;
     maxFrameBytes?: number;
     readStderrPreview?: () => string;
+    recordRuntimeLimitMeasurement?: HostRuntimeLimitMeasurementRecorder;
 }>;
 
 export type JsonStreamProcessClient = Readonly<{
@@ -47,7 +51,6 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
     const maxFrameBytes = params.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
     let disposedError: Error | null = null;
     let closedSettled = false;
-    let deliveryQueue = Promise.resolve();
     let resolveClosed: () => void = () => undefined;
     let rejectClosed: (error: Error) => void = () => undefined;
     let detachLineReader: () => void = () => undefined;
@@ -88,26 +91,41 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
         settleClosed(error);
     }
 
+    const deliveryQueue = createPluginProtocolCallbackQueue({
+        recordRuntimeLimitMeasurement: params.recordRuntimeLimitMeasurement,
+        onFailure(failure) {
+            failClient(new PluginExecClientError(
+                failure.code,
+                failure.code === 'PLUGIN_EXEC_CLIENT_BACKPRESSURE_EXCEEDED'
+                    ? 'JSON stream callback queue exceeded its bounded capacity'
+                    : 'JSON stream subscriber failed',
+                { cause: failure.cause, stderrPreview: readStderrPreview() },
+            ));
+        },
+    });
+
     async function deliverRecord(record: unknown): Promise<void> {
         if (subscribers.size === 0) {
             return;
         }
         stdout.pause?.();
         try {
+            let firstFailure: unknown;
             for (const listener of [...subscribers]) {
-                await listener(record);
+                try {
+                    await listener(record);
+                } catch (error) {
+                    firstFailure ??= error;
+                }
             }
+            if (firstFailure !== undefined) throw firstFailure;
         } finally {
             stdout.resume?.();
         }
     }
 
-    function enqueueRecord(record: unknown): void {
-        deliveryQueue = deliveryQueue
-            .then(() => deliverRecord(record))
-            .catch((error) => {
-                failClient(createProtocolError('JSON stream subscriber failed', error, readStderrPreview()));
-            });
+    function enqueueRecord(record: unknown, byteLength: number): void {
+        deliveryQueue.enqueue(byteLength, () => deliverRecord(record));
     }
 
     function handleLine(line: string): void {
@@ -119,7 +137,7 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
             return;
         }
         try {
-            enqueueRecord(JSON.parse(line));
+            enqueueRecord(JSON.parse(line), Buffer.byteLength(line));
         } catch (error) {
             failClient(createProtocolError('Invalid JSON stream record', error, readStderrPreview()));
         }
@@ -165,24 +183,41 @@ export function createJsonStreamProcessClient(params: CreateJsonStreamProcessCli
         },
         async writeRecord(record, options) {
             if (disposedError) {
-                throw disposedError;
+                return { kind: 'rejected_before_write', error: disposedError };
             }
             if (options?.signal?.aborted) {
-                throw createPluginExecClientAbortError();
+                return { kind: 'rejected_before_write', error: createPluginExecClientAbortError() };
             }
             let encodedRecord: string | undefined;
             try {
                 encodedRecord = JSON.stringify(record);
             } catch (error) {
-                throw createProtocolError('JSON stream record is not JSON-serializable', error, readStderrPreview());
+                return {
+                    kind: 'rejected_before_write',
+                    error: createProtocolError('JSON stream record is not JSON-serializable', error, readStderrPreview()),
+                };
             }
             if (typeof encodedRecord !== 'string') {
-                throw createProtocolError('JSON stream record is not JSON-serializable', undefined, readStderrPreview());
+                return {
+                    kind: 'rejected_before_write',
+                    error: createProtocolError('JSON stream record is not JSON-serializable', undefined, readStderrPreview()),
+                };
             }
             if (Buffer.byteLength(encodedRecord) > maxFrameBytes) {
-                throw createProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview());
+                return {
+                    kind: 'rejected_before_write',
+                    error: createProtocolError('JSON stream record exceeded the configured size limit', undefined, readStderrPreview()),
+                };
             }
-            await params.write(`${encodedRecord}\n`);
+            try {
+                await params.write(`${encodedRecord}\n`);
+                return { kind: 'written' };
+            } catch (error) {
+                return {
+                    kind: 'write_may_have_occurred',
+                    error: error instanceof Error ? error : new Error(String(error)),
+                };
+            }
         },
     });
 

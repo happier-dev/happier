@@ -7,6 +7,10 @@ import type {
     SessionStoredMessageContent,
     SessionTurnMutationV1,
 } from '@happier-dev/protocol';
+import {
+    SessionTranscriptObservationProvenanceV1Schema,
+    type SessionTranscriptObservationProvenanceV1,
+} from '@happier-dev/protocol';
 
 export type SessionClientDurableMutationDependency = Readonly<{
     mutationId: string;
@@ -56,7 +60,35 @@ export type TranscriptMessageAppendMutationV1 = Readonly<{
     createdAt: number;
     updatedAt: number;
     sessionEventType?: 'ready';
+    provenance: SessionTranscriptObservationProvenanceV1;
 }>;
+
+/** Recovery-only shape for public-dev journals written before provenance became mandatory. */
+export type PersistedTranscriptMessageAppendMutationV1 =
+    | TranscriptMessageAppendMutationV1
+    | Readonly<Omit<TranscriptMessageAppendMutationV1, 'provenance'> & {
+        provenance?: undefined;
+    }>;
+
+export type VoiceAgentTranscriptTurnMutationV1 = Readonly<{
+    v: 1;
+    sessionId: string;
+    mutationId: string;
+    source: 'voice_agent_transcript_turn';
+    /** Stable execution-run stream identity for the completed logical turn. */
+    turnId: string;
+    user: TranscriptMessageAppendMutationV1;
+    assistant: TranscriptMessageAppendMutationV1;
+    observedAt: number;
+}>;
+
+/** Recovery-only shape; canonical new voice turns always carry provenance on both roles. */
+export type PersistedVoiceAgentTranscriptTurnMutationV1 = Readonly<
+    Omit<VoiceAgentTranscriptTurnMutationV1, 'user' | 'assistant'> & {
+        user: PersistedTranscriptMessageAppendMutationV1;
+        assistant: PersistedTranscriptMessageAppendMutationV1;
+    }
+>;
 
 export type RegisteredSessionStateFieldMutationV1 = Readonly<{
     v: 1;
@@ -75,6 +107,12 @@ export type RegisteredSessionStateFieldMutationV1 = Readonly<{
     source: 'runtime' | 'ui' | 'daemon' | 'server_reconcile' | 'compat';
     observedAt: number;
     dependsOn?: readonly SessionClientDurableMutationDependency[];
+}>;
+
+export type DaemonUsageLimitRecoveryFieldMutation = RegisteredSessionStateFieldMutationV1 & Readonly<{
+    fieldId: 'runtime.usageLimitRecovery';
+    source: 'daemon';
+    deliveryClass: 'durable_required';
 }>;
 
 export type QueuedSessionClientDurableMutation =
@@ -101,7 +139,17 @@ export type QueuedSessionClientDurableMutation =
     | Readonly<{
         kind: 'transcript_message_append';
         mutationId: string;
-        payload: TranscriptMessageAppendMutationV1;
+        payload: PersistedTranscriptMessageAppendMutationV1;
+        createdAt: number;
+        attempts: number;
+        nextAttemptAt: number;
+        dependsOn?: readonly SessionClientDurableMutationDependency[];
+        paused?: SessionClientDurableMutationPause;
+    }>
+    | Readonly<{
+        kind: 'voice_agent_transcript_turn';
+        mutationId: string;
+        payload: PersistedVoiceAgentTranscriptTurnMutationV1;
         createdAt: number;
         attempts: number;
         nextAttemptAt: number;
@@ -112,6 +160,8 @@ export type QueuedSessionClientDurableMutation =
         kind: 'registered_session_state_field';
         mutationId: string;
         payload: RegisteredSessionStateFieldMutationV1;
+        /** Positive durable admission identity assigned by the generic journal. */
+        admissionOrder?: number;
         createdAt: number;
         attempts: number;
         nextAttemptAt: number;
@@ -124,23 +174,17 @@ export function resolveTranscriptMessageAppendMutationId(params: Readonly<{
     localId: string;
 }>): string {
     const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
-    const localId = normalizeRequiredString(params.localId, 'localId');
+    const localId = readRequiredOpaqueString(params.localId, 'localId');
     return `transcript:${sessionId}:${localId}`;
 }
 
-export function createSessionEndMutation(params: Readonly<{
+export function resolveVoiceAgentTranscriptTurnMutationId(params: Readonly<{
     sessionId: string;
-    observedAt?: number;
-    exit?: unknown;
-}>): SessionEndMutationV1 {
-    return {
-        v: 1,
-        sessionId: params.sessionId,
-        mutationId: randomUUID(),
-        source: 'session_end',
-        observedAt: normalizeObservedAt(params.observedAt ?? Date.now()),
-        ...(params.exit !== undefined ? { exit: params.exit } : {}),
-    };
+    turnId: string;
+}>): string {
+    const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
+    const turnId = normalizeRequiredString(params.turnId, 'turnId');
+    return `voice-agent-transcript-turn:${sessionId}:${turnId}`;
 }
 
 export function createTranscriptMessageAppendMutation(params: Readonly<{
@@ -152,9 +196,10 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
     sessionEventType?: 'ready';
     createdAt?: number;
     updatedAt?: number;
+    provenance: SessionTranscriptObservationProvenanceV1;
 }>): TranscriptMessageAppendMutationV1 {
     const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
-    const localId = normalizeRequiredString(params.localId, 'localId');
+    const localId = readRequiredOpaqueString(params.localId, 'localId');
     const sidechainId = normalizeOptionalString(params.sidechainId);
     const createdAt = normalizeObservedAt(params.createdAt ?? Date.now());
     const updatedAt = normalizeObservedAt(params.updatedAt ?? createdAt);
@@ -169,8 +214,54 @@ export function createTranscriptMessageAppendMutation(params: Readonly<{
         content: params.content,
         createdAt,
         updatedAt: Math.max(createdAt, updatedAt),
+        provenance: requireTranscriptMessageAppendProvenance(params.provenance),
         ...(params.sessionEventType ? { sessionEventType: params.sessionEventType } : {}),
     };
+}
+
+export function createVoiceAgentTranscriptTurnMutation(params: Readonly<{
+    sessionId: string;
+    turnId: string;
+    user: TranscriptMessageAppendMutationV1;
+    assistant: TranscriptMessageAppendMutationV1;
+    observedAt?: number;
+}>): VoiceAgentTranscriptTurnMutationV1 {
+    const sessionId = normalizeRequiredString(params.sessionId, 'sessionId');
+    const turnId = normalizeRequiredString(params.turnId, 'turnId');
+    if (params.user.sessionId !== sessionId || params.assistant.sessionId !== sessionId) {
+        throw new Error('Voice-agent transcript turn roles must belong to the same session');
+    }
+    if (params.user.messageRole !== 'user' || params.assistant.messageRole !== 'agent') {
+        throw new Error('Voice-agent transcript turn requires one user role followed by one agent role');
+    }
+    if (params.user.localId === params.assistant.localId) {
+        throw new Error('Voice-agent transcript turn role local ids must be distinct');
+    }
+    requireTranscriptMessageAppendProvenance(params.user.provenance);
+    requireTranscriptMessageAppendProvenance(params.assistant.provenance);
+    return {
+        v: 1,
+        sessionId,
+        mutationId: resolveVoiceAgentTranscriptTurnMutationId({ sessionId, turnId }),
+        source: 'voice_agent_transcript_turn',
+        turnId,
+        user: params.user,
+        assistant: params.assistant,
+        observedAt: normalizeObservedAt(params.observedAt ?? Math.max(
+            params.user.updatedAt,
+            params.assistant.updatedAt,
+        )),
+    };
+}
+
+export function requireTranscriptMessageAppendProvenance(
+    value: unknown,
+): SessionTranscriptObservationProvenanceV1 {
+    const parsed = SessionTranscriptObservationProvenanceV1Schema.safeParse(value);
+    if (!parsed.success) {
+        throw new Error('Transcript append mutation provenance is required');
+    }
+    return parsed.data;
 }
 
 export function createRegisteredSessionStateFieldMutation(params: Readonly<{
@@ -186,7 +277,9 @@ export function createRegisteredSessionStateFieldMutation(params: Readonly<{
     return {
         v: 1,
         sessionId,
-        mutationId: randomUUID(),
+        mutationId: params.fieldId === 'runtime.activity'
+            ? resolveRuntimeActivitySnapshotMutationId(sessionId)
+            : randomUUID(),
         fieldId: params.fieldId,
         deliveryClass: params.deliveryClass ?? 'durable_required',
         op: params.op,
@@ -194,6 +287,10 @@ export function createRegisteredSessionStateFieldMutation(params: Readonly<{
         observedAt: normalizeObservedAt(params.observedAt ?? Date.now()),
         ...(params.dependsOn && params.dependsOn.length > 0 ? { dependsOn: normalizeDependencies(params.dependsOn) } : {}),
     };
+}
+
+export function resolveRuntimeActivitySnapshotMutationId(sessionId: string): string {
+    return `runtime-activity-snapshot:${normalizeRequiredString(sessionId, 'sessionId')}`;
 }
 
 function normalizeDependencies(
@@ -218,4 +315,11 @@ function normalizeRequiredString(value: string | null | undefined, name: string)
     const normalized = normalizeOptionalString(value);
     if (!normalized) throw new Error(`${name} is required`);
     return normalized;
+}
+
+function readRequiredOpaqueString(value: string | null | undefined, name: string): string {
+    if (typeof value !== 'string' || value.trim().length === 0) {
+        throw new Error(`${name} is required`);
+    }
+    return value;
 }

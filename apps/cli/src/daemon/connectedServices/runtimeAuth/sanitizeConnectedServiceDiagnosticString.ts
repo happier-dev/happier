@@ -1,3 +1,5 @@
+import { redactBugReportSensitiveText } from '@happier-dev/protocol';
+
 import {
   CONNECTED_SERVICE_LOCAL_PATH_REDACTION_MARKER,
   CONNECTED_SERVICE_PROVIDER_RESUME_ID_REDACTION_MARKER,
@@ -33,7 +35,10 @@ export function sanitizeConnectedServiceDiagnosticString(
   const maxLength = typeof params.maxLength === 'number' && Number.isFinite(params.maxLength)
     ? Math.max(1, Math.trunc(params.maxLength))
     : DEFAULT_MAX_DIAGNOSTIC_STRING_LENGTH;
-  const withKnownValuesRedacted = replaceKnownSensitiveValues(value, params.redactedValues ?? []);
+  const withKnownValuesRedacted = replaceKnownSensitiveValues(
+    redactBugReportSensitiveText(value),
+    params.redactedValues ?? [],
+  );
   return withKnownValuesRedacted
     .replace(/\b(authorization|authHeader|auth|cookie)(?:"?)\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\n]+)/gi, `$1=${CONNECTED_SERVICE_SECRET_REDACTION_MARKER}`)
     .replace(/\b(accessToken|access_token|idToken|id_token|refreshToken|refresh_token|token|credential|credentials|clientSecret|client_secret|client-secret|privateKey|private_key|private-key|apiKey|api_key|api-key|secret)(?:"?)\s*[:=]\s*(?:"(?:Bearer\s+)?[^"]*"|'(?:Bearer\s+)?[^']*'|(?:Bearer\s+)?[^\s;,]+)/gi, `$1=${CONNECTED_SERVICE_SECRET_REDACTION_MARKER}`)

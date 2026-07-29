@@ -1,4 +1,13 @@
-import type { AbortServiceV1 } from '@happier-dev/plugin-sdk';
+type PluginAbortSubscription = Readonly<{
+    unsubscribe(): void;
+}>;
+
+type PluginAbortService = Readonly<{
+    signal: AbortSignal;
+    compose(signals: readonly AbortSignal[]): AbortSignal;
+    race<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T>;
+    onHeartbeat(listener: (reason: unknown) => void): PluginAbortSubscription;
+}>;
 
 function createAbortError(): Error {
     const error = new Error('Plugin operation was aborted');
@@ -10,12 +19,12 @@ export function createPluginAbortService(params?: Readonly<{
     controller?: AbortController;
 }>): Readonly<{
     controller: AbortController;
-    service: AbortServiceV1;
+    service: PluginAbortService;
 }> {
     const controller = params?.controller ?? new AbortController();
     const heartbeatListeners = new Set<(reason: unknown) => void>();
 
-    const service: AbortServiceV1 = Object.freeze({
+    const service: PluginAbortService = Object.freeze({
         signal: controller.signal,
         compose(signals: readonly AbortSignal[]): AbortSignal {
             const composed = new AbortController();

@@ -1,7 +1,7 @@
 import type {
     SessionMcpElicitRequestV1,
     SessionMcpElicitResultV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/agents';
 
 import type { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import type { PermissionRequestOwner } from '@/agent/permissions/permissionRequestOwner';

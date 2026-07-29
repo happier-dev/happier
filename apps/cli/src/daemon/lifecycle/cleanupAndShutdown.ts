@@ -24,6 +24,7 @@ export type CleanupAndShutdownParams = Readonly<{
     connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle | null;
     beforeShutdown?: () => Promise<void>;
     apiMachine: ApiMachineClient | null;
+    closeDaemonMutationCustody?: () => Promise<void>;
     machineConnectionStateCleanup: (() => void) | null;
     automationWorker: AutomationWorkerHandle | null;
     memoryWorker: MemoryWorkerHandle | null;
@@ -68,7 +69,7 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
         params.connectedServiceRefreshLoopHandle.stop();
     }
     if (params.connectedServiceQuotasLoopHandle) {
-        params.connectedServiceQuotasLoopHandle.stop();
+        await params.connectedServiceQuotasLoopHandle.stop();
     }
     if (params.beforeShutdown) {
         try {
@@ -77,6 +78,12 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
             logger.debug('[DAEMON RUN] Error draining shutdown work during cleanup (best-effort)', error);
         }
     }
+
+    // Stop transfer listeners while the machine socket is still available. Their lifecycle
+    // owners publish the terminal inactive state through apiMachine; disconnecting first leaves
+    // the previous daemon's direct routes falsely active until a replacement daemon publishes.
+    await params.stopDirectPeerServer();
+    await params.stopTailscaleTransferServeLifecycle();
 
     if (params.apiMachine) {
         params.machineConnectionStateCleanup?.();
@@ -100,6 +107,16 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
         });
     }
 
+    // API shutdown waits for in-flight machine RPC handlers. Close the usage-capable
+    // daemon handle afterwards so no staging call can race handle retirement.
+    if (params.closeDaemonMutationCustody) {
+        try {
+            await params.closeDaemonMutationCustody();
+        } catch (error) {
+            logger.debug('[DAEMON RUN] Error closing daemon mutation custody during cleanup (best-effort)', error);
+        }
+    }
+
     if (params.automationWorker) {
         params.automationWorker.stop();
     }
@@ -110,8 +127,6 @@ export async function cleanupAndShutdown(params: CleanupAndShutdownParams): Prom
         await params.voiceInferenceWorker.stop();
     }
 
-    await params.stopDirectPeerServer();
-    await params.stopTailscaleTransferServeLifecycle();
     await params.stopManagedServersOnShutdown();
     await params.stopSshTunnelsOnShutdown?.();
     await params.stopControlServer();

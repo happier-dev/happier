@@ -1,8 +1,9 @@
 import { readFile } from 'node:fs/promises';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  FeaturesResponseSchema,
   ExternalSessionAttachResponseSchema,
   ExternalSessionFollowPolicySetResponseSchema,
   ExternalSessionLinkEnsureResponseSchema,
@@ -13,25 +14,95 @@ import {
   ExternalSessionTranscriptPageResponseSchema,
   ExternalSessionTranscriptReadAfterResponseSchema,
 } from '@happier-dev/protocol';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { ExternalSessionProviderOps } from '@/session/external/providerOps';
-import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
+import {
+  ExternalSessionProviderFailureError,
+  type ExternalSessionProviderOps,
+} from '@/session/external/providerOps';
+import type {
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import type { ExternalSessionHostOperationSet } from '@/session/external/hostOperationOwner';
+import type {
+  startExternalSessionPassiveObservation,
+} from '@/api/session/external/leases/startExternalSessionPassiveObservation';
 
-const { resolveBackendExecutionSurfacesMock, resolveExecutionSurfacesMock } = vi.hoisted(() => {
-  const resolveBackendExecutionSurfacesMock = vi.fn();
+const {
+  resolveExecutionSurfacesMock,
+  observationProjectionParams,
+  authoritativeRuntimeRegistryLeaseOverride,
+  writeFollowStatusMock,
+} = vi.hoisted(() => {
   const resolveExecutionSurfacesMock = vi.fn();
-  return { resolveBackendExecutionSurfacesMock, resolveExecutionSurfacesMock };
+  return {
+    resolveExecutionSurfacesMock,
+    observationProjectionParams: {
+      current: null as unknown,
+    },
+    authoritativeRuntimeRegistryLeaseOverride: {
+      current: null as null | Readonly<{
+        registry: unknown;
+        release(): Promise<void>;
+      }>,
+    },
+    writeFollowStatusMock: vi.fn(async (_input: unknown) => {}),
+  };
 });
-
-vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
-  resolveBackendExecutionSurfaces: resolveBackendExecutionSurfacesMock,
-}));
 
 vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
   getSessionHostBridge: () => ({
     resolveExecutionSurfaces: resolveExecutionSurfacesMock,
   }),
+}));
+
+vi.mock('@/plugins/runtime/reload/runtimeLease', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@/plugins/runtime/reload/runtimeLease')
+  >();
+  return {
+    ...actual,
+    acquireAuthoritativePluginRuntimeRegistryLease: (
+      ...args: Parameters<typeof actual.acquireAuthoritativePluginRuntimeRegistryLease>
+    ) => authoritativeRuntimeRegistryLeaseOverride.current
+      ?? actual.acquireAuthoritativePluginRuntimeRegistryLease(...args),
+  };
+});
+
+vi.mock('@/persistence', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/persistence')>();
+  return {
+    ...actual,
+    readCredentials: () => authoritativeRuntimeRegistryLeaseOverride.current
+      ? Promise.resolve({
+          token: 'fixture-token',
+          encryption: {
+            type: 'legacy' as const,
+            secret: new Uint8Array(),
+          },
+        })
+      : actual.readCredentials(),
+  };
+});
+
+vi.mock('@/api/session/external/leases/createExternalSessionObservationDaemonProjection', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@/api/session/external/leases/createExternalSessionObservationDaemonProjection')
+  >();
+  return {
+    ...actual,
+    createExternalSessionObservationDaemonProjection: (
+      params: Parameters<typeof actual.createExternalSessionObservationDaemonProjection>[0],
+    ) => {
+      observationProjectionParams.current = params;
+      return actual.createExternalSessionObservationDaemonProjection(params);
+    },
+  };
+});
+
+vi.mock('@/api/session/external/backgroundFollow/externalSessionBackgroundFollowMetadata', () => ({
+  writeExternalSessionFollowStatus: (input: unknown) => writeFollowStatusMock(input),
 }));
 
 import { registerMachineExternalSessionsRpcHandlers } from './rpcHandlers.externalSessions';
@@ -46,7 +117,346 @@ function createRpcHandlerManager(): { handlers: Map<string, (params: unknown) =>
   };
 }
 
+function createServerFeaturesSnapshot(
+  currentPublicationFenceVersion?: number,
+): CliServerFeaturesSnapshot {
+  const features = FeaturesResponseSchema.parse({
+    features: {},
+    capabilities: {
+      compatibility: {
+        v: 1,
+        sessionSync: {
+          v: 1,
+          enforcement: 'observe',
+          minimumSessionSyncProtocolVersion: 1,
+          currentSessionSyncProtocolVersion: 2,
+          declarationTransport: 'headers-v1',
+        },
+      },
+    },
+  });
+  return {
+    status: 'ready',
+    features: currentPublicationFenceVersion === undefined
+      ? features
+      : {
+      ...features,
+      capabilities: {
+        ...features.capabilities,
+        compatibility: {
+          ...features.capabilities.compatibility!,
+          externalSessionImport: {
+            currentPublicationFenceVersion,
+          },
+        },
+      },
+    },
+  };
+}
+
 describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', () => {
+  beforeEach(() => {
+    resolveExecutionSurfacesMock.mockReset();
+    observationProjectionParams.current = null;
+    authoritativeRuntimeRegistryLeaseOverride.current = null;
+    writeFollowStatusMock.mockReset();
+    writeFollowStatusMock.mockResolvedValue(undefined);
+  });
+
+  it('installs and retires daemon-scoped host operations with machine RPC composition', async () => {
+    const rpcHandlerManager = createRpcHandlerManager();
+    const disposeInstallation = vi.fn(async () => undefined);
+    let capturedOperations: ExternalSessionHostOperationSet | null = null;
+    const installExternalSessionHostOperations = vi.fn(async (
+      operations: ExternalSessionHostOperationSet,
+    ) => {
+      capturedOperations = operations;
+      return { dispose: disposeInstallation };
+    });
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      spawnSession: async () => ({ type: 'success', sessionId: 'session-1' }),
+      stopSession: async () => true,
+      machineId: 'machine-1',
+      installExternalSessionHostOperations,
+    });
+
+    expect(installExternalSessionHostOperations).toHaveBeenCalledOnce();
+    expect(capturedOperations).toMatchObject({
+      takeoverOperation: { execute: expect.any(Function) },
+      followTargetOperation: { execute: expect.any(Function) },
+      followOperation: { execute: expect.any(Function) },
+    });
+    await registration.dispose();
+    expect(disposeInstallation).toHaveBeenCalledOnce();
+  });
+
+  it('owns the status-demand channel subscription and detaches it with the projection lifecycle', async () => {
+    const rpcHandlerManager = createRpcHandlerManager();
+    const detachDemand = vi.fn();
+    const detachConnection = vi.fn();
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      statusDemand: {
+        machineId: 'machine-1',
+        channel: {
+          onExternalSessionStatusDemand: () => detachDemand,
+          onConnectionStateChange: () => detachConnection,
+        },
+      },
+    });
+
+    await registration.dispose();
+
+    expect(detachDemand).toHaveBeenCalledOnce();
+    expect(detachConnection).toHaveBeenCalledOnce();
+  });
+
+  it('allows ready notifications only for explicit background follow with no attached viewer', async () => {
+    const rpcHandlerManager = createRpcHandlerManager();
+    let followLeaseManager: unknown = null;
+    type FollowLeaseManagerFixture = Readonly<{
+      attach(input: Readonly<{
+        sessionId: string;
+        ttlMs: number;
+      }>): Promise<Readonly<{ leaseId: string }>>;
+      detach(input: Readonly<{
+        sessionId: string;
+        leaseId: string;
+      }>): Promise<unknown>;
+      setBackgroundFollowEnabled(input: Readonly<{
+        sessionId: string;
+        enabled: boolean;
+      }>): Promise<unknown>;
+    }>;
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      statusDemand: {
+        machineId: 'machine-1',
+        channel: {
+          onExternalSessionStatusDemand: () => () => {},
+          onConnectionStateChange: () => () => {},
+        },
+      },
+      startPassiveObservation: (params) => {
+        followLeaseManager = params.followLeaseManager;
+        return {
+          ready: Promise.resolve(),
+          pause: async () => {},
+          resume: async () => {},
+          reconcileSession: async () => ({ status: 'settled' as const }),
+          releaseSession: async () => {},
+          dispose: async () => {},
+        };
+      },
+    });
+    const projectionParams = observationProjectionParams.current as null | Readonly<{
+      shouldSendReadyNotification?: (sessionId: string) => boolean;
+    }>;
+    const shouldSendReadyNotification =
+      projectionParams?.shouldSendReadyNotification;
+    const manager = followLeaseManager as FollowLeaseManagerFixture;
+    expect(shouldSendReadyNotification).toEqual(expect.any(Function));
+
+    expect(shouldSendReadyNotification?.('session-1')).toBe(false);
+    await manager.setBackgroundFollowEnabled({
+      sessionId: 'session-1',
+      enabled: true,
+    });
+    expect(shouldSendReadyNotification?.('session-1')).toBe(true);
+
+    const attached = await manager.attach({
+      sessionId: 'session-1',
+      ttlMs: 30_000,
+    });
+    expect(shouldSendReadyNotification?.('session-1')).toBe(false);
+
+    await manager.detach({
+      sessionId: 'session-1',
+      leaseId: attached.leaseId,
+    });
+    expect(shouldSendReadyNotification?.('session-1')).toBe(true);
+
+    await manager.setBackgroundFollowEnabled({
+      sessionId: 'session-1',
+      enabled: false,
+    });
+    expect(shouldSendReadyNotification?.('session-1')).toBe(false);
+    await registration.dispose();
+  });
+
+  it('exposes passive External Sessions restoration to the daemon connectivity owner without starting during registration', async () => {
+    const rpcHandlerManager = createRpcHandlerManager();
+    const disposePassiveObservation = vi.fn(async () => {});
+    const pausePassiveObservation = vi.fn(async () => {});
+    const resumePassiveObservation = vi.fn(async () => {});
+    const reconcilePassiveSession = vi.fn(async (_sessionId: string) => {});
+    let onSessionArchivedStateChange:
+      ((change: Readonly<{ sessionId: string; archived: boolean }>) => void | Promise<void>)
+      | null = null;
+    const detachSessionArchivedStateChanges = vi.fn();
+    let capturedFollowLeaseManager:
+      Parameters<typeof startExternalSessionPassiveObservation>[0]['followLeaseManager'];
+    const startPassiveObservation = vi.fn((
+      input: Parameters<typeof startExternalSessionPassiveObservation>[0],
+    ) => {
+      capturedFollowLeaseManager = input.followLeaseManager;
+      return {
+        ready: Promise.resolve(),
+        pause: pausePassiveObservation,
+        resume: resumePassiveObservation,
+        reconcileSession: async (sessionId: string) => {
+          reconcilePassiveSession(sessionId);
+          await input.followLeaseManager?.resumeSession({
+            sessionId,
+            reason: 'session_archived',
+          });
+          return { status: 'settled' as const };
+        },
+        releaseSession: async (sessionId: string) => {
+          await input.followLeaseManager?.archiveSession({
+            sessionId,
+          });
+        },
+        dispose: disposePassiveObservation,
+      };
+    });
+    const registration = registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      statusDemand: {
+        machineId: 'machine-1',
+        channel: {
+          onExternalSessionStatusDemand: () => () => {},
+          onConnectionStateChange: () => () => {},
+        },
+      },
+      startPassiveObservation,
+      subscribeSessionArchivedStateChanges: (listener) => {
+        onSessionArchivedStateChange = listener;
+        return detachSessionArchivedStateChanges;
+      },
+    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0]);
+
+    expect(startPassiveObservation).toHaveBeenCalledWith({
+      machineId: 'machine-1',
+      projection: expect.objectContaining({
+        reconcileLink: expect.any(Function),
+      }),
+      followLeaseManager: expect.any(Object),
+      startPaused: true,
+      reconcileSharedCredentialDemand: expect.any(Function),
+    });
+    expect(resumePassiveObservation).not.toHaveBeenCalled();
+
+    await registration.connectivityResource?.resume();
+    await registration.connectivityResource?.resume();
+    expect(resumePassiveObservation).toHaveBeenCalledTimes(2);
+
+    const manager = capturedFollowLeaseManager!;
+    const emitSessionArchivedStateChange = onSessionArchivedStateChange as unknown as (
+      change: Readonly<{ sessionId: string; archived: boolean }>,
+    ) => void | Promise<void>;
+    const release = vi.fn()
+      .mockRejectedValueOnce(new Error('secret release failure'))
+      .mockResolvedValueOnce(undefined);
+    const acquireFollowLease = vi.fn(async () => ({ release }));
+    await manager.setBackgroundFollowEnabled({
+      sessionId: 'session-archived',
+      enabled: true,
+      acquireFollowLease,
+    });
+
+    await emitSessionArchivedStateChange({
+      sessionId: 'session-archived',
+      archived: true,
+    });
+    expect(manager.isSessionSuspended({
+      sessionId: 'session-archived',
+      reason: 'session_archived',
+    })).toBe(true);
+    expect(manager.hasBackgroundFollowLease('session-archived')).toBe(true);
+    expect(writeFollowStatusMock).toHaveBeenLastCalledWith({
+      sessionId: 'session-archived',
+      followStatusV1: expect.objectContaining({
+        status: 'error',
+        reason: 'lease_release_failed',
+      }),
+      lastFollowIssueV1: expect.objectContaining({
+        code: 'follow_lease_release_failed',
+        retryable: true,
+      }),
+    });
+
+    await emitSessionArchivedStateChange({
+      sessionId: 'session-archived',
+      archived: true,
+    });
+    expect(release).toHaveBeenCalledTimes(2);
+    expect(manager.hasBackgroundFollowLease('session-archived')).toBe(false);
+    expect(writeFollowStatusMock).toHaveBeenLastCalledWith({
+      sessionId: 'session-archived',
+      followStatusV1: expect.objectContaining({
+        status: 'paused',
+        reason: 'session_archived',
+      }),
+    });
+
+    await emitSessionArchivedStateChange({
+      sessionId: 'session-archived',
+      archived: false,
+    });
+    expect(manager.isSessionSuspended({
+      sessionId: 'session-archived',
+      reason: 'session_archived',
+    })).toBe(false);
+    expect(acquireFollowLease).toHaveBeenCalledTimes(2);
+    expect(manager.hasBackgroundFollowLease('session-archived')).toBe(true);
+    expect(reconcilePassiveSession).toHaveBeenCalledExactlyOnceWith(
+      'session-archived',
+    );
+
+    let finishRelease!: () => void;
+    const pendingRelease = new Promise<void>((resolve) => {
+      finishRelease = resolve;
+    });
+    const acquireOrderedFollowLease = vi.fn(async () => ({
+      release: async () => await pendingRelease,
+    }));
+    await manager.setBackgroundFollowEnabled({
+      sessionId: 'session-archive-ordering',
+      enabled: true,
+      acquireFollowLease: acquireOrderedFollowLease,
+    });
+
+    const archiveTransition = Promise.resolve(emitSessionArchivedStateChange({
+      sessionId: 'session-archive-ordering',
+      archived: true,
+    }));
+    await vi.waitFor(() => {
+      expect(manager.isSessionSuspended({
+        sessionId: 'session-archive-ordering',
+        reason: 'session_archived',
+      })).toBe(true);
+    });
+    const unarchiveTransition = Promise.resolve(emitSessionArchivedStateChange({
+      sessionId: 'session-archive-ordering',
+      archived: false,
+    }));
+    finishRelease();
+    await Promise.all([archiveTransition, unarchiveTransition]);
+
+    expect(manager.isSessionSuspended({
+      sessionId: 'session-archive-ordering',
+      reason: 'session_archived',
+    })).toBe(false);
+    expect(acquireOrderedFollowLease).toHaveBeenCalledTimes(2);
+    expect(manager.hasBackgroundFollowLease('session-archive-ordering')).toBe(true);
+
+    await registration.dispose();
+    expect(disposePassiveObservation).toHaveBeenCalledOnce();
+    expect(detachSessionArchivedStateChanges).toHaveBeenCalledOnce();
+  });
+
   it('registers required external-session action rows through the generic ActionSpec RPC registrar', async () => {
     const source = await readFile(new URL('./rpcHandlers.externalSessions.ts', import.meta.url), 'utf8');
 
@@ -54,50 +464,267 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     expect(source).not.toContain('registerExternalSessionActionBackedRpcHandler');
   });
 
+  it('requires the canonical admission owner and exposes no fallback persisted-takeover spawn seam', async () => {
+    const source = await readFile(new URL('./rpcHandlers.externalSessions.ts', import.meta.url), 'utf8');
+
+    expect(source).not.toContain('preparePersistedTakeoverAdmissionSpawn');
+    expect(source).toContain(
+      'prepareSpawn: persistedTakeoverAdmissionOwner.prepareSpawn',
+    );
+  });
+
+  it.each([
+    RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START,
+    RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START,
+  ])('rejects import-advancing %s before the operation executor on a pre-fence server', async (method) => {
+    const actionExecutor: RpcActionExecutor = {
+      execute: vi.fn(async () => {
+        throw new Error('operation executor must not run');
+      }),
+    };
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+      getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(),
+    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
+      getServerFeaturesSnapshot: () => CliServerFeaturesSnapshot;
+    });
+
+    const input = method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER_START
+      ? {
+          request: {
+            v: 1,
+            idempotencyKey: 'takeover-1',
+            sessionId: 'linked-session-1',
+            source: {
+              machineId: 'machine-1',
+              remoteSessionId: 'remote-session-1',
+              qualifiedIdentity: {
+                v: 1,
+                agent: {
+                  pluginId: 'acme.external',
+                  localId: 'agent',
+                },
+                source: {
+                  kind: 'source',
+                  contractVersion: 1,
+                },
+              },
+              linkGeneration: 'link-generation-1',
+            },
+            plan: 'takeover',
+            targetStorageMode: 'persisted',
+            targetRuntimeMode: 'terminal',
+          },
+        }
+      : {};
+
+    await expect(rpcHandlerManager.handlers.get(method)!(input)).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: 'upgrade_required',
+      },
+    });
+    expect(actionExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_CANCEL,
+    RPC_METHODS.DAEMON_EXTERNAL_SESSION_OPERATION_DISCARD,
+  ])('admits cleanup-only %s without advancing through the publication fence', async (method) => {
+    const expected = {
+      ok: false as const,
+      error: {
+        code: 'operation_not_found' as const,
+        message: 'No operation exists.',
+      },
+    };
+    const actionExecutor: RpcActionExecutor = {
+      execute: vi.fn(async () => ({ ok: true as const, result: expected })),
+    };
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+      getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(),
+    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
+      getServerFeaturesSnapshot: () => CliServerFeaturesSnapshot;
+    });
+
+    await expect(rpcHandlerManager.handlers.get(method)!({})).resolves.toEqual(expected);
+    expect(actionExecutor.execute).toHaveBeenCalledOnce();
+  });
+
+  it('rejects the live persisted-takeover import before its executor on a pre-fence server', async () => {
+    const actionExecutor: RpcActionExecutor = {
+      execute: vi.fn(async () => {
+        throw new Error('persisted takeover executor must not run');
+      }),
+    };
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+      getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(),
+    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
+      getServerFeaturesSnapshot: () => CliServerFeaturesSnapshot;
+    });
+
+    await expect(rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TAKEOVER)!({
+      linkedSessionId: 'linked-session-1',
+      targetRuntimeMode: 'terminal',
+      storageMode: 'persisted',
+      machineId: 'machine-1',
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'upgrade_required',
+    });
+    expect(actionExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  it('admits import activation through the same executor when the server publishes the fence contract', async () => {
+    const expected = {
+      ok: false as const,
+      error: {
+        code: 'operation_not_found' as const,
+        message: 'No operation exists.',
+      },
+    };
+    const actionExecutor: RpcActionExecutor = {
+      execute: vi.fn(async () => ({ ok: true as const, result: expected })),
+    };
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+      getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(1),
+    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
+      getServerFeaturesSnapshot: () => CliServerFeaturesSnapshot;
+    });
+
+    await expect(
+      rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSION_MATERIALIZE_START)!({}),
+    ).resolves.toEqual(expected);
+    expect(actionExecutor.execute).toHaveBeenCalledOnce();
+  });
+
   it.each(['claude', 'codex', 'opencode', 'ohMyPi'] as const)(
-    'resolves direct-session candidates through the canonical execution-surface registry for %s',
-    async (providerId) => {
+    'resolves direct-session candidates through the held authoritative runtime registry for %s',
+    async (agentId) => {
     const externalSessions = {
-      validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
+      resolveSource: vi.fn(async ({ source }) => ({ ok: true as const, value: { source } })),
       listCandidates: vi.fn(async () => ({
-        candidates: [],
-        nextCursor: null,
+        ok: true as const,
+        value: {
+          candidates: [],
+          nextCursor: null,
+        },
       })),
-      getActivity: vi.fn(async () => ({
-        lastActivityAtMs: null,
-        isRunning: false,
+      resolveLinkIdentity: vi.fn(async ({ source, remoteSessionId }) => ({
+        ok: true as const,
+        value: { source, remoteSessionId, linkData: {} },
+      })),
+      resolveLinkedIdentity: vi.fn(async ({ source, remoteSessionId, linkData }) => ({
+        ok: true as const,
+        value: { source, remoteSessionId, linkData },
       })),
       pageTranscript: vi.fn(async () => ({
-        items: [],
-        nextCursor: null,
-        tailCursor: null,
-        hasMore: false,
-        truncated: false,
+        ok: true as const,
+        value: {
+          items: [],
+          nextCursor: null,
+        },
       })),
       readAfterTranscript: vi.fn(async () => ({
-        items: [],
-        nextCursor: null,
-        truncated: false,
+        ok: true as const,
+        value: { outcome: 'already_current' as const },
       })),
-      resolveTakeoverSpawnOptions: vi.fn(async () => null),
-    } satisfies ExternalSessionProviderOps;
-
-    resolveBackendExecutionSurfacesMock.mockResolvedValue({
-      terminalRuntime: null,
-      externalSession: externalSessions,
-      attach: null,
-      handoff: null,
-      fork: null,
-      checkpoint: null,
-    } satisfies BackendExecutionSurfaces);
-    resolveExecutionSurfacesMock.mockResolvedValue({
-      externalSession: externalSessions,
-      terminalRuntime: null,
-      attach: null,
-      handoff: null,
-      fork: null,
-      checkpoint: null,
-    });
+    } satisfies AgentExternalSessionsContribution;
+    const pluginId = agentId === 'ohMyPi'
+      ? 'happier.agent.ohmypi'
+      : `fixture.${agentId}`;
+    const localId = agentId === 'ohMyPi' ? 'ohmypi' : agentId;
+    const source = agentId === 'ohMyPi'
+      ? { kind: 'ohMyPiAgentDir' as const, agentDir: '/tmp/oh-my-pi-agent' }
+      : { kind: 'codexHome' as const, home: 'user' as const };
+    const sourceDeclaration = agentId === 'ohMyPi'
+      ? {
+          sourceKind: 'ohMyPiAgentDir',
+          schema: {
+            fields: [
+              { name: 'kind', kind: 'literal', value: 'ohMyPiAgentDir' },
+              {
+                name: 'agentDir',
+                kind: 'string',
+                min: 1,
+                max: 10_000,
+                nullish: true,
+              },
+            ],
+            passthrough: true,
+          },
+          key: {
+            segments: [
+              { kind: 'literal', value: 'ohMyPiAgentDir' },
+              { kind: 'field', field: 'agentDir' },
+            ],
+          },
+          instances: [{ kind: 'default', constants: {} }],
+        } as const
+      : {
+          sourceKind: 'codexHome',
+          schema: {
+            fields: [
+              { name: 'kind', kind: 'literal', value: 'codexHome' },
+              { name: 'home', kind: 'enum', values: ['user', 'connectedService'] },
+            ],
+          },
+          key: {
+            segments: [
+              { kind: 'literal', value: 'codexHome' },
+              { kind: 'homeMode', field: 'home' },
+            ],
+          },
+          instances: [{ kind: 'default', constants: { home: 'user' } }],
+        } as const;
+    const agentContribution = {
+      id: agentId,
+      pluginId,
+      identity: { pluginId, localId },
+      richDefinition: {
+        definition: {
+          surfaces: {
+            externalSession: {
+              sources: [sourceDeclaration],
+            },
+          },
+        },
+      },
+    };
+    const retirement = new AbortController();
+    const registry = {
+      contributes: {
+        agents: [agentContribution],
+        agentDefinitionsById: new Map([[agentId, agentContribution]]),
+      },
+      agentRuntimesByAgentId: new Map([[agentId, {
+        pluginId,
+        pluginVersion: '1.0.0',
+        agentId,
+        generation: 'fixture-generation',
+        hasPrimaryRuntime: false as const,
+        externalSessions,
+        retirementSignal: retirement.signal,
+        isCurrent: () => true,
+      }]]),
+      activateContributionsOnDemand: vi.fn(async () => []),
+    };
+    const release = vi.fn(async () => {});
+    authoritativeRuntimeRegistryLeaseOverride.current = {
+      registry,
+      release,
+    };
 
     const rpcHandlerManager = createRpcHandlerManager();
     registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager: rpcHandlerManager as never });
@@ -105,36 +732,80 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     const handler = rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST);
     const legacyHandler = rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY);
     expect(handler).toBeDefined();
-    expect(legacyHandler).toBe(handler);
+    expect(legacyHandler).toBeDefined();
 
-    await expect(handler!({
+    const response = await handler!({
       machineId: 'machine-1',
-      providerId,
+      agentId,
+      source,
+      limit: 10,
+    });
+    expect(externalSessions.resolveSource).toHaveBeenCalledTimes(1);
+    expect(externalSessions.listCandidates).toHaveBeenCalledTimes(1);
+    expect(response).toEqual({
+      ok: true,
+      candidates: [],
+      nextCursor: null,
+      autoLinkPolicyScopeV1: expect.any(Object),
+    });
+
+    expect(resolveExecutionSurfacesMock).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalled();
+    },
+  );
+
+  it('returns a protocol-shaped candidates error when execution-surface resolution fails', async () => {
+    resolveExecutionSurfacesMock.mockRejectedValueOnce(
+      Object.assign(new Error('Cannot find providerOps chunk'), { code: 'ERR_MODULE_NOT_FOUND' }),
+    );
+
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({ rpcHandlerManager: rpcHandlerManager as never });
+
+    const handler = rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST);
+    expect(handler).toBeDefined();
+
+    const response = await handler!({
+      machineId: 'machine-1',
+      agentId: 'codex',
       source: {
         kind: 'codexHome',
         home: 'user',
       },
       limit: 10,
-    })).resolves.toMatchObject({
-      ok: true,
-      candidates: [],
-      nextCursor: null,
     });
 
-    expect(resolveBackendExecutionSurfacesMock).toHaveBeenCalledWith(providerId);
-    expect(externalSessions.validateSource).toHaveBeenCalledTimes(1);
-    expect(externalSessions.listCandidates).toHaveBeenCalledTimes(1);
-    },
-  );
+    expect(response).toEqual({
+      ok: false,
+      errorCode: 'internal_error',
+      error: 'external_sessions_candidates_list_failed',
+    });
+    expect(ExternalSessionsCandidatesListResponseSchema.safeParse(response).success).toBe(true);
+  });
 
-  it('returns a protocol-shaped candidates error when execution-surface resolution fails', async () => {
-    resolveBackendExecutionSurfacesMock.mockRejectedValueOnce(
-      Object.assign(new Error('Cannot find providerOps chunk'), { code: 'ERR_MODULE_NOT_FOUND' }),
-    );
+  it('returns a typed provider-unavailable candidates error when the provider cannot list candidates', async () => {
+    const externalSessions = {
+      validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
+      listCandidates: vi.fn(async () => {
+        throw new ExternalSessionProviderFailureError({
+          operation: 'externalSession.listCandidates',
+          code: 'agent_unavailable',
+          message: 'external_session_candidate_service_unavailable',
+          retryable: true,
+        });
+      }),
+      pageTranscript: vi.fn(async () => ({
+        items: [],
+        nextCursor: null,
+        tailCursor: null,
+        hasMore: false,
+        truncated: false,
+      })),
+      readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
+    } satisfies ExternalSessionProviderOps;
+
     resolveExecutionSurfacesMock.mockResolvedValue({
-      externalSession: {
-        validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
-      },
+      externalSession: externalSessions,
       terminalRuntime: null,
       attach: null,
       handoff: null,
@@ -150,7 +821,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
     const response = await handler!({
       machineId: 'machine-1',
-      providerId: 'codex',
+      agentId: 'codex',
       source: {
         kind: 'codexHome',
         home: 'user',
@@ -179,7 +850,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
     const response = await handler!({
       machineId: 'machine-1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'remote-session-1',
       source: {
         kind: 'codexHome',
@@ -201,7 +872,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       {
         machineId: 'machine-1',
         sessionId: 'session-1',
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'remote-session-1',
         source: { kind: 'codexHome', home: 'user' },
         leaseId: 'lease-1',
@@ -210,11 +881,11 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       ExternalSessionAttachResponseSchema,
     ],
     [
-      RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET,
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
       {
         machineId: 'machine-1',
         sessionId: 'session-1',
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'remote-session-1',
         source: { kind: 'codexHome', home: 'user' },
         enabled: true,
@@ -227,7 +898,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       {
         machineId: 'machine-1',
         sessionId: 'session-1',
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'remote-session-1',
         source: { kind: 'codexHome', home: 'user' },
       },
@@ -238,7 +909,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE,
       {
         machineId: 'machine-1',
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'remote-session-1',
         source: { kind: 'codexHome', home: 'user' },
         direction: 'older',
@@ -250,7 +921,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_READ_AFTER,
       {
         machineId: 'machine-1',
-        providerId: 'codex',
+        agentId: 'codex',
         remoteSessionId: 'remote-session-1',
         source: { kind: 'codexHome', home: 'user' },
         cursor: 'cursor-1',
@@ -259,7 +930,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       ExternalSessionTranscriptReadAfterResponseSchema,
     ],
   ] as const)(
-    'returns a protocol-shaped %s error when source validation throws',
+    'returns a protocol-shaped %s precondition or source-validation error',
     async (method, input, expectedError, responseSchema) => {
       resolveExecutionSurfacesMock.mockRejectedValueOnce(
         Object.assign(new Error('Cannot find providerOps chunk'), { code: 'ERR_MODULE_NOT_FOUND' }),
@@ -273,28 +944,29 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
       const response = await handler!(input);
 
-      expect(response).toEqual({
-        ok: false,
-        errorCode: 'internal_error',
-        error: expectedError,
-      });
+      const expectsAuthenticatedPersistedLink =
+        method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET;
+      expect(response).toEqual(expectsAuthenticatedPersistedLink
+        ? {
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'not_authenticated',
+          }
+        : {
+            ok: false,
+            errorCode: 'internal_error',
+            error: expectedError,
+          });
+      if (expectsAuthenticatedPersistedLink) {
+        expect(resolveExecutionSurfacesMock).not.toHaveBeenCalled();
+      }
       expect(responseSchema.safeParse(response).success).toBe(true);
     },
   );
 
-  it('returns a protocol-shaped candidates error when the backend exposes no direct-session surfaces', async () => {
-    resolveBackendExecutionSurfacesMock.mockResolvedValue({
-      terminalRuntime: null,
-      externalSession: null,
-      attach: null,
-      handoff: null,
-      fork: null,
-      checkpoint: null,
-    } satisfies BackendExecutionSurfaces);
+  it('returns an internal candidates error when no authoritative Agent runtime registry is installed', async () => {
     resolveExecutionSurfacesMock.mockResolvedValue({
-      externalSession: {
-        validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
-      },
+      externalSession: null,
       terminalRuntime: null,
       attach: null,
       handoff: null,
@@ -310,7 +982,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
     const response = await handler!({
       machineId: 'machine-1',
-      providerId: 'codex',
+      agentId: 'codex',
       source: {
         kind: 'codexHome',
         home: 'user',
@@ -326,7 +998,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     expect(ExternalSessionsCandidatesListResponseSchema.safeParse(response).success).toBe(true);
   });
 
-  it('routes canonical and legacy external-session RPCs through external-session actions before domain execution', async () => {
+  it('routes canonical and safe legacy RPCs while retiring unphased legacy persisted takeover before domain execution', async () => {
     const calls: Array<Readonly<{ actionId: string; input: unknown }>> = [];
     const actionExecutor: RpcActionExecutor = {
       execute: async (actionId, input) => {
@@ -352,16 +1024,17 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     } = {
       rpcHandlerManager: rpcHandlerManager as never,
       actionExecutor,
+      getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(1),
     };
     registerMachineExternalSessionsRpcHandlers(params);
 
     const candidatesHandler = rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST);
     const legacyCandidatesHandler = rpcHandlerManager.handlers.get(RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY);
     expect(candidatesHandler).toBeDefined();
-    expect(legacyCandidatesHandler).toBe(candidatesHandler);
+    expect(legacyCandidatesHandler).toBeDefined();
     await expect(candidatesHandler!({
       machineId: 'machine-1',
-      providerId: 'codex',
+      agentId: 'codex',
       source: { kind: 'codexHome', home: 'user' },
       limit: 10,
     })).resolves.toEqual({ ok: true, candidates: [], nextCursor: null });
@@ -379,14 +1052,18 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     await expect(takeoverPersistHandler!({
       machineId: 'machine-1',
       sessionId: 'linked-session-2',
-    })).resolves.toEqual({ ok: true, converted: true });
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'upgrade_required',
+    });
 
     expect(calls).toEqual([
       {
         actionId: 'sessions.external.candidates.list',
         input: {
           machineId: 'machine-1',
-          providerId: 'codex',
+          agentId: 'codex',
           source: { kind: 'codexHome', home: 'user' },
           limit: 10,
         },
@@ -401,15 +1078,120 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
           machineId: 'machine-1',
         },
       },
-      {
-        actionId: 'sessions.external.takeover',
-        input: {
-          linkedSessionId: 'linked-session-2',
-          targetRuntimeMode: 'terminal',
-          storageMode: 'persisted',
-          machineId: 'machine-1',
+    ]);
+  });
+
+  it('keeps canonical agent-unavailable errors while translating legacy aliases to the released provider literal', async () => {
+    const actionExecutor: RpcActionExecutor = {
+      execute: async () => ({
+        ok: true,
+        result: {
+          ok: false,
+          errorCode: 'agent_unavailable',
+          error: 'external_session_agent_unavailable',
         },
+      }),
+    };
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+    });
+
+    const canonicalHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSIONS_CANDIDATES_LIST,
+    );
+    const legacyHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_DIRECT_SESSIONS_CANDIDATES_LIST_LEGACY,
+    );
+    const input = {
+      machineId: 'machine-1',
+      providerId: 'codex',
+      source: { kind: 'codexHome', home: 'user' },
+      limit: 10,
+    };
+
+    await expect(canonicalHandler!({ ...input, agentId: 'codex' })).resolves.toEqual({
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'external_session_agent_unavailable',
+    });
+    await expect(legacyHandler!(input)).resolves.toEqual({
+      ok: false,
+      errorCode: 'provider_unavailable',
+      error: 'external_session_agent_unavailable',
+    });
+  });
+
+  it('removes the never-released external alias and retains predecessor direct cleanup only', async () => {
+    const calls: string[] = [];
+    const actionExecutor: RpcActionExecutor = {
+      execute: async (actionId) => {
+        calls.push(actionId);
+        return {
+          ok: true,
+          result: {
+            ok: false,
+            errorCode: 'agent_unavailable',
+            error: 'external_session_agent_unavailable',
+          },
+        };
       },
+    };
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+    });
+
+    const canonicalHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET,
+    );
+    const priorExternalHandler = rpcHandlerManager.handlers.get(
+      'daemon.externalSessions.followPolicy.set',
+    );
+    const releasedDirectHandler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_DIRECT_SESSION_FOLLOW_POLICY_SET_LEGACY,
+    );
+    expect(canonicalHandler).toBeDefined();
+    expect(priorExternalHandler).toBeUndefined();
+    expect(releasedDirectHandler).toBeDefined();
+
+    const input = {
+      machineId: 'machine-1',
+      sessionId: 'linked-session-1',
+      agentId: 'codex',
+      remoteSessionId: 'remote-session-1',
+      source: { kind: 'codexHome', home: 'user' },
+      enabled: true,
+    };
+    const expected = {
+      ok: false,
+      errorCode: 'agent_unavailable',
+      error: 'external_session_agent_unavailable',
+    };
+    const { agentId, ...releasedDirectInput } = input;
+
+    await expect(canonicalHandler!(input)).resolves.toEqual(expected);
+    await expect(releasedDirectHandler!({
+      ...releasedDirectInput,
+      providerId: agentId,
+    })).resolves.toEqual({
+      ok: false,
+      errorCode: 'provider_unavailable',
+      error: 'background_follow_not_supported',
+    });
+    await expect(releasedDirectHandler!({
+      ...releasedDirectInput,
+      providerId: agentId,
+      enabled: false,
+    })).resolves.toEqual({
+      ...expected,
+      errorCode: 'provider_unavailable',
+    });
+    expect(calls).toEqual([
+      'sessions.external.backgroundFollow.set',
+      'sessions.external.backgroundFollow.set',
     ]);
   });
 
@@ -435,7 +1217,7 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
 
     const response = await handler!({
       machineId: 'machine-1',
-      providerId: 'codex',
+      agentId: 'codex',
       source: { kind: 'codexHome', home: 'user' },
       limit: 10,
     });
@@ -443,23 +1225,14 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
     expect(response).toEqual({
       ok: false,
       errorCode: 'internal_error',
-      error: 'unexpected_action_failure',
+      error: 'internal_error',
     });
     expect(ExternalSessionsCandidatesListResponseSchema.safeParse(response).success).toBe(true);
   });
 
-  it.each([
-    [
-      RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
-      ExternalSessionTakeoverResponseSchema,
-    ],
-    [
-      RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
-      ExternalSessionTakeoverPersistResponseSchema,
-    ],
-  ] as const)(
-    'maps thrown %s action failures to legacy direct-session response envelopes',
-    async (method, responseSchema) => {
+  it(
+    'maps thrown daemon.directSessions.takeover action failures to its legacy response envelope',
+    async () => {
       const actionExecutor: RpcActionExecutor = {
         execute: async () => {
           throw new Error('resolver exploded');
@@ -470,11 +1243,14 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
       registerMachineExternalSessionsRpcHandlers({
         rpcHandlerManager: rpcHandlerManager as never,
         actionExecutor,
+        getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(1),
       } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
         actionExecutor: RpcActionExecutor;
       });
 
-      const handler = rpcHandlerManager.handlers.get(method);
+      const handler = rpcHandlerManager.handlers.get(
+        RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_LEGACY,
+      );
       expect(handler).toBeDefined();
 
       const response = await handler!({
@@ -487,9 +1263,44 @@ describe('registerMachineExternalSessionsRpcHandlers execution-surface seam', ()
         errorCode: 'internal_error',
         error: 'external_session_takeover_failed',
       });
-      expect(responseSchema.safeParse(response).success).toBe(true);
+      expect(ExternalSessionTakeoverResponseSchema.safeParse(response).success).toBe(true);
     },
   );
+
+  it('retires legacy persisted takeover before a throwing action executor can run', async () => {
+    const actionExecutor: RpcActionExecutor = {
+      execute: vi.fn(async () => {
+        throw new Error('resolver exploded');
+      }),
+    };
+
+    const rpcHandlerManager = createRpcHandlerManager();
+    registerMachineExternalSessionsRpcHandlers({
+      rpcHandlerManager: rpcHandlerManager as never,
+      actionExecutor,
+      getServerFeaturesSnapshot: () => createServerFeaturesSnapshot(1),
+    } as Parameters<typeof registerMachineExternalSessionsRpcHandlers>[0] & {
+      actionExecutor: RpcActionExecutor;
+    });
+
+    const handler = rpcHandlerManager.handlers.get(
+      RPC_METHODS.DAEMON_DIRECT_SESSION_TAKEOVER_PERSIST_LEGACY,
+    );
+    expect(handler).toBeDefined();
+
+    const response = await handler!({
+      machineId: 'machine-1',
+      sessionId: 'linked-session-1',
+    });
+
+    expect(response).toEqual({
+      ok: false,
+      errorCode: 'invalid_request',
+      error: 'upgrade_required',
+    });
+    expect(ExternalSessionTakeoverPersistResponseSchema.safeParse(response).success).toBe(true);
+    expect(actionExecutor.execute).not.toHaveBeenCalled();
+  });
 
   it('maps unsupported external-session takeover actions to legacy provider unavailable errors', async () => {
     const actionExecutor: RpcActionExecutor = {

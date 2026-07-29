@@ -1,8 +1,15 @@
-import { lstat, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { lstat, readdir, realpath, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isAbsolute, relative } from 'node:path';
 
 import { normalizeMaterializationKeyForPath } from '../normalizeMaterializationKeyForPath';
+
+/**
+ * Provider-agnostic hygiene hook applied to every retained materialized-home root before
+ * orphan cleanup. Provider-specific knowledge (which credential file lives where, and how to
+ * sanitize it) is owned by the contributing plugin — this scheduler only orchestrates the call.
+ */
+export type ConnectedServiceRetainedMaterializedHomeSanitizer = (homeRootDir: string) => Promise<void> | void;
 
 type MaterializedHomeCleanupTargetKind = 'identity_root' | 'attempt_root';
 
@@ -25,12 +32,11 @@ type RemovePath = typeof rm;
 
 type MaterializedHomeCleanupFileOperation =
   | 'lstat'
-  | 'readFile'
   | 'readdir'
   | 'realpath'
   | 'rm'
-  | 'stat'
-  | 'writeFile';
+  | 'sanitizeRetainedHome'
+  | 'stat';
 
 const DEFAULT_FILE_OPERATION_TIMEOUT_MS = 5_000;
 
@@ -121,54 +127,6 @@ async function readDirectoryMtimeMs(path: string, timeoutMs: number): Promise<nu
   }
 }
 
-function stripClaudeRefreshTokenFields(value: unknown): unknown | null {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const root = value as Record<string, unknown>;
-  const credential = root.claudeAiOauth;
-  if (!credential || typeof credential !== 'object' || Array.isArray(credential)) return null;
-  const credentialRecord = credential as Record<string, unknown>;
-  if (
-    !('refreshToken' in credentialRecord)
-    && !('refresh_token' in credentialRecord)
-    && !('RT' in credentialRecord)
-  ) {
-    return null;
-  }
-  const {
-    refreshToken: _refreshToken,
-    refresh_token: _refresh_token,
-    RT: _rt,
-    ...withoutRefreshTokens
-  } = credentialRecord;
-  return {
-    ...root,
-    claudeAiOauth: withoutRefreshTokens,
-  };
-}
-
-async function stripLegacyClaudeRefreshTokensFromMaterializedHome(credentialPath: string, timeoutMs: number): Promise<void> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(await runFileOperationWithTimeout({
-      operation: 'readFile',
-      path: credentialPath,
-      timeoutMs,
-      run: async () => await readFile(credentialPath, 'utf8'),
-    })) as unknown;
-  } catch (error) {
-    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return;
-    return;
-  }
-  const stripped = stripClaudeRefreshTokenFields(parsed);
-  if (!stripped) return;
-  await runFileOperationWithTimeout({
-    operation: 'writeFile',
-    path: credentialPath,
-    timeoutMs,
-    run: async () => await writeFile(credentialPath, `${JSON.stringify(stripped)}\n`),
-  });
-}
-
 function normalizeMaterializationKeys(keys: Iterable<string>): Set<string> {
   const segments = new Set<string>();
   for (const key of keys) {
@@ -197,6 +155,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
   readonly #maxCleanupRetries: number;
   readonly #fileOperationTimeoutMs: number;
   readonly #removePath: RemovePath;
+  readonly #sanitizeRetainedMaterializedHome: ConnectedServiceRetainedMaterializedHomeSanitizer | null;
   readonly #failedAttemptsByPath = new Map<string, number>();
   readonly #abandonedPaths = new Set<string>();
 
@@ -205,6 +164,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     nowMs: () => number;
     getLiveMaterializationKeys: () => Iterable<string>;
     getRetainedMaterializationKeys?: () => Promise<ConnectedServiceRetainedMaterializationKeysResult> | ConnectedServiceRetainedMaterializationKeysResult;
+    sanitizeRetainedMaterializedHome?: ConnectedServiceRetainedMaterializedHomeSanitizer;
     orphanTtlMs?: number;
     attemptTtlMs?: number;
     maxCleanupRetries?: number;
@@ -218,6 +178,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     this.#maxCleanupRetries = Math.max(1, Math.trunc(deps.maxCleanupRetries ?? 3));
     this.#fileOperationTimeoutMs = normalizeFileOperationTimeoutMs(deps.fileOperationTimeoutMs);
     this.#removePath = deps.removePath ?? rm;
+    this.#sanitizeRetainedMaterializedHome = deps.sanitizeRetainedMaterializedHome ?? null;
   }
 
   async #readRetainedSegments(): Promise<RetainedSegmentsSnapshot> {
@@ -275,12 +236,19 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
     return targets;
   }
 
-  async #stripLegacyClaudeRefreshTokens(retainedSnapshot: RetainedSegmentsSnapshot): Promise<void> {
+  async #sanitizeRetainedMaterializedHomes(retainedSnapshot: RetainedSegmentsSnapshot): Promise<void> {
+    const sanitize = this.#sanitizeRetainedMaterializedHome;
+    if (!sanitize) return;
     await Promise.all(Array.from(retainedSnapshot.retainedSegments, async (segment) => {
-      await stripLegacyClaudeRefreshTokensFromMaterializedHome(
-        join(this.#baseDir, segment, 'claude', '.credentials.json'),
-        this.#fileOperationTimeoutMs,
-      );
+      const homeRootDir = join(this.#baseDir, segment);
+      await runFileOperationWithTimeout({
+        operation: 'sanitizeRetainedHome',
+        path: homeRootDir,
+        timeoutMs: this.#fileOperationTimeoutMs,
+        run: async () => {
+          await sanitize(homeRootDir);
+        },
+      }).catch(() => undefined);
     }));
   }
 
@@ -373,7 +341,7 @@ export class ConnectedServiceMaterializedHomeCleanupScheduler {
 
   async reconcile(): Promise<ReadonlyArray<ConnectedServiceMaterializedHomeCleanupResult>> {
     const retainedSnapshot = await this.#readRetainedSegments();
-    await this.#stripLegacyClaudeRefreshTokens(retainedSnapshot);
+    await this.#sanitizeRetainedMaterializedHomes(retainedSnapshot);
     const results: ConnectedServiceMaterializedHomeCleanupResult[] = [];
     for (const target of await this.#listCleanupTargets(retainedSnapshot)) {
       results.push(await this.#removeTarget(target));

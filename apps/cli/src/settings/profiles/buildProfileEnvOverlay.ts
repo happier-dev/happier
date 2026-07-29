@@ -1,8 +1,8 @@
 import {
   buildBackendTargetKey,
-  decryptSecretValueWithKeysV1,
+  buildBackendTargetKeyV2,
   isLaunchProfileV2,
-  isCanonicalProviderSavedSecretIdV1,
+  readBackendTargetRefV2,
   validateLaunchProfileV2ReservedEnvironment,
   type AIBackendProfile,
   type LaunchProfileV2,
@@ -10,22 +10,20 @@ import {
 
 import { isPermissionMode, type PermissionMode } from '@/api/types';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
-import type { Credentials } from '@/persistence';
-import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
-import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
-import { indexSavedSecretsByIdFromAccountSettings } from '@/settings/secrets/indexSavedSecretsById';
 
 type SecretPromptFn = (promptLabel: string) => Promise<string>;
 
 export type BuildProfileEnvOverlayResult = Readonly<{
-  profileId: string;
-  envOverlayExpanded: Record<string, string>;
+  envOverlayRaw: Record<string, string>;
+  foregroundSatisfiedSecretRequirementNames: readonly string[];
   permissionModeSeed: PermissionMode | null;
 }>;
 
 function readNonEmptyEnv(processEnv: NodeJS.ProcessEnv, name: string): string | null {
   const raw = processEnv[name];
-  return isCanonicalProviderSavedSecretIdV1(raw) ? raw : null;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function extractTemplateVarNames(value: string): string[] {
@@ -39,20 +37,14 @@ function extractTemplateVarNames(value: string): string[] {
   return out;
 }
 
-function readSecretBindingId(params: Readonly<{
-  secretBindingsByProfileId: Record<string, Record<string, string>>;
-  profileId: string;
-  envVarName: string;
-}>): string | null {
-  const raw = params.secretBindingsByProfileId[params.profileId]?.[params.envVarName];
-  if (typeof raw !== 'string') return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 function resolvePermissionModeSeed(profile: AIBackendProfile | LaunchProfileV2, agentId: string): PermissionMode | null {
-  const targetKey = buildBackendTargetKey({ kind: 'builtInAgent', agentId });
-  const raw = profile.defaultPermissionModeByTargetKey?.[targetKey];
+  const legacyTarget = { kind: 'builtInAgent' as const, agentId };
+  const targetKey = buildBackendTargetKey(legacyTarget);
+  const targetKeyV2 = buildBackendTargetKeyV2(
+    readBackendTargetRefV2(legacyTarget),
+  );
+  const raw = profile.defaultPermissionModeByTargetKey?.[targetKeyV2]
+    ?? profile.defaultPermissionModeByTargetKey?.[targetKey];
   if (typeof raw !== 'string') return null;
   const trimmed = raw.trim();
   if (!trimmed) return null;
@@ -62,12 +54,10 @@ function resolvePermissionModeSeed(profile: AIBackendProfile | LaunchProfileV2, 
 export async function buildProfileEnvOverlay(params: Readonly<{
   agentId: string;
   profile: AIBackendProfile | LaunchProfileV2;
-  accountSettings: Readonly<Record<string, unknown>>;
-  credentials: Credentials;
   processEnv: NodeJS.ProcessEnv;
   promptSecretFn: SecretPromptFn | null;
-  startedBy: 'terminal' | 'daemon' | undefined;
   reservedEnvironmentVariableNames: ReadonlySet<string>;
+  requiredSecretRequirementNamesMissingBinding: ReadonlySet<string>;
 }>): Promise<BuildProfileEnvOverlayResult> {
   const requiredConfigMissing: string[] = [];
 
@@ -78,10 +68,6 @@ export async function buildProfileEnvOverlay(params: Readonly<{
   const overlayRaw: Record<string, string> = Object.fromEntries(
     (isSlim ? params.profile.extraEnvironmentVariables : params.profile.environmentVariables)
       .map((entry) => [entry.name, entry.value]),
-  );
-
-  const requiredEnvNames = new Set<string>(
-    (params.profile.envVarRequirements ?? []).filter((r) => r.required === true).map((r) => r.name),
   );
 
   const secretRequirements = (params.profile.envVarRequirements ?? [])
@@ -107,33 +93,24 @@ export async function buildProfileEnvOverlay(params: Readonly<{
     );
   }
 
-  const { secretBindingsByProfileId } = readProfilesFromAccountSettings(params.accountSettings);
-  const savedSecretsById = indexSavedSecretsByIdFromAccountSettings(params.accountSettings);
-  const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(params.credentials);
+  const foregroundSatisfiedSecretRequirementNames: string[] = [];
 
   for (const req of secretRequirements) {
     const fromEnv = readNonEmptyEnv(params.processEnv, req.name);
     if (fromEnv) {
       overlayRaw[req.name] = fromEnv;
+      foregroundSatisfiedSecretRequirementNames.push(req.name);
       continue;
     }
 
-    const bindingId = readSecretBindingId({
-      secretBindingsByProfileId,
-      profileId: params.profile.id,
-      envVarName: req.name,
-    });
-
-    if (bindingId) {
-      const container = savedSecretsById.get(bindingId) ?? null;
-      const plaintext = decryptSecretValueWithKeysV1(container, settingsSecretsReadKeys);
-      if (typeof plaintext === 'string' && plaintext.trim().length > 0) {
-        overlayRaw[req.name] = plaintext.trim();
-        continue;
-      }
+    if (
+      req.required !== true
+      || !params.requiredSecretRequirementNamesMissingBinding.has(req.name)
+    ) {
+      continue;
     }
 
-    const shouldPrompt = req.required === true && typeof params.promptSecretFn === 'function';
+    const shouldPrompt = typeof params.promptSecretFn === 'function';
     if (shouldPrompt) {
       const entered = await params.promptSecretFn(`${req.name}: `);
       const normalized = typeof entered === 'string' ? entered.trim() : '';
@@ -141,6 +118,7 @@ export async function buildProfileEnvOverlay(params: Readonly<{
         throw new Error(`Missing required secret value for ${req.name}.`);
       }
       overlayRaw[req.name] = normalized;
+      foregroundSatisfiedSecretRequirementNames.push(req.name);
       continue;
     }
 
@@ -156,11 +134,46 @@ export async function buildProfileEnvOverlay(params: Readonly<{
     }
   }
 
-  const sourceEnv: NodeJS.ProcessEnv = { ...params.processEnv, ...overlayRaw };
-  const envOverlayExpanded = expandEnvironmentVariables(overlayRaw, sourceEnv, { warnOnUndefined: false });
+  return {
+    envOverlayRaw: overlayRaw,
+    foregroundSatisfiedSecretRequirementNames:
+      Object.freeze(foregroundSatisfiedSecretRequirementNames),
+    permissionModeSeed: resolvePermissionModeSeed(params.profile, params.agentId),
+  };
+}
 
+export function expandProfileEnvOverlay(params: Readonly<{
+  profile: AIBackendProfile | LaunchProfileV2;
+  envOverlayRaw: Readonly<Record<string, string>>;
+  processEnv: NodeJS.ProcessEnv;
+  resolvedEnvironment: Readonly<Record<string, string>>;
+}>): Record<string, string> {
+  const sourceEnv: NodeJS.ProcessEnv = {
+    ...params.processEnv,
+    ...params.resolvedEnvironment,
+    ...params.envOverlayRaw,
+  };
+  const envOverlayExpanded = expandEnvironmentVariables(
+    params.envOverlayRaw,
+    sourceEnv,
+    { warnOnUndefined: false },
+  );
+  const requiredEnvNames = new Set<string>(
+    (params.profile.envVarRequirements ?? [])
+      .filter((requirement) => requirement.required === true)
+      .map((requirement) => requirement.name),
+  );
+  const missingRequired = [...requiredEnvNames].filter((name) => {
+    const value = sourceEnv[name];
+    return typeof value !== 'string' || value.trim().length === 0;
+  });
+  if (missingRequired.length > 0) {
+    throw new Error(
+      `Profile "${params.profile.name}" is missing required environment values after daemon admission: ${missingRequired.join(', ')}`,
+    );
+  }
   const keysDependingOnRequired = new Set<string>();
-  for (const [key, value] of Object.entries(overlayRaw)) {
+  for (const [key, value] of Object.entries(params.envOverlayRaw)) {
     if (!value.includes('${')) continue;
     for (const refName of extractTemplateVarNames(value)) {
       if (requiredEnvNames.has(refName)) {
@@ -182,10 +195,5 @@ export async function buildProfileEnvOverlay(params: Readonly<{
       `Profile "${params.profile.name}" still contains unresolved environment templates after expansion: ${unresolvedKeys.join(', ')}`,
     );
   }
-
-  return {
-    profileId: params.profile.id,
-    envOverlayExpanded,
-    permissionModeSeed: resolvePermissionModeSeed(params.profile, params.agentId),
-  };
+  return envOverlayExpanded;
 }

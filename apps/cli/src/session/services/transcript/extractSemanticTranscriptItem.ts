@@ -1,3 +1,5 @@
+import { readConversationTurnOriginV1FromMessageMeta } from '@happier-dev/protocol';
+
 import {
   type TranscriptHistoryNormalizationSequenceState,
   isMemoryArtifactDecryptedRow,
@@ -115,6 +117,8 @@ export function extractSemanticTranscriptItemFromDecryptedPayload(params: Readon
   const createdAt = typeof params.row.createdAt === 'number' && Number.isFinite(params.row.createdAt) ? params.row.createdAt : 0;
   const id = typeof params.row.id === 'string' ? params.row.id : seq !== undefined ? String(seq) : String(params.index);
   const storedMessageRole = normalizeStoredRole(params.row.messageRole);
+  const decryptedRecord = asRecord(params.decrypted);
+  const origin = readConversationTurnOriginV1FromMessageMeta(decryptedRecord?.meta);
   const text = classified.text ? truncateText(classified.text, params.options.maxTextChars) : null;
   const summary = classified.summary ? truncateText(classified.summary, params.options.maxTextChars) : null;
   const includeRaw = params.options.includeRaw === true || params.options.includeStructuredPayload === true;
@@ -129,6 +133,7 @@ export function extractSemanticTranscriptItemFromDecryptedPayload(params: Readon
       semanticRole: classified.semanticRole,
       role: classified.semanticRole,
       kind: classified.kind,
+      ...(origin ? { origin } : {}),
       ...(classified.provider ? { provider: classified.provider } : {}),
       ...(text ? { text: text.text, ...(text.truncated ? { truncated: true } : {}) } : {}),
       ...(summary ? { summary: summary.text, ...(summary.truncated ? { truncated: true } : {}) } : {}),

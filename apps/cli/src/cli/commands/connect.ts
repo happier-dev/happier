@@ -1,460 +1,897 @@
-import { randomBytes } from 'node:crypto';
-import { readCredentials } from '@/persistence';
-import { ApiClient } from '@/api/api';
 import {
-  isCloudConnectAuthenticateResultV1,
-  type CloudAuthCredentialWriteInputV1,
-  type CloudAuthCredentialWriteResultV1,
-  type CloudConnectAuthenticateResultV1,
-  type CloudConnectTarget,
-  type CloudConnectTargetStatus,
-} from '@/cloud/connectTypes';
-import { configuration } from '@/configuration';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import {
-  buildConnectedAccountCredentialRecordFromOauthPayload,
-  buildConnectedAccountCredentialRecordFromTokenInput,
-} from '@/daemon/connectedServices/descriptors/buildConnectedAccountCredentialRecord';
-import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
-import {
-  CONNECTED_ACCOUNT_DESCRIPTORS,
-  ConnectedAccountDescriptorSchema,
-  ConnectedServiceCredentialRecordV1Schema,
-  requireConnectedAccountDescriptor,
-  sealConnectedServiceCredentialCiphertext,
-  type ConnectedAccountDescriptor,
-  type ConnectedAccountTokenKind,
-  type ConnectedServiceCredentialRecordV1,
-  type ConnectedServiceId,
+  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  PluginConnectedAccountDescriptorContributionV2Schema,
+  PluginJsonValueV2Schema,
+  type PluginConnectedAccountAuthenticationModeV2,
+  type PluginConnectedAccountDescriptorContributionV2,
+  type PluginContributionIdentityV1,
+  type PluginJsonValueV2,
+  type QualifiedConnectedAccountProfileV4,
 } from '@happier-dev/protocol';
-import { banner, bullets, cmd, dim, errorFrame, gray, neutral, ok, sectionTitle, warn } from '@happier-dev/cli-common/output';
+import {
+  banner,
+  bullets,
+  cmd,
+  dim,
+  errorFrame,
+  gray,
+  neutral,
+  ok,
+  sectionTitle,
+  warn,
+} from '@happier-dev/cli-common/output';
 
 import type { CommandContext } from '@/cli/commandRegistry';
-import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
-import { resolveConnectAuthIntent } from './connect/resolveConnectAuthIntent';
-import { resolveConnectTargetServiceIdsFromRegistry } from './connect/resolveConnectTargetServiceIds';
+import { configuration } from '@/configuration';
+import { parseOauthRedirectPaste } from '@/cloud/parseOauthRedirectPaste';
+import { readCredentials } from '@/persistence';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { promptInput, promptSecretInput } from '@/terminal/prompts/promptInput';
+import { ensureMachineIdForCredentials } from '@/ui/auth';
+import { openBrowser } from '@/ui/openBrowser';
+import { delay } from '@/utils/time';
 
-/**
- * Handle connect subcommand.
- *
- * Implements connect subcommands for storing Connected Services credentials (v2):
- * - connect codex: Store OpenAI Codex subscription OAuth (openai-codex) or OpenAI API key (openai)
- * - connect claude: Store Claude subscription auth (claude-subscription) or Anthropic API key (anthropic)
- * - connect gemini: Store Gemini OAuth (gemini)
- */
-export async function handleConnectCommand(args: string[]): Promise<void> {
-    const { includeExperimental, subcommand, options } = parseConnectArgs(args);
+import {
+  createConnectedAccountDaemonClient,
+  type ConnectedAccountDaemonClient,
+} from './connect/connectedAccountDaemonClient';
+import { parseConnectArgs, type ConnectParsedOptions } from './connect/parseConnectArgs';
 
-    const { targets: allTargets, registry } = await loadConnectTargetsWithRegistry({ includeExperimental: true });
-    const visibleTargets = includeExperimental ? allTargets : allTargets.filter((t) => t.status === 'wired');
+type AttemptResponse = Awaited<
+  ReturnType<ConnectedAccountDaemonClient['authenticate']>
+>;
+type ControlResponse = Awaited<
+  ReturnType<ConnectedAccountDaemonClient['control']>
+>;
+type DescribedService = Extract<ControlResponse, { status: 'described' }>;
+type ConfigurationDescription = Extract<
+  ControlResponse,
+  { status: 'configuration' | 'configurationCommitted' }
+>;
+type ConfigurationTarget = ConfigurationDescription['target'];
+type ManualField = Extract<
+  PluginConnectedAccountAuthenticationModeV2,
+  { kind: 'manual' }
+>['fields'][number];
+type ConfigurationField = Readonly<{
+  id: string;
+  title: string | Readonly<{ fallback: string }>;
+  schema: Readonly<{
+    type?: 'null' | 'boolean' | 'number' | 'integer' | 'string' | 'array' | 'object';
+    enum?: readonly unknown[];
+    const?: unknown;
+  }>;
+  secret: boolean;
+  default?: unknown;
+  required?: boolean;
+  presentation?: Readonly<{
+    hidden?: boolean;
+    order?: number;
+  }>;
+}>;
 
-    const targetById = new Map<string, CloudConnectTarget>(allTargets.map((t) => [t.id, t] as const));
-    const visibleTargetById = new Map<string, CloudConnectTarget>(visibleTargets.map((t) => [t.id, t] as const));
+type ConnectTarget = Readonly<{
+  service: PluginContributionIdentityV1;
+  descriptor: PluginConnectedAccountDescriptorContributionV2;
+  commandId: string;
+  aliases: readonly string[];
+}>;
 
-    if (!subcommand || subcommand === 'help' || subcommand === '--help' || subcommand === '-h') {
-        showConnectHelp(visibleTargets, { includeExperimental });
-        return;
-    }
+type AuthenticationIntent =
+  | Readonly<{
+      kind: 'connect';
+      service: PluginContributionIdentityV1;
+      modeId: string;
+    }>
+  | Readonly<{
+      kind: 'reconnect';
+      account: Readonly<{
+        service: PluginContributionIdentityV1;
+        accountId: string;
+      }>;
+    }>;
 
-    const normalized = subcommand.toLowerCase();
-    if (normalized === 'status') {
-      await handleConnectStatus(visibleTargets, registry);
-      return;
-    }
-
-    const visibleTarget = visibleTargetById.get(normalized);
-    if (!visibleTarget) {
-      const hiddenTarget = targetById.get(normalized);
-      if (hiddenTarget && hiddenTarget.status === 'experimental' && !includeExperimental) {
-        console.error(warn(`Connect target '${hiddenTarget.id}' is experimental and not enabled by default.`));
-        console.error(`  ${dim(`Run: ${cmd(`happier connect --all ${hiddenTarget.id}`)}`)}`);
-        process.exit(1);
-      }
-      console.error(errorFrame('Error:', [`Unknown connect target: ${subcommand}`]));
-      showConnectHelp(visibleTargets, { includeExperimental });
-      process.exit(1);
-    }
-
-    await handleConnectVendor(visibleTarget, options, registry);
+function localizedText(
+  value: string | Readonly<{ fallback: string }> | undefined,
+): string {
+  return typeof value === 'string' ? value : value?.fallback ?? '';
 }
 
-async function loadConnectTargetsWithRegistry(
-  params: Readonly<{ includeExperimental: boolean }>,
-): Promise<Readonly<{ targets: CloudConnectTarget[]; registry: ResolvedContributionRegistry }>> {
-  const targets: CloudConnectTarget[] = [];
-  const registry = await resolveMergedContributionRegistry({ happyHomeDir: configuration.happyHomeDir });
-  const descriptors = resolveConnectDescriptorsFromRegistry(registry);
-  for (const entry of Object.values(registry.catalogEntriesById)) {
-    if (!entry.getCloudConnectTarget) continue;
-    targets.push(await entry.getCloudConnectTarget());
-  }
-  const targetIds = new Set(targets.map((target) => target.id));
-  for (const descriptor of descriptors) {
-    for (const mode of descriptor.connectModes) {
-      if (targetIds.has(mode.targetId)) continue;
-      targets.push(createDescriptorOnlyConnectTarget(descriptor, mode.targetId));
-      targetIds.add(mode.targetId);
-    }
-  }
-  targets.sort((a, b) => a.id.localeCompare(b.id));
-  return {
-    targets: params.includeExperimental ? targets : targets.filter((t) => t.status === 'wired'),
-    registry,
-  };
+function sameService(
+  left: PluginContributionIdentityV1,
+  right: PluginContributionIdentityV1,
+): boolean {
+  return left.pluginId === right.pluginId && left.localId === right.localId;
 }
 
-function resolveConnectDescriptorsFromRegistry(
+function exactServiceCommandId(service: PluginContributionIdentityV1): string {
+  return `${service.pluginId}/${service.localId}`;
+}
+
+function legacyServiceIdFor(
+  service: PluginContributionIdentityV1,
+): string | null {
+  for (const [serviceId, compatibility] of Object.entries(
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+  )) {
+    if (sameService(service, compatibility.service)) return serviceId;
+  }
+  return null;
+}
+
+function resolveConnectTargets(
   registry: Pick<ResolvedContributionRegistry, 'connectedAccountDescriptors'>,
-): readonly ConnectedAccountDescriptor[] {
-  const descriptorsById = new Map<string, ConnectedAccountDescriptor>();
-  for (const descriptor of CONNECTED_ACCOUNT_DESCRIPTORS) {
-    descriptorsById.set(descriptor.id, descriptor);
-  }
-  for (const contribution of registry.connectedAccountDescriptors ?? []) {
-    const parsed = ConnectedAccountDescriptorSchema.safeParse(contribution.definition);
-    if (!parsed.success) continue;
-    descriptorsById.set(parsed.data.id, parsed.data);
-  }
-  return [...descriptorsById.values()];
-}
-
-function createDescriptorOnlyConnectTarget(
-  descriptor: ConnectedAccountDescriptor,
-  targetId: string,
-): CloudConnectTarget {
-  return {
-    id: targetId,
-    displayName: descriptor.id,
-    vendorDisplayName: descriptor.id,
-    vendorKey: 'scm',
-    status: 'wired',
-    authenticate: async () => {
-      throw new Error(`Connect target '${targetId}' does not support OAuth authentication`);
+): readonly ConnectTarget[] {
+  const candidates = (registry.connectedAccountDescriptors ?? []).flatMap(
+    (contribution) => {
+      const pluginId = contribution.pluginId?.trim();
+      if (!pluginId) return [];
+      const descriptor =
+        PluginConnectedAccountDescriptorContributionV2Schema.safeParse(
+          contribution.definition,
+        );
+      if (!descriptor.success) return [];
+      const service = Object.freeze({
+        pluginId,
+        localId: descriptor.data.id,
+      });
+      return [
+        {
+          service,
+          descriptor: descriptor.data,
+          legacyServiceId: legacyServiceIdFor(service),
+        },
+      ];
     },
-  };
+  );
+  const localIdCounts = new Map<string, number>();
+  for (const candidate of candidates) {
+    localIdCounts.set(
+      candidate.service.localId,
+      (localIdCounts.get(candidate.service.localId) ?? 0) + 1,
+    );
+  }
+  return Object.freeze(
+    candidates
+      .map(({ service, descriptor, legacyServiceId }) => {
+        const exactId = exactServiceCommandId(service);
+        const aliases = new Set<string>([exactId]);
+        if (localIdCounts.get(service.localId) === 1) {
+          aliases.add(service.localId);
+        }
+        if (legacyServiceId) aliases.add(legacyServiceId);
+        return Object.freeze({
+          service,
+          descriptor,
+          commandId: legacyServiceId ?? (
+            localIdCounts.get(service.localId) === 1
+              ? service.localId
+              : exactId
+          ),
+          aliases: Object.freeze([...aliases]),
+        });
+      })
+      .sort((left, right) => left.commandId.localeCompare(right.commandId)),
+  );
 }
 
-function showConnectHelp(targets: ReadonlyArray<CloudConnectTarget>, opts: Readonly<{ includeExperimental: boolean }>): void {
-    const targetLines = targets.length > 0
-      ? targets.map((t) => formatTargetLine(t)).join('\n')
-      : '  (no connect targets registered)';
-    console.log([
-      `${sectionTitle('happier connect')} - Connect AI vendor subscriptions and API keys to Happier cloud`,
+async function loadConnectTargets(): Promise<readonly ConnectTarget[]> {
+  const registry = await resolveMergedContributionRegistry({
+    happyHomeDir: configuration.happyHomeDir,
+  });
+  return resolveConnectTargets(registry);
+}
+
+function showConnectHelp(targets: readonly ConnectTarget[]): void {
+  const targetLines =
+    targets.length > 0
+      ? targets
+          .map((target) => {
+            const title =
+              localizedText(target.descriptor.title) || target.service.localId;
+            return `  happier connect ${target.commandId.padEnd(20)} ${title}`;
+          })
+          .join('\n')
+      : '  (no connected-account services registered)';
+  console.log(
+    [
+      `${sectionTitle('happier connect')} - Connect accounts through the Happier daemon`,
       '',
       sectionTitle('Usage:'),
       targetLines,
-      `  ${cmd('happier connect status')}       Show connection status for all vendors`,
-      `  ${cmd('happier connect help')}         Show this help message`,
-      `  ${cmd('happier connect --all ...')}    Include experimental providers`,
-      `  ${cmd('happier connect <target> --profile <id>')}      Store under a specific profile (default: default)`,
-      `  ${cmd('happier connect <target> --paste')}             Headless mode: paste redirect URL`,
-      `  ${cmd('happier connect <target> --device')}            Use device-code auth when available`,
-      `  ${cmd('happier connect <target> --api-key')}           Store a provider API key when supported`,
-      `  ${cmd('happier connect <target> --setup-token')}       Store a provider setup-token when supported`,
-      `  ${cmd('happier connect <target> --token')}             Store a provider token when supported`,
-      `  ${cmd('happier connect <target> --oauth')}             Store provider subscription OAuth when supported`,
-      `  ${cmd('happier connect <target> --no-open')}           Do not attempt to open a browser`,
-      `  ${cmd('happier connect <target> --timeout <seconds>')} Override OAuth timeout`,
-      '',
-      sectionTitle('Description:'),
-      '  The connect command allows you to securely store your connected-service credentials',
-      '  in Happier cloud. This enables you to use these services through Happier',
-      '  without exposing credentials locally.',
-      '',
-      sectionTitle('Examples:'),
-      `  ${cmd(`happier connect ${targets[0]?.id ?? '<target>'}`)}`,
-      `  ${cmd('happier connect status')}`,
+      `  ${cmd('happier connect status')}                      Show connection status`,
+      `  ${cmd('happier connect <service> --account <id>')}    Reconnect an exact account`,
+      `  ${cmd('happier connect <service> --mode <mode>')}     Select an authentication mode`,
+      `  ${cmd('happier connect <service> --oauth')}           Select authorization-code OAuth`,
+      `  ${cmd('happier connect <service> --device')}          Select device-code OAuth`,
+      `  ${cmd('happier connect <service> --token')}           Select the built-in token mode`,
+      `  ${cmd('happier connect <service> --no-open')}         Do not open a browser`,
+      `  ${cmd('happier connect <service> --timeout <seconds>')} Bound the interactive flow`,
       '',
       sectionTitle('Notes:'),
       bullets([
-        `You must be authenticated with Happier first (run ${cmd('happier auth login')})`,
-        'Credentials are encrypted and stored securely in Happier cloud',
-        'You can manage your stored keys at app.happier.dev',
-        opts.includeExperimental ? null : 'Some providers are experimental; use --all to show them',
+        `Authenticate with Happier first using ${cmd('happier auth login')}`,
+        'Authentication state, PKCE, credentials, and settlement stay in the selected daemon',
+        'External services use the unambiguous <pluginId>/<localId> command form',
       ]),
       '',
-    ].join('\n'));
+    ].join('\n'),
+  );
 }
 
-function formatTargetLine(target: CloudConnectTarget): string {
-  const statusSuffix = target.status === 'wired' ? '' : gray(' (experimental)');
-  return `  happier connect ${target.id.padEnd(12)} ${target.vendorDisplayName}${statusSuffix}`;
+function findTarget(
+  targets: readonly ConnectTarget[],
+  commandId: string,
+): ConnectTarget | null {
+  const normalized = commandId.trim().toLowerCase();
+  const matches = targets.filter((target) =>
+    target.aliases.some((alias) => alias.toLowerCase() === normalized),
+  );
+  return matches.length === 1 ? matches[0]! : null;
 }
 
-function resolveTokenPromptLabel(tokenKind: ConnectedAccountTokenKind, promptLabelKey: string): string {
-  const labels: Readonly<Record<string, string>> = {
-    'connectedServices.tokenPrompts.claudeSetupToken': 'Paste Claude setup-token (from `claude setup-token`): ',
-    'connectedServices.tokenPrompts.openaiApiKey': 'Paste OpenAI API key: ',
-    'connectedServices.tokenPrompts.anthropicApiKey': 'Paste Anthropic API key: ',
-    'connectedServices.tokenPrompts.githubPersonalAccessToken': 'Paste GitHub fine-grained personal access token: ',
-    'connectedServices.tokenPrompts.bitbucketApiToken': 'Paste Bitbucket API token or app password: ',
-    'connectedServices.tokenPrompts.bitbucketEmailOrUsername': 'Paste Bitbucket email or username: ',
-  };
-  return labels[promptLabelKey]
-    ?? (tokenKind === 'personal-access-token'
-      ? 'Paste personal access token: '
-      : tokenKind === 'setup-token'
-        ? 'Paste setup-token: '
-        : tokenKind === 'api-token'
-          ? 'Paste API token: '
-        : 'Paste API key: ');
+async function createDaemonClient(): Promise<ConnectedAccountDaemonClient> {
+  const credentials = await readCredentials();
+  if (!credentials) {
+    throw new Error(
+      `Not authenticated with Happier. Run ${cmd('happier auth login')} first.`,
+    );
+  }
+  const { machineId } = await ensureMachineIdForCredentials(credentials);
+  return createConnectedAccountDaemonClient({ credentials, machineId });
 }
 
-function resolveMissingTokenError(tokenKind: ConnectedAccountTokenKind, missingValueErrorKey: string): string {
-  const messages: Readonly<Record<string, string>> = {
-    'connectedServices.tokenPrompts.errors.missingSetupToken': 'Missing setup-token',
-    'connectedServices.tokenPrompts.errors.missingApiKey': 'Missing API key',
-    'connectedServices.tokenPrompts.errors.missingPersonalAccessToken': 'Missing personal access token',
-    'connectedServices.tokenPrompts.errors.missingApiToken': 'Missing API token',
-    'connectedServices.tokenPrompts.errors.missingBitbucketEmailOrUsername': 'Missing Bitbucket email or username',
-  };
-  return messages[missingValueErrorKey]
-    ?? (tokenKind === 'personal-access-token'
-      ? 'Missing personal access token'
-      : tokenKind === 'setup-token'
-        ? 'Missing setup-token'
-        : tokenKind === 'api-token'
-          ? 'Missing API token'
-        : 'Missing API key');
-}
-
-async function registerConnectedServiceCredentialRecord(params: Readonly<{
-  api: ApiClient;
-  credentials: NonNullable<Awaited<ReturnType<typeof readCredentials>>>;
-  record: ConnectedServiceCredentialRecordV1;
-}>): Promise<void> {
-  if (await params.api.getAccountEncryptionMode() === 'plain') {
-    await params.api.registerConnectedServiceCredentialPlain({
-      serviceId: params.record.serviceId,
-      profileId: params.record.profileId,
-      content: { t: 'plain', v: params.record },
-    });
-    return;
+function modeSelectedByFlags(
+  described: DescribedService,
+  target: ConnectTarget,
+  options: ConnectParsedOptions,
+): PluginConnectedAccountAuthenticationModeV2 {
+  const modes = described.descriptor.authentication.modes;
+  const explicitKinds = [
+    options.device ? 'oauthDeviceCode' : null,
+    options.oauth || options.paste ? 'oauthAuthorizationCode' : null,
+  ].filter((kind): kind is PluginConnectedAccountAuthenticationModeV2['kind'] =>
+    kind !== null,
+  );
+  if (explicitKinds.length > 1) {
+    throw new Error('Choose only one authentication-mode flag.');
   }
 
-  const sealedCiphertext = sealConnectedServiceCredentialCiphertext({
-    material:
-      params.credentials.encryption.type === 'legacy'
-        ? { type: 'legacy', secret: params.credentials.encryption.secret }
-        : { type: 'dataKey', machineKey: params.credentials.encryption.machineKey },
-    payload: params.record,
-    randomBytes: (length) => randomBytes(length),
+  let modeId = options.modeId;
+  if (!modeId && explicitKinds[0]) {
+    modeId = modes.find((mode) => mode.kind === explicitKinds[0])?.id ?? null;
+  }
+  if (
+    !modeId &&
+    (options.token || options.apiKey || options.setupToken)
+  ) {
+    const legacyServiceId = legacyServiceIdFor(target.service);
+    const compatibility = legacyServiceId
+      ? BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+          legacyServiceId as keyof typeof BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID
+        ]
+      : null;
+    const tokenModeId =
+      compatibility &&
+      'token' in compatibility.authenticationModeByCredentialKind
+        ? compatibility.authenticationModeByCredentialKind.token
+        : undefined;
+    modeId =
+      tokenModeId ??
+      modes.find((mode) => mode.kind === 'manual')?.id ??
+      null;
+  }
+  modeId ??= described.descriptor.authentication.defaultModeId;
+  const selected = modes.find((mode) => mode.id === modeId);
+  if (!selected) {
+    throw new Error(
+      `Authentication mode '${modeId}' is not declared by ${target.commandId}.`,
+    );
+  }
+  if (explicitKinds[0] && selected.kind !== explicitKinds[0]) {
+    throw new Error(
+      `${target.commandId} does not declare the requested authentication mode.`,
+    );
+  }
+  return selected;
+}
+
+function validateManualString(
+  field: ManualField,
+  value: string,
+): boolean {
+  const schema = field.schema;
+  if (schema.type !== undefined && schema.type !== 'string') return false;
+  if (schema.minLength !== undefined && value.length < schema.minLength) {
+    return false;
+  }
+  if (schema.maxLength !== undefined && value.length > schema.maxLength) {
+    return false;
+  }
+  if (schema.enum && !schema.enum.includes(value)) return false;
+  if (schema.const !== undefined && schema.const !== value) return false;
+  if (schema.pattern !== undefined) {
+    try {
+      if (!new RegExp(schema.pattern).test(value)) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function promptManualFields(
+  mode: Extract<
+    PluginConnectedAccountAuthenticationModeV2,
+    { kind: 'manual' }
+  >,
+): Promise<Readonly<Record<string, string>>> {
+  const values: Record<string, string> = {};
+  const fields = [...mode.fields].sort((left, right) => {
+    const order =
+      (left.presentation?.order ?? Number.POSITIVE_INFINITY) -
+      (right.presentation?.order ?? Number.POSITIVE_INFINITY);
+    return order || left.id.localeCompare(right.id);
   });
-  await params.api.registerConnectedServiceCredentialSealed({
-    serviceId: params.record.serviceId,
-    profileId: params.record.profileId,
-    sealed: { format: 'account_scoped_v1', ciphertext: sealedCiphertext },
-    metadata: {
-      kind: params.record.kind,
-      providerEmail:
-        params.record.kind === 'oauth' ? params.record.oauth.providerEmail ?? null : params.record.token.providerEmail ?? null,
-      providerAccountId:
-        params.record.kind === 'oauth' ? params.record.oauth.providerAccountId ?? null : params.record.token.providerAccountId ?? null,
-      expiresAt: params.record.expiresAt,
-    },
-  });
-}
-
-function formatCloudAuthFailure(result: Extract<CloudConnectAuthenticateResultV1, { ok: false }>): string {
-  const diagnostic = result.diagnostics?.[0];
-  return diagnostic?.message
-    ? `Cloud authentication failed (${result.code}): ${diagnostic.message}`
-    : `Cloud authentication failed (${result.code})`;
-}
-
-function summarizeCloudAuthSuccess(result: Extract<CloudConnectAuthenticateResultV1, { ok: true }>): string {
-  return result.credentialRef ?? result.accountRef ?? 'custom authenticator completed';
-}
-
-async function handleConnectVendor(
-  target: CloudConnectTarget,
-  options: ConnectParsedOptions,
-  registry: ResolvedContributionRegistry,
-): Promise<void> {
-    console.log(`\n${banner(`Connecting ${target.vendorDisplayName}`, { subtitle: 'Happier cloud' })}\n`);
-
-    // Check if authenticated
-    const credentials = await readCredentials();
-    if (!credentials) {
-        console.log(warn('Not authenticated with Happier'));
-        console.log(`  ${dim(`Please run ${cmd('happier auth login')} first`)}`);
-        process.exit(1);
+  for (const field of fields) {
+    const title = localizedText(field.title) || field.id;
+    const value = (
+      field.secret === true
+        ? await promptSecretInput(`${title}: `)
+        : await promptInput(`${title}: `)
+    ).trim();
+    if (!validateManualString(field, value)) {
+      throw new Error(`Invalid value for '${field.id}'.`);
     }
+    values[field.id] = value;
+  }
+  return Object.freeze(values);
+}
 
-    // Create API client
-    const api = await ApiClient.create(credentials);
+function formatJsonValue(value: PluginJsonValueV2 | undefined): string {
+  if (value === undefined) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+}
 
-    const now = Date.now();
-    let postConnectPayload: unknown | null = null;
-    let customAuthSuccess: Extract<CloudConnectAuthenticateResultV1, { ok: true }> | null = null;
-
-    const writeCredentialFromCustomAuth = async (
-      input: CloudAuthCredentialWriteInputV1,
-    ): Promise<CloudAuthCredentialWriteResultV1> => {
-      const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(input.record);
-      if (!parsed.success) {
-        return {
-          ok: false,
-          code: 'invalid_result',
-          diagnostics: [{ code: 'invalid_credential_record' }],
-        };
+function parseConfigurationValue(
+  field: ConfigurationField,
+  rawValue: string,
+): PluginJsonValueV2 {
+  const schema = field.schema;
+  let value: PluginJsonValueV2;
+  switch (schema.type) {
+    case 'boolean': {
+      const normalized = rawValue.trim().toLowerCase();
+      if (['true', 'yes', 'y', '1'].includes(normalized)) value = true;
+      else if (['false', 'no', 'n', '0'].includes(normalized)) value = false;
+      else throw new Error(`Invalid boolean for '${field.id}'.`);
+      break;
+    }
+    case 'number':
+    case 'integer': {
+      const parsed = Number(rawValue);
+      if (
+        !Number.isFinite(parsed) ||
+        (schema.type === 'integer' && !Number.isInteger(parsed))
+      ) {
+        throw new Error(`Invalid number for '${field.id}'.`);
       }
-      await registerConnectedServiceCredentialRecord({
-        api,
-        credentials,
-        record: parsed.data,
-      });
-      return {
-        ok: true,
-        credentialRef: `${parsed.data.serviceId}/${parsed.data.profileId}`,
-      };
-    };
-
-    const record = await (async () => {
-      const descriptors = resolveConnectDescriptorsFromRegistry(registry);
-      const authIntent = resolveConnectAuthIntent({ targetId: target.id, options, descriptors });
-      const serviceId: ConnectedServiceId = authIntent.serviceId;
-      const descriptor = descriptors.find((candidate) => candidate.id === serviceId)
-        ?? requireConnectedAccountDescriptor(serviceId);
-      if (authIntent.kind === 'token') {
-        if (!descriptor.tokenSetup) {
-          throw new Error(`Connected account does not support token setup: ${serviceId}`);
-        }
-        const promptLabel = resolveTokenPromptLabel(authIntent.tokenKind, descriptor.tokenSetup.promptLabelKey);
-        const identity = descriptor.tokenSetup.identity
-          ? (await promptInput(resolveTokenPromptLabel(authIntent.tokenKind, descriptor.tokenSetup.identity.promptLabelKey))).trim()
-          : null;
-        if (descriptor.tokenSetup.identity && !identity) {
-          throw new Error(resolveMissingTokenError(authIntent.tokenKind, descriptor.tokenSetup.identity.missingValueErrorKey));
-        }
-        const token = (await promptSecretInput(promptLabel)).trim();
-        if (!token) throw new Error(resolveMissingTokenError(authIntent.tokenKind, descriptor.tokenSetup.missingValueErrorKey));
-        return buildConnectedAccountCredentialRecordFromTokenInput({
-          now,
-          serviceId,
-          profileId: options.profileId,
-          token,
-          providerAccountId: identity,
-          providerEmail: identity,
-          descriptor,
-        });
-      }
-
-      const oauth = await target.authenticate({
-        paste: options.paste,
-        device: options.device,
-        noOpen: options.noOpen,
-        timeoutSeconds: options.timeoutSeconds ?? undefined,
-        serviceId,
-        profileId: options.profileId,
-        hostServices: {
-          credentials: { write: writeCredentialFromCustomAuth },
-        },
-      });
-      if (isCloudConnectAuthenticateResultV1(oauth)) {
-        if (!oauth.ok) {
-          throw new Error(formatCloudAuthFailure(oauth));
-        }
-        customAuthSuccess = oauth;
-        return null;
-      }
-      postConnectPayload = oauth;
-
-      return buildConnectedAccountCredentialRecordFromOauthPayload({
-        now,
-        serviceId,
-        profileId: options.profileId,
-        payload: oauth,
-      });
-    })();
-
-    if (record) {
-      console.log(`🚀 Registering ${target.displayName} credential with server (${record.serviceId}/${options.profileId})`);
-      await registerConnectedServiceCredentialRecord({
-        api,
-        credentials,
-        record,
-      });
-      console.log(`✅ ${target.displayName} credential registered with server`);
-    } else if (customAuthSuccess) {
-      console.log(`✅ ${target.displayName} credential handled by custom authenticator (${summarizeCloudAuthSuccess(customAuthSuccess)})`);
+      value = parsed;
+      break;
     }
-
-    if (postConnectPayload !== null) {
-      target.postConnect?.(postConnectPayload);
-    }
-    process.exit(0);
-}
-
-/**
- * Show connection status for all vendors
- */
-async function handleConnectStatus(
-  targets: ReadonlyArray<CloudConnectTarget>,
-  registry: Pick<ResolvedContributionRegistry, 'catalogEntriesById' | 'providerDefinitionsById'>,
-): Promise<void> {
-    console.log(`\n${sectionTitle('Connection status')}\n`);
-
-    // Check if authenticated
-    const credentials = await readCredentials();
-    if (!credentials) {
-        console.log(warn('Not authenticated with Happier'));
-        console.log(`  ${dim(`Please run ${cmd('happier auth login')} first`)}`);
-        process.exit(1);
-    }
-
-    // Create API client
-    const api = await ApiClient.create(credentials);
-
-    for (const target of targets) {
+    case 'array':
+    case 'object':
+    case 'null': {
       try {
-        const serviceIds: ConnectedServiceId[] = resolveConnectTargetServiceIdsFromRegistry(target.id, registry);
-
-        if (serviceIds.length === 0) {
-          console.log(`  ${neutral(`${target.vendorDisplayName}: not supported`)}`);
-          continue;
-        }
-
-        const allProfiles = (await Promise.all(serviceIds.map(async (serviceId) => {
-          const { profiles } = await api.listConnectedServiceProfiles({ serviceId });
-          return profiles;
-        }))).flat();
-
-        const connected = allProfiles.filter((p) => p.status === 'connected');
-        if (connected.length === 0) {
-          const needsReauth = allProfiles.length > 0;
-          const label = needsReauth ? 'needs re-auth' : 'not connected';
-          console.log(`  ${(needsReauth ? warn : neutral)(`${target.vendorDisplayName}: ${label}`)}`);
-          continue;
-        }
-
-        const primary = connected[0]!;
-        const userInfo = primary.providerEmail ? gray(` (${primary.providerEmail})`) : '';
-        console.log(`  ${ok(`${target.vendorDisplayName}: connected`)}${userInfo}`);
-      } catch (error) {
-        if (process.env.DEBUG) {
-          console.error(gray(`[debug] failed to check ${target.vendorDisplayName} connection:`), error);
-        }
-        console.log(`  ${warn(`${target.vendorDisplayName}: unknown (check failed)`)}`);
+        value = JSON.parse(rawValue) as PluginJsonValueV2;
+      } catch {
+        throw new Error(`Invalid JSON for '${field.id}'.`);
       }
+      break;
     }
-
-    console.log('');
-    const exampleVendorId = targets[0]?.id ?? '<vendor>';
-    console.log(dim(`To connect a vendor, run: ${cmd('happier connect <vendor>')}`));
-    console.log(dim(`Example: ${cmd(`happier connect ${exampleVendorId}`)}`));
-    console.log('');
+    default:
+      value = rawValue;
+  }
+  if (
+    schema.enum &&
+    !schema.enum.some(
+      (candidate) => JSON.stringify(candidate) === JSON.stringify(value),
+    )
+  ) {
+    throw new Error(`Value for '${field.id}' is not an allowed option.`);
+  }
+  if (
+    schema.const !== undefined &&
+    JSON.stringify(schema.const) !== JSON.stringify(value)
+  ) {
+    throw new Error(`Value for '${field.id}' does not match its fixed value.`);
+  }
+  return value;
 }
 
-export async function handleConnectCliCommand(context: CommandContext): Promise<void> {
+function normalizeConfigurationJsonValue(value: unknown): PluginJsonValueV2 {
+  return PluginJsonValueV2Schema.parse(value);
+}
+
+async function promptConfiguration(
+  description: ConfigurationDescription,
+): Promise<
+  Readonly<{
+    values: Readonly<Record<string, PluginJsonValueV2>>;
+    secretValues: Readonly<Record<string, string>>;
+  }>
+> {
+  const configuration =
+    'configuration' in description.mode
+      ? description.mode.configuration
+      : undefined;
+  if (!configuration) {
+    throw new Error('Daemon requested undeclared connected-account configuration.');
+  }
+  const values: Record<string, PluginJsonValueV2> = {};
+  const secretValues: Record<string, string> = {};
+  const configuredSecretFieldIds = new Set(
+    description.configuration.configuredSecretFieldIds,
+  );
+  const fields = [...configuration.fields].sort((left, right) => {
+    const order =
+      (left.presentation?.order ?? Number.POSITIVE_INFINITY) -
+      (right.presentation?.order ?? Number.POSITIVE_INFINITY);
+    return order || left.id.localeCompare(right.id);
+  });
+
+  for (const field of fields) {
+    const current = description.configuration.values[field.id] ?? field.default;
+    if (field.presentation?.hidden === true) {
+      if (field.secret === true) {
+        if (field.required === true && !configuredSecretFieldIds.has(field.id)) {
+          throw new Error(`Missing required hidden secret '${field.id}'.`);
+        }
+      } else if (current !== undefined) {
+        values[field.id] = normalizeConfigurationJsonValue(current);
+      } else if (field.required === true) {
+        throw new Error(`Missing required hidden value '${field.id}'.`);
+      }
+      continue;
+    }
+    const title = localizedText(field.title) || field.id;
+    if (field.secret === true) {
+      const secret = await promptSecretInput(
+        `${title}${configuredSecretFieldIds.has(field.id) ? ' (blank keeps current)' : ''}: `,
+      );
+      if (secret.length > 0) {
+        secretValues[field.id] = secret;
+      } else if (
+        field.required === true &&
+        !configuredSecretFieldIds.has(field.id)
+      ) {
+        throw new Error(`Missing required configuration '${field.id}'.`);
+      }
+      continue;
+    }
+    const currentText = formatJsonValue(
+      current === undefined
+        ? undefined
+        : normalizeConfigurationJsonValue(current),
+    );
+    const input = await promptInput(
+      `${title}${currentText ? ` [${currentText}]` : ''}: `,
+    );
+    const selected = input.length > 0 ? input : currentText;
+    if (!selected) {
+      if (field.required === true) {
+        throw new Error(`Missing required configuration '${field.id}'.`);
+      }
+      continue;
+    }
+    values[field.id] = parseConfigurationValue(field, selected);
+  }
+  return Object.freeze({
+    values: Object.freeze(values),
+    secretValues: Object.freeze(secretValues),
+  });
+}
+
+function toControlTarget(
+  target: ConfigurationTarget,
+): Parameters<ConnectedAccountDaemonClient['control']>[0] extends infer _T
+  ? Extract<
+      Parameters<ConnectedAccountDaemonClient['control']>[0],
+      { operation: 'readConfiguration' }
+    >['target']
+  : never {
+  switch (target.kind) {
+    case 'service':
+      return target;
+    case 'account':
+      return { kind: 'account', account: target.account };
+    case 'attempt':
+      return { kind: 'attempt', attemptId: target.attemptId };
+  }
+}
+
+async function replaceRequiredConfiguration(params: Readonly<{
+  client: ConnectedAccountDaemonClient;
+  response: Extract<AttemptResponse, { status: 'configurationRequired' }>;
+}>): Promise<string | undefined> {
+  const read = await params.client.control({
+    operation: 'readConfiguration',
+    target: toControlTarget(params.response.target),
+  });
+  if (read.status !== 'configuration') {
+    throw new Error(
+      `Connected-account configuration unavailable (${controlFailureCode(read)}).`,
+    );
+  }
+  const replacement = await promptConfiguration(read);
+  const committed = await params.client.control({
+    operation: 'replaceConfiguration',
+    target: toControlTarget(read.target),
+    expectedRevision: read.configuration.revision,
+    values: replacement.values,
+    secretValues: replacement.secretValues,
+  });
+  if (committed.status !== 'configurationCommitted') {
+    throw new Error(
+      `Connected-account configuration was not committed (${controlFailureCode(committed)}).`,
+    );
+  }
+  return committed.configuration.revision ?? undefined;
+}
+
+function describeFailure(response: AttemptResponse): string {
+  if ('code' in response) return response.code;
+  return `connected_account_${response.status}`;
+}
+
+function controlFailureCode(response: ControlResponse): string {
+  return 'code' in response
+    ? response.code
+    : `connected_account_control_${response.status}_unexpected`;
+}
+
+async function continueAuthentication(params: Readonly<{
+  client: ConnectedAccountDaemonClient;
+  described: DescribedService;
+  intent: AuthenticationIntent;
+  initial: AttemptResponse;
+  options: ConnectParsedOptions;
+}>): Promise<Extract<AttemptResponse, { status: 'connected' }>> {
+  const startedAt = Date.now();
+  const timeoutMs = (params.options.timeoutSeconds ?? 10 * 60) * 1000;
+  let response = params.initial;
+  let renderedDeviceAttemptId: string | null = null;
+  const resolveAuthenticationMode = () => {
+    const reconnectAccount =
+      params.intent.kind === 'reconnect' ? params.intent.account : null;
+    const authenticationModeId =
+      params.intent.kind === 'connect'
+        ? params.intent.modeId
+        : params.described.accounts.find(
+            (account) =>
+              reconnectAccount !== null &&
+              account.ref.accountId === reconnectAccount.accountId &&
+              sameService(
+                account.ref.service,
+                reconnectAccount.service,
+              ),
+          )?.authenticationModeId;
+    return params.described.descriptor.authentication.modes.find(
+      (candidate) => candidate.id === authenticationModeId,
+    );
+  };
+
+  for (let step = 0; step < 1_000; step += 1) {
+    if (Date.now() - startedAt > timeoutMs) {
+      if ('attemptId' in response && response.attemptId) {
+        await params.client
+          .authenticate({ operation: 'cancel', attemptId: response.attemptId })
+          .catch(() => undefined);
+      }
+      throw new Error('Connected-account authentication timed out.');
+    }
+    switch (response.status) {
+      case 'starting':
+        await delay(100);
+        response = await params.client.authenticate({
+          operation: 'read',
+          attemptId: response.attemptId,
+        });
+        break;
+      case 'awaitingManual': {
+        const mode = resolveAuthenticationMode();
+        if (!mode || mode.kind !== 'manual') {
+          throw new Error('Daemon returned an undeclared manual authentication phase.');
+        }
+        response = await params.client.authenticate({
+          operation: 'submitManual',
+          attemptId: response.attemptId,
+          fields: await promptManualFields(mode),
+        });
+        break;
+      }
+      case 'awaitingOAuth': {
+        if (!response.authorizationUrl) {
+          throw new Error('Daemon did not provide an OAuth authorization URL.');
+        }
+        console.log(`\n${dim('Open this authorization URL:')}\n${response.authorizationUrl}\n`);
+        if (!params.options.noOpen) {
+          await openBrowser(response.authorizationUrl);
+        }
+        const pasted = await promptInput('Paste the final redirect URL: ');
+        const parsed = parseOauthRedirectPaste({ pasted });
+        if (!parsed.ok) {
+          throw new Error(`Invalid OAuth callback (${parsed.error}).`);
+        }
+        response = await params.client.authenticate({
+          operation: 'completeOAuth',
+          attemptId: response.attemptId,
+          completion: {
+            code: parsed.code,
+            callbackUrl: response.callbackUrl,
+            state: parsed.state,
+          },
+        });
+        break;
+      }
+      case 'awaitingDeviceAuthorization': {
+        if (renderedDeviceAttemptId !== response.attemptId) {
+          const verificationUrl =
+            response.verificationUriComplete ?? response.verificationUri;
+          console.log(
+            [
+              '',
+              response.userCode
+                ? `Device code: ${response.userCode}`
+                : 'Complete device authorization in the browser.',
+              verificationUrl ? `Verification URL: ${verificationUrl}` : null,
+              '',
+            ]
+              .filter((line): line is string => line !== null)
+              .join('\n'),
+          );
+          if (verificationUrl && !params.options.noOpen) {
+            await openBrowser(verificationUrl);
+          }
+          renderedDeviceAttemptId = response.attemptId;
+        }
+        await delay(Math.max(250, response.pollIntervalMs ?? 1_000));
+        response = await params.client.authenticate({
+          operation: 'pollDevice',
+          attemptId: response.attemptId,
+        });
+        break;
+      }
+      case 'pending': {
+        const mode = resolveAuthenticationMode();
+        if (!mode) {
+          throw new Error(
+            'Daemon returned a pending phase for an undeclared authentication mode.',
+          );
+        }
+        await delay(Math.max(250, response.retryAfterMs));
+        response = await params.client.authenticate({
+          operation: mode.kind === 'oauthDeviceCode'
+            ? 'pollDevice'
+            : 'reconcile',
+          attemptId: response.attemptId,
+        });
+        break;
+      }
+      case 'configurationRequired': {
+        const revision = await replaceRequiredConfiguration({
+          client: params.client,
+          response,
+        });
+        if (response.attemptId) {
+          response = await params.client.authenticate({
+            operation: 'continueConnect',
+            attemptId: response.attemptId,
+            ...(revision ? { expectedConfigurationRevision: revision } : {}),
+          });
+        } else if (params.intent.kind === 'connect') {
+          response = await params.client.authenticate({
+            operation: 'beginConnect',
+            service: params.intent.service,
+            modeId: params.intent.modeId,
+            ...(revision ? { expectedConfigurationRevision: revision } : {}),
+          });
+        } else {
+          response = await params.client.authenticate({
+            operation: 'beginReconnect',
+            account: params.intent.account,
+            ...(revision ? { expectedConfigurationRevision: revision } : {}),
+          });
+        }
+        break;
+      }
+      case 'outcomeUnknown':
+        response = await params.client.authenticate({
+          operation: 'reconcile',
+          attemptId: response.attemptId,
+        });
+        break;
+      case 'cleanupPending':
+        response = await params.client.authenticate({
+          operation: 'cancel',
+          attemptId: response.attemptId,
+        });
+        break;
+      case 'connected':
+        return response;
+      case 'cancelled':
+      case 'reconnectRequired':
+      case 'rejected':
+      case 'unavailable':
+      case 'conflict':
+        throw new Error(
+          `Connected-account authentication failed (${describeFailure(response)}).`,
+        );
+    }
+  }
+  throw new Error('Connected-account authentication exceeded its operation bound.');
+}
+
+async function describeService(
+  client: ConnectedAccountDaemonClient,
+  target: ConnectTarget,
+): Promise<DescribedService> {
+  const response = await client.control({
+    operation: 'describeService',
+    service: target.service,
+  });
+  if (response.status !== 'described') {
+    throw new Error(
+      `Connected-account service unavailable (${controlFailureCode(response)}).`,
+    );
+  }
+  if (!sameService(response.service, target.service)) {
+    throw new Error('Daemon described a different connected-account service.');
+  }
+  return response;
+}
+
+async function handleConnectTarget(
+  target: ConnectTarget,
+  options: ConnectParsedOptions,
+): Promise<void> {
+  console.log(
+    `\n${banner(`Connecting ${localizedText(target.descriptor.title) || target.commandId}`, {
+      subtitle: 'Happier daemon',
+    })}\n`,
+  );
+  const client = await createDaemonClient();
+  const described = await describeService(client, target);
+  const accountId =
+    options.accountId ??
+    (options.profileId !== 'default' ? options.profileId : null);
+  const intent: AuthenticationIntent = accountId
+    ? {
+        kind: 'reconnect',
+        account: {
+          service: target.service,
+          accountId,
+        },
+      }
+    : {
+        kind: 'connect',
+        service: target.service,
+        modeId: modeSelectedByFlags(described, target, options).id,
+      };
+  const initial =
+    intent.kind === 'reconnect'
+      ? await client.authenticate({
+          operation: 'beginReconnect',
+          account: intent.account,
+        })
+      : await client.authenticate({
+          operation: 'beginConnect',
+          service: intent.service,
+          modeId: intent.modeId,
+        });
+  const connected = await continueAuthentication({
+    client,
+    described,
+    intent,
+    initial,
+    options,
+  });
+  console.log(
+    ok(
+      `${localizedText(described.descriptor.title) || target.commandId}: connected (${connected.account.accountId})`,
+    ),
+  );
+}
+
+function accountPresentation(
+  account: QualifiedConnectedAccountProfileV4,
+): string {
+  return (
+    account.providerIdentity?.email ??
+    account.providerIdentity?.accountId ??
+    account.displayName ??
+    account.ref.accountId
+  );
+}
+
+async function handleConnectStatus(targets: readonly ConnectTarget[]): Promise<void> {
+  console.log(`\n${sectionTitle('Connection status')}\n`);
+  const client = await createDaemonClient();
+  for (const target of targets) {
+    const fallbackTitle =
+      localizedText(target.descriptor.title) || target.commandId;
+    try {
+      const described = await describeService(client, target);
+      const title = localizedText(described.descriptor.title) || fallbackTitle;
+      const connected = described.accounts.filter(
+        (account) => account.status === 'connected',
+      );
+      if (connected.length === 0) {
+        const needsReconnect = described.accounts.length > 0;
+        console.log(
+          `  ${
+            (needsReconnect ? warn : neutral)(
+              `${title}: ${needsReconnect ? 'needs re-auth' : 'not connected'}`,
+            )
+          }`,
+        );
+        continue;
+      }
+      console.log(
+        `  ${ok(`${title}: connected`)}${gray(
+          ` (${connected.map(accountPresentation).join(', ')})`,
+        )}`,
+      );
+    } catch (error) {
+      if (process.env.DEBUG) {
+        console.error(
+          gray(`[debug] failed to check ${fallbackTitle} connection:`),
+          error,
+        );
+      }
+      console.log(`  ${warn(`${fallbackTitle}: unknown (check failed)`)}`);
+    }
+  }
+  console.log('');
+}
+
+export async function handleConnectCommand(args: string[]): Promise<void> {
+  const { subcommand, options } = parseConnectArgs(args);
+  const targets = await loadConnectTargets();
+
+  if (
+    !subcommand ||
+    subcommand === 'help' ||
+    subcommand === '--help' ||
+    subcommand === '-h'
+  ) {
+    showConnectHelp(targets);
+    return;
+  }
+  if (subcommand.toLowerCase() === 'status') {
+    await handleConnectStatus(targets);
+    return;
+  }
+  const target = findTarget(targets, subcommand);
+  if (!target) {
+    throw new Error(`Unknown or ambiguous connected-account service: ${subcommand}`);
+  }
+  await handleConnectTarget(target, options);
+}
+
+export async function handleConnectCliCommand(
+  context: CommandContext,
+): Promise<void> {
   try {
     await handleConnectCommand(context.args.slice(1));
   } catch (error) {
-    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
-    if (process.env.DEBUG) {
-      console.error(error);
-    }
+    console.error(
+      errorFrame('Error:', [
+        error instanceof Error ? error.message : 'Unknown error',
+      ]),
+    );
+    if (process.env.DEBUG) console.error(error);
     process.exit(1);
   }
 }

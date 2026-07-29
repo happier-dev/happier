@@ -55,13 +55,16 @@ export function validatePetManifestBytes(
     return { ok: false, issues: [issue('manifest_invalid_json', 'Manifest is not valid JSON.')] };
   }
 
+  const rawSpritesheetPath = raw && typeof raw === 'object' && 'spritesheetPath' in raw
+    ? (raw as { spritesheetPath?: unknown }).spritesheetPath
+    : undefined;
+  if (typeof rawSpritesheetPath === 'string' && !isSafePetSpritesheetRelativePath(rawSpritesheetPath)) {
+    return { ok: false, issues: [issue('spritesheet_path_unsafe', 'Spritesheet path must be a safe relative PNG or WebP path.')] };
+  }
+
   const parsed = PetPackageManifestV1Schema.safeParse(raw);
   if (!parsed.success) {
     return { ok: false, issues: [issue('manifest_invalid_shape', 'Manifest does not match the pet package contract.')] };
-  }
-
-  if (!isSafePetSpritesheetRelativePath(parsed.data.spritesheetPath)) {
-    return { ok: false, issues: [issue('spritesheet_path_unsafe', 'Spritesheet path must be a safe relative PNG or WebP path.')] };
   }
 
   return { ok: true, manifest: parsed.data };

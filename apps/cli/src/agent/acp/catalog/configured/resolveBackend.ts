@@ -8,24 +8,32 @@ import type {
   AcpBackendCapabilitiesV1,
   AcpCatalogTransportProfileV1,
   McpValueRefV1,
+  PluginSystemToolContributionV1,
 } from '@happier-dev/protocol';
-import type {
-  AcpBootstrapV1,
-  AcpMcpInputPolicyV1,
-  AcpMessageMetaHooksV1,
-  AcpPermissionModeArgvSpecV1,
-  AcpTimeoutsV1,
-  AcpTransportLifecycleV1,
-} from '@happier-dev/plugin-sdk';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { loadInstalledPlugins, type LoadedPlugin } from '@/plugins/discovery/load/installed';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 import { readAcpCatalogSettingsFromAccountSettings } from '../readAcpCatalogSettingsFromAccountSettings';
 import { normalizePluginBackendContributionAcpDefinition } from '../../runtime/definition/plugin';
-import type { AcpRuntimeDefinitionV1 } from '../../runtime/definition/_types';
+import type {
+  AcpRuntimeDefinition,
+  HostAcpMcpInputPolicy,
+  HostAcpMessageMetaHooks,
+  HostAcpPermissionModeArgvSpec,
+  HostAcpTimeouts,
+  HostAcpTransportLifecycle,
+} from '../../runtime/definition/_types';
 
 export type ResolvedConfiguredAcpBackend = Readonly<{
   backendId: string;
+  source: Readonly<
+    | { kind: 'account_configured' }
+    | {
+        kind: 'plugin_contributed';
+        pluginId: string;
+        systemTools: readonly PluginSystemToolContributionV1[];
+      }
+  >;
   name: string;
   title: string;
   description?: string;
@@ -38,9 +46,11 @@ export type ResolvedConfiguredAcpBackend = Readonly<{
         args: ReadonlyArray<string>;
       }
     | {
-        kind: 'agent-cli';
-        agentId: string;
+        kind: 'system-tool';
+        toolId: string;
+        purpose: string;
         args: ReadonlyArray<string>;
+        env?: Readonly<Record<string, string>>;
       }
   >;
   env: Readonly<Record<string, McpValueRefV1>>;
@@ -49,14 +59,13 @@ export type ResolvedConfiguredAcpBackend = Readonly<{
   capabilities: AcpBackendCapabilitiesV1;
   defaultMode?: string;
   defaultModel?: string;
-  timeouts?: AcpTimeoutsV1;
+  timeouts?: HostAcpTimeouts;
   fsEnabled?: boolean;
-  transportLifecycle?: AcpTransportLifecycleV1;
-  permissionModeArgv?: AcpPermissionModeArgvSpecV1;
+  transportLifecycle?: HostAcpTransportLifecycle;
+  permissionModeArgv?: HostAcpPermissionModeArgvSpec;
   sessionIdHeaderName?: string;
-  bootstrap?: AcpBootstrapV1;
-  messageMeta?: AcpMessageMetaHooksV1;
-  mcp?: AcpMcpInputPolicyV1;
+  messageMeta?: HostAcpMessageMetaHooks;
+  mcp?: HostAcpMcpInputPolicy;
 }>;
 
 type AccountSettingsConfiguredAcpBackend = ReturnType<typeof readAcpCatalogSettingsFromAccountSettings>['backends'][number];
@@ -70,6 +79,7 @@ function resolveConfiguredAcpBackendFromAccountSettingsEntry(
 
   return {
     backendId: backend.id,
+    source: { kind: 'account_configured' },
     name: backend.name,
     title: backend.title,
     description: backend.description,
@@ -122,7 +132,7 @@ function parseLaunchLiteralEnv(launchEnv: unknown): Record<string, McpValueRefV1
   return out;
 }
 
-function resolvePluginAcpAuth(definition: AcpRuntimeDefinitionV1): AcpBackendAuthConfigV1 | undefined | null {
+function resolvePluginAcpAuth(definition: AcpRuntimeDefinition): AcpBackendAuthConfigV1 | undefined | null {
   if (!definition.auth?.config) {
     return undefined;
   }
@@ -144,7 +154,7 @@ function coerceSupportHintFromFinalFlag(value: unknown): AcpBackendCapabilitiesV
 }
 
 function resolveFinalPluginAcpCapabilities(
-  definition: AcpRuntimeDefinitionV1,
+  definition: AcpRuntimeDefinition,
 ): AcpBackendCapabilitiesV1 {
   const capabilities = definition.capabilities;
 
@@ -178,7 +188,7 @@ function mergePluginFinalAcpEnv(
 }
 
 function resolveFinalPluginAcpLaunch(
-  definition: AcpRuntimeDefinitionV1,
+  definition: AcpRuntimeDefinition,
 ): ResolvedConfiguredAcpBackend['launch'] | null {
   const transport = definition.transport;
   if (transport.kind !== 'stdio') return null;
@@ -192,13 +202,15 @@ function resolveFinalPluginAcpLaunch(
     };
   }
 
-  if (transport.launch.kind !== 'agent-cli') return null;
-  const agentId = readOptionalString(transport.launch.agentId);
-  if (!agentId) return null;
+  if (transport.launch.kind !== 'system-tool') return null;
+  const toolId = readOptionalString(transport.launch.toolId);
+  if (!toolId) return null;
   return {
-    kind: 'agent-cli',
-    agentId,
+    kind: 'system-tool',
+    toolId,
+    purpose: transport.launch.purpose,
     args: [...(transport.launch.args ?? [])],
+    ...(transport.launch.env ? { env: { ...transport.launch.env } } : {}),
   };
 }
 
@@ -206,8 +218,9 @@ function resolveFinalPluginAcpBackendDefinition(
   backendDefinitionRecord: Readonly<Record<string, unknown>>,
   backendId: string,
   pluginId?: string,
+  systemTools: readonly PluginSystemToolContributionV1[] = [],
 ): ResolvedConfiguredAcpBackend | null {
-  let definition: AcpRuntimeDefinitionV1;
+  let definition: AcpRuntimeDefinition;
   try {
     definition = normalizePluginBackendContributionAcpDefinition({
       pluginId,
@@ -232,10 +245,17 @@ function resolveFinalPluginAcpBackendDefinition(
 
   return {
     backendId,
+    source: pluginId
+      ? {
+          kind: 'plugin_contributed',
+          pluginId,
+          systemTools: Object.freeze(systemTools.map((definition) => Object.freeze({ ...definition }))),
+        }
+      : { kind: 'account_configured' },
     name,
     title,
     description: readOptionalString(definition.ux.description),
-    command: launch.kind === 'executable' ? launch.command : launch.agentId,
+    command: launch.kind === 'executable' ? launch.command : launch.toolId,
     args: [...launch.args],
     launch,
     env,
@@ -249,7 +269,6 @@ function resolveFinalPluginAcpBackendDefinition(
     ...(definition.transportLifecycle ? { transportLifecycle: definition.transportLifecycle } : {}),
     ...(definition.permissionModeArgv ? { permissionModeArgv: definition.permissionModeArgv } : {}),
     ...(definition.sessionIdHeaderName ? { sessionIdHeaderName: definition.sessionIdHeaderName } : {}),
-    ...(definition.bootstrap ? { bootstrap: definition.bootstrap } : {}),
     ...(definition.messageMeta ? { messageMeta: definition.messageMeta } : {}),
     ...(definition.mcp ? { mcp: definition.mcp } : {}),
   };
@@ -259,11 +278,17 @@ export function resolveConfiguredAcpBackendFromPluginBackendDefinition(
   backendDefinition: Readonly<Record<string, unknown>> | null,
   backendId: string,
   pluginId?: string,
+  systemTools: readonly PluginSystemToolContributionV1[] = [],
 ): ResolvedConfiguredAcpBackend | null {
   if (!backendDefinition) return null;
   const backendDefinitionRecord = asRecord(backendDefinition);
   if (!backendDefinitionRecord) return null;
-  const finalDefinition = resolveFinalPluginAcpBackendDefinition(backendDefinitionRecord, backendId, pluginId);
+  const finalDefinition = resolveFinalPluginAcpBackendDefinition(
+    backendDefinitionRecord,
+    backendId,
+    pluginId,
+    systemTools,
+  );
   if (finalDefinition) return finalDefinition;
   return null;
 }
@@ -272,23 +297,34 @@ async function listPluginConfiguredAcpBackends(params: Readonly<{
   happyHomeDir?: string;
 }>): Promise<ReadonlyArray<ResolvedConfiguredAcpBackend>> {
   const mergedRegistry = await resolveMergedContributionRegistry({ happyHomeDir: params.happyHomeDir });
-  const loadedPlugins = await loadInstalledPlugins({ happyHomeDir: params.happyHomeDir });
-  const loadedPluginsById = new Map<string, LoadedPlugin>();
-  for (const plugin of loadedPlugins.loadedPlugins) {
-    loadedPluginsById.set(plugin.pluginId, plugin);
-  }
+  return listPluginConfiguredAcpBackendsFromRegistry(mergedRegistry);
+}
+
+export function listPluginConfiguredAcpBackendsFromRegistry(
+  mergedRegistry: Pick<ResolvedContributionRegistry, 'agents' | 'systemTools'>,
+): ReadonlyArray<ResolvedConfiguredAcpBackend> {
   const resolved: ResolvedConfiguredAcpBackend[] = [];
-  for (const backendContribution of mergedRegistry.backendDefinitionsById.values()) {
-    if (backendContribution.provenance !== 'external' || !backendContribution.pluginId) continue;
-    const plugin = loadedPluginsById.get(backendContribution.pluginId);
-    if (!plugin) continue;
-    const rawBackend = plugin.manifest.contributes.backends.find((entry) => entry.id === backendContribution.id) ?? null;
-    const backend = resolveConfiguredAcpBackendFromPluginBackendDefinition(rawBackend, backendContribution.id, backendContribution.pluginId);
+  for (const agentContribution of mergedRegistry.agents) {
+    if (
+      agentContribution.provenance !== 'external'
+      || !agentContribution.pluginId
+      || agentContribution.richDefinition?.provenance !== 'external'
+    ) continue;
+    const rawAgent = agentContribution.richDefinition.definition;
+    const systemTools = (mergedRegistry.systemTools ?? [])
+      .filter((tool) => tool.pluginId === agentContribution.pluginId)
+      .map((tool) => tool.definition);
+    const backend = resolveConfiguredAcpBackendFromPluginBackendDefinition(
+      rawAgent,
+      agentContribution.id,
+      agentContribution.pluginId,
+      systemTools,
+    );
     if (backend) {
       resolved.push(backend);
     }
   }
-  return resolved;
+  return Object.freeze(resolved);
 }
 
 export async function listConfiguredAcpBackendsFromAccountSettingsOrPlugins(params: Readonly<{

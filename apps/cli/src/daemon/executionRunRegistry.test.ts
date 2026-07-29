@@ -5,13 +5,17 @@ import { join } from 'node:path';
 
 describe('executionRunRegistry', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
+  const originalPublicReleaseChannel = process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL;
   const originalReleaseRing = process.env.HAPPIER_RELEASE_RING;
+  const originalReleaseChannel = process.env.HAPPIER_RELEASE_CHANNEL;
   let happyHomeDir: string;
 
   beforeEach(() => {
     happyHomeDir = join(tmpdir(), `happier-cli-exec-run-registry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     process.env.HAPPIER_HOME_DIR = happyHomeDir;
+    delete process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL;
     delete process.env.HAPPIER_RELEASE_RING;
+    delete process.env.HAPPIER_RELEASE_CHANNEL;
     vi.resetModules();
   });
 
@@ -24,10 +28,20 @@ describe('executionRunRegistry', () => {
     } else {
       process.env.HAPPIER_HOME_DIR = originalHappyHomeDir;
     }
+    if (originalPublicReleaseChannel === undefined) {
+      delete process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL;
+    } else {
+      process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL = originalPublicReleaseChannel;
+    }
     if (originalReleaseRing === undefined) {
       delete process.env.HAPPIER_RELEASE_RING;
     } else {
       process.env.HAPPIER_RELEASE_RING = originalReleaseRing;
+    }
+    if (originalReleaseChannel === undefined) {
+      delete process.env.HAPPIER_RELEASE_CHANNEL;
+    } else {
+      process.env.HAPPIER_RELEASE_CHANNEL = originalReleaseChannel;
     }
   });
 
@@ -65,6 +79,79 @@ describe('executionRunRegistry', () => {
     const parsed = JSON.parse(raw);
     expect(parsed.happyHomeDir).toBe(configuration.happyHomeDir);
     expect(parsed.runId).toBe('run_1');
+  });
+
+  it('keeps predecessor launch evidence owner-local and omits it from outward marker lists', async () => {
+    const { configuration } = await import('@/configuration');
+    const {
+      listExecutionRunMarkers,
+      listExecutionRunMarkersForRehydration,
+    } = await import('./executionRunRegistry');
+    const runId = 'run_22222222-2222-4222-8222-222222222222';
+    const markerDir = join(configuration.happyHomeDir, 'tmp', 'daemon-execution-runs');
+    mkdirSync(markerDir, { recursive: true });
+    writeFileSync(join(markerDir, `run-${runId}.json`), JSON.stringify({
+      happyHomeDir: configuration.happyHomeDir,
+      pid: 123,
+      happySessionId: 'session-1',
+      runId,
+      callId: 'call-1',
+      sidechainId: 'side-1',
+      intent: 'review',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+      runClass: 'bounded',
+      ioMode: 'request_response',
+      retentionPolicy: 'resumable',
+      status: 'running',
+      startedAtMs: 1,
+      updatedAtMs: 1,
+      executionRunConnectedServicesLaunchV1: {
+        v: 1,
+        runKey: 'execution_run:11111111-1111-4111-8111-111111111111',
+        agentId: 'codex',
+        connectedServicesBindings: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': {
+              source: 'connected',
+              selection: 'profile',
+              profileId: 'team',
+            },
+          },
+        },
+        brokerSelectionIdentity: 'sk-must-not-leave-owner',
+        runtimeAccountIdentitySelections: [{
+          serviceId: 'openai-codex',
+          profileId: 'team',
+          groupId: null,
+          groupGeneration: null,
+          providerAccountId: 'ghp_must_not_leave_owner',
+          accountLabel: 'Bearer must-not-leave-owner',
+          source: 'spawn_selection',
+        }],
+        connectedServiceSelectionsJson: JSON.stringify([{
+          kind: 'profile',
+          serviceId: 'openai-codex',
+          profileId: 'team',
+        }]),
+        sessionDirectory: '/workspace',
+        materializedRoot: null,
+      },
+    }));
+
+    const ownerLocal = await listExecutionRunMarkersForRehydration();
+    expect(ownerLocal[0]?.executionRunConnectedServicesLaunchV1).toMatchObject({
+      brokerSelectionIdentity: 'sk-must-not-leave-owner',
+      runtimeAccountIdentitySelections: [{
+        providerAccountId: 'ghp_must_not_leave_owner',
+        accountLabel: 'Bearer must-not-leave-owner',
+      }],
+    });
+
+    const outward = await listExecutionRunMarkers();
+    expect(outward).toHaveLength(1);
+    expect(outward[0]).not.toHaveProperty('executionRunConnectedServicesLaunchV1');
+    expect(JSON.stringify(outward)).not.toContain('must-not-leave-owner');
   });
 
   it('writes markers into a channel-scoped tmp dir for the dev public ring', async () => {

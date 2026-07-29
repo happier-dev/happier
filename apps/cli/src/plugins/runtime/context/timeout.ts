@@ -1,4 +1,4 @@
-import type { TimeoutBudgetV1, TimeoutRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+import type { TimeoutBudgetV1, TimeoutRuntimeServiceV1 } from '@happier-dev/plugin-sdk/experimental/timeout';
 
 import { createPluginAbortService } from './abort';
 

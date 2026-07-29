@@ -96,6 +96,22 @@ function decodeAcpLikeData(params: Readonly<{
     ...(sidechainId ? { sidechainId } : {}),
   };
 
+  if (type === 'text') {
+    const text = readNonEmptyString(params.data.text);
+    if (!text) return null;
+
+    const role = readNonEmptyString(params.data.role);
+    if (role === 'system') return null;
+    if (role === 'user') {
+      return { semanticRole: 'user', kind: 'user_message', text, ...commonFields };
+    }
+    if (role === 'reasoning') {
+      return { semanticRole: 'reasoning', kind: 'reasoning', text, ...commonFields };
+    }
+    if (role !== null && role !== 'assistant' && role !== 'agent') return null;
+    return { semanticRole: 'assistant', kind: 'assistant_message', text, ...commonFields };
+  }
+
   if (type === 'message' || type === 'agent_message') {
     const text = readFirstNonEmptyString(params.data, ['message', 'text']);
     const messageRole = resolveTranscriptBodySessionMessageRole({
@@ -228,7 +244,10 @@ export function decodeTranscriptBody(value: unknown): DecodedTranscriptBody | nu
   if (contentType === 'acp' || contentType === 'codex') {
     const data = asRecord(content.data);
     if (!data) return null;
-    const provider = readNonEmptyString(content.agentId) ?? (contentType === 'codex' ? 'codex' : undefined);
+    const provider =
+      readNonEmptyString(content.agentId)
+      ?? readNonEmptyString(content.provider)
+      ?? (contentType === 'codex' ? 'codex' : undefined);
     return decodeAcpLikeData({
       data,
       protocol: contentType,

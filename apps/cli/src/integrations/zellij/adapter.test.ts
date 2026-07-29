@@ -169,7 +169,7 @@ describe('createZellijTerminalHostAdapter', () => {
     }));
   });
 
-  it('does not wait for a delayed pre-submit collapsed marker before pressing Enter', async () => {
+  it('does not wait for a delayed pre-submit collapsed marker and settles once after Enter', async () => {
     const prompt = Array.from({ length: 6_000 }, (_, index) => `line ${index} ${'x'.repeat(36)}`).join('\n');
     const waits: number[] = [];
     let dumpCount = 0;
@@ -228,7 +228,7 @@ describe('createZellijTerminalHostAdapter', () => {
       paneId: 'terminal_42',
     });
 
-    expect(waits).toEqual([]);
+    expect(waits).toEqual([50]);
     expect(actions.dumpScreen).toHaveBeenCalledTimes(1);
     expect(actions.sendEnter).toHaveBeenCalledTimes(1);
   });
@@ -485,6 +485,38 @@ describe('createZellijTerminalHostAdapter', () => {
     expect(actions.pasteText).toHaveBeenCalledWith(expect.objectContaining({ paneId: 'terminal_42' }));
     expect(actions.writeBytesChunked).not.toHaveBeenCalled();
     expect(actions.sendEnter).toHaveBeenCalledWith(expect.objectContaining({ paneId: 'terminal_42' }));
+  });
+
+  it('interrupts the exact live pane through the terminal-host contract', async () => {
+    const actions = createActions();
+    const adapter = createTestZellijAdapter({
+      zellijBinary: '/tools/zellij',
+      socketDir: '/tmp/zellij-sock',
+      actions,
+    });
+
+    await expect(adapter.interruptTurn?.({
+      kind: 'zellij',
+      sessionName: 'session-a',
+      paneId: 'terminal_42',
+      socketDir: '/tmp/zellij-sock',
+      attachMetadata: {
+        attachStrategy: 'terminal_host',
+        topology: 'exclusive',
+        locality: 'same_machine',
+        maxClients: null,
+        requiresLocalAttachmentInfo: true,
+        liveProbe: 'required',
+      },
+    })).resolves.toBeUndefined();
+
+    expect(actions.sendEscape).toHaveBeenCalledWith(expect.objectContaining({
+      zellijBinary: '/tools/zellij',
+      paneId: 'terminal_42',
+      env: expect.objectContaining({
+        ZELLIJ_SOCKET_DIR: '/tmp/zellij-sock',
+      }),
+    }));
   });
 
   it('uses the only matching live command pane when zellij rekeys the tracked pane after launch', async () => {

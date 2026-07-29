@@ -10,18 +10,16 @@ const providerOrServiceIdPattern =
   /(['"])(codex|claude|opencode|gemini|pi|openai-codex|claude-subscription|github|anthropic|openai)\1/gu;
 
 const allowedProviderLiteralFiles: Readonly<Record<string, string>> = {
-  'descriptors/connectedAccountDescriptors.ts':
-    'canonical connected-account descriptors own service ids and OAuth defaults',
   'github/githubConnectedAccountTarget.ts':
     'provider-owned GitHub connected-account target owns the GitHub service id',
   'notifications/dispatchConnectedServiceAccountSwitchNotification.ts':
     'notification copy maps canonical service ids to product display names',
+  'requestAuth/firstPartyConnectedAccountRequestAuthAdapter.ts':
+    'the host-private first-party adapter owns the Codex account header refinement after generated qualified-service resolution',
   'refresh/ConnectedServiceRefreshCoordinator.ts':
     'Codex app-server ChatGPT bridge refresh is the central daemon lifecycle entrypoint for openai-codex',
   'refresh/serviceRefreshers.ts':
-    'central OAuth refreshers own service-id to provider OAuth metadata mapping',
-  'shared/oauthConfig.ts':
-    'legacy OAuth config accessors intentionally wrap canonical service descriptors',
+    'the named old-peer OAuth adapter refines generated-eligible Codex and Claude modes until the supported V2/V3 client-refresh window ends',
 };
 
 async function listSourceFiles(dir: string): Promise<string[]> {

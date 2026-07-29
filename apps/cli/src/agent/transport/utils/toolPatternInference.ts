@@ -71,11 +71,20 @@ export function findToolNameFromInputFields(
   const inputKeys = new Set(Object.keys(input).map(normalizeKey));
   if (inputKeys.size === 0) return null;
 
-  for (const toolPattern of patterns) {
-    const fields = toolPattern.inputFields;
-    if (!fields || fields.length === 0) continue;
-    if (fields.some((field) => inputKeys.has(normalizeKey(field)))) {
-      return toolPattern.name;
+  // `title` is also standard ACP observation metadata. The resolver adds it to
+  // the inference view even when it was not part of the provider's raw input,
+  // so a concrete domain field such as `command` or `path` must win first.
+  // A real title-only tool still resolves on the second pass.
+  for (const allowMetadataOnly of [false, true]) {
+    for (const toolPattern of patterns) {
+      const fields = toolPattern.inputFields;
+      if (!fields || fields.length === 0) continue;
+      const relevantFields = allowMetadataOnly
+        ? fields
+        : fields.filter((field) => normalizeKey(field) !== 'title');
+      if (relevantFields.some((field) => inputKeys.has(normalizeKey(field)))) {
+        return toolPattern.name;
+      }
     }
   }
 
@@ -88,4 +97,3 @@ export function findEmptyInputDefaultToolName(
   const found = patterns.find((p) => p.emptyInputDefault === true);
   return found?.name ?? null;
 }
-

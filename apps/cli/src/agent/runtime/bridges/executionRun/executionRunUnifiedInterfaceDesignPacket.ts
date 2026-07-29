@@ -15,7 +15,6 @@ export const EXECUTION_RUN_UNIFIED_INTERFACE_DESIGN_PACKET = Object.freeze({
   runtimeTurnOperations: RUNTIME_TURN_OPERATION_SET,
   bridgeOperationMappings: {
     beginTurnLifecycle: { runtimeTurnOperation: 'beginTurnLifecycle' },
-    startOrLoadSession: { runtimeTurnOperation: 'startOrLoadSession' },
     sendTurnPrompt: { runtimeTurnOperation: 'sendTurnPrompt' },
     steerInFlightTurn: { runtimeTurnOperation: 'steerInFlightTurn' },
     waitForTurnCompletion: { runtimeTurnOperation: 'waitForTurnCompletion' },

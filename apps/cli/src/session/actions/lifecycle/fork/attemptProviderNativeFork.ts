@@ -2,7 +2,7 @@ import { isAuthenticationError } from '@/api/client/httpStatusError';
 import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { dispatchProviderNativeFork } from '@/session/fork/providerNativeForkDispatch';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
@@ -115,15 +115,13 @@ export async function attemptProviderNativeFork(params: Readonly<{
             };
         }
 
-        if (params.requestedStrategy === 'provider_native' && result.type !== 'success') {
+        if (result.type !== 'success' || !result.sessionId) {
             return {
                 ok: false,
                 errorCode: (result as { errorCode?: string })?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
                 errorMessage: (result as { errorMessage?: string })?.errorMessage ?? 'Failed to spawn provider-native fork session',
             };
         }
-
-        if (result.type !== 'success' || !result.sessionId) return null;
 
         const childSessionId = result.sessionId;
         if (childSessionId === params.parentSessionId) {
@@ -153,9 +151,17 @@ export async function attemptProviderNativeFork(params: Readonly<{
                 maxAttempts: 6,
             });
         } catch (error) {
+            await cleanupForkChildBestEffort({
+                credentials: params.credentials,
+                fallbackStopSession: params.stopSession,
+                sessionId: childSessionId,
+            });
             if (isAuthenticationError(error)) throw error;
-            await cleanupForkChildBestEffort(params.stopSession, childSessionId);
-            await archiveSessionBestEffort(params.credentials.token, childSessionId);
+            try {
+                await archiveSessionBestEffort(params.credentials.token, childSessionId);
+            } catch {
+                // Recovery must not replace the initiating finalization failure.
+            }
             return {
                 ok: false,
                 errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,

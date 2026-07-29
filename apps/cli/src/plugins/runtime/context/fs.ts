@@ -14,7 +14,7 @@ import type {
     FsStatV1,
     FsTempTextFileInputV1,
     FsWriteTextInputV1,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/fs';
 
 function resolveScopedPath(rootDir: string, path: string): string {
     const resolved = resolve(rootDir, path);

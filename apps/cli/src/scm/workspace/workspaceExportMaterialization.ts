@@ -3,6 +3,7 @@ import { access, rename, rm } from 'node:fs/promises';
 import { dirname, join, parse } from 'node:path';
 
 import type { ScmBackendRegistry } from '../registry';
+import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import { cleanupWorkspaceStaging } from './workspaceExportStaging/cleanupWorkspaceStaging';
 import {
     createWorkspaceStagingRoot,
@@ -55,12 +56,14 @@ async function promoteMaterializedWorkspace(params: Readonly<{
     conflictPolicy: ScmWorkspaceIntegrationWorkspaceTransferConflictPolicy;
     expectedManifest: ScmWorkspaceIntegrationWorkspaceExportArtifacts['manifest'];
     naming: WorkspaceExportMaterializationNaming;
+    registry: ScmBackendRegistry;
 }>): Promise<string | undefined> {
     if (params.conflictPolicy !== 'replace_existing' || !(await pathExists(params.targetWorkspaceDirectory))) {
         await promoteStagedWorkspace({
             stagingRoot: params.stagingRoot,
             targetWorkspaceDirectory: params.targetWorkspaceDirectory,
             expectedManifest: params.expectedManifest,
+            scmRegistry: params.registry,
         });
         return undefined;
     }
@@ -76,6 +79,7 @@ async function promoteMaterializedWorkspace(params: Readonly<{
             stagingRoot: params.stagingRoot,
             targetWorkspaceDirectory: params.targetWorkspaceDirectory,
             expectedManifest: params.expectedManifest,
+            scmRegistry: params.registry,
         });
         return backupDirectory;
     } catch (error) {
@@ -96,6 +100,14 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
     naming: WorkspaceExportMaterializationNaming;
     assertCanContinue?: () => Promise<void>;
 }>): Promise<Readonly<{ targetPath: string }>> {
+    if (!params.registry) {
+        return await runWithScmBackendRegistryLease(undefined, async (registry) =>
+            await materializeWorkspaceExportArtifactsWithScmWorkspace({
+                ...params,
+                registry,
+            }));
+    }
+
     const targetPath = await resolveWorkspaceExportMaterializationTargetPath({
         targetPath: params.targetPath,
         conflictPolicy: params.conflictPolicy,
@@ -132,6 +144,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             stagingRoot,
             expectedManifest: params.workspaceExportArtifacts.manifest,
             blobProvider: params.blobProvider,
+            scmRegistry: params.registry,
             assertCanContinue: params.assertCanContinue,
         });
         if (!staged.verification.isVerified) {
@@ -146,6 +159,7 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
             conflictPolicy: params.conflictPolicy,
             expectedManifest: params.workspaceExportArtifacts.manifest,
             naming: params.naming,
+            registry: params.registry,
         });
         didPromoteTarget = true;
 

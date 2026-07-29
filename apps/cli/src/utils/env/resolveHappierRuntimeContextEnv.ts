@@ -13,7 +13,7 @@
  *   to command-local context env for environments with stale shell startup exports
  *
  * NO secrets (access/refresh tokens, API keys, credential file contents) belong
- * here. Only home dir, active server id, and resolved server/webapp URLs.
+ * here. Only home dir, active server id, daemon lifecycle scope, and resolved server/webapp URLs.
  */
 
 export type HappierRuntimeServerContext = Readonly<{
@@ -27,6 +27,7 @@ export type HappierRuntimeServerContext = Readonly<{
 
 export type ResolveHappierRuntimeContextEnvInput = Readonly<{
   homeDir?: string | null;
+  daemonLifecycleScopeId?: string | null;
   server?: HappierRuntimeServerContext | null;
 }>;
 
@@ -38,6 +39,7 @@ export type ResolveHappierRuntimeContextEnvInput = Readonly<{
 export const HAPPIER_RUNTIME_CONTEXT_ENV_KEYS = [
   'HAPPIER_HOME_DIR',
   'HAPPIER_ACTIVE_SERVER_ID',
+  'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
   'HAPPIER_SERVER_URL',
   'HAPPIER_LOCAL_SERVER_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
@@ -67,6 +69,9 @@ export function resolveHappierRuntimeContextEnv(
 
   const homeDir = nonEmpty(input.homeDir);
   if (homeDir) out.HAPPIER_HOME_DIR = homeDir;
+
+  const daemonLifecycleScopeId = nonEmpty(input.daemonLifecycleScopeId);
+  if (daemonLifecycleScopeId) out.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID = daemonLifecycleScopeId;
 
   const server = input.server;
   if (server) {

@@ -1,81 +1,91 @@
 import { configuration } from '@/configuration';
 import {
-    CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
-    ConnectedServiceBindingsV1Schema,
-    resolveConnectedServicesProviderStateSharingPolicyV1,
+    createProviderErrorV1,
     type ConnectedServiceBindingsV1,
     type ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
-import {
-    HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY,
-} from '@/agent/runtime/daemonInitialPrompt';
-import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
 import { validateEnvVarRecordStrict } from '@/terminal/runtime/envVarSanitization';
 import { logger } from '@/ui/logger';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
-import type { CatalogAgentId } from '@/backends/types';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 
-import type { TrackedSession } from '../types';
+import type {
+    DaemonSpawnStartupReadinessFailure,
+    TrackedSession,
+} from '../types';
 import type {
     SpawnSessionOptions,
     SpawnSessionResult,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import {
     SPAWN_SESSION_ERROR_CODES,
-} from '@/rpc/handlers/registerSessionHandlers';
-import { createSessionAttachFile } from '../sessionAttachFile';
-import { buildTrackedSessionRespawnEnvironmentVariables } from '../processSupervision/sessionRunnerRespawnDescriptor';
-import { resolveSpawnChildEnvironment } from '../spawn/resolveSpawnChildEnvironment';
-import { resolveStackProcessKindOverrideForSessionSpawn } from '../spawn/resolveStackProcessKindOverrideForSessionSpawn';
-import { createSpawnLifecycleCallbacks } from '../spawn/createSpawnLifecycleCallbacks';
+} from '@/session/shared/spawnSessionContract';
 import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentity';
 import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
-import {
-    ConnectedServiceSpawnResumeUnreachableError,
-    resolveConnectedServiceAuthForSpawn,
-} from '../connectedServices/resolveConnectedServiceAuthForSpawn';
-import { buildSpawnResumeUnreachableErrorResult } from '../connectedServices/buildSpawnResumeUnreachableErrorResult';
-import {
-    buildConnectedServiceMaterializationSpawnErrorResult,
-    buildConnectedServiceCredentialRefreshSpawnErrorResult,
-    buildConnectedServiceDiagnosticSpawnValidationErrorResult,
-} from '../connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
-import { shouldResolveConnectedServiceAuthForSpawn } from '../connectedServices/shouldResolveConnectedServiceAuthForSpawn';
+import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
 import type { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
-import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '../connectedServices/connectedServiceChildEnvironment';
-import { ConnectedServiceMaterializationBlockedError } from '../connectedServices/materialize/materializeConnectedServicesForSpawn';
-import {
-    readConnectedServiceMaterializationIdentityFromSpawnOptions,
-    readConnectedServiceMaterializationIdentityFromEnvironment,
-    resolveConnectedServiceMaterializationIdentityForSpawn,
-    withConnectedServiceMaterializationIdentityEnv,
-} from '../connectedServices/materialization/identity';
-import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { refreshAccountSettingsForDaemonRequest } from './accountSettingsFreshness';
 import {
-    buildConnectedServiceUxDiagnostic,
-} from '../connectedServices/diagnostics/connectedServiceUxDiagnostics';
+    type ProviderSpawnAuthorizationAttempt,
+} from '@/providers/spawn/authorize';
+import { createProviderRedactionLease } from '@/providers/spawn/redaction';
+import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
+import type { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
+import { createSpawnPluginRuntimeLease } from '../spawn/spawnPluginRuntimeLease';
+import { prepareDaemonProviderLaunch } from '../spawn/prepareDaemonProviderLaunch';
+import { prepareDaemonConnectedServices } from '../spawn/prepareDaemonConnectedServices';
+import { prepareDaemonSpawnChildEnvironment } from '../spawn/prepareDaemonSpawnChildEnvironment';
+import { prepareDaemonSpawnLifecycle } from '../spawn/prepareDaemonSpawnLifecycle';
+import { buildProviderSpawnErrorResult } from '../spawn/buildProviderSpawnErrorResult';
+import { prepareDaemonManagedProviderBinding } from '../spawn/prepareDaemonManagedProviderBinding';
+import type {
+    ConnectedAccountRequestAuthSubjectRegistry,
+} from '../connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import {
+    activateConnectedAccountRequestAuthForSpawn,
+} from '../connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import type {
+    SessionSyncPendingInputServerContractResult,
+} from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import type {
+    ResolveManagedProviderPurposeBindingIntent,
+} from '@/providers/managed/resolvePurposeBindingSnapshot';
+import type {
+    ConnectedAccountPurposeBindingOwner,
+} from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import {
+    composeConnectedAccountSessionPurposeBindingSnapshot,
+    scopeConnectedAccountSessionPurposeBindingLease,
+} from '../connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
+import {
+    clearSessionMarkerManagedLocalServiceRunAttachment,
+    managedLocalServiceRunAttachmentsEqual,
+    type ManagedLocalServiceRunAttachmentMarkerOwnership,
+    type ManagedLocalServiceRunAttachmentV1,
+} from '../sessionRegistry';
+import {
+    clearPromotedManagedLocalServiceMarkerAttachment,
+} from './clearPromotedManagedLocalServiceMarkerAttachment';
 
 type SpawnCredentials = NonNullable<Parameters<typeof resolveSpawnBackendIdentity>[0]['credentials']>;
 type SpawnApi = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['api'];
+type SpawnAccountUsageStore = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['accountUsageStore'];
 type SpawnAuthGroupSwitchCoordinator = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['authGroupSwitchCoordinator'];
-type SpawnSoftSwitchRecoveryGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['softSwitchRecoveryGuard'];
+type SpawnPredictiveSwitchGuard = Parameters<typeof resolveConnectedServiceAuthForSpawn>[0]['predictiveSwitchGuard'];
 type LoadLocalHandoffMetadataByVendorResumeId =
     Parameters<typeof resolveSpawnBackendIdentity>[0]['loadLocalHandoffMetadataByVendorResumeId'];
-
-function buildDaemonOwnedSpawnChildEnv(): Record<string, string> {
-    return {
-        HAPPIER_HOME_DIR: configuration.happyHomeDir,
-        HAPPIER_ACTIVE_SERVER_ID: configuration.activeServerId,
-        HAPPIER_SERVER_URL: configuration.serverUrl,
-        HAPPIER_LOCAL_SERVER_URL: configuration.apiServerUrl,
-        HAPPIER_PUBLIC_SERVER_URL: configuration.publicServerUrl,
-        HAPPIER_WEBAPP_URL: configuration.webappUrl,
-    };
-}
+type ManagedProviderEndpointRuntime = Omit<
+    Parameters<typeof prepareDaemonManagedProviderBinding>[0],
+    'attempt'
+    | 'context'
+    | 'launchResourceScope'
+    | 'managedLocalServicesEnabled'
+    | 'requestAuthHttpPort'
+> & Readonly<{
+    resolveManagedLocalServicesEnabled: () => boolean | Promise<boolean>;
+}>;
 
 export type ExecuteSpawnSessionRequestParams = Readonly<{
     options: SpawnSessionOptions;
@@ -85,58 +95,38 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     connectedServicesMaterializationBaseDir: string;
     connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null;
     connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null;
+    connectedServiceRuntimeRegistry: Pick<ConnectedServiceRuntimeRegistry, 'registerTarget'>;
+    providerAccountUsageStore?: SpawnAccountUsageStore;
     authGroupSwitchCoordinator?: SpawnAuthGroupSwitchCoordinator | null;
-    softSwitchRecoveryGuard?: SpawnSoftSwitchRecoveryGuard;
+    predictiveSwitchGuard?: SpawnPredictiveSwitchGuard;
     repairMissingConnectedServiceMaterializationIdentityForSpawn?: (input: Readonly<{
         sessionId: string;
         agentId: CatalogAgentId;
         connectedServices: ConnectedServiceBindingsV1;
         vendorResumeId: string | null;
     }>) => Promise<ConnectedServiceMaterializationIdentityV1 | null>;
-    connectedServiceRuntimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
     pidToTrackedSession: Map<number, TrackedSession>;
     pidToAwaiter: Map<number, (session: TrackedSession) => void>;
     pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
     pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
     resolveCanonicalTrackedSessionId: (pid: number) => string;
-    onChildExited: (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => void;
-    spawnResourceCleanupByPid: Map<number, () => void>;
+    onChildExited: (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => void | Promise<void>;
+    spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
     sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
     processEnv?: NodeJS.ProcessEnv;
+    /** Canonical daemon/server feature decision. Missing or non-enabled fails provider spawns closed. */
+    resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
+    managedProviderEndpointRuntime?: ManagedProviderEndpointRuntime;
+    connectedAccountRequestAuthRegistry?: Pick<
+        ConnectedAccountRequestAuthSubjectRegistry,
+        'activate' | 'retire'
+    >;
+    connectedAccountRequestAuthHttpPort?: number;
+    resolveManagedPurposeBindingIntent?: ResolveManagedProviderPurposeBindingIntent;
+    activateSessionPurposeBindings?: ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
+    resolveSessionSyncPendingInputServerContractResult?: () =>
+        SessionSyncPendingInputServerContractResult | null;
 }>;
-
-function readConnectedServiceBindingsOrNull(raw: unknown): ConnectedServiceBindingsV1 | null {
-    const parsed = ConnectedServiceBindingsV1Schema.safeParse(raw);
-    return parsed.success ? parsed.data : null;
-}
-
-function connectedServiceBindingsRequireMaterializationIdentity(
-    bindings: ConnectedServiceBindingsV1 | null,
-): bindings is ConnectedServiceBindingsV1 {
-    return Boolean(
-        bindings
-        && Object.values(bindings.bindingsByServiceId).some((binding) => binding.source === 'connected'),
-    );
-}
-
-function buildMaterializationIdentityMissingSpawnErrorResult(input: Readonly<{
-    agentId: CatalogAgentId;
-    reason: string;
-}>): Extract<SpawnSessionResult, { type: 'error' }> {
-    return buildConnectedServiceDiagnosticSpawnValidationErrorResult({
-        errorMessage: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
-        uxDiagnostic: buildConnectedServiceUxDiagnostic({
-            code: CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceMaterializationIdentityMissing,
-            failurePhase: 'materialization',
-            source: 'spawn_resume',
-            agentId: input.agentId,
-            retryable: false,
-            diagnostics: {
-                reason: input.reason,
-            },
-        }),
-    });
-}
 
 async function refreshAccountSettingsForSpawn(
     params: Pick<ExecuteSpawnSessionRequestParams, 'credentials' | 'options'>,
@@ -156,8 +146,6 @@ export async function executeSpawnSessionRequest(
     const { options } = params;
 
     try {
-        await refreshAccountSettingsForSpawn(params);
-
         const prepared = await prepareExecuteSpawnSessionRequest({
             request: {
                 ...params,
@@ -169,6 +157,8 @@ export async function executeSpawnSessionRequest(
             return prepared;
         }
 
+        await refreshAccountSettingsForSpawn(params);
+
         const {
             directory,
             sessionId,
@@ -176,10 +166,8 @@ export async function executeSpawnSessionRequest(
             permissionModeUpdatedAt,
             agentModeId,
             agentModeUpdatedAt,
-            modelId,
-            modelUpdatedAt,
+            modelSelection,
             directoryCreated,
-            normalizedInitialPrompt,
             normalizedExistingSessionId,
             effectiveResume,
             effectiveBackendTargetV2,
@@ -188,291 +176,747 @@ export async function executeSpawnSessionRequest(
             catalogAgentIdForConnectedServices,
             daemonSpawnHooks,
             environmentVariablesValidation,
+            persistedProviderResumeState,
         } = prepared;
 
-        let spawnResourceCleanupOnFailure: (() => void) | null = null;
-        let spawnResourceCleanupOnExit: (() => void) | null = null;
-        let spawnResourceCleanupArmed = false;
-        let sessionAttachCleanup: (() => Promise<void>) | null = null;
+        let spawnResourceCleanupOnExit: (() => void | Promise<void>) | null = null;
+        let retainResourcesForUntrackedTmuxChild = false;
+        let cleanupPendingSessionAttach: (() => Promise<void>) | null = null;
+        const launchResourceScope = createProviderLaunchResourceScope({
+            onCleanupError: (safeMessage) => {
+                logger.warn('[DAEMON RUN] Provider launch cleanup failed', { error: safeMessage });
+            },
+        });
+        const providerDiagnosticRedactionLease = createProviderRedactionLease({
+            values: [],
+        });
+        launchResourceScope.setSanitizer(
+            providerDiagnosticRedactionLease.redact,
+        );
+        launchResourceScope.register(
+            providerDiagnosticRedactionLease.close,
+        );
+        type ManagedLocalServiceMarkerCustody = Readonly<{
+            pid: number;
+            ownership: ManagedLocalServiceRunAttachmentMarkerOwnership;
+            attachment: ManagedLocalServiceRunAttachmentV1;
+        }>;
+        let managedLocalServiceMarkerCustody:
+            ManagedLocalServiceMarkerCustody | null = null;
+        let managedLocalServiceMarkerCleanupClaim:
+            ManagedLocalServiceMarkerCustody | null = null;
+        let managedLocalServiceCanonicalSessionId: string | null = null;
+        let managedLocalServiceMarkerCleanupOwnedByRun = false;
+        const clearManagedLocalServiceMarkerCustody = async (): Promise<void> => {
+            const custody = managedLocalServiceMarkerCustody;
+            if (!custody) return;
+            managedLocalServiceMarkerCustody = null;
+            managedLocalServiceMarkerCleanupClaim = custody;
+            const canonicalSessionId =
+                managedLocalServiceCanonicalSessionId;
+            if (
+                canonicalSessionId
+                && await clearSessionMarkerManagedLocalServiceRunAttachment({
+                    ...custody,
+                    ownership: {
+                        ...custody.ownership,
+                        happySessionId: canonicalSessionId,
+                    },
+                }) !== 'mismatch'
+            ) {
+                return;
+            }
+            const cleared =
+                await clearSessionMarkerManagedLocalServiceRunAttachment(
+                    custody,
+                );
+            if (cleared === 'mismatch') {
+                throw new Error(
+                    'Managed local-service marker cleanup ownership mismatch',
+                );
+            }
+        };
+        launchResourceScope.register({
+            onFailure: async () => {
+                if (!managedLocalServiceMarkerCleanupOwnedByRun) {
+                    await clearManagedLocalServiceMarkerCustody();
+                }
+            },
+            onExit: async () => {
+                if (!managedLocalServiceMarkerCleanupOwnedByRun) {
+                    await clearManagedLocalServiceMarkerCustody();
+                }
+            },
+        });
+        const pluginRuntimeLease = createSpawnPluginRuntimeLease(launchResourceScope);
+        let launchRetirementOutcome:
+            Promise<string | null> | null = null;
+        const retireLaunchResources =
+            (): Promise<string | null> => {
+                launchRetirementOutcome ??= (async () => {
+                    try {
+                        await launchResourceScope.retire();
+                    } catch {
+                        return 'startup_retirement_incomplete:exit_cleanup_incomplete';
+                    }
+                    const pendingAttachCleanup =
+                        cleanupPendingSessionAttach;
+                    if (pendingAttachCleanup) {
+                        try {
+                            await pendingAttachCleanup();
+                            if (
+                                cleanupPendingSessionAttach
+                                === pendingAttachCleanup
+                            ) {
+                                cleanupPendingSessionAttach = null;
+                            }
+                        } catch (cleanupError) {
+                            logger.warn(
+                                '[DAEMON RUN] Session attach cleanup failed during startup retirement',
+                                {
+                                    error:
+                                        launchResourceScope.sanitize(
+                                            cleanupError,
+                                        ),
+                                },
+                            );
+                            return 'startup_retirement_incomplete:exit_cleanup_incomplete';
+                        }
+                    }
+                    return null;
+                })();
+                return launchRetirementOutcome;
+            };
 
         try {
-            const cleanupSpawnResources = () => {
-                if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-                    spawnResourceCleanupOnFailure();
-                    spawnResourceCleanupOnFailure = null;
-                    spawnResourceCleanupOnExit = null;
+            const cleanupSpawnResources = async () => {
+                const incompleteRetirement =
+                    await retireLaunchResources();
+                if (incompleteRetirement) {
+                    throw new Error(incompleteRetirement);
                 }
             };
-
-            let connectedServiceAuth: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> = null;
-            const shouldResolveConnectedServiceAuth = shouldResolveConnectedServiceAuthForSpawn(options);
-            let connectedServiceMaterializationIdentity =
-                readConnectedServiceMaterializationIdentityFromSpawnOptions(options)
-                ?? readConnectedServiceMaterializationIdentityFromEnvironment(options.environmentVariables);
-            if (shouldResolveConnectedServiceAuth && !connectedServiceMaterializationIdentity) {
-                if (normalizedExistingSessionId) {
-                    const connectedServices = readConnectedServiceBindingsOrNull(options.connectedServices);
-                    if (
-                        catalogAgentId
-                        && connectedServiceBindingsRequireMaterializationIdentity(connectedServices)
-                        && params.repairMissingConnectedServiceMaterializationIdentityForSpawn
-                    ) {
-                        connectedServiceMaterializationIdentity =
-                            await params.repairMissingConnectedServiceMaterializationIdentityForSpawn({
-                                sessionId: normalizedExistingSessionId,
-                                agentId: catalogAgentId,
-                                connectedServices,
-                                vendorResumeId: effectiveResume || null,
-                            });
-                    }
-                    if (!connectedServiceMaterializationIdentity) {
-                        return buildMaterializationIdentityMissingSpawnErrorResult({
-                            agentId: catalogAgentId ?? catalogAgentIdForConnectedServices,
-                            reason: 'missing_identity_and_resume_state',
-                        });
-                    }
-                } else {
-                    connectedServiceMaterializationIdentity = resolveConnectedServiceMaterializationIdentityForSpawn({
-                        options,
-                    });
-                }
-            }
-            const optionsForSpawn: SpawnSessionOptions = connectedServiceMaterializationIdentity
-                ? {
-                    ...options,
-                    connectedServiceMaterializationIdentityV1: connectedServiceMaterializationIdentity,
-                }
-                : options;
-            const requestedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
-            const materializationKey =
-                connectedServiceMaterializationIdentity?.id
-                || normalizedExistingSessionId
-                || requestedSessionId
-                || 'unmaterialized-connected-services';
-            const connectedServiceAuthSessionId =
-                normalizedExistingSessionId ||
-                requestedSessionId ||
-                undefined;
-
-            if (shouldResolveConnectedServiceAuth && catalogAgentId) {
-                const activeAccountSettings = getActiveAccountSettingsSnapshot();
-                // K1 §2: only continuity-gate the spawn when shared-state continuity was requested
-                // for this agent. The gate proves the post-materialization target the vendor reads;
-                // a fresh (no-resume) spawn or an isolated spawn is not gated.
-                const spawnSharedStateContinuityRequested = resolveConnectedServicesProviderStateSharingPolicyV1(
-                    (activeAccountSettings?.settings as { connectedServicesProviderStateSharingSettingsV1?: unknown } | null)
-                        ?.connectedServicesProviderStateSharingSettingsV1,
-                    catalogAgentId,
-                ).stateMode === 'shared';
-                try {
-                    connectedServiceAuth = await resolveConnectedServiceAuthForSpawn({
-                        agentId: catalogAgentId,
-                        connectedServicesBindingsRaw: optionsForSpawn.connectedServices,
-                        materializationKey,
-                        activeServerDir: configuration.activeServerDir,
-                        baseDir: params.connectedServicesMaterializationBaseDir,
-                        sessionDirectory: optionsForSpawn.directory,
-                        credentials: params.credentials,
-                        api: params.api,
-                        runtimeQuotaSnapshots: params.connectedServiceRuntimeQuotaSnapshots,
-                        quotaFreshnessMs: 5 * 60_000,
-                        nowMs: () => Date.now(),
-                        ...(connectedServiceAuthSessionId ? { sessionId: connectedServiceAuthSessionId } : {}),
-                        authGroupSwitchCoordinator: params.authGroupSwitchCoordinator ?? null,
-                        softSwitchRecoveryGuard: params.softSwitchRecoveryGuard ?? null,
-                        accountSettings: activeAccountSettings?.settings ?? null,
-                        processEnv: params.processEnv ?? process.env,
-                        credentialRefreshService: params.connectedServiceRefreshCoordinator,
-                        vendorResumeId: effectiveResume || null,
-                        resumeReachabilityRequired: spawnSharedStateContinuityRequested,
-                    });
-                } catch (error) {
-                    // K1 §2: the post-materialization re-verify proved the resumed session is
-                    // unreachable in the REAL materialized target. Fail closed BEFORE the vendor
-                    // launches with the concrete structured continuity reason, instead of respawning
-                    // into a missing session file ("Pi process exited"). D2: we keep the verbatim
-                    // SPAWN_VALIDATION_FAILED code + message (legacy consumers unchanged) AND attach a
-                    // structured `errorDetail` so the client can programmatically recognize "resume
-                    // unreachable" and offer "start fresh under the new account".
-                    if (error instanceof ConnectedServiceSpawnResumeUnreachableError) {
-                        logger.warn('[DAEMON RUN] Connected services resume reachability re-verify failed; failing closed before spawn', {
-                            agentId: error.agentId,
-                            errorCode: error.errorCode,
-                            failurePhase: error.failurePhase,
-                            vendorResumeId: error.vendorResumeId,
-                            cwd: error.cwd,
-                            targetMaterializedRoot: error.targetMaterializedRoot,
-                            reason: error.reason,
-                        });
-                        return buildSpawnResumeUnreachableErrorResult(error);
-                    }
-                    if (error instanceof ConnectedServiceMaterializationBlockedError) {
-                        logger.warn('[DAEMON RUN] Connected services materialization failed; failing closed before spawn', {
-                            agentId: catalogAgentId,
-                            diagnostics: error.diagnostics.map((diagnostic) => ({
-                                code: diagnostic.code,
-                                providerId: diagnostic.providerId,
-                                serviceId: diagnostic.serviceId,
-                                reason: diagnostic.reason,
-                                severity: diagnostic.severity,
-                            })),
-                        });
-                        return buildConnectedServiceMaterializationSpawnErrorResult({
-                            agentId: catalogAgentId,
-                            diagnostics: error.diagnostics,
-                        });
-                    }
-                    const credentialRefreshErrorResult = buildConnectedServiceCredentialRefreshSpawnErrorResult({
-                        agentId: catalogAgentId,
-                        error,
-                    });
-                    if (credentialRefreshErrorResult) {
-                        logger.warn('[DAEMON RUN] Connected services credential preflight failed; failing closed before spawn', {
-                            agentId: catalogAgentId,
-                            code: credentialRefreshErrorResult.errorMessage,
-                        });
-                        return credentialRefreshErrorResult;
-                    }
-                    logger.debug('[DAEMON RUN] Connected services resolution failed', error);
-                    return {
+            const refuseSpawn = async (
+                result: Extract<SpawnSessionResult, { type: 'error' }>,
+            ): Promise<Extract<SpawnSessionResult, { type: 'error' }>> => {
+                const incompleteRetirement =
+                    await retireLaunchResources();
+                return incompleteRetirement
+                    ? {
                         type: 'error',
-                        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                        errorMessage:
-                            error instanceof Error
-                                ? `Connected services resolution failed: ${error.message}`
-                                : 'Connected services resolution failed.',
-                    };
-                }
-            } else if (shouldResolveConnectedServiceAuth && !catalogAgentId) {
-                logger.warn('[DAEMON RUN] Ignoring connected-services spawn request for configured backend target');
-            }
-
-            const effectiveConnectedServicesBindings =
-                connectedServiceAuth?.connectedServicesBindings ?? optionsForSpawn.connectedServices;
-            const effectiveOptionsForSpawn: SpawnSessionOptions = {
-                ...optionsForSpawn,
-                ...(effectiveConnectedServicesBindings
-                    ? { connectedServices: effectiveConnectedServicesBindings }
-                    : {}),
+                        errorCode:
+                            SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+                        errorMessage: incompleteRetirement,
+                    }
+                    : result;
             };
 
-            const spawnEnvironment = await resolveSpawnChildEnvironment({
-                happyHomeDir: configuration.happyHomeDir,
-                options: effectiveOptionsForSpawn,
+            const requestedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
+            const priorBindingMetadata = persistedProviderResumeState.binding
+                ?? options.providerBindingMetadataV1
+                ?? null;
+            const appliedPluginRuntimeLease = await pluginRuntimeLease.acquire();
+            const daemonProviderLaunch = await prepareDaemonProviderLaunch({
+                options,
+                effectiveBackendTarget: effectiveBackendTargetV2,
+                catalogAgentId,
+                ...(modelSelection ? { modelSelection } : {}),
                 profileEnvironmentVariables: environmentVariablesValidation.env,
                 daemonSpawnHooks,
+                persistedProviderBinding: priorBindingMetadata,
+                normalizedExistingSessionId,
+                pluginRuntimeLease,
+                launchResourceScope,
+                resolveProvidersFeatureEnabled: params.resolveProvidersFeatureEnabled,
+                ...(params.resolveManagedPurposeBindingIntent
+                    ? {
+                        resolveManagedPurposeBindingIntent:
+                            params.resolveManagedPurposeBindingIntent,
+                    }
+                    : {}),
                 processEnv: params.processEnv ?? process.env,
-                logDebug: (message) => logger.debug(message),
-                logInfo: (message) => logger.info(message),
-                logWarn: (message) => logger.warn(message),
-                connectedServiceAuth,
             });
-            spawnResourceCleanupOnFailure = spawnEnvironment.cleanupOnFailure;
-            spawnResourceCleanupOnExit = spawnEnvironment.cleanupOnExit;
-            if (!spawnEnvironment.ok) {
-                cleanupSpawnResources();
-                return {
+            if (!daemonProviderLaunch.ok) {
+                return await refuseSpawn(daemonProviderLaunch.result);
+            }
+            const optionsWithProviderIsolation = daemonProviderLaunch.options;
+            const providerBindingAttempt: ProviderSpawnAuthorizationAttempt | null = daemonProviderLaunch.attempt;
+            const providerAgentTargetKey = daemonProviderLaunch.agentTargetKey;
+            const providerSessionId = daemonProviderLaunch.providerSessionId;
+
+            const connectedServices = await prepareDaemonConnectedServices({
+                options: optionsWithProviderIsolation,
+                normalizedExistingSessionId,
+                requestedSessionId,
+                effectiveResume,
+                catalogAgentId,
+                catalogAgentIdForConnectedServices,
+                credentials: params.credentials,
+                api: params.api,
+                ...(params.providerAccountUsageStore
+                    ? { providerAccountUsageStore: params.providerAccountUsageStore }
+                    : {}),
+                connectedServiceRefreshCoordinator: params.connectedServiceRefreshCoordinator,
+                authGroupSwitchCoordinator: params.authGroupSwitchCoordinator,
+                predictiveSwitchGuard: params.predictiveSwitchGuard,
+                processEnv: params.processEnv ?? process.env,
+                connectedServicesMaterializationBaseDir: params.connectedServicesMaterializationBaseDir,
+                pluginContributions: appliedPluginRuntimeLease.registry.contributes,
+                serverContract:
+                    params
+                        .resolveSessionSyncPendingInputServerContractResult?.()
+                    ?? null,
+                repairMissingMaterializationIdentity:
+                    params.repairMissingConnectedServiceMaterializationIdentityForSpawn,
+            });
+            if (!connectedServices.ok) {
+                return await refuseSpawn(connectedServices.result);
+            }
+            const connectedServiceAuth = connectedServices.auth;
+            const connectedServiceMaterializationIdentity = connectedServices.materializationIdentity;
+            const effectiveOptionsForSpawn = connectedServices.options;
+            const effectiveConnectedServicesBindings = connectedServices.effectiveBindings;
+            const materializationKey = connectedServices.materializationKey;
+            const connectedServiceAuthSessionId = connectedServices.authSessionId;
+            const agentPurposeBindingSnapshot =
+                connectedServices.qualifiedPurposeBindingSnapshot;
+            const requestAuthPurposeBindings =
+                connectedServiceAuth?.requestAuthPurposeBindings ?? [];
+            const managedProviderBindingAttempt = (
+                providerBindingAttempt
+                && 'materializeManagedEndpoint' in providerBindingAttempt
+            )
+                ? providerBindingAttempt
+                : null;
+            const managedPurposeBindings = managedProviderBindingAttempt
+                ? managedProviderBindingAttempt.authorization.deployment
+                    .implementation.purposeBindings.bindings
+                : [];
+            const managedPurposes = managedPurposeBindings.map(
+                (binding) => binding.purpose,
+            );
+            const managedRequestAuthUses = managedProviderBindingAttempt
+                ? managedProviderBindingAttempt.authorization.deployment
+                    .implementation.facet.requestAuthUses.map((use) =>
+                        Object.freeze({
+                            purpose: Object.freeze({
+                                consumer: managedProviderBindingAttempt.authorization.deployment
+                                    .implementation.implementationIdentity,
+                                purpose: use.purpose,
+                            }),
+                            materialization: use.materialization,
+                        }))
+                : [];
+            let sessionPurposeBindingSnapshot:
+                ReturnType<
+                    typeof composeConnectedAccountSessionPurposeBindingSnapshot
+                >;
+            try {
+                sessionPurposeBindingSnapshot =
+                    composeConnectedAccountSessionPurposeBindingSnapshot([
+                        ...(agentPurposeBindingSnapshot?.purposes.length
+                            ? [agentPurposeBindingSnapshot]
+                            : []),
+                        ...(managedPurposes.length
+                            ? [{
+                                purposes: managedPurposes,
+                                bindings: managedPurposeBindings,
+                            }]
+                            : []),
+                    ]);
+            } catch {
+                return await refuseSpawn({
                     type: 'error',
-                    errorCode: spawnEnvironment.errorCode,
-                    errorMessage: spawnEnvironment.errorMessage,
-                };
-            }
-
-            const extraEnv = spawnEnvironment.expandedEnvironmentVariables;
-            const extraEnvForChild = connectedServiceMaterializationIdentity
-                ? withConnectedServiceMaterializationIdentityEnv(
-                    spawnEnvironment.extraEnvForChild,
-                    connectedServiceMaterializationIdentity,
-                )
-                : spawnEnvironment.extraEnvForChild;
-            const materializationDiagnostics = spawnEnvironment.materializationDiagnostics;
-            const trackedSessionEnvironmentVariables = buildTrackedSessionRespawnEnvironmentVariables({
-                expandedEnvironmentVariables: extraEnv,
-                extraEnvForChild,
-            });
-            const {
-                initialTranscriptAfterSeq: _initialTranscriptAfterSeq,
-                ...trackedSpawnOptionsBase
-            } = effectiveOptionsForSpawn;
-            const trackedSpawnOptions: SpawnSessionOptions = {
-                ...trackedSpawnOptionsBase,
-                ...(trackedSessionEnvironmentVariables
-                    ? { environmentVariables: trackedSessionEnvironmentVariables }
-                    : {}),
-                ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
-            };
-
-            const terminalRequest = resolveTerminalRequestFromSpawnOptions({
-                happyHomeDir: configuration.happyHomeDir,
-                terminal: options.terminal,
-                environmentVariables: extraEnv,
-            });
-            let sessionAttachFilePath: string | null = null;
-            if (normalizedExistingSessionId) {
-                if (!sessionAttachPayload) {
-                    throw new Error('Missing session attach payload for existing session');
-                }
-                const attach = await createSessionAttachFile({
-                    happySessionId: normalizedExistingSessionId,
-                    payload: sessionAttachPayload,
+                    errorCode:
+                        SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                    errorMessage:
+                        'connected_account_session_binding_snapshot_invalid',
                 });
-                sessionAttachFilePath = attach.filePath;
-                sessionAttachCleanup = attach.cleanup;
             }
-
-            const stackProcessKindOverride = resolveStackProcessKindOverrideForSessionSpawn(params.processEnv ?? process.env);
-            const extraEnvForChildWithMessage = {
-                ...extraEnvForChild,
-                ...buildDaemonOwnedSpawnChildEnv(),
-                ...(sessionAttachFilePath
-                    ? { HAPPIER_SESSION_ATTACH_FILE: sessionAttachFilePath }
-                    : {}),
-                ...(normalizedInitialPrompt
-                    ? { [HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY]: normalizedInitialPrompt }
-                    : {}),
-                ...stackProcessKindOverride,
+            type SessionPurposeBindingLease = ReturnType<
+                ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings']
+            >;
+            type SessionPurposeBindingActivationResult =
+                | {
+                    ok: true;
+                    lease: SessionPurposeBindingLease;
+                }
+                | {
+                    ok: false;
+                    failure: DaemonSpawnStartupReadinessFailure;
+                };
+            let sessionPurposeBindingLease: SessionPurposeBindingLease | null =
+                null;
+            const activateSessionPurposeBindingLeaseAndAgent = async (
+                canonicalSessionId: string,
+            ): Promise<SessionPurposeBindingActivationResult> => {
+                const activateSessionPurposeBindings =
+                    params.activateSessionPurposeBindings;
+                if (
+                    sessionPurposeBindingSnapshot.purposes.length === 0
+                    || !activateSessionPurposeBindings
+                ) {
+                    return {
+                        ok: false,
+                        failure: {
+                            type: 'error',
+                            errorCode:
+                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                            errorMessage:
+                                'connected_account_session_binding_unavailable',
+                        },
+                    };
+                }
+                let activatedLease: SessionPurposeBindingLease;
+                try {
+                    activatedLease =
+                        activateSessionPurposeBindings({
+                            sessionId: canonicalSessionId,
+                            purposes: sessionPurposeBindingSnapshot.purposes,
+                            bindings: sessionPurposeBindingSnapshot.bindings,
+                        });
+                    launchResourceScope.register({
+                        onFailure: () => activatedLease.dispose(),
+                        onExit: () => activatedLease.dispose(),
+                    });
+                } catch {
+                    return {
+                        ok: false,
+                        failure: {
+                            type: 'error',
+                            errorCode:
+                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                            errorMessage:
+                                'connected_account_session_binding_activation_failed',
+                        },
+                    };
+                }
+                if (requestAuthPurposeBindings.length === 0) {
+                    return { ok: true, lease: activatedLease };
+                }
+                const materializedRootDir =
+                    connectedServiceAuth?.targetMaterializedRoot?.trim() ?? '';
+                const requestAuthRegistry =
+                    params.connectedAccountRequestAuthRegistry;
+                const requestAuthHttpPort =
+                    params.connectedAccountRequestAuthHttpPort;
+                if (
+                    !agentPurposeBindingSnapshot?.requestAuthUses?.length
+                    || !materializedRootDir
+                    || !requestAuthRegistry
+                    || typeof requestAuthHttpPort !== 'number'
+                    || !Number.isSafeInteger(requestAuthHttpPort)
+                    || requestAuthHttpPort < 1
+                    || requestAuthHttpPort > 65535
+                ) {
+                    return {
+                        ok: false,
+                        failure: {
+                            type: 'error',
+                            errorCode:
+                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                            errorMessage:
+                                'connected_account_request_auth_unavailable',
+                        },
+                    };
+                }
+                try {
+                    await activateConnectedAccountRequestAuthForSpawn({
+                        agentId: catalogAgentIdForConnectedServices,
+                        materializationId: materializationKey,
+                        materializedRootDir,
+                        httpPort: requestAuthHttpPort,
+                        subject:
+                            scopeConnectedAccountSessionPurposeBindingLease({
+                                lease: activatedLease,
+                                subjectId:
+                                    `${activatedLease.subjectId}/agent:${catalogAgentIdForConnectedServices}`,
+                                uses:
+                                    agentPurposeBindingSnapshot.requestAuthUses,
+                                registerRedaction:
+                                    providerDiagnosticRedactionLease.add,
+                            }),
+                        registry: requestAuthRegistry,
+                        launchResourceScope,
+                    });
+                } catch {
+                    return {
+                        ok: false,
+                        failure: {
+                            type: 'error',
+                            errorCode:
+                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                            errorMessage:
+                                'connected_account_request_auth_activation_failed',
+                        },
+                    };
+                }
+                return { ok: true, lease: activatedLease };
             };
-            const spawnLifecycleCallbacks = createSpawnLifecycleCallbacks({
-                connectedServicesBindingsRaw: effectiveConnectedServicesBindings,
-                connectedServiceSelectionsEnvRaw: extraEnvForChild[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY],
-                catalogAgentId: catalogAgentIdForConnectedServices,
-                ...(connectedServiceAuthSessionId ? { sessionId: connectedServiceAuthSessionId } : {}),
-                materializationKey,
-                hasConnectedServiceAuth: () => connectedServiceAuth !== null,
-                registerConnectedServiceRefreshTarget: (target) =>
-                    params.connectedServiceRefreshCoordinator?.registerSpawnTarget(target),
-                registerConnectedServiceQuotaTarget: (target) =>
-                    params.connectedServiceQuotasCoordinator?.registerSpawnTarget({
-                        pid: target.pid,
-                        ...(target.sessionId ? { sessionId: target.sessionId } : {}),
-                        connectedServicesBindingsRaw: target.connectedServicesBindingsRaw as Readonly<{
-                            v?: unknown;
-                            bindingsByServiceId?: Record<string, unknown>;
-                        }>,
-                        ...(typeof target.connectedServiceSelectionsEnvRaw === 'string'
+            if (sessionPurposeBindingSnapshot.purposes.length > 0) {
+                if (!params.activateSessionPurposeBindings) {
+                    return await refuseSpawn({
+                        type: 'error',
+                        errorCode:
+                            SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                        errorMessage:
+                            'connected_account_session_binding_unavailable',
+                    });
+                }
+                if (connectedServiceAuthSessionId) {
+                    const activation =
+                        await activateSessionPurposeBindingLeaseAndAgent(
+                            connectedServiceAuthSessionId,
+                        );
+                    if (!activation.ok) {
+                        return await refuseSpawn(activation.failure);
+                    }
+                    sessionPurposeBindingLease = activation.lease;
+                }
+            } else if (requestAuthPurposeBindings.length > 0) {
+                return await refuseSpawn({
+                    type: 'error',
+                    errorCode:
+                        SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                    errorMessage:
+                        'connected_account_request_auth_unavailable',
+                });
+            }
+            const knownManagedRequestAuthSubject =
+                connectedServiceAuthSessionId
+                && sessionPurposeBindingLease
+                && managedPurposes.length > 0
+                    ? scopeConnectedAccountSessionPurposeBindingLease({
+                        lease: sessionPurposeBindingLease,
+                        subjectId:
+                            `${sessionPurposeBindingLease.subjectId}/managed-provider:${managedProviderBindingAttempt!.authorization.ticket.connectionId}`,
+                        uses: managedRequestAuthUses,
+                        registerRedaction:
+                            providerDiagnosticRedactionLease.add,
+                    })
+                    : null;
+            const materializeManagedProviderBinding = managedProviderBindingAttempt
+                ? async () => {
+                    const runtime = params.managedProviderEndpointRuntime;
+                    const requestAuthHttpPort =
+                        params.connectedAccountRequestAuthHttpPort;
+                    if (!runtime) {
+                        return {
+                            ok: false as const,
+                            error: createProviderErrorV1('provider_endpoint_unavailable', {
+                                connectionId:
+                                    managedProviderBindingAttempt.authorization.ticket.connectionId,
+                                machineId:
+                                    managedProviderBindingAttempt.authorization.ticket.machineId,
+                            }),
+                        };
+                    }
+                    if (
+                        typeof requestAuthHttpPort !== 'number'
+                        || !Number.isSafeInteger(requestAuthHttpPort)
+                        || requestAuthHttpPort < 1
+                        || requestAuthHttpPort > 65535
+                    ) {
+                        return {
+                            ok: false as const,
+                            error: createProviderErrorV1('provider_endpoint_unavailable', {
+                                connectionId:
+                                    managedProviderBindingAttempt.authorization.ticket.connectionId,
+                                machineId:
+                                    managedProviderBindingAttempt.authorization.ticket.machineId,
+                            }),
+                        };
+                    }
+                    let managedLocalServicesEnabled = false;
+                    try {
+                        managedLocalServicesEnabled =
+                            await runtime.resolveManagedLocalServicesEnabled() === true;
+                    } catch {
+                        managedLocalServicesEnabled = false;
+                    }
+                    const contribution =
+                        managedProviderBindingAttempt.authorization.deployment.contribution;
+                    const operationId = options.spawnNonce?.trim() ?? '';
+                    if (!providerSessionId && !operationId) {
+                        return {
+                            ok: false as const,
+                            error: createProviderErrorV1('provider_endpoint_unavailable', {
+                                connectionId:
+                                    managedProviderBindingAttempt.authorization.ticket.connectionId,
+                                machineId:
+                                    managedProviderBindingAttempt.authorization.ticket.machineId,
+                            }),
+                        };
+                    }
+                    return await prepareDaemonManagedProviderBinding({
+                        ...runtime,
+                        managedLocalServicesEnabled,
+                        requestAuthHttpPort,
+                        attempt: managedProviderBindingAttempt,
+                        ...(knownManagedRequestAuthSubject
                             ? {
-                                connectedServiceSelectionsEnv: {
-                                    [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: target.connectedServiceSelectionsEnvRaw,
-                                },
+                                requestAuthSubject:
+                                    knownManagedRequestAuthSubject,
                             }
                             : {}),
-                    }),
-                getSpawnResourceCleanupOnExit: () => spawnResourceCleanupOnExit,
-                onSpawnResourceCleanupArmed: () => {
-                    spawnResourceCleanupArmed = true;
-                },
-                spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
-                getSessionAttachCleanup: () => sessionAttachCleanup,
-                setSessionAttachCleanup: (cleanup) => {
-                    sessionAttachCleanup = cleanup;
-                },
-                sessionAttachCleanupByPid: params.sessionAttachCleanupByPid,
-            });
+                        context: providerSessionId
+                            ? {
+                                pluginId: contribution.identity.pluginId,
+                                contributionId: contribution.identity.localId,
+                                sessionId: providerSessionId,
+                                title: contribution.definition.name,
+                            }
+                            : {
+                                pluginId: contribution.identity.pluginId,
+                                contributionId: contribution.identity.localId,
+                                operationId,
+                                title: contribution.definition.name,
+                            },
+                        launchResourceScope,
+                    });
+                }
+                : undefined;
 
-            return await routeSpawnModeAndWaitForWebhook({
+            const childEnvironment = await prepareDaemonSpawnChildEnvironment({
+                options: effectiveOptionsForSpawn,
+                effectiveModelSelection: modelSelection,
+                terminal: options.terminal,
+                profileEnvironmentVariables: environmentVariablesValidation.env,
+                daemonSpawnHooks,
+                pluginRuntimeRegistry: appliedPluginRuntimeLease.registry,
+                processEnv: params.processEnv ?? process.env,
+                connectedServiceAuth,
+                connectedServiceMaterializationIdentity,
+                providerBindingAttempt,
+                providerAgentTargetKey,
+                providerDiagnosticRedactionLease,
+                ...(materializeManagedProviderBinding
+                    ? { materializeManagedProviderBinding }
+                    : {}),
+                launchResourceScope,
+            });
+            if (!childEnvironment.ok) {
+                return await refuseSpawn(childEnvironment.result);
+            }
+            const { spawnEnvironment, extraEnv, extraEnvForChild, trackedSpawnOptions, terminalRequest } = childEnvironment;
+            const activateConnectedAccountSessionBinding = async (
+                canonicalSessionId: string,
+            ): Promise<DaemonSpawnStartupReadinessFailure | null> => {
+                const activation =
+                    await activateSessionPurposeBindingLeaseAndAgent(
+                        canonicalSessionId,
+                    );
+                if (!activation.ok) return activation.failure;
+                sessionPurposeBindingLease = activation.lease;
+                if (childEnvironment.activateManagedProviderRequestAuth) {
+                    try {
+                        await childEnvironment.activateManagedProviderRequestAuth(
+                            scopeConnectedAccountSessionPurposeBindingLease({
+                                lease: sessionPurposeBindingLease,
+                                subjectId:
+                                    `${sessionPurposeBindingLease.subjectId}/managed-provider:${managedProviderBindingAttempt!.authorization.ticket.connectionId}`,
+                                uses: managedRequestAuthUses,
+                                registerRedaction:
+                                    providerDiagnosticRedactionLease.add,
+                            }),
+                        );
+                    } catch {
+                        return {
+                            type: 'error',
+                            errorCode:
+                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                            errorMessage:
+                                'managed_provider_request_auth_activation_failed',
+                        };
+                    }
+                }
+                if (childEnvironment.managedLocalServiceRunAttachment) {
+                    managedLocalServiceCanonicalSessionId =
+                        canonicalSessionId;
+                }
+                return null;
+            };
+            let activateConnectedAccountSessionBindingOnCanonicalSession:
+                ((sessionId: string) => Promise<DaemonSpawnStartupReadinessFailure | null>)
+                | undefined;
+            if (sessionPurposeBindingSnapshot.purposes.length > 0) {
+                if (!connectedServiceAuthSessionId) {
+                    activateConnectedAccountSessionBindingOnCanonicalSession =
+                        activateConnectedAccountSessionBinding;
+                }
+            } else if (
+                requestAuthPurposeBindings.length > 0
+                || childEnvironment.activateManagedProviderRequestAuth
+            ) {
+                return await refuseSpawn({
+                    type: 'error',
+                    errorCode:
+                        SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+                    errorMessage:
+                        'connected_account_request_auth_unavailable',
+                });
+            }
+            if (
+                connectedServiceAuthSessionId
+                && childEnvironment.managedLocalServiceRunAttachment
+            ) {
+                managedLocalServiceCanonicalSessionId =
+                    connectedServiceAuthSessionId;
+            }
+            const spawnLifecycle = await prepareDaemonSpawnLifecycle({
+                effectiveBackendTarget: effectiveBackendTargetV2,
+                pluginRuntimeLease,
+                launchResourceScope,
+                normalizedExistingSessionId,
+                sessionAttachPayload: sessionAttachPayload ?? null,
+                extraEnv,
+                extraEnvForChild,
+                providerBindingLaunchHandoff: spawnEnvironment.providerBindingLaunchHandoff ?? null,
+                unsetEnvKeys: spawnEnvironment.unsetEnvKeys,
+                processEnv: params.processEnv ?? process.env,
+                effectiveConnectedServicesBindings,
+                connectedServiceSelectionsEnv: connectedServiceAuth?.env,
+                catalogAgentId: catalogAgentIdForConnectedServices,
+                connectedServiceAuthSessionId,
+                sessionDirectory: effectiveOptionsForSpawn.directory,
+                materializationKey,
+                ...(connectedServiceMaterializationIdentity
+                    ? { connectedServiceMaterializationIdentityV1: connectedServiceMaterializationIdentity }
+                    : {}),
+                hasConnectedServiceAuth:
+                    connectedServiceAuth !== null
+                    && connectedServiceAuth
+                        .ongoingRuntimeRegistrationAllowed !== false,
+                ...(activateConnectedAccountSessionBindingOnCanonicalSession
+                    ? {
+                        activateConnectedAccountSessionBindingOnCanonicalSession,
+                    }
+                    : {}),
+                connectedServiceRefreshCoordinator: params.connectedServiceRefreshCoordinator,
+                connectedServiceQuotasCoordinator: params.connectedServiceQuotasCoordinator,
+                connectedServiceRuntimeRegistry: params.connectedServiceRuntimeRegistry,
+                spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
+                sessionAttachCleanupByPid: params.sessionAttachCleanupByPid,
+                setPendingSessionAttachCleanup: (cleanup) => {
+                    cleanupPendingSessionAttach = cleanup;
+                },
+                getSpawnResourceCleanupOnExit: () => {
+                    spawnResourceCleanupOnExit ??= launchResourceScope.transfer();
+                    return spawnResourceCleanupOnExit;
+                },
+                onSpawnResourceCleanupArmed: () => undefined,
+                respawnDescriptorEncryptionMaterial: params.credentials.encryption,
+                ...(childEnvironment.managedLocalServiceRunAttachment
+                    ? {
+                        managedLocalServiceRunAttachment:
+                            childEnvironment.managedLocalServiceRunAttachment,
+                        onManagedLocalServiceRunAttachmentPersisted: async (custody) => {
+                            managedLocalServiceMarkerCustody = custody;
+                            const ownedRun =
+                                childEnvironment.managedLocalServiceOwnedRun;
+                            const localServices =
+                                params.managedProviderEndpointRuntime?.localServices;
+                            if (
+                                !ownedRun
+                                || !localServices
+                                || !localServices.registerOwnedCleanup(
+                                    ownedRun,
+                                    clearManagedLocalServiceMarkerCustody,
+                                )
+                            ) {
+                                await clearManagedLocalServiceMarkerCustody();
+                                throw new Error(
+                                    'Managed local-service marker cleanup custody transfer failed',
+                                );
+                            }
+                            managedLocalServiceMarkerCleanupOwnedByRun = true;
+                        },
+                        onManagedLocalServiceRunAttachmentPidPromoted: async ({
+                            fromPid,
+                            toPid,
+                            ownership,
+                        }) => {
+                            const custody =
+                                managedLocalServiceMarkerCustody;
+                            if (
+                                custody?.pid === toPid
+                                && custody.ownership.happySessionId
+                                    === ownership.happySessionId
+                                && custody.ownership.processCommandHash
+                                    === ownership.processCommandHash
+                                && custody.ownership.processStartTimeMs
+                                    === ownership.processStartTimeMs
+                                && managedLocalServiceRunAttachmentsEqual(
+                                    custody.attachment,
+                                    childEnvironment
+                                        .managedLocalServiceRunAttachment!,
+                                )
+                            ) {
+                                return true;
+                            }
+                            if (custody?.pid === fromPid) {
+                                managedLocalServiceMarkerCustody = {
+                                    pid: toPid,
+                                    ownership,
+                                    attachment: custody.attachment,
+                                };
+                                return true;
+                            }
+                            const cleanupClaim =
+                                managedLocalServiceMarkerCleanupClaim;
+                            if (
+                                !cleanupClaim
+                                || cleanupClaim.pid !== fromPid
+                            ) {
+                                return false;
+                            }
+                            const cleared =
+                                await clearPromotedManagedLocalServiceMarkerAttachment({
+                                    toPid,
+                                    ownership,
+                                    canonicalSessionId:
+                                        managedLocalServiceCanonicalSessionId,
+                                    attachment:
+                                        cleanupClaim.attachment,
+                                    clear:
+                                        clearSessionMarkerManagedLocalServiceRunAttachment,
+                                });
+                            if (!cleared) return false;
+                            if (
+                                managedLocalServiceMarkerCleanupClaim
+                                === cleanupClaim
+                            ) {
+                                managedLocalServiceMarkerCleanupClaim =
+                                    null;
+                            }
+                            return 'attachment_cleared';
+                        },
+                    }
+                    : {}),
+            });
+            cleanupPendingSessionAttach = spawnLifecycle.cleanupPendingSessionAttach;
+
+            let providerCleanupTransferred = false;
+            const revalidateProviderBeforeCommit = providerBindingAttempt
+                ? async (): Promise<SpawnSessionResult | null> => {
+                    const providerCommitAuthorization = await providerBindingAttempt!.revalidateBeforeCommit();
+                    if (!providerCommitAuthorization.ok) {
+                        await cleanupSpawnResources();
+                        return buildProviderSpawnErrorResult(providerCommitAuthorization.error);
+                    }
+                    if (!providerCleanupTransferred) {
+                        providerCleanupTransferred = true;
+                        const providerCleanupOnExit = providerBindingAttempt!.takeCleanupOnExit();
+                        launchResourceScope.register(providerCleanupOnExit);
+                    }
+                    return null;
+                }
+                : undefined;
+
+            let spawnResult = await routeSpawnModeAndWaitForWebhook({
                 terminalRequest,
                 directory,
-                options: optionsForSpawn,
+                options: effectiveOptionsForSpawn,
                 trackedSpawnOptions,
                 normalizedExistingSessionId,
                 effectiveResume,
@@ -482,10 +926,13 @@ export async function executeSpawnSessionRequest(
                 permissionModeUpdatedAt,
                 agentModeId,
                 agentModeUpdatedAt,
-                modelId,
-                modelUpdatedAt,
+                modelSelection,
                 directoryCreated,
-                extraEnvForChildWithMessage,
+                extraEnvForChildWithMessage: spawnLifecycle.extraEnvForChildWithMessage,
+                unsetEnvKeys: spawnLifecycle.unsetEnvKeys,
+                localServicesBridgeAuthorization: spawnLifecycle.localServicesBridgeAuthorization,
+                agentRuntimeSessionBridgeAuthorization:
+                    spawnLifecycle.agentRuntimeSessionBridgeAuthorization,
                 processEnv: params.processEnv ?? process.env,
                 happyHomeDir: configuration.happyHomeDir,
                 pidToTrackedSession: params.pidToTrackedSession,
@@ -494,27 +941,53 @@ export async function executeSpawnSessionRequest(
                 pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
                 resolveCanonicalTrackedSessionId: params.resolveCanonicalTrackedSessionId,
                 onChildExited: params.onChildExited,
-                spawnLifecycleCallbacks,
+                spawnLifecycleCallbacks: spawnLifecycle.spawnLifecycleCallbacks,
                 cleanupSpawnResources,
                 logDebug: (message, payload) => logger.debug(message, payload),
                 warn: (message) => logger.warn(message),
+                sanitizeDiagnosticText: childEnvironment.sanitizeDiagnosticText,
+                createStreamingSanitizer: childEnvironment.createStreamingSanitizer,
+                revalidateBeforeCommit: revalidateProviderBeforeCommit,
+                onUntrackedTmuxChild: () => {
+                    retainResourcesForUntrackedTmuxChild = true;
+                },
             });
+            if (spawnResult.type === 'error' && !retainResourcesForUntrackedTmuxChild) {
+                const incompleteRetirement =
+                    await retireLaunchResources();
+                if (incompleteRetirement) {
+                    spawnResult = {
+                        type: 'error',
+                        errorCode:
+                            SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
+                        errorMessage: incompleteRetirement,
+                    };
+                }
+            }
+            if (!providerBindingAttempt && !retainResourcesForUntrackedTmuxChild) {
+                await pluginRuntimeLease.release();
+            }
+            return spawnResult;
         } catch (error) {
-            if (spawnResourceCleanupOnFailure && !spawnResourceCleanupArmed) {
-                spawnResourceCleanupOnFailure();
-                spawnResourceCleanupOnFailure = null;
-                spawnResourceCleanupOnExit = null;
+            const errorMessage = launchResourceScope.sanitize(error);
+            let incompleteRetirement: string | null = null;
+            if (!retainResourcesForUntrackedTmuxChild) {
+                incompleteRetirement =
+                    await retireLaunchResources();
             }
-            if (sessionAttachCleanup) {
-                await sessionAttachCleanup();
-                sessionAttachCleanup = null;
-            }
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            logger.debug('[DAEMON RUN] Failed to spawn session:', error);
+            logger.debug('[DAEMON RUN] Failed to spawn session', { error: errorMessage });
             return {
                 type: 'error',
                 errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
-                errorMessage: `Failed to spawn session: ${errorMessage}`,
+                errorMessage:
+                    incompleteRetirement
+                    ?? (
+                        errorMessage.startsWith(
+                            'startup_retirement_incomplete:',
+                        )
+                            ? errorMessage
+                            : `Failed to spawn session: ${errorMessage}`
+                    ),
             };
         }
     } catch (error) {

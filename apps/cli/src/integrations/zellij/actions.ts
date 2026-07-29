@@ -291,7 +291,7 @@ export async function sendEnter(params: ZellijPaneActionParams & ZellijTimeoutPa
 }
 
 export async function sendEscape(params: ZellijPaneActionParams & ZellijTimeoutParams): Promise<void> {
-  await requireSuccess(await runZellij(params, ['action', 'send-keys', '--pane-id', params.paneId, 'Escape'], {
+  await requireSuccess(await runZellij(params, ['action', 'send-keys', '--pane-id', params.paneId, 'Esc'], {
     timeoutMs: params.timeoutMs,
     action: 'send-keys',
   }), 'send-keys');

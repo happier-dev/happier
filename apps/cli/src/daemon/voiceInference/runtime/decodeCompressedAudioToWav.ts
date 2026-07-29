@@ -1,60 +1,47 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { rm, stat } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { rm } from 'node:fs/promises';
 import { basename, dirname, extname, join } from 'node:path';
+
+import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol';
+
+import { resolveFfmpegStaticBinaryPath } from '@/daemon/runtime/ffmpegStatic';
 
 import { createRuntimeUnavailableError, createVoiceInferenceError } from '../voiceInferenceWorker.shared';
 
-const DEFAULT_STT_SAMPLE_RATE = 16_000;
-const require = createRequire(import.meta.url);
-
-let ffmpegStaticPathPromise: Promise<string | null> | null = null;
+/**
+ * Build the ffmpeg args that resample/downmix arbitrary compressed audio into the
+ * canonical daemon STT PCM format. The sample rate, channel count, and codec come
+ * from the centralized protocol constant so this conversion chokepoint cannot drift
+ * from what the sherpa runtime expects.
+ */
+export function buildDaemonSttDecodeFfmpegArgs(params: Readonly<{
+    inputFilePath: string;
+    outputFilePath: string;
+}>): string[] {
+    return [
+        '-nostdin',
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-i',
+        params.inputFilePath,
+        '-vn',
+        '-ac',
+        String(VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.channelCount),
+        '-ar',
+        String(VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.sampleRateHz),
+        '-c:a',
+        VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT.ffmpegCodec,
+        params.outputFilePath,
+    ];
+}
 
 function throwIfAborted(signal?: AbortSignal | null): void {
     if (signal?.aborted) {
         throw createVoiceInferenceError('cancelled', 'voice_inference_cancelled');
     }
-}
-
-function isModuleResolutionFailure(error: unknown): boolean {
-    const message = error instanceof Error ? error.message : String(error ?? '');
-    return (
-        message.includes('Cannot find module')
-        || message.includes('Cannot find package')
-        || message.includes('ERR_MODULE_NOT_FOUND')
-    );
-}
-
-async function resolveFfmpegStaticBinaryPath(): Promise<string | null> {
-    if (!ffmpegStaticPathPromise) {
-        ffmpegStaticPathPromise = (async () => {
-            let resolvedPath: unknown;
-            try {
-                resolvedPath = require('ffmpeg-static');
-            } catch (error) {
-                if (isModuleResolutionFailure(error)) {
-                    return null;
-                }
-                throw error;
-            }
-            const candidate = typeof resolvedPath === 'string'
-                ? resolvedPath
-                : typeof (resolvedPath as { default?: unknown } | null)?.default === 'string'
-                    ? (resolvedPath as { default: string }).default
-                    : null;
-            if (!candidate) {
-                return null;
-            }
-            try {
-                const candidateStat = await stat(candidate);
-                return candidateStat.isFile() ? candidate : null;
-            } catch {
-                return null;
-            }
-        })();
-    }
-    return await ffmpegStaticPathPromise;
 }
 
 async function runFfmpegDecode(params: Readonly<{
@@ -66,23 +53,10 @@ async function runFfmpegDecode(params: Readonly<{
     throwIfAborted(params.signal);
 
     await new Promise<void>((resolve, reject) => {
-        const args = [
-            '-nostdin',
-            '-y',
-            '-hide_banner',
-            '-loglevel',
-            'error',
-            '-i',
-            params.inputFilePath,
-            '-vn',
-            '-ac',
-            '1',
-            '-ar',
-            String(DEFAULT_STT_SAMPLE_RATE),
-            '-c:a',
-            'pcm_s16le',
-            params.outputFilePath,
-        ];
+        const args = buildDaemonSttDecodeFfmpegArgs({
+            inputFilePath: params.inputFilePath,
+            outputFilePath: params.outputFilePath,
+        });
         const child = spawn(params.ffmpegBinaryPath, args, {
             stdio: ['ignore', 'ignore', 'ignore'],
             windowsHide: true,

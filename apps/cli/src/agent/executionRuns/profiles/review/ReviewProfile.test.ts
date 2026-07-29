@@ -85,6 +85,81 @@ describe('ReviewProfile', () => {
     expect((res.structuredMeta as any).payload?.overviewMarkdown).toContain('Overview');
   });
 
+  it('validates and retains bounded proposed comments in structured output', () => {
+    const start = {
+      sessionId: 'sess_1', runId: 'run_1', callId: 'call_1', sidechainId: 'call_1',
+      intent: 'review', backendId: 'coderabbit',
+      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      instructions: 'review this', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+      runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1,
+    } as const;
+    const res = ReviewProfile.onBoundedComplete({
+      start,
+      rawText: JSON.stringify({
+        summary: 'One finding', overviewMarkdown: 'One finding', findings: [], questions: [], assumptions: [],
+        proposedComments: [{
+          findingId: 'finding-1', body: 'Validate the redirect.',
+          anchor: { kind: 'line', filePath: 'src/auth.ts', line: 12 },
+          severity: 'error', taxonomyIds: ['security.redirect'], tags: ['coderabbit'],
+        }],
+      }),
+      finishedAtMs: 2,
+    });
+
+    expect(res.status).toBe('succeeded');
+    expect((res.structuredMeta?.payload as any).proposedComments).toEqual([
+      expect.objectContaining({ findingId: 'finding-1', body: 'Validate the redirect.' }),
+    ]);
+  });
+
+  it('keeps host comment materialization out of the pure profile action reducer', () => {
+    const start = {
+      sessionId: 'sess_1', runId: 'run_1', callId: 'call_1', sidechainId: 'call_1',
+      intent: 'review', backendId: 'coderabbit',
+      backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      instructions: 'review this', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+      runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1,
+    } as const;
+    const acted = ReviewProfile.applyAction?.({
+      start,
+      actionId: 'reviews.comments.create',
+      structuredMeta: {
+        kind: 'review_findings.v2',
+        payload: {
+          runRef: { runId: 'run_1', callId: 'call_1', backendId: 'coderabbit' },
+          summary: 'One finding', overviewMarkdown: 'One finding', findings: [], questions: [], assumptions: [],
+          proposedComments: [{ body: 'Finding', anchor: { kind: 'file', filePath: 'src/auth.ts' } }],
+          generatedAtMs: 2,
+        },
+      },
+    });
+
+    expect(acted).toEqual(expect.objectContaining({
+      ok: false,
+      errorCode: 'execution_run_action_not_supported',
+    }));
+  });
+
+  it('rejects stale retained proposals at the pure profile boundary', () => {
+    const start = {
+      sessionId: 'sess_1', runId: 'run_1', callId: 'call_1', sidechainId: 'call_1',
+      intent: 'review', backendId: 'coderabbit', backendTarget: { kind: 'builtInAgent', agentId: 'coderabbit' },
+      instructions: 'review', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+      runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1,
+    } as const;
+    expect(ReviewProfile.applyAction?.({
+      start, actionId: 'reviews.comments.create', structuredMeta: {
+        kind: 'review_findings.v2', payload: {
+          runRef: { runId: 'other_run', callId: 'call_1', backendId: 'coderabbit' },
+          summary: 'x', overviewMarkdown: 'x', findings: [], questions: [], assumptions: [],
+          proposedComments: [{ body: 'x', anchor: { kind: 'file', filePath: 'src/a.ts' } }], generatedAtMs: 2,
+        },
+      },
+    })).toEqual(expect.objectContaining({
+      ok: false, errorCode: 'execution_run_action_not_supported',
+    }));
+  });
+
   it('fails deterministically when model output is not strict JSON', () => {
     const start = {
       sessionId: 'sess_1',

@@ -108,7 +108,7 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
       getOrCreateSessionByTag({
         credentials: createLegacyCredentials(),
         tag: 'tag-1',
-        metadata: { title: 'hello' },
+        metadata: { path: '/private/project', host: 'private-host' },
         agentState: null,
       }),
     ).rejects.toMatchObject({
@@ -117,6 +117,111 @@ describe('sessionControl.sessionsHttp authentication status handling', () => {
       code: 'not_authenticated',
     });
   });
+
+  it('returns exact create-or-load truth while accepting released responses that omit it', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    vi.doMock('@/api/session/resolveSessionCreateEncryptionMode', () => ({
+      resolveSessionCreateEncryptionMode: vi.fn(async () => ({
+        desiredSessionEncryptionMode: 'plain',
+        serverSupportsFeatureSnapshot: true,
+      })),
+    }));
+    vi.resetModules();
+    const { getOrCreateSessionByTag } = await import('./sessionsHttp');
+    const session = {
+      id: 'session-1',
+      seq: 0,
+      createdAt: 1,
+      updatedAt: 1,
+      active: true,
+      activeAt: 1,
+      metadata: '{}',
+      metadataVersion: 0,
+      agentState: null,
+      agentStateVersion: 0,
+      dataEncryptionKey: null,
+    };
+    const post = vi.spyOn(axios, 'post')
+      .mockResolvedValueOnce({ status: 200, data: { session, created: false } } as never)
+      .mockResolvedValueOnce({ status: 200, data: { session } } as never);
+
+    const input = {
+      credentials: createLegacyCredentials(),
+      tag: 'tag-1',
+      metadata: { path: '/private/project', host: 'private-host' },
+      agentState: null,
+    };
+    await expect(getOrCreateSessionByTag(input)).resolves.toMatchObject({ created: false });
+    await expect(getOrCreateSessionByTag(input)).resolves.toMatchObject({ created: true });
+    expect(post).toHaveBeenCalledTimes(2);
+    for (const call of post.mock.calls) {
+      const requestBody = call[1] as Readonly<{
+        metadata: string;
+        agentState: null;
+      }>;
+      expect(requestBody).toMatchObject({ agentState: null });
+      expect(requestBody).not.toHaveProperty('metadataLayoutVersion');
+      expect(requestBody).not.toHaveProperty('sharedMetadata');
+      expect(requestBody).not.toHaveProperty('ownerMetadata');
+      expect(JSON.parse(requestBody.metadata)).toMatchObject({
+        path: '/private/project',
+        host: 'private-host',
+      });
+    }
+  });
+
+  it('revalidates a caller commit precondition after asynchronous create preparation', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    let releasePreparation!: () => void;
+    vi.doMock('@/api/session/resolveSessionCreateEncryptionMode', () => ({
+      resolveSessionCreateEncryptionMode: vi.fn(
+        async () => await new Promise((resolve) => {
+          releasePreparation = () => resolve({
+            desiredSessionEncryptionMode: 'plain',
+            serverSupportsFeatureSnapshot: true,
+          });
+        }),
+      ),
+    }));
+    vi.resetModules();
+    const { getOrCreateSessionByTag } = await import('./sessionsHttp');
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({
+      status: 200,
+      data: {
+        session: {
+          id: 'session-created-after-retirement',
+          seq: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          active: true,
+          activeAt: 1,
+          metadata: '{}',
+          metadataVersion: 0,
+          agentState: null,
+          agentStateVersion: 0,
+          dataEncryptionKey: null,
+        },
+        created: true,
+      },
+    } as never);
+    let shouldCommit = true;
+    const pending = getOrCreateSessionByTag({
+      credentials: createLegacyCredentials(),
+      tag: 'tag-1',
+      metadata: { path: '/private/project', host: 'private-host' },
+      agentState: null,
+      shouldCommit: () => shouldCommit,
+    });
+    await vi.waitFor(() => {
+      expect(typeof releasePreparation).toBe('function');
+    });
+
+    shouldCommit = false;
+    releasePreparation();
+
+    await expect(pending).rejects.toThrow('Session creation commit precondition failed');
+    expect(post).not.toHaveBeenCalled();
+  }, 120_000);
 
   it('keeps archive domain errors distinct while normalizing auth failures', async () => {
     process.env.HAPPIER_SERVER_URL = 'http://server.example.test';

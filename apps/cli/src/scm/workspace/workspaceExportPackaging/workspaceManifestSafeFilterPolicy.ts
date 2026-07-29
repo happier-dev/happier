@@ -1,5 +1,5 @@
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { resolveScmBackendRegistry } from '@/scm/scmBackendCatalog';
+import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import {
     isAdministrativeWorkspacePathWithScmWorkspace,
     resolveIsAdministrativeWorkspacePathWithScmWorkspace,
@@ -33,10 +33,11 @@ export function inferWorkspaceManifestSafeFilterPolicyFromEntries(entries: reado
 export async function resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries: readonly Readonly<{
     relativePath: string;
 }>[], registry?: ScmBackendRegistry): Promise<WorkspaceManifestSafeFilterPolicy> {
-    return inferWorkspaceManifestSafeFilterPolicyFromEntries(
-        entries,
-        await resolveScmBackendRegistry(registry),
-    );
+    return runWithScmBackendRegistryLease(registry, async (resolvedRegistry) =>
+        inferWorkspaceManifestSafeFilterPolicyFromEntries(
+            entries,
+            resolvedRegistry,
+        ));
 }
 
 export async function shouldFilterWorkspaceManifestPath(

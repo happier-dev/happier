@@ -133,4 +133,29 @@ describe('normalizeEditResult', () => {
     const metadata = (normalized.metadata ?? {}) as Record<string, unknown>;
     expect(metadata.diff).toBe('-1 ONE\n+1 TWO');
   });
+
+  it('derives metadata.diff from Grok SearchReplace EditsApplied details', () => {
+    const normalized = normalizeEditResult({
+      type: 'SearchReplace',
+      EditsApplied: {
+        absolute_path: '/tmp/grok-edit.txt',
+        edits: {
+          details: [{
+            old_string: 'BEFORE_EDIT_DIFF_E2E',
+            old_line: 1,
+            new_string: 'AFTER_EDIT_DIFF_E2E',
+            new_line: 1,
+          }],
+        },
+      },
+      metadata: {},
+    });
+
+    const metadata = (normalized.metadata ?? {}) as Record<string, unknown>;
+    expect(typeof metadata.diff).toBe('string');
+    expect(String(metadata.diff)).toContain('--- a//tmp/grok-edit.txt');
+    expect(String(metadata.diff)).toContain('+++ b//tmp/grok-edit.txt');
+    expect(String(metadata.diff)).toContain('-BEFORE_EDIT_DIFF_E2E');
+    expect(String(metadata.diff)).toContain('+AFTER_EDIT_DIFF_E2E');
+  });
 });

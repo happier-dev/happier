@@ -24,7 +24,8 @@ describe('createAcpRuntime (session modes)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
+    sendPrompt.mockClear();
     const runtimeWithCompaction = runtime as typeof runtime & { compactContext?: (command: string) => Promise<void> };
     expect(typeof runtimeWithCompaction.compactContext).toBe('function');
     await expect(runtimeWithCompaction.compactContext?.('/compact keep only current task')).rejects.toThrow(
@@ -51,7 +52,8 @@ describe('createAcpRuntime (session modes)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
+    sendPrompt.mockClear();
     const runtimeWithCompaction = runtime as typeof runtime & { compactContext?: (command: string) => Promise<void> };
     expect(typeof runtimeWithCompaction.compactContext).toBe('function');
     await runtimeWithCompaction.compactContext?.('/compact keep only current task');
@@ -77,7 +79,7 @@ describe('createAcpRuntime (session modes)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     const modesEvent: EventMessage = {
       type: 'event',
@@ -96,7 +98,7 @@ describe('createAcpRuntime (session modes)', () => {
     const metadata: Metadata = getMetadata();
     expect(metadata.sessionModesV1).toMatchObject({
       v: 1,
-      provider: 'codex',
+      agentId: 'codex',
       currentModeId: 'code',
       availableModes: [
         { id: 'code', name: 'Code' },
@@ -106,7 +108,7 @@ describe('createAcpRuntime (session modes)', () => {
     expect(typeof metadata.sessionModesV1?.updatedAt).toBe('number');
     expect(metadata.acpSessionModesV1).toMatchObject({
       v: 1,
-      provider: 'codex',
+      agentId: 'codex',
       currentModeId: 'code',
       availableModes: [
         { id: 'code', name: 'Code' },
@@ -122,7 +124,7 @@ describe('createAcpRuntime (session modes)', () => {
       initialMetadata: createTestMetadata({
         sessionModesV1: {
           v: 1,
-          provider: 'codex',
+          agentId: 'codex',
           updatedAt: 1,
           currentModeId: 'code',
           availableModes: [
@@ -144,7 +146,7 @@ describe('createAcpRuntime (session modes)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'event',
@@ -190,7 +192,7 @@ describe('createAcpRuntime (session modes)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     await runtime.setSessionMode('plan');
 
     expect(lastSet).toEqual({ sessionId: 'sess_main', modeId: 'plan' });

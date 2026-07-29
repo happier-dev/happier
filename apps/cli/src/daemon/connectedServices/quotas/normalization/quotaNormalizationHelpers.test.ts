@@ -128,21 +128,21 @@ describe('quota normalization helpers', () => {
   it('classifies provider limit evidence without collapsing capacity or eligibility into quota', async () => {
     const helpers = await loadNormalizationHelpers();
 
-    expect(helpers.classifyProviderLimitEvidence({ code: 'usage_limit_reached' })).toBe('usage_limit');
-    expect(helpers.classifyProviderLimitEvidence({ status: 429, message: 'rate limit exceeded' })).toBe('rate_limit');
-    expect(helpers.classifyProviderLimitEvidence({ error: { status: 429 } })).toBe('rate_limit');
-    expect(helpers.classifyProviderLimitEvidence({ error: { code: -32603, data: { status: 429 } } })).toBe('rate_limit');
-    expect(helpers.classifyProviderLimitEvidence({ code: 'rate_limit_error' })).toBe('rate_limit');
-    expect(helpers.classifyProviderLimitEvidence({ message: 'RateLimitError' })).toBe('rate_limit');
-    expect(helpers.classifyProviderLimitEvidence({ message: 'model capacity exhausted' })).toBe('capacity');
-    expect(helpers.classifyProviderLimitEvidence({ code: 'server_is_overloaded' })).toBe('capacity');
-    expect(helpers.classifyProviderLimitEvidence({ message: 'server_is_overloaded' })).toBe('capacity');
-    expect(helpers.classifyProviderLimitEvidence({ status: 401, message: 'invalid api key' })).toBe('auth_invalid');
-    expect(helpers.classifyProviderLimitEvidence({ status: 402, message: 'upgrade your plan' })).toBe('plan_invalid');
-    expect(helpers.classifyProviderLimitEvidence({ message: 'plan unavailable for this account' })).toBe('plan_invalid');
-    expect(helpers.classifyProviderLimitEvidence({ status: 400, message: 'validation failed' })).toBe('validation_failed');
-    expect(helpers.classifyProviderLimitEvidence({ message: 'account disabled' })).toBe('disabled');
-    expect(helpers.classifyProviderLimitEvidence({ message: 'quota limit: 100000 remaining: 95000' })).toBe('unknown');
+    expect(helpers.classifyProviderLimitEvidence({ code: 'usage_limit_reached' }).category).toBe('usage_limit');
+    expect(helpers.classifyProviderLimitEvidence({ status: 429, message: 'rate limit exceeded' }).category).toBe('rate_limit');
+    expect(helpers.classifyProviderLimitEvidence({ error: { status: 429 } }).category).toBe('rate_limit');
+    expect(helpers.classifyProviderLimitEvidence({ error: { code: -32603, data: { status: 429 } } }).category).toBe('rate_limit');
+    expect(helpers.classifyProviderLimitEvidence({ code: 'rate_limit_error' }).category).toBe('rate_limit');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'RateLimitError' }).category).toBe('rate_limit');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'model capacity exhausted' }).category).toBe('capacity');
+    expect(helpers.classifyProviderLimitEvidence({ code: 'server_is_overloaded' }).category).toBe('capacity');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'server_is_overloaded' }).category).toBe('capacity');
+    expect(helpers.classifyProviderLimitEvidence({ status: 401, message: 'invalid api key' }).category).toBe('auth_invalid');
+    expect(helpers.classifyProviderLimitEvidence({ status: 402, message: 'upgrade your plan' }).category).toBe('plan_invalid');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'plan unavailable for this account' }).category).toBe('plan_invalid');
+    expect(helpers.classifyProviderLimitEvidence({ status: 400, message: 'validation failed' }).category).toBe('validation_failed');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'account disabled' }).category).toBe('disabled');
+    expect(helpers.classifyProviderLimitEvidence({ message: 'quota limit: 100000 remaining: 95000' }).category).toBe('unknown');
   });
 
   it('selects the most constrained reliable applicable quota or rate-limit meter', async () => {

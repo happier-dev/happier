@@ -1,6 +1,7 @@
 import {
   CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES,
   ConnectedServiceBindingsV1Schema,
+  ConnectedServiceCredentialRevisionV1Schema,
   ConnectedServiceUxDiagnosticCodeV1Schema,
   ConnectedServiceIdSchema,
   ConnectedServiceMaterializationIdentityV1Schema,
@@ -101,6 +102,7 @@ type NextConnectedServiceChildSelection =
       kind: 'profile';
       serviceId: ConnectedServiceId;
       profileId: string;
+      credentialRevision?: string;
     }>
   | Readonly<{
       kind: 'group';
@@ -109,7 +111,8 @@ type NextConnectedServiceChildSelection =
       activeProfileId: string;
       fallbackProfileId: string;
       generation: number;
-	    }>;
+      credentialRevision?: string;
+    }>;
 
 type ConnectedServiceAccountSwitchMode = 'hot_apply' | 'restart_resume' | 'spawn_next_turn';
 export type SessionConnectedServiceRuntimeAuthSelectionMaterializerMode = 'apply' | 'preflight';
@@ -206,7 +209,7 @@ export type SessionConnectedServiceAuthSwitchApplicationState = Readonly<{
 }>;
 
 export type SessionConnectedServiceAuthSwitchRollbackDiagnostic = Readonly<{
-  status: 'bindings_rollback_failed';
+  status: 'bindings_rollback_failed' | 'post_apply_commit_failed';
   pendingReconciliation: true;
 }>;
 
@@ -613,7 +616,12 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
     kind: 'disabled_for_test_only';
     reason: string;
   }>;
-  registerHotApplyTargets(tracked: TrackedSession): void;
+  registerHotApplyTargets(input: Readonly<{
+    tracked: TrackedSession;
+    runtimeAuthSelectionsByServiceId: RuntimeAuthSelectionsByServiceId;
+    acceptedConnectedServicesBindingsRaw: ConnectedServiceBindingsV1;
+    acceptedConnectedServiceSelectionsEnv: Readonly<Record<string, string>>;
+  }>): void | Promise<void>;
   emitSessionEvent(sessionId: string, event: unknown): void;
   dryRun?: boolean;
   reason?: ConnectedServiceSessionAuthSwitchReason;
@@ -734,7 +742,6 @@ function buildRuntimeAuthMaterializationFailureResult(input: Readonly<{
         failurePhase: 'materialization',
         source: input.diagnosticSource,
         agentId: input.agentId,
-        providerId: primary?.providerId ?? input.agentId,
         serviceId: primary?.serviceId ?? input.serviceId,
         ...(input.next.profileId ? { profileId: input.next.profileId } : {}),
         ...(input.next.groupId ? { groupId: input.next.groupId } : {}),
@@ -904,15 +911,22 @@ function buildConnectedServiceChildSelection(input: Readonly<{
   previousSelection?: PreviousConnectedServiceChildSelection;
   groupMetadata?: ConnectedServiceGroupRuntimeMetadata;
 }>): NextConnectedServiceChildSelection | null {
+  const runtimeAuthSelection = readRecord(input.runtimeAuthSelection);
+  const materializedSelection = readConnectedServiceChildSelectionsFromEnv(
+    (readRecord(runtimeAuthSelection?.targetMaterializedEnv) ?? {}) as Record<string, string | undefined>,
+  )?.get(input.serviceId);
+  const credentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
+    runtimeAuthSelection?.credentialRevision ?? materializedSelection?.credentialRevision,
+  );
   if (input.binding.selection === 'profile') {
     return {
       kind: 'profile',
       serviceId: input.serviceId,
       profileId: input.binding.profileId,
+      ...(credentialRevision.success ? { credentialRevision: credentialRevision.data } : {}),
     };
   }
 
-  const runtimeAuthSelection = readRecord(input.runtimeAuthSelection);
   const previousGroupSelection = input.previousSelection?.kind === 'group'
     ? input.previousSelection
     : null;
@@ -938,6 +952,7 @@ function buildConnectedServiceChildSelection(input: Readonly<{
       ?? groupMetadata?.generation
       ?? previousGroupSelection?.generation
       ?? 0,
+    ...(credentialRevision.success ? { credentialRevision: credentialRevision.data } : {}),
   };
 }
 
@@ -1305,7 +1320,20 @@ async function normalizeRequestedBindings(input: Readonly<{
         && expectedGeneration === currentGeneration + 1
         && prospectiveProfileId.length > 0
         && groupHasEnabledMember({ group, profileId: prospectiveProfileId });
-      if (expectedGeneration !== null && expectedGeneration !== currentGeneration && !isProspectiveDryRunGeneration) {
+      // Generation semantics are CONVERGENCE, not CAS, for real applies: the caller's expected
+      // generation is a snapshot taken before a fan-out that legitimately overlaps other group
+      // writers (concurrent daemons, recovery switches, member edits — observed live 2026-07-10 as
+      // per-session "group_generation_conflict" transcript errors on every settings pool switch).
+      // The switch below applies the group's CURRENT active profile + generation, which is always
+      // the correct target regardless of how the generation advanced. Only DRY-RUN preflights keep
+      // the strict check: they validate a PROSPECTIVE (not-yet-committed) generation and must abort
+      // on any other mismatch so the coordinator re-resolves before committing.
+      if (
+        input.dryRun === true
+        && expectedGeneration !== null
+        && expectedGeneration !== currentGeneration
+        && !isProspectiveDryRunGeneration
+      ) {
         return { ok: false, errorCode: 'group_generation_conflict', serviceId };
       }
       const activeProfileId = isProspectiveDryRunGeneration
@@ -1330,7 +1358,6 @@ async function normalizeRequestedBindings(input: Readonly<{
         source: 'connected',
         selection: 'group',
         groupId: binding.groupId,
-        profileId: activeProfileId,
       };
       effectiveByServiceId.set(serviceId, {
         source: 'connected',
@@ -1538,6 +1565,16 @@ function emitFailedSwitchAttemptEvent(input: Readonly<{
   reason?: ConnectedServiceRuntimeAuthApplyReason;
 }>): void {
   if (input.result.ok) return;
+  // A predictive soft-threshold switch is a background optimization with a fail-safe design: it only
+  // ever hot-applies (never restarts a working session) and declines BEFORE side effects when no safe
+  // apply window exists (e.g. the session is mid-turn). The session keeps working on its current
+  // account, the next poll/in-band tick retries, and hard-limit recovery remains the backstop — so a
+  // declined hot-apply must not surface as a user-facing "Authentication could not be switched" error
+  // (observed live 2026-07-10 19:10: idle siblings applied instantly, the one mid-turn session alarmed
+  // the user). Only the benign hot_apply_failed decline is suppressed; side-effectful failure codes
+  // stay loud, and the returned result/diagnostics are unchanged so coordinator retry bookkeeping still
+  // works. Symmetric with predictive soft-threshold switches staying silent on the success path.
+  if (input.reason === 'soft_threshold' && input.result.errorCode === 'hot_apply_failed') return;
   const projection = resolveFailedSwitchAttemptEventProjection(input.result);
   if (!projection) return;
   input.emitSessionEvent(input.sessionId, {
@@ -1606,40 +1643,6 @@ function resolveUnchangedRematerializeServiceId(input: Readonly<{
     });
 }
 
-function readExpectedGroupGenerationForService(input: Readonly<{
-  request: SessionConnectedServiceAuthSwitchRequest;
-  serviceId: ConnectedServiceId;
-}>): number | null {
-  const value = input.request.expectedGroupGenerationByServiceId?.[input.serviceId];
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
-  return Math.trunc(value);
-}
-
-function hasTrackedRuntimeAlreadyAdoptedExpectedGroupGeneration(input: Readonly<{
-  request: SessionConnectedServiceAuthSwitchRequest;
-  tracked: TrackedSession;
-  serviceId: ConnectedServiceId;
-  next: EffectiveBinding;
-  runtimeAuthApplyReason?: ConnectedServiceRuntimeAuthApplyReason;
-}>): boolean {
-  if (shouldRequireDirectLiveHotApplyForRuntimeAuthReason(input.runtimeAuthApplyReason)) return false;
-  if (input.request.rematerializeServiceId) return false;
-  if (input.next.source !== 'connected' || input.next.selection !== 'group') return false;
-  const expectedGeneration = readExpectedGroupGenerationForService({
-    request: input.request,
-    serviceId: input.serviceId,
-  });
-  if (expectedGeneration === null) return false;
-
-  const selection = readConnectedServiceChildSelectionsFromEnv(
-    input.tracked.spawnOptions?.environmentVariables ?? {},
-  )?.get(input.serviceId) ?? null;
-  if (!selection || selection.kind !== 'group') return false;
-  return selection.groupId === input.next.groupId
-    && selection.activeProfileId === input.next.profileId
-    && selection.generation === expectedGeneration;
-}
-
 async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
   request: SessionConnectedServiceAuthSwitchRequest;
   reason: ConnectedServiceSessionAuthSwitchReason;
@@ -1679,22 +1682,6 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
       warnings: [],
     };
   }
-  if (hasTrackedRuntimeAlreadyAdoptedExpectedGroupGeneration({
-    request: input.request,
-    tracked: input.tracked,
-    serviceId,
-    next,
-    runtimeAuthApplyReason: input.runtimeAuthApplyReason,
-  })) {
-    return {
-      ok: true,
-      action: 'unchanged',
-      normalizedBindings: input.normalizedBindings,
-      continuityByServiceId: {},
-      warnings: [],
-    };
-  }
-
   const previous = input.previousByServiceId.get(serviceId) ?? null;
   const previousBindings = readConnectedServiceBindingsOrEmpty(
     resolveTrackedConnectedServiceBindingsRaw(input.tracked),
@@ -1801,7 +1788,7 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
           normalizedBindings: input.normalizedBindings,
           connectedServiceMaterializationIdentityV1,
         });
-      } catch (error) {
+      } catch {
         input.tracked.spawnOptions = previousSpawnOptions;
         return failureResult('metadata_update_failed', {
           failurePhase: 'metadata',
@@ -1882,7 +1869,23 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
           underlyingError: hotApplyResult.underlyingError,
         });
       }
-      input.registerHotApplyTargets(input.tracked);
+      try {
+        await input.registerHotApplyTargets({
+          tracked: input.tracked,
+          runtimeAuthSelectionsByServiceId: runtimeAuthSelectionsByServiceId ?? new Map(),
+          acceptedConnectedServicesBindingsRaw: input.normalizedBindings,
+          acceptedConnectedServiceSelectionsEnv: nextEnvironmentVariables ?? {},
+        });
+      } catch {
+        return partialAppliedPendingReconciliation({
+          reason: input.reason,
+          phase: 'hot_apply',
+          rollback: {
+            status: 'post_apply_commit_failed',
+            pendingReconciliation: true,
+          },
+        });
+      }
       const continuationOutcome = await runPostSwitchVerificationRecoveryAndContinuation({
         recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
         continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,
@@ -2394,7 +2397,23 @@ export async function applyConnectedServiceAuthGenerationToTrackedSession(
           });
         }
       } else {
-        input.registerHotApplyTargets(tracked);
+        try {
+          await input.registerHotApplyTargets({
+            tracked,
+            runtimeAuthSelectionsByServiceId,
+            acceptedConnectedServicesBindingsRaw: normalized.normalized,
+            acceptedConnectedServiceSelectionsEnv: nextEnvironmentVariables ?? {},
+          });
+        } catch {
+          return partialAppliedPendingReconciliation({
+            reason: switchReason,
+            phase: 'hot_apply',
+            rollback: {
+              status: 'post_apply_commit_failed',
+              pendingReconciliation: true,
+            },
+          });
+        }
         const continuationOutcome = await runPostSwitchVerificationRecoveryAndContinuation({
           recoverAfterRuntimeAuthSwitch: input.recoverAfterRuntimeAuthSwitch,
           continueAfterRuntimeAuthSwitch: input.continueAfterRuntimeAuthSwitch,

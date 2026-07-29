@@ -1,5 +1,12 @@
 import type { AgentId } from '@happier-dev/agents';
+import { randomUUID } from 'node:crypto';
 import { errorFrame, warn } from '@happier-dev/cli-common/output';
+import {
+  isLaunchProfileV2,
+  readBackendTargetRefV2,
+  type BackendTargetRefV2Input,
+  type ProviderErrorV1,
+} from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
@@ -11,8 +18,10 @@ import { resolveSessionStartAccountSettingsRefreshMode } from '@/settings/accoun
 import { ensureDaemonRunningForSessionCommand, shouldAutoStartDaemonAfterAuth } from '@/daemon/ensureDaemon';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
-import { applyProfileToProcessEnv } from '@/settings/profiles/applyProfileToProcessEnv';
-import { buildProfileEnvOverlay } from '@/settings/profiles/buildProfileEnvOverlay';
+import {
+  buildProfileEnvOverlay,
+  expandProfileEnvOverlay,
+} from '@/settings/profiles/buildProfileEnvOverlay';
 import { readProfilesFromAccountSettings } from '@/settings/profiles/readProfilesFromAccountSettings';
 import { resolveProfileForAgent } from '@/settings/profiles/resolveProfileForAgent';
 import { isPermissionMode, type PermissionMode } from '@/api/types';
@@ -23,16 +32,53 @@ import {
 import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
-import { passthroughProviderCliArgs } from '@/cli/providerCliPassthrough';
+import {
+  isProviderCliInfoCommandPrefixRequest,
+  passthroughProviderCliArgs,
+  type ProviderCliInfoCommandPrefix,
+} from '@/cli/providerCliPassthrough';
 import {
   partitionProviderSessionArgs,
   type ProviderSessionArgPartitionResult,
 } from '@/cli/providerSessionArgPartition';
+import { resolveSessionStartModelSelection } from '@/cli/resolveSessionStartModelSelection';
 import { buildRootHelpText } from '@/cli/buildRootHelpText';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { resolveRequestedSessionDirectory } from '@/agent/runtime/resolveRequestedSessionDirectory';
-import { resolveProviderSessionRuntimePreferences } from '@/backends/catalog';
+import { resolveProviderSessionRuntimePreferences } from '@/session/runtime/catalogHooks';
+import { prepareDirectProviderLaunch } from '@/providers/lifecycle/prepareDirectLaunch';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
+import type { ProviderLaunchCleanup } from '@/providers/lifecycle/resourceScope';
+import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
+import {
+  buildScopedProcessEnv,
+  normalizeUnsetEnvKeys,
+  stripUnsetEnvironmentVariables,
+} from '@/utils/processEnv/buildScopedProcessEnv';
+import {
+  stripSessionControlEnvOverrides,
+  stripSessionControlUnsetEnvKeys,
+} from '@/session/runtime/control/sessionControlEnvironment';
+import {
+  resolveDirectConnectedServiceEnvironment,
+} from '@/cli/connectedServices/resolveDirectConnectedServiceEnvironment';
+import { resolveDirectCliConnectedServiceBindings } from '@/cli/connectedServices/resolveDirectCliConnectedServiceBindings';
+import { HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY } from '@/agent/runtime/sessionConnectedServicesBindingsEnv';
+import {
+  admitDaemonForegroundAgentRuntime,
+  releaseDaemonForegroundAgentRuntime,
+} from '@/daemon/controlClient';
+import {
+  claimDaemonForegroundAgentRuntimeEnvironment,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient';
+import {
+  HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
+import {
+  isAgentSessionContinuationUnreachableError,
+  SESSION_RUNNER_EXIT_CODES,
+} from '@/session/shared/spawnSessionContract';
 
 type CommonBackendRunOptions = ParsedSessionStartArgs & {
   credentials: Credentials;
@@ -44,7 +90,20 @@ type CommonBackendRunOptions = ParsedSessionStartArgs & {
   startedBy: ParsedSessionStartArgs['startedBy'];
   accountSettingsContext: AccountSettingsContext | null;
   environmentVariables?: Record<string, string>;
+  unsetEnvironmentVariables?: readonly string[];
 };
+
+type RuntimeAuthorityAgentId = string;
+
+class DirectProviderLaunchError extends Error {
+  readonly providerError: ProviderErrorV1;
+
+  constructor(providerError: ProviderErrorV1) {
+    super(providerError.code);
+    this.name = 'DirectProviderLaunchError';
+    this.providerError = providerError;
+  }
+}
 
 function readProviderEnvironmentVariables(value: unknown): Record<string, string> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -61,6 +120,18 @@ function readProviderEnvironmentVariables(value: unknown): Record<string, string
   return Object.keys(environmentVariables).length > 0 ? environmentVariables : undefined;
 }
 
+function readUnsetEnvironmentVariables(value: unknown): readonly string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const entries = value.filter((entry): entry is string => typeof entry === 'string');
+  const normalized = normalizeUnsetEnvKeys(entries);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function passthroughProviderCliArgsAndExit(params: Parameters<typeof passthroughProviderCliArgs>[0]): void {
+  passthroughProviderCliArgs(params);
+  process.exit(0);
+}
+
 async function resolveProviderRunOptions(params: Readonly<{
   agentId: AgentId;
   settings: Readonly<Record<string, unknown>>;
@@ -73,16 +144,22 @@ async function resolveProviderRunOptions(params: Readonly<{
     startedBy: params.startedBy,
   });
   const environmentVariables = readProviderEnvironmentVariables(extras.environmentVariables);
+  const unsetEnvironmentVariables = readUnsetEnvironmentVariables(extras.unsetEnvironmentVariables);
   return {
     ...extras,
     ...(environmentVariables ? { environmentVariables } : {}),
+    ...(unsetEnvironmentVariables ? { unsetEnvironmentVariables } : {}),
   };
 }
 
 export async function runBackendSessionCliCommand<Extra extends Record<string, unknown>>(params: {
   context: CommandContext;
   backendIdForSessionRuntime: string;
+  /** Canonical catalog Agent identity used only for daemon runtime authority. */
+  runtimeAuthorityAgentId?: RuntimeAuthorityAgentId;
+  /** Optional legacy CLI argument normalizer; never a runtime-authority source. */
   agentIdForDeprecatedAliases?: AgentId;
+  /** Optional Profile, account-settings, and Connected Services catalog owner. */
   agentIdForAccountSettings?: AgentId;
   loadAccountSettings?: boolean;
   directoryFlags?: readonly string[];
@@ -90,22 +167,40 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
   forwardResumeFlag?: boolean;
   yoloProviderArgs?: readonly string[];
   versionFlags?: readonly string[];
+  providerInfoCommandPrefixes?: readonly ProviderCliInfoCommandPrefix[];
   resolveExtraOptions?: (args: string[], parsed: ProviderSessionArgPartitionResult) => Extra;
+  resolveDirectConnectedServiceEnvironmentFn?: typeof resolveDirectConnectedServiceEnvironment;
 }): Promise<void> {
   let releaseSessionRunnerLock: (() => Promise<void>) | null = null;
+  let releaseDirectProviderLaunch: ProviderLaunchCleanup | null = null;
+  const cleanupDirectProviderLaunch = async (): Promise<void> => {
+    const cleanup = releaseDirectProviderLaunch;
+    releaseDirectProviderLaunch = null;
+    if (!cleanup) return;
+    try {
+      await cleanup();
+    } catch (error) {
+      void error;
+      logger.warn('[session] Direct Provider launch cleanup failed', {
+        error: 'provider_cleanup_failed',
+      });
+    }
+  };
 
   try {
-    const agentId = params.agentIdForAccountSettings ?? params.agentIdForDeprecatedAliases;
+    const cliArgumentAgentId =
+      params.agentIdForAccountSettings
+      ?? params.agentIdForDeprecatedAliases;
     const parsed = partitionProviderSessionArgs({
       args: params.context.args,
-      providerSubcommand: agentId,
+      providerSubcommand: cliArgumentAgentId,
       directoryFlags: params.directoryFlags,
       forwardModelFlag: params.forwardModelFlag,
       forwardResumeFlag: params.forwardResumeFlag,
       yoloProviderArgs: params.yoloProviderArgs,
       versionFlags: params.versionFlags,
     });
-    if (agentId && parsed.helpRequested) {
+    if (cliArgumentAgentId && parsed.helpRequested) {
       console.log(`${buildRootHelpText()}
 
 ${'-'.repeat(60)}
@@ -114,11 +209,35 @@ Provider CLI Options:
       const providerHelpArgs = parsed.providerArgs.some((arg) => arg === '-h' || arg === '--help')
         ? parsed.providerArgs
         : [...parsed.providerArgs, '--help'];
-      passthroughProviderCliArgs({ agentId, providerArgs: providerHelpArgs });
+      passthroughProviderCliArgsAndExit({
+        agentId: cliArgumentAgentId,
+        providerArgs: providerHelpArgs,
+      });
       return;
     }
-    if (agentId && parsed.versionRequested && parsed.versionFlag) {
-      passthroughProviderCliArgs({ agentId, providerArgs: [parsed.versionFlag] });
+    if (
+      cliArgumentAgentId
+      && parsed.versionRequested
+      && parsed.versionFlag
+    ) {
+      passthroughProviderCliArgsAndExit({
+        agentId: cliArgumentAgentId,
+        providerArgs: [parsed.versionFlag],
+      });
+      return;
+    }
+    if (
+      cliArgumentAgentId
+      && params.providerInfoCommandPrefixes
+      && isProviderCliInfoCommandPrefixRequest({
+        args: parsed.providerArgs,
+        prefixes: params.providerInfoCommandPrefixes,
+      })
+    ) {
+      passthroughProviderCliArgsAndExit({
+        agentId: cliArgumentAgentId,
+        providerArgs: parsed.providerArgs,
+      });
       return;
     }
 
@@ -160,13 +279,22 @@ Provider CLI Options:
     if (!backendId) {
       throw new Error('Session command is missing a backend id for session startup');
     }
+    const modelSelectionBackendTargetInput = (
+      extraOptions as Readonly<{ backendTarget?: BackendTargetRefV2Input }>
+    ).backendTarget ?? {
+      kind: 'backend',
+      backendId,
+      sourceKind: 'built_in',
+    };
 
     let credentials = await readCredentials();
+    let machineId: string;
     if (!credentials) {
       const auth = await authAndSetupMachineIfNeeded();
       credentials = auth.credentials;
+      machineId = auth.machineId;
     } else {
-      await ensureMachineIdForCredentials(credentials);
+      machineId = (await ensureMachineIdForCredentials(credentials)).machineId;
       if (
         shouldAutoStartDaemonAfterAuth({
           env: process.env,
@@ -181,12 +309,15 @@ Provider CLI Options:
     }
 
     let accountSettingsContext: AccountSettingsContext | null = null;
-    const agentIdForProfiles = params.agentIdForAccountSettings ?? params.agentIdForDeprecatedAliases;
+    const profileAgentId =
+      params.agentIdForAccountSettings
+      ?? params.agentIdForDeprecatedAliases;
+    const runtimeAuthorityAgentId = params.runtimeAuthorityAgentId;
 
     if (params.agentIdForAccountSettings || params.loadAccountSettings || profileQuery) {
-      const accountSettingsBootstrapMode = startedBy === 'daemon' ? 'blocking' : 'fast';
+      const accountSettingsBootstrapMode = profileQuery ? 'blocking' : 'fast';
       const snapshot = await bootstrapAccountSettingsContext({
-        ...(agentIdForProfiles ? { agentId: agentIdForProfiles } : {}),
+        ...(profileAgentId ? { agentId: profileAgentId } : {}),
         credentials,
         mode: accountSettingsBootstrapMode,
         refresh: resolveSessionStartAccountSettingsRefreshMode({
@@ -201,71 +332,586 @@ Provider CLI Options:
       });
     }
 
-    const permissionModeSeededByProfile = profileQuery && accountSettingsContext && agentIdForProfiles
-      ? (() => {
-        const { customProfiles } = readProfilesFromAccountSettings(accountSettingsContext.settings as any);
-        const profile = resolveProfileForAgent({ agentId: agentIdForProfiles, query: profileQuery, customProfiles });
-        const promptSecretFn =
-          startedBy !== 'daemon' && isInteractiveTerminal()
-            ? promptSecret
-            : null;
-        return buildProfileEnvOverlay({
-          agentId: agentIdForProfiles,
-          profile,
-          accountSettings: accountSettingsContext.settings as any,
-          credentials,
-          processEnv: process.env,
-          promptSecretFn,
-          startedBy,
-        }).then((overlay) => {
-          applyProfileToProcessEnv({ profileId: overlay.profileId, envOverlayExpanded: overlay.envOverlayExpanded });
-          return overlay.permissionModeSeed;
+    const providerSessionId =
+      normalizedExistingSessionId || `direct-${randomUUID()}`;
+    const catalogAgentId = params.agentIdForAccountSettings ?? null;
+    const selectedProfile =
+      profileQuery && accountSettingsContext && profileAgentId
+        ? (() => {
+            const {
+              visibleProfiles,
+              terminalMigratedProfileIds,
+            } = readProfilesFromAccountSettings(
+              accountSettingsContext.settings as any,
+            );
+            return resolveProfileForAgent({
+              agentId: profileAgentId,
+              query: profileQuery,
+              customProfiles: visibleProfiles,
+              terminalMigratedProfileIds,
+            });
+          })()
+        : null;
+    const preferredProfileModelSelection =
+      selectedProfile && isLaunchProfileV2(selectedProfile)
+        ? selectedProfile.preferredModelSelection
+        : undefined;
+    const modelSelection = resolveSessionStartModelSelection({
+      backendTarget: modelSelectionBackendTargetInput,
+      canonicalSelection: resolved.modelSelection,
+      legacyModelId: resolved.modelId,
+      providerConnectionId: resolved.providerConnectionId,
+      legacyModelUpdatedAt: resolved.modelUpdatedAt,
+      fallbackSelection: preferredProfileModelSelection,
+    });
+    const hasForegroundProviderSelection =
+      modelSelection?.ref.providerConnectionId !== null
+      && modelSelection?.ref.providerConnectionId !== undefined;
+    let foregroundReservedEnvironmentVariableNames: readonly string[] =
+      Object.freeze([]);
+    let profileSecretRequirementNamesMissingBinding: readonly string[] =
+      Object.freeze([]);
+    let foregroundAdmissionClaim: Readonly<{
+      tokenFilePath: string;
+      sessionId: string;
+      attemptId: string;
+    }> | null = null;
+    let admitForegroundRuntime:
+      | (() => Promise<Readonly<{
+          claim: NonNullable<typeof foregroundAdmissionClaim>;
+          reservedEnvironmentVariableNames: readonly string[];
+          profileSecretRequirementNamesMissingBinding: readonly string[];
+        }>>)
+      | null = null;
+    if (
+      startedBy !== 'daemon'
+      && runtimeAuthorityAgentId
+    ) {
+      if (
+        selectedProfile
+        && (
+          !accountSettingsContext?.scopeKey
+          || typeof accountSettingsContext.settingsVersion !== 'number'
+        )
+      ) {
+        throw new Error(
+          'Foreground Profile admission requires an exact account settings scope',
+        );
+      }
+      await ensureDaemonRunningForSessionCommand();
+      admitForegroundRuntime = async () => {
+        const attemptId = randomUUID();
+        const admission = await admitDaemonForegroundAgentRuntime({
+          v: 1,
+          attemptId,
+          sessionId: providerSessionId,
+          foregroundPid: process.pid,
+          directory:
+            parsed.directory ?? resolveRequestedSessionDirectory(),
+          agentId: runtimeAuthorityAgentId,
+          backendTarget: readBackendTargetRefV2(
+            modelSelectionBackendTargetInput,
+          ),
+          ...(selectedProfile ? { profileId: selectedProfile.id } : {}),
+          ...(selectedProfile && accountSettingsContext?.scopeKey
+            ? {
+                accountSettingsScopeKey: accountSettingsContext.scopeKey,
+                accountSettingsVersion:
+                  accountSettingsContext.settingsVersion,
+              }
+            : {}),
+          ...(hasForegroundProviderSelection && modelSelection
+            ? { selection: modelSelection }
+            : {}),
+          previousBinding:
+            params.context.directSessionLaunch?.providerBinding ?? null,
+        }, {
+          ...(params.context.signal ? { signal: params.context.signal } : {}),
         });
-      })()
-      : null;
+        if (!admission.ok) {
+          throw new DirectProviderLaunchError(admission.error);
+        }
+        return Object.freeze({
+          claim: Object.freeze({
+            tokenFilePath: admission.capability.tokenFilePath,
+            sessionId: providerSessionId,
+            attemptId,
+          }),
+          reservedEnvironmentVariableNames:
+            admission.launchPolicy.reservedEnvironmentVariableNames,
+          profileSecretRequirementNamesMissingBinding:
+            admission.launchPolicy
+              .profileSecretRequirementNamesMissingBinding,
+        });
+      };
+      const initialAdmission = await admitForegroundRuntime();
+      foregroundAdmissionClaim = initialAdmission.claim;
+      foregroundReservedEnvironmentVariableNames =
+        initialAdmission.reservedEnvironmentVariableNames;
+      profileSecretRequirementNamesMissingBinding =
+        initialAdmission.profileSecretRequirementNamesMissingBinding;
+      const releaseForegroundAdmission = async () => {
+        const activeClaim = foregroundAdmissionClaim;
+        foregroundAdmissionClaim = null;
+        if (!activeClaim) return;
+        await releaseDaemonForegroundAgentRuntime({
+          v: 1,
+          attemptId: activeClaim.attemptId,
+          sessionId: activeClaim.sessionId,
+        }).catch(() => undefined);
+      };
+      releaseDirectProviderLaunch = releaseForegroundAdmission;
+    }
 
-    const permissionModeSeedRaw = permissionModeSeededByProfile ? await permissionModeSeededByProfile : null;
+    let profileEnvironmentVariables: Record<string, string> = {};
+    let profileEnvironmentVariablesRaw: Record<string, string> = {};
+    let foregroundSatisfiedProfileSecretRequirementNames: readonly string[] =
+      Object.freeze([]);
+    const profileLaunchPreferences =
+      selectedProfile && accountSettingsContext && profileAgentId
+        ? await buildProfileEnvOverlay({
+            agentId: profileAgentId,
+            profile: selectedProfile,
+            processEnv: process.env,
+            promptSecretFn:
+              startedBy !== 'daemon' && isInteractiveTerminal()
+                ? promptSecret
+                : null,
+            reservedEnvironmentVariableNames: new Set(
+              foregroundReservedEnvironmentVariableNames,
+            ),
+            requiredSecretRequirementNamesMissingBinding: new Set(
+              profileSecretRequirementNamesMissingBinding,
+            ),
+          }).then((overlay) => {
+            profileEnvironmentVariablesRaw =
+              stripSessionControlEnvOverrides(overlay.envOverlayRaw);
+            foregroundSatisfiedProfileSecretRequirementNames =
+              overlay.foregroundSatisfiedSecretRequirementNames;
+            profileEnvironmentVariables = {
+              ...profileEnvironmentVariablesRaw,
+              HAPPIER_SESSION_PROFILE_ID: selectedProfile.id,
+            };
+            return {
+              permissionModeSeed: overlay.permissionModeSeed,
+              preferredModelSelection: preferredProfileModelSelection,
+            };
+          })
+        : null;
+
+    const permissionModeSeedRaw = profileLaunchPreferences?.permissionModeSeed ?? null;
     const permissionModeSeed =
       typeof permissionModeSeedRaw === 'string' && isPermissionMode(permissionModeSeedRaw) ? permissionModeSeedRaw : null;
     const permissionMode: PermissionMode | undefined = resolved.permissionMode ?? (permissionModeSeed ?? undefined);
     const permissionModeUpdatedAt = resolved.permissionModeUpdatedAt ?? (permissionModeSeed ? Date.now() : undefined);
+    let directConnectedServices = params.context.directSessionLaunch?.connectedServices ?? null;
+    let resolveDirectConnectedServices =
+      params.context.directSessionLaunch?.resolveConnectedServiceEnvironment;
+    const shouldResolveCliConnectedServices =
+      startedBy !== 'daemon'
+      && params.context.directSessionLaunch === undefined
+      && catalogAgentId !== null
+      && accountSettingsContext !== null
+      && !process.env[HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY];
+    if (shouldResolveCliConnectedServices) {
+      if (!catalogAgentId || !accountSettingsContext) {
+        throw new Error('connected_service_auth_unsupported');
+      }
+      const directAccountSettings = accountSettingsContext.settings;
+      directConnectedServices = await resolveDirectCliConnectedServiceBindings({
+        agentId: catalogAgentId,
+        credentials,
+        accountSettings: directAccountSettings,
+        authRaw: parsed.connectedServicesAuthRaw,
+        authJsonRaw: parsed.connectedServicesAuthJsonRaw,
+      });
+      if (directConnectedServices) {
+        resolveDirectConnectedServices = (connectedServices) => connectedServices
+          ? (
+              params.resolveDirectConnectedServiceEnvironmentFn
+              ?? resolveDirectConnectedServiceEnvironment
+            )({
+              agentId: catalogAgentId as CatalogAgentId,
+              credentials,
+              accountSettings: directAccountSettings,
+              directory: parsed.directory ?? resolveRequestedSessionDirectory(),
+              sessionId: providerSessionId,
+              connectedServices,
+            })
+          : Promise.resolve(null);
+      }
+    }
+    let directProviderEnvironment: Readonly<Record<string, string>> = Object.freeze({});
+    let directProviderUnsetEnvKeys: readonly string[] = Object.freeze([]);
+    if (
+      startedBy !== 'daemon'
+      && resolveDirectConnectedServices !== undefined
+    ) {
+      const directLaunch = await prepareDirectProviderLaunch({
+        backendTarget: readBackendTargetRefV2(
+          modelSelectionBackendTargetInput,
+        ),
+        machineId,
+        agentId: catalogAgentId,
+        sessionId: providerSessionId,
+        previousBinding: params.context.directSessionLaunch?.providerBinding ?? null,
+        confirmation: null,
+        confirmSecurityChange: params.context.directSessionLaunch?.confirmProviderSecurityChange,
+        connectedServices: directConnectedServices,
+        featureEnabled: false,
+      }, {
+        resolvePrerequisites: async () => {
+          throw new Error(
+            'Native Connected Services launch has no Provider prerequisites',
+          );
+        },
+        createAuthorizationAttempt: async () => {
+          throw new Error(
+            'Native Connected Services launch has no Provider authorization',
+          );
+        },
+        resolveConnectedServices: resolveDirectConnectedServices,
+      });
+      if (!directLaunch.ok) {
+        throw new Error(
+          'Direct Connected Services environment could not be prepared',
+        );
+      }
+      const releaseAdmission = releaseDirectProviderLaunch;
+      releaseDirectProviderLaunch = async () => {
+        await directLaunch.cleanupOnExit?.();
+        await releaseAdmission?.();
+      };
+      directProviderEnvironment = directLaunch.environment;
+      directProviderUnsetEnvKeys = directLaunch.unsetEnvKeys;
+    }
     const providerSpawnExtras =
       params.agentIdForAccountSettings && accountSettingsContext
         ? await resolveProviderRunOptions({
           agentId: params.agentIdForAccountSettings,
           settings: accountSettingsContext.settings as Readonly<Record<string, unknown>>,
-          processEnv: process.env,
+          processEnv: buildScopedProcessEnv({
+            baseEnv: process.env,
+            explicitEnv: profileEnvironmentVariables,
+          }),
           startedBy,
         })
         : {};
+    const providerEnvironmentVariablesRaw = readProviderEnvironmentVariables(
+      (providerSpawnExtras as Readonly<Record<string, unknown>>).environmentVariables,
+    );
+    const providerEnvironmentVariables = providerEnvironmentVariablesRaw
+      ? stripSessionControlEnvOverrides(providerEnvironmentVariablesRaw)
+      : undefined;
+    const extraEnvironmentVariablesRaw = readProviderEnvironmentVariables(
+      (extraOptions as Readonly<Record<string, unknown>>).environmentVariables,
+    );
+    const extraEnvironmentVariables = extraEnvironmentVariablesRaw
+      ? stripSessionControlEnvOverrides(extraEnvironmentVariablesRaw)
+      : undefined;
+    const scopedEnvironmentVariablesRaw = readProviderEnvironmentVariables(
+      params.context.scopedEnvironment?.env,
+    );
+    const scopedEnvironmentVariables = scopedEnvironmentVariablesRaw
+      ? stripSessionControlEnvOverrides(scopedEnvironmentVariablesRaw)
+      : undefined;
+    const baseMergedEnvironmentVariables: Record<string, string> = {
+      ...(providerEnvironmentVariables ?? {}),
+      ...(extraEnvironmentVariables ?? {}),
+      ...(scopedEnvironmentVariables ?? {}),
+      ...directProviderEnvironment,
+    };
+    const baseUnsetEnvironmentVariables =
+      stripSessionControlUnsetEnvKeys(normalizeUnsetEnvKeys([
+        ...(readUnsetEnvironmentVariables(
+          (providerSpawnExtras as Readonly<Record<string, unknown>>)
+            .unsetEnvironmentVariables,
+        ) ?? []),
+        ...(readUnsetEnvironmentVariables(
+          (extraOptions as Readonly<Record<string, unknown>>)
+            .unsetEnvironmentVariables,
+        ) ?? []),
+        ...(readUnsetEnvironmentVariables(
+          params.context.scopedEnvironment?.unsetEnvKeys,
+        ) ?? []),
+        ...directProviderUnsetEnvKeys,
+      ]));
+    const finalizeEnvironment = (
+      admissionEnvironment: Readonly<Record<string, string>>,
+      admissionUnsetEnvironmentVariableNames: readonly string[],
+    ) => {
+      const resolvedProfileEnvironment = selectedProfile
+        ? {
+            ...stripSessionControlEnvOverrides(expandProfileEnvOverlay({
+              profile: selectedProfile,
+              envOverlayRaw: profileEnvironmentVariablesRaw,
+              processEnv: process.env,
+              resolvedEnvironment: admissionEnvironment,
+            })),
+            HAPPIER_SESSION_PROFILE_ID: selectedProfile.id,
+          }
+        : profileEnvironmentVariables;
+      const mergedEnvironmentVariables: Record<string, string> = {
+        ...resolvedProfileEnvironment,
+        ...baseMergedEnvironmentVariables,
+        ...admissionEnvironment,
+      };
+      const reservedEnvironmentVariablesToUnset: string[] = [];
+      for (const reservedName of foregroundReservedEnvironmentVariableNames) {
+        const identity = reservedName.toLowerCase();
+        const trustedEntry =
+          Object.entries(admissionEnvironment).find(
+            ([name]) => name.toLowerCase() === identity,
+          )
+          ?? Object.entries(resolvedProfileEnvironment).find(
+            ([name]) => name.toLowerCase() === identity,
+          );
+        for (const existingName of Object.keys(mergedEnvironmentVariables)) {
+          if (existingName.toLowerCase() === identity) {
+            delete mergedEnvironmentVariables[existingName];
+          }
+        }
+        if (trustedEntry) {
+          mergedEnvironmentVariables[trustedEntry[0]] = trustedEntry[1];
+        } else {
+          reservedEnvironmentVariablesToUnset.push(reservedName);
+        }
+      }
+      const unsetEnvironmentVariables =
+        stripSessionControlUnsetEnvKeys(normalizeUnsetEnvKeys([
+          ...baseUnsetEnvironmentVariables,
+          ...admissionUnsetEnvironmentVariableNames,
+          ...reservedEnvironmentVariablesToUnset,
+        ]));
+      return Object.freeze({
+        environmentVariables: stripUnsetEnvironmentVariables(
+          mergedEnvironmentVariables,
+          unsetEnvironmentVariables,
+        ),
+        unsetEnvironmentVariables,
+      });
+    };
+    let initialEnvironment = foregroundAdmissionClaim
+      ? Object.freeze({
+          environmentVariables: Object.freeze({}),
+          unsetEnvironmentVariables: Object.freeze([]),
+        })
+      : finalizeEnvironment(
+          Object.freeze({}),
+          Object.freeze([]),
+        );
+    let resolveLateEnvironment:
+      | (() => Promise<ReturnType<typeof finalizeEnvironment>>)
+      | undefined;
+    if (foregroundAdmissionClaim) {
+      for (const reservedName of foregroundReservedEnvironmentVariableNames) {
+        const identity = reservedName.toLowerCase();
+        for (const existingName of Object.keys(
+          baseMergedEnvironmentVariables,
+        )) {
+          if (existingName.toLowerCase() === identity) {
+            delete baseMergedEnvironmentVariables[existingName];
+          }
+        }
+      }
+      initialEnvironment = Object.freeze({
+        environmentVariables: stripUnsetEnvironmentVariables(
+          baseMergedEnvironmentVariables,
+          baseUnsetEnvironmentVariables,
+        ),
+        unsetEnvironmentVariables: baseUnsetEnvironmentVariables,
+      });
+      resolveLateEnvironment = async () => {
+        const claim = async () => {
+          const activeClaim = foregroundAdmissionClaim;
+          if (!activeClaim) {
+            throw new Error(
+              'Foreground Agent runtime admission capability is unavailable',
+            );
+          }
+          return await claimDaemonForegroundAgentRuntimeEnvironment({
+            env: {
+              [HAPPIER_AGENT_RUNTIME_DAEMON_BRIDGE_TOKEN_FILE_ENV_KEY]:
+                activeClaim.tokenFilePath,
+            },
+            sessionId: activeClaim.sessionId,
+            attemptId: activeClaim.attemptId,
+            foregroundSatisfiedProfileSecretRequirementNames,
+            ...(params.context.signal
+              ? { signal: params.context.signal }
+              : {}),
+          });
+        };
+        let claimed = await claim();
+        if (!claimed.ok && claimed.profileSecretRecovery) {
+          if (
+            !selectedProfile
+            || !admitForegroundRuntime
+            || startedBy === 'daemon'
+            || !isInteractiveTerminal()
+          ) {
+            throw new DirectProviderLaunchError(claimed.error);
+          }
+          const canonicalRequiredSecretNames = new Set(
+            (selectedProfile.envVarRequirements ?? [])
+              .filter((requirement) =>
+                (requirement.kind ?? 'secret') === 'secret'
+                && requirement.required === true
+              )
+              .map((requirement) => requirement.name),
+          );
+          const recoveryNames =
+            claimed.profileSecretRecovery.requirementNames;
+          if (
+            new Set(recoveryNames).size !== recoveryNames.length
+            || recoveryNames.some((name) =>
+              !canonicalRequiredSecretNames.has(name)
+            )
+          ) {
+            throw new Error(
+              'Foreground Profile secret recovery returned invalid requirement names',
+            );
+          }
+          for (const name of recoveryNames) {
+            const entered = await promptSecret(`${name}: `);
+            const normalized = entered.trim();
+            if (!normalized) {
+              throw new Error(`Missing required secret value for ${name}.`);
+            }
+            profileEnvironmentVariablesRaw[name] = normalized;
+          }
+          foregroundSatisfiedProfileSecretRequirementNames =
+            Object.freeze([
+              ...new Set([
+                ...foregroundSatisfiedProfileSecretRequirementNames,
+                ...recoveryNames,
+              ]),
+            ]);
+          const priorReservedNames = new Set(
+            foregroundReservedEnvironmentVariableNames.map((name) =>
+              name.toLowerCase()
+            ),
+          );
+          const staleClaim = foregroundAdmissionClaim;
+          foregroundAdmissionClaim = null;
+          if (staleClaim) {
+            await releaseDaemonForegroundAgentRuntime({
+              v: 1,
+              attemptId: staleClaim.attemptId,
+              sessionId: staleClaim.sessionId,
+            }).catch(() => undefined);
+          }
+          const retryAdmission = await admitForegroundRuntime();
+          const retryReservedNames = new Set(
+            retryAdmission.reservedEnvironmentVariableNames.map((name) =>
+              name.toLowerCase()
+            ),
+          );
+          if (
+            priorReservedNames.size !== retryReservedNames.size
+            || [...priorReservedNames].some((name) =>
+              !retryReservedNames.has(name)
+            )
+          ) {
+            await releaseDaemonForegroundAgentRuntime({
+              v: 1,
+              attemptId: retryAdmission.claim.attemptId,
+              sessionId: retryAdmission.claim.sessionId,
+            }).catch(() => undefined);
+            throw new Error(
+              'Foreground Agent runtime admission policy changed during Profile secret recovery',
+            );
+          }
+          foregroundAdmissionClaim = retryAdmission.claim;
+          claimed = await claim();
+          if (!claimed.ok && claimed.profileSecretRecovery) {
+            throw new DirectProviderLaunchError(claimed.error);
+          }
+        }
+        if (!claimed.ok) {
+          throw new DirectProviderLaunchError(claimed.error);
+        }
+        const finalized = finalizeEnvironment(
+          claimed.environment,
+          claimed.unsetEnvironmentVariableNames,
+        );
+        return Object.freeze({
+          ...finalized,
+          sensitiveEnvironmentVariableNames:
+            claimed.sensitiveEnvironmentVariableNames,
+        });
+      };
+    }
 
-    await getSessionHostBridge().runSessionCommand(backendId, {
+    const sessionRuntimeParams = {
       credentials,
       directory: parsed.directory ?? resolveRequestedSessionDirectory(),
       terminalRuntime: params.context.terminalRuntime,
+      ...(parsed.startingMode === 'terminal' || parsed.startingMode === 'remote' || parsed.startingMode === 'local'
+        ? { startingMode: parsed.startingMode }
+        : {}),
       happyHomeDir: configuration.happyHomeDir,
       startedBy,
       permissionMode,
       permissionModeUpdatedAt,
       sessionModeId: resolved.sessionModeId,
       sessionModeUpdatedAt: resolved.sessionModeUpdatedAt,
-      modelId: resolved.modelId,
-      modelUpdatedAt: resolved.modelUpdatedAt,
       existingSessionId: normalizedExistingSessionId || undefined,
+      sessionAttachFilePath: params.context.directSessionLaunch?.sessionAttachFilePath,
       resume,
       accountSettingsContext,
       ...providerSpawnExtras,
       ...extraOptions,
-    });
-  } catch (error) {
-    console.error(errorFrame('Error:', [error instanceof Error ? error.message : 'Unknown error']));
-    if (process.env.DEBUG) {
-      console.error(error);
+      ...(parsed.nativeForkSource ? { nativeForkSource: parsed.nativeForkSource } : {}),
+      backendTarget: modelSelectionBackendTargetInput,
+      ...(modelSelection ? { modelSelection } : {}),
+      environmentVariables:
+        Object.keys(initialEnvironment.environmentVariables).length > 0
+          ? initialEnvironment.environmentVariables
+          : undefined,
+      unsetEnvironmentVariables:
+        initialEnvironment.unsetEnvironmentVariables.length > 0
+          ? initialEnvironment.unsetEnvironmentVariables
+          : undefined,
+      ...(resolveLateEnvironment ? { resolveLateEnvironment } : {}),
+    };
+    const sessionHostBridge = getSessionHostBridge();
+    if (foregroundAdmissionClaim) {
+      await sessionHostBridge.runSessionCommand(
+        backendId,
+        sessionRuntimeParams,
+        {
+          agentRuntimeDaemonBridgeTokenFilePath:
+            foregroundAdmissionClaim.tokenFilePath,
+        },
+      );
+    } else {
+      await sessionHostBridge.runSessionCommand(
+        backendId,
+        sessionRuntimeParams,
+      );
     }
+  } catch (error) {
+    const exitCode =
+      isAgentSessionContinuationUnreachableError(error)
+        ? SESSION_RUNNER_EXIT_CODES.CONTINUATION_UNREACHABLE
+        : 1;
+    const rawLines = error instanceof DirectProviderLaunchError
+      ? presentProviderCliRefusal(error.providerError)
+      : [error instanceof Error ? error.message : 'Unknown error'];
+    console.error(errorFrame('Error:', rawLines));
+    if (process.env.DEBUG) {
+      const rawDiagnostic = error instanceof Error
+        ? `${error.name}: ${error.message}${error.stack ? `\n${error.stack}` : ''}`
+        : String(error);
+      console.error(rawDiagnostic);
+    }
+    await cleanupDirectProviderLaunch();
     await releaseSessionRunnerLock?.().catch(() => {});
     releaseSessionRunnerLock = null;
-    process.exit(1);
+    process.exit(exitCode);
   } finally {
+    await cleanupDirectProviderLaunch();
     await releaseSessionRunnerLock?.().catch(() => {});
   }
 }

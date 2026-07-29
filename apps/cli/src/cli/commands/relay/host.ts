@@ -27,6 +27,7 @@ import {
   type SystemTaskSshConnectionConfig,
 } from '@happier-dev/cli-common/systemTasks';
 import { readKnownHostsTextSync, writeKnownHostsTextSync } from '@happier-dev/cli-common/ssh';
+import { renderHelpPage } from '@happier-dev/cli-common/output';
 import { getReleaseRingPublicLabel, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { defaultNameFromUrl, defaultWebappUrlFromServerUrl } from '../server/commandUtilities';
 import { buildScpCommand, buildSshCommand, type SshAuth } from '@/capabilities/systemTasks/ssh/sshTransport';
@@ -44,6 +45,30 @@ type RelayHostInstallJson = Readonly<{
   relayUrl: string;
   mode: 'user' | 'system';
 }>;
+
+export function showRelayHostHelp(subcommand?: string): void {
+  const installUsage = {
+    label: 'happier relay host install [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--server-binary <path>] [--lan | --expose | --host <ip>] [--preserve-active-server] [--yes] [--json]',
+    description: 'Install or update a relay host',
+  };
+  const usage = subcommand === 'install'
+    ? [installUsage]
+    : [
+        installUsage,
+        { label: 'happier relay host status [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--json]', description: 'Show relay host status' },
+        { label: 'happier relay host start|stop|restart|uninstall [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--yes] [--json]', description: 'Control the relay host service' },
+      ];
+  console.log(renderHelpPage({
+    title: subcommand === 'install' ? 'happier relay host install' : 'happier relay host',
+    subtitle: 'Install and control a local or remote relay host',
+    usage,
+    notes: [
+      '--lan binds to an auto-detected LAN or Tailscale address.',
+      '--expose binds to all interfaces; --host binds to one explicit address.',
+      '--preserve-active-server keeps the current CLI relay profile after installation.',
+    ],
+  }));
+}
 
 function normalizeRelayUrlForComparison(raw: string): string {
   const value = String(raw ?? '').trim();
@@ -454,8 +479,12 @@ function resolveRelayRuntimeTaskParams(params: Readonly<{
 }
 
 export async function runRelayHostSubcommand(args: string[]): Promise<void> {
-  const json = wantsJson(args);
   const op = String(args[0] ?? '').trim();
+  if (op === '--help' || op === '-h' || args.slice(1).some((arg) => arg === '--help' || arg === '-h')) {
+    showRelayHostHelp(op === '--help' || op === '-h' ? undefined : op);
+    return;
+  }
+  const json = wantsJson(args);
   if (!op) {
     throw new Error('Usage: happier relay host <install|status|start|stop|restart|uninstall> [--ssh <user@host>] [--mode user|system] [--channel stable|preview|dev] [--env KEY=VALUE]... [--server-binary <path>] [--lan | --expose | --host <ip>] [--preserve-active-server] [--yes] [--json]');
   }

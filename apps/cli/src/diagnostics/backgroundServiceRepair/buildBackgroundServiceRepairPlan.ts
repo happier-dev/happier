@@ -21,12 +21,18 @@ function resolveRepairPlannerHappierHomeDir(params: Readonly<{
   entry: DaemonServiceListEntry;
   currentHappierHomeDir?: string | null;
 }>): string {
-  const serviceHappierHomeDir = resolveHappierHomeDirComparableKey(params.entry.happierHomeDir);
+  const serviceHappierHomeDir = resolveHappierHomeDirComparableKey(
+    params.entry.happierHomeDir,
+    params.entry.platform,
+  );
   if (serviceHappierHomeDir !== null) {
     return serviceHappierHomeDir;
   }
 
-  const currentHappierHomeDir = resolveHappierHomeDirComparableKey(params.currentHappierHomeDir);
+  const currentHappierHomeDir = resolveHappierHomeDirComparableKey(
+    params.currentHappierHomeDir,
+    params.entry.platform,
+  );
   if (currentHappierHomeDir !== null) {
     return currentHappierHomeDir;
   }
@@ -71,8 +77,14 @@ function isForeignHomeService(params: Readonly<{
   entry: DaemonServiceListEntry;
   currentHappierHomeDir: string | null | undefined;
 }>): boolean {
-  const currentHappierHomeDir = resolveHappierHomeDirComparableKey(params.currentHappierHomeDir);
-  const serviceHappierHomeDir = resolveHappierHomeDirComparableKey(params.entry.happierHomeDir);
+  const currentHappierHomeDir = resolveHappierHomeDirComparableKey(
+    params.currentHappierHomeDir,
+    params.entry.platform,
+  );
+  const serviceHappierHomeDir = resolveHappierHomeDirComparableKey(
+    params.entry.happierHomeDir,
+    params.entry.platform,
+  );
   return currentHappierHomeDir !== null
     && serviceHappierHomeDir !== null
     && currentHappierHomeDir !== serviceHappierHomeDir;
@@ -175,7 +187,7 @@ export function buildBackgroundServiceRepairPlan(params: Readonly<{
     ? params.services.filter((service) =>
       isSameModeDefaultFollowingService(service, params.preferredMode)
       && (
-        resolveHappierHomeDirComparableKey(service.happierHomeDir) === null
+        resolveHappierHomeDirComparableKey(service.happierHomeDir, service.platform) === null
         || isForeignHomeService({
           entry: service,
           currentHappierHomeDir: params.currentHappierHomeDir,
@@ -189,7 +201,7 @@ export function buildBackgroundServiceRepairPlan(params: Readonly<{
       if (repairableExternalDefaultServicesSet.has(service)) {
         return false;
       }
-      if (resolveHappierHomeDirComparableKey(service.happierHomeDir) !== null) {
+      if (resolveHappierHomeDirComparableKey(service.happierHomeDir, service.platform) !== null) {
         return false;
       }
       if (service.targetMode === 'default-following' && service.releaseChannel === params.currentReleaseChannel) {

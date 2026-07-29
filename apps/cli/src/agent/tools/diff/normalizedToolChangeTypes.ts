@@ -43,7 +43,7 @@ export type PendingNormalizedToolChange =
             source?: ChangeEvidenceSource;
             confidence?: ChangeConfidence;
             provider?: string;
-            providerTurnId?: string | null;
+            agentTurnId?: string | null;
             providerMessageId?: string | null;
             description?: string;
         }>>;

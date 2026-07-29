@@ -65,6 +65,9 @@ export function startMachineLiveStreamFramePump(_input: Readonly<{
     ) => Readonly<{ ok: true } | { ok: false; reasonCode: 'invalid_control' | 'stale_ack' }>;
     offerFrame: (frame: MachineLiveStreamFrameV1) => Readonly<{ ok: true } | { ok: false; reasonCode: FramePumpReasonCode }>;
 }> {
+    // The server relay owns network/window backpressure for server-routed viewers. The daemon
+    // pump starts unbounded locally and only applies explicit transport credit when an ack is
+    // forwarded back from the server.
     let windowFrames = Number.POSITIVE_INFINITY;
     let windowBytes = Number.POSITIVE_INFINITY;
     let nextSequence = 1;

@@ -5,13 +5,15 @@ import {
   resolvePermissionIntentFromSessionMetadata,
   type PermissionIntent,
 } from '@happier-dev/agents';
-import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol';
-import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import {
+  readPendingLocalId,
+  withSessionMessageModelSelectionV1,
+  type ProviderErrorV1,
+} from '@happier-dev/protocol';
 
 import { fetchEncryptedTranscriptPageAfterSeq } from '@/api/session/fetchEncryptedTranscriptWindow';
 import {
-  materializeNextPendingQueueV2MessageViaHttp,
+  enqueuePendingQueueV2MessageViaHttp,
   readBlockedPendingQueueV2DeliveryByLocalIdFromServer,
   type PendingQueueDeliveryBlockedReason,
 } from '@/api/session/pendingQueueV2Transport';
@@ -23,31 +25,33 @@ import type { Credentials } from '@/persistence';
 import {
   detectSessionTurnActivity,
   isMemoryArtifactDecryptedRow,
+  isSessionAgentMessage,
   isSessionUserMessage,
+  readSessionProjectedTurnStatus,
+  type SessionTurnActivity,
 } from '@/session/query/detectSessionTurnInFlight';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
-import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { waitForIdleViaSocket } from '@/session/transport/socket/sessionSocketAgentState';
-import { sendSessionMessageViaSocketCommitted } from '@/session/transport/socket/sessionSocketSendMessage';
 import {
   decryptSessionPayload,
   encryptSessionPayload,
-  tryDecryptSessionMetadata,
+  tryDecryptSessionOwnerMetadataView,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import {
   detectSessionTurnLifecycleEvent,
+  isBareSessionReadyEvent,
   isSessionTurnCompletionProof,
 } from '@/session/shared/sessionTurnLifecycle';
 
 import { resolveSessionTransportContext } from './resolveSessionTransportContext';
 import {
-  resolveSessionMessageModelId,
-  SessionMessageProviderSwitchUnsupportedError,
+  resolveSessionMessageModel,
   type SessionMessageModelSelectionInput,
 } from './resolveSessionMessageModel';
+import { requestInactiveSessionResume } from './requestInactiveSessionResume';
 
 export type SendSessionMessageResult =
-  | Readonly<{ ok: true; sessionId: string; localId: string; waited: boolean }>
+  | Readonly<{ ok: true; sessionId: string; localId: string; waited: boolean; suppressed?: true }>
   | Readonly<{
       ok: false;
       code: 'session_not_found' | 'session_id_ambiguous' | 'session_archived' | 'session_inactive' | 'unsupported' | 'timeout' | 'wait_failed' | 'provider_switch_unsupported';
@@ -55,11 +59,6 @@ export type SendSessionMessageResult =
       message?: string;
       providerError?: ProviderErrorV1;
     }>;
-
-export type SendSessionMessageSocketCommit = Readonly<{
-  sessionId: string;
-  localId: string;
-}>;
 
 function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
   const parsed = parsePermissionIntentAlias(raw);
@@ -69,39 +68,6 @@ function parsePermissionIntentOrThrow(raw: string): PermissionIntent {
     throw err;
   }
   return parsed;
-}
-
-function isFallbackSafeRuntimeRpcError(error: unknown): boolean {
-  if (readRpcErrorCode(error) === 'session_not_found') {
-    return true;
-  }
-
-  const errorMessage = error instanceof Error ? error.message : String(error ?? '');
-  if (
-    errorMessage === 'Method not found'
-    || errorMessage === 'RPC method not available'
-    || errorMessage === 'Socket connect timeout'
-  ) {
-    return true;
-  }
-
-  return errorMessage.toLowerCase().includes('connect_error');
-}
-
-async function nudgePendingQueueBestEffort(params: Readonly<{
-  token: string;
-  sessionId: string;
-}>): Promise<void> {
-  try {
-    await materializeNextPendingQueueV2MessageViaHttp({
-      token: params.token,
-      sessionId: params.sessionId,
-    });
-  } catch {
-    // Best-effort only. Callers may layer stronger retry loops when materialization
-    // is safety-critical, but ordinary socket-fallback sends should still attempt
-    // one canonical nudge here.
-  }
 }
 
 function resolvePermissionIntent(params: Readonly<{
@@ -269,21 +235,46 @@ function readProjectedCurrentTurnFailure(params: Readonly<{
   session: unknown;
   currentUserCreatedAt: number | null;
 }>): string | null {
-  if (params.currentUserCreatedAt === null) return null;
-  const record = asRecord(params.session);
-  if (!record) return null;
-  const latestTurnStatus = record.latestTurnStatus;
+  const latestTurnStatus = readProjectedCurrentTurnStatus(params);
   if (latestTurnStatus !== 'failed' && latestTurnStatus !== 'cancelled') {
     return null;
   }
-  const observedAt = readNonnegativeInteger(record.latestTurnStatusObservedAt);
-  if (observedAt === null || observedAt < params.currentUserCreatedAt) {
-    return null;
-  }
+  const record = asRecord(params.session);
   return formatStructuredTurnFailureMessage(
     latestTurnStatus,
-    readStructuredIssuePreview(record.lastRuntimeIssue),
+    readStructuredIssuePreview(record?.lastRuntimeIssue),
   );
+}
+
+function readProjectedCurrentTurnStatus(params: Readonly<{
+  session: unknown;
+  currentUserCreatedAt: number | null;
+}>): ReturnType<typeof readSessionProjectedTurnStatus> {
+  if (params.currentUserCreatedAt === null) return null;
+  const record = asRecord(params.session);
+  if (!record) return null;
+  const latestTurnStatus = readSessionProjectedTurnStatus(record.latestTurnStatus);
+  if (!latestTurnStatus) return null;
+  const observedAt = readNonnegativeInteger(record.latestTurnStatusObservedAt);
+  if (
+    observedAt === null
+    || observedAt < params.currentUserCreatedAt
+    || (observedAt === params.currentUserCreatedAt && latestTurnStatus !== 'in_progress')
+  ) {
+    return null;
+  }
+  return latestTurnStatus;
+}
+
+function turnActivityFromProjectedCurrentTurnStatus(
+  status: NonNullable<ReturnType<typeof readSessionProjectedTurnStatus>>,
+): SessionTurnActivity {
+  const activeTaskInFlight = status === 'in_progress';
+  return {
+    pendingUserTurns: 0,
+    activeTaskInFlight,
+    turnInFlight: activeTaskInFlight,
+  };
 }
 
 type AssistantTurnOutcome =
@@ -363,6 +354,7 @@ async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
 }>> {
   let afterSeq = Math.max(0, Math.trunc(params.materializedSeq) - 1);
   let currentUserSeq = Math.max(0, Math.trunc(params.materializedSeq));
+  let observedAgentProgress = false;
   let sawCompletion = false;
 
   while (true) {
@@ -392,6 +384,16 @@ async function scanAssistantTurnAfterCurrentUserTurn(params: Readonly<{
       }
       if (isAssistantTurnCompletionProof(decrypted)) {
         sawCompletion = true;
+        continue;
+      }
+      if (isBareSessionReadyEvent(decrypted)) {
+        if (observedAgentProgress) {
+          sawCompletion = true;
+        }
+        continue;
+      }
+      if (isSessionAgentMessage(decrypted)) {
+        observedAgentProgress = true;
       }
     }
 
@@ -481,11 +483,12 @@ export async function sendSessionMessage(params: Readonly<{
   wait: boolean;
   timeoutMs: number;
   localId?: string;
+  resumeInactiveSession?: boolean;
   permissionModeOverride?: string;
   modelSelectionInput?: SessionMessageModelSelectionInput;
+  pendingAdmissionMode?: 'continuation_if_no_queued_user_input';
   /** Deployed CLI compatibility only; new action callers pass modelSelectionInput. */
   modelOverride?: string | null;
-  onCommittedViaSocket?: (input: SendSessionMessageSocketCommit) => Promise<void> | void;
 }>): Promise<SendSessionMessageResult> {
   const sessionTarget = await resolveSessionTransportContext({
     credentials: params.credentials,
@@ -509,16 +512,11 @@ export async function sendSessionMessage(params: Readonly<{
       code: 'session_archived',
     };
   }
-  if (sessionTarget.rawSession.active !== true) {
-    return {
-      ok: false,
-      code: 'session_inactive',
-      message: 'Session is inactive. Resume it before sending a message.',
-    };
+  if (params.localId !== undefined && readPendingLocalId(params.localId) === null) {
+    throw new Error('Pending localId must not be blank');
   }
-
-  const localId = params.localId?.trim() || randomUUID();
-  const decryptedMetadata = tryDecryptSessionMetadata({
+  const localId = readPendingLocalId(params.localId) ?? randomUUID();
+  const decryptedMetadata = tryDecryptSessionOwnerMetadataView({
     credentials: params.credentials,
     rawSession: sessionTarget.rawSession,
   });
@@ -526,94 +524,96 @@ export async function sendSessionMessage(params: Readonly<{
     permissionModeOverride: params.permissionModeOverride,
     decryptedMetadata,
   });
-  let modelId: string;
-  try {
-    modelId = resolveSessionMessageModelId({
-      metadata: decryptedMetadata,
-      ...(params.modelSelectionInput !== undefined
-        ? { modelSelectionInput: params.modelSelectionInput }
-        : params.modelOverride !== undefined
-          ? { legacyModelOverride: params.modelOverride }
-          : {}),
-    });
-  } catch (error) {
-    if (error instanceof SessionMessageProviderSwitchUnsupportedError) {
-      return {
-        ok: false,
-        code: error.code,
-        message: error.message,
-        providerError: createProviderErrorV1(error.code),
-      };
-    }
-    throw error;
-  }
+  const modelResolution = resolveSessionMessageModel({
+    metadata: decryptedMetadata,
+    sessionActive: sessionTarget.rawSession.active === true,
+    ...(params.modelSelectionInput !== undefined
+      ? { modelSelectionInput: params.modelSelectionInput }
+      : params.modelOverride !== undefined
+        ? { legacyModelOverride: params.modelOverride }
+        : {}),
+    nowMs: Date.now(),
+  });
 
+  const baseMeta = {
+    sentFrom: 'cli',
+    // Important: `source: 'cli'` is reserved for CLI-authored transcript traffic that
+    // the running agent runtime should treat as "self-sent" (e.g. local provider echoes).
+    // A `happier session send` prompt is user intent and must be delivered to the runtime
+    // queue even when it is committed by the daemon via session RPC.
+    source: 'ui',
+    permissionMode: permissionIntent,
+    ...(modelResolution.modelId ? { model: modelResolution.modelId } : {}),
+  } as const;
   const record = {
     role: 'user',
     content: { type: 'text', text: params.message },
-    meta: {
-      sentFrom: 'cli',
-      // Important: `source: 'cli'` is reserved for CLI-authored transcript traffic that
-      // the running agent runtime should treat as "self-sent" (e.g. local provider echoes).
-      // A `happier session send` prompt is user intent and must be delivered to the runtime
-      // queue even when it is committed by the daemon via session RPC.
-      source: 'ui',
-      permissionMode: permissionIntent,
-      ...(modelId ? { model: modelId } : {}),
-    },
+    meta: modelResolution.selection
+      ? withSessionMessageModelSelectionV1(baseMeta, modelResolution.selection)
+      : baseMeta,
   } as const;
 
   const content =
     sessionTarget.mode === 'plain'
       ? ({ t: 'plain', v: record } as const)
-      : ({ t: 'encrypted', c: encryptSessionPayload({ ctx: sessionTarget.ctx, payload: record }) } as const);
+      : ({
+          t: 'encrypted',
+          c: encryptSessionPayload({
+            ctx: sessionTarget.ctx,
+            payload: record,
+            ...(params.pendingAdmissionMode ? { idempotencyKey: localId } : {}),
+          }),
+        } as const);
 
-  async function commitViaSocket(): Promise<void> {
-    await sendSessionMessageViaSocketCommitted({
-      token: params.credentials.token,
-      sessionId,
-      content,
-      localId,
-      messageRole: 'user',
-      sentFrom: 'cli',
-      permissionMode: permissionIntent,
-    });
-    await nudgePendingQueueBestEffort({
-      token: params.credentials.token,
-      sessionId,
-    });
-    await params.onCommittedViaSocket?.({
-      sessionId,
-      localId,
-    });
-  }
+  let enqueueResult: Awaited<ReturnType<typeof enqueuePendingQueueV2MessageViaHttp>>;
   try {
-    await callSessionRpc({
+    enqueueResult = await enqueuePendingQueueV2MessageViaHttp({
       token: params.credentials.token,
       sessionId,
-      mode: sessionTarget.mode,
-      ctx: sessionTarget.ctx,
-      method: `${sessionId}:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`,
-      request: {
-        text: params.message,
-        localId,
-        meta: record.meta,
-      },
+      body: content.t === 'encrypted'
+        ? {
+            localId,
+            ciphertext: content.c,
+            messageRole: 'user',
+            requestedAction: { v: 1, kind: 'send_now' },
+            ...(params.pendingAdmissionMode ? { deliveryMode: params.pendingAdmissionMode } : {}),
+          }
+        : {
+            localId,
+            content,
+            messageRole: 'user',
+            requestedAction: { v: 1, kind: 'send_now' },
+            ...(params.pendingAdmissionMode ? { deliveryMode: params.pendingAdmissionMode } : {}),
+          },
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error ?? '');
-    if (errorMessage === 'RPC call timeout') {
-      return {
-        ok: false,
-        code: 'timeout',
-        message: errorMessage,
-      };
-    }
-    if (!isFallbackSafeRuntimeRpcError(error)) {
-      throw error;
-    }
+    return { ok: false, code: 'timeout', message: errorMessage || 'Pending enqueue acknowledgement was not confirmed' };
+  }
 
-    await commitViaSocket();
+  if (enqueueResult?.suppressed === true) {
+    return { ok: true, sessionId, localId, waited: false, suppressed: true };
+  }
+
+  if (enqueueResult?.terminal === true) {
+    return { ok: true, sessionId, localId, waited: false };
+  }
+
+  if (sessionTarget.rawSession.active !== true && params.resumeInactiveSession !== false) {
+    const resumeResult = await requestInactiveSessionResume({
+      credentials: params.credentials,
+      sessionId,
+      localId,
+      rawSession: sessionTarget.rawSession,
+      metadata: decryptedMetadata && typeof decryptedMetadata === 'object' && !Array.isArray(decryptedMetadata)
+        ? decryptedMetadata as Record<string, unknown>
+        : {},
+      timeoutMs: params.timeoutMs,
+    });
+    if (!resumeResult.ok) {
+      return { ok: false, code: resumeResult.code, message: resumeResult.message };
+    }
+    if (!params.wait) return { ok: true, sessionId, localId, waited: false };
   }
 
   if (!params.wait) {
@@ -651,6 +651,7 @@ export async function sendSessionMessage(params: Readonly<{
       };
     }
     const materialized = promptDelivery.message;
+    const currentUserCreatedAt = readNonnegativeInteger(materialized.createdAt);
 
     currentTurnAfterSeqExclusive = await resolveCurrentTurnAfterSeqExclusive({
       token: params.credentials.token,
@@ -672,16 +673,22 @@ export async function sendSessionMessage(params: Readonly<{
       waitSessionSnapshot = sessionTarget.rawSession;
     }
 
-    const initialTurnActivity = await detectSessionTurnActivity({
-      token: params.credentials.token,
-      sessionId,
-      encryptionMode: sessionTarget.mode,
-      encryptionKey: sessionTarget.ctx.encryptionKey,
-      encryptionVariant: sessionTarget.ctx.encryptionVariant,
-      ...(typeof currentTurnAfterSeqExclusive === 'number' ? { afterSeqExclusive: currentTurnAfterSeqExclusive } : {}),
-      readyCompletesPendingUserTurns: false,
-      transcriptFetchTimeoutMs: remainingTimeoutMs(),
+    const initialProjectedCurrentTurnStatus = readProjectedCurrentTurnStatus({
+      session: waitSessionSnapshot,
+      currentUserCreatedAt,
     });
+    const initialTurnActivity = initialProjectedCurrentTurnStatus
+      ? turnActivityFromProjectedCurrentTurnStatus(initialProjectedCurrentTurnStatus)
+      : await detectSessionTurnActivity({
+          token: params.credentials.token,
+          sessionId,
+          encryptionMode: sessionTarget.mode,
+          encryptionKey: sessionTarget.ctx.encryptionKey,
+          encryptionVariant: sessionTarget.ctx.encryptionVariant,
+          ...(typeof currentTurnAfterSeqExclusive === 'number' ? { afterSeqExclusive: currentTurnAfterSeqExclusive } : {}),
+          readyCompletesPendingUserTurns: false,
+          transcriptFetchTimeoutMs: remainingTimeoutMs(),
+        });
 
     const agentStateCiphertext =
       typeof waitSessionSnapshot.agentState === 'string' ? String(waitSessionSnapshot.agentState).trim() : null;
@@ -693,8 +700,23 @@ export async function sendSessionMessage(params: Readonly<{
       sessionEncryptionMode: sessionTarget.mode,
       timeoutMs: remainingTimeoutMs(),
       initialTurnActivity,
-      recheckTurnActivity: async () =>
-        detectSessionTurnActivity({
+      recheckTurnActivity: async () => {
+        try {
+          const refreshedSession = await fetchSessionById({
+            token: params.credentials.token,
+            sessionId,
+          });
+          const projectedCurrentTurnStatus = readProjectedCurrentTurnStatus({
+            session: refreshedSession,
+            currentUserCreatedAt,
+          });
+          if (projectedCurrentTurnStatus) {
+            return turnActivityFromProjectedCurrentTurnStatus(projectedCurrentTurnStatus);
+          }
+        } catch {
+          // Fall through to transcript evidence when the current projection is unavailable.
+        }
+        return detectSessionTurnActivity({
           token: params.credentials.token,
           sessionId,
           encryptionMode: sessionTarget.mode,
@@ -703,7 +725,8 @@ export async function sendSessionMessage(params: Readonly<{
           ...(typeof currentTurnAfterSeqExclusive === 'number' ? { afterSeqExclusive: currentTurnAfterSeqExclusive } : {}),
           readyCompletesPendingUserTurns: false,
           transcriptFetchTimeoutMs: remainingTimeoutMs(),
-        }),
+        });
+      },
       preferProjectionUpdates: false,
       readyCompletesPendingUserTurns: false,
       initialAgentStateCiphertextBase64:
@@ -723,7 +746,7 @@ export async function sendSessionMessage(params: Readonly<{
     }
     const projectedFailure = readProjectedCurrentTurnFailure({
       session: finalSessionSnapshot,
-      currentUserCreatedAt: readNonnegativeInteger(materialized.createdAt),
+      currentUserCreatedAt,
     });
     if (projectedFailure) {
       return {
@@ -744,6 +767,17 @@ export async function sendSessionMessage(params: Readonly<{
         ok: false,
         code: 'wait_failed',
         message: transcriptFailure,
+      };
+    }
+    if (readProjectedCurrentTurnStatus({
+      session: finalSessionSnapshot,
+      currentUserCreatedAt,
+    }) === 'completed') {
+      return {
+        ok: true,
+        sessionId,
+        localId,
+        waited: true,
       };
     }
     const assistantTurnOutcome = await waitForAssistantCompletionAfterCurrentUserTurn({

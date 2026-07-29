@@ -3,11 +3,11 @@ import type { ACPMessageData, ACPProvider, SessionEventMessage } from './session
 import type { AgentState, Metadata } from '../types';
 import type { ProviderTranscriptDispatchRequest } from './client/transcript/providerDispatch';
 import type {
-  SessionRuntimeActivitySourceClassV1,
   SessionSystemRecord,
   SessionSystemRecordNamespace,
   SessionSystemRecordUpsertRequest,
   SessionTurnMutationV1,
+  SessionTranscriptObservationProvenanceV1,
 } from '@happier-dev/protocol';
 import type {
   SessionEncryptionContext,
@@ -16,15 +16,12 @@ import type {
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { PendingQueueState } from './pendingQueueState';
 import type { RegisteredSessionStateFieldMutationV1 } from './client/transport/mutations/sessionClientDurableMutationTypes';
-import type {
-  PendingMaterializationActiveTurnPolicy,
-  ProviderAcceptancePendingMaterializationPolicy,
-} from './pendingMaterializationActiveTurnPolicy';
+import type { RuntimeActivitySnapshotTail } from './client/transport/mutations/createSessionClientDurableMutationOutbox';
 import type {
   PendingMaterializationDeliveryState,
   PendingMaterializationDeliveryTiming,
-  PendingQueueDeliveryBlockedReason,
 } from './pendingQueueV2Transport';
+import type { CommittedUserMessageSeqListener } from './committedUserMessageSeqTracker';
 
 export type MaterializeNextPendingResult =
   | {
@@ -37,19 +34,11 @@ export type MaterializeNextPendingResult =
       deliveryState?: PendingMaterializationDeliveryState;
     }
   | { type: 'no_pending' }
-  | { type: 'deferred'; reason: 'supervisor_offline' | 'supervisor_auth_failed' | 'runtime_activity_active' };
+  | { type: 'retryable_transport' }
+  | { type: 'auth_failure' }
+  | { type: 'deferred'; reason: 'supervisor_offline' | 'supervisor_auth_failed' | 'runtime_activity_active' | 'runtime_activity_unknown' };
 
-export type ProviderUserMessageDeliveryAcceptance = Readonly<{
-  localIds?: readonly string[] | null;
-  userMessageSeq?: number | null;
-  userMessageSeqs?: readonly number[] | null;
-}>;
-
-export type UserMessageProviderAcceptanceQuery = Readonly<{
-  localIds?: readonly string[] | null;
-  userMessageSeq?: number | null;
-  userMessageSeqs?: readonly number[] | null;
-}>;
+export type { RuntimeActivitySnapshotTail } from './client/transport/mutations/createSessionClientDurableMutationOutbox';
 
 export type LocallyConsumedUserMessageConfirmation = Readonly<{
   localIds?: readonly string[] | null;
@@ -73,17 +62,15 @@ export interface SessionClientPort {
   enqueueAgentMessageCommitted?(
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown> },
+    opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
   ): Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   sendAgentMessageCommitted(provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }): Promise<void>;
 
   updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
   updateAgentState(updater: (state: AgentState) => AgentState): void | Promise<void>;
   updateRuntimeActivityProjection?(projection: Readonly<{
+    runtimeActivityState: 'active' | 'idle' | 'unknown';
     runtimeActivityActiveCount: number;
-    runtimeActivityObservedAt: number | null;
-    runtimeActivityExpiresAt: number | null;
-    runtimeActivitySourceClass: SessionRuntimeActivitySourceClassV1 | null;
   }>): Promise<void>;
   upsertSessionSystemRecord?(request: SessionSystemRecordUpsertRequest): Promise<void>;
   fetchSessionSystemRecord?(params: Readonly<{
@@ -102,41 +89,23 @@ export interface SessionClientPort {
 
   getMetadataSnapshot(): Metadata | null;
   getCommittedUserMessageSeq?(localId: string): number | null;
-  hasCanonicalPendingDeliveryLocalId?(localId: string): boolean;
-  getDeliveredUserMessageSeq?(): number | null;
-  getProviderAcceptedUserMessageSeq?(): number | null;
-  hasUserMessageProviderAcceptance?(query: UserMessageProviderAcceptanceQuery): boolean;
+  subscribeCommittedUserMessageSeq?(listener: CommittedUserMessageSeqListener): () => void;
   hasUserMessageLocalConsumption?(query: UserMessageLocalConsumptionQuery): boolean;
-  /**
-   * HF-1 owed-delivery watermark, provider-acceptance shape: a runtime with an acceptance seam
-   * opts in (queue-handoff persist stops) and confirms accepted row seqs explicitly.
-   */
-  deferDeliveredUserMessageWatermarkToProviderAcceptance?(opts?: {
-    pendingMaterialization?: ProviderAcceptancePendingMaterializationPolicy;
-  }): void;
-  confirmUserMessageDeliveredToProvider?(acceptance: ProviderUserMessageDeliveryAcceptance): void;
   confirmUserMessageLocallyConsumed?(confirmation: LocallyConsumedUserMessageConfirmation): void;
-  blockPendingMessageDelivery?(params: Readonly<{
-    localIds?: readonly string[] | null;
-    reason: PendingQueueDeliveryBlockedReason;
-  }>): Promise<boolean>;
-  retryPendingMessageDelivery?(params: Readonly<{
-    localId: string;
-  }>): Promise<boolean>;
-  waitForCommittedUserMessageSeq?(
-    localId: string,
-    options?: Readonly<{ timeoutMs?: number; pollMs?: number }>,
-  ): Promise<number | null>;
   waitForMetadataUpdate(abortSignal?: AbortSignal): Promise<boolean>;
+  readRuntimeActivitySnapshotTail?(): RuntimeActivitySnapshotTail;
+  waitForRuntimeActivitySnapshotTailChange?(
+    sequence: number,
+    abortSignal?: AbortSignal,
+  ): Promise<boolean>;
   materializeNextPendingMessageSafely?(opts?: {
     reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
-    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
     deliveryTiming?: PendingMaterializationDeliveryTiming;
+    expectedRuntimeActivityRevision?: number;
   }): Promise<MaterializeNextPendingResult>;
+  wakePendingMaterialization?(): void;
   popPendingMessage(): Promise<boolean>;
-  shouldAttemptPendingMaterialization(opts?: {
-    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
-  }): boolean;
+  shouldAttemptPendingMaterialization(): boolean;
   getPendingQueueState?(): PendingQueueState;
   reconcilePendingQueueState?(opts?: { force?: boolean }): Promise<boolean>;
 
@@ -144,7 +113,6 @@ export interface SessionClientPort {
   discardPendingMessageQueueV2All(opts: { reason: 'switch_to_local' | 'manual' }): Promise<number>;
   discardCommittedMessageLocalIds(opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }): Promise<number>;
 
-  sendSessionDeath(): void;
   flush(): Promise<void>;
   close(): Promise<void>;
 

@@ -5,7 +5,9 @@ import type {
   ExecutionRunDisplay,
   ExecutionRunIntent,
   ExecutionRunResumeHandle,
+  ExecutionRunConnectedServicesLaunchV1,
 } from '@happier-dev/protocol';
+import type { PermissionIntent } from '@happier-dev/agents';
 
 import type {
   ExecutionRunStructuredMeta,
@@ -54,6 +56,7 @@ export type ExecutionRunManagerStartParams = Readonly<{
   runClass: 'bounded' | 'long_lived';
   ioMode: 'request_response' | 'streaming';
   profileId?: string | null;
+  profileGenerationId?: string | null;
   // Internal runtime override for bounded-run timeouts. Not part of the public RPC contract.
   boundedTimeoutMs?: number;
   resumeHandle?: ExecutionRunResumeHandle | null;
@@ -118,6 +121,7 @@ export type ExecutionRunState = Readonly<{
     modelId?: string;
     sessionConfigOptionOverrides?: AcpConfigOptionOverridesV1;
     connectedServicesSelection?: ConnectedServiceBindingsV1 | null;
+    connectedServicesRegistration?: ExecutionRunConnectedServicesLaunchV1;
   }>;
   status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timeout';
   startedAtMs: number;
@@ -132,7 +136,7 @@ export type ExecutionRunState = Readonly<{
     chatModelId: string;
     commitModelId: string;
     commitIsolation: boolean;
-    permissionPolicy: 'no_tools' | 'read_only';
+    permissionIntent: PermissionIntent;
     idleTtlSeconds: number;
     initialContext: string;
     initialContextMode: 'bootstrap' | 'first_turn';

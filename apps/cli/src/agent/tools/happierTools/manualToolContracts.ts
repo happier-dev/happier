@@ -1,8 +1,13 @@
 import { z } from 'zod';
 import {
+  AcpConfigOptionOverridesV1Schema,
   BackendTargetRefV2InputSchema,
   ExecutionRunIntentSchema,
   ExecutionRunStartRequestSchema,
+  SpawnConfigOptionValueSchema,
+  findSpawnConfigOptionAliasConflicts,
+  mergeSpawnConfigOptionAliases,
+  normalizeConnectedServiceSelectionInput,
 } from '@happier-dev/protocol';
 import {
   defaultIoModeForExecutionRunIntent,
@@ -38,6 +43,10 @@ export const executionRunStartToolInputSchema = z.object({
   retentionPolicy: z.enum(['ephemeral', 'resumable']).optional(),
   runClass: z.enum(['bounded', 'long_lived']).optional(),
   ioMode: z.enum(['request_response', 'streaming']).optional(),
+  connectedServices: z.unknown().optional(),
+  modelId: z.string().min(1).optional(),
+  sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
+  configOptions: z.record(z.string(), SpawnConfigOptionValueSchema).optional(),
 }).passthrough().superRefine((value, ctx) => {
   const hasBackendTarget = typeof value.backendTarget !== 'undefined';
   const backendId = typeof value.backendId === 'string' ? value.backendId.trim() : '';
@@ -55,7 +64,7 @@ export function normalizeExecutionRunStartToolInput(params: Readonly<{
   args: unknown;
 }>):
   | Readonly<{ ok: true; request: z.infer<typeof ExecutionRunStartRequestSchema> }>
-  | Readonly<{ ok: false; errorCode: 'invalid_action_input' | 'execution_run_not_allowed'; error: string }> {
+  | Readonly<{ ok: false; errorCode: 'invalid_action_input' | 'invalid_parameters' | 'execution_run_not_allowed'; error: string }> {
   const parsed = executionRunStartToolInputSchema.safeParse(params.args ?? {});
   if (!parsed.success) {
     return {
@@ -78,6 +87,37 @@ export function normalizeExecutionRunStartToolInput(params: Readonly<{
     agentId: String(parsed.data.backendId ?? '').trim(),
   };
 
+  // Validate the optional connected-services selection at this ONE boundary via the SAME normalizer
+  // the canonical action path uses — accepts the agent-friendly simple string / array / full object
+  // forms. A malformed selection is a bad parameter, not an unparseable action payload; the two
+  // contracts must stay identical.
+  let connectedServices: unknown;
+  if (typeof parsed.data.connectedServices !== 'undefined') {
+    const normalized = normalizeConnectedServiceSelectionInput(parsed.data.connectedServices);
+    if (!normalized.ok) {
+      return {
+        ok: false,
+        errorCode: 'invalid_parameters',
+        error: 'Invalid connected-services selection',
+      };
+    }
+    connectedServices = normalized.bindings;
+  }
+
+  // Merge the `configOptions` shorthand into the canonical `sessionConfigOptionOverrides` (reasoning
+  // effort, etc.) via the SAME owner session spawn + the canonical action path use; a conflict is a
+  // bad parameter.
+  if (findSpawnConfigOptionAliasConflicts({
+    sessionConfigOptionOverrides: parsed.data.sessionConfigOptionOverrides,
+    configOptions: parsed.data.configOptions,
+  }).length > 0) {
+    return { ok: false, errorCode: 'invalid_parameters', error: 'Conflicting configOptions and sessionConfigOptionOverrides' };
+  }
+  const sessionConfigOptionOverrides = mergeSpawnConfigOptionAliases({
+    ...(parsed.data.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: parsed.data.sessionConfigOptionOverrides } : {}),
+    ...(parsed.data.configOptions ? { configOptions: parsed.data.configOptions } : {}),
+  });
+
   const request = ExecutionRunStartRequestSchema.safeParse({
     intent: parsed.data.intent,
     backendTarget,
@@ -91,6 +131,9 @@ export function normalizeExecutionRunStartToolInput(params: Readonly<{
     ...(typeof parsed.data.initialContextMode !== 'undefined' ? { initialContextMode: parsed.data.initialContextMode } : {}),
     ...(typeof parsed.data.resumeHandle !== 'undefined' ? { resumeHandle: parsed.data.resumeHandle } : {}),
     ...(typeof parsed.data.replay !== 'undefined' ? { replay: parsed.data.replay } : {}),
+    ...(connectedServices ? { connectedServices } : {}),
+    ...(typeof parsed.data.modelId === 'string' ? { modelId: parsed.data.modelId } : {}),
+    ...(sessionConfigOptionOverrides ? { sessionConfigOptionOverrides } : {}),
   });
   if (!request.success) {
     return {

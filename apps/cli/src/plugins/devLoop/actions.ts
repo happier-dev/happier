@@ -2,14 +2,14 @@ import type { ActionId } from '@happier-dev/protocol';
 
 import { installPluginFromLocator } from '@/plugins/projection/catalog/installed';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
+import { readInstalledPluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import { uninstallPluginFromCatalog } from '@/plugins/projection/catalog/installed';
 import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
-import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
-import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { readDaemonPluginCatalog } from '@/daemon/controlClient';
+import { requestUserPluginChange } from '@/plugins/daemon/changeClient';
+import { projectPluginCatalogEntrySnapshot } from '@/plugins/projection/introspection/catalogSnapshot';
 
 export type PluginDevLoopActionId = Extract<ActionId, 'plugins.scaffold' | 'plugins.install' | 'plugins.uninstall' | 'plugins.reload' | 'plugins.list'>;
-
-type ReloadPlugin = PluginReloadController['reload'];
 
 type PluginDevLoopActionInput = Readonly<Record<string, unknown>>;
 
@@ -18,7 +18,6 @@ export type ExecutePluginDevLoopActionParams = Readonly<{
   input: unknown;
   happyHomeDir?: string;
   workspaceRoot?: string;
-  reload?: ReloadPlugin;
 }>;
 
 function readInput(input: unknown): PluginDevLoopActionInput {
@@ -45,35 +44,23 @@ function isRemotePluginInstallLocator(locator: string): boolean {
 }
 
 function summarizeCatalogEntry(entry: Awaited<ReturnType<typeof readInstalledPluginCatalog>>[number]) {
-  return {
-    id: entry.pluginId,
-    pluginId: entry.pluginId,
-    version: entry.version,
-    title: entry.title,
-    state: entry.enabled ? 'enabled' : 'disabled',
-    sourceKind: entry.source.kind,
-    source: entry.source,
-    install: entry.install,
-    compatibility: entry.compatibility,
-    manifestPath: entry.manifestPath,
-    manifestDigest: entry.manifestDigest,
-    contributions: entry.contributionIds,
-    diagnostics: entry.diagnostics,
-  };
+  return projectPluginCatalogEntrySnapshot(entry);
 }
 
-function summarizeReloadResult(result: Awaited<ReturnType<ReloadPlugin>>) {
+function summarizePluginChangeFailure(result: Exclude<
+  Awaited<ReturnType<typeof requestUserPluginChange>>,
+  { kind: 'committed' }
+>) {
+  const code = result.kind === 'failed' || result.kind === 'unavailable'
+    ? result.code
+    : `plugin_change_${result.kind}`;
   return {
-    ok: result.ok,
-    generation: result.generation,
-    attemptedGeneration: result.attemptedGeneration,
-    requestedPluginIds: result.requestedPluginIds,
-    changedPluginIds: result.changedPluginIds,
-    affectedPluginIds: result.affectedPluginIds,
-    activeGenerationId: result.activeGenerationId,
-    registryStatus: result.registryStatus,
-    diagnostics: result.diagnostics,
-    diagnosticsByPluginId: result.diagnosticsByPluginId,
+    ok: false,
+    kind: 'plugins_reload',
+    diagnostics: [{
+      code,
+      message: `The daemon rejected the development reload (${result.kind}).`,
+    }],
   };
 }
 
@@ -127,12 +114,22 @@ export async function executePluginDevLoopAction(params: ExecutePluginDevLoopAct
         ],
       };
     }
+    if (!readBoolean(input, 'dryRun')) {
+      return {
+        ok: false,
+        kind: 'plugins_install',
+        diagnostics: [{
+          code: 'plugin_install_review_unavailable',
+          message: 'This ActionSpec cannot display and decide the daemon package review. Preview with dryRun, then use the CLI Install & Trust flow to install.',
+        }],
+      };
+    }
 
     const result = await installPluginFromLocator({
       locator,
       happyHomeDir: params.happyHomeDir,
       skipIfInstalled: !readBoolean(input, 'force'),
-      dryRun: readBoolean(input, 'dryRun'),
+      dryRun: true,
       dev: readBoolean(input, 'dev'),
       workspaceRoot: params.workspaceRoot,
     });
@@ -165,54 +162,89 @@ export async function executePluginDevLoopAction(params: ExecutePluginDevLoopAct
       };
     }
 
-    const reload = params.reload ?? pluginReloadController.reload.bind(pluginReloadController);
-    try {
-      const reloadResult = await reload({ pluginId: result.pluginId });
-      return {
-        ok: reloadResult.ok,
-        kind: 'plugins_uninstall',
-        plugin: summarizeCatalogEntry(result.entry),
-        removedInstalledPath: result.removedInstalledPath,
-        reload: summarizeReloadResult(reloadResult),
-        diagnostics: reloadResult.diagnostics,
-        diagnosticsByPluginId: reloadResult.diagnosticsByPluginId,
-      };
-    } catch (error) {
-      const diagnostics = [
-        {
-          code: 'plugin_reload_failed',
-          message: error instanceof Error ? error.message : 'Plugin reload failed after uninstall',
-        },
-      ];
-      return {
-        ok: false,
-        kind: 'plugins_uninstall',
-        plugin: summarizeCatalogEntry(result.entry),
-        removedInstalledPath: result.removedInstalledPath,
-        reload: {
-          ok: false,
-          registryStatus: 'unavailable',
-          diagnostics,
-        },
-        diagnostics,
-        diagnosticsByPluginId: {},
-      };
-    }
-  }
-
-  if (params.actionId === 'plugins.reload') {
-    const reload = params.reload ?? pluginReloadController.reload.bind(pluginReloadController);
-    const pluginId = readString(input, 'pluginId');
-    const result = await reload(pluginId ? { pluginId } : undefined);
     return {
-      kind: 'plugins_reload',
-      ...summarizeReloadResult(result),
+      ok: true,
+      kind: 'plugins_uninstall',
+      plugin: summarizeCatalogEntry(result.entry),
+      removedInstalledPath: result.removedInstalledPath,
+      change: result.change,
     };
   }
 
-  const entries = await readInstalledPluginCatalog({
-    happyHomeDir: params.happyHomeDir,
-  });
+  if (params.actionId === 'plugins.reload') {
+    const pluginId = readString(input, 'pluginId');
+    if (!pluginId) {
+      return {
+        ok: false,
+        kind: 'plugins_reload',
+        diagnostics: [{
+          code: 'plugin_manifest_semantic_invalid',
+          message: 'plugins.reload requires a non-empty pluginId',
+        }],
+      };
+    }
+    const entry = await readInstalledPluginCatalogEntry({
+      pluginId,
+      happyHomeDir: params.happyHomeDir,
+    });
+    if (!entry) {
+      return {
+        ok: false,
+        kind: 'plugins_reload',
+        diagnostics: [{
+          code: 'plugin_source_missing',
+          message: `Installed plugin '${pluginId}' was not found`,
+        }],
+      };
+    }
+    if (entry.source.kind !== 'path') {
+      return {
+        ok: false,
+        kind: 'plugins_reload',
+        diagnostics: [{
+          code: 'plugin_source_kind_unsupported',
+          message: `Plugin '${pluginId}' is not installed from a local development path`,
+        }],
+      };
+    }
+    const result = await requestUserPluginChange({
+      request: {
+        kind: 'development',
+        pluginId,
+        sourceRootPath: entry.source.locator,
+      },
+      approval: 'none',
+    });
+    if (result.kind !== 'committed') return summarizePluginChangeFailure(result);
+    return {
+      ok: result.desiredGeneration === result.appliedGeneration,
+      kind: 'plugins_reload',
+      desiredGeneration: result.desiredGeneration,
+      appliedGeneration: result.appliedGeneration,
+      pendingSurfaces: result.pendingSurfaces,
+      ...(result.desiredGeneration === result.appliedGeneration
+        ? {}
+        : {
+            diagnostics: [{
+              code: 'plugin_dev_adoption_pending',
+              message: 'The daemon committed the development generation but has not applied it yet.',
+            }],
+          }),
+    };
+  }
+
+  const catalog = await readDaemonPluginCatalog();
+  if (catalog.kind !== 'available') {
+    return {
+      ok: false,
+      kind: 'plugins_list',
+      diagnostics: [{
+        code: catalog.code,
+        message: 'The active daemon plugin catalog is unavailable.',
+      }],
+    };
+  }
+  const entries = catalog.plugins;
   return {
     ok: true,
     kind: 'plugins_list',

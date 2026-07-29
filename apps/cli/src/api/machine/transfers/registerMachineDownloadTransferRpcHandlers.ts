@@ -2,15 +2,21 @@ import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 import { TransferSessionStore } from '@/transfers/core/transferSessionStore';
 import { registerDownloadTransferLifecycleHandlers } from '@/transfers/rpc/registerDownloadTransferLifecycleHandlers';
+import type { TransferLifecycleDiagnosticContext } from '@/transfers/rpc/transferLifecycleDiagnostics';
 import type { DownloadTransferSource } from '@/transfers/targets/downloadTransferSource';
 
 export type MachineDownloadTransferInitResponse =
   | Readonly<{ success: true; downloadId: string; chunkSizeBytes: number; sizeBytes: number; name: string }>
   | Readonly<{ success: false; error: string }>;
 
+export type MachineDownloadTransferRpcRegistration = Readonly<{
+  transferSessionStore: TransferSessionStore;
+  dispose: () => Promise<void>;
+}>;
+
 type ResolvedMachineDownloadSource = Readonly<{
   source: DownloadTransferSource;
-  logContext?: Record<string, unknown>;
+  diagnosticContext?: TransferLifecycleDiagnosticContext;
 }>;
 
 type RejectedMachineDownloadSource = Readonly<{
@@ -36,7 +42,8 @@ export function registerMachineDownloadTransferRpcHandlers<TRequest>(params: Rea
   resolveSource: (request: TRequest) => Promise<ResolvedMachineDownloadSource | RejectedMachineDownloadSource>;
   initFailureMessage: string;
   store?: TransferSessionStore;
-}>): TransferSessionStore {
+}>): MachineDownloadTransferRpcRegistration {
+  const ownsStore = !params.store;
   const store = params.store ?? new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
 
   registerDownloadTransferLifecycleHandlers<MachineDownloadTransferInitResponse>({
@@ -77,7 +84,9 @@ export function registerMachineDownloadTransferRpcHandlers<TRequest>(params: Rea
         kind: 'accepted',
         source: source.source,
         recipientPublicKeyBase64,
-        logContext: source.logContext,
+        diagnosticContext: source.diagnosticContext ?? {
+          transferKind: 'session_file',
+        },
       };
     },
     buildInitSuccessResponse: ({ session, source }) => ({
@@ -93,5 +102,12 @@ export function registerMachineDownloadTransferRpcHandlers<TRequest>(params: Rea
     }),
   });
 
-  return store;
+  return {
+    transferSessionStore: store,
+    dispose: async () => {
+      if (ownsStore) {
+        await store.dispose();
+      }
+    },
+  };
 }

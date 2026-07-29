@@ -44,18 +44,6 @@ export interface ToolNameContext {
 }
 
 /**
- * Context passed to prompt-error suppression hooks.
- */
-export interface PromptErrorContext {
-  /** Whether the generic ACP backend is still waiting for prompt response completion */
-  waitingForResponse: boolean;
-  /** Whether the prompt has already produced any session/update traffic */
-  sawSessionUpdateSincePrompt: boolean;
-  /** Number of tool calls still active for the current prompt */
-  activeToolCallCount: number;
-}
-
-/**
  * Context passed to terminal tool update logging hooks.
  */
 export interface TerminalToolUpdateLogContext {
@@ -196,15 +184,6 @@ export interface TransportHandler {
   ): string;
 
   /**
-   * Optional provider hook to suppress known non-fatal prompt errors.
-   *
-   * This keeps provider-specific post-response quirks out of the generic ACP prompt path.
-   * Implementations should return true only for tightly identified provider errors that are
-   * known to arrive after the turn has already produced or completed useful output.
-   */
-  shouldIgnorePromptError?(error: unknown, context: PromptErrorContext): boolean;
-
-  /**
    * Optional provider hook for debug logging terminal tool update payloads.
    *
    * The generic ACP update path owns terminal-tool detection; providers own whether/how to log
@@ -312,11 +291,4 @@ export interface TransportHandler {
    */
   sanitizeToolUpdateContent?<T extends { content?: unknown }>(update: T): T;
 
-  /**
-   * Whether this provider delivers plans/todos through a richer proprietary channel and therefore
-   * opts out of the generic ACP `plan` SessionUpdate -> TodoWrite render (to avoid a duplicate
-   * checklist). Example: Cursor delivers plans via the `cursor/create_plan` extension method.
-   * Defaults to false (render standard ACP plan updates).
-   */
-  suppressAcpPlanUpdate?(): boolean;
 }

@@ -1,5 +1,5 @@
 import type { Credentials } from '@/persistence';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import {
   readSystemSessionMetadataFromMetadata,
@@ -23,7 +23,10 @@ export function summarizeSessionRow(params: Readonly<{
   row: RawSessionListRow;
 }>): SessionSummary {
   const id = params.row.id.trim();
-  const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: params.row });
+  const metadata = tryDecryptSessionOwnerMetadataView({
+    credentials: params.credentials,
+    rawSession: params.row,
+  });
   const tag = typeof (metadata as any)?.tag === 'string' ? String((metadata as any).tag) : undefined;
   const title = typeof (metadata as any)?.summary?.text === 'string' ? String((metadata as any).summary.text).trim() : undefined;
   const path = typeof (metadata as any)?.path === 'string' ? String((metadata as any).path) : undefined;
@@ -41,6 +44,7 @@ export function summarizeSessionRow(params: Readonly<{
     activeAt: params.row.activeAt,
     ...(archivedAtValue !== undefined ? { archivedAt: archivedAtValue } : {}),
     ...(typeof params.row.pendingCount === 'number' ? { pendingCount: params.row.pendingCount } : {}),
+    ...(typeof (params.row as any).pendingBlockedCount === 'number' ? { pendingBlockedCount: (params.row as any).pendingBlockedCount } : {}),
     ...(tag ? { tag } : {}),
     ...(title ? { title } : {}),
     ...(path ? { path } : {}),

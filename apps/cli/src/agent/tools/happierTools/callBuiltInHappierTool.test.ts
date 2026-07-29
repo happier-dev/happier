@@ -4,44 +4,38 @@ function createMockResolvedContributionRegistry(params?: Readonly<{
   actions?: readonly unknown[];
 }>): {
   generationId: string;
-  providers: [];
-  backends: [];
+  agents: [];
   actions: readonly unknown[];
   resources: [];
-  uiDescriptors: [];
   activationTargets: [];
-  hookRegistrations: [];
   actionsById: Map<never, never>;
   resourcesById: Map<never, never>;
-  uiDescriptorsById: Map<never, never>;
-  surfaceHandlersByBackendId: Map<never, never>;
   catalogEntriesById: {};
-  providerDefinitionsById: Map<never, never>;
-  backendDefinitionsById: Map<never, never>;
+  agentDefinitionsById: Map<never, never>;
   pluginDiagnosticsByPluginId: {};
 } {
   return {
     generationId: 'registry:test',
-    providers: [],
-    backends: [],
-    actions: params?.actions ?? [],
+    agents: [],
+        actions: params?.actions ?? [],
     resources: [],
-    uiDescriptors: [],
     activationTargets: [],
-    hookRegistrations: [],
     actionsById: new Map<never, never>(),
     resourcesById: new Map<never, never>(),
-    uiDescriptorsById: new Map<never, never>(),
-    surfaceHandlersByBackendId: new Map<never, never>(),
-    catalogEntriesById: {},
-    providerDefinitionsById: new Map<never, never>(),
-    backendDefinitionsById: new Map<never, never>(),
+        catalogEntriesById: {},
+    agentDefinitionsById: new Map<never, never>(),
     pluginDiagnosticsByPluginId: {},
   };
 }
 
 const { getResolvedContributionRegistry } = vi.hoisted(() => ({
   getResolvedContributionRegistry: vi.fn(() => createMockResolvedContributionRegistry()),
+}));
+const { readDaemonPluginCatalog } = vi.hoisted(() => ({
+  readDaemonPluginCatalog: vi.fn(async () => ({
+    kind: 'unavailable' as const,
+    code: 'test_daemon_unavailable',
+  })),
 }));
 
 const resolveSessionTransportContext = vi.fn();
@@ -67,11 +61,23 @@ vi.mock('@/plugins/projection/registry/createResolvedContributionRegistry', () =
   getResolvedContributionRegistry,
 }));
 
+vi.mock('@/daemon/controlClient', () => ({
+  readDaemonPluginCatalog,
+}));
+
 vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc: vi.fn(),
 }));
 
 const env = process.env;
+
+function expectActionDisabled(result: unknown): void {
+  expect(result).toMatchObject({
+    ok: false,
+    errorCode: 'action_disabled',
+    error: 'Action is disabled',
+  });
+}
 
 describe('callBuiltInHappierTool', () => {
   beforeEach(() => {
@@ -81,6 +87,10 @@ describe('callBuiltInHappierTool', () => {
     });
     process.env = { ...env };
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    readDaemonPluginCatalog.mockResolvedValue({
+      kind: 'unavailable',
+      code: 'test_daemon_unavailable',
+    });
     getResolvedContributionRegistry.mockReturnValue(createMockResolvedContributionRegistry());
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
@@ -114,84 +124,8 @@ describe('callBuiltInHappierTool', () => {
     });
     expect(execute).toHaveBeenCalledWith(
       'subagents.plan.start',
-      { backendTargetKeys: ['agent:codex'], instructions: 'Plan this change.' },
-      { defaultSessionId: 'sess-1', surface: 'cli' },
-    );
-  });
-
-  it('executes trusted non-MCP plugin action_execute calls through the shared action executor on the CLI surface', async () => {
-    getResolvedContributionRegistry.mockReturnValue(createMockResolvedContributionRegistry({
-      actions: [
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'acme.review.plugin',
-          manifestPath: '/plugins/acme/review/.happier-plugin/plugin.json',
-          manifestDigest: 'sha256:acme-review',
-          daemonEntryPath: '/plugins/acme/review/daemon.mjs',
-          sourceSpec: {
-            kind: 'path',
-            locator: '/plugins/acme/review',
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-          },
-          definition: {
-            kindVersion: 1,
-            id: 'acme.cli.review.start',
-            title: 'Acme CLI Review Start',
-            description: 'Start a CLI-only plugin-defined review workflow',
-            safety: 'safe',
-            placements: [],
-            slash: null,
-            bindings: {},
-            examples: null,
-            surfaces: {
-              ui: false,
-              voice: false,
-              session_agent: true,
-              mcp: false,
-              cli: true,
-              rpc: false,
-              sdk: false,
-            },
-            inputHints: null,
-            inputSchema: {
-              type: 'object',
-              properties: {},
-              additionalProperties: true,
-            },
-            execution: {
-              routing: 'plugin',
-              handler: {
-                target: 'plugin',
-                exportName: 'startCliReview',
-              },
-            },
-          },
-        },
-      ],
-    }));
-    execute.mockResolvedValueOnce({ ok: true, result: { started: true } });
-
-    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
-    const result = await callBuiltInHappierTool({
-      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
-      sessionId: 'sess-1',
-      toolName: 'action_execute',
-      args: {
-        actionId: 'acme.cli.review.start',
-        input: { scope: 'diff' },
-      },
-    });
-
-    expect(result).toEqual({
-      ok: true,
-      result: { started: true },
-    });
-    expect(execute).toHaveBeenCalledWith(
-      'acme.cli.review.start',
-      { scope: 'diff' },
-      { defaultSessionId: 'sess-1', surface: 'cli' },
+      { backendTargetKeys: ['agent:codex'], instructions: 'Plan this change.', sessionId: 'sess-1' },
+      { defaultSessionId: 'sess-1', surface: 'cli', actionsSettings: { v: 1, actions: {} } },
     );
   });
 
@@ -207,11 +141,27 @@ describe('callBuiltInHappierTool', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
+    expectActionDisabled(result);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('fails closed for runtime action ids through action_execute on the CLI tool surface', async () => {
+    const { callBuiltInHappierTool } = await import('./callBuiltInHappierTool');
+    const result = await callBuiltInHappierTool({
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+      sessionId: 'sess-1',
+      toolName: 'action_execute',
+      args: {
+        actionId: 'browser.navigate',
+        input: {
+          sessionId: 'sess-1',
+          browserViewId: 'browser-view-1',
+          url: 'https://example.test/',
+        },
+      },
     });
+
+    expectActionDisabled(result);
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -226,11 +176,7 @@ describe('callBuiltInHappierTool', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(execute).not.toHaveBeenCalled();
     expect(createCliActionExecutor).toHaveBeenCalledWith(expect.objectContaining({
       token: 'token',
@@ -310,11 +256,7 @@ describe('callBuiltInHappierTool', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -330,11 +272,7 @@ describe('callBuiltInHappierTool', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(execute).not.toHaveBeenCalled();
   });
 

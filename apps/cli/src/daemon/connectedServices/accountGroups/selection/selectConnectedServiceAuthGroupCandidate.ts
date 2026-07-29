@@ -373,10 +373,33 @@ export function isConnectedServiceAuthGroupSoftSwitchCandidateMeaningfullyBetter
 }
 
 export type ConnectedServiceAuthGroupSoftSwitchSourceEvidence = Readonly<
-  | { status: 'at_or_below_threshold'; remainingPercent: number; thresholdPercent: number }
+  | { status: 'at_or_below_threshold'; remainingPercent: number; thresholdPercent: number; projected?: true }
   | { status: 'above_threshold'; remainingPercent: number; thresholdPercent: number }
   | { status: 'unknown'; reason: 'missing_active_profile' | 'missing_fresh_quota_snapshot' | 'missing_remaining_percent' | 'missing_soft_switch_threshold' }
 >;
+
+/**
+ * Recent consumption velocity of the active member's remaining%, used to PREEMPT a soft-switch when
+ * the current snapshot is still healthy but a fast burn will cross the threshold within the horizon.
+ * `remainingPercentPerMs` must be a positive burn (remaining decreasing); the horizon is the
+ * projection window (derive it from the existing `probeIfSnapshotOlderThanMs` — the next check
+ * window — so no new policy knob is introduced).
+ */
+export type ConnectedServiceAuthGroupSoftSwitchBurnProjection = Readonly<{
+  remainingPercentPerMs: number;
+  horizonMs: number;
+}>;
+
+function projectBurnedRemainingPercent(
+  remainingPercent: number,
+  burnProjection: ConnectedServiceAuthGroupSoftSwitchBurnProjection | null | undefined,
+): number | null {
+  if (!burnProjection) return null;
+  const { remainingPercentPerMs, horizonMs } = burnProjection;
+  if (!Number.isFinite(remainingPercentPerMs) || remainingPercentPerMs <= 0) return null;
+  if (!Number.isFinite(horizonMs) || horizonMs <= 0) return null;
+  return remainingPercent - remainingPercentPerMs * horizonMs;
+}
 
 export function resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence(input: Readonly<{
   activeProfileId: string | null;
@@ -384,6 +407,7 @@ export function resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence(input: 
   memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
   nowMs: number;
   quotaFreshnessMs: number;
+  burnProjection?: ConnectedServiceAuthGroupSoftSwitchBurnProjection | null;
 }>): ConnectedServiceAuthGroupSoftSwitchSourceEvidence {
   const activeProfileId = input.activeProfileId?.trim() ?? '';
   if (!activeProfileId) return { status: 'unknown', reason: 'missing_active_profile' };
@@ -396,9 +420,17 @@ export function resolveConnectedServiceAuthGroupSoftSwitchSourceEvidence(input: 
   if (!quotaSnapshot) return { status: 'unknown', reason: 'missing_fresh_quota_snapshot' };
   const remainingPercent = resolveLeastLimitedScore(quotaSnapshot);
   if (remainingPercent === null) return { status: 'unknown', reason: 'missing_remaining_percent' };
-  return remainingPercent <= threshold
-    ? { status: 'at_or_below_threshold', remainingPercent, thresholdPercent: threshold }
-    : { status: 'above_threshold', remainingPercent, thresholdPercent: threshold };
+  if (remainingPercent <= threshold) {
+    return { status: 'at_or_below_threshold', remainingPercent, thresholdPercent: threshold };
+  }
+  // Preemptive: the current snapshot is above the threshold, but the projected next-window remaining
+  // (current burn rate × horizon) crosses it. Fire the soft-switch BEFORE the turn burns through —
+  // reusing the SAME threshold semantics, not a new knob.
+  const projectedRemaining = projectBurnedRemainingPercent(remainingPercent, input.burnProjection);
+  if (projectedRemaining !== null && projectedRemaining <= threshold) {
+    return { status: 'at_or_below_threshold', remainingPercent, thresholdPercent: threshold, projected: true };
+  }
+  return { status: 'above_threshold', remainingPercent, thresholdPercent: threshold };
 }
 
 function resolveCurrentCandidate(

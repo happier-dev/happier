@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -11,10 +15,47 @@ import {
   METADATA_SESSION_USAGE_LIMIT_RECOVERY_V1_KEY,
   RUNTIME_USAGE_LIMIT_RECOVERY_FIELD,
   UsageLimitRecoveryScheduler,
+  type UsageLimitRecoveryIntent,
 } from './UsageLimitRecoveryScheduler';
 import { createUsageLimitRecoveryWakeGate } from './usageLimitRecoveryWakeGate';
+import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
+import type { DurableBackoffRecoveryStore } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 
 describe('UsageLimitRecoveryScheduler', () => {
+  it('hydrates persisted state passively until an explicit current-generation check', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000));
+    const persisted = {
+      v: 1 as const,
+      issueFingerprint: 'persisted-limit',
+      status: 'waiting' as const,
+      resumePromptMode: 'standard' as const,
+      armedAtMs: 100,
+      resetAtMs: 2_000,
+      nextCheckAtMs: 2_000,
+      attemptCount: 0,
+      maxAttempts: 3,
+      lastProbeError: null,
+      selectedAuth: { kind: 'native' as const },
+    };
+    const recover = vi.fn(async () => ({ status: 'ready' as const }));
+    const scheduler = new UsageLimitRecoveryScheduler({
+      nowMs: () => Date.now(),
+      store: {
+        read: () => persisted,
+        readAll: () => [['session-1', persisted] as const],
+        write: vi.fn(),
+      },
+      recover,
+    });
+
+    expect(scheduler.hydratePassive()).toEqual([persisted]);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(recover).not.toHaveBeenCalled();
+    await scheduler.wake({ sessionId: 'session-1', reason: 'check_now' });
+    expect(recover).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
   afterEach(() => {
     vi.useRealTimers();
   });
@@ -40,6 +81,234 @@ describe('UsageLimitRecoveryScheduler', () => {
     expect(RUNTIME_USAGE_LIMIT_RECOVERY_FIELD).toBe(SESSION_USAGE_LIMIT_RECOVERY_STATE_FIELD_ID);
     expect(METADATA_SESSION_USAGE_LIMIT_RECOVERY_V1_KEY).toBe(SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY);
     expect(SessionUsageLimitRecoveryV1Schema.safeParse(intent).success).toBe(true);
+  });
+
+  it('allocates a strictly newer epoch for a fresh issue when the clock has not advanced', async () => {
+    const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000 });
+    await scheduler.upsert({
+      sessionId: 'session-1',
+      intent: {
+        v: 1,
+        status: 'cancelled',
+        resumePromptMode: 'standard',
+        issueFingerprint: 'issue-z',
+        armedAtMs: 1_000,
+        resetAtMs: null,
+        nextCheckAtMs: null,
+        attemptCount: 3,
+        maxAttempts: 3,
+        lastProbeError: null,
+        selectedAuth: { kind: 'native' },
+      },
+    });
+    const fresh = await scheduler.enable({
+      sessionId: 'session-1',
+      issueFingerprint: 'issue-a',
+      resetAtMs: 2_000,
+      selectedAuth: { kind: 'native' },
+    });
+    expect(fresh).toMatchObject({ issueFingerprint: 'issue-a', armedAtMs: 1_001, status: 'waiting' });
+  });
+
+  it.each([
+    ['issue-a', 'issue-b'],
+    ['issue-b', 'issue-a'],
+  ] as const)('allocates same-millisecond epochs at the shared CAS owner (%s then %s)', async (firstIssue, secondIssue) => {
+    const values = new Map<string, UsageLimitRecoveryIntent>();
+    const store = {
+      read: (sessionId: string) => values.get(sessionId) ?? null,
+      readAll: () => [...values.entries()] as ReadonlyArray<readonly [string, unknown]>,
+      write: (sessionId: string, intent: UsageLimitRecoveryIntent) => { values.set(sessionId, intent); },
+      merge: (
+        sessionId: string,
+        next: UsageLimitRecoveryIntent,
+        merge: (previous: UsageLimitRecoveryIntent | null, candidate: UsageLimitRecoveryIntent) => UsageLimitRecoveryIntent,
+      ) => {
+        const merged = merge(values.get(sessionId) ?? null, next);
+        values.set(sessionId, merged);
+        return merged;
+      },
+    };
+    const first = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000, store });
+    const second = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000, store });
+
+    const older = await first.enable({
+      sessionId: 'session-shared',
+      issueFingerprint: firstIssue,
+      resetAtMs: 5_000,
+      selectedAuth: { kind: 'native' },
+    });
+    const newer = await second.enable({
+      sessionId: 'session-shared',
+      issueFingerprint: secondIssue,
+      resetAtMs: 6_000,
+      selectedAuth: { kind: 'native' },
+    });
+
+    expect(older.armedAtMs).toBe(1_000);
+    expect(newer).toMatchObject({ issueFingerprint: secondIssue, armedAtMs: 1_001 });
+    const replacement = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000, store });
+    expect(replacement.hydratePassive()).toEqual([
+      expect.objectContaining({ issueFingerprint: secondIssue, armedAtMs: 1_001 }),
+    ]);
+  });
+
+  it('serializes concurrent same-millisecond rearm merges through the production file-store transaction and survives restart', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-usage-recovery-cas-'));
+    try {
+      const filePath = join(dir, 'intents.json');
+      const seedStore = createRecoveryIntentFileStore<UsageLimitRecoveryIntent>(filePath);
+      await seedStore.write('session-shared', {
+        v: 1,
+        status: 'waiting',
+        issueFingerprint: 'base',
+        armedAtMs: 999,
+        resetAtMs: 5_000,
+        nextCheckAtMs: 5_000,
+        attemptCount: 0,
+        maxAttempts: 3,
+        lastProbeError: null,
+        resumePromptMode: 'standard',
+        selectedAuth: { kind: 'native' },
+      });
+      const newer = new UsageLimitRecoveryScheduler({
+        nowMs: () => 1_000,
+        store: createRecoveryIntentFileStore<UsageLimitRecoveryIntent>(filePath),
+      });
+      let newerPromise: Promise<UsageLimitRecoveryIntent> | null = null;
+      const olderDurableStore = createRecoveryIntentFileStore<UsageLimitRecoveryIntent>(filePath);
+      const olderStore: DurableBackoffRecoveryStore<UsageLimitRecoveryIntent> = {
+        ...olderDurableStore,
+        transact: async (sessionId, transaction) => await olderDurableStore.transact!(sessionId, (current) => {
+          const result = transaction(current);
+          newerPromise ??= newer.enable({
+            sessionId: 'session-shared',
+            issueFingerprint: 'a-newer',
+            resetAtMs: 7_000,
+            selectedAuth: { kind: 'native' },
+          });
+          return result;
+        }),
+      };
+      const older = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000, store: olderStore });
+
+      const olderResult = await older.enable({
+        sessionId: 'session-shared',
+        issueFingerprint: 'z-older',
+        resetAtMs: 6_000,
+        selectedAuth: { kind: 'native' },
+      });
+      const startedNewerPromise = newerPromise;
+      if (!startedNewerPromise) throw new Error('newer production transaction was not started while the older lock was held');
+      const newerResult = await startedNewerPromise;
+
+      expect(olderResult).toMatchObject({ issueFingerprint: 'z-older', armedAtMs: 1_000 });
+      expect(newerResult).toMatchObject({ issueFingerprint: 'a-newer', armedAtMs: 1_001 });
+      const replacement = new UsageLimitRecoveryScheduler({
+        nowMs: () => 1_000,
+        store: createRecoveryIntentFileStore<UsageLimitRecoveryIntent>(filePath),
+      });
+      expect(replacement.hydratePassive()).toEqual([
+        expect.objectContaining({ issueFingerprint: 'a-newer', armedAtMs: 1_001 }),
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns superseded when B commits after A observation but before the exact-cancel transaction', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-usage-recovery-cancel-cas-'));
+    try {
+      const filePath = join(dir, 'intents.json');
+      const durableStore = createRecoveryIntentFileStore<UsageLimitRecoveryIntent>(filePath);
+      const attemptA: UsageLimitRecoveryIntent = {
+        v: 1,
+        status: 'waiting',
+        issueFingerprint: 'attempt-a',
+        armedAtMs: 1_000,
+        resetAtMs: 5_000,
+        nextCheckAtMs: 5_000,
+        attemptCount: 0,
+        maxAttempts: 3,
+        lastProbeError: null,
+        resumePromptMode: 'standard',
+        selectedAuth: { kind: 'native' },
+      };
+      await durableStore.write('session-race', attemptA);
+      let markCancelPersistenceStarted!: () => void;
+      const cancelPersistenceStarted = new Promise<void>((resolve) => { markCancelPersistenceStarted = resolve; });
+      let releaseCancelPersistence!: () => void;
+      const cancelPersistenceRelease = new Promise<void>((resolve) => { releaseCancelPersistence = resolve; });
+      const cancelStore: DurableBackoffRecoveryStore<UsageLimitRecoveryIntent> = {
+        ...durableStore,
+        write: async (sessionId: string, intent: UsageLimitRecoveryIntent) => {
+          markCancelPersistenceStarted();
+          await cancelPersistenceRelease;
+          await durableStore.write(sessionId, intent);
+        },
+        transact: async (sessionId, transaction) => {
+          markCancelPersistenceStarted();
+          await cancelPersistenceRelease;
+          return await durableStore.transact!(sessionId, transaction);
+        },
+      };
+      const cancelling = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000, store: cancelStore });
+      const rearming = new UsageLimitRecoveryScheduler({
+        nowMs: () => 1_001,
+        store: createRecoveryIntentFileStore<UsageLimitRecoveryIntent>(filePath),
+      });
+
+      const cancelA = cancelling.cancelExact({
+        sessionId: 'session-race',
+        issueFingerprint: attemptA.issueFingerprint,
+        armedAtMs: attemptA.armedAtMs,
+      });
+      await cancelPersistenceStarted;
+      const attemptB = await rearming.enable({
+        sessionId: 'session-race',
+        issueFingerprint: 'attempt-b',
+        resetAtMs: 6_000,
+        selectedAuth: { kind: 'native' },
+      });
+      releaseCancelPersistence();
+
+      await expect(cancelA).resolves.toMatchObject({
+        status: 'superseded',
+        intent: { issueFingerprint: attemptB.issueFingerprint, armedAtMs: attemptB.armedAtMs },
+      });
+      expect(createRecoveryIntentFileStore<UsageLimitRecoveryIntent>(filePath).read('session-race')).toMatchObject({
+        status: 'waiting',
+        issueFingerprint: 'attempt-b',
+        armedAtMs: attemptB.armedAtMs,
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('coalesces independent same-fingerprint controllers into one same-millisecond epoch', async () => {
+    const values = new Map<string, UsageLimitRecoveryIntent>();
+    const store = {
+      read: (sessionId: string) => values.get(sessionId) ?? null,
+      write: (sessionId: string, intent: UsageLimitRecoveryIntent) => { values.set(sessionId, intent); },
+      merge: (
+        sessionId: string,
+        next: UsageLimitRecoveryIntent,
+        merge: (previous: UsageLimitRecoveryIntent | null, candidate: UsageLimitRecoveryIntent) => UsageLimitRecoveryIntent,
+      ) => {
+        const merged = merge(values.get(sessionId) ?? null, next);
+        values.set(sessionId, merged);
+        return merged;
+      },
+    };
+    const first = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000, store });
+    const second = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000, store });
+    const [left, right] = await Promise.all([
+      first.enable({ sessionId: 'session-shared', issueFingerprint: 'same', resetAtMs: 5_000, selectedAuth: { kind: 'native' } }),
+      second.enable({ sessionId: 'session-shared', issueFingerprint: 'same', resetAtMs: 5_000, selectedAuth: { kind: 'native' } }),
+    ]);
+    expect(left.armedAtMs).toBe(1_000);
+    expect(right.armedAtMs).toBe(1_000);
   });
 
   it('preserves attemptCount on same-fingerprint re-arm instead of resetting to 0', async () => {
@@ -117,6 +386,55 @@ describe('UsageLimitRecoveryScheduler', () => {
 
     expect(reArmed.status).toBe('exhausted');
     expect(reArmed.attemptCount).toBe(3);
+  });
+
+  it('allocates a newer epoch when explicitly re-arming a paused same-fingerprint attempt', async () => {
+    const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000 });
+    await scheduler.upsert({
+      sessionId: 'session-paused',
+      intent: {
+        v: 1,
+        issueFingerprint: 'limit',
+        status: 'paused',
+        resumePromptMode: 'standard',
+        armedAtMs: 1_000,
+        resetAtMs: 2_000,
+        nextCheckAtMs: null,
+        attemptCount: 2,
+        maxAttempts: 3,
+        lastProbeError: null,
+        selectedAuth: { kind: 'native' },
+      },
+    });
+    const rearmed = await scheduler.enable({
+      sessionId: 'session-paused',
+      issueFingerprint: 'limit',
+      resetAtMs: 2_000,
+      selectedAuth: { kind: 'native' },
+    });
+    expect(rearmed).toMatchObject({ status: 'waiting', armedAtMs: 1_001, attemptCount: 0 });
+  });
+
+  it.each([
+    { requested: 1, expected: 1 },
+    { requested: 0, expected: 3 },
+  ])('keeps zero-aware stricter same-attempt cap for requested $requested', async ({ requested, expected }) => {
+    const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => 1_000 });
+    await scheduler.enable({
+      sessionId: 'session-cap',
+      issueFingerprint: 'limit',
+      resetAtMs: 2_000,
+      maxAttempts: 3,
+      selectedAuth: { kind: 'native' },
+    });
+    const rearmed = await scheduler.enable({
+      sessionId: 'session-cap',
+      issueFingerprint: 'limit',
+      resetAtMs: 2_000,
+      maxAttempts: requested,
+      selectedAuth: { kind: 'native' },
+    });
+    expect(rearmed.maxAttempts).toBe(expected);
   });
 
   it('cancels active intents', async () => {
@@ -491,7 +809,7 @@ describe('UsageLimitRecoveryScheduler', () => {
       recover,
     });
 
-    scheduler.upsert({
+    scheduler.load({
       sessionId: 'session-1',
       intent: {
         v: 1,
@@ -556,7 +874,7 @@ describe('UsageLimitRecoveryScheduler', () => {
       resume,
     });
 
-    scheduler.upsert({
+    scheduler.load({
       sessionId: 'session-1',
       intent: {
         v: 1,

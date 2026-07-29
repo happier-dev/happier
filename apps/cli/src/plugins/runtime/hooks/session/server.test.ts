@@ -8,7 +8,10 @@ import { tmpdir } from 'node:os';
 import { SESSION_PROVIDER_HOOK_EVENT_ID_V1 } from '@happier-dev/protocol';
 import { buildDefaultPermissionHookResponse } from '@happier-dev/plugins-claude/agent';
 
-import { startSessionHookServer } from './server';
+import {
+  QUALIFIED_EXTERNAL_SESSION_HOOK_PATH,
+  startSessionHookServer,
+} from './server';
 
 const { loggerDebugMock } = vi.hoisted(() => ({
   loggerDebugMock: vi.fn(),
@@ -49,6 +52,25 @@ async function postPermissionHook(params: {
     },
     body: JSON.stringify(params.body),
   });
+  return { status: res.status, text: await res.text() };
+}
+
+async function postQualifiedExternalSessionHook(params: {
+  port: number;
+  secret: string;
+  body: unknown;
+}): Promise<{ status: number; text: string }> {
+  const res = await fetch(
+    `http://127.0.0.1:${params.port}${QUALIFIED_EXTERNAL_SESSION_HOOK_PATH}`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-happier-hook-secret': params.secret,
+      },
+      body: JSON.stringify(params.body),
+    },
+  );
   return { status: res.status, text: await res.text() };
 }
 
@@ -180,6 +202,9 @@ async function runSessionForwarder(params: {
         stderr: Buffer.concat(stderr).toString('utf8'),
       });
     });
+    child.stdin.on('error', () => {
+      // A bounded forwarder may close stdin before a deliberately oversized fixture finishes.
+    });
     child.stdin.end(JSON.stringify(params.body));
   });
 }
@@ -203,6 +228,59 @@ describe('startSessionHookServer', () => {
     await writeFile(filePath, secret, { encoding: 'utf8', mode: 0o600 });
     return filePath;
   }
+
+  it('can reclaim an exact persisted port after the previous hook server closes', async () => {
+    const first = await startSessionHookServer({});
+    servers.push(first);
+    const persistedPort = first.port;
+    first.stop();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const second = await startSessionHookServer({
+      requestedPort: persistedPort,
+    } as Parameters<typeof startSessionHookServer>[0] & { requestedPort: number });
+    servers.push(second);
+
+    expect(second.port).toBe(persistedPort);
+  });
+
+  it('classifies oversized qualified hook bodies only by the host-owned sentinel identity', async () => {
+    const hostile = Proxy.revocable({}, {});
+    hostile.revoke();
+    const onQualifiedExternalSessionHook = vi.fn()
+      .mockRejectedValueOnce(new Error('hook request body exceeded maximum size'))
+      .mockRejectedValueOnce(hostile.proxy);
+    const server = await startSessionHookServer({
+      onQualifiedExternalSessionHook,
+    });
+    servers.push(server);
+    const createBody = () => {
+      const now = Date.now();
+      return {
+        eventId: 'SessionStart',
+        observedAtMs: now,
+        forwardingStartedAtMs: now,
+        nativePayload: {},
+      };
+    };
+
+    const sameMessage = await postQualifiedExternalSessionHook({
+      port: server.port,
+      secret: 'qualified-hook-token',
+      body: createBody(),
+    });
+    const hostileRejection = await postQualifiedExternalSessionHook({
+      port: server.port,
+      secret: 'qualified-hook-token',
+      body: createBody(),
+    });
+
+    expect(sameMessage).toEqual({ status: 400, text: 'invalid request' });
+    expect(hostileRejection).toEqual({ status: 400, text: 'invalid request' });
+    expect(loggerDebugMock).toHaveBeenLastCalledWith(
+      '[sessionHookServer] Qualified External Session hook request failed',
+    );
+  });
 
   it('publishes canonical provider-hook events for provider session hooks', async () => {
     const publishHostEvent = vi.fn<(
@@ -252,6 +330,7 @@ describe('startSessionHookServer', () => {
   });
 
   it('publishes provider-hook events when the legacy session callback fails', async () => {
+    const privateTranscript = 'private provider transcript that must not enter hook logs';
     const publishHostEvent = vi.fn<(
       name: string,
       payload?: unknown,
@@ -262,7 +341,10 @@ describe('startSessionHookServer', () => {
         sessionId: 'happier-session-legacy-failure',
       },
       onSessionHook: () => {
-        throw new Error('legacy session callback failed');
+        throw {
+          toJSON: () => ({ privateTranscript }),
+          toString: () => privateTranscript,
+        };
       },
       publishHostEvent,
     });
@@ -285,9 +367,13 @@ describe('startSessionHookServer', () => {
         providerSessionId: 'provider-session-legacy-failure',
       }),
     );
+    expect(loggerDebugMock).toHaveBeenCalledWith(
+      '[sessionHookServer] Session hook callback failed after event publication',
+    );
   });
 
-  it('redacts provider-supplied paths in session hook debug logs', async () => {
+  it('does not retain provider-supplied session hook fields in debug logs', async () => {
+    const privatePayloadText = 'private-session-hook-payload-claim45';
     const rawTranscriptPath = join(tmpdir(), 'happier-secret-home', 'claude-session.jsonl');
     const rawCwd = join(tmpdir(), 'happier-secret-home');
     const server = await startSessionHookServer({
@@ -305,20 +391,23 @@ describe('startSessionHookServer', () => {
       port: server.port,
       body: {
         hook_event_name: 'SessionStart',
-        session_id: 'provider-session-redaction',
+        session_id: privatePayloadText,
         transcript_path: rawTranscriptPath,
         cwd: rawCwd,
+        source: privatePayloadText,
       },
     });
 
     expect(res).toEqual({ status: 200, text: 'ok' });
     const serializedLogs = JSON.stringify(loggerDebugMock.mock.calls);
+    expect(serializedLogs).not.toContain(privatePayloadText);
     expect(serializedLogs).not.toContain(rawTranscriptPath);
     expect(serializedLogs).not.toContain(rawCwd);
     expect(serializedLogs).toContain('[redacted-path]');
   });
 
-  it('redacts provider-supplied paths in permission hook debug logs', async () => {
+  it('does not retain provider-supplied permission hook fields in debug logs', async () => {
+    const privatePayloadText = 'private-permission-hook-payload-claim45';
     const rawTranscriptPath = join(tmpdir(), 'happier-secret-home', 'claude-permission.jsonl');
     const rawCwd = join(tmpdir(), 'happier-secret-home');
     const server = await startSessionHookServer({
@@ -337,16 +426,18 @@ describe('startSessionHookServer', () => {
       port: server.port,
       body: {
         hook_event_name: 'PermissionRequest',
-        session_id: 'provider-session-permission-redaction',
+        session_id: privatePayloadText,
         transcript_path: rawTranscriptPath,
         cwd: rawCwd,
-        tool_name: 'Bash',
-        tool_use_id: 'toolu_redaction',
+        permission_mode: privatePayloadText,
+        tool_name: privatePayloadText,
+        tool_use_id: privatePayloadText,
       },
     });
 
     expect(res.status).toBe(200);
     const serializedLogs = JSON.stringify(loggerDebugMock.mock.calls);
+    expect(serializedLogs).not.toContain(privatePayloadText);
     expect(serializedLogs).not.toContain(rawTranscriptPath);
     expect(serializedLogs).not.toContain(rawCwd);
     expect(serializedLogs).toContain('[redacted-path]');
@@ -461,6 +552,97 @@ describe('startSessionHookServer', () => {
       hook_event_name: 'UserPromptSubmit',
       prompt: 'typed in terminal',
     }));
+  });
+
+  it('keeps hook delivery non-controlling when the hook server rejects delivery', async () => {
+    const server = await startSessionHookServer({
+      sessionHookSecret: 'expected-session-forwarder-secret',
+    } as Parameters<typeof startSessionHookServer>[0] & { sessionHookSecret: string });
+    servers.push(server);
+    const secretFile = await createSecretFile('wrong-session-forwarder-secret');
+
+    const result = await runSessionForwarder({
+      port: server.port,
+      hookEventName: 'PostToolUse',
+      secretFile,
+      body: {
+        session_id: 'sess_rejected_forwarder',
+        tool_use_id: 'toolu_rejected_forwarder',
+      },
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('');
+  });
+
+  it('keeps hook delivery non-controlling when the hook server connection is refused', async () => {
+    const server = await startSessionHookServer({});
+    servers.push(server);
+    const refusedPort = server.port;
+    server.stop();
+    await server.closed;
+    const secretFile = await createSecretFile('unused-session-forwarder-secret');
+
+    const result = await runSessionForwarder({
+      port: refusedPort,
+      hookEventName: 'SubagentStop',
+      secretFile,
+      body: {
+        session_id: 'sess_unreachable_forwarder',
+        agent_id: 'agent_unreachable_forwarder',
+      },
+    });
+
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('');
+  });
+
+  it('uses one attempt and exits successfully within the 500 ms total deadline when delivery hangs', async () => {
+    let deliveryAttempts = 0;
+    const server = await startSessionHookServer({
+      onSessionHook: async () => {
+        deliveryAttempts += 1;
+        await new Promise(() => {});
+      },
+    });
+    servers.push(server);
+    const secretFile = await createSecretFile('unused-session-forwarder-secret');
+    const startedAt = Date.now();
+
+    const result = await runSessionForwarder({
+      port: server.port,
+      hookEventName: 'Stop',
+      secretFile,
+      body: {
+        session_id: 'sess_hung_forwarder',
+      },
+    });
+
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(deliveryAttempts).toBe(1);
+    expect(result).toEqual({ code: 0, stdout: '', stderr: '' });
+  });
+
+  it('drops oversized hook input before delivery without affecting the Agent', async () => {
+    const onSessionHook = vi.fn();
+    const server = await startSessionHookServer({ onSessionHook });
+    servers.push(server);
+    const secretFile = await createSecretFile('unused-session-forwarder-secret');
+
+    const result = await runSessionForwarder({
+      port: server.port,
+      hookEventName: 'Stop',
+      secretFile,
+      body: {
+        session_id: 'sess_oversized_forwarder',
+        ignored: 'x'.repeat(1024 * 1024),
+      },
+    });
+
+    expect(result).toEqual({ code: 0, stdout: '', stderr: '' });
+    expect(onSessionHook).not.toHaveBeenCalled();
   });
 
   it('returns 403 when the permission secret header is missing or mismatched', async () => {
@@ -607,6 +789,65 @@ describe('startSessionHookServer', () => {
     });
 
     expect(res.status).toBe(408);
+  });
+
+  it('awaits asynchronous default responses and per-tool timeout resolution', async () => {
+    const defaultPermissionHookResponse = vi.fn(async (data: Record<string, unknown>) => ({
+      continue: true,
+      suppressOutput: true,
+      observedEvent: data.hook_event_name,
+    }));
+    const permissionRequestTimeoutMsForTool = vi.fn(async () => null);
+    const server = await startSessionHookServer({
+      defaultPermissionHookResponse,
+      permissionRequestTimeoutMsForTool,
+      permissionHookSecret: 'secret-async-resolvers',
+      permissionRequestTimeoutMs: 1,
+    });
+    servers.push(server);
+
+    const res = await postPermissionHook({
+      port: server.port,
+      secret: 'secret-async-resolvers',
+      body: {
+        hook_event_name: 'PreToolUse',
+        tool_name: 'ExitPlanMode',
+      },
+    });
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.text)).toMatchObject({
+      observedEvent: 'PreToolUse',
+    });
+    expect(permissionRequestTimeoutMsForTool).toHaveBeenCalledWith('ExitPlanMode');
+    expect(defaultPermissionHookResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ hook_event_name: 'PreToolUse' }),
+    );
+  });
+
+  it('falls through to the canonical safe response when async resolvers reject', async () => {
+    const server = await startSessionHookServer({
+      defaultPermissionHookResponse: async () => {
+        throw new Error('default response unavailable');
+      },
+      permissionRequestTimeoutMsForTool: async () => {
+        throw new Error('timeout policy unavailable');
+      },
+      permissionHookSecret: 'secret-rejected-resolvers',
+    });
+    servers.push(server);
+
+    const res = await postPermissionHook({
+      port: server.port,
+      secret: 'secret-rejected-resolvers',
+      body: { hook_event_name: 'PermissionRequest', tool_name: 'Bash' },
+    });
+
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.text)).toEqual({
+      continue: true,
+      suppressOutput: true,
+    });
   });
 
   it('returns the onPermissionHook response when it completes before timeout', async () => {
@@ -761,6 +1002,39 @@ describe('startSessionHookServer', () => {
         model: { id: 'claude-fable-5', display_name: 'Fable 5' },
         some_future_field: { nested: true },
       }));
+    });
+
+    it('does not retain provider-supplied statusline fields in debug logs', async () => {
+      const privatePayloadText = 'private-statusline-hook-payload-claim45';
+      const rawTranscriptPath = join(tmpdir(), privatePayloadText, 'claude-statusline.jsonl');
+      const onStatuslineUpdate = vi.fn();
+      const server = await startSessionHookServer({
+        session: {
+          providerId: 'claude',
+          sessionId: 'happier-session-statusline-redaction',
+        },
+        sessionHookSecret: 'statusline-secret-redaction',
+        onStatuslineUpdate,
+      });
+      servers.push(server);
+      loggerDebugMock.mockClear();
+
+      const res = await postStatuslineHook({
+        port: server.port,
+        secret: 'statusline-secret-redaction',
+        body: {
+          session_id: privatePayloadText,
+          transcript_path: rawTranscriptPath,
+          model: { id: privatePayloadText },
+        },
+      });
+
+      expect(res.status).toBe(200);
+      expect(onStatuslineUpdate).toHaveBeenCalledTimes(1);
+      const serializedLogs = JSON.stringify(loggerDebugMock.mock.calls);
+      expect(serializedLogs).not.toContain(privatePayloadText);
+      expect(serializedLogs).not.toContain(rawTranscriptPath);
+      expect(serializedLogs).toContain('[redacted-path]');
     });
 
     it('returns 403 when the statusline secret header is missing or mismatched', async () => {

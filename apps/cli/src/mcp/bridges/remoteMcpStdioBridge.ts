@@ -21,6 +21,7 @@ import { z } from 'zod';
 
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { isSafeTmpMcpConfigFilePath } from '@/mcp/runtime/isSafeTmpMcpConfigFilePath';
+import { registerHappierBridgeTools } from './registerHappierBridgeTools';
 
 const REMOTE_BRIDGE_CONFIG_PREFIX = 'happier-mcp-remote-bridge';
 
@@ -40,11 +41,6 @@ function writeStderr(line: string): void {
   }
 }
 
-function parseArgsValue(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  return value as Record<string, unknown>;
-}
-
 async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> {
   const client = new Client({ name: 'happier-remote-bridge', version: '1.0.0' }, { capabilities: {} });
 
@@ -60,8 +56,13 @@ async function connectRemoteClient(config: RemoteBridgeConfig): Promise<Client> 
         eventSourceInit: { headers } as any,
       });
 
-  await client.connect(transport);
-  return client;
+  try {
+    await client.connect(transport);
+    return client;
+  } catch (error) {
+    await client.close().catch(() => {});
+    throw error;
+  }
 }
 
 async function main(): Promise<void> {
@@ -86,35 +87,69 @@ async function main(): Promise<void> {
   }
 
   const remoteClient = await connectRemoteClient(config);
-
-  const toolList = await remoteClient.listTools();
-  const tools = Array.isArray((toolList as any)?.tools) ? ((toolList as any).tools as any[]) : [];
-
   const server = new McpServer({ name: 'Happier MCP Remote Bridge', version: '1.0.0' });
+  let resolveShutdown!: () => void;
+  const shutdownRequested = new Promise<void>((resolve) => {
+    resolveShutdown = resolve;
+  });
+  let shutdownStarted = false;
+  let requestedSignal: NodeJS.Signals | null = null;
+  const requestShutdown = () => {
+    if (shutdownStarted) return;
+    shutdownStarted = true;
+    resolveShutdown();
+  };
+  const onStdinEnd = () => requestShutdown();
+  const onStdinError = () => requestShutdown();
+  const onSigint = () => {
+    requestedSignal = 'SIGINT';
+    requestShutdown();
+  };
+  const onSigterm = () => {
+    requestedSignal = 'SIGTERM';
+    requestShutdown();
+  };
+  process.stdin.once('end', onStdinEnd);
+  process.stdin.once('error', onStdinError);
+  process.once('SIGINT', onSigint);
+  process.once('SIGTERM', onSigterm);
+  remoteClient.onclose = requestShutdown;
 
-  for (const tool of tools) {
-    const name = typeof tool?.name === 'string' ? tool.name : '';
-    if (!name) continue;
+  try {
+    const toolList = await remoteClient.listTools();
+    registerHappierBridgeTools(server, {
+      tools: toolList.tools,
+      callHttpTool: async (name, args, options) =>
+        await callMcpToolWithResolvedTimeout({
+          client: remoteClient,
+          toolName: name,
+          args,
+          ...(options?.signal === undefined ? {} : { signal: options.signal }),
+        }),
+    });
 
-    server.registerTool(
-      name,
-      {
-        description: typeof tool?.description === 'string' ? tool.description : undefined,
-        title: typeof tool?.title === 'string' ? tool.title : undefined,
-        // The SDK expects a Zod schema for input validation. Remote `listTools` returns JSON schema.
-        // Prefer permissive validation here and let the remote server enforce its own schema.
-        inputSchema: z.any(),
-        _meta: tool?.inputSchema ? { remoteInputSchema: tool.inputSchema } : undefined,
-      } as any,
-      (async (argsOrExtra: unknown, extra?: unknown) => {
-        const toolArgs = parseArgsValue(argsOrExtra) ?? parseArgsValue(extra);
-        return await callMcpToolWithResolvedTimeout({ client: remoteClient, toolName: name, args: toolArgs });
-      }) as any,
-    );
+    const stdio = new StdioServerTransport();
+    await server.connect(stdio);
+    if (process.stdin.readableEnded || process.stdin.destroyed) {
+      requestShutdown();
+    }
+    await shutdownRequested;
+  } finally {
+    process.stdin.off('end', onStdinEnd);
+    process.stdin.off('error', onStdinError);
+    process.off('SIGINT', onSigint);
+    process.off('SIGTERM', onSigterm);
+    const cleanup = await Promise.allSettled([
+      server.close(),
+      remoteClient.close(),
+    ]);
+    const failures = cleanup.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Remote MCP bridge cleanup failed');
+    }
   }
-
-  const stdio = new StdioServerTransport();
-  await server.connect(stdio);
+  if (requestedSignal === 'SIGINT') process.exitCode = 130;
+  if (requestedSignal === 'SIGTERM') process.exitCode = 143;
 }
 
 main().catch((err) => {

@@ -1,4 +1,4 @@
-import type { InstallAgentCliResult, AgentCliInstallPlan } from '../install.js';
+import type { InstallAgentCliResult, AgentCliInstallIntent, AgentCliInstallPlan } from '../install.js';
 import {
     readBackendCliSourcePreferenceForAgent,
     resolveAgentCliCommandForRuntime,
@@ -35,9 +35,10 @@ export function runRuntimeInstallPreflight(params: Readonly<{
     env: NodeJS.ProcessEnv;
     dryRun?: boolean;
     skipIfInstalled?: boolean;
+    intent?: AgentCliInstallIntent;
     allowVendorRecipeExecution?: boolean;
 }>): RuntimeInstallPreflightResult {
-    const skipIfInstalled = params.skipIfInstalled !== false;
+    const skipIfInstalled = params.intent !== 'update' && params.skipIfInstalled !== false;
     const allowVendorRecipeExecution = params.allowVendorRecipeExecution === true;
 
     if (skipIfInstalled) {

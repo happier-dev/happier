@@ -1,4 +1,4 @@
-import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import type { TrackedSession } from '@/daemon/types';
 
 function isPidPlaceholderSessionId(value: string): boolean {
@@ -32,6 +32,12 @@ export function resolveSpawnWebhookResult(params: Readonly<{
   }
 
   const trackedSessionId = typeof tracked.happySessionId === 'string' ? tracked.happySessionId.trim() : '';
+  if (typeof tracked.sessionWebhookTimedOutAtMs === 'number') {
+    params.warn(
+      `[DAEMON RUN] Session webhook startup deadline expired for PID ${params.pid}; keeping timeout error`,
+    );
+    return params.result;
+  }
   if (trackedSessionId && !isPidPlaceholderSessionId(trackedSessionId)) {
     params.warn(
       `[DAEMON RUN] Session webhook timed out for PID ${params.pid}, but canonical session id ${trackedSessionId} is already tracked; continuing`,

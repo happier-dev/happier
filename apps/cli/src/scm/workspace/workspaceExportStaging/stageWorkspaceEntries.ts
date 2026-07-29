@@ -1,4 +1,5 @@
 import type { WorkspaceManifest } from '@happier-dev/protocol';
+import type { ScmBackendRegistry } from '@/scm/registry';
 
 import type { WorkspaceStagingRoot } from './createWorkspaceStagingRoot';
 import { stageWorkspaceDirectory, type StagedWorkspaceDirectory } from './stageWorkspaceDirectory';
@@ -26,6 +27,7 @@ export async function stageWorkspaceEntries(params: Readonly<{
     stagingRoot: WorkspaceStagingRoot;
     expectedManifest: WorkspaceManifest;
     blobProvider?: WorkspaceExportBlobProvider;
+    scmRegistry?: ScmBackendRegistry;
     assertCanContinue?: () => Promise<void>;
 }>): Promise<StageWorkspaceEntriesResult> {
     const fileEntries = params.expectedManifest.entries.filter(
@@ -86,6 +88,7 @@ export async function stageWorkspaceEntries(params: Readonly<{
         blobsDirectory: params.stagingRoot.blobsDirectory,
         expectedManifest: params.expectedManifest,
         expectedBlobDigests: uniqueBlobDigests,
+        scmRegistry: params.scmRegistry,
     });
 
     return {

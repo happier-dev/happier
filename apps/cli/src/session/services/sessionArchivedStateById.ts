@@ -1,4 +1,3 @@
-import { releaseExternalSessionFollowLeasesForArchivedSession } from '@/api/session/external/leases/externalSessionFollowLeaseArchiveRegistry';
 import { archiveSession, unarchiveSession } from '@/session/transport/http/sessionsHttp';
 
 export function isSessionActiveArchiveError(error: unknown): error is Error & { code: 'session_active' } {
@@ -19,10 +18,6 @@ export async function setSessionArchivedStateById(params: Readonly<{
         token: params.token,
         sessionId: params.sessionId,
       });
-
-  if (params.archived) {
-    await releaseExternalSessionFollowLeasesForArchivedSession(params.sessionId);
-  }
 
   return {
     archivedAt: result.archivedAt,

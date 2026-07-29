@@ -2,12 +2,11 @@ import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { PluginSourceTrustPolicyV1 } from '@happier-dev/protocol';
 import { createJiti } from 'jiti';
 
-import { isTrustPolicyLocallyTrusted } from '@/plugins/install/ui/trustedSource';
+import { isPluginTrustRecordAuthorized } from '@/plugins/store/install/trustIdentity';
 
-import type { PluginActivationSource } from './activationSources';
+import type { CommittedPluginExecutionAuthorization, PluginActivationSource } from './activationSources';
 
 export type PluginModuleNamespace = Readonly<Record<string, unknown>> & Readonly<{
     default?: unknown;
@@ -17,8 +16,7 @@ type PluginModuleLoadErrorCode =
     | 'PLUGIN_DAEMON_ENTRY_MISSING'
     | 'PLUGIN_DAEMON_ENTRY_KIND_UNSUPPORTED'
     | 'PLUGIN_DAEMON_MODULE_LOAD_FAILED'
-    | 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED'
-    | 'PLUGIN_DAEMON_TRUST_UNTRUSTED';
+    | 'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED';
 
 const moduleLoadCache = new Map<string, Promise<PluginModuleNamespace>>();
 const SUPPORTED_DAEMON_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
@@ -30,12 +28,6 @@ const SUPPORTED_DEV_DAEMON_ENTRY_EXTENSIONS = new Set([
     '.tsx',
 ]);
 const TYPESCRIPT_DEV_DAEMON_ENTRY_EXTENSIONS = new Set(['.ts', '.mts', '.cts', '.tsx']);
-const tsDevEntryLoader = createJiti(import.meta.url, {
-    fsCache: false,
-    moduleCache: false,
-    interopDefault: false,
-});
-
 function createModuleLoadError(code: PluginModuleLoadErrorCode, message: string, cause?: unknown): Error {
     const error = new Error(message) as Error & { code?: PluginModuleLoadErrorCode; cause?: unknown };
     error.code = code;
@@ -77,28 +69,49 @@ function evictCacheByPrefix(prefix: string, preserveKey: string): void {
     }
 }
 
-function assertTrusted(trustPolicy: PluginSourceTrustPolicyV1 | undefined): void {
-    if (!isTrustPolicyLocallyTrusted(trustPolicy)) {
-        if (trustPolicy === 'untrusted') {
+async function assertTrusted(
+    committedAuthorization: CommittedPluginExecutionAuthorization | undefined,
+): Promise<void> {
+    if (committedAuthorization) {
+        const authorized = committedAuthorization.admittedIntegrity === committedAuthorization.packageDigest
+            && isPluginTrustRecordAuthorized(committedAuthorization.trust, {
+                pluginId: committedAuthorization.pluginId,
+                distribution: committedAuthorization.distribution,
+                realm: 'daemon',
+            });
+        if (!authorized) {
             throw createModuleLoadError(
-                'PLUGIN_DAEMON_TRUST_UNTRUSTED',
-                "Refusing to load executable plugin daemon entry because source trustPolicy:'untrusted' denies daemon code execution",
+                'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED',
+                'Committed plugin execution authorization does not match the reviewed distribution and immutable generation',
             );
         }
-        throw createModuleLoadError(
-            'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED',
-            `Plugin executable load requires explicit trust approval before loading daemon code because source trustPolicy:'${trustPolicy ?? 'prompt'}' is not local_trusted`,
-        );
+        if (!(await committedAuthorization.isCurrent())) {
+            throw createModuleLoadError(
+                'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED',
+                `Committed plugin execution authorization is stale for generation '${committedAuthorization.immutableGenerationId}'`,
+            );
+        }
+        return;
     }
+    throw createModuleLoadError(
+        'PLUGIN_DAEMON_TRUST_APPROVAL_REQUIRED',
+        'Plugin executable load requires a reviewed, committed, current daemon generation',
+    );
 }
 
 function resolveSelectedEntryPath(params: Readonly<{
     entryPath: string;
     devEntryPath?: string | null;
-    trustPolicy: PluginSourceTrustPolicyV1 | undefined;
+    useDevelopmentEntry?: boolean;
 }>): Readonly<{ entryPath: string; isDevEntry: boolean }> {
     const devEntryPath = params.devEntryPath?.trim();
-    if (devEntryPath && isTrustPolicyLocallyTrusted(params.trustPolicy)) {
+    if (params.useDevelopmentEntry === true) {
+        if (!devEntryPath) {
+            throw createModuleLoadError(
+                'PLUGIN_DAEMON_ENTRY_MISSING',
+                'Plugin development execution was selected without a development entrypoint',
+            );
+        }
         return { entryPath: devEntryPath, isDevEntry: true };
     }
     return { entryPath: params.entryPath, isDevEntry: false };
@@ -129,8 +142,17 @@ async function importFileBackedModule(params: Readonly<{
     isTypeScriptDevEntry: boolean;
 }>): Promise<PluginModuleNamespace> {
     if (params.isTypeScriptDevEntry) {
+        // A development generation owns its whole TypeScript module graph. Creating
+        // Jiti here prevents a transitive import cached by one generation from
+        // leaking into its replacement; moduleLoadCache still joins repeated loads
+        // of the same immutable generation key.
+        const generationLoader = createJiti(import.meta.url, {
+            fsCache: false,
+            moduleCache: false,
+            interopDefault: false,
+        });
         const source = await readFile(params.resolvedEntryPath, 'utf8');
-        return await tsDevEntryLoader.evalModule(source, {
+        return await generationLoader.evalModule(source, {
             filename: params.resolvedEntryPath,
             async: true,
         }) as PluginModuleNamespace;
@@ -147,15 +169,16 @@ async function importFileBackedModule(params: Readonly<{
 async function loadFileBackedModule(params: Readonly<{
     entryPath: string;
     devEntryPath?: string | null;
-    trustPolicy: PluginSourceTrustPolicyV1 | undefined;
+    useDevelopmentEntry?: boolean;
+    committedAuthorization?: CommittedPluginExecutionAuthorization;
     cacheKey?: string;
 }>): Promise<PluginModuleNamespace> {
-    assertTrusted(params.trustPolicy);
+    await assertTrusted(params.committedAuthorization);
 
     const selectedEntry = resolveSelectedEntryPath({
         entryPath: params.entryPath,
         devEntryPath: params.devEntryPath,
-        trustPolicy: params.trustPolicy,
+        useDevelopmentEntry: params.useDevelopmentEntry,
     });
     const resolvedEntryPath = resolve(selectedEntry.entryPath);
     const extension = extname(resolvedEntryPath).toLowerCase();
@@ -260,7 +283,8 @@ export async function loadPluginModule<TModule extends PluginModuleNamespace>(pa
         return await loadFileBackedModule({
             entryPath: params.source.entryPath,
             devEntryPath: params.source.devEntryPath,
-            trustPolicy: params.source.trustPolicy,
+            useDevelopmentEntry: params.source.useDevelopmentEntry,
+            committedAuthorization: params.source.committedAuthorization,
             cacheKey: params.cacheKey,
         }) as TModule;
     }

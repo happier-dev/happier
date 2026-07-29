@@ -213,7 +213,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const res = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_123',
       titleHint: 'Linked Claude Session',
       directoryHint: '/tmp/project-a',
@@ -234,7 +234,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
         text: z.string(),
       }).passthrough(),
       externalSessionV1: z.object({
-        providerId: z.string().min(1),
+        agentId: z.string().min(1),
         remoteSessionId: z.string().min(1),
         machineId: z.string().min(1),
       }).passthrough(),
@@ -246,7 +246,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     expect(parsedMeta.data.tag).toMatch(/^direct:v1:/);
     expect(parsedMeta.data.summary.text).toBe('Linked Claude Session');
     expect(parsedMeta.data.path).toBe('/tmp/project-a');
-    expect(parsedMeta.data.externalSessionV1.providerId).toBe('claude');
+    expect(parsedMeta.data.externalSessionV1.agentId).toBe('claude');
     expect(parsedMeta.data.externalSessionV1.remoteSessionId).toBe('remote_123');
     expect(parsedMeta.data.externalSessionV1.machineId).toBe('machine_1');
   });
@@ -268,7 +268,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const res = await handler!({
       machineId: 'machine_1',
-      providerId: 'codex',
+      agentId: 'codex',
       remoteSessionId: 'remote_codex_123',
       titleHint: 'Linked Codex Session',
       directoryHint: '/tmp/project-codex',
@@ -284,7 +284,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     const parsedMeta = z.object({
       codexBackendMode: z.enum(['mcp', 'acp', 'appServer']),
       externalSessionV1: z.object({
-        providerId: z.literal('codex'),
+        agentId: z.literal('codex'),
         codexBackendMode: z.enum(['mcp', 'acp', 'appServer']).optional(),
       }).passthrough(),
     }).passthrough().safeParse(meta);
@@ -313,7 +313,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const first = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_123',
       titleHint: 'Linked Claude Session',
       directoryHint: '/tmp/project-a',
@@ -321,7 +321,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
     });
     const second = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_123',
       titleHint: 'Linked Claude Session',
       directoryHint: '/tmp/project-a',
@@ -352,13 +352,13 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const first = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_123',
       source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-a' },
     });
     const second = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_123',
       titleHint: 'Recovered Claude Session',
       directoryHint: '/tmp/project-a',
@@ -405,14 +405,14 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const first = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_456',
       titleHint: 'Original Claude Session',
       source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-b' },
     });
     const second = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_456',
       titleHint: 'Replacement Title Should Not Win',
       directoryHint: '/tmp/project-b',
@@ -458,7 +458,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const first = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_789',
       titleHint: 'remote_789',
       source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-c' },
@@ -482,7 +482,7 @@ describe('daemon.externalSessions.link.ensure (integration)', () => {
 
     const second = await handler!({
       machineId: 'machine_1',
-      providerId: 'claude',
+      agentId: 'claude',
       remoteSessionId: 'remote_789',
       titleHint: 'Recovered Claude Session',
       source: { kind: 'claudeConfig', configDir: '/tmp', projectId: 'proj-c' },

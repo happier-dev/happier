@@ -8,9 +8,7 @@ import {
   type ExecutionRunProfileContributionCatalog,
 } from '@/agent/executionRuns/profiles/intentRegistry';
 import {
-  resolveExecutionRunStructuredOutputRecovery,
   type ExecutionRunStructuredMeta,
-  type ExecutionRunStructuredOutputRecovery,
 } from '@/agent/executionRuns/profiles/ExecutionRunIntentProfile';
 import {
   REVIEW_SCM_SCOPE_INPUT_KEY,
@@ -45,8 +43,9 @@ import {
 } from './backendTargets';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 import type { ExecutionRunPermissionRequestStoreProvider } from './executionRunPermissionResponseTarget';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveExecutionRunRuntimeSettings } from './runtimeSettings';
+import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 
 type SendAcp = (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
 
@@ -102,17 +101,6 @@ function readScmDiffSummaryCachedOutput(value: unknown): Record<string, unknown>
   if (!cachedOutput || typeof cachedOutput !== 'object' || Array.isArray(cachedOutput)) return null;
   const output = cachedOutput as Record<string, unknown>;
   return typeof output.success === 'boolean' ? output : null;
-}
-
-function resolveStructuredOutputRecoveryForBackend(backendId: string): ExecutionRunStructuredOutputRecovery | undefined {
-  try {
-    const backendDefinition = getResolvedContributionRegistry().agentRuntimeDefinitionsById.get(backendId) ?? null;
-    return resolveExecutionRunStructuredOutputRecovery(
-      backendDefinition?.capabilities?.executionRun?.structuredOutputRecovery,
-    );
-  } catch {
-    return undefined;
-  }
 }
 
 function readRecord(value: unknown): Record<string, unknown> | null {
@@ -194,6 +182,10 @@ type ExecuteBoundedRun = (args: {
 export async function startExecutionRun(args: Readonly<{
   params: ExecutionRunManagerStartParams;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
+  contributions?: Pick<
+    ResolvedContributionRegistry,
+    'agentDefinitionsById'
+  >;
   parentProvider: ACPProvider;
   sendAcp: SendAcp;
   streamedTranscriptSession: StreamedTranscriptWriterSession | null;
@@ -265,10 +257,7 @@ export async function startExecutionRun(args: Readonly<{
 
   const startedAtMs = args.getNowMs();
   const backendId = resolveExecutionRunRuntimeBackendId(args.params.backendTarget);
-  const structuredOutputRecovery = resolveStructuredOutputRecoveryForBackend(backendId);
-  const startParams: ExecutionRunManagerStartParams = structuredOutputRecovery
-    ? { ...args.params, structuredOutputRecovery }
-    : args.params;
+  const startParams = args.params;
   const profileId =
     typeof args.params.profileId === 'string' && args.params.profileId.trim().length > 0
       ? args.params.profileId.trim()
@@ -381,6 +370,7 @@ export async function startExecutionRun(args: Readonly<{
   }
 
   let backendBeforeControllerRegistration: ExecutionRunHostRuntime | null = null;
+  let registeredController: ExecutionRunController | null = null;
 
   try {
     if (args.params.intent === 'voice_agent' && args.params.ioMode === 'streaming') {
@@ -393,7 +383,7 @@ export async function startExecutionRun(args: Readonly<{
       const epoch = Number.isFinite(epochRaw) && epochRaw >= 0 ? Math.floor(epochRaw) : 0;
       const persistenceMode = args.params.transcript?.persistenceMode === 'persistent' ? 'persistent' : 'ephemeral';
 
-      const permissionPolicy = args.params.permissionMode === 'no_tools' ? 'no_tools' : 'read_only';
+      const permissionIntent = permissionMode(args.params.permissionMode);
       const initialContext = [String(args.params.initialContext ?? '').trim(), String(args.params.instructions ?? '').trim()]
         .filter((t) => t.length > 0)
         .join('\n\n');
@@ -427,7 +417,7 @@ export async function startExecutionRun(args: Readonly<{
         chatModelId,
         commitModelId,
         commitIsolation,
-        permissionPolicy,
+        permissionIntent,
         idleTtlSeconds,
         initialContext,
         initialContextMode,
@@ -435,6 +425,28 @@ export async function startExecutionRun(args: Readonly<{
         bootstrapMode,
         ...(typeof bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs } : {}),
         disabledActionIds,
+      }, {
+        createRuntime: ({ agentId, modelId, permissionIntent, start, connectedServices }) => {
+          try {
+            return args.createRuntime({
+              runId,
+              backendId: agentId,
+              backendTarget: { kind: 'builtInAgent', agentId },
+              modelId,
+              permissionMode: permissionIntent,
+              ...(start ? { start } : {}),
+              ...(connectedServices !== undefined ? { connectedServices } : {}),
+            });
+          } catch (error) {
+            if (error instanceof VoiceAgentError) {
+              throw error;
+            }
+            throw new VoiceAgentError(
+              'VOICE_AGENT_UNSUPPORTED',
+              error instanceof Error ? error.message : 'voice agent backend unavailable',
+            );
+          }
+        },
       });
 
       const resumeHandle = args.voiceAgentManager.getResumeHandle(startedVoice.voiceAgentId);
@@ -448,7 +460,7 @@ export async function startExecutionRun(args: Readonly<{
             chatModelId,
             commitModelId,
             commitIsolation,
-            permissionPolicy,
+            permissionIntent,
             idleTtlSeconds,
             initialContext,
             initialContextMode,
@@ -471,9 +483,12 @@ export async function startExecutionRun(args: Readonly<{
         transcript: { persistenceMode, epoch },
         externalStreamIdByInternal: new Map(),
         internalStreamIdByExternal: new Map(),
-        persistedDoneByExternalStreamId: new Set(),
+        pendingTranscriptTurnByExternalStreamId: new Map(),
+        terminalReadByExternalStreamId: new Map(),
+        readInFlightByExternalStreamId: new Map(),
       };
       args.controllers.set(runId, ctrl);
+      registeredController = ctrl;
       await args.writeActivityMarker(runId, args.getNowMs(), { force: true }).catch(() => {});
       return { runId, callId, sidechainId };
     }
@@ -496,7 +511,10 @@ export async function startExecutionRun(args: Readonly<{
       ...(args.params.connectedServicesDefaultServiceIds && args.params.connectedServicesDefaultServiceIds.length > 0
         ? { connectedServicesDefaultServiceIds: args.params.connectedServicesDefaultServiceIds }
         : {}),
-      start: startParams,
+      start: {
+        ...startParams,
+        profileId: profileId ?? undefined,
+      },
     });
     backendBeforeControllerRegistration = backend;
     let resolveTerminal!: () => void;
@@ -537,6 +555,7 @@ export async function startExecutionRun(args: Readonly<{
       resolveTerminal,
     };
     args.controllers.set(runId, ctrl);
+    registeredController = ctrl;
     backendBeforeControllerRegistration = null;
 
     const onMessage = createExecutionRunControllerMessageHandler({
@@ -598,9 +617,10 @@ export async function startExecutionRun(args: Readonly<{
             .executeBoundedRun({ runId, callId, sidechainId, startedAtMs, params: startParams })
             .finally(() => {
               // Ensure terminal promise resolves even if executeBoundedRun throws unexpectedly.
-              const ctrl = args.controllers.get(runId);
-              ctrl?.resolveTerminal();
-              args.controllers.delete(runId);
+              ctrl.resolveTerminal();
+              if (args.controllers.get(runId) === ctrl) {
+                args.controllers.delete(runId);
+              }
             });
         } catch (e: any) {
           const message = e instanceof Error ? e.message : 'Execution failed';
@@ -629,14 +649,13 @@ export async function startExecutionRun(args: Readonly<{
           } catch {
             // best effort
           }
-          const ctrl = args.controllers.get(runId) ?? null;
-          if (ctrl) {
-            try {
-              if (ctrl.kind === 'backend') await ctrl.backend.dispose();
-            } catch {
-              // best effort
-            }
-            ctrl.resolveTerminal();
+          try {
+            await ctrl.backend.dispose();
+          } catch {
+            // best effort
+          }
+          ctrl.resolveTerminal();
+          if (args.controllers.get(runId) === ctrl) {
             args.controllers.delete(runId);
           }
         }
@@ -730,7 +749,7 @@ export async function startExecutionRun(args: Readonly<{
     } catch {
       // best effort
     }
-    const ctrl = args.controllers.get(runId) ?? null;
+    const ctrl = registeredController;
     if (ctrl) {
       try {
         if (ctrl.kind === 'backend') await ctrl.backend.dispose();
@@ -738,7 +757,9 @@ export async function startExecutionRun(args: Readonly<{
         // best effort
       }
       ctrl.resolveTerminal();
-      args.controllers.delete(runId);
+      if (args.controllers.get(runId) === ctrl) {
+        args.controllers.delete(runId);
+      }
     } else if (backendBeforeControllerRegistration) {
       try {
         await backendBeforeControllerRegistration.dispose();

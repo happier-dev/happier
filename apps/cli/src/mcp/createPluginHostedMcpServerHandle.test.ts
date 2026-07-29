@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk';
+import type { McpServerSpecV1 } from '@happier-dev/plugin-sdk/experimental/mcp';
 
 import {
     createPluginHostedMcpServerHandle,

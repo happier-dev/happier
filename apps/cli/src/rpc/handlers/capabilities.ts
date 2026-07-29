@@ -1,16 +1,19 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
-import { AGENTS, type AgentCatalogEntry, type CatalogAgentId } from '@/backends/catalog';
-import { checklists } from '@/capabilities/checklists';
+import { AGENTS } from '@/agent/catalog/registry';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import { createCapabilityChecklists } from '@/capabilities/checklists';
 import { buildDetectContext } from '@/capabilities/context/buildDetectContext';
 import { buildCliCapabilityData } from '@/capabilities/probes/cliBase';
-import { createAcpCliCapability } from '@/capabilities/probes/createAcpCliCapability';
 import { tmuxCapability } from '@/capabilities/registry/toolTmux';
 import { windowsTerminalCapability } from '@/capabilities/registry/toolWindowsTerminal';
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { systemTasksCapability } from '@/capabilities/registry/toolSystemTasks';
 import { ghDepCapability } from '@/capabilities/registry/depGh';
 import { azDepCapability } from '@/capabilities/registry/depAz';
-import { createInstallableCapabilitiesFromContributions } from '@/capabilities/registry/installables';
+import {
+    createInstallableCapabilities,
+    createInstallablesRegistryFromResolvedContributions,
+} from '@/capabilities/registry/installables';
 import { createCapabilitiesService } from '@/capabilities/service';
 import type { Capability } from '@/capabilities/service';
 import type {
@@ -24,22 +27,27 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { probeAgentModelsBestEffort } from '@/capabilities/probes/agentModelsProbe';
 import { probeAgentModesBestEffort } from '@/capabilities/probes/agentModesProbe';
 import { probeAgentConfigOptionsBestEffort } from '@/capabilities/probes/agentConfigOptionsProbe';
-import { readCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
-import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import type { AgentId } from '@happier-dev/agents';
-import { applyAgentRuntimeKindOverrideToAccountSettings } from '@happier-dev/agents';
-import { BackendTargetRefSchema, type BackendTargetRefV1, type CapabilityId } from '@happier-dev/protocol';
-import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/packagedRuntime/managedTools/invokeProviderCliInstall';
+import { type CapabilityId } from '@happier-dev/protocol';
+import { resolveProbeBackendContext } from './capabilitiesProbeContext';
+import { invokeAgentCliInstall as invokeSharedProviderCliInstall } from '@/packagedRuntime/managedTools/invokeAgentCliInstall';
 import {
     getResolvedContributionRegistry,
     primeResolvedContributionRegistry,
 } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { installMarketplacePlugin as installMarketplacePluginFromCatalog } from '@/plugins/store/marketplace/catalog';
-import { readInstalledPluginCatalog, readInstalledPluginCatalogEntry } from '@/plugins/projection/catalog/installed';
+import { requestExactMarketplaceInstall } from '@/plugins/store/marketplace/exactInstall';
+import {
+    readInstalledPluginCatalogEntry,
+    type PluginCatalogEntry,
+} from '@/plugins/projection/catalog/installed';
+import { requestUserPluginChange } from '@/plugins/daemon/changeClient';
+import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
 import { setInstalledPluginEnabled } from '@/plugins/store/enabled';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import type { PluginReloadResult } from '@/plugins/runtime/reload/controller';
+import { runPluginAuthorToolchain } from '@/plugins/authoring/toolchain';
+import { packLocalPlugin } from '@/plugins/packaging/pack';
+import { scaffoldLocalPlugin } from '@/plugins/scaffold/scaffold';
 
 const DEFAULT_PROBE_MODELS_TIMEOUT_MS = 30_000;
 
@@ -67,57 +75,64 @@ function resolvePublicCliCapabilityTitle(agentId: string): string {
     return `${titleCase(agentId)} CLI`;
 }
 
-async function resolveProbeBackendContext(params?: Record<string, unknown>): Promise<{
-    backendTarget: BackendTargetRefV1 | undefined;
-    credentials: Awaited<ReturnType<typeof readCredentials>> | null;
-    accountSettings: Record<string, unknown> | null;
+function resolveCliProbeInvokeParams(params?: Record<string, unknown>): Readonly<{
+    cwd: string;
+    timeoutMs: number;
 }> {
-    const parsedBackendTarget = BackendTargetRefSchema.safeParse((params ?? {}).backendTarget);
-    const backendTarget = parsedBackendTarget.success ? parsedBackendTarget.data : undefined;
-    const runtimeKindOverride = (params ?? {}).runtimeKindOverride;
-
-    const agentId = typeof params?.agentId === 'string' ? params.agentId : null;
-    const needsAccountSettingsForProbes =
-        agentId && (AGENTS[agentId as keyof typeof AGENTS] as AgentCatalogEntry | undefined)?.needsAccountSettingsForProbes === true;
-    const shouldLoadAccountSettings = backendTarget?.kind === 'configuredAcpBackend' || needsAccountSettingsForProbes;
-    if (!shouldLoadAccountSettings) {
-      return { backendTarget, credentials: null, accountSettings: null };
-    }
-
-    const credentials = await readCredentials().catch(() => null);
-    if (!credentials) return { backendTarget, credentials: null, accountSettings: null };
-
-    const accountSettingsContext = await bootstrapAccountSettingsContext({
-        credentials,
-        ...(params?.agentId ? { agentId: params.agentId as AgentId } : {}),
-        backendTarget,
-        mode: 'blocking',
-        refresh: 'auto',
-    }).catch(() => null);
-
-    const accountSettings = accountSettingsContext?.settings ?? null;
-    const effectiveAccountSettings = params?.agentId
-        ? applyAgentRuntimeKindOverrideToAccountSettings({
-            agentId: params.agentId as AgentId,
-            accountSettings,
-            runtimeKindOverride,
-        })
-        : accountSettings;
-
+    const rawParams = params ?? {};
+    const timeoutMsRaw = rawParams.timeoutMs;
+    const cwdRaw = rawParams.cwd;
     return {
-      backendTarget,
-      credentials,
-      accountSettings: effectiveAccountSettings,
+        cwd: typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd(),
+        timeoutMs: typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS,
     };
 }
 
-async function invokeProviderCliInstall(
+async function invokeCliProbeOrInstallMethod(
+    agentId: AgentCatalogEntry['id'],
+    method: string,
+    params?: Record<string, unknown>,
+): Promise<CapabilitiesInvokeResponse | null> {
+    if (method === 'install') {
+        return invokeAgentCliInstall(agentId, params);
+    }
+
+    if (method !== 'probeModels' && method !== 'probeModes' && method !== 'probeConfigOptions') {
+        return null;
+    }
+
+    const probeContext = await resolveProbeBackendContext({ ...params, agentId });
+    const { cwd, timeoutMs } = resolveCliProbeInvokeParams(params);
+    const connectedServices = params && Object.prototype.hasOwnProperty.call(params, 'connectedServices')
+        ? params.connectedServices
+        : undefined;
+    const commonProbeArgs = {
+        agentId,
+        backendTarget: probeContext.backendTarget,
+        cwd,
+        timeoutMs,
+        accountSettings: probeContext.accountSettings,
+        credentials: probeContext.credentials,
+        ...(connectedServices !== undefined ? { connectedServices } : {}),
+    };
+
+    if (method === 'probeModels') {
+        return { ok: true, result: await probeAgentModelsBestEffort(commonProbeArgs) };
+    }
+    if (method === 'probeModes') {
+        return { ok: true, result: await probeAgentModesBestEffort(commonProbeArgs) };
+    }
+    return { ok: true, result: await probeAgentConfigOptionsBestEffort(commonProbeArgs) };
+}
+
+async function invokeAgentCliInstall(
     agentId: AgentCatalogEntry['id'],
     params?: Record<string, unknown>,
 ): Promise<CapabilitiesInvokeResponse> {
     const dryRun = params?.dryRun === true;
     const allowVendorRecipeExecution = params?.allowVendorRecipeExecution === true;
     const sharedParams = {
+        ...(params?.intent === 'update' ? { intent: 'update' as const } : {}),
         ...(typeof params?.skipIfInstalled === 'boolean' ? { skipIfInstalled: params.skipIfInstalled } : {}),
         ...(typeof params?.platform === 'string' && params.platform.trim().length > 0 ? { platform: params.platform.trim() } : {}),
         ...(allowVendorRecipeExecution ? { allowVendorRecipeExecution: true } : {}),
@@ -171,58 +186,167 @@ async function invokeProviderCliInstall(
     return { ok: true, result: { plan: result.plan, alreadyInstalled: result.alreadyInstalled, logPath: result.logPath ?? null } };
 }
 
-function mapPluginDiagnosticsToInvokeError(diagnostics: readonly { code: string; message: string }[]): Readonly<{ message: string; code?: string }> {
-    const firstDiagnostic = diagnostics[0];
-    if (!firstDiagnostic) {
-        return {
-            message: 'Plugin operation failed',
-            code: 'plugin_operation_failed',
-        };
-    }
-    return {
-        message: diagnostics.map((diagnostic) => diagnostic.message).join('\n'),
-        code: firstDiagnostic.code,
-    };
-}
+type PluginMarketplaceCapabilityMethod =
+    | 'install'
+    | 'update'
+    | 'enable'
+    | 'disable'
+    | 'rollback'
+    | 'uninstall'
+    | 'forgetTrust'
+    | 'create'
+    | 'test'
+    | 'pack';
 
-function resolveMarketplaceActionMethod(method: string): 'install' | 'update' | 'enable' | 'disable' | 'reload' | null {
-    if (method === 'install' || method === 'update' || method === 'enable' || method === 'disable' || method === 'reload') {
+function resolveMarketplaceActionMethod(method: string): PluginMarketplaceCapabilityMethod | null {
+    if (
+        method === 'install'
+        || method === 'update'
+        || method === 'enable'
+        || method === 'disable'
+        || method === 'rollback'
+        || method === 'uninstall'
+        || method === 'forgetTrust'
+        || method === 'create'
+        || method === 'test'
+        || method === 'pack'
+    ) {
         return method;
     }
     return null;
 }
 
-async function reloadPluginIfNeeded(pluginId: string, shouldReload: boolean): Promise<PluginReloadResult | null> {
-    if (!shouldReload) {
-        return null;
-    }
-    return await pluginReloadController.reload({ pluginId });
+function projectPluginDevelopmentSources(
+    installedPlugins: readonly PluginCatalogEntry[],
+): readonly Readonly<{
+    pluginId: string;
+    sourceRootPath: string;
+    watch: Readonly<{ state: 'configured' }>;
+    reload: Readonly<{
+        state: 'clear' | 'attention';
+        diagnostics: typeof installedPlugins[number]['diagnostics'];
+    }>;
+    actions: Readonly<{ test: true; pack: true }>;
+}>[] {
+    return installedPlugins
+        .filter((entry) => entry.source.kind === 'path' && entry.source.devWatch === true)
+        .map((entry) => {
+            const diagnostics = [...entry.diagnostics, ...entry.compatibility.diagnostics];
+            return Object.freeze({
+                pluginId: entry.pluginId,
+                sourceRootPath: entry.source.locator,
+                watch: Object.freeze({ state: 'configured' as const }),
+                reload: Object.freeze({
+                    state: diagnostics.length === 0 ? 'clear' as const : 'attention' as const,
+                    diagnostics,
+                }),
+                actions: Object.freeze({ test: true as const, pack: true as const }),
+            });
+        });
 }
 
-async function invokePluginMarketplaceAction(method: string, params?: Record<string, unknown>): Promise<CapabilitiesInvokeResponse> {
+async function invokePluginDevelopmentAction(
+    action: Extract<PluginMarketplaceCapabilityMethod, 'create' | 'test' | 'pack'>,
+    params: Record<string, unknown> | undefined,
+): Promise<CapabilitiesInvokeResponse> {
+    if (action === 'create') {
+        const targetDir = typeof params?.targetDir === 'string' ? params.targetDir.trim() : '';
+        const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
+        const displayName = typeof params?.displayName === 'string' ? params.displayName.trim() : '';
+        const result = await scaffoldLocalPlugin({ targetDir, pluginId, displayName });
+        if (!result.ok) {
+            return {
+                ok: false,
+                error: {
+                    message: result.diagnostics.map((diagnostic) => diagnostic.message).join('\n'),
+                    code: result.diagnostics[0]?.code ?? 'plugin-scaffold-failed',
+                },
+            };
+        }
+        return {
+            ok: true,
+            result: {
+                action,
+                pluginId: result.pluginId,
+                sourceRootPath: result.targetDir,
+                manifestPath: result.manifestPath,
+            },
+        };
+    }
+
+    const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
+    if (!pluginId) {
+        return { ok: false, error: { message: 'pluginId is required', code: 'plugin-not-found' } };
+    }
+    const entry = await readInstalledPluginCatalogEntry({
+        pluginId,
+        happyHomeDir: configuration.happyHomeDir,
+    });
+    if (!entry) {
+        return { ok: false, error: { message: `Installed plugin '${pluginId}' was not found`, code: 'plugin-not-found' } };
+    }
+    if (entry.source.kind !== 'path' || entry.source.devWatch !== true) {
+        return {
+            ok: false,
+            error: {
+                message: `Plugin '${pluginId}' is not an approved local development source`,
+                code: 'plugin-development-source-unavailable',
+            },
+        };
+    }
+
+    const sourceRootPath = entry.source.locator;
+    if (action === 'test') {
+        const result = await runPluginAuthorToolchain({
+            operation: 'test',
+            projectRoot: sourceRootPath,
+        });
+        if (!result.ok) {
+            return {
+                ok: false,
+                error: {
+                    message: result.diagnostics.map((diagnostic) => diagnostic.message).join('\n'),
+                    code: result.diagnostics[0]?.code ?? 'plugin-author-test-failed',
+                },
+            };
+        }
+        return { ok: true, result: { action, pluginId, sourceRootPath } };
+    }
+
+    const result = await packLocalPlugin({ locator: sourceRootPath });
+    if (!result.ok) {
+        return {
+            ok: false,
+            error: {
+                message: result.diagnostics.map((diagnostic) => diagnostic.message).join('\n'),
+                code: 'plugin-pack-failed',
+            },
+        };
+    }
+    return {
+        ok: true,
+        result: {
+            action,
+            pluginId,
+            sourceRootPath,
+            archivePath: result.archivePath,
+            archiveDigest: result.archiveDigest,
+            digestPath: result.digestPath,
+        },
+    };
+}
+
+async function invokePluginMarketplaceAction(
+    method: string,
+    params: Record<string, unknown> | undefined,
+): Promise<CapabilitiesInvokeResponse> {
     const action = resolveMarketplaceActionMethod(method);
     if (!action) {
         return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
     }
 
-    if (action === 'reload') {
-        const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
-        const reload = await pluginReloadController.reload(pluginId ? { pluginId } : undefined);
-        const entry = pluginId
-            ? await readInstalledPluginCatalogEntry({
-                pluginId,
-                happyHomeDir: configuration.happyHomeDir,
-            })
-            : null;
-        return {
-            ok: true,
-            result: {
-                action,
-                pluginId: pluginId || null,
-                entry,
-                reload,
-            },
-        };
+    if (action === 'create' || action === 'test' || action === 'pack') {
+        return await invokePluginDevelopmentAction(action, params);
     }
 
     if (action === 'enable' || action === 'disable') {
@@ -240,73 +364,91 @@ async function invokePluginMarketplaceAction(method: string, params?: Record<str
             return { ok: false, error: { message: toggled.errorMessage, code: toggled.errorCode } };
         }
 
-        const entry = await readInstalledPluginCatalogEntry({
-            pluginId,
+        const entry = (await readCurrentDaemonPluginCatalog({
             happyHomeDir: configuration.happyHomeDir,
-        });
-        const reload = await reloadPluginIfNeeded(pluginId, toggled.changed);
+            reloadController: pluginReloadController,
+        })).find((candidate) => candidate.pluginId === pluginId) ?? null;
         return {
             ok: true,
             result: {
                 action,
                 pluginId,
                 entry,
-                reload,
+                change: toggled.change ?? null,
             },
         };
     }
 
-    const sourceUrl = typeof params?.sourceUrl === 'string' ? params.sourceUrl.trim() : '';
     const pluginId = typeof params?.pluginId === 'string' ? params.pluginId.trim() : '';
-    if (!sourceUrl || !pluginId) {
-        return { ok: false, error: { message: 'sourceUrl and pluginId are required', code: 'plugin_source_missing' } };
+    if (!pluginId) {
+        return { ok: false, error: { message: 'pluginId is required', code: 'plugin-not-found' } };
     }
 
-    const existingEntry = await readInstalledPluginCatalogEntry({
-        pluginId,
-        happyHomeDir: configuration.happyHomeDir,
-    });
-    const existingEnabled = existingEntry?.enabled ?? true;
-    const isDryRun = params?.dryRun === true;
-    const installResult = await installMarketplacePluginFromCatalog({
-        sourceUrl,
-        pluginId,
-        happyHomeDir: configuration.happyHomeDir,
-        skipIfInstalled: action === 'install',
-        dryRun: isDryRun,
-    });
-
-    if (!installResult.ok) {
-        return { ok: false, error: mapPluginDiagnosticsToInvokeError(installResult.diagnostics) };
-    }
-
-    if (action === 'update' && existingEntry && existingEnabled === false && !isDryRun) {
-        const disableResult = await setInstalledPluginEnabled({
-            happyHomeDir: configuration.happyHomeDir,
-            pluginId,
-            enabled: false,
-        });
-        if (!disableResult.ok) {
-            return { ok: false, error: { message: disableResult.errorMessage, code: disableResult.errorCode } };
+    if (action === 'install' || action === 'update') {
+        const sourceId = typeof params?.sourceId === 'string' ? params.sourceId.trim() : '';
+        if (!sourceId) {
+            return { ok: false, error: { message: 'sourceId is required', code: 'plugin_source_missing' } };
         }
+        const exactInstall = await requestExactMarketplaceInstall({
+            happyHomeDir: configuration.happyHomeDir,
+            sourceId,
+            pluginId,
+        });
+        if (!exactInstall.ok) {
+            return { ok: false, error: { message: exactInstall.message, code: exactInstall.code } };
+        }
+        if (exactInstall.change.kind === 'reviewRequired' || (
+            action === 'update' && exactInstall.change.kind === 'committed'
+        )) {
+            return {
+                ok: true,
+                result: {
+                    action,
+                    pluginId,
+                    listing: exactInstall.listing,
+                    change: exactInstall.change,
+                },
+            };
+        }
+        if (exactInstall.change.kind !== 'committed') {
+            return {
+                ok: false,
+                error: {
+                    message: `The daemon did not commit the exact marketplace ${action} (${exactInstall.change.kind}).`,
+                    code: exactInstall.change.kind,
+                },
+            };
+        }
+        return {
+            ok: false,
+            error: {
+                message: 'Generic plugin installation cannot approve or commit new package trust.',
+                code: 'plugin_install_human_decision_required',
+            },
+        };
     }
 
-    const entry = await readInstalledPluginCatalogEntry({
-        pluginId,
-        happyHomeDir: configuration.happyHomeDir,
+    const change = await requestUserPluginChange({
+        request: action === 'uninstall'
+            ? { kind: 'uninstall', pluginId }
+            : { kind: action, pluginId },
+        approval: 'none',
     });
-    const reload = await reloadPluginIfNeeded(
-        pluginId,
-        !isDryRun && (action === 'update' || !installResult.alreadyInstalled),
-    );
+    if (change.kind !== 'committed') {
+        return {
+            ok: false,
+            error: {
+                message: `The daemon did not commit the plugin ${action} (${change.kind}).`,
+                code: change.kind,
+            },
+        };
+    }
     return {
         ok: true,
         result: {
             action,
-            alreadyInstalled: installResult.alreadyInstalled,
             pluginId,
-            entry,
-            reload,
+            change,
         },
     };
 }
@@ -330,63 +472,16 @@ function createGenericCliCapability(agentId: AgentCatalogEntry['id']): Capabilit
             return buildCliCapabilityData({ request, entry });
         },
         invoke: async ({ method, params }) => {
-            if (method === 'install') {
-                return invokeProviderCliInstall(agentId, params);
-            }
-            if (method === 'probeModels') {
-                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
-                const timeoutMsRaw = (params ?? {}).timeoutMs;
-                const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
-                const cwdRaw = (params ?? {}).cwd;
-                const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-                const result = await probeAgentModelsBestEffort({
-                    agentId,
-                    backendTarget: probeContext.backendTarget,
-                    cwd,
-                    timeoutMs,
-                    accountSettings: probeContext.accountSettings,
-                    credentials: probeContext.credentials,
-                });
-                return { ok: true, result };
-            }
-            if (method === 'probeModes') {
-                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
-                const timeoutMsRaw = (params ?? {}).timeoutMs;
-                const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
-                const cwdRaw = (params ?? {}).cwd;
-                const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-                const result = await probeAgentModesBestEffort({
-                    agentId,
-                    backendTarget: probeContext.backendTarget,
-                    cwd,
-                    timeoutMs,
-                    accountSettings: probeContext.accountSettings,
-                    credentials: probeContext.credentials,
-                });
-                return { ok: true, result };
-            }
-            if (method === 'probeConfigOptions') {
-                const probeContext = await resolveProbeBackendContext({ ...params, agentId });
-                const timeoutMsRaw = (params ?? {}).timeoutMs;
-                const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
-                const cwdRaw = (params ?? {}).cwd;
-                const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-                const result = await probeAgentConfigOptionsBestEffort({
-                    agentId,
-                    backendTarget: probeContext.backendTarget,
-                    cwd,
-                    timeoutMs,
-                    accountSettings: probeContext.accountSettings,
-                    credentials: probeContext.credentials,
-                });
-                return { ok: true, result };
-            }
+            const sharedResult = await invokeCliProbeOrInstallMethod(agentId, method, params);
+            if (sharedResult) return sharedResult;
             return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
         },
     };
 }
 
-function createPluginMarketplaceCapability(): Capability {
+function createPluginMarketplaceCapability(
+    readPluginCatalog: () => Promise<readonly PluginCatalogEntry[]>,
+): Capability {
     return {
         descriptor: {
             id: 'tool.plugins',
@@ -397,18 +492,27 @@ function createPluginMarketplaceCapability(): Capability {
                 update: { title: 'Update' },
                 enable: { title: 'Enable' },
                 disable: { title: 'Disable' },
-                reload: { title: 'Reload' },
+                rollback: { title: 'Rollback' },
+                uninstall: { title: 'Uninstall' },
+                forgetTrust: { title: 'Forget trust' },
+                create: { title: 'Create' },
+                test: { title: 'Test' },
+                pack: { title: 'Pack' },
             },
         },
         detect: async () => {
-            const installedPlugins = await readInstalledPluginCatalog({ happyHomeDir: configuration.happyHomeDir });
-            return { installedPlugins };
+            const installedPlugins = await readPluginCatalog();
+            return {
+                installedPlugins,
+                developmentActions: { create: true },
+                developmentSources: projectPluginDevelopmentSources(installedPlugins),
+            };
         },
         invoke: async ({ method, params }) => invokePluginMarketplaceAction(method, params),
     };
 }
 
-function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCatalogEntry['id']): Capability {
+function augmentCliCapabilityWithProviderCliMethods(cap: Capability, agentId: AgentCatalogEntry['id']): Capability {
     if (!cap.descriptor.id.startsWith('cli.')) return cap;
 
     const existingMethods = cap.descriptor.methods ?? {};
@@ -423,57 +527,8 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     const baseInvoke = cap.invoke;
 
     const invoke: Capability['invoke'] = async ({ method, params }) => {
-        if (method === 'install') {
-            return invokeProviderCliInstall(agentId, params);
-        }
-        if (method === 'probeModels') {
-            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
-            const timeoutMsRaw = (params ?? {}).timeoutMs;
-            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
-            const cwdRaw = (params ?? {}).cwd;
-            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-            const result = await probeAgentModelsBestEffort({
-                agentId,
-                backendTarget: probeContext.backendTarget,
-                cwd,
-                timeoutMs,
-                accountSettings: probeContext.accountSettings,
-                credentials: probeContext.credentials,
-            });
-            return { ok: true, result };
-        }
-        if (method === 'probeModes') {
-            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
-            const timeoutMsRaw = (params ?? {}).timeoutMs;
-            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
-            const cwdRaw = (params ?? {}).cwd;
-            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-            const result = await probeAgentModesBestEffort({
-                agentId,
-                backendTarget: probeContext.backendTarget,
-                cwd,
-                timeoutMs,
-                accountSettings: probeContext.accountSettings,
-                credentials: probeContext.credentials,
-            });
-            return { ok: true, result };
-        }
-        if (method === 'probeConfigOptions') {
-            const probeContext = await resolveProbeBackendContext({ ...params, agentId });
-            const timeoutMsRaw = (params ?? {}).timeoutMs;
-            const timeoutMs = typeof timeoutMsRaw === 'number' ? timeoutMsRaw : DEFAULT_PROBE_MODELS_TIMEOUT_MS;
-            const cwdRaw = (params ?? {}).cwd;
-            const cwd = typeof cwdRaw === 'string' && cwdRaw.trim().length > 0 ? cwdRaw.trim() : process.cwd();
-            const result = await probeAgentConfigOptionsBestEffort({
-                agentId,
-                backendTarget: probeContext.backendTarget,
-                cwd,
-                timeoutMs,
-                accountSettings: probeContext.accountSettings,
-                credentials: probeContext.credentials,
-            });
-            return { ok: true, result };
-        }
+        const sharedResult = await invokeCliProbeOrInstallMethod(agentId, method, params);
+        if (sharedResult) return sharedResult;
         if (baseInvoke) return await baseInvoke({ method, params });
         return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
     };
@@ -485,25 +540,18 @@ function augmentCliCapabilityWithProbeModels(cap: Capability, agentId: AgentCata
     };
 }
 
-export async function createCliCapabilitiesService(): Promise<ReturnType<typeof createCapabilitiesService>> {
-    const resolvedContributionRegistry = await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir })
-        .catch(() => getResolvedContributionRegistry());
+export async function createCliCapabilitiesService(dependencies: Readonly<{
+    readPluginCatalog?: () => Promise<readonly PluginCatalogEntry[]>;
+}> = {}): Promise<ReturnType<typeof createCapabilitiesService>> {
+    const resolvedContributionRegistry = (
+        await primeResolvedContributionRegistry({ happyHomeDir: configuration.happyHomeDir }).catch(() => undefined)
+    ) ?? getResolvedContributionRegistry();
 
     const cliCapabilities = await Promise.all(
         (Object.values(AGENTS) as AgentCatalogEntry[]).map(async (entry) => {
             if (entry.getCliCapabilityOverride) {
                 const override = await entry.getCliCapabilityOverride();
-                return augmentCliCapabilityWithProbeModels(override, entry.id);
-            }
-            const acpRuntimeDefinitionBridge = entry.getAcpRuntimeDefinitionBridge
-                ? await entry.getAcpRuntimeDefinitionBridge()
-                : null;
-            if (acpRuntimeDefinitionBridge) {
-                return createAcpCliCapability({
-                    agentId: entry.id as CatalogAgentId,
-                    title: resolvePublicCliCapabilityTitle(entry.id),
-                    runtimeDefinitionBridge: acpRuntimeDefinitionBridge,
-                });
+                return augmentCliCapabilityWithProviderCliMethods(override, entry.id);
             }
             return createGenericCliCapability(entry.id);
         }),
@@ -512,7 +560,12 @@ export async function createCliCapabilitiesService(): Promise<ReturnType<typeof 
     const explicitCapabilities: Capability[] = [
         tmuxCapability,
         windowsTerminalCapability,
-        createPluginMarketplaceCapability(),
+        createPluginMarketplaceCapability(
+            dependencies.readPluginCatalog ?? (async () => await readCurrentDaemonPluginCatalog({
+                happyHomeDir: configuration.happyHomeDir,
+                reloadController: pluginReloadController,
+            })),
+        ),
         ghDepCapability,
         azDepCapability,
         executionRunsCapability,
@@ -522,8 +575,11 @@ export async function createCliCapabilitiesService(): Promise<ReturnType<typeof 
         ...cliCapabilities.map((capability) => capability.descriptor.id),
         ...explicitCapabilities.map((capability) => capability.descriptor.id),
     ]);
-    const installableCapabilities = await createInstallableCapabilitiesFromContributions({
-        installables: resolvedContributionRegistry.installables,
+    const installablesRegistry = createInstallablesRegistryFromResolvedContributions(
+        resolvedContributionRegistry.managedDependencies ?? [],
+    );
+    const installableCapabilities = await createInstallableCapabilities({
+        installablesRegistry,
         existingCapabilityIds,
     });
 
@@ -533,19 +589,34 @@ export async function createCliCapabilitiesService(): Promise<ReturnType<typeof 
             ...installableCapabilities,
             ...explicitCapabilities,
         ],
-        checklists,
+        checklists: createCapabilityChecklists(installablesRegistry),
         buildContext: buildDetectContext,
     });
 }
 
 export function registerCapabilitiesHandlers(rpcHandlerManager: RpcHandlerRegistrar): void {
     let servicePromise: Promise<ReturnType<typeof createCapabilitiesService>> | null = null;
+    let servicePluginReloadGeneration: number | null = null;
+
+    const readPluginReloadGeneration = (): number => {
+        try {
+            return pluginReloadController.getState().generation;
+        } catch {
+            return 0;
+        }
+    };
 
     const getService = (): Promise<ReturnType<typeof createCapabilitiesService>> => {
-        if (servicePromise) return servicePromise;
+        const currentGeneration = readPluginReloadGeneration();
+        if (servicePromise && servicePluginReloadGeneration === currentGeneration) return servicePromise;
+        servicePromise = null;
+        servicePluginReloadGeneration = currentGeneration;
         const pending = createCliCapabilitiesService().catch((error) => {
             if (servicePromise === pending) {
                 servicePromise = null;
+                if (servicePluginReloadGeneration === currentGeneration) {
+                    servicePluginReloadGeneration = null;
+                }
             }
             throw error;
         });

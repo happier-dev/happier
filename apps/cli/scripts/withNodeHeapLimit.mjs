@@ -4,6 +4,7 @@ import { pathToFileURL } from 'node:url';
 import { resolveSignalExitCode, runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
 
 const HEAP_LIMIT_REGEX = /(^|\s)--max-old-space-size(=|\s)\d+(\s|$)/;
+export const DEFAULT_CLI_NODE_HEAP_LIMIT_MB = 8192;
 
 export function hasMaxOldSpaceSize(nodeOptions) {
   return HEAP_LIMIT_REGEX.test(String(nodeOptions ?? ''));
@@ -21,7 +22,7 @@ export function resolveMaxOldSpaceSizeMb(env) {
   const raw = String(env?.HAPPIER_CLI_TEST_MAX_OLD_SPACE_SIZE_MB ?? '').trim();
   const parsed = Number.parseInt(raw, 10);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  return 8192;
+  return DEFAULT_CLI_NODE_HEAP_LIMIT_MB;
 }
 
 async function main(argv) {

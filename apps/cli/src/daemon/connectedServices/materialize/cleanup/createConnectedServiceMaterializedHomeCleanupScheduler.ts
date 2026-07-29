@@ -8,6 +8,7 @@ import {
 import {
   ConnectedServiceMaterializedHomeCleanupScheduler,
   type ConnectedServiceRetainedMaterializationKeysResult,
+  type ConnectedServiceRetainedMaterializedHomeSanitizer,
 } from './ConnectedServiceMaterializedHomeCleanupScheduler';
 
 function readIdentityId(identity: ConnectedServiceMaterializationIdentityV1 | null): string | null {
@@ -25,6 +26,7 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
   pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
   nowMs?: () => number;
   getRetainedMaterializationKeys?: () => Promise<ConnectedServiceRetainedMaterializationKeysResult> | ConnectedServiceRetainedMaterializationKeysResult;
+  sanitizeRetainedMaterializedHome?: ConnectedServiceRetainedMaterializedHomeSanitizer;
   orphanTtlMs?: number;
   attemptTtlMs?: number;
   maxCleanupRetries?: number;
@@ -32,6 +34,9 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
   return new ConnectedServiceMaterializedHomeCleanupScheduler({
     baseDir: params.baseDir,
     nowMs: params.nowMs ?? (() => Date.now()),
+    ...(params.sanitizeRetainedMaterializedHome
+      ? { sanitizeRetainedMaterializedHome: params.sanitizeRetainedMaterializedHome }
+      : {}),
     getLiveMaterializationKeys: () => {
       const keys: string[] = [];
       for (const tracked of params.pidToTrackedSession.values()) {

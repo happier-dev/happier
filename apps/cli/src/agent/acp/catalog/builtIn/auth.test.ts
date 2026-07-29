@@ -15,6 +15,9 @@ describe('createBuiltInCliAuthSpec', () => {
     'ANTHROPIC_API_KEY',
     'ANTHROPIC_OAUTH_TOKEN',
     'GEMINI_API_KEY',
+    'GOOGLE_GENAI_USE_VERTEXAI',
+    'GOOGLE_CLOUD_PROJECT',
+    'GOOGLE_CLOUD_LOCATION',
     'COPILOT_GITHUB_TOKEN',
     'GH_TOKEN',
     'GITHUB_TOKEN',
@@ -30,6 +33,9 @@ describe('createBuiltInCliAuthSpec', () => {
       'ANTHROPIC_API_KEY',
       'ANTHROPIC_OAUTH_TOKEN',
       'GEMINI_API_KEY',
+      'GOOGLE_GENAI_USE_VERTEXAI',
+      'GOOGLE_CLOUD_PROJECT',
+      'GOOGLE_CLOUD_LOCATION',
       'COPILOT_GITHUB_TOKEN',
       'GH_TOKEN',
       'GITHUB_TOKEN',
@@ -37,55 +43,6 @@ describe('createBuiltInCliAuthSpec', () => {
       'PATH',
     ]);
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
-  });
-
-  it('detects logged-in Kiro auth status from whoami json', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-kiro-auth-'));
-    tempDirs.push(dir);
-
-    const scriptPath = join(dir, 'kiro-cli.js');
-    await writeFile(
-      scriptPath,
-      '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify({ email: "agent@example.com" }));\n',
-      'utf8',
-    );
-    await chmod(scriptPath, 0o755);
-
-    const spec = createBuiltInCliAuthSpec('kiro');
-    const detectAuthStatus = spec.detectAuthStatus;
-    expect(detectAuthStatus).toBeTypeOf('function');
-    if (!detectAuthStatus) throw new Error('expected detectAuthStatus');
-
-    await expect(detectAuthStatus({ resolvedPath: scriptPath })).resolves.toMatchObject({
-      state: 'logged_in',
-      method: 'oauth_cli',
-      source: 'command',
-      accountLabel: 'agent@example.com',
-    });
-  });
-
-  it('marks Kiro as logged out when whoami exits non-zero', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'happier-kiro-auth-fail-'));
-    tempDirs.push(dir);
-
-    const scriptPath = join(dir, 'kiro-cli.js');
-    await writeFile(
-      scriptPath,
-      '#!/usr/bin/env node\nprocess.exit(1);\n',
-      'utf8',
-    );
-    await chmod(scriptPath, 0o755);
-
-    const spec = createBuiltInCliAuthSpec('kiro');
-    const detectAuthStatus = spec.detectAuthStatus;
-    expect(detectAuthStatus).toBeTypeOf('function');
-    if (!detectAuthStatus) throw new Error('expected detectAuthStatus');
-
-    await expect(detectAuthStatus({ resolvedPath: scriptPath })).resolves.toMatchObject({
-      state: 'logged_out',
-      reason: 'missing_credentials',
-      source: 'command',
-    });
   });
 
   it('builds env-only auth probing for ohMyPi', async () => {
@@ -103,6 +60,26 @@ describe('createBuiltInCliAuthSpec', () => {
     if (!detectAuthStatus) throw new Error('expected detectAuthStatus');
 
     await expect(detectAuthStatus({ resolvedPath: '/usr/local/bin/omp' })).resolves.toMatchObject({
+      state: 'logged_in',
+      method: 'api_key_env',
+      source: 'env',
+    });
+  });
+
+  it('builds env-only auth probing for Gemini API-key and Vertex env only', async () => {
+    envScope.patch({
+      GEMINI_API_KEY: undefined,
+      GOOGLE_GENAI_USE_VERTEXAI: '1',
+      GOOGLE_CLOUD_PROJECT: 'happier-vertex-project',
+      GOOGLE_CLOUD_LOCATION: 'us-central1',
+    });
+
+    const spec = createBuiltInCliAuthSpec('gemini');
+    const detectAuthStatus = spec.detectAuthStatus;
+    expect(detectAuthStatus).toBeTypeOf('function');
+    if (!detectAuthStatus) throw new Error('expected detectAuthStatus');
+
+    await expect(detectAuthStatus({ resolvedPath: '/usr/local/bin/gemini' })).resolves.toMatchObject({
       state: 'logged_in',
       method: 'api_key_env',
       source: 'env',

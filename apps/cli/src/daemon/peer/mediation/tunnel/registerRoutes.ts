@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fastifyWebsocket from '@fastify/websocket';
 
 import {
@@ -7,18 +7,38 @@ import {
     PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
     PEER_TCP_TUNNEL_OPEN_PATH,
+    PEER_TCP_TUNNEL_OPEN_PATH_V2,
     PEER_TCP_TUNNEL_STREAM_PATH,
     PeerTcpTunnelOpenV1Schema,
+    PeerTcpTunnelOpenV2Schema,
+    type VoiceMediaApplicationAuthorityV1,
 } from '@happier-dev/protocol';
 
 import { openPeerTcpTunnel, type OpenPeerTcpTunnelInput, type OpenPeerTcpTunnelResult } from './open';
 import {
+    createPeerTcpTunnelApplicationSubstreamSession,
     createPeerTcpTunnelSubstreamMuxSession,
     createPeerTcpTunnelStreamSession,
     decodePeerTcpTunnelBinaryFrameForSession,
     encodePeerTcpTunnelBinaryFrameForSession,
 } from './frames';
 import { connectPeerTcpTunnelTcp } from './open';
+import { createAtomicRouteGrantConsumption } from './grantConsumption';
+import {
+    decodePeerTcpTunnelBinaryRoutingHeaderV2,
+    peerTcpTunnelBinaryDecodeFailureReason,
+} from './routingHeader';
+import {
+    dispatchDaemonVoiceInferenceSttBinaryAppend,
+    dispatchDaemonVoiceInferenceSttTerminal,
+    parseDaemonVoiceInferenceSttSubstreamId,
+    type PeerTcpTunnelVoiceBinaryAppendConsumer,
+    type PeerTcpTunnelVoiceBinaryTerminalConsumer,
+} from './voiceBinaryAppend';
+import {
+    dispatchVoiceMediaAgentRealtimeBinaryFrame,
+    type VoiceMediaAgentRealtimeApplicationConsumer,
+} from '../../../voiceMedia/voiceMediaApplicationDispatcher';
 
 const registeredTunnelApps = new WeakSet<FastifyInstance>();
 const DEFAULT_DIRECT_TUNNEL_LIMITS: Readonly<{
@@ -31,15 +51,18 @@ const DEFAULT_DIRECT_TUNNEL_LIMITS: Readonly<{
 };
 const DEFAULT_OPEN_STREAM_TIMEOUT_MS = 30_000;
 
-export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelInput, 'open' | 'nowMs'> & Readonly<{
+export type RegisterPeerTcpTunnelLoopbackRoutesOptions = Omit<OpenPeerTcpTunnelInput, 'open' | 'nowMs' | 'grantConsumption'> & Readonly<{
     nowMs: () => number;
     openTunnel?: (input: OpenPeerTcpTunnelInput) => Promise<OpenPeerTcpTunnelResult>;
     maxActiveTunnels?: number;
     openStreamTimeoutMs?: number;
+    voiceBinaryAppendConsumer?: PeerTcpTunnelVoiceBinaryAppendConsumer;
+    voiceBinaryTerminalConsumer?: PeerTcpTunnelVoiceBinaryTerminalConsumer;
+    voiceMediaAgentRealtimeConsumer?: VoiceMediaAgentRealtimeApplicationConsumer;
 }>;
 
 type ActivePeerTcpTunnel = (OpenPeerTcpTunnelResult & { ok: true }) & Readonly<{
-    open: ReturnType<typeof PeerTcpTunnelOpenV1Schema.parse>;
+    open: ReturnType<typeof PeerTcpTunnelOpenV1Schema.parse> | ReturnType<typeof PeerTcpTunnelOpenV2Schema.parse>;
     openStreamTimeout?: ReturnType<typeof setTimeout>;
 }>;
 
@@ -50,10 +73,14 @@ type PeerTcpTunnelFastifyWebSocket = Readonly<{
 }>;
 
 type PeerTcpTunnelLoopbackSession = Readonly<{
-    session: ReturnType<typeof createPeerTcpTunnelStreamSession>;
+    flowKind: ActivePeerTcpTunnel['flowKind'];
+    session?: ReturnType<typeof createPeerTcpTunnelStreamSession>;
+    applicationSubstreams?: ReturnType<typeof createPeerTcpTunnelApplicationSubstreamSession>;
     substreamMux?: ReturnType<typeof createPeerTcpTunnelSubstreamMuxSession>;
     encoding: ActivePeerTcpTunnel['response']['encoding'];
     maxFrameBytes: number;
+    voiceMediaApplicationAuthority?: VoiceMediaApplicationAuthorityV1;
+    applicationAbortController?: AbortController;
 }>;
 
 function readFrameTunnelId(frame: unknown): string | null {
@@ -68,8 +95,10 @@ function readFrameTunnelId(frame: unknown): string | null {
 }
 
 function readOpenTunnelId(open: unknown): string | null {
-    const parsed = PeerTcpTunnelOpenV1Schema.safeParse(open);
-    return parsed.success ? parsed.data.tunnelId : null;
+    const parsedV2 = PeerTcpTunnelOpenV2Schema.safeParse(open);
+    if (parsedV2.success) return parsedV2.data.tunnelId;
+    const parsedV1 = PeerTcpTunnelOpenV1Schema.safeParse(open);
+    return parsedV1.success ? parsedV1.data.tunnelId : null;
 }
 
 function toBinaryFramePayload(raw: unknown, maxHeaderBytes: number): Uint8Array | null {
@@ -91,15 +120,6 @@ function toBinaryFramePayload(raw: unknown, maxHeaderBytes: number): Uint8Array 
     return bytes;
 }
 
-function readBinaryFrameTunnelId(raw: Uint8Array, maxHeaderBytes: number): string | null {
-    const decoded = decodePeerTcpTunnelBinaryFrameV2({
-        frame: raw,
-        maxHeaderBytes,
-        maxPayloadBytes: Number.MAX_SAFE_INTEGER,
-    });
-    return decoded.ok ? decoded.header.tunnelId : null;
-}
-
 function closeSocket(socket: PeerTcpTunnelFastifyWebSocket): void {
     socket.close();
 }
@@ -116,6 +136,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
     const openTunnel = options.openTunnel ?? openPeerTcpTunnel;
     const maxActiveTunnels = Math.max(1, Math.floor(options.maxActiveTunnels ?? 8));
     const activeTunnels = new Map<string, ActivePeerTcpTunnel>();
+    const grantConsumption = createAtomicRouteGrantConsumption({ activationFailurePolicy: 'consume' });
     const openStreamTimeoutMs =
         typeof options.openStreamTimeoutMs === 'number' && Number.isFinite(options.openStreamTimeoutMs) && options.openStreamTimeoutMs >= 1
             ? Math.floor(options.openStreamTimeoutMs)
@@ -133,7 +154,8 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                     clearTimeout(tunnel.openStreamTimeout);
                 }
                 const limits = tunnel.limits ?? DEFAULT_DIRECT_TUNNEL_LIMITS;
-                const session = createPeerTcpTunnelStreamSession({
+                const session = tunnel.flowKind === 'tcp_tunnel' && tunnel.connection
+                    ? createPeerTcpTunnelStreamSession({
                     tunnelId,
                     initialWindowBytes: tunnel.response.initialWindowBytes,
                     maxFrameBytes: tunnel.response.maxFrameBytes,
@@ -148,8 +170,10 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                         }
                         socket.send(JSON.stringify(frame));
                     },
-                });
-                const substreamMux = tunnel.response.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2
+                    })
+                    : undefined;
+                const substreamMux = tunnel.flowKind === 'tcp_tunnel'
+                    && tunnel.response.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2
                     ? createPeerTcpTunnelSubstreamMuxSession({
                         tunnelId,
                         destination: {
@@ -174,11 +198,70 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                         nowMs: options.nowMs,
                     })
                     : undefined;
+                let applicationSubstreams: ReturnType<typeof createPeerTcpTunnelApplicationSubstreamSession> | undefined;
+                const applicationAbortController = new AbortController();
+                if (
+                    tunnel.response.encoding === PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2
+                    && tunnel.flowKind === 'voice_media'
+                    && (options.voiceBinaryAppendConsumer || options.voiceMediaAgentRealtimeConsumer)
+                ) {
+                    const aggregateLimit = limits.maxTotalBytes
+                        ?? DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES.maxAggregateBytes;
+                    applicationSubstreams = createPeerTcpTunnelApplicationSubstreamSession({
+                        tunnelId,
+                        maxBinaryHeaderBytes: tunnel.response.maxFrameBytes,
+                        maxFrameBytes: tunnel.response.maxFrameBytes,
+                        maxBytesPerSubstream: aggregateLimit,
+                        maxAggregateBytes: aggregateLimit,
+                        maxConcurrentSubstreams: DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES.maxConcurrentSubstreams,
+                        maxTotalSubstreams: DEFAULT_MACHINE_TUNNEL_SUBSTREAM_CAPABILITIES.maxTotalSubstreams,
+                        maxSubstreamIdleMs: limits.maxIdleMs,
+                        maxSessionIdleMs: limits.maxIdleMs,
+                        maxDurationMs: limits.maxDurationMs,
+                        sendBinaryFrame: (frame) => socket.send(frame),
+                        onTerminal: async ({ reasonCode, substreamIds }) => {
+                            applicationAbortController.abort(reasonCode);
+                            try {
+                                await dispatchDaemonVoiceInferenceSttTerminal({
+                                    consumer: options.voiceBinaryTerminalConsumer,
+                                    substreamIds,
+                                    reasonCode,
+                                    voiceMediaApplicationAuthority: tunnel.voiceMediaApplicationAuthority,
+                                });
+                                if (
+                                    tunnel.voiceMediaApplicationAuthority?.applicationKind === 'agent_realtime'
+                                    && options.voiceMediaAgentRealtimeConsumer
+                                ) {
+                                    await options.voiceMediaAgentRealtimeConsumer.close({
+                                        authority: tunnel.voiceMediaApplicationAuthority,
+                                        substreamId:
+                                            `agent.realtime.${tunnel.voiceMediaApplicationAuthority.applicationAttemptId}`,
+                                        reasonCode,
+                                    });
+                                }
+                            } finally {
+                                const current = sessions.get(tunnelId);
+                                if (!current || current.applicationSubstreams !== applicationSubstreams) return;
+                                sessions.delete(tunnelId);
+                                activeTunnels.delete(tunnelId);
+                                await current.substreamMux?.close();
+                                await current.session?.close();
+                            }
+                        },
+                        nowMs: options.nowMs,
+                    });
+                }
                 const entry = {
-                    session,
+                    flowKind: tunnel.flowKind,
+                    ...(session ? { session } : {}),
                     ...(substreamMux ? { substreamMux } : {}),
+                    ...(applicationSubstreams ? { applicationSubstreams } : {}),
+                    ...(applicationSubstreams ? { applicationAbortController } : {}),
                     encoding: tunnel.response.encoding,
                     maxFrameBytes: tunnel.response.maxFrameBytes,
+                    ...(tunnel.voiceMediaApplicationAuthority ? {
+                        voiceMediaApplicationAuthority: tunnel.voiceMediaApplicationAuthority,
+                    } : {}),
                 };
                 sessions.set(tunnelId, entry);
                 return entry;
@@ -189,11 +272,15 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                 inboundQueue = inboundQueue.then(async () => {
                     const binaryPayload = toBinaryFramePayload(raw, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES);
                     if (binaryPayload) {
-                        const tunnelId = readBinaryFrameTunnelId(binaryPayload, PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES);
-                        if (!tunnelId) {
+                        const routingHeader = decodePeerTcpTunnelBinaryRoutingHeaderV2({
+                            frame: binaryPayload,
+                            maxHeaderBytes: PEER_TCP_TUNNEL_DEFAULT_MAX_FRAME_BYTES,
+                        });
+                        if (!routingHeader.ok) {
                             closeSocket(socket);
                             return;
                         }
+                        const tunnelId = routingHeader.header.tunnelId;
                         const entry = getSession(tunnelId);
                         if (!entry || entry.encoding !== PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2) {
                             closeSocket(socket);
@@ -202,9 +289,93 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                         const decodedHeader = decodePeerTcpTunnelBinaryFrameV2({
                             frame: binaryPayload,
                             maxHeaderBytes: entry.maxFrameBytes,
-                            maxPayloadBytes: entry.maxFrameBytes,
+                            // Routing only: the owning parent/substream session applies its own payload cap.
+                            maxPayloadBytes: Number.MAX_SAFE_INTEGER,
                         });
-                        if (decodedHeader.ok && decodedHeader.header.substreamId) {
+                        if (routingHeader.header.substreamId) {
+                            const substreamId = routingHeader.header.substreamId;
+                            if (
+                                entry.applicationSubstreams
+                                && entry.flowKind === 'voice_media'
+                                && (
+                                    (
+                                        entry.voiceMediaApplicationAuthority?.applicationKind
+                                            === 'speech_transcription'
+                                        && options.voiceBinaryAppendConsumer
+                                        && parseDaemonVoiceInferenceSttSubstreamId(substreamId)
+                                    )
+                                    || (
+                                        entry.voiceMediaApplicationAuthority?.applicationKind
+                                            === 'agent_realtime'
+                                        && options.voiceMediaAgentRealtimeConsumer
+                                        && substreamId
+                                            === `agent.realtime.${entry.voiceMediaApplicationAuthority.applicationAttemptId}`
+                                    )
+                                )
+                            ) {
+                                if (!decodedHeader.ok) {
+                                    await entry.applicationSubstreams.denySubstream(
+                                        substreamId,
+                                        peerTcpTunnelBinaryDecodeFailureReason(decodedHeader.reasonCode),
+                                    );
+                                    return;
+                                }
+                                await entry.applicationSubstreams.acceptBinaryFrame(binaryPayload, async ({ payload, sequence }) => {
+                                    if (
+                                        entry.voiceMediaApplicationAuthority?.applicationKind === 'agent_realtime'
+                                        && options.voiceMediaAgentRealtimeConsumer
+                                    ) {
+                                        const handled = await dispatchVoiceMediaAgentRealtimeBinaryFrame({
+                                            authority: entry.voiceMediaApplicationAuthority,
+                                            substreamId,
+                                            carrierSequence: sequence,
+                                            payload,
+                                            consumer: options.voiceMediaAgentRealtimeConsumer,
+                                            emitPayload: async (createPayload) => {
+                                                await entry.applicationSubstreams!.sendApplicationFrame({
+                                                    substreamId,
+                                                    createPayload: async (carrierSequence) => {
+                                                        const response = await createPayload(carrierSequence);
+                                                        if (!response) {
+                                                            throw new Error(
+                                                                'Agent realtime application response could not be encoded',
+                                                            );
+                                                        }
+                                                        return response;
+                                                    },
+                                                });
+                                            },
+                                            signal: entry.applicationAbortController?.signal
+                                                ?? new AbortController().signal,
+                                        });
+                                        if (!handled) {
+                                            throw new Error('Agent realtime application frame was rejected');
+                                        }
+                                        return null;
+                                    }
+                                    let responsePayload: Uint8Array | null = null;
+                                    await dispatchDaemonVoiceInferenceSttBinaryAppend({
+                                        consumer: options.voiceBinaryAppendConsumer,
+                                        header: {
+                                            ...routingHeader.header,
+                                            kind: 'data',
+                                            direction: 'client_to_daemon',
+                                            sequence,
+                                        },
+                                        payload,
+                                        voiceMediaApplicationAuthority: entry.voiceMediaApplicationAuthority,
+                                        onResponse: (response) => {
+                                            responsePayload = Buffer.from(JSON.stringify(response), 'utf8');
+                                        },
+                                    });
+                                    return responsePayload;
+                                });
+                                return;
+                            }
+                            if (!decodedHeader.ok) {
+                                closeSocket(socket);
+                                return;
+                            }
                             await entry.substreamMux?.acceptBinaryFrame(binaryPayload);
                             return;
                         }
@@ -214,6 +385,10 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                             maxRawPayloadBytes: entry.maxFrameBytes,
                         });
                         if (!decoded.ok) {
+                            closeSocket(socket);
+                            return;
+                        }
+                        if (!entry.session) {
                             closeSocket(socket);
                             return;
                         }
@@ -238,6 +413,10 @@ export function registerPeerTcpTunnelLoopbackRoutes(
                         closeSocket(socket);
                         return;
                     }
+                    if (!entry.session) {
+                        closeSocket(socket);
+                        return;
+                    }
                     await entry.session.acceptFrame(frame);
                 }).catch(() => {
                     closeSocket(socket);
@@ -246,12 +425,15 @@ export function registerPeerTcpTunnelLoopbackRoutes(
 
             socket.on('close', () => {
                 for (const [tunnelId, entry] of sessions) {
-                    const tunnel = activeTunnels.get(tunnelId);
+                    if (entry.applicationSubstreams) {
+                        void entry.applicationSubstreams.close();
+                        continue;
+                    }
                     void entry.substreamMux?.close();
-                    void tunnel?.connection.close();
+                    void entry.session?.close();
                     activeTunnels.delete(tunnelId);
+                    sessions.delete(tunnelId);
                 }
-                sessions.clear();
             });
         });
     });
@@ -260,12 +442,13 @@ export function registerPeerTcpTunnelLoopbackRoutes(
             if (tunnel.openStreamTimeout) {
                 clearTimeout(tunnel.openStreamTimeout);
             }
-            await tunnel.connection.close();
+            await tunnel.connection?.close();
         }
         activeTunnels.clear();
+        grantConsumption.clear();
     });
 
-    app.post(PEER_TCP_TUNNEL_OPEN_PATH, async (request, reply) => {
+    const handleOpen = async (request: FastifyRequest, reply: FastifyReply) => {
         const tunnelId = readOpenTunnelId(request.body);
         if (tunnelId && activeTunnels.has(tunnelId)) {
             reply.code(409);
@@ -284,6 +467,7 @@ export function registerPeerTcpTunnelLoopbackRoutes(
         const result = await openTunnel({
             ...options,
             nowMs: options.nowMs(),
+            grantConsumption,
             open: request.body,
         });
         if (!result.ok) {
@@ -294,19 +478,29 @@ export function registerPeerTcpTunnelLoopbackRoutes(
             ? undefined
             : setTimeout(() => {
                 const activeTunnel = activeTunnels.get(result.response.tunnelId);
-                if (!activeTunnel || activeTunnel.connection !== result.connection) return;
+                if (!activeTunnel || activeTunnel.openStreamTimeout !== openStreamTimeout) return;
                 if (activeTunnel.openStreamTimeout) {
                     clearTimeout(activeTunnel.openStreamTimeout);
                 }
-                void activeTunnel.connection.close();
+                void activeTunnel.connection?.close();
                 activeTunnels.delete(result.response.tunnelId);
+                void dispatchDaemonVoiceInferenceSttTerminal({
+                    consumer: options.voiceBinaryTerminalConsumer,
+                    substreamIds: [],
+                    reasonCode: 'tunnel_open_timeout',
+                    voiceMediaApplicationAuthority: activeTunnel.voiceMediaApplicationAuthority,
+                }).catch(() => undefined);
             }, openStreamTimeoutMs);
         openStreamTimeout?.unref?.();
         activeTunnels.set(result.response.tunnelId, {
             ...result,
-            open: PeerTcpTunnelOpenV1Schema.parse(request.body),
+            open: result.response.tunnelId && PeerTcpTunnelOpenV2Schema.safeParse(request.body).success
+                ? PeerTcpTunnelOpenV2Schema.parse(request.body)
+                : PeerTcpTunnelOpenV1Schema.parse(request.body),
             ...(openStreamTimeout ? { openStreamTimeout } : {}),
         });
         return result.response;
-    });
+    };
+    app.post(PEER_TCP_TUNNEL_OPEN_PATH, handleOpen);
+    app.post(PEER_TCP_TUNNEL_OPEN_PATH_V2, handleOpen);
 }

@@ -8,7 +8,7 @@ vi.mock('axios', () => ({
   },
 }));
 
-describe('enqueueAndMaterializeAutomationPrompt', () => {
+describe('enqueueAutomationPrompt', () => {
   beforeEach(() => {
     vi.resetModules();
   });
@@ -18,18 +18,19 @@ describe('enqueueAndMaterializeAutomationPrompt', () => {
     const axiosPost = vi.mocked(axiosModule.default.post);
     axiosPost.mockResolvedValue({ data: { ok: true } } as never);
 
-    const { enqueueAndMaterializeAutomationPrompt } = await import('./automationPendingQueueClient');
+    const { enqueueAutomationPrompt } = await import('./automationPendingQueueClient');
 
-    await enqueueAndMaterializeAutomationPrompt({
+    await enqueueAutomationPrompt({
       token: 'token',
       sessionId: 'session-plain',
       prompt: 'Hello from automation',
       sessionEncryptionMode: 'plain',
+      localId: '  opaque-automation-id  ',
     });
 
-    expect(axiosPost).toHaveBeenCalledTimes(2);
+    expect(axiosPost).toHaveBeenCalledTimes(1);
     expect(axiosPost.mock.calls[0]?.[1]).toEqual({
-      localId: expect.any(String),
+      localId: '  opaque-automation-id  ',
       messageRole: 'user',
       content: {
         t: 'plain',
@@ -45,21 +46,20 @@ describe('enqueueAndMaterializeAutomationPrompt', () => {
           },
         },
       },
+      requestedAction: { v: 1, kind: 'enqueue' },
     });
-    expect(String(axiosPost.mock.calls[1]?.[0] ?? '')).toContain('/v2/sessions/session-plain/pending/materialize-next');
+    expect(String(axiosPost.mock.calls[0]?.[0] ?? '')).toContain('/v2/sessions/session-plain/pending');
   });
 
-  it('rethrows terminal auth failures from the materialize step', async () => {
+  it('rethrows terminal auth failures from enqueue', async () => {
     const axiosModule = await import('axios');
     const axiosPost = vi.mocked(axiosModule.default.post);
-    axiosPost
-      .mockResolvedValueOnce({ data: { ok: true } } as never)
-      .mockRejectedValueOnce(new HttpStatusError(403, 'Authentication failed'));
+    axiosPost.mockRejectedValueOnce(new HttpStatusError(403, 'Authentication failed'));
 
-    const { enqueueAndMaterializeAutomationPrompt } = await import('./automationPendingQueueClient');
+    const { enqueueAutomationPrompt } = await import('./automationPendingQueueClient');
 
     await expect(
-      enqueueAndMaterializeAutomationPrompt({
+      enqueueAutomationPrompt({
         token: 'token',
         sessionId: 'session-plain',
         prompt: 'Hello from automation',

@@ -32,11 +32,6 @@ describe('createDaemonTransferRuntimeState', () => {
           configured: true,
           active: false,
         },
-        lan_http: {
-          enabled: false,
-          configured: false,
-          active: false,
-        },
         tailscale_serve_https: {
           enabled: true,
           configured: true,
@@ -47,6 +42,32 @@ describe('createDaemonTransferRuntimeState', () => {
       lifecycle: {
         mode: 'lazy_idle_shutdown',
         version: 1,
+      },
+    });
+  });
+
+  it('projects a legacy nonloopback bind configuration through the loopback-only runtime posture', () => {
+    const state = createDaemonTransferRuntimeState({
+      directPeer: {
+        featureEnabled: true,
+        serverEnabled: true,
+        bindHost: '0.0.0.0',
+        bindPort: 46001,
+        advertisedHosts: ['192.168.1.20'],
+      },
+    });
+
+    expect(state.listenerClasses).toEqual({
+      loopback_http: {
+        enabled: true,
+        configured: true,
+        active: false,
+      },
+      tailscale_serve_https: {
+        enabled: false,
+        configured: false,
+        active: false,
+        available: false,
       },
     });
   });
@@ -280,6 +301,154 @@ describe('createDaemonTransferRuntimeState', () => {
       active: true,
       available: true,
     });
+  });
+
+  it('retains the latest pending state while quiescing and flushes it once after resume', async () => {
+    const initialState = createDaemonTransferRuntimeState({
+      directPeer: {
+        featureEnabled: true,
+        serverEnabled: true,
+        bindHost: '127.0.0.1',
+        bindPort: 46001,
+        advertisedHosts: ['127.0.0.1'],
+      },
+    });
+    let quiescing = true;
+    const publishedStates: DaemonState[] = [];
+    const updateDaemonState = vi.fn(async (updater: (state: DaemonState | null) => DaemonState) => {
+      const next = updater({
+        status: 'running',
+        pid: 123,
+        httpPort: 46000,
+        startedAt: 1,
+        transfer: initialState,
+      });
+      publishedStates.push(next);
+      return next;
+    });
+    const publisher = createDaemonTransferRuntimeStatePublisher({
+      initialTransferState: initialState,
+      isDaemonQuiescing: () => quiescing,
+    });
+
+    await publisher.attachApiMachine({ updateDaemonState });
+    await publisher.publishDirectTransferServerLifecycleState({
+      status: 'starting',
+      listenerClasses: ['loopback_http'],
+      publishedTransferCount: 0,
+    });
+    await publisher.publishDirectTransferServerLifecycleState({
+      status: 'running',
+      listenerClasses: ['loopback_http'],
+      port: 46001,
+      publishedTransferCount: 1,
+    });
+
+    expect(updateDaemonState).not.toHaveBeenCalled();
+
+    quiescing = false;
+    await publisher.resume();
+    await publisher.resume();
+
+    expect(updateDaemonState).toHaveBeenCalledTimes(1);
+    expect(publishedStates).toHaveLength(1);
+    expect(publishedStates[0]?.transfer?.listenerClasses.loopback_http.active).toBe(true);
+  });
+
+  it('replays the latest pending state once after an admitted publication is suppressed', async () => {
+    const initialState = createDaemonTransferRuntimeState({
+      directPeer: {
+        featureEnabled: true,
+        serverEnabled: true,
+        bindHost: '127.0.0.1',
+        bindPort: 46001,
+        advertisedHosts: ['127.0.0.1'],
+      },
+    });
+    let quiescing = false;
+    const publishedStates: DaemonState[] = [];
+    const updateDaemonState = vi.fn(async (updater: (state: DaemonState | null) => DaemonState) => {
+      const next = updater({
+        status: 'running',
+        pid: 123,
+        httpPort: 46000,
+        startedAt: 1,
+        transfer: initialState,
+      });
+      if (updateDaemonState.mock.calls.length === 1) {
+        quiescing = true;
+        return 'suppressed' as const;
+      }
+      publishedStates.push(next);
+      return 'published' as const;
+    });
+    const publisher = createDaemonTransferRuntimeStatePublisher({
+      initialTransferState: initialState,
+      isDaemonQuiescing: () => quiescing,
+    });
+
+    await publisher.attachApiMachine({ updateDaemonState });
+    await publisher.publishDirectTransferServerLifecycleState({
+      status: 'running',
+      listenerClasses: ['loopback_http'],
+      port: 46001,
+      publishedTransferCount: 1,
+    });
+
+    expect(updateDaemonState).toHaveBeenCalledTimes(1);
+    expect(publishedStates).toHaveLength(0);
+
+    quiescing = false;
+    await publisher.resume();
+    await publisher.resume();
+
+    expect(updateDaemonState).toHaveBeenCalledTimes(2);
+    expect(publishedStates).toHaveLength(1);
+    expect(publishedStates[0]?.transfer?.listenerClasses.loopback_http.active).toBe(true);
+  });
+
+  it('replays a suppressed publication when resume joins the still-settling flush', async () => {
+    const initialState = createDaemonTransferRuntimeState({
+      directPeer: {
+        featureEnabled: true,
+        serverEnabled: true,
+        bindHost: '127.0.0.1',
+        bindPort: 46001,
+        advertisedHosts: ['127.0.0.1'],
+      },
+    });
+    let quiescing = false;
+    let resolveFirstPublication!: (outcome: 'suppressed') => void;
+    const firstPublication = new Promise<'suppressed'>((resolve) => {
+      resolveFirstPublication = resolve;
+    });
+    const updateDaemonState = vi.fn(async () => {
+      if (updateDaemonState.mock.calls.length === 1) {
+        return await firstPublication;
+      }
+      return 'published' as const;
+    });
+    const publisher = createDaemonTransferRuntimeStatePublisher({
+      initialTransferState: initialState,
+      isDaemonQuiescing: () => quiescing,
+    });
+    await publisher.attachApiMachine({ updateDaemonState });
+
+    const publish = publisher.publishDirectTransferServerLifecycleState({
+      status: 'running',
+      listenerClasses: ['loopback_http'],
+      port: 46001,
+      publishedTransferCount: 1,
+    });
+    await vi.waitFor(() => expect(updateDaemonState).toHaveBeenCalledTimes(1));
+
+    quiescing = true;
+    quiescing = false;
+    const resume = publisher.resume();
+    resolveFirstPublication('suppressed');
+    await Promise.all([publish, resume]);
+
+    expect(updateDaemonState).toHaveBeenCalledTimes(2);
   });
 
   it('does not spin forever when publishing daemon state keeps failing', async () => {

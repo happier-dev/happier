@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
@@ -8,6 +12,8 @@ import {
   type TestExecutionRunHostRuntime,
   type TestExecutionRunHostRuntimeOptions,
 } from '@/agent/runtime/bridges/executionRun/testkit';
+import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
+import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
 
 type TestRuntimeFactoryInput = Readonly<{
   cwd: string;
@@ -20,12 +26,32 @@ type TestRuntimeFactoryInput = Readonly<{
   start?: unknown;
   happyHomeDir?: string | null;
   parentSessionStateTarget?: unknown;
+  onConnectedServicesRegistration?: (registration: typeof CONNECTED_SERVICES_REGISTRATION) => void | Promise<void>;
 }>;
 
 type TestRuntimeFactory = (opts: TestRuntimeFactoryInput) => ExecutionRunHostRuntime;
 
 const TEST_PRIMARY_BACKEND_ID = `${'primary'}.${'backend'}` as never;
 const TEST_SECONDARY_BACKEND_ID = `${'secondary'}.${'backend'}` as never;
+const CONNECTED_SERVICES_REGISTRATION = {
+  v: 1 as const,
+  activationId: '11111111-1111-4111-8111-111111111111',
+  runKey: 'replaced-at-runtime',
+  agentId: TEST_PRIMARY_BACKEND_ID,
+  materializationKey: 'replaced-at-runtime',
+  connectedServicesBindings: {
+    v: 1 as const,
+    bindingsByServiceId: {},
+  },
+  connectedServiceSelectionsEnv: {},
+  sessionDirectory: '/tmp/project',
+  materializedRoot: null,
+};
+let defaultExecutionRunManagerTestCwd = '';
+let defaultExecutionRunManagerPluginHomeDir = '';
+let shutdownDefaultExecutionRunManagerPluginRuntime:
+  | (() => Promise<void>)
+  | null = null;
 
 const {
   createExecutionRunRuntimeMock,
@@ -68,6 +94,52 @@ vi.mock('@/session/replay/resolveReplaySeedDraft', () => ({
 
 import { ExecutionRunHostBridge as ExecutionRunManager } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 
+beforeAll(async () => {
+  defaultExecutionRunManagerTestCwd = mkdtempSync(join(tmpdir(), 'happier-execution-run-manager-workspace-'));
+  runGit(defaultExecutionRunManagerTestCwd, ['init', '--initial-branch=main']);
+  defaultExecutionRunManagerPluginHomeDir = mkdtempSync(
+    join(tmpdir(), 'happier-execution-run-manager-plugin-home-'),
+  );
+  const [
+    { pluginReloadController },
+    { resolveExecutablePluginRuntimeRegistry },
+  ] = await Promise.all([
+    import('@/plugins/runtime/reload/singleton'),
+    import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry'),
+  ]);
+  const registry = await resolveExecutablePluginRuntimeRegistry({
+    happyHomeDir: defaultExecutionRunManagerPluginHomeDir,
+    generation: 1,
+  });
+  const adoption = await pluginReloadController.adoptPreparedRuntimeRegistry({
+    registry,
+    changedPluginIds: [],
+    durableRevision: 1,
+  });
+  if (!adoption.ok) {
+    throw new Error('Failed to publish the execution-run manager test plugin runtime');
+  }
+  shutdownDefaultExecutionRunManagerPluginRuntime = async () => {
+    await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+  };
+});
+
+afterAll(async () => {
+  await shutdownDefaultExecutionRunManagerPluginRuntime?.();
+  shutdownDefaultExecutionRunManagerPluginRuntime = null;
+  if (defaultExecutionRunManagerTestCwd) {
+    rmSync(defaultExecutionRunManagerTestCwd, { recursive: true, force: true });
+    defaultExecutionRunManagerTestCwd = '';
+  }
+  if (defaultExecutionRunManagerPluginHomeDir) {
+    rmSync(defaultExecutionRunManagerPluginHomeDir, {
+      recursive: true,
+      force: true,
+    });
+    defaultExecutionRunManagerPluginHomeDir = '';
+  }
+});
+
 beforeEach(() => {
   runtimeFactoryRef.current = null;
   createExecutionRunRuntimeMock.mockClear();
@@ -78,7 +150,10 @@ function createExecutionRunManager(
 ): ExecutionRunManager {
   const { createRuntime, ...bridgeOptions } = opts;
   runtimeFactoryRef.current = createRuntime;
-  return new ExecutionRunManager(bridgeOptions);
+  return new ExecutionRunManager({
+    ...bridgeOptions,
+    cwd: bridgeOptions.cwd === process.cwd() ? defaultExecutionRunManagerTestCwd : bridgeOptions.cwd,
+  });
 }
 
 async function readExecutionRunTurnStreamUntilDone(args: Readonly<{
@@ -136,16 +211,29 @@ function createStaticJsonRuntime(responseText: string): TestExecutionRunHostRunt
 
 function createDelayedJsonRuntime(responseText: string, delayMs: number): TestExecutionRunHostRuntime {
   let done: Promise<void> | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let resolveDone: (() => void) | null = null;
+  const finish = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    resolveDone?.();
+  };
   return createPromptRuntime(
     (runtime) => {
       done = new Promise((resolve) => {
-        setTimeout(() => {
+        resolveDone = resolve;
+        timer = setTimeout(() => {
+          timer = null;
           runtime.emitMessage({ type: 'model-output', fullText: responseText });
           resolve();
         }, delayMs);
       });
     },
     {
+      onCancel: finish,
+      onDispose: finish,
       onWaitForTurnCompletion: async () => {
         await (done ?? Promise.resolve());
       },
@@ -1496,6 +1584,24 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     const manager = createExecutionRunManager({
       parentProvider: TEST_PRIMARY_BACKEND_ID,
       cwd: process.cwd(),
+      executionRunProfileCatalog: buildExecutionRunProfileCatalog(
+        [{
+          id: 'work',
+          intent: 'voice_agent',
+          title: 'Work voice agent',
+          promptAsset: {
+            pluginId: 'happier.test.voice',
+            localId: 'work-voice-prompt',
+          },
+          compatibleAgents: [TEST_PRIMARY_BACKEND_ID],
+          defaults: {
+            retention: 'resumable',
+            runClass: 'longLived',
+            io: 'streaming',
+          },
+        }],
+        { generationId: 'generation-work' },
+      ),
       createRuntime: () => createPromptEchoRuntime(),
       sendAcp: (provider: string, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => {
         sent.push({ provider, body, meta: opts?.meta });
@@ -1518,6 +1624,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       runClass: 'long_lived',
       ioMode: 'streaming',
       profileId: 'work',
+      profileGenerationId: 'generation-work',
     });
 
     const streamStart = await manager.startTurnStream(started.runId, { message: 'hello' });
@@ -1533,7 +1640,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
       settings: { promptStacksSource: 'account-settings' },
       profileId: 'work',
       sessionId: 'parent_session_1',
-      workingDirectory: process.cwd(),
+      workingDirectory: defaultExecutionRunManagerTestCwd,
     }]);
 
     const stopped = await manager.stop(started.runId);
@@ -1598,7 +1705,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     expect(seen[0]).toMatchObject({
       backendId: TEST_SECONDARY_BACKEND_ID,
       modelId: 'chat',
-      permissionMode: 'read_only',
+      permissionMode: 'read-only',
       start: { intent: 'voice_agent' },
     });
   });
@@ -1630,7 +1737,7 @@ describe('ExecutionRunManager (long-lived runs)', () => {
     expect(seen[0]).toMatchObject({
       backendId: TEST_SECONDARY_BACKEND_ID,
       modelId: '',
-      permissionMode: 'read_only',
+      permissionMode: 'read-only',
       start: { intent: 'voice_agent' },
     });
   });
@@ -1761,4 +1868,187 @@ describe('ExecutionRunManager (bounded external send)', () => {
     expect(manager.get(started.runId)?.status).toBe('succeeded');
   });
 
+});
+
+describe('ExecutionRunManager connected-services exact currentness', () => {
+  async function createRunningHarness(params: Readonly<{
+    checkConnectedServicesGenerationCurrent?: NonNullable<
+      ConstructorParameters<
+        typeof ExecutionRunManager
+      >[0]['checkConnectedServicesGenerationCurrent']
+    >;
+  }> = {}) {
+    let completeTurn!: () => void;
+    let turnCompletion = Promise.resolve();
+    const registrationCallbackRef: {
+      current:
+        | ((registration: typeof CONNECTED_SERVICES_REGISTRATION) => void | Promise<void>)
+        | null;
+    } = { current: null };
+    const runtime = createPromptRuntime(
+      () => {
+        turnCompletion = new Promise<void>((resolve) => {
+          completeTurn = resolve;
+        });
+      },
+      {
+        onCancel: () => completeTurn?.(),
+        onDispose: () => completeTurn?.(),
+        onWaitForTurnCompletion: async () => await turnCompletion,
+      },
+    );
+    const manager = createExecutionRunManager({
+      parentProvider: TEST_PRIMARY_BACKEND_ID,
+      cwd: process.cwd(),
+      createRuntime: (opts) => {
+        registrationCallbackRef.current =
+          opts.onConnectedServicesRegistration ?? null;
+        return runtime;
+      },
+      sendAcp: () => {},
+      getNowMs: () => 1_700_000_000_000,
+      ...(params.checkConnectedServicesGenerationCurrent
+        ? {
+            checkConnectedServicesGenerationCurrent:
+              params.checkConnectedServicesGenerationCurrent,
+          }
+        : {}),
+    });
+    const started = await manager.start({
+      sessionId: 'parent_session_1',
+      intent: 'delegate',
+      backendTarget: {
+        kind: 'builtInAgent',
+        agentId: TEST_PRIMARY_BACKEND_ID,
+      },
+      instructions: 'Keep running.',
+      permissionMode: 'read_only',
+      retentionPolicy: 'ephemeral',
+      runClass: 'bounded',
+      ioMode: 'request_response',
+    });
+    const onConnectedServicesRegistration =
+      registrationCallbackRef.current;
+    if (!onConnectedServicesRegistration) {
+      throw new Error('expected connected-services registration callback');
+    }
+    return {
+      manager,
+      runId: started.runId,
+      onConnectedServicesRegistration,
+    };
+  }
+
+  it.each(['replacement', 'exit'] as const)(
+    'fails connected-services authorization when the exact run has a deferred %s',
+    async (transition) => {
+      let checkerEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        checkerEntered = resolve;
+      });
+      let releaseChecker!: () => void;
+      const checkerGate = new Promise<void>((resolve) => {
+        releaseChecker = resolve;
+      });
+      const harness = await createRunningHarness({
+        checkConnectedServicesGenerationCurrent: async () => {
+          checkerEntered();
+          await checkerGate;
+          return { current: true };
+        },
+      });
+      const registration = {
+        ...CONNECTED_SERVICES_REGISTRATION,
+        runKey: harness.runId,
+        materializationKey: harness.runId,
+      };
+      const internals = harness.manager as unknown as {
+        runs: Map<string, NonNullable<ReturnType<ExecutionRunManager['get']>>>;
+        authorizeConnectedServicesProviderEffect(
+          runId: string,
+        ): Promise<{ ok: boolean; errorCode?: string }>;
+      };
+      const run = internals.runs.get(harness.runId);
+      if (!run) throw new Error('expected running execution run');
+      const runWithRegistration = {
+        ...run,
+        launch: {
+          ...(run.launch ?? {}),
+          connectedServicesRegistration: registration,
+        },
+      };
+      internals.runs.set(harness.runId, runWithRegistration);
+
+      const authorization =
+        internals.authorizeConnectedServicesProviderEffect(harness.runId);
+      await entered;
+      if (transition === 'replacement') {
+        internals.runs.set(harness.runId, { ...runWithRegistration });
+      } else {
+        internals.runs.delete(harness.runId);
+      }
+      releaseChecker();
+
+      await expect(authorization).resolves.toMatchObject({
+        ok: false,
+        errorCode:
+          'execution_run_connected_service_generation_refresh_required',
+      });
+      await harness.manager.dispose();
+    },
+  );
+
+  it.each(['replacement', 'exit'] as const)(
+    'rejects a connected-services registration whose required marker await observes a deferred %s',
+    async (transition) => {
+      const harness = await createRunningHarness();
+      let markerEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        markerEntered = resolve;
+      });
+      let releaseMarker!: () => void;
+      const markerGate = new Promise<void>((resolve) => {
+        releaseMarker = resolve;
+      });
+      const internals = harness.manager as unknown as {
+        runs: Map<string, NonNullable<ReturnType<ExecutionRunManager['get']>>>;
+        writeActivityMarker(
+          runId: string,
+          nowMs: number,
+          opts?: Readonly<{ force?: boolean; required?: boolean }>,
+        ): Promise<void>;
+      };
+      internals.writeActivityMarker = vi.fn(async () => {
+        markerEntered();
+        await markerGate;
+      });
+      const registration = {
+        ...CONNECTED_SERVICES_REGISTRATION,
+        runKey: harness.runId,
+        materializationKey: harness.runId,
+      };
+
+      const registrationWrite =
+        harness.onConnectedServicesRegistration(registration);
+      await entered;
+      const registeredRun = internals.runs.get(harness.runId);
+      if (!registeredRun) throw new Error('expected registered execution run');
+      if (transition === 'replacement') {
+        internals.runs.set(harness.runId, { ...registeredRun });
+      } else {
+        internals.runs.delete(harness.runId);
+      }
+      releaseMarker();
+
+      await expect(registrationWrite).rejects.toThrow(
+        'registration is no longer current',
+      );
+      if (transition === 'replacement') {
+        expect(internals.runs.get(harness.runId)).not.toBe(registeredRun);
+      } else {
+        expect(internals.runs.has(harness.runId)).toBe(false);
+      }
+      await harness.manager.dispose();
+    },
+  );
 });

@@ -1,4 +1,4 @@
-import type { InstallAgentCliResult, AgentCliInstallPlan } from '../install.js';
+import type { InstallAgentCliResult, AgentCliInstallIntent, AgentCliInstallPlan } from '../install.js';
 import { type AgentCliRuntimeDescriptor } from '../resolution.js';
 import type { ManagedInstallDeps } from './managedInstall.js';
 import {
@@ -16,6 +16,7 @@ export async function runRuntimeInstallCoordinator(params: Readonly<{
     logDir?: string | null;
     dryRun?: boolean;
     skipIfInstalled?: boolean;
+    intent?: AgentCliInstallIntent;
     allowVendorRecipeExecution?: boolean;
     deps: ManagedInstallDeps;
 }>): Promise<InstallAgentCliResult> {
@@ -27,6 +28,7 @@ export async function runRuntimeInstallCoordinator(params: Readonly<{
         env,
         dryRun: params.dryRun,
         skipIfInstalled: params.skipIfInstalled,
+        intent: params.intent,
         allowVendorRecipeExecution: params.allowVendorRecipeExecution,
     });
     if (preflight.kind === 'return') {

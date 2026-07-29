@@ -1,46 +1,67 @@
 import type {
-  BackendSurfaceAvailabilityV1,
   ExternalSessionCandidateV1,
   ExternalSessionsSource,
   ExternalSessionTranscriptRawMessageV1,
+  PluginAgentExternalLinkedTakeoverWriterSafetyV1,
   RuntimeDescriptorV1,
 } from '@happier-dev/protocol';
 import type {
-  ExternalSessionAvailabilityRequestV1,
-  ExternalSessionRuntimeContextV1,
   SessionStateUpdateV1,
-  TranscriptSourceFollowLease,
   TranscriptSourcePage,
   TranscriptSourceReadAfter,
 } from '@happier-dev/agents';
-
-import type { LoadedLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import { createPollingExternalSessionFollowLease } from '@/api/session/external/backgroundFollow/createPollingExternalSessionFollowLease';
 
 export type ExternalSessionCandidatesPage = Readonly<{
   candidates: readonly ExternalSessionCandidateV1[];
   nextCursor: string | null;
   searchIncomplete?: boolean;
-}>;
-
-export type ExternalSessionActivitySample = Readonly<{
-  lastActivityAtMs: number | null;
-  isRunning: boolean;
+  preparation?: Readonly<{
+    kind: 'building_candidate_index';
+    scanned: number;
+    total?: number;
+  }>;
 }>;
 
 export type ExternalSessionTranscriptPage = TranscriptSourcePage<ExternalSessionTranscriptRawMessageV1>;
 
-export type ExternalSessionTranscriptReadAfter = TranscriptSourceReadAfter<ExternalSessionTranscriptRawMessageV1>;
+export type ExternalSessionTranscriptReadAfter =
+  | Readonly<{ outcome: 'already_current' }>
+  | Readonly<{
+    outcome: 'advanced';
+    items: readonly ExternalSessionTranscriptRawMessageV1[];
+    nextCursor: string;
+    boundary: string;
+    diagnostics?: readonly Readonly<{
+      code: string;
+      count: number;
+      positions: readonly number[];
+    }>[];
+  }>
+  | Readonly<{ outcome: 'gap_or_cursor_expired' }>
+  | Readonly<{ outcome: 'source_replaced' }>
+  | Readonly<{ outcome: 'source_unavailable' }>
+  | Readonly<{ outcome: 'read_failed' }>;
 
-export type ExternalSessionFollowLeaseReason = 'attached_view' | 'background_follow';
-
-export type ExternalSessionFollowLease = TranscriptSourceFollowLease<ExternalSessionTranscriptRawMessageV1>;
-
-export type ExternalSessionFollowTranscriptPathResolution = Readonly<{
-  path: string;
-  sourceId?: string;
-}>;
+/**
+ * Compatibility adapter for host transcript-source utilities that still use
+ * the pre-E9 page carrier. The explicit outcome remains authoritative.
+ */
+export function toLegacyTranscriptSourceReadAfter(
+  result: ExternalSessionTranscriptReadAfter,
+  currentCursor: string,
+): TranscriptSourceReadAfter<ExternalSessionTranscriptRawMessageV1> {
+  if (result.outcome === 'advanced') {
+    return {
+      items: [...result.items],
+      nextCursor: result.nextCursor,
+      truncated: false,
+    };
+  }
+  if (result.outcome === 'already_current') {
+    return { items: [], nextCursor: currentCursor, truncated: false };
+  }
+  return { items: [], nextCursor: null, truncated: true };
+}
 
 export type ExternalSessionLinkIdentity = Readonly<{
   remoteSessionId: string;
@@ -56,11 +77,15 @@ export type ExternalSessionSourceValidationResult =
   | Readonly<{ ok: false; error: string }>;
 
 export type ExternalSessionProviderOps = Readonly<{
-  evaluateAvailability?: (params: ExternalSessionAvailabilityRequestV1) => Promise<BackendSurfaceAvailabilityV1> | BackendSurfaceAvailabilityV1;
+  /**
+   * Static Agent-leaf evidence for continuing single-writer safety after an
+   * external-linked takeover. Absence always degrades to unsupported.
+   */
+  externalLinkedTakeoverWriterSafety?: PluginAgentExternalLinkedTakeoverWriterSafetyV1;
   validateSource: (params: Readonly<{
     source: ExternalSessionsSource;
-    runtime?: ExternalSessionRuntimeContextV1;
     env?: NodeJS.ProcessEnv;
+    signal?: AbortSignal;
   }>) => Promise<ExternalSessionSourceValidationResult> | ExternalSessionSourceValidationResult;
   listCandidates: (params: Readonly<{
     source: ExternalSessionsSource;
@@ -68,13 +93,9 @@ export type ExternalSessionProviderOps = Readonly<{
     limit: number;
     searchTerm?: string;
     searchMode?: 'fast' | 'full';
-    runtime?: ExternalSessionRuntimeContextV1;
+    maxBytes?: number;
+    signal?: AbortSignal;
   }>) => Promise<ExternalSessionCandidatesPage>;
-  getActivity: (params: Readonly<{
-    source: ExternalSessionsSource;
-    remoteSessionId: string;
-    runtime?: ExternalSessionRuntimeContextV1;
-  }>) => Promise<ExternalSessionActivitySample>;
   pageTranscript: (params: Readonly<{
     source: ExternalSessionsSource;
     remoteSessionId: string;
@@ -83,7 +104,7 @@ export type ExternalSessionProviderOps = Readonly<{
     maxBytes: number;
     maxItems: number;
     allowProviderFallback?: boolean;
-    runtime?: ExternalSessionRuntimeContextV1;
+    signal?: AbortSignal;
   }>) => Promise<ExternalSessionTranscriptPage>;
   readAfterTranscript: (params: Readonly<{
     source: ExternalSessionsSource;
@@ -92,32 +113,17 @@ export type ExternalSessionProviderOps = Readonly<{
     maxBytes: number;
     maxItems: number;
     allowProviderFallback?: boolean;
-    runtime?: ExternalSessionRuntimeContextV1;
+    signal?: AbortSignal;
   }>) => Promise<ExternalSessionTranscriptReadAfter>;
   resolveTranscriptMediaReadRoots?: (params: Readonly<{
     source: ExternalSessionsSource;
     remoteSessionId: string;
-    runtime?: ExternalSessionRuntimeContextV1;
   }>) => Promise<readonly string[]>;
-  resolveFollowTranscriptPath?: (params: Readonly<{
-    source: ExternalSessionsSource;
-    remoteSessionId: string;
-    reason: ExternalSessionFollowLeaseReason;
-    linkedSessionId?: string;
-    runtime?: ExternalSessionRuntimeContextV1;
-  }>) => Promise<ExternalSessionFollowTranscriptPathResolution | null>;
-  acquireFollowLease?: (params: Readonly<{
-    source: ExternalSessionsSource;
-    remoteSessionId: string;
-    reason: ExternalSessionFollowLeaseReason;
-    linkedSessionId?: string;
-    runtime?: ExternalSessionRuntimeContextV1;
-  }>) => Promise<ExternalSessionFollowLease | null>;
   canonicalizeLinkedSession?: (params: Readonly<{
     metadata: Record<string, unknown>;
     remoteSessionId: string;
     source: ExternalSessionsSource;
-    runtime?: ExternalSessionRuntimeContextV1;
+    signal?: AbortSignal;
   }>) => Promise<Readonly<{
     remoteSessionId: string;
     source: ExternalSessionsSource;
@@ -127,86 +133,31 @@ export type ExternalSessionProviderOps = Readonly<{
     source: ExternalSessionsSource;
     runtimeDescriptor?: RuntimeDescriptorV1 | null;
     metadata?: Record<string, unknown>;
-    runtime?: ExternalSessionRuntimeContextV1;
+    signal?: AbortSignal;
   }>) => Promise<ExternalSessionLinkIdentity>;
-  resolveTakeoverSpawnOptions: (params: Readonly<{
-    linked: LoadedLinkedExternalSession;
-    sessionId: string;
-    runtime?: ExternalSessionRuntimeContextV1;
-  }>) => Promise<SpawnSessionOptions | null>;
 }>;
 
-export type ExternalSessionExecutionSurface = Readonly<Partial<ExternalSessionProviderOps>>;
+export class ExternalSessionProviderFailureError extends Error {
+  readonly code: string;
+  readonly operation: string;
+  readonly retryable: boolean;
 
-type ExternalSessionTranscriptPageLoader<TItem> = (params: Readonly<{
-  source: ExternalSessionsSource;
-  remoteSessionId: string;
-  direction: 'older' | 'newer';
-  cursor?: string;
-  maxBytes: number;
-  maxItems: number;
-  allowProviderFallback?: boolean;
-}>) => Promise<TranscriptSourcePage<TItem>>;
-
-type ExternalSessionTranscriptReadAfterLoader<TItem> = (params: Readonly<{
-  source: ExternalSessionsSource;
-  remoteSessionId: string;
-  cursor: string;
-  maxBytes: number;
-  maxItems: number;
-  allowProviderFallback?: boolean;
-}>) => Promise<TranscriptSourceReadAfter<TItem>>;
-
-type ExternalSessionTranscriptFollowLeaseAcquirer<TItem> = (params: Readonly<{
-  source: ExternalSessionsSource;
-  remoteSessionId: string;
-  reason: ExternalSessionFollowLeaseReason;
-  linkedSessionId?: string;
-}>) => Promise<TranscriptSourceFollowLease<TItem> | null>;
-
-export function createExternalSessionTranscriptProviderOps<TItem>(params: Readonly<{
-  pageOlder: ExternalSessionTranscriptPageLoader<TItem>;
-  readAfter: ExternalSessionTranscriptReadAfterLoader<TItem>;
-  acquireFollowLease?: ExternalSessionTranscriptFollowLeaseAcquirer<TItem>;
-}>): Readonly<{
-  pageTranscript: ExternalSessionTranscriptPageLoader<TItem>;
-  readAfterTranscript: ExternalSessionTranscriptReadAfterLoader<TItem>;
-  acquireFollowLease?: ExternalSessionTranscriptFollowLeaseAcquirer<TItem>;
-}> {
-  return {
-    pageTranscript: async (input) => {
-      return await params.pageOlder(input);
-    },
-    readAfterTranscript: async (input) => {
-      return await params.readAfter(input);
-    },
-    acquireFollowLease: async (input) => {
-      if (params.acquireFollowLease) {
-        return await params.acquireFollowLease(input);
-      }
-      return await createPollingExternalSessionFollowLease<TItem>({
-        readAfterTranscript: ({ cursor, maxBytes, maxItems }) =>
-          params.readAfter({
-            source: input.source,
-            remoteSessionId: input.remoteSessionId,
-            cursor,
-            maxBytes,
-            maxItems,
-          }),
-      });
-    },
-  };
-}
-
-export function mergeExternalSessionEnvironmentVariables(values: Array<Record<string, string> | null>): Record<string, string> | undefined {
-  const merged: Record<string, string> = {};
-  for (const value of values) {
-    if (!value) continue;
-    for (const [key, raw] of Object.entries(value)) {
-      const normalized = String(raw ?? '').trim();
-      if (!normalized) continue;
-      merged[key] = normalized;
-    }
+  constructor(params: Readonly<{
+    code: string;
+    message: string;
+    operation: string;
+    retryable?: boolean;
+  }>) {
+    super(params.message);
+    this.name = 'ExternalSessionProviderFailureError';
+    this.code = params.code;
+    this.operation = params.operation;
+    this.retryable = params.retryable === true;
   }
-  return Object.keys(merged).length > 0 ? merged : undefined;
 }
+
+export function isExternalSessionProviderFailureError(error: unknown): error is ExternalSessionProviderFailureError {
+  return error instanceof ExternalSessionProviderFailureError;
+}
+
+export type ExternalSessionExecutionSurface = Readonly<Partial<ExternalSessionProviderOps>>;

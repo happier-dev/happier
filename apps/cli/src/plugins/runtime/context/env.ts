@@ -1,10 +1,14 @@
-import type { EnvRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+type PluginEnvironmentService = Readonly<{
+    get(name: string): string | null;
+    require(name: string): string;
+    list(prefix?: string): Readonly<Record<string, string>>;
+}>;
 
 export function createPluginEnvService(params?: Readonly<{
     env?: NodeJS.ProcessEnv;
     allowedNames?: readonly string[];
     allowedPrefixes?: readonly string[];
-}>): EnvRuntimeServiceV1 {
+}>): PluginEnvironmentService {
     const env = params?.env ?? process.env;
     const allowedNames = new Set(params?.allowedNames ?? []);
     const allowedPrefixes = params?.allowedPrefixes ?? [];
@@ -13,7 +17,7 @@ export function createPluginEnvService(params?: Readonly<{
         || allowedPrefixes.some((prefix) => name.startsWith(prefix))
     );
 
-    const service: EnvRuntimeServiceV1 = Object.freeze({
+    const service: PluginEnvironmentService = Object.freeze({
         get(name: string): string | null {
             if (!isAllowed(name)) {
                 return null;

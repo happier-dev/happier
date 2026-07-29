@@ -117,4 +117,44 @@ describe('sendBackendLongLivedRun (resume)', () => {
     expect(res.errorCode).toBe('execution_run_not_allowed');
     expect(res.error).toBe('Turn limit exceeded');
   });
+
+  it('checks connected-service generation after resume and before sending to the provider', async () => {
+    const { runtime, setSendPrompt } = createResumableBackendHarness();
+    const sendPrompt = vi.fn();
+    setSendPrompt(sendPrompt);
+    const run = createLongLivedResumableRun();
+    const runs = new Map([[run.runId, run]]);
+    const controllers = new Map();
+
+    const res = await sendBackendLongLivedRun({
+      runId: run.runId,
+      params: { message: 'hi', resume: true },
+      runs,
+      controllers,
+      budgetRegistry: null,
+      createRuntime: () => runtime,
+      maxTurns: null,
+      getNowMs: () => 123,
+      finishRun: () => undefined,
+      sendAcp: (() => undefined) as any,
+      parentProvider: 'acme.runtime.provider' as any,
+      streamedTranscriptSession: null,
+      writeActivityMarker: async () => undefined,
+      authorizeProviderEffect: async () => {
+        expect(controllers.has(run.runId)).toBe(true);
+        return {
+          ok: false,
+          errorCode: 'execution_run_connected_service_generation_refresh_required',
+          error: 'Connected-service credentials changed. Restart or resume this execution run before sending.',
+        };
+      },
+    });
+
+    expect(res).toEqual({
+      ok: false,
+      errorCode: 'execution_run_connected_service_generation_refresh_required',
+      error: 'Connected-service credentials changed. Restart or resume this execution run before sending.',
+    });
+    expect(sendPrompt).not.toHaveBeenCalled();
+  });
 });

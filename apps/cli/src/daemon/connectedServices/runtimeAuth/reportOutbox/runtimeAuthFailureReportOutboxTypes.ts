@@ -5,6 +5,9 @@ import type { ConnectedServiceRuntimeFailureClassification } from '../types';
 export type RuntimeAuthFailureReportOutboxClassification = ConnectedServiceRuntimeFailureClassification;
 
 export type RuntimeAuthFailureReportOutboxReport = Readonly<{
+  reportId?: string;
+  /** Accepted from older runners but ignored; launcher daemon identity is not authority. */
+  originDaemonExecutionGenerationV1?: string;
   sessionId: string;
   switchesThisTurn?: number;
   resumePromptMode?: unknown;
@@ -15,6 +18,7 @@ export type RuntimeAuthFailureReportOutboxItem = Readonly<{
   schemaVersion: 1;
   fileId: string;
   reportKey: string;
+  reportId: string;
   sessionId: string;
   switchesThisTurn: number;
   resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;

@@ -38,7 +38,13 @@ export interface SessionHostBridgeContract {
     facet: RuntimeOutboundTranscriptDispatchFacetV1;
   }> | null>;
   createSessionRuntime(backendId: string, params: unknown): Promise<HostSessionRuntimePlan>;
-  runSessionCommand(backendId: string, params: unknown): Promise<void>;
+  runSessionCommand(
+    backendId: string,
+    params: unknown,
+    lifecycle?: Readonly<{
+      beforeRuntimePlanCommit?: () => void | Promise<void>;
+    }>,
+  ): Promise<void>;
   evaluateAttachEligibility(
     params: Omit<
       Parameters<(typeof import('@/session/attach/evaluateCliSessionAttachEligibility'))['evaluateCliSessionAttachEligibility']>[0],

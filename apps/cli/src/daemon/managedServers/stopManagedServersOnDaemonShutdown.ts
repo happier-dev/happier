@@ -1,8 +1,8 @@
-import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/backends/types';
+import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
 import { logger } from '@/ui/logger';
 
 async function resolveManagedServerShutdownCleanup(agentId: CatalogAgentId) {
-    const { getManagedServerShutdownCleanup } = await import('@/backends/catalog');
+    const { getManagedServerShutdownCleanup } = await import('./catalogHooks');
     return await getManagedServerShutdownCleanup(agentId);
 }
 

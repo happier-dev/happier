@@ -1,19 +1,23 @@
-import type {
-    PluginRequestInterceptorContributionV1,
-    PluginRequestInterceptorScopeV1,
-    PluginRequestInterceptorTargetV1,
-    RequestInterceptorRequestPatchV1,
-    RequestPolicyResultV1,
-} from '@happier-dev/protocol';
+import type { PluginRequestInterceptorContributionV1 } from '@happier-dev/protocol';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 import type {
     FetchRuntimeRequestV1,
     FetchRuntimeResponseV1,
     FetchRuntimeServiceV1,
-    PluginApiRequestInterceptorRegistrationV1,
-    RequestPolicyCallerV1,
-} from '@happier-dev/plugin-sdk';
+} from '@/plugins/runtime/exec/privateContract';
+import type {
+    HttpMethod,
+    PluginInterceptedRequest,
+    PluginInterceptorResult,
+    PluginFetchCredentialBinding,
+    PluginFetchService,
+} from '@happier-dev/plugin-sdk/runtime';
+import { PluginError } from '@happier-dev/plugin-sdk';
+import type {
+    PluginInvocationServiceBinding,
+    PluginInvocationServicesSeed,
+} from '../invocation/services/types';
 
 export type PluginFetchErrorCode =
     | 'PLUGIN_FETCH_PERMISSION_DENIED'
@@ -21,6 +25,9 @@ export type PluginFetchErrorCode =
     | 'PLUGIN_FETCH_URL_SCOPE_DENIED'
     | 'PLUGIN_FETCH_INTERCEPTOR_DENIED'
     | 'PLUGIN_FETCH_INTERCEPTOR_FAILED';
+
+// The fetch owner enforces this security/resource bound; it is not author configuration.
+const MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES = 32 * 1024 * 1024;
 
 export class PluginFetchError extends Error {
     readonly code: PluginFetchErrorCode;
@@ -32,31 +39,81 @@ export class PluginFetchError extends Error {
     }
 }
 
+export type PluginRequestInterceptorDeclarationV1 = Readonly<{
+    pluginId: string;
+    contribution: PluginRequestInterceptorContributionV1;
+}>;
+
+export type PluginRequestInterceptorBindingV1 = Readonly<{
+    pluginId: string;
+    contribution: PluginRequestInterceptorContributionV1;
+    invoke(request: PluginInterceptedRequest, signal: AbortSignal | undefined): Promise<PluginInterceptorResult>;
+}>;
+
+export type PluginRequestInterceptorRegistryV1 = Readonly<{
+    declarations: readonly PluginRequestInterceptorDeclarationV1[];
+    activateContributionsOnDemand(demands: readonly Readonly<{
+        pluginId: string;
+        family: 'requestInterceptors';
+        localId: string;
+    }>[] ): Promise<unknown>;
+    readBindings(): readonly PluginRequestInterceptorBindingV1[];
+}>;
+
 export type CreatePluginFetchServiceParams = Readonly<{
     networkAllowed: boolean;
     adapter?: FetchRuntimeServiceV1 | null;
-    interceptors?: readonly PluginRequestInterceptorBindingV1[];
-    interception?: Readonly<{
-        scope?: PluginRequestInterceptorScopeV1;
-        caller?: RequestPolicyCallerV1;
-        operationId?: string;
-    }>;
+    interceptorRegistry?: PluginRequestInterceptorRegistryV1;
     pluginId?: string | null;
     allowedUrlOrigins?: readonly string[];
     retry?: Readonly<{
         maxAttempts: number;
         baseDelayMs?: number;
     }>;
+    revalidateFinalPolicy?: (effect: Readonly<{
+        request: FetchRuntimeRequestV1;
+        attempt: number;
+    }>) => void | Promise<void>;
 }>;
 
-export type PluginRequestInterceptorBindingV1 = Readonly<{
-    pluginId: string;
-    contribution: PluginRequestInterceptorContributionV1;
-    registration: PluginApiRequestInterceptorRegistrationV1;
+export type StablePluginFetchFinalPolicyEffect = Readonly<{
+    seed: PluginInvocationServicesSeed;
+    serviceBinding: PluginInvocationServiceBinding;
+    request: FetchRuntimeRequestV1;
+    attempt: number;
+}>;
+
+export type StablePluginFetchHost = Readonly<{
+    bind(seed: PluginInvocationServicesSeed, binding: PluginInvocationServiceBinding): PluginFetchService;
+    bindRuntime(seed: PluginInvocationServicesSeed, binding: PluginInvocationServiceBinding): FetchRuntimeServiceV1;
+}>;
+
+type StablePluginFetchResponse = Awaited<ReturnType<PluginFetchService['request']>>;
+
+export type StablePluginFetchCredentialBindingHost = Readonly<{
+    request(input: Readonly<{
+        seed: PluginInvocationServicesSeed;
+        serviceBinding: PluginInvocationServiceBinding;
+        credentialBinding: PluginFetchCredentialBinding;
+        request: Parameters<PluginFetchService['request']>[0];
+        signal: AbortSignal | undefined;
+        execute(credentialHeaders: Readonly<Record<string, string>>): Promise<StablePluginFetchResponse>;
+    }>): Promise<StablePluginFetchResponse>;
+}>;
+
+export type StablePluginFetchHostParams = Readonly<{
+    adapter: FetchRuntimeServiceV1;
+    interceptorRegistry?: PluginRequestInterceptorRegistryV1;
+    credentialBindingHost?: StablePluginFetchCredentialBindingHost;
+    retry?: CreatePluginFetchServiceParams['retry'];
+    revalidateFinalPolicy?: (
+        effect: StablePluginFetchFinalPolicyEffect,
+    ) => void | Promise<void>;
 }>;
 
 const REDACTED_VALUE = '[redacted]';
 const SECRET_KEY_PATTERN = /api_?key|secret|token|password|credential/i;
+const HTTP_METHODS = new Set<HttpMethod>(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']);
 const TIER_ONE_HEADER_NAMES = new Set([
     'authorization',
     'cookie',
@@ -66,7 +123,32 @@ const TIER_ONE_HEADER_NAMES = new Set([
     'api-key',
     'x-auth-token',
 ]);
+
+export function isLiteralPrivateNetworkHostname(hostname: string): boolean {
+    const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true;
+    const ipKind = isIP(normalized);
+    if (ipKind === 4) {
+        const [first = 0, second = 0] = normalized.split('.').map(Number);
+        return first === 10
+            || first === 127
+            || (first === 169 && second === 254)
+            || (first === 172 && second >= 16 && second <= 31)
+            || (first === 192 && second === 168);
+    }
+    if (ipKind === 6) {
+        return normalized === '::1'
+            || normalized.startsWith('fc')
+            || normalized.startsWith('fd')
+            || normalized.startsWith('fe8')
+            || normalized.startsWith('fe9')
+            || normalized.startsWith('fea')
+            || normalized.startsWith('feb');
+    }
+    return false;
+}
 const TIER_TWO_HEADER_NAMES = new Set([
+    'chatgpt-account-id',
     'forwarded',
     'x-client-ip',
     'x-forwarded-user',
@@ -79,6 +161,10 @@ const TIER_TWO_HEADER_NAMES = new Set([
     'x-signature',
     'x-hub-signature-256',
 ]);
+const HEADER_NAME_PATTERN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+// Invocation bindings created by one stable host are distinct service objects,
+// but nested fetches still belong to the same logical async operation.
+const activeInterceptorKeysByOperation = new AsyncLocalStorage<Set<string>>();
 
 function createAbortError(): Error {
     const error = new Error('Plugin fetch request was aborted');
@@ -92,48 +178,69 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
     }
 }
 
-function mergeAbortSignals(signals: readonly (AbortSignal | undefined)[]): AbortSignal | undefined {
+function mergeAbortSignals(signals: readonly (AbortSignal | undefined)[]): Readonly<{
+    signal: AbortSignal | undefined;
+    dispose(): void;
+}> {
     const activeSignals = signals.filter((signal): signal is AbortSignal => signal !== undefined);
-    if (activeSignals.length === 0) {
-        return undefined;
-    }
-    if (activeSignals.length === 1) {
-        return activeSignals[0];
-    }
+    if (activeSignals.length === 0) return { signal: undefined, dispose: () => undefined };
+    if (activeSignals.length === 1) return { signal: activeSignals[0], dispose: () => undefined };
+
     const controller = new AbortController();
-    const abort = (signal: AbortSignal) => {
-        if (!controller.signal.aborted) {
-            controller.abort(signal.reason);
+    const listeners: Array<Readonly<{ signal: AbortSignal; listener: () => void }>> = [];
+    const dispose = () => {
+        for (const { signal, listener } of listeners.splice(0)) {
+            signal.removeEventListener('abort', listener);
         }
+    };
+    const abort = (signal: AbortSignal) => {
+        if (!controller.signal.aborted) controller.abort(signal.reason);
+        dispose();
     };
     for (const signal of activeSignals) {
         if (signal.aborted) {
             abort(signal);
             break;
         }
-        signal.addEventListener('abort', () => abort(signal), { once: true });
+        const listener = () => abort(signal);
+        listeners.push({ signal, listener });
+        signal.addEventListener('abort', listener, { once: true });
     }
-    return controller.signal;
+    return { signal: controller.signal, dispose };
 }
 
 function withTimeout(request: FetchRuntimeRequestV1): Readonly<{
     request: FetchRuntimeRequestV1;
     dispose: () => void;
 }> {
-    if (request.timeoutMs === undefined) {
-        return { request, dispose: () => undefined };
+    if (request.timeoutMs === undefined) return { request, dispose: () => undefined };
+    if (!Number.isSafeInteger(request.timeoutMs) || request.timeoutMs <= 0) {
+        throw new TypeError('Plugin fetch timeoutMs must be a positive safe integer');
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => {
-        controller.abort(createAbortError());
-    }, Math.max(0, request.timeoutMs));
+    const timer = setTimeout(() => controller.abort(createAbortError()), request.timeoutMs);
+    const mergedSignal = mergeAbortSignals([request.signal, controller.signal]);
     return {
-        request: {
+        request: Object.freeze({
             ...request,
-            signal: mergeAbortSignals([request.signal, controller.signal]),
+            signal: mergedSignal.signal,
+        }),
+        dispose: () => {
+            clearTimeout(timer);
+            mergedSignal.dispose();
         },
-        dispose: () => clearTimeout(timer),
     };
+}
+
+function readHttpUrl(value: string): URL | null {
+    try {
+        const url = new URL(value);
+        return (url.protocol === 'http:' || url.protocol === 'https:') && !url.username && !url.password
+            ? url
+            : null;
+    } catch {
+        return null;
+    }
 }
 
 function assertUrlAllowed(params: Readonly<{
@@ -145,64 +252,53 @@ function assertUrlAllowed(params: Readonly<{
     if (!allowedUrlOrigins || allowedUrlOrigins.length === 0) {
         throw new PluginFetchError(
             'PLUGIN_FETCH_URL_SCOPE_DENIED',
-            `Plugin '${params.pluginId ?? 'unknown'}' cannot call ctx.fetch without a declared URL origin scope`,
+            `Plugin '${params.pluginId ?? 'unknown'}' cannot fetch without a declared URL origin scope`,
         );
     }
-    if (allowedUrlOrigins.includes('*')) {
-        return;
-    }
-    let origin: string;
-    try {
-        origin = new URL(params.request.url).origin;
-    } catch {
+    const url = readHttpUrl(params.request.url);
+    if (!url) {
         throw new PluginFetchError(
             'PLUGIN_FETCH_URL_SCOPE_DENIED',
-            `Plugin '${params.pluginId ?? 'unknown'}' cannot call ctx.fetch with an invalid URL`,
+            `Plugin '${params.pluginId ?? 'unknown'}' supplied an invalid HTTP(S) URL`,
         );
     }
-    if (!allowedUrlOrigins.includes(origin)) {
+    if (!allowedUrlOrigins.includes('*') && !allowedUrlOrigins.includes(url.origin)) {
         throw new PluginFetchError(
             'PLUGIN_FETCH_URL_SCOPE_DENIED',
-            `Plugin '${params.pluginId ?? 'unknown'}' cannot call ctx.fetch for undeclared URL origin '${origin}'`,
+            `Plugin '${params.pluginId ?? 'unknown'}' cannot fetch undeclared URL origin '${url.origin}'`,
         );
     }
 }
 
-function readOrigin(url: string): string | null {
-    try {
-        return new URL(url).origin;
-    } catch {
-        return null;
-    }
+function normalizeRequestMethod(method: string | undefined): HttpMethod | null {
+    const normalized = (method ?? 'GET').trim().toUpperCase();
+    return HTTP_METHODS.has(normalized as HttpMethod) ? normalized as HttpMethod : null;
 }
 
-function targetAllowsUrl(target: PluginRequestInterceptorTargetV1, url: string): boolean {
-    const allowedUrlOrigins = target.urlOrigins;
-    if (!allowedUrlOrigins || allowedUrlOrigins.length === 0 || allowedUrlOrigins.includes('*')) {
-        return true;
-    }
-    const origin = readOrigin(url);
-    return origin !== null && allowedUrlOrigins.includes(origin);
-}
-
-function selectTarget(
+function contributionAllowsRequest(
     contribution: PluginRequestInterceptorContributionV1,
-    scope: PluginRequestInterceptorScopeV1,
     request: FetchRuntimeRequestV1,
-): PluginRequestInterceptorTargetV1 | null {
-    return contribution.targets.find((target) => (
-        target.scope === scope && targetAllowsUrl(target, request.url)
-    )) ?? null;
+): boolean {
+    const url = readHttpUrl(request.url);
+    const method = normalizeRequestMethod(request.method);
+    return url !== null
+        && method !== null
+        && contribution.origins.includes(url.origin)
+        && (contribution.methods === undefined || contribution.methods.includes(method));
 }
 
 function normalizeHeaderName(name: string): string {
     return name.trim().toLowerCase();
 }
 
-function isTierOneHeader(name: string): boolean {
+function isProtectedHeader(name: string): boolean {
     const normalized = normalizeHeaderName(name);
     return TIER_ONE_HEADER_NAMES.has(normalized)
+        || TIER_TWO_HEADER_NAMES.has(normalized)
         || SECRET_KEY_PATTERN.test(normalized)
+        || normalized.startsWith('x-forwarded-')
+        || normalized.startsWith('x-user-')
+        || normalized.includes('signature')
         || normalized.endsWith('api-key')
         || normalized.endsWith('auth-token')
         || normalized.endsWith('session-secret')
@@ -210,21 +306,11 @@ function isTierOneHeader(name: string): boolean {
         || normalized.endsWith('provider-credential');
 }
 
-function isTierTwoHeader(name: string): boolean {
-    const normalized = normalizeHeaderName(name);
-    return TIER_TWO_HEADER_NAMES.has(normalized)
-        || normalized.startsWith('x-forwarded-')
-        || normalized.startsWith('x-user-')
-        || normalized.includes('signature');
-}
-
 function redactUrl(url: string): string {
     try {
         const parsed = new URL(url);
         for (const key of [...parsed.searchParams.keys()]) {
-            if (SECRET_KEY_PATTERN.test(key)) {
-                parsed.searchParams.set(key, REDACTED_VALUE);
-            }
+            if (SECRET_KEY_PATTERN.test(key)) parsed.searchParams.set(key, REDACTED_VALUE);
         }
         return parsed.toString();
     } catch {
@@ -232,193 +318,203 @@ function redactUrl(url: string): string {
     }
 }
 
+function redactHeaders(headers: FetchRuntimeRequestV1['headers']): Readonly<Record<string, string>> {
+    return Object.freeze(Object.fromEntries(Object.entries(headers ?? {}).map(([key, value]) => [
+        key,
+        isProtectedHeader(key) ? REDACTED_VALUE : value,
+    ])));
+}
+
 function isPlainRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-        return false;
-    }
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const prototype = Object.getPrototypeOf(value);
     return prototype === Object.prototype || prototype === null;
 }
 
-function redactBody(value: unknown, redactPrimitive: boolean = true): unknown {
-    if (value === undefined || value === null) {
-        return value;
-    }
-    if (Array.isArray(value)) {
-        return value.map((entry) => redactBody(entry, false));
-    }
-    if (!isPlainRecord(value)) {
-        return typeof value === 'object' || redactPrimitive ? REDACTED_VALUE : value;
-    }
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-        output[key] = SECRET_KEY_PATTERN.test(key) ? REDACTED_VALUE : redactBody(child, false);
-    }
-    return Object.freeze(output);
+function hasOnlyKeys(value: Readonly<Record<string, unknown>>, keys: ReadonlySet<string>): boolean {
+    return Object.keys(value).every((key) => keys.has(key));
 }
 
-function redactHeaders(headers: FetchRuntimeRequestV1['headers']): FetchRuntimeRequestV1['headers'] {
-    if (!headers) {
-        return headers;
-    }
-    return Object.freeze(Object.fromEntries(Object.entries(headers).map(([key, value]) => [
-        key,
-        isTierOneHeader(key) || isTierTwoHeader(key) ? REDACTED_VALUE : value,
-    ])));
-}
-
-function redactRequestForInterceptor(request: FetchRuntimeRequestV1): FetchRuntimeRequestV1 {
-    return Object.freeze({
-        ...request,
-        url: redactUrl(request.url),
-        headers: redactHeaders(request.headers),
-        body: redactBody(request.body),
-    });
-}
-
-function isStringArray(value: unknown): value is readonly string[] {
-    return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
-}
-
-function isStringRecord(value: unknown): value is Readonly<Record<string, string>> {
-    return isPlainRecord(value) && Object.values(value).every((entry) => typeof entry === 'string');
-}
-
-function isHeaderPatch(value: unknown): boolean {
-    if (!isPlainRecord(value)) {
-        return false;
-    }
-    return (value.remove === undefined || isStringArray(value.remove))
-        && (value.set === undefined || isStringRecord(value.set));
-}
-
-function isRequestPatch(value: unknown): value is RequestInterceptorRequestPatchV1 {
-    if (!isPlainRecord(value)) {
-        return false;
-    }
-    const allowedKeys = new Set(['url', 'method', 'headers', 'metadata']);
-    if (Object.keys(value).some((key) => !allowedKeys.has(key))) {
-        return false;
-    }
-    return (value.url === undefined || typeof value.url === 'string')
-        && (value.method === undefined || typeof value.method === 'string')
-        && (value.headers === undefined || isHeaderPatch(value.headers))
-        && (value.metadata === undefined || isPlainRecord(value.metadata));
-}
-
-function isDiagnosticMetadata(value: unknown): value is Readonly<Record<string, unknown>> {
-    return isPlainRecord(value);
-}
-
-function hasOnlyKeys(
-    value: Readonly<Record<string, unknown>>,
-    allowedKeys: ReadonlySet<string>,
-): boolean {
-    return Object.keys(value).every((key) => allowedKeys.has(key));
-}
-
-const ALLOW_RESULT_KEYS = new Set(['kind', 'request', 'auditMetadata']);
-const DENY_RESULT_KEYS = new Set(['kind', 'code', 'reason', 'auditMetadata']);
-const ERROR_RESULT_KEYS = new Set(['kind', 'code', 'reason', 'retryable', 'auditMetadata']);
-
-function isRequestPolicyResult(value: unknown): value is RequestPolicyResultV1 {
-    if (!isPlainRecord(value) || typeof value.kind !== 'string') {
-        return false;
-    }
-    if (value.auditMetadata !== undefined && !isDiagnosticMetadata(value.auditMetadata)) {
-        return false;
-    }
-    if (value.kind === 'allow') {
-        return hasOnlyKeys(value, ALLOW_RESULT_KEYS)
-            && (value.request === undefined || isRequestPatch(value.request));
-    }
-    if (value.kind === 'deny') {
-        return hasOnlyKeys(value, DENY_RESULT_KEYS)
-            && typeof value.code === 'string'
-            && value.code.trim().length > 0
-            && (value.reason === undefined || typeof value.reason === 'string');
-    }
-    if (value.kind === 'error') {
-        return hasOnlyKeys(value, ERROR_RESULT_KEYS)
-            && typeof value.code === 'string'
-            && value.code.trim().length > 0
-            && (value.reason === undefined || typeof value.reason === 'string')
-            && (value.retryable === undefined || typeof value.retryable === 'boolean');
-    }
-    return false;
-}
-
-function removeHeader(headers: Record<string, string>, name: string): void {
-    const normalized = normalizeHeaderName(name);
-    for (const key of Object.keys(headers)) {
-        if (normalizeHeaderName(key) === normalized) {
-            delete headers[key];
+function isValidHeaderRecord(value: unknown): value is Readonly<Record<string, string>> {
+    if (!isPlainRecord(value)) return false;
+    const normalizedNames = new Set<string>();
+    for (const [name, headerValue] of Object.entries(value)) {
+        const normalized = normalizeHeaderName(name);
+        if (!HEADER_NAME_PATTERN.test(name) || normalizedNames.has(normalized)
+            || typeof headerValue !== 'string' || /[\r\n]/.test(headerValue)) {
+            return false;
         }
+        normalizedNames.add(normalized);
     }
+    return true;
 }
 
-function applyRequestPatch(
-    request: FetchRuntimeRequestV1,
-    patch: RequestInterceptorRequestPatchV1 | undefined,
-): FetchRuntimeRequestV1 {
-    if (!patch) {
-        return request;
+function readPluginInterceptorResult(value: unknown): PluginInterceptorResult | null {
+    if (!isPlainRecord(value) || typeof value.decision !== 'string') return null;
+    if (value.decision === 'deny') {
+        return hasOnlyKeys(value, new Set(['decision', 'code']))
+            && typeof value.code === 'string'
+            && value.code.trim().length > 0
+            ? value as PluginInterceptorResult
+            : null;
     }
-    const headers = { ...(request.headers ?? {}) };
-    for (const name of patch.headers?.remove ?? []) {
-        removeHeader(headers, name);
-    }
-    for (const [name, value] of Object.entries(patch.headers?.set ?? {})) {
-        removeHeader(headers, name);
-        headers[name] = value;
-    }
-    const metadata = patch.metadata
-        ? Object.freeze({ ...(request.metadata ?? {}), ...patch.metadata })
-        : request.metadata;
+    if (value.decision !== 'continue' || !hasOnlyKeys(value, new Set(['decision', 'request']))) return null;
+    const request = value.request;
+    if (!isPlainRecord(request) || !hasOnlyKeys(request, new Set(['url', 'method', 'headers', 'body']))) return null;
+    return typeof request.url === 'string'
+        && typeof request.method === 'string'
+        && normalizeRequestMethod(request.method) !== null
+        && isValidHeaderRecord(request.headers)
+        && (request.body === undefined || request.body instanceof Uint8Array)
+        ? value as PluginInterceptorResult
+        : null;
+}
+
+function snapshotInterceptorRequest(request: FetchRuntimeRequestV1): Readonly<{
+    publicRequest: PluginInterceptedRequest;
+    bodySnapshot?: Uint8Array;
+}> {
+    const method = normalizeRequestMethod(request.method);
+    if (!method) throw new PluginFetchError('PLUGIN_FETCH_INTERCEPTOR_FAILED', 'Fetch request has an unsupported HTTP method');
+    const body = request.body instanceof Uint8Array ? new Uint8Array(request.body) : undefined;
     return Object.freeze({
-        ...request,
-        ...(patch.url !== undefined ? { url: patch.url } : {}),
-        ...(patch.method !== undefined ? { method: patch.method } : {}),
-        ...(Object.keys(headers).length > 0 ? { headers: Object.freeze(headers) } : { headers: undefined }),
-        ...(metadata !== undefined ? { metadata } : {}),
+        publicRequest: Object.freeze({
+            url: redactUrl(request.url),
+            method,
+            headers: redactHeaders(request.headers),
+            ...(body ? { body } : {}),
+        }),
+        ...(body ? { bodySnapshot: new Uint8Array(body) } : {}),
     });
+}
+
+function bytesEqual(left: Uint8Array | undefined, right: Uint8Array | undefined): boolean {
+    return left === undefined && right === undefined
+        || left !== undefined && right !== undefined
+            && left.length === right.length
+            && left.every((byte, index) => byte === right[index])
+        || false;
+}
+
+function findHeader(
+    headers: Readonly<Record<string, string>>,
+    normalizedName: string,
+): readonly [string, string] | null {
+    return Object.entries(headers).find(([name]) => normalizeHeaderName(name) === normalizedName) ?? null;
+}
+
+function adaptContinuedRequest(params: Readonly<{
+    pluginId: string;
+    interceptorId: string;
+    contribution: PluginRequestInterceptorContributionV1;
+    effectiveRequest: FetchRuntimeRequestV1;
+    publicRequest: PluginInterceptedRequest;
+    bodySnapshot?: Uint8Array;
+    result: Extract<PluginInterceptorResult, { decision: 'continue' }>;
+}>): FetchRuntimeRequestV1 {
+    const returned = params.result.request;
+    if (!bytesEqual(returned.body, params.bodySnapshot)) {
+        throw new PluginFetchError(
+            'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+            `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted a body mutation`,
+        );
+    }
+
+    let nextUrl = params.effectiveRequest.url;
+    if (returned.url !== params.publicRequest.url) {
+        if (redactUrl(params.effectiveRequest.url) !== params.effectiveRequest.url
+            || redactUrl(returned.url) !== returned.url
+            || !readHttpUrl(returned.url)) {
+            throw new PluginFetchError(
+                'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted a forbidden URL mutation`,
+            );
+        }
+        nextUrl = returned.url;
+    }
+
+    const nextHeaders: Record<string, string> = {};
+    for (const [name, value] of Object.entries(returned.headers)) {
+        const normalized = normalizeHeaderName(name);
+        const existing = findHeader(params.effectiveRequest.headers ?? {}, normalized);
+        if (isProtectedHeader(name)) {
+            if (!existing || value !== REDACTED_VALUE) {
+                throw new PluginFetchError(
+                    'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                    `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted a protected header mutation`,
+                );
+            }
+            continue;
+        }
+        nextHeaders[name] = value;
+    }
+    for (const [name, value] of Object.entries(params.effectiveRequest.headers ?? {})) {
+        if (!isProtectedHeader(name)) continue;
+        const returnedEntry = findHeader(returned.headers, normalizeHeaderName(name));
+        if (!returnedEntry || returnedEntry[1] !== REDACTED_VALUE) {
+            throw new PluginFetchError(
+                'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                `Request interceptor '${params.pluginId}/${params.interceptorId}' attempted a protected header mutation`,
+            );
+        }
+        nextHeaders[name] = value;
+    }
+
+    const nextRequest = Object.freeze({
+        ...params.effectiveRequest,
+        url: nextUrl,
+        method: returned.method,
+        headers: Object.freeze(nextHeaders),
+    });
+    const nextOrigin = readHttpUrl(nextRequest.url)?.origin;
+    if (!nextOrigin || !params.contribution.origins.includes(nextOrigin)) {
+        throw new PluginFetchError(
+            'PLUGIN_FETCH_URL_SCOPE_DENIED',
+            `Request interceptor '${params.pluginId}/${params.interceptorId}' rewrote outside its declared origin`,
+        );
+    }
+    if (!contributionAllowsRequest(params.contribution, nextRequest)) {
+        throw new PluginFetchError(
+            'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+            `Request interceptor '${params.pluginId}/${params.interceptorId}' rewrote outside its declared methods`,
+        );
+    }
+    return nextRequest;
 }
 
 function isTransientFetchError(error: unknown): boolean {
-    if (!(error instanceof Error)) {
-        return false;
-    }
+    if (!(error instanceof Error) || error.name === 'AbortError') return false;
     const code = String((error as Error & { code?: unknown }).code ?? '');
     return code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'EAI_AGAIN';
 }
 
 async function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
     assertNotAborted(signal);
-    if (ms <= 0) {
-        return;
-    }
+    if (ms <= 0) return;
     await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(resolve, ms);
-        signal?.addEventListener('abort', () => {
+        const cleanup = () => signal?.removeEventListener('abort', abort);
+        const abort = () => {
             clearTimeout(timer);
+            cleanup();
             reject(createAbortError());
-        }, { once: true });
+        };
+        const timer = setTimeout(() => {
+            cleanup();
+            resolve();
+        }, ms);
+        signal?.addEventListener('abort', abort, { once: true });
     });
 }
 
 async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
     assertNotAborted(signal);
-    if (!signal) {
-        return await operation;
-    }
+    if (!signal) return await operation;
     return await new Promise<T>((resolve, reject) => {
         const abort = () => {
             cleanup();
             reject(createAbortError());
         };
-        const cleanup = () => {
-            signal.removeEventListener('abort', abort);
-        };
+        const cleanup = () => signal.removeEventListener('abort', abort);
         signal.addEventListener('abort', abort, { once: true });
         operation.then(
             (value) => {
@@ -433,32 +529,55 @@ async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | und
     });
 }
 
-function sortInterceptors(
-    interceptors: readonly PluginRequestInterceptorBindingV1[],
-): readonly PluginRequestInterceptorBindingV1[] {
-    return Object.freeze([...interceptors].sort((left, right) => (
-        (left.contribution.order ?? 0) - (right.contribution.order ?? 0)
+function bindingIdentity(pluginId: string, localId: string): string {
+    return `${pluginId}\u0000requestInterceptors\u0000${localId}`;
+}
+
+function declarationsEqual(
+    left: PluginRequestInterceptorContributionV1,
+    right: PluginRequestInterceptorContributionV1,
+): boolean {
+    return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function resolveDemandedBindings(params: Readonly<{
+    declarations: readonly PluginRequestInterceptorDeclarationV1[];
+    bindings: readonly PluginRequestInterceptorBindingV1[];
+}>): readonly PluginRequestInterceptorBindingV1[] {
+    const bindingsByIdentity = new Map<string, PluginRequestInterceptorBindingV1[]>();
+    for (const binding of params.bindings) {
+        const key = bindingIdentity(binding.pluginId, binding.contribution.id);
+        const entries = bindingsByIdentity.get(key) ?? [];
+        entries.push(binding);
+        bindingsByIdentity.set(key, entries);
+    }
+    const seenDeclarations = new Set<string>();
+    const resolved: PluginRequestInterceptorBindingV1[] = [];
+    for (const declaration of params.declarations) {
+        const key = bindingIdentity(declaration.pluginId, declaration.contribution.id);
+        if (seenDeclarations.has(key)) {
+            throw new PluginFetchError('PLUGIN_FETCH_INTERCEPTOR_FAILED', 'Duplicate request interceptor declaration');
+        }
+        seenDeclarations.add(key);
+        const candidates = bindingsByIdentity.get(key) ?? [];
+        if (candidates.length !== 1
+            || !declarationsEqual(candidates[0]!.contribution, declaration.contribution)) {
+            throw new PluginFetchError(
+                'PLUGIN_FETCH_INTERCEPTOR_FAILED',
+                `Request interceptor '${declaration.pluginId}/${declaration.contribution.id}' has no unique current binding`,
+            );
+        }
+        resolved.push(candidates[0]!);
+    }
+    return Object.freeze(resolved.sort((left, right) => (
+        (left.contribution.priority ?? 0) - (right.contribution.priority ?? 0)
         || left.pluginId.localeCompare(right.pluginId)
         || left.contribution.id.localeCompare(right.contribution.id)
     )));
 }
 
-function createDefaultOperationId(
-    scope: PluginRequestInterceptorScopeV1,
-    request: FetchRuntimeRequestV1,
-): string {
-    const method = (request.method ?? 'GET').trim().toUpperCase() || 'GET';
-    const digest = createHash('sha256')
-        .update(method)
-        .update('\0')
-        .update(redactUrl(request.url))
-        .digest('hex')
-        .slice(0, 16);
-    return `${scope}:${method}:${digest}`;
-}
-
 function createTerminalFetchAdapter(params: CreatePluginFetchServiceParams): FetchRuntimeServiceV1 {
-    return async (request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> => {
+    return async (request) => {
         assertNotAborted(request.signal);
         assertUrlAllowed({
             request,
@@ -468,7 +587,7 @@ function createTerminalFetchAdapter(params: CreatePluginFetchServiceParams): Fet
         if (!params.adapter) {
             throw new PluginFetchError(
                 'PLUGIN_FETCH_ADAPTER_UNAVAILABLE',
-                'ctx.fetch network access is unavailable in this host context because no host fetch adapter is bound',
+                'Plugin fetch network access is unavailable in this host context',
             );
         }
         return await params.adapter(request);
@@ -476,91 +595,82 @@ function createTerminalFetchAdapter(params: CreatePluginFetchServiceParams): Fet
 }
 
 export function createPluginFetchService(params: CreatePluginFetchServiceParams): FetchRuntimeServiceV1 {
-    const interceptors = sortInterceptors(params.interceptors ?? []);
+    if (params.retry && (!Number.isSafeInteger(params.retry.maxAttempts) || params.retry.maxAttempts < 1)) {
+        throw new TypeError('Plugin fetch retry maxAttempts must be a positive safe integer');
+    }
     const terminal = createTerminalFetchAdapter(params);
-    const activeInterceptorKeysByOperation = new AsyncLocalStorage<Set<string>>();
-    const scope = params.interception?.scope ?? 'plugin-fetch';
-    const caller = params.interception?.caller ?? Object.freeze({
-        scope: 'plugin-fetch' as const,
-        ...(params.pluginId ? { pluginId: params.pluginId } : {}),
-    });
 
-    async function fetchThroughPolicies(request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> {
+    async function applyInterceptors(request: FetchRuntimeRequestV1): Promise<FetchRuntimeRequestV1> {
         const activeInterceptorKeys = activeInterceptorKeysByOperation.getStore();
         if (!activeInterceptorKeys) {
-            throw new PluginFetchError(
-                'PLUGIN_FETCH_INTERCEPTOR_FAILED',
-                'Request interceptor recursion state is unavailable for this operation',
-            );
+            throw new PluginFetchError('PLUGIN_FETCH_INTERCEPTOR_FAILED', 'Request interceptor state is unavailable');
         }
+        const registry = params.interceptorRegistry;
+        if (!registry) return request;
+
+        const matchingDeclarations = registry.declarations.filter((declaration) => (
+            contributionAllowsRequest(declaration.contribution, request)
+        ));
+        if (matchingDeclarations.length === 0) return request;
+
+        try {
+            await registry.activateContributionsOnDemand(Object.freeze(matchingDeclarations.map((declaration) => Object.freeze({
+                pluginId: declaration.pluginId,
+                family: 'requestInterceptors' as const,
+                localId: declaration.contribution.id,
+            }))));
+        } catch {
+            throw new PluginFetchError('PLUGIN_FETCH_INTERCEPTOR_FAILED', 'Request interceptor activation failed');
+        }
+
+        const bindings = resolveDemandedBindings({
+            declarations: matchingDeclarations,
+            bindings: registry.readBindings(),
+        });
         let effectiveRequest = request;
-        for (const binding of interceptors) {
+        for (const binding of bindings) {
             assertNotAborted(effectiveRequest.signal);
-            const activeKey = `${binding.pluginId}:${binding.contribution.id}`;
-            if (activeInterceptorKeys.has(activeKey)) {
-                continue;
-            }
-            const target = selectTarget(binding.contribution, scope, effectiveRequest);
-            if (!target) {
-                continue;
-            }
-            activeInterceptorKeys.add(activeKey);
-            let result: RequestPolicyResultV1;
+            if (!contributionAllowsRequest(binding.contribution, effectiveRequest)) continue;
+            const key = bindingIdentity(binding.pluginId, binding.contribution.id);
+            if (activeInterceptorKeys.has(key)) continue;
+
+            const snapshot = snapshotInterceptorRequest(effectiveRequest);
+            activeInterceptorKeys.add(key);
+            let rawResult: unknown;
             try {
-                result = await binding.registration.handle({
-                    interceptorId: binding.contribution.id,
-                    pluginId: binding.pluginId,
-                    target,
-                    originalRequest: redactRequestForInterceptor(request),
-                    effectiveRequest: redactRequestForInterceptor(effectiveRequest),
-                    caller,
-                    operation: {
-                        id: params.interception?.operationId ?? createDefaultOperationId(scope, request),
-                        attempt: Number(request.metadata?.attempt ?? 1),
-                    },
-                });
-            } catch (error) {
+                rawResult = await binding.invoke(snapshot.publicRequest, effectiveRequest.signal);
+            } catch {
                 throw new PluginFetchError(
                     'PLUGIN_FETCH_INTERCEPTOR_FAILED',
-                    error instanceof Error ? error.message : `Request interceptor '${binding.contribution.id}' failed`,
+                    `Request interceptor '${binding.pluginId}/${binding.contribution.id}' failed`,
                 );
             } finally {
-                activeInterceptorKeys.delete(activeKey);
+                activeInterceptorKeys.delete(key);
             }
-            if (!isRequestPolicyResult(result)) {
+            const result = readPluginInterceptorResult(rawResult);
+            if (!result) {
                 throw new PluginFetchError(
                     'PLUGIN_FETCH_INTERCEPTOR_FAILED',
-                    `Request interceptor '${binding.contribution.id}' returned an invalid policy result`,
+                    `Request interceptor '${binding.pluginId}/${binding.contribution.id}' returned an invalid result`,
                 );
             }
-            if (result.kind === 'deny') {
+            if (result.decision === 'deny') {
                 throw new PluginFetchError(
                     'PLUGIN_FETCH_INTERCEPTOR_DENIED',
-                    result.reason ?? `Request interceptor '${binding.contribution.id}' denied the request with code '${result.code}'`,
+                    `Request interceptor '${binding.pluginId}/${binding.contribution.id}' denied the request`,
                 );
             }
-            if (result.kind === 'error') {
-                throw new PluginFetchError(
-                    'PLUGIN_FETCH_INTERCEPTOR_FAILED',
-                    result.reason ?? `Request interceptor '${binding.contribution.id}' failed with code '${result.code}'`,
-                );
-            }
-            if (result.kind !== 'allow') {
-                throw new PluginFetchError(
-                    'PLUGIN_FETCH_INTERCEPTOR_FAILED',
-                    `Request interceptor '${binding.contribution.id}' returned an invalid policy result`,
-                );
-            }
-            const nextRequest = applyRequestPatch(effectiveRequest, result.request);
-            if (!targetAllowsUrl(target, nextRequest.url)) {
-                throw new PluginFetchError(
-                    'PLUGIN_FETCH_URL_SCOPE_DENIED',
-                    `Request interceptor '${binding.contribution.id}' rewrote the request outside its declared target URL origins`,
-                );
-            }
-            effectiveRequest = nextRequest;
+            effectiveRequest = adaptContinuedRequest({
+                pluginId: binding.pluginId,
+                interceptorId: binding.contribution.id,
+                contribution: binding.contribution,
+                effectiveRequest,
+                publicRequest: snapshot.publicRequest,
+                ...(snapshot.bodySnapshot ? { bodySnapshot: snapshot.bodySnapshot } : {}),
+                result,
+            });
         }
-        return await terminal(effectiveRequest);
+        return effectiveRequest;
     }
 
     async function executeFetch(request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> {
@@ -568,50 +678,203 @@ export function createPluginFetchService(params: CreatePluginFetchServiceParams)
         if (!params.networkAllowed) {
             throw new PluginFetchError(
                 'PLUGIN_FETCH_PERMISSION_DENIED',
-                `Plugin '${params.pluginId ?? 'unknown'}' cannot call ctx.fetch without declaring network permission`,
+                `Plugin '${params.pluginId ?? 'unknown'}' cannot fetch without network permission`,
             );
         }
-        assertUrlAllowed({
-            request,
-            allowedUrlOrigins: params.allowedUrlOrigins,
-            pluginId: params.pluginId,
-        });
+        assertUrlAllowed({ request, allowedUrlOrigins: params.allowedUrlOrigins, pluginId: params.pluginId });
         const timeout = withTimeout(request);
-        const maxAttempts = Math.max(1, params.retry?.maxAttempts ?? 1);
+        const maxAttempts = params.retry?.maxAttempts ?? 1;
         try {
+            const interceptedRequest = await raceWithAbort(
+                applyInterceptors(timeout.request),
+                timeout.request.signal,
+            );
             for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
                 assertNotAborted(timeout.request.signal);
+                const terminalRequest = Object.freeze({
+                    ...interceptedRequest,
+                    metadata: Object.freeze({
+                        ...(interceptedRequest.metadata ?? {}),
+                        attempt,
+                    }),
+                });
                 try {
-                    return await raceWithAbort(fetchThroughPolicies({
-                        ...timeout.request,
-                        metadata: Object.freeze({
-                            ...(timeout.request.metadata ?? {}),
-                            attempt,
-                        }),
-                    }), timeout.request.signal);
-                } catch (error) {
-                    if (attempt >= maxAttempts || !isTransientFetchError(error)) {
-                        throw error;
+                    if (params.revalidateFinalPolicy) {
+                        await raceWithAbort(
+                            Promise.resolve(params.revalidateFinalPolicy(Object.freeze({
+                                request: terminalRequest,
+                                attempt,
+                            }))),
+                            timeout.request.signal,
+                        );
                     }
+                    assertNotAborted(timeout.request.signal);
+                    return await raceWithAbort(terminal(terminalRequest), timeout.request.signal);
+                } catch (error) {
+                    if (attempt >= maxAttempts || !isTransientFetchError(error)) throw error;
                     await delay(params.retry?.baseDelayMs ?? 0, timeout.request.signal);
                 }
             }
         } finally {
             timeout.dispose();
         }
-        throw new PluginFetchError(
-            'PLUGIN_FETCH_ADAPTER_UNAVAILABLE',
-            'ctx.fetch retry exhausted without a terminal result',
-        );
+        throw new PluginFetchError('PLUGIN_FETCH_ADAPTER_UNAVAILABLE', 'Plugin fetch retry exhausted');
     }
 
-    return async (request: FetchRuntimeRequestV1): Promise<FetchRuntimeResponseV1> => {
-        const existingOperationState = activeInterceptorKeysByOperation.getStore();
-        if (existingOperationState) {
-            return await executeFetch(request);
-        }
-        return await activeInterceptorKeysByOperation.run(new Set<string>(), async () => (
-            await executeFetch(request)
-        ));
+    return async (request) => {
+        const existingState = activeInterceptorKeysByOperation.getStore();
+        if (existingState) return await executeFetch(request);
+        return await activeInterceptorKeysByOperation.run(new Set<string>(), async () => await executeFetch(request));
     };
+}
+
+export function createStablePluginFetchHost(params: StablePluginFetchHostParams): StablePluginFetchHost {
+    const bindRuntime = (
+        seed: PluginInvocationServicesSeed,
+        binding: PluginInvocationServiceBinding,
+    ): FetchRuntimeServiceV1 => {
+        const runtimeFetch = createPluginFetchService({
+            networkAllowed: binding.availability.fetch === 'available',
+            adapter: params.adapter,
+            pluginId: seed.plugin.id,
+            allowedUrlOrigins: binding.networkOrigins ?? Object.freeze([]),
+            ...(params.interceptorRegistry ? { interceptorRegistry: params.interceptorRegistry } : {}),
+            ...(params.retry ? { retry: params.retry } : {}),
+            ...(params.revalidateFinalPolicy || binding.networkCurrentness || binding.networkScopes?.length ? {
+                revalidateFinalPolicy: async (effect) => {
+                    if (
+                        binding.networkCurrentness
+                        && !await binding.networkCurrentness()
+                    ) {
+                        throw new PluginError({
+                            code: 'plugin_final_generation_retired',
+                            message: 'Connected-account network configuration is no longer current',
+                        });
+                    }
+                    const url = new URL(effect.request.url);
+                    const method = (effect.request.method ?? 'GET').toUpperCase();
+                    const privateNetwork = isLiteralPrivateNetworkHostname(url.hostname);
+                    const withinBoundScope = binding.networkScopes?.some((scope) => (
+                        scope.origins.includes(url.origin)
+                        && (scope.methods === undefined || scope.methods.includes(method as HttpMethod))
+                        && (!privateNetwork || scope.privateNetwork)
+                    )) === true;
+                    if (!withinBoundScope) {
+                        throw new PluginError({
+                            code: 'plugin_final_resource_not_selected',
+                            message: 'Fetch operation is outside the bound network scope',
+                        });
+                    }
+                    await params.revalidateFinalPolicy?.({
+                        seed,
+                        serviceBinding: binding,
+                        ...effect,
+                    });
+                },
+            } : {}),
+        });
+        return async (request) => {
+            if (!seed.isGenerationCurrent()) {
+                throw new PluginError({
+                    code: 'plugin_final_generation_retired',
+                    message: 'Plugin generation is no longer current',
+                });
+            }
+            const mergedSignal = mergeAbortSignals([seed.signal, request.signal]);
+            let response: FetchRuntimeResponseV1;
+            try {
+                response = await runtimeFetch(Object.freeze({
+                    ...request,
+                    signal: mergedSignal.signal,
+                }));
+            } finally {
+                mergedSignal.dispose();
+            }
+            if (!seed.isGenerationCurrent()) {
+                throw new PluginError({
+                    code: 'plugin_final_generation_retired',
+                    message: 'Plugin generation is no longer current',
+                });
+            }
+            return response;
+        };
+    };
+    return Object.freeze({
+        bindRuntime,
+        bind(seed, binding): PluginFetchService {
+            const runtimeFetch = bindRuntime(seed, binding);
+            return Object.freeze({
+                async request(
+                    input: Parameters<PluginFetchService['request']>[0],
+                    options: Parameters<PluginFetchService['request']>[1] = {},
+                ) {
+                    if (!seed.isGenerationCurrent()) {
+                        throw new PluginError({
+                            code: 'plugin_final_generation_retired',
+                            message: 'Plugin generation is no longer current',
+                        });
+                    }
+                    if (input.credentialBinding !== undefined && !params.credentialBindingHost) {
+                        throw new PluginError({
+                            code: 'plugin_fetch_credential_binding_unavailable',
+                            message: 'Connected-account fetch credentials are unavailable in this invocation host',
+                        });
+                    }
+                    if (input.redirect === 'follow') {
+                        throw new PluginError({
+                            code: 'plugin_fetch_redirect_follow_unavailable',
+                            message: 'Plugin fetch redirect following is unavailable until each redirect hop can be reauthorized',
+                        });
+                    }
+                    const execute = async (
+                        credentialHeaders: Readonly<Record<string, string>>,
+                    ): Promise<StablePluginFetchResponse> => {
+                        const response = await runtimeFetch(Object.freeze({
+                            url: input.url,
+                            ...(input.method === undefined ? {} : { method: input.method }),
+                            headers: Object.freeze({
+                                ...(input.headers ?? {}),
+                                ...credentialHeaders,
+                            }),
+                            ...(input.body === undefined ? {} : { body: input.body }),
+                            ...(options.signal === undefined ? {} : { signal: options.signal }),
+                            ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
+                            metadata: Object.freeze({ redirect: input.redirect }),
+                        }));
+                        const bodyBuffer = await response.arrayBuffer();
+                        if (bodyBuffer.byteLength > MAX_PLUGIN_FETCH_RESPONSE_BODY_BYTES) {
+                            throw new PluginError({
+                                code: 'plugin_fetch_response_too_large',
+                                message: 'Plugin fetch response exceeded the stable response-body limit',
+                            });
+                        }
+                        const finalUrl = (response as FetchRuntimeResponseV1 & Readonly<{ finalUrl?: unknown }>).finalUrl;
+                        return Object.freeze({
+                            status: response.status,
+                            finalUrl: typeof finalUrl === 'string' ? finalUrl : input.url,
+                            headers: Object.freeze({ ...response.headers }),
+                            body: new Uint8Array(bodyBuffer.slice(0)),
+                        });
+                    };
+                    const stableResponse = input.credentialBinding === undefined
+                        ? await execute(Object.freeze({}))
+                        : await params.credentialBindingHost!.request(Object.freeze({
+                            seed,
+                            serviceBinding: binding,
+                            credentialBinding: input.credentialBinding,
+                            request: input,
+                            signal: options.signal,
+                            execute,
+                        }));
+                    if (!seed.isGenerationCurrent()) {
+                        throw new PluginError({
+                            code: 'plugin_final_generation_retired',
+                            message: 'Plugin generation is no longer current',
+                        });
+                    }
+                    return stableResponse;
+                },
+            });
+        },
+    });
 }

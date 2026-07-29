@@ -29,6 +29,23 @@ export type ManagedProcessRestartPolicy =
        * - `0` means no restarts.
        */
       maxRestarts: number | null;
+      /**
+       * Maximum INTENDED restarts (connected-service-initiated relaunches) on their OWN budget,
+       * separate from `maxRestarts`. Intended restarts are wanted, not crash symptoms, so they must
+       * not consume the generic crash budget — but a storm of them must still be bounded (RR-2).
+       *
+       * - `undefined` falls back to `DEFAULT_MAX_INTENDED_RESTARTS`.
+       * - `null` means unlimited (avoid).
+       * - `0` means no intended restarts.
+       */
+      maxIntendedRestarts?: number | null;
+      /**
+       * Rolling window for intended-restart accounting: restarts inside the window count against
+       * `maxIntendedRestarts` even across SUCCESSFUL respawns (a successful restart loop must still
+       * trip the limiter); older restarts decay out. `undefined` falls back to
+       * `DEFAULT_INTENDED_RESTART_WINDOW_MS`.
+       */
+      intendedRestartWindowMs?: number;
       baseDelayMs: number;
       maxDelayMs: number;
       jitterMs: number;

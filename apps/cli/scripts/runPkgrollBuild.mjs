@@ -1,7 +1,17 @@
-import { createRequire } from 'node:module';
-import { cpSync, existsSync, readFileSync, rmSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join, relative, resolve } from 'node:path';
+
+import { DEFAULT_CLI_NODE_HEAP_LIMIT_MB, upsertMaxOldSpaceSize } from './withNodeHeapLimit.mjs';
 
 const require = createRequire(import.meta.url);
 const DEFAULT_BUILD_OUTPUT_DIR = 'dist';
@@ -20,17 +30,52 @@ function resolvePkgrollTimeoutMs(env, explicitTimeoutMs) {
   return Math.min(1_800_000, Math.max(60_000, parsed));
 }
 
-export function resolvePkgrollCliPath() {
-  return require.resolve('pkgroll/dist/cli.mjs');
+function normalizePkgrollOutputDir(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return DEFAULT_BUILD_OUTPUT_DIR;
+  const normalized = raw.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  const segments = normalized.split('/').filter(Boolean);
+  if (
+    raw.startsWith('-')
+    || normalized.startsWith('/')
+    || /^[A-Za-z]:\//.test(normalized)
+    || segments.length === 0
+    || segments.includes('.')
+    || segments.includes('..')
+    || segments.some((segment) => segment.includes(':'))
+  ) {
+    return DEFAULT_BUILD_OUTPUT_DIR;
+  }
+  return segments.join('/');
+}
+
+function resolveRequiredPkgrollOutputDir(value) {
+  const raw = String(value ?? '').trim();
+  const normalized = raw.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  const segments = normalized.split('/').filter(Boolean);
+  if (
+    !raw
+    || raw.startsWith('-')
+    || normalized.startsWith('/')
+    || /^[A-Za-z]:\//.test(normalized)
+    || segments.length === 0
+    || segments.includes('.')
+    || segments.includes('..')
+    || segments.some((segment) => segment.includes(':'))
+  ) {
+    throw new Error('runPkgrollBuild requires an explicit relative builder-owned output directory');
+  }
+  return segments.join('/');
 }
 
 function rebasePackageEntrypointOutputPath(value, outputDir = DEFAULT_BUILD_OUTPUT_DIR) {
   if (typeof value !== 'string') return null;
   const normalized = value.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  const outputRoot = normalizePkgrollOutputDir(outputDir);
   for (const sourceRoot of ['dist', 'package-dist']) {
-    if (normalized === sourceRoot) return outputDir;
+    if (normalized === sourceRoot) return outputRoot;
     const prefix = `${sourceRoot}/`;
-    if (normalized.startsWith(prefix)) return `${outputDir}/${normalized.slice(prefix.length)}`;
+    if (normalized.startsWith(prefix)) return `${outputRoot}/${normalized.slice(prefix.length)}`;
   }
   return null;
 }
@@ -52,7 +97,7 @@ function collectEntrypointOutputPaths(value, outputDir, out) {
 }
 
 export function collectPkgrollInputPaths(manifest, options = {}) {
-  const outputDir = resolveBuildOutputDir({}, options.outputDir);
+  const outputDir = normalizePkgrollOutputDir(options.outputDir);
   const paths = new Set();
   for (const key of ['main', 'module', 'types', 'exports', 'imports']) {
     if (Object.prototype.hasOwnProperty.call(manifest, key)) {
@@ -62,14 +107,105 @@ export function collectPkgrollInputPaths(manifest, options = {}) {
   return [...paths].sort();
 }
 
-export function resolveBuildOutputDir(env = process.env, explicitOutputDir) {
-  const candidate = String(explicitOutputDir ?? env?.HAPPIER_CLI_BUILD_OUTPUT_DIR ?? '').trim();
-  if (!candidate || candidate.startsWith('-')) return DEFAULT_BUILD_OUTPUT_DIR;
-  if (isAbsolute(candidate)) return DEFAULT_BUILD_OUTPUT_DIR;
-  const segments = candidate.split(/[\\/]+/g).filter(Boolean);
-  if (segments.length === 0) return DEFAULT_BUILD_OUTPUT_DIR;
-  if (segments.includes('.') || segments.includes('..')) return DEFAULT_BUILD_OUTPUT_DIR;
-  return segments.join('/');
+function rewritePackageDistPath(value, outputDir) {
+  if (typeof value !== 'string') return value;
+  const outputRoot = `./${normalizePkgrollOutputDir(outputDir)}`;
+  if (value === './package-dist') return outputRoot;
+  if (value.startsWith('./package-dist/')) {
+    return `${outputRoot}/${value.slice('./package-dist/'.length)}`;
+  }
+  return value;
+}
+
+function preparePkgrollPackageManifest(value, outputDir) {
+  if (Array.isArray(value)) {
+    return value.map((item) => preparePkgrollPackageManifest(item, outputDir));
+  }
+  if (!value || typeof value !== 'object') {
+    return rewritePackageDistPath(value, outputDir);
+  }
+
+  const out = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    if (key === 'bin') continue;
+    if (key === 'files') {
+      out[key] = entryValue;
+      continue;
+    }
+    out[key] = preparePkgrollPackageManifest(entryValue, outputDir);
+  }
+  return out;
+}
+
+function prepareRuntimeGenerationManifest(manifest, outputDir) {
+  const prepared = preparePkgrollPackageManifest(manifest, outputDir);
+  const bundledInternalPackages = new Set(
+    (Array.isArray(manifest?.bundledDependencies) ? manifest.bundledDependencies : [])
+      .map((name) => String(name))
+      .filter((name) => name.startsWith('@happier-dev/')),
+  );
+  if (bundledInternalPackages.size === 0) return prepared;
+
+  const dependencies = { ...(prepared.dependencies ?? {}) };
+  const devDependencies = { ...(prepared.devDependencies ?? {}) };
+  for (const packageName of bundledInternalPackages) {
+    if (!Object.prototype.hasOwnProperty.call(dependencies, packageName)) continue;
+    devDependencies[packageName] = dependencies[packageName];
+    delete dependencies[packageName];
+  }
+  return {
+    ...prepared,
+    dependencies,
+    devDependencies,
+  };
+}
+
+function rebaseManifestOutputPathToStage(value, outputDir) {
+  if (typeof value !== 'string') return value;
+  const normalized = value.replace(/\\/g, '/').replace(/^\.\/+/, '');
+  for (const outputRoot of [outputDir, 'dist', 'package-dist']) {
+    if (normalized === outputRoot) return '.';
+    const prefix = `${outputRoot}/`;
+    if (normalized.startsWith(prefix)) return `./${normalized.slice(prefix.length)}`;
+  }
+  return value;
+}
+
+function prepareStageOwnedManifest(value, outputDir) {
+  if (Array.isArray(value)) {
+    return value.map((item) => prepareStageOwnedManifest(item, outputDir));
+  }
+  if (!value || typeof value !== 'object') {
+    return rebaseManifestOutputPathToStage(value, outputDir);
+  }
+
+  const out = {};
+  for (const [key, entryValue] of Object.entries(value)) {
+    if (key === 'files') {
+      out[key] = entryValue;
+      continue;
+    }
+    out[key] = prepareStageOwnedManifest(entryValue, outputDir);
+  }
+  return out;
+}
+
+function toSlashNormalizedRelativePath(from, to) {
+  const value = relative(from, to).replace(/\\/g, '/');
+  return value || '.';
+}
+
+function rebasePkgrollInputPathToStage(inputPath, outputDir) {
+  const normalized = String(inputPath).replace(/\\/g, '/').replace(/^\.\/+/, '');
+  const prefix = `${outputDir}/`;
+  if (!normalized.startsWith(prefix)) {
+    throw new Error(`Pkgroll input is outside the builder-owned output directory: ${inputPath}`);
+  }
+  return normalized.slice(prefix.length);
+}
+
+export function resolvePkgrollCliPath() {
+  return require.resolve('pkgroll/dist/cli.mjs');
 }
 
 function readPkgrollCliKind(pkgrollCliPath, read = readFileSync) {
@@ -81,40 +217,72 @@ function readPkgrollCliKind(pkgrollCliPath, read = readFileSync) {
   return 'node-module';
 }
 
-export function runPkgrollBuild(options = {}) {
+function copyFirstPartyStaticAssets(packageRoot, outputDir) {
+  const sourceDir = join(packageRoot, FIRST_PARTY_STATIC_ASSETS_SOURCE_RELATIVE_PATH);
+  if (!existsSync(sourceDir)) return;
+
+  const distDir = join(
+    packageRoot,
+    outputDir,
+    FIRST_PARTY_STATIC_ASSETS_DIST_RELATIVE_PATH.slice('dist/'.length),
+  );
+  rmSync(distDir, { recursive: true, force: true });
+  cpSync(sourceDir, distDir, { recursive: true });
+}
+
+function runPkgrollBuildInStage(options = {}) {
+  const packageJsonPath = resolve(String(options.packageJsonPath));
+  const packageRoot = dirname(packageJsonPath);
+  const outputDir = resolveRequiredPkgrollOutputDir(options.outputDir);
+  const stagingDir = resolve(packageRoot, outputDir);
+  const sourceDir = resolve(packageRoot, 'src');
   const spawn = options.spawn ?? spawnSync;
   const nodeExecutable = options.nodeExecutable ?? process.execPath;
-  const cwd = options.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const timeoutMs = resolvePkgrollTimeoutMs(env, options.timeoutMs);
-  const packageJsonPath = resolve(String(options.packageJsonPath ?? join(cwd, 'package.json')));
-  const packageRoot = dirname(packageJsonPath);
-  const outputDir = resolveBuildOutputDir(env, options.outputDir);
+  const childEnv = {
+    ...env,
+    NODE_OPTIONS: upsertMaxOldSpaceSize(env.NODE_OPTIONS, DEFAULT_CLI_NODE_HEAP_LIMIT_MB),
+  };
   const read = options.readFileSync ?? readFileSync;
   const pkgrollCliPath = options.pkgrollCliPath ?? resolvePkgrollCliPath();
   const manifest = JSON.parse(read(packageJsonPath, 'utf8'));
-  const inputPaths = collectPkgrollInputPaths(manifest, { outputDir });
+  const buildManifest = prepareRuntimeGenerationManifest(manifest, outputDir);
+  const stageManifest = prepareStageOwnedManifest(buildManifest, outputDir);
+  const stageManifestRaw = `${JSON.stringify(stageManifest, null, 2)}\n`;
+  const inputPaths = collectPkgrollInputPaths(manifest, { outputDir })
+    .map((inputPath) => rebasePkgrollInputPathToStage(inputPath, outputDir));
   if (inputPaths.length === 0) {
     throw new Error('No package entrypoints found for pkgroll build');
   }
-
   if (readPkgrollCliKind(pkgrollCliPath, read) !== 'node-module') {
     throw new Error(
       `Local pkgroll install is invalid at ${pkgrollCliPath}: expected a JavaScript entrypoint but found a shell wrapper. Reinstall dependencies before building apps/cli.`,
     );
   }
-  const pkgrollArgs = [pkgrollCliPath, '--packagejson=false', '--srcdist', `src:${outputDir}`];
+
+  mkdirSync(stagingDir, { recursive: true });
+  const physicalStagingDir = realpathSync.native(stagingDir);
+  const stageManifestPath = join(physicalStagingDir, 'package.json');
+  const srcdist = `${toSlashNormalizedRelativePath(physicalStagingDir, sourceDir)}:.`;
+  const pkgrollArgs = [pkgrollCliPath, '--packagejson=false', '--srcdist', srcdist];
   for (const inputPath of inputPaths) {
     pkgrollArgs.push('--input', inputPath);
   }
 
-  const result = spawn(nodeExecutable, pkgrollArgs, {
-    cwd: packageRoot,
-    stdio: ['ignore', 'inherit', 'inherit'],
-    timeout: timeoutMs,
-  });
-  if (typeof result.status === 'number' && result.status !== 0) {
-    throw new Error(`pkgroll exited with status ${result.status}`);
+  let result;
+  let manifestWritten = false;
+  try {
+    writeFileSync(stageManifestPath, stageManifestRaw, { encoding: 'utf8', flag: 'wx' });
+    manifestWritten = true;
+    result = spawn(nodeExecutable, pkgrollArgs, {
+      cwd: physicalStagingDir,
+      env: childEnv,
+      stdio: ['ignore', 'inherit', 'inherit'],
+      timeout: timeoutMs,
+    });
+  } finally {
+    if (manifestWritten) rmSync(stageManifestPath, { force: true });
   }
   if (result.error) {
     const errorCode = typeof result.error?.code === 'string' ? result.error.code : '';
@@ -123,23 +291,20 @@ export function runPkgrollBuild(options = {}) {
     }
     throw result.error;
   }
+  if (result.signal) {
+    throw new Error(`pkgroll terminated by signal ${result.signal}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`pkgroll exited without success (status=${result.status ?? 'null'})`);
+  }
   copyFirstPartyStaticAssets(packageRoot, outputDir);
 }
 
-function copyFirstPartyStaticAssets(cwd, outputDir) {
-  const sourceDir = join(cwd, FIRST_PARTY_STATIC_ASSETS_SOURCE_RELATIVE_PATH);
-  if (!existsSync(sourceDir)) return;
-
-  const distDir = join(cwd, outputDir, FIRST_PARTY_STATIC_ASSETS_DIST_RELATIVE_PATH.slice('dist/'.length));
-  rmSync(distDir, { recursive: true, force: true });
-  cpSync(sourceDir, distDir, { recursive: true });
-}
-
-const isEntrypoint = (() => {
-  const arg = typeof process.argv?.[1] === 'string' ? process.argv[1] : '';
-  return arg.endsWith('/runPkgrollBuild.mjs') || arg.endsWith('\\runPkgrollBuild.mjs');
-})();
-
-if (isEntrypoint) {
-  runPkgrollBuild();
+export function runPkgrollBuild(options = {}) {
+  const lexicalPackageJsonPath = resolve(String(
+    options.packageJsonPath
+      ?? join(options.cwd ?? process.cwd(), 'package.json'),
+  ));
+  const packageJsonPath = realpathSync.native(lexicalPackageJsonPath);
+  return runPkgrollBuildInStage({ ...options, packageJsonPath });
 }

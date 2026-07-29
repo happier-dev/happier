@@ -7,7 +7,11 @@ export type SimulatorInputLeaseManager = Readonly<{
         holderId: string;
         nowMs: number;
     }>) => Readonly<{ ok: true; lease: MachineLiveStreamControlLeaseV1 } | { ok: false; reasonCode: 'lease_already_held' }>;
-    release: (leaseId: string) => void;
+    release: (input: Readonly<{
+        streamId: string;
+        sourceId: string;
+        leaseId: string;
+    }>) => Readonly<{ ok: true } | { ok: false; reasonCode: 'input_lease_mismatch' }>;
     read: (input: Readonly<{ streamId: string; sourceId: string; nowMs: number }>) => MachineLiveStreamControlLeaseV1 | null;
 }>;
 
@@ -46,10 +50,14 @@ export function createSimulatorInputLeaseManager(input: Readonly<{ ttlMs: number
             leasesBySource.set(keyFor(request.streamId, request.sourceId), lease);
             return { ok: true, lease };
         },
-        release: (leaseId) => {
-            for (const [key, lease] of leasesBySource.entries()) {
-                if (lease.leaseId === leaseId) leasesBySource.delete(key);
+        release: (request) => {
+            const key = keyFor(request.streamId, request.sourceId);
+            const existing = leasesBySource.get(key);
+            if (!existing || existing.leaseId !== request.leaseId) {
+                return { ok: false, reasonCode: 'input_lease_mismatch' };
             }
+            leasesBySource.delete(key);
+            return { ok: true };
         },
         read: (request) => readActive(request.streamId, request.sourceId, request.nowMs),
     };

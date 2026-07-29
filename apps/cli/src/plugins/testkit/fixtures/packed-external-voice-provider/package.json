@@ -1,0 +1,10 @@
+{
+  "name": "happier-plugin-acme-packed-voice",
+  "version": "1.0.0",
+  "type": "module",
+  "keywords": ["happier-plugin"],
+  "files": [".happier-plugin", "dist"],
+  "happier": {
+    "manifest": ".happier-plugin/plugin.json"
+  }
+}

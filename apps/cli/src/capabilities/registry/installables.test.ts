@@ -19,9 +19,11 @@ import type {
 
 import {
   createInstallableCapabilities,
+  createInstallableCapabilitiesFromContributions,
   createInstallableCapabilityRequests,
   type RuntimeInstallableAdapterResolver,
 } from './installables';
+import type { ResolvedInstallableContribution } from '@/plugins/projection/registry/types';
 
 const codexAcpInstallableDescriptor = InstallableDependencyDescriptorSchema.parse({
   id: INSTALLABLE_KEYS.CODEX_ACP,
@@ -213,5 +215,71 @@ describe('installable capability projection', () => {
       { id: 'dep.codex-acp' },
       { id: 'dep.gh' },
     ]);
+  });
+
+  it('exposes a complete V2 managed PyPI source through the user-consented install capability', async () => {
+    const installOrUpgrade = vi.fn(async () => ({ ok: true as const, logPath: '/tmp/localharness.log' }));
+    const contribution = {
+      provenance: 'first_party',
+      source: { kind: 'bundled' },
+      pluginId: 'happier.agent.antigravity',
+      manifestPath: 'bundled:happier.agent.antigravity',
+      manifestDigest: 'sha256:antigravity',
+      daemonEntryPath: '@happier-dev/plugins-antigravity',
+      sourceSpec: {
+        kind: 'bundled',
+        locator: '@happier-dev/plugins-antigravity',
+        trustPolicy: 'local_trusted',
+        installPolicy: 'copy',
+      },
+      definition: {
+        id: 'localharness',
+        title: 'Antigravity localharness',
+        executable: 'localharness',
+        sources: [{
+          kind: 'managedPypiWheelAsset',
+          installId: 'dep.antigravity.localharness',
+          distribution: 'google-antigravity',
+          versionSpecifier: '>=0.1.4,<0.2.0',
+          assetPathByPlatform: {
+            'darwin-arm64': 'google/antigravity/bin/localharness',
+            'linux-x64': 'google/antigravity/bin/localharness',
+            'linux-arm64': 'google/antigravity/bin/localharness',
+            'win32-x64': 'google/antigravity/bin/localharness.exe',
+            'win32-arm64': 'google/antigravity/bin/localharness.exe',
+          },
+          executable: true,
+          installConsent: 'host_managed_required',
+          autoUpdateMode: 'notify',
+        }],
+      },
+    } satisfies ResolvedInstallableContribution;
+
+    const capabilities = await createInstallableCapabilitiesFromContributions({
+      installables: [contribution],
+      getRuntimeInstallableAdapter: async (key, options) => {
+        const descriptor = options?.installablesRegistry?.descriptorsByKey[key]?.descriptor;
+        expect(descriptor).toMatchObject({
+          key: 'dep.antigravity.localharness',
+          consent: {
+            install: 'required',
+            update: 'required',
+          },
+        });
+        return createAdapter({
+          descriptor,
+          installOrUpgrade,
+        });
+      },
+    });
+
+    expect(capabilities.map((capability) => capability.descriptor.id)).toEqual([
+      'dep.antigravity.localharness',
+    ]);
+    await expect(capabilities[0]?.invoke?.({ method: 'install' })).resolves.toEqual({
+      ok: true,
+      result: { logPath: '/tmp/localharness.log' },
+    });
+    expect(installOrUpgrade).toHaveBeenCalledTimes(1);
   });
 });

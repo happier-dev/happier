@@ -12,9 +12,14 @@ import { ApiSessionClient } from "@/api/session/sessionClient";
 import { AgentState } from "@/api/types";
 import { updateAgentStateBestEffort as updateAgentStateBestEffortShared } from "@/api/session/sessionWritesBestEffort";
 import { isToolAllowedForSession, makeToolIdentifier } from './permissionToolIdentifier';
-import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist, seedAllowlistFromCompletedRequests } from './applyPermissionAllowlistUpdates';
+import { applyAllowedToolsToAllowlist, applyUpdatedPermissionsToAllowlist } from './applyPermissionAllowlistUpdates';
 import { recordToolTraceEvent, type ToolTraceProtocol } from '@/agent/tools/trace/toolTrace';
-import type { AccountSettings } from '@happier-dev/protocol';
+import {
+    StructuredQuestionAnswersV1Schema,
+    type AccountSettings,
+    type StructuredQuestionAnswersV1,
+} from '@happier-dev/protocol';
+import { CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE } from '@happier-dev/agents';
 import type {
     PermissionRequestPushSender as PermissionRequestPushSenderFromSettings,
 } from '@/settings/notifications/permissionRequestPush';
@@ -30,6 +35,11 @@ import {
     type PermissionRequestCoordinatorCompletedRequest,
     type PermissionRequestCoordinatorContext,
 } from './permissionRequestCoordinator';
+import {
+    isPermissionRequestOwnedByPlugin,
+    normalizePermissionRequestOwner,
+    type PermissionRequestOwner,
+} from './permissionRequestOwner';
 
 type AgentStateRequestStoreBindableSession = Readonly<{
     bindAgentStateRequestStore?: (store: AgentStateRequestStore) => void;
@@ -54,7 +64,7 @@ export interface PermissionResponse {
      *
      * When present, the agent can complete the request without requiring an additional free-form user message.
      */
-    answers?: Record<string, string>;
+    answers?: StructuredQuestionAnswersV1 | Readonly<Record<string, string>>;
     execPolicyAmendment?: {
         command: string[];
     };
@@ -72,6 +82,7 @@ export interface PendingRequest {
     subagentRef?: unknown;
     sidechainId?: string;
     permissionSuggestions?: readonly unknown[];
+    owner?: PermissionRequestOwner;
     coordinatorManaged?: boolean;
 }
 
@@ -83,7 +94,7 @@ export interface PermissionResult {
     execPolicyAmendment?: {
         command: string[];
     };
-    answers?: Record<string, string>;
+    answers?: StructuredQuestionAnswersV1 | Readonly<Record<string, string>>;
 }
 
 /**
@@ -115,8 +126,9 @@ export type PermissionRespondRpcResult =
 export abstract class BasePermissionHandler {
     protected pendingRequests = new Map<string, PendingRequest>();
     protected session: ApiSessionClient;
-    private isResetting = false;
+    private resetPromise: Promise<void> | null = null;
     private allowedToolIdentifiers = new Set<string>();
+    private readonly allowedToolIdentifiersByOwner = new Map<string, Set<string>>();
     private readonly requestStore: AgentStateRequestStore;
     private readonly requestCoordinator: PermissionRequestCoordinator<PermissionResult>;
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
@@ -199,6 +211,7 @@ export abstract class BasePermissionHandler {
         // Prevent per-session allowlists from leaking across session references.
         // The new session snapshot will re-seed any persisted per-session approvals.
         this.allowedToolIdentifiers.clear();
+        this.allowedToolIdentifiersByOwner.clear();
         this.requestStore.updateSession(newSession);
         this.bindRequestStoreToSession(newSession);
         this.seedAllowedToolsFromAgentState();
@@ -232,6 +245,9 @@ export abstract class BasePermissionHandler {
                         : Array.isArray(pending.permissionSuggestions)
                             ? { permissionSuggestions: pending.permissionSuggestions }
                             : {}),
+                    ...(priorOutstanding?.owner ?? pending.owner
+                        ? { owner: priorOutstanding?.owner ?? pending.owner ?? null }
+                        : {}),
                 });
             } else {
                 this.requestStore.notifyPermissionRequestPushBestEffort({
@@ -254,7 +270,20 @@ export abstract class BasePermissionHandler {
             const snapshot = this.session.getAgentStateSnapshot?.() ?? null;
             const completed = snapshot?.completedRequests;
             if (!completed) return;
-            seedAllowlistFromCompletedRequests(this.allowedToolIdentifiers, completed);
+            const completedRecord = completed && typeof completed === 'object' && !Array.isArray(completed)
+                ? completed as Record<string, unknown>
+                : null;
+            if (!completedRecord) return;
+
+            for (const value of Object.values(completedRecord)) {
+                if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+                const entry = value as Record<string, unknown>;
+                if (entry.status !== 'approved') continue;
+
+                const allowedIdentifiers = this.getAllowedToolIdentifiersForOwner(entry.owner);
+                applyUpdatedPermissionsToAllowlist(allowedIdentifiers, entry.updatedPermissions);
+                applyAllowedToolsToAllowlist(allowedIdentifiers, entry.allowedTools ?? entry.allowTools);
+            }
         } catch (error) {
             logger.debug(`${this.getLogPrefix()} Failed to seed allowlist from agentState`, error);
         }
@@ -305,21 +334,33 @@ export abstract class BasePermissionHandler {
         };
     }
 
-    private applyPermissionResponseAnswers(response: PermissionResponse, result: PermissionResult): void {
-        if (!response.approved) return;
+    private applyPermissionResponseAnswers(response: PermissionResponse, result: PermissionResult): boolean {
+        if (!response.approved || typeof response.answers === 'undefined') return true;
 
         const answersRaw = response.answers;
-        if (!answersRaw || typeof answersRaw !== 'object' || Array.isArray(answersRaw)) return;
+        if (!answersRaw || typeof answersRaw !== 'object' || Array.isArray(answersRaw)) return false;
 
+        const structured = StructuredQuestionAnswersV1Schema.safeParse(answersRaw);
+        if (structured.success) {
+            if (Object.keys(structured.data).length > 0) {
+                result.answers = structured.data;
+            }
+            return true;
+        }
+
+        // Compatibility reader for UI/action clients through the released 0.2.2 preview,
+        // which wrote question -> scalar answer. Remove after that preview is outside the
+        // supported mixed-version window and stored/in-flight requests cannot carry it.
         const normalized = Object.create(null) as Record<string, string>;
         for (const [key, value] of Object.entries(answersRaw)) {
-            if (!key) continue;
-            if (typeof value === 'string') normalized[key] = value;
+            if (!key || typeof value !== 'string') return false;
+            normalized[key] = value;
         }
 
         if (Object.keys(normalized).length > 0) {
             result.answers = normalized;
         }
+        return true;
     }
 
     private applyPermissionResponseSideEffects(params: Readonly<{
@@ -328,15 +369,17 @@ export abstract class BasePermissionHandler {
         responseAllowedTools: readonly string[] | undefined;
         updatedPermissions: unknown;
         requestSource: Readonly<{ toolName: string; input: unknown }>;
+        owner?: PermissionRequestOwner;
         debugMessage: string;
     }>): void {
         const { response, result, responseAllowedTools, updatedPermissions, requestSource } = params;
+        const allowedIdentifiers = this.getAllowedToolIdentifiersForOwner(params.owner);
 
         if (response.approved) {
-            applyUpdatedPermissionsToAllowlist(this.allowedToolIdentifiers, updatedPermissions);
-            applyAllowedToolsToAllowlist(this.allowedToolIdentifiers, responseAllowedTools);
+            applyUpdatedPermissionsToAllowlist(allowedIdentifiers, updatedPermissions);
+            applyAllowedToolsToAllowlist(allowedIdentifiers, responseAllowedTools);
             if (!Array.isArray(responseAllowedTools) && result.decision === 'approved_for_session') {
-                this.allowedToolIdentifiers.add(makeToolIdentifier(requestSource.toolName, requestSource.input));
+                allowedIdentifiers.add(makeToolIdentifier(requestSource.toolName, requestSource.input));
             }
         }
 
@@ -377,7 +420,7 @@ export abstract class BasePermissionHandler {
      */
     protected setupRpcHandler(): void {
         const handlePermissionResponse = async (response: PermissionResponse): Promise<PermissionRespondRpcResult> => {
-            const outcome = this.handleIncomingPermissionResponse(response);
+            const outcome = await this.handleIncomingPermissionResponse(response);
             if (outcome.status === 'not_found') {
                 return {
                     ok: false,
@@ -406,11 +449,11 @@ export abstract class BasePermissionHandler {
      * to its pending coordinator request. Returns a typed `not_found` for unknown explicit ids so the
      * caller surfaces a typed failure instead of fabricating a success (gap 28/29).
      */
-    respondToPendingPermission(response: PermissionResponse): PermissionResponseRoutingResult {
+    respondToPendingPermission(response: PermissionResponse): Promise<PermissionResponseRoutingResult> {
         return this.handleIncomingPermissionResponse(response);
     }
 
-    private handleIncomingPermissionResponse(response: PermissionResponse): PermissionResponseRoutingResult {
+    private async handleIncomingPermissionResponse(response: PermissionResponse): Promise<PermissionResponseRoutingResult> {
         const legacyPending = this.pendingRequests.get(response.id);
         const context = this.requestCoordinator.getResponseContext(response.id)
             ?? (legacyPending
@@ -419,6 +462,7 @@ export abstract class BasePermissionHandler {
                     toolName: legacyPending.toolName,
                     toolInput: legacyPending.input,
                     createdAt: Date.now(),
+                    ...(legacyPending.owner ? { owner: legacyPending.owner } : {}),
                     sourceLocalId: null,
                     correlation: 'record' as const,
                     status: 'live' as const,
@@ -431,39 +475,29 @@ export abstract class BasePermissionHandler {
             return { status: 'not_found' };
         }
 
-        this.handlePermissionResponseWithContext({
+        const completed = await this.handlePermissionResponseWithContext({
             response,
             context,
             legacyPending,
         });
-        return { status: 'resolved' };
+        return completed ? { status: 'resolved' } : { status: 'not_found' };
     }
 
-    private handlePermissionResponseWithContext(params: Readonly<{
+    private async handlePermissionResponseWithContext(params: Readonly<{
         response: PermissionResponse;
         context: PermissionRequestCoordinatorContext;
         legacyPending: PendingRequest | undefined;
-    }>): void {
+    }>): Promise<boolean> {
         const { response, context, legacyPending } = params;
         const responseAllowedTools = response.allowedTools ?? response.allowTools;
         const updatedPermissions = response.updatedPermissions;
         const result = this.buildPermissionResult(response);
-        this.applyPermissionResponseAnswers(response, result);
+        if (!this.applyPermissionResponseAnswers(response, result)) {
+            throw new Error('Invalid structured question answers');
+        }
 
         const requestSource = { toolName: context.toolName, input: context.toolInput };
-        this.applyPermissionResponseSideEffects({
-            response,
-            result,
-            responseAllowedTools,
-            updatedPermissions,
-            requestSource,
-            debugMessage:
-                context.correlation === 'agent_state'
-                    ? 'Permission response received without pending request; finalized agentState best-effort'
-                    : `Permission ${response.approved ? 'approved' : 'denied'} for ${context.toolName}`,
-        });
-
-        const completed = this.completePendingPermissionRequest(
+        const completed = await this.completePendingPermissionRequest(
             response.id,
             context,
             result,
@@ -476,6 +510,24 @@ export abstract class BasePermissionHandler {
             ),
         );
 
+        if (!completed && (!legacyPending || legacyPending.coordinatorManaged)) {
+            logger.debug(`${this.getLogPrefix()} Permission response did not complete any pending request`);
+            return false;
+        }
+
+        this.applyPermissionResponseSideEffects({
+            response,
+            result,
+            responseAllowedTools,
+            updatedPermissions,
+            requestSource,
+            ...(context.owner ? { owner: context.owner } : {}),
+            debugMessage:
+                context.correlation === 'agent_state'
+                    ? 'Permission response received without pending request; finalized agentState best-effort'
+                    : `Permission ${response.approved ? 'approved' : 'denied'} for ${context.toolName}`,
+        });
+
         if (!legacyPending?.coordinatorManaged && this.pendingRequests.has(response.id)) {
             this.pendingRequests.delete(response.id);
             legacyPending?.resolve(result);
@@ -485,16 +537,14 @@ export abstract class BasePermissionHandler {
             this.autoApproveNowAllowedPendingRequests(response.id);
         }
 
-        if (!completed && !legacyPending) {
-            logger.debug(`${this.getLogPrefix()} Permission response did not complete any pending request`);
-        }
+        return completed || Boolean(legacyPending && !legacyPending.coordinatorManaged);
     }
 
     private autoApproveNowAllowedPendingRequests(excludePermissionId: string): void {
         for (const [permissionId, pending] of this.pendingRequests.entries()) {
             if (permissionId === excludePermissionId) continue;
             if (resolveAgentRequestKind(pending.toolName) !== 'permission') continue;
-            if (!this.isAllowedForSession(pending.toolName, pending.input)) continue;
+            if (!this.isAllowedForSessionForOwner(pending.toolName, pending.input, pending.owner)) continue;
 
             this.resolvePendingPermissionRequest(permissionId, { decision: 'approved' }, {
                 status: 'approved',
@@ -504,18 +554,21 @@ export abstract class BasePermissionHandler {
     }
 
     protected isAllowedForSession(toolName: string, input: unknown): boolean {
-        return isToolAllowedForSession(this.allowedToolIdentifiers, toolName, input);
+        return this.isAllowedForSessionForOwner(toolName, input, null);
     }
 
     protected recordAutoDecision(
         toolCallId: string,
         toolName: string,
         input: unknown,
-        decision: PermissionResult['decision']
+        decision: PermissionResult['decision'],
+        options?: Readonly<{ owner?: PermissionRequestOwner | null; source?: string | null }>,
     ): void {
         const allowedTools = decision === 'approved_for_session'
             ? [makeToolIdentifier(toolName, input)]
             : undefined;
+        const owner = normalizePermissionRequestOwner(options?.owner);
+        const source = typeof options?.source === 'string' ? options.source.trim() : '';
         this.requestStore.recordCompletedRequest({
             requestId: toolCallId,
             toolName,
@@ -523,21 +576,61 @@ export abstract class BasePermissionHandler {
             status: decision === 'denied' || decision === 'abort' ? 'denied' : 'approved',
             decision,
             allowedTools,
+            ...(source ? { source } : {}),
+            ...(owner ? { owner } : {}),
         });
     }
 
-    protected requestPermissionDecision(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
+    protected isAllowedForSessionForOwner(
+        toolName: string,
+        input: unknown,
+        owner: PermissionRequestOwner | null | undefined,
+    ): boolean {
+        const normalizedOwner = normalizePermissionRequestOwner(owner);
+        const allowedIdentifiers = normalizedOwner
+            ? this.allowedToolIdentifiersByOwner.get(permissionRequestOwnerAllowlistKey(normalizedOwner)) ?? []
+            : this.allowedToolIdentifiers;
+        return isToolAllowedForSession(allowedIdentifiers, toolName, input);
+    }
+
+    private getAllowedToolIdentifiersForOwner(owner: unknown): Set<string> {
+        const normalizedOwner = normalizePermissionRequestOwner(owner);
+        if (!normalizedOwner) {
+            return this.allowedToolIdentifiers;
+        }
+        const key = permissionRequestOwnerAllowlistKey(normalizedOwner);
+        let allowedIdentifiers = this.allowedToolIdentifiersByOwner.get(key);
+        if (!allowedIdentifiers) {
+            allowedIdentifiers = new Set<string>();
+            this.allowedToolIdentifiersByOwner.set(key, allowedIdentifiers);
+        }
+        return allowedIdentifiers;
+    }
+
+    protected requestPermissionDecision(
+        toolCallId: string,
+        toolName: string,
+        input: unknown,
+        options?: Readonly<{
+            owner?: PermissionRequestOwner | null;
+            source?: string | null;
+            signal?: AbortSignal;
+        }>,
+    ): Promise<PermissionResult> {
+        const source = typeof options?.source === 'string' ? options.source.trim() : '';
         const hasExistingContext = this.requestCoordinator.getResponseContext(toolCallId) !== null;
         if (!hasExistingContext) {
-            this.recordPermissionRequestTrace(toolCallId, toolName, input);
+            this.recordPermissionRequestTrace(toolCallId, toolName, input, source);
         }
 
+        const owner = normalizePermissionRequestOwner(options?.owner);
         let ownsPendingRecord = false;
         let pendingRecord = this.pendingRequests.get(toolCallId);
         if (!pendingRecord) {
             pendingRecord = {
                 toolName,
                 input,
+                ...(owner ? { owner } : {}),
                 coordinatorManaged: true,
                 resolve: (value) => {
                     this.resolvePendingPermissionRequest(toolCallId, value);
@@ -555,7 +648,9 @@ export abstract class BasePermissionHandler {
             toolName,
             toolInput: input,
             createdAt: Date.now(),
-        });
+            ...(source ? { source } : {}),
+            ...(owner ? { owner } : {}),
+        }, { signal: options?.signal });
 
         return pending.finally(() => {
             if (ownsPendingRecord && this.pendingRequests.get(toolCallId) === pendingRecord) {
@@ -577,7 +672,12 @@ export abstract class BasePermissionHandler {
         });
     }
 
-    private recordPermissionRequestTrace(toolCallId: string, toolName: string, input: unknown): void {
+    private recordPermissionRequestTrace(
+        toolCallId: string,
+        toolName: string,
+        input: unknown,
+        source?: string | null,
+    ): void {
         if (this.toolTrace) {
             recordToolTraceEvent({
                 direction: 'outbound',
@@ -590,7 +690,7 @@ export abstract class BasePermissionHandler {
                     permissionId: toolCallId,
                     toolName,
                     description: `${toolName} permission`,
-                    options: { input },
+                    options: { input: resolvePermissionRequestTraceInput({ input, source }) },
                 },
             });
         }
@@ -609,7 +709,7 @@ export abstract class BasePermissionHandler {
             return;
         }
 
-        this.completePendingPermissionRequest(
+        void this.completePendingPermissionRequest(
             requestId,
             context,
             result,
@@ -617,7 +717,9 @@ export abstract class BasePermissionHandler {
                 status: result.decision === 'denied' || result.decision === 'abort' ? 'denied' : 'approved',
                 decision: result.decision,
             },
-        );
+        ).catch((error) => {
+            logger.debug(`${this.getLogPrefix()} Failed to complete permission request (non-fatal)`, error);
+        });
     }
 
     private rejectPendingPermissionRequest(requestId: string, error: Error): void {
@@ -625,14 +727,14 @@ export abstract class BasePermissionHandler {
         this.requestCoordinator.cancelRequest(requestId, error.message);
     }
 
-    private completePendingPermissionRequest(
+    private async completePendingPermissionRequest(
         requestId: string,
         context: PermissionRequestCoordinatorContext,
         result: PermissionResult,
         completedRequest: PermissionRequestCoordinatorCompletedRequest,
-    ): boolean {
+    ): Promise<boolean> {
         const pending = this.pendingRequests.get(requestId);
-        const completed = this.requestCoordinator.completeResponse({
+        const completed = await this.requestCoordinator.completeResponse({
             context,
             completion: {
                 result,
@@ -650,10 +752,10 @@ export abstract class BasePermissionHandler {
         return completed;
     }
 
-    private cancelPendingRequests(reason: string): void {
+    private async cancelPendingRequests(reason: string): Promise<void> {
         const pendingSnapshot = Array.from(this.pendingRequests.values());
         this.pendingRequests.clear();
-        this.requestCoordinator.cancelAll(reason);
+        const cancellation = this.requestCoordinator.cancelAll(reason);
 
         for (const pending of pendingSnapshot) {
             if (pending.coordinatorManaged) continue;
@@ -663,10 +765,30 @@ export abstract class BasePermissionHandler {
                 logger.debug(`${this.getLogPrefix()} Error rejecting legacy pending request:`, err);
             }
         }
+        await cancellation;
+    }
+
+    async cancelByPlugin(pluginId: string, reason: string = 'plugin_deactivated'): Promise<void> {
+        const normalizedPluginId = pluginId.trim();
+        if (!normalizedPluginId) return;
+
+        const legacyPendingSnapshot = Array.from(this.pendingRequests.entries()).filter(
+            ([, pending]) => !pending.coordinatorManaged && isPermissionRequestOwnedByPlugin(pending.owner, normalizedPluginId),
+        );
+        await this.requestCoordinator.cancelByPlugin(normalizedPluginId, reason);
+
+        for (const [requestId, pending] of legacyPendingSnapshot) {
+            this.pendingRequests.delete(requestId);
+            try {
+                pending.reject(new Error(reason));
+            } catch (err) {
+                logger.debug(`${this.getLogPrefix()} Error rejecting legacy plugin-owned request:`, err);
+            }
+        }
     }
 
     async abortPendingRequestsAndFlush(reason: string = 'Aborted by user'): Promise<void> {
-        this.cancelPendingRequests(reason);
+        await this.cancelPendingRequests(reason);
         try {
             await this.session.flush?.();
         } catch (error) {
@@ -678,22 +800,73 @@ export abstract class BasePermissionHandler {
      * Reset state for new sessions.
      * This method is idempotent - safe to call multiple times.
      */
-    reset(): void {
-        // Guard against re-entrant/concurrent resets
-        if (this.isResetting) {
-            logger.debug(`${this.getLogPrefix()} Reset already in progress, skipping`);
-            return;
+    reset(): Promise<void> {
+        if (this.resetPromise) {
+            logger.debug(`${this.getLogPrefix()} Reset already in progress, awaiting active cleanup`);
+            return this.resetPromise;
         }
-        this.isResetting = true;
+        const resetPromise = this.performReset();
+        this.resetPromise = resetPromise;
+        return resetPromise;
+    }
 
+    private async performReset(): Promise<void> {
         try {
-            this.cancelPendingRequests('Session reset');
+            await this.cancelPendingRequests('Session reset');
 
             this.allowedToolIdentifiers.clear();
+            this.allowedToolIdentifiersByOwner.clear();
             this.requestStore.dispose();
             logger.debug(`${this.getLogPrefix()} Permission handler reset`);
         } finally {
-            this.isResetting = false;
+            this.resetPromise = null;
         }
     }
+}
+
+function permissionRequestOwnerAllowlistKey(owner: PermissionRequestOwner): string {
+    return `${owner.pluginId}\u0000${owner.runtimeId ?? ''}`;
+}
+
+function resolvePermissionRequestTraceInput(params: Readonly<{
+    input: unknown;
+    source?: string | null;
+}>): unknown {
+    if (params.source !== CLAUDE_UNIFIED_TERMINAL_DIALOG_CHOICE_REQUEST_SOURCE) {
+        return params.input;
+    }
+
+    const input = readPlainRecord(params.input);
+    const dialogInput = readPlainRecord(input?.happierDialog);
+    const questions = Array.isArray(input?.questions) ? input.questions : [];
+    const optionCount = questions.reduce((count, question) => {
+        const questionRecord = readPlainRecord(question);
+        return count + (Array.isArray(questionRecord?.options) ? questionRecord.options.length : 0);
+    }, 0);
+    const dialog: Record<string, string> = {};
+    if (dialogInput?.kind === 'recognized' || dialogInput?.kind === 'unrecognized') {
+        dialog.kind = dialogInput.kind;
+    }
+    if (
+        typeof dialogInput?.dialogId === 'string'
+        && /^[a-z0-9_]{1,80}$/.test(dialogInput.dialogId)
+    ) {
+        dialog.dialogId = dialogInput.dialogId;
+    }
+    if (dialogInput?.mode === 'generic' || dialogInput?.mode === 'notice') {
+        dialog.mode = dialogInput.mode;
+    }
+
+    return {
+        redacted: true,
+        ...(Object.keys(dialog).length > 0 ? { dialog } : {}),
+        questionCount: questions.length,
+        optionCount,
+    };
+}
+
+function readPlainRecord(value: unknown): Record<string, unknown> | null {
+    return value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
 }

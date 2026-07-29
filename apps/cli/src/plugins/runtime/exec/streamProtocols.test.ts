@@ -2,11 +2,12 @@ import { PassThrough } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import type { ExecProcessHandleV1 } from '@happier-dev/plugin-sdk';
+import type { ExecProcessHandleV1 } from './privateContract';
 
 import { PluginExecClientError } from './errors';
 import { createFramedBytesProcessClient } from './framedBytes';
 import { createJsonStreamProcessClient } from './jsonStream';
+import { encodeContentLengthFrame } from './contentLengthFraming';
 
 function createInMemoryProcess(writes: Array<string | Uint8Array>): ExecProcessHandleV1 {
     return {
@@ -21,6 +22,49 @@ function createInMemoryProcess(writes: Array<string | Uint8Array>): ExecProcessH
 }
 
 describe('A.13p.1 stream protocol clients', () => {
+    it('reports callback queue facts from real JSON stream delivery', async () => {
+        const stdout = new PassThrough();
+        const samples: Array<{
+            family: 'plugin-protocol-callbacks';
+            queuedItems: number;
+            queuedBytes: number;
+            backpressured: boolean;
+        }> = [];
+        let release!: () => void;
+        const blocked = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        let delivered!: () => void;
+        const delivery = new Promise<void>((resolve) => {
+            delivered = resolve;
+        });
+        const protocol = createJsonStreamProcessClient({
+            process: createInMemoryProcess([]),
+            stdout,
+            write: async () => undefined,
+            recordRuntimeLimitMeasurement: (sample) => {
+                if (sample.family === 'plugin-protocol-callbacks') samples.push(sample);
+            },
+        });
+        protocol.client.subscribe(async () => {
+            await blocked;
+            delivered();
+        });
+        const encoded = JSON.stringify({ measured: true });
+
+        stdout.write(`${encoded}\n`);
+
+        await expect.poll(() => samples).toEqual([{
+            family: 'plugin-protocol-callbacks',
+            queuedItems: 1,
+            queuedBytes: Buffer.byteLength(encoded),
+            backpressured: false,
+        }]);
+        release();
+        await delivery;
+        protocol.dispose(new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'disposed'));
+    });
+
     it('rejects invalid JSON stream records with a typed protocol error', async () => {
         const stdout = new PassThrough();
         const writes: Array<string | Uint8Array> = [];
@@ -58,7 +102,7 @@ describe('A.13p.1 stream protocol clients', () => {
         });
     });
 
-    it('rejects non-serializable JSON stream writes with a typed protocol error', async () => {
+    it('classifies non-serializable JSON stream writes as rejected before write', async () => {
         const stdout = new PassThrough();
         const writes: Array<string | Uint8Array> = [];
         const protocol = createJsonStreamProcessClient({
@@ -71,14 +115,17 @@ describe('A.13p.1 stream protocol clients', () => {
         const record: Record<string, unknown> = {};
         record.self = record;
 
-        await expect(protocol.client.writeRecord(record)).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+        await expect(protocol.client.writeRecord(record)).resolves.toMatchObject({
+            kind: 'rejected_before_write',
+            error: {
+                code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+            },
         });
         expect(writes).toEqual([]);
         protocol.dispose(new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'disposed'));
     });
 
-    it('rejects JSON stream writes after a clean close without writing stdin', async () => {
+    it('classifies JSON stream writes after a clean close as rejected before write', async () => {
         const stdout = new PassThrough();
         const writes: Array<string | Uint8Array> = [];
         const protocol = createJsonStreamProcessClient({
@@ -92,13 +139,16 @@ describe('A.13p.1 stream protocol clients', () => {
         stdout.end();
 
         await expect(protocol.client.closed).resolves.toBeUndefined();
-        await expect(protocol.client.writeRecord({ afterClose: true })).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_CLIENT_DISPOSED',
+        await expect(protocol.client.writeRecord({ afterClose: true })).resolves.toMatchObject({
+            kind: 'rejected_before_write',
+            error: {
+                code: 'PLUGIN_EXEC_CLIENT_DISPOSED',
+            },
         });
         expect(writes).toEqual([]);
     });
 
-    it('rejects JSON stream writes with an already-aborted signal without writing stdin', async () => {
+    it('classifies already-aborted JSON stream writes as rejected before write', async () => {
         const stdout = new PassThrough();
         const writes: Array<string | Uint8Array> = [];
         const protocol = createJsonStreamProcessClient({
@@ -111,10 +161,31 @@ describe('A.13p.1 stream protocol clients', () => {
 
         await expect(
             protocol.client.writeRecord({ aborted: true }, { signal: AbortSignal.abort() }),
-        ).rejects.toMatchObject({
-            code: 'PLUGIN_EXEC_CLIENT_ABORTED',
+        ).resolves.toMatchObject({
+            kind: 'rejected_before_write',
+            error: {
+                code: 'PLUGIN_EXEC_CLIENT_ABORTED',
+            },
         });
         expect(writes).toEqual([]);
+        protocol.dispose(new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'disposed'));
+    });
+
+    it('classifies a rejected process write as write attempted', async () => {
+        const stdout = new PassThrough();
+        const writeFailure = new Error('process writer result is unknowable');
+        const protocol = createJsonStreamProcessClient({
+            process: createInMemoryProcess([]),
+            stdout,
+            write: async () => {
+                throw writeFailure;
+            },
+        });
+
+        await expect(protocol.client.writeRecord({ attempted: true })).resolves.toEqual({
+            kind: 'write_may_have_occurred',
+            error: writeFailure,
+        });
         protocol.dispose(new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'disposed'));
     });
 
@@ -141,6 +212,32 @@ describe('A.13p.1 stream protocol clients', () => {
             [0, 255, 13],
             [],
         ]);
+        protocol.dispose(new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'disposed'));
+    });
+
+    it('reads and writes fragmented content-length byte frames', async () => {
+        const stdout = new PassThrough();
+        const writes: Array<string | Uint8Array> = [];
+        const protocol = createFramedBytesProcessClient({
+            process: createInMemoryProcess(writes),
+            stdout,
+            framing: 'contentLength',
+            maxFrameBytes: 4,
+            write: async (input) => {
+                writes.push(input);
+            },
+        });
+        const frames: number[][] = [];
+        protocol.client.subscribe((frame) => {
+            frames.push([...frame]);
+        });
+        const encoded = encodeContentLengthFrame(new Uint8Array([0, 255, 2, 3]));
+
+        stdout.write(encoded.subarray(0, 8));
+        stdout.write(encoded.subarray(8));
+        await expect.poll(() => frames).toEqual([[0, 255, 2, 3]]);
+        await protocol.client.writeFrame(new Uint8Array([4]));
+        expect(Buffer.from(writes[0] as Uint8Array).toString('ascii')).toMatch(/^Content-Length: 1\r\n\r\n/u);
         protocol.dispose(new PluginExecClientError('PLUGIN_EXEC_CLIENT_DISPOSED', 'disposed'));
     });
 

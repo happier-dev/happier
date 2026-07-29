@@ -1,3 +1,5 @@
+import type { SupportedSessionMediaMimeType } from './mime';
+
 export type SessionMediaIngestionSource =
   | Readonly<{
       kind: 'base64';
@@ -29,7 +31,7 @@ export type SessionMediaOrigin = Readonly<{
   agentId?: string;
   toolCallId?: string;
   generationId?: string;
-  providerEventId?: string;
+  agentEventId?: string;
   providerFileId?: string;
 }>;
 
@@ -37,8 +39,8 @@ export type SessionMediaItemV1 = Readonly<{
   id: string;
   role: 'input' | 'output';
   category: 'attachment' | 'generated' | 'tool-artifact';
-  mediaKind: 'image';
-  mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif';
+  mediaKind: 'image' | 'video';
+  mimeType: SupportedSessionMediaMimeType;
   name: string;
   path: string;
   sizeBytes: number;

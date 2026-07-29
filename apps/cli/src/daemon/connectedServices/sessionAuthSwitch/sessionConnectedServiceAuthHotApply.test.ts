@@ -143,6 +143,60 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     });
   });
 
+  it('preserves the complete provider-remeasured generation application proof', async () => {
+    const credentialRevision = 'csr_abcdefghijklmnopqrstuv';
+    const adapter = {
+      classifyRuntimeAuthFailure: () => null,
+      materializeActiveProfile: async () => ({}),
+      canHotApply: () => ({ supported: true }),
+      hotApply: async () => ({
+        applied: true,
+        verification: {
+          status: 'verified',
+          sharedAuthSurfaceId: 'group-1',
+          proofStrength: 'exact',
+          source: 'claude_native_credentials',
+          credentialRevision,
+          credentialFingerprint: 'fingerprint-1',
+          generationApplication: {
+            serviceId: 'claude-subscription',
+            groupId: 'group-1',
+            profileId: 'profile-1',
+            generation: 7,
+            credentialRevision,
+            credentialFingerprint: 'fingerprint-1',
+          },
+        },
+      }),
+      recoverAfterRuntimeAuthSwitch: async () => ({ status: 'resumed' }),
+      probeQuota: async () => ({}),
+      refreshActiveProfile: async () => ({}),
+    } satisfies ConnectedServiceProviderRuntimeAuthAdapter;
+    const apply = createSessionConnectedServiceAuthHotApply({ resolveRuntimeAuthAdapter: async () => adapter });
+
+    await expect(apply({
+      tracked: {
+        startedBy: 'daemon', happySessionId: 'sess_1', pid: 123,
+        spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } },
+      },
+      normalizedBindings: {
+        v: 1,
+        bindingsByServiceId: {
+          'claude-subscription': { source: 'connected', selection: 'group', groupId: 'group-1', profileId: 'profile-1' },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      verificationByServiceId: {
+        'claude-subscription': {
+          credentialRevision,
+          credentialFingerprint: 'fingerprint-1',
+          generationApplication: { generation: 7, credentialRevision, credentialFingerprint: 'fingerprint-1' },
+        },
+      },
+    });
+  });
+
   it('does not accept exact hot-apply proof without identity material', async () => {
     const adapter = {
       classifyRuntimeAuthFailure: () => null,

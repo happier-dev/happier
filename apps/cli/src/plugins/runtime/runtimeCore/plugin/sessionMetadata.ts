@@ -6,7 +6,6 @@ import {
     type RuntimeTurnOperations,
     type RuntimeTurnPromptMeta,
     type RuntimeTurnSessionIdentity,
-    type RuntimeTurnStartOrLoadOptions,
     type RuntimePublicationEvent,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
 import { normalizePublishedRuntimeFacetsV1 } from '@/agent/runtime/facets/runtimeFacetsPublication';
@@ -46,16 +45,16 @@ function buildGenericPluginRuntimeDescriptor(backend: ResolvedAgentRuntimeContri
 
     return {
         v: 1,
-        providerId: backend.agentId,
-        provider: {
+        agentId: backend.agentId,
+        agent: {
             backendMode: runtimeKind,
-            providerExtra: {
+            agentExtra: {
                 owner: 'happier',
                 schemaId: 'happier.pluginRuntimeDescriptorExtra',
                 v: 1,
                 runtimeHandle: {
                     backendId: backend.id,
-                    providerId: backend.agentId,
+                    agentId: backend.agentId,
                     provenance: backend.provenance,
                     source: backend.source,
                 },
@@ -111,9 +110,6 @@ export function decorateRuntimeTurnOperationsWithMetadata(params: Readonly<{
         beginTurnLifecycle() {
             runtime.beginTurnLifecycle();
         },
-        async startOrLoadSession(opts?: RuntimeTurnStartOrLoadOptions) {
-            await runtime.startOrLoadSession(opts);
-        },
         async sendTurnPrompt(prompt: string, meta?: RuntimeTurnPromptMeta) {
             await runtime.sendTurnPrompt(prompt, meta);
         },
@@ -147,6 +143,13 @@ export function decorateRuntimeTurnOperationsWithMetadata(params: Readonly<{
                 },
             }
             : {}),
+        ...(runtime.setOnPromptDeliveryOutcome
+            ? {
+                setOnPromptDeliveryOutcome(handler: Parameters<NonNullable<typeof runtime.setOnPromptDeliveryOutcome>>[0]) {
+                    runtime.setOnPromptDeliveryOutcome?.(handler);
+                },
+            }
+            : {}),
         ...(runtime.setOnPromptTerminallyRejectedBeforeProvider
             ? {
                 setOnPromptTerminallyRejectedBeforeProvider(
@@ -156,17 +159,19 @@ export function decorateRuntimeTurnOperationsWithMetadata(params: Readonly<{
                 },
             }
             : {}),
-        ...(runtime.setOnUndeliverablePrompts
-            ? {
-                setOnUndeliverablePrompts(handler: Parameters<NonNullable<typeof runtime.setOnUndeliverablePrompts>>[0]) {
-                    runtime.setOnUndeliverablePrompts?.(handler);
-                },
-            }
-            : {}),
         ...(runtime.clearTerminalComposer
             ? {
                 clearTerminalComposer(request: Parameters<NonNullable<typeof runtime.clearTerminalComposer>>[0]) {
                     return runtime.clearTerminalComposer?.(request);
+                },
+            }
+            : {}),
+        ...(runtime.interruptPendingInputAndRun
+            ? {
+                interruptPendingInputAndRun(
+                    request: Parameters<NonNullable<typeof runtime.interruptPendingInputAndRun>>[0],
+                ) {
+                    return runtime.interruptPendingInputAndRun?.(request);
                 },
             }
             : {}),
@@ -201,8 +206,8 @@ export function decorateRuntimeTurnOperationsWithMetadata(params: Readonly<{
         async updateSessionRuntimeConfig(update: RuntimeTurnConfigUpdate) {
             await runtime.updateSessionRuntimeConfig(update);
         },
-        async resetOrDisposeRuntime() {
-            await runtime.resetOrDisposeRuntime();
+        async resetOrDisposeRuntime(reason, nextSessionOpenIntent) {
+            await runtime.resetOrDisposeRuntime(reason, nextSessionOpenIntent);
         },
     });
 }

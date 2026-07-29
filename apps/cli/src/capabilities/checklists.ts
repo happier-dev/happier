@@ -1,6 +1,10 @@
 import { AGENTS } from '@/agent/catalog/registry';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
+import {
+    BUILT_IN_INSTALLABLES_REGISTRY,
+    type InstallablesRegistry,
+} from '@happier-dev/protocol/installables';
 
 import { CHECKLIST_IDS, resumeChecklistId, type ChecklistId } from './checklistIds';
 import type { CapabilityDetectRequest } from './types';
@@ -45,9 +49,11 @@ const resumeChecklistEntries = CATALOG_AGENT_IDS.reduce<Record<`resume.${Catalog
     {} as Record<`resume.${CatalogAgentId}`, CapabilityDetectRequest[]>,
 );
 
-function buildChecklists(): Record<ChecklistId, CapabilityDetectRequest[]> {
+export function createCapabilityChecklists(
+    installablesRegistry: Pick<InstallablesRegistry, 'descriptors'> = BUILT_IN_INSTALLABLES_REGISTRY,
+): Record<ChecklistId, CapabilityDetectRequest[]> {
     const cliAgentRequests = createCliAgentRequests();
-    const installableDependencyRequests = createInstallableCapabilityRequests();
+    const installableDependencyRequests = createInstallableCapabilityRequests(installablesRegistry);
     const baseChecklists = {
         [CHECKLIST_IDS.NEW_SESSION]: [
             ...cliAgentRequests,
@@ -70,7 +76,7 @@ function buildChecklists(): Record<ChecklistId, CapabilityDetectRequest[]> {
 
 function resolveChecklists(): Record<ChecklistId, CapabilityDetectRequest[]> {
     if (cachedChecklists) return cachedChecklists;
-    cachedChecklists = buildChecklists();
+    cachedChecklists = createCapabilityChecklists();
     return cachedChecklists;
 }
 

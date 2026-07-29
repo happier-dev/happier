@@ -29,21 +29,21 @@ export function enqueueExecutionRunMarkerWrite(args: Readonly<{
 export async function writeExecutionRunActivityMarker(args: Readonly<{
   runId: string;
   nowMs: number;
-  opts?: Readonly<{ force?: boolean }>;
+  opts?: Readonly<{ force?: boolean; required?: boolean }>;
   runs: Map<string, ExecutionRunState>;
   controllers: Map<string, ExecutionRunController>;
   enqueueMarkerWrite: (runId: string, write: () => Promise<void>) => Promise<void>;
 }>): Promise<void> {
   const run = args.runs.get(args.runId);
   const ctrl = args.controllers.get(args.runId);
-  if (!run || !ctrl) return;
+  if (!run || (!ctrl && args.opts?.force !== true)) return;
   if (run.status !== 'running') return;
 
   // Avoid noisy disk writes when models stream deltas or long-lived chats are active.
   // This is best-effort telemetry for machine-wide visibility only.
   const throttleMs = 1_000;
-  if (args.opts?.force !== true && args.nowMs - ctrl.lastMarkerWriteAtMs < throttleMs) return;
-  ctrl.lastMarkerWriteAtMs = args.nowMs;
+  if (ctrl && args.opts?.force !== true && args.nowMs - ctrl.lastMarkerWriteAtMs < throttleMs) return;
+  if (ctrl) ctrl.lastMarkerWriteAtMs = args.nowMs;
 
   const markerPayload = {
     pid: process.pid,
@@ -64,6 +64,9 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
     lastActivityAtMs: args.nowMs,
     ...(typeof run.summary === 'string' && run.summary.trim().length > 0 ? { summary: run.summary } : {}),
     ...(run.error?.code ? { errorCode: run.error.code } : {}),
+    ...(run.launch?.connectedServicesRegistration
+      ? { executionRunConnectedServicesLaunchV1: run.launch.connectedServicesRegistration }
+      : {}),
     resumeHandle: (() => {
       const providerSessionId = readBackendResumableChildSessionId(args.controllers.get(args.runId) ?? null);
       if (typeof providerSessionId === 'string' && providerSessionId.trim().length > 0) {
@@ -76,5 +79,10 @@ export async function writeExecutionRunActivityMarker(args: Readonly<{
         : null;
     })(),
   } as const;
-  await args.enqueueMarkerWrite(args.runId, () => writeExecutionRunMarker(markerPayload)).catch(() => {});
+  const write = args.enqueueMarkerWrite(args.runId, () => writeExecutionRunMarker(markerPayload));
+  if (args.opts?.required === true) {
+    await write;
+    return;
+  }
+  await write.catch(() => {});
 }

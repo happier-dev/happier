@@ -1290,6 +1290,171 @@ describe('runDaemonServiceCliCommand', () => {
     });
   });
 
+  it('restarts a drifted linux service on start so the running default-following service adopts the active relay', async () => {
+    await withTempDir('happier-service-start-drifted-active-unit-', async (homeDir) => {
+      const spawnedCommands: Array<{ command: string; args: readonly string[] }> = [];
+      const happierHomeDir = `${homeDir}/.happier`;
+      let expectedServiceLabel = '';
+      let expectedCliVersion = '';
+      let writeDaemonStateImpl: ((state: DaemonLocallyPersistedState) => void) | null = null;
+
+      envScope.patch({
+        HAPPIER_HOME_DIR: happierHomeDir,
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '120',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_ACTIVE_GRACE_TIMEOUT_MS: '0',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '10',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '20',
+      });
+      vi.resetModules();
+      doMockChildProcessSpawnSync((command: string, args: readonly string[] = []) => {
+        spawnedCommands.push({ command, args });
+        if (command === 'systemctl' && args.includes('restart')) {
+          writeDaemonStateImpl?.({
+            pid: process.pid,
+            httpPort: 43137,
+            startedAt: Date.now(),
+            startedWithCliVersion: expectedCliVersion,
+            startedWithPublicReleaseChannel: 'preview',
+            startupSource: 'background-service',
+            serviceLabel: expectedServiceLabel,
+            runtimeId: 'runtime-drifted-active-unit',
+          });
+        }
+        if (command === 'systemctl' && args.includes('is-active')) {
+          return { status: 0, stdout: Buffer.from('active'), stderr: Buffer.from('') };
+        }
+        return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+      });
+      vi.doMock('./commandExistsInPath', () => ({
+        commandExistsInPath: vi.fn(() => true),
+      }));
+
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonState, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
+        loadCliModule(),
+        import('@/persistence'),
+        import('@/configuration'),
+      ]);
+      writeDaemonStateImpl = writeDaemonState;
+      expectedCliVersion = configuration.currentCliVersion;
+
+      const runtime = resolveDaemonServiceCliRuntimeFromEnv({ targetMode: 'default-following' });
+      const paths = resolveDaemonServicePaths(runtime);
+      expectedServiceLabel = paths.label;
+      mkdirSync(dirname(paths.installedPath), { recursive: true });
+      writeValidInstalledDaemonServiceFile(paths.installedPath, {
+        releaseChannel: 'stable',
+        targetMode: 'default-following',
+      });
+      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(1), token: 'token-drifted-active-unit' });
+      clearDaemonState();
+
+      const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['start', '--json'] });
+        const payload = output.json();
+        expect(payload.ok).toBe(true);
+        expect(payload.platform).toBe('linux');
+        expect(spawnedCommands.some((entry) => entry.command === 'systemctl' && entry.args.includes('restart'))).toBe(true);
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
+  it('restarts a running default-following service on start when it is not active for the selected relay', async () => {
+    await withTempDir('happier-service-start-running-default-following-wrong-relay-', async (homeDir) => {
+      const spawnedCommands: Array<{ command: string; args: readonly string[] }> = [];
+      const happierHomeDir = `${homeDir}/.happier`;
+      let expectedServiceLabel = '';
+      let expectedCliVersion = '';
+      let writeDaemonStateImpl: ((state: DaemonLocallyPersistedState) => void) | null = null;
+
+      envScope.patch({
+        HAPPIER_HOME_DIR: happierHomeDir,
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'preview',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_TIMEOUT_MS: '120',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_ACTIVE_GRACE_TIMEOUT_MS: '0',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_WAIT_POLL_MS: '10',
+        HAPPIER_DAEMON_SERVICE_OWNERSHIP_STABLE_MS: '20',
+      });
+      vi.resetModules();
+      doMockChildProcessSpawnSync((command: string, args: readonly string[] = []) => {
+        spawnedCommands.push({ command, args });
+        if (command === 'systemctl' && args.includes('restart')) {
+          writeDaemonStateImpl?.({
+            pid: process.pid,
+            httpPort: 43138,
+            startedAt: Date.now(),
+            startedWithCliVersion: expectedCliVersion,
+            startedWithPublicReleaseChannel: 'preview',
+            startupSource: 'background-service',
+            serviceLabel: expectedServiceLabel,
+            runtimeId: 'runtime-default-following-restarted-for-active-relay',
+          });
+        }
+        if (command === 'systemctl' && args.includes('is-active')) {
+          return { status: 0, stdout: Buffer.from('active'), stderr: Buffer.from('') };
+        }
+        return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+      });
+      vi.doMock('./commandExistsInPath', () => ({
+        commandExistsInPath: vi.fn(() => true),
+      }));
+
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }, { clearDaemonState, writeCredentialsLegacy, writeDaemonState }, { configuration }] = await Promise.all([
+        loadCliModule(),
+        import('@/persistence'),
+        import('@/configuration'),
+      ]);
+      writeDaemonStateImpl = writeDaemonState;
+      expectedCliVersion = configuration.currentCliVersion;
+
+      const runtime = resolveDaemonServiceCliRuntimeFromEnv({ targetMode: 'default-following' });
+      const paths = resolveDaemonServicePaths(runtime);
+      expectedServiceLabel = paths.label;
+      mkdirSync(dirname(paths.installedPath), { recursive: true });
+      const expectedPlan = planDaemonServiceInstall({
+        platform: runtime.platform,
+        mode: 'user',
+        channel: runtime.channel,
+        targetMode: runtime.targetMode,
+        instanceId: runtime.instanceId,
+        activeServerId: runtime.activeServerId,
+        userHomeDir: runtime.userHomeDir,
+        happierHomeDir: runtime.happierHomeDir,
+        serverUrl: runtime.serverUrl,
+        webappUrl: runtime.webappUrl,
+        publicServerUrl: runtime.publicServerUrl,
+        nodePath: runtime.nodePath,
+        entryPath: runtime.entryPath,
+      });
+      writeFileSync(paths.installedPath, expectedPlan.files[0]?.content ?? '', 'utf-8');
+      await writeCredentialsLegacy({ secret: new Uint8Array(32).fill(1), token: 'token-default-following-wrong-relay' });
+      clearDaemonState();
+
+      const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['start', '--json'] });
+        const payload = output.json();
+        expect(payload.ok).toBe(true);
+        expect(payload.platform).toBe('linux');
+        expect(spawnedCommands.some((entry) => entry.command === 'systemctl' && entry.args.includes('restart'))).toBe(true);
+        expect(spawnedCommands.some((entry) => entry.command === 'systemctl' && entry.args.includes('start'))).toBe(false);
+      } finally {
+        output.restore();
+      }
+    });
+  });
+
   it('uses extended Windows ownership wait defaults for background-service restarts', async () => {
     await withTempDir('happier-service-restart-win32-wait-budget-', async (homeDir) => {
       const happierHomeDir = `${homeDir}/.happier`;
@@ -1595,6 +1760,98 @@ describe('runDaemonServiceCliCommand', () => {
     });
   });
 
+  it('transfers the current Windows service owner before installer-driven service stop', async () => {
+    await withTempDir('happier-service-stop-win32-transfer-owner-', async (homeDir) => {
+      const happierHomeDir = `${homeDir}/.happier`;
+      const lifecycleEvents: string[] = [];
+      envScope.patch({
+        HAPPIER_HOME_DIR: happierHomeDir,
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32',
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: happierHomeDir,
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+      });
+      vi.resetModules();
+      vi.doMock('node:child_process', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('node:child_process')>();
+        return {
+          ...actual,
+          spawnSync: vi.fn((command: string, args: readonly string[] = []) => {
+            if (command === 'schtasks') {
+              lifecycleEvents.push(String(args[0] ?? ''));
+            }
+            return { status: 0, stdout: Buffer.from(''), stderr: Buffer.from('') };
+          }),
+        };
+      });
+      vi.doMock('./commandExistsInPath', () => ({
+        commandExistsInPath: vi.fn(() => true),
+      }));
+
+      const controlClient = await import('@/daemon/controlClient');
+      const [{ clearDaemonState, writeDaemonState }, { configuration }] = await Promise.all([
+        import('@/persistence'),
+        import('@/configuration'),
+      ]);
+      const stopSpy = vi.spyOn(controlClient, 'stopDaemon').mockImplementation(async () => {
+        lifecycleEvents.push('stopDaemon');
+        await clearDaemonState();
+      });
+
+      const [{ runDaemonServiceCliCommand, resolveDaemonServiceCliRuntimeFromEnv, resolveDaemonServicePaths }] = await Promise.all([
+        loadCliModule(),
+      ]);
+      const runtime = resolveDaemonServiceCliRuntimeFromEnv({ targetMode: 'default-following' });
+      const paths = resolveDaemonServicePaths(runtime);
+      mkdirSync(dirname(paths.installedPath), { recursive: true });
+      writeValidInstalledWindowsDaemonServiceFile(paths.installedPath);
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: 43144,
+        startedAt: Date.now(),
+        startedWithCliVersion: configuration.currentCliVersion,
+        startupSource: 'background-service',
+        serviceLabel: paths.label,
+        runtimeId: 'runtime-win32-transfer-owner',
+      });
+
+      const output = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
+      try {
+        await runDaemonServiceCliCommand({
+          argv: ['stop', '--transfer-managed-local-services', '--json'],
+        });
+        expect(output.json()).toEqual(expect.objectContaining({ ok: true, platform: 'win32' }));
+      } finally {
+        output.restore();
+      }
+
+      expect(stopSpy).toHaveBeenCalledWith({ transferManagedLocalServices: true });
+      expect(lifecycleEvents.slice(0, 2)).toEqual(['stopDaemon', '/End']);
+
+      stopSpy.mockClear();
+      lifecycleEvents.length = 0;
+      writeDaemonState({
+        pid: process.pid,
+        httpPort: 43145,
+        startedAt: Date.now(),
+        startedWithCliVersion: configuration.currentCliVersion,
+        startupSource: 'background-service',
+        serviceLabel: paths.label,
+        runtimeId: 'runtime-win32-permanent-stop-owner',
+      });
+      const permanentStopOutput = captureStdoutJsonOutput<{ ok: boolean; platform: string }>();
+      try {
+        await runDaemonServiceCliCommand({ argv: ['stop', '--json'] });
+        expect(permanentStopOutput.json()).toEqual(expect.objectContaining({ ok: true, platform: 'win32' }));
+      } finally {
+        permanentStopOutput.restore();
+      }
+
+      expect(stopSpy.mock.calls).toEqual([[]]);
+      expect(lifecycleEvents.slice(0, 2)).toEqual(['stopDaemon', '/End']);
+    });
+  });
+
   it('allows taking over a manual daemon when starting a background service with --takeover', async () => {
     await withTempDir('happier-service-start-owner-takeover-', async (homeDir) => {
       stopDaemonMock.mockReset();
@@ -1870,6 +2127,7 @@ describe('runDaemonServiceCliCommand', () => {
         channel: runtime.channel,
         targetMode: runtime.targetMode,
         instanceId: runtime.instanceId,
+        activeServerId: runtime.activeServerId,
         uid: runtime.uid ?? undefined,
         userHomeDir: runtime.userHomeDir,
         happierHomeDir: runtime.happierHomeDir,
@@ -1997,6 +2255,7 @@ describe('runDaemonServiceCliCommand', () => {
         channel: runtime.channel,
         targetMode: runtime.targetMode,
         instanceId: runtime.instanceId,
+        activeServerId: runtime.activeServerId,
         uid: runtime.uid ?? undefined,
         userHomeDir: runtime.userHomeDir,
         happierHomeDir: runtime.happierHomeDir,
@@ -2231,6 +2490,7 @@ describe('runDaemonServiceCliCommand', () => {
         channel: runtime.channel,
         targetMode: runtime.targetMode,
         instanceId: runtime.instanceId,
+        activeServerId: runtime.activeServerId,
         uid: runtime.uid ?? undefined,
         userHomeDir: runtime.userHomeDir,
         happierHomeDir: runtime.happierHomeDir,

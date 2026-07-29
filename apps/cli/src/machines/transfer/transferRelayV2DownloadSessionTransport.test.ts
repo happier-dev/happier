@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -191,6 +191,80 @@ describe('transferRelayV2DownloadSessionTransport', () => {
 
             unsubscribe();
         } finally {
+            await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+        }
+    });
+
+    it('aborts without sending a chunk when an opened download source no longer has bytes', async () => {
+        const tempDir = await mkdtemp(join(tmpdir(), 'happier-relay-v2-download-session-truncated-'));
+        const store = new TransferSessionStore({ ttlMs: 30_000 });
+        const lifecycle = createTransferSessionLifecycle({ store, chunkSizeBytes: 5 });
+        const recipientKeyPair = createTransferRecipientKeyPair();
+
+        try {
+            const filePath = join(tempDir, 'hello.txt');
+            await writeFile(filePath, Buffer.from('hello', 'utf8'));
+            const session = await openDownloadTransferSession({
+                lifecycle,
+                source: {
+                    filePath,
+                    deleteFileOnClose: false,
+                    sizeBytes: 5,
+                    name: 'hello.txt',
+                },
+                recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+            });
+            await truncate(filePath, 0);
+
+            const { registerTransferRelayV2DownloadSessionResponder } = await import('./transferRelayV2DownloadSessionTransport');
+            const harness = createRelayChannelHarness();
+            const unsubscribe = registerTransferRelayV2DownloadSessionResponder({
+                machineId: 'machine-1',
+                transferRelayChannel: harness.channel,
+                resolveSessionOwner: (transferId) => (
+                    store.getDownloadSession(transferId)
+                        ? { store, lifecycle }
+                        : null
+                ),
+            });
+
+            harness.receive({
+                scopeUserId: 'user-1',
+                sender: {
+                    kind: 'user',
+                },
+                recipient: {
+                    kind: 'machine',
+                    machineId: 'machine-1',
+                },
+                envelope: {
+                    transferId: session.downloadId,
+                    kind: 'open',
+                    recipientPublicKeyBase64: recipientKeyPair.recipientPublicKeyBase64,
+                },
+            });
+
+            const abortEnvelope = await waitForSentEnvelope(
+                harness.sent,
+                (payload) => payload.envelope.transferId === session.downloadId && payload.envelope.kind === 'abort',
+            );
+            expect(abortEnvelope).toMatchObject({
+                envelope: {
+                    transferId: session.downloadId,
+                    kind: 'abort',
+                    reason: 'Download source ended before expected size',
+                },
+            });
+            expect(
+                harness.sent.some(
+                    (payload) => payload.envelope.transferId === session.downloadId && payload.envelope.kind === 'chunk',
+                ),
+            ).toBe(false);
+            expect(store.getDownloadSession(session.downloadId)).toBeNull();
+
+            unsubscribe();
+        } finally {
+            await store.dispose();
             await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
         }
     });

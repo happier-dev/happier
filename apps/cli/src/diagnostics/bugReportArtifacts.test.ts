@@ -1,11 +1,14 @@
 import { basename } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { collectBugReportMachineDiagnosticsSnapshot } from './bugReportMachineDiagnostics';
+
 const {
   readCredentialsMock,
   readSettingsMock,
   collectBugReportMachineDiagnosticsSnapshotMock,
   readBugReportLogTailMock,
+  buildDoctorSnapshotMock,
 } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn<() => Promise<{ token: string } | null>>(async () => null),
   readSettingsMock: vi.fn(async () => ({
@@ -39,7 +42,7 @@ const {
       },
     },
   })),
-  collectBugReportMachineDiagnosticsSnapshotMock: vi.fn(async () => ({
+  collectBugReportMachineDiagnosticsSnapshotMock: vi.fn<typeof collectBugReportMachineDiagnosticsSnapshot>(async () => ({
     daemonState: {
       pid: 100,
       httpPort: 3001,
@@ -51,6 +54,21 @@ const {
     daemonLogs: [
       { file: 'daemon.log', path: '/Users/alice/.happier/logs/daemon.log', modifiedAt: '2026-02-11T00:00:00.000Z' },
     ],
+    doctorSnapshot: {
+      capturedAt: '2026-02-11T00:00:00.000Z',
+      server: {
+        activeServerId: 'cloud',
+        serverUrl: 'https://api.happier.dev',
+        publicServerUrl: 'https://api.happier.dev',
+        webappUrl: 'https://app.happier.dev',
+      },
+      accountId: null,
+      settings: {
+        activeServerId: 'cloud',
+        servers: [],
+        knownAccountIds: [],
+      },
+    },
     runtime: {
       cwd: '/Users/alice/private/project',
       platform: 'darwin',
@@ -65,6 +83,7 @@ const {
     },
   })),
   readBugReportLogTailMock: vi.fn(async (path: string) => `tail for ${path}`),
+  buildDoctorSnapshotMock: vi.fn(async () => ({ source: 'standalone-doctor' })),
 }));
 
 vi.mock('@/configuration', () => ({
@@ -85,6 +104,10 @@ vi.mock('@/persistence', () => ({
 vi.mock('@/diagnostics/bugReportMachineDiagnostics', () => ({
   collectBugReportMachineDiagnosticsSnapshot: collectBugReportMachineDiagnosticsSnapshotMock,
   readBugReportLogTail: readBugReportLogTailMock,
+}));
+
+vi.mock('@/ui/doctorSnapshot', () => ({
+  buildDoctorSnapshot: buildDoctorSnapshotMock,
 }));
 
 import { collectBugReportDiagnosticsArtifacts } from './bugReportArtifacts';
@@ -136,8 +159,10 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(cliContext.settingsServers).toBeDefined();
 
     const doctorSnapshot = JSON.parse(String(doctorSnapshotArtifact?.content ?? '{}')) as Record<string, unknown>;
+    expect(doctorSnapshot.capturedAt).toBe('2026-02-11T00:00:00.000Z');
     expect(JSON.stringify(doctorSnapshot)).not.toContain('admin:secret');
     expect(JSON.stringify(doctorSnapshot)).not.toContain('?token=');
+    expect(buildDoctorSnapshotMock).not.toHaveBeenCalled();
 
     const daemonSummary = JSON.parse(String(daemonSummaryArtifact?.content ?? '{}')) as Record<string, unknown>;
     expect(JSON.stringify(daemonSummary)).not.toContain('/Users/alice/');
@@ -208,6 +233,7 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
         daemonLogPath: 'C:\\Users\\alice\\.happier\\logs\\daemon.log',
       },
       daemonLogs: [],
+      doctorSnapshot: null,
       runtime: {
         cwd: 'C:\\Users\\alice\\private\\project',
         platform: 'win32',

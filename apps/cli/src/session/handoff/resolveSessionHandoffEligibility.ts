@@ -1,8 +1,10 @@
 import {
   evaluateVendorHandoffEligibility,
+  isAgentId,
   resolveAgentIdFromSessionMetadata,
   type AgentId,
 } from '@happier-dev/agents';
+import { readLinkedExternalSessionV1FromMetadata } from '@happier-dev/protocol';
 import { resolveSessionRuntimeIdentityFallback } from '@/agent/runtime/identity';
 
 type SessionStorageMode = 'direct' | 'persisted';
@@ -50,12 +52,6 @@ function buildVendorEligibilityMetadata(
   };
 }
 
-function getSessionStorageMode(metadata: Record<string, unknown>): SessionStorageMode {
-  const externalSession = metadata.externalSessionV1;
-  if (!externalSession || typeof externalSession !== 'object') return 'persisted';
-  return (externalSession as { v?: unknown }).v === 1 ? 'direct' : 'persisted';
-}
-
 export function resolveSessionHandoffEligibility(input: Readonly<{
   metadata: unknown;
   accountSettings?: Record<string, unknown> | null;
@@ -66,8 +62,12 @@ export function resolveSessionHandoffEligibility(input: Readonly<{
   }
 
   const runtimeIdentity = resolveSessionRuntimeIdentityFallback({ metadata });
-  const agentId = resolveAgentIdFromSessionMetadata(metadata);
+  const externalSessionLink = readLinkedExternalSessionV1FromMetadata(metadata);
+  const agentId = externalSessionLink?.agentId ?? resolveAgentIdFromSessionMetadata(metadata);
   if (!agentId) {
+    return { eligible: false, reasonCode: 'agent_unknown' };
+  }
+  if (!isAgentId(agentId)) {
     return { eligible: false, reasonCode: 'agent_unknown' };
   }
 
@@ -76,7 +76,7 @@ export function resolveSessionHandoffEligibility(input: Readonly<{
     return { eligible: false, reasonCode: 'source_machine_missing' };
   }
 
-  const storageMode = getSessionStorageMode(metadata);
+  const storageMode: SessionStorageMode = externalSessionLink ? 'direct' : 'persisted';
   const vendorEligibilityMetadata = buildVendorEligibilityMetadata(
     metadata,
     runtimeIdentity.runtimeDescriptorV1,

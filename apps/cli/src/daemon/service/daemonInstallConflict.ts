@@ -23,7 +23,10 @@ export type DaemonServiceInstallConflictPlan = Readonly<{
   servicesToRemove: readonly InstalledDaemonServiceEntry[];
 }>;
 
-function matchesTarget(service: InstalledDaemonServiceEntry, target: DaemonServiceInstallTarget): boolean {
+export function daemonServiceMatchesInstallTarget(
+  service: InstalledDaemonServiceEntry,
+  target: DaemonServiceInstallTarget,
+): boolean {
   if (service.platform !== target.platform) {
     return false;
   }
@@ -33,7 +36,10 @@ function matchesTarget(service: InstalledDaemonServiceEntry, target: DaemonServi
   if (service.targetMode !== target.targetMode) {
     return false;
   }
-  if (resolveHappierHomeDirComparableKey(service.happierHomeDir) !== resolveHappierHomeDirComparableKey(target.happierHomeDir)) {
+  if (
+    resolveHappierHomeDirComparableKey(service.happierHomeDir, target.platform)
+    !== resolveHappierHomeDirComparableKey(target.happierHomeDir, target.platform)
+  ) {
     return false;
   }
   if (target.targetMode === 'default-following') {
@@ -49,12 +55,12 @@ function resolveTupleKey(service: InstalledDaemonServiceEntry): string {
     service.targetMode,
     service.releaseChannel,
     service.serverId,
-    resolveHappierHomeDirComparableKey(service.happierHomeDir),
+    resolveHappierHomeDirComparableKey(service.happierHomeDir, service.platform),
   ].join(':');
 }
 
 function isCompetingService(service: InstalledDaemonServiceEntry, target: DaemonServiceInstallTarget): boolean {
-  if (matchesTarget(service, target)) {
+  if (daemonServiceMatchesInstallTarget(service, target)) {
     return false;
   }
   if (service.platform !== target.platform) {
@@ -70,8 +76,8 @@ function isCompetingService(service: InstalledDaemonServiceEntry, target: Daemon
 }
 
 function isForeignHomeConflict(service: InstalledDaemonServiceEntry, target: DaemonServiceInstallTarget): boolean {
-  const serviceHomeDir = resolveHappierHomeDirComparableKey(service.happierHomeDir);
-  const targetHomeDir = resolveHappierHomeDirComparableKey(target.happierHomeDir);
+  const serviceHomeDir = resolveHappierHomeDirComparableKey(service.happierHomeDir, target.platform);
+  const targetHomeDir = resolveHappierHomeDirComparableKey(target.happierHomeDir, target.platform);
   if (serviceHomeDir === null || targetHomeDir === null) {
     return true;
   }
@@ -104,7 +110,9 @@ export function resolveDaemonServiceInstallConflictPlan(params: Readonly<{
     }
   }
 
-  const exactTargetExists = params.services.some((service) => matchesTarget(service, params.target));
+  const exactTargetExists = params.services.some((service) =>
+    daemonServiceMatchesInstallTarget(service, params.target),
+  );
   const competingServices = params.services.filter((service) =>
     isCompetingService(service, params.target) || duplicateTupleKeys.has(resolveTupleKey(service)),
   );

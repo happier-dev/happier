@@ -15,6 +15,14 @@ function unsupported(): HappierBuiltInToolDispatchResult {
   return { ok: false, errorCode: 'unsupported', error: 'unsupported' };
 }
 
+function expectActionDisabled(result: HappierBuiltInToolDispatchResult): void {
+  expect(result).toMatchObject({
+    ok: false,
+    errorCode: 'action_disabled',
+    error: 'Action is disabled',
+  });
+}
+
 describe('built-in Happier tools', () => {
   it('lists the default session-agent direct bootstrap tools from the shared catalog', () => {
     const names = listBuiltInHappierTools().map((tool) => tool.name);
@@ -80,11 +88,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(changeTitle).not.toHaveBeenCalled();
   });
 
@@ -176,11 +180,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
   });
 
   it('resolves action options directly from an optionsSourceId', async () => {
@@ -226,11 +226,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(getResult).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(getResult);
   });
 
   it('does not expose non-MCP action specs through the shared discovery tools', async () => {
@@ -245,10 +241,15 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(getResult).toEqual({
+    expect(getResult).toMatchObject({
       ok: false,
       errorCode: 'action_disabled',
       error: 'Action is disabled',
+      details: {
+        actionId: 'ui.voice_global.reset',
+        surface: 'mcp',
+        reason: 'unsupported_surface',
+      },
     });
   });
 
@@ -290,11 +291,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
@@ -312,11 +309,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
@@ -334,11 +327,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
@@ -356,10 +345,15 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       ok: false,
       errorCode: 'action_disabled',
       error: 'Action is disabled',
+      details: {
+        actionId: 'action.spec.search',
+        surface: 'cli',
+        reason: 'unsupported_surface',
+      },
     });
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
@@ -370,7 +364,7 @@ describe('built-in Happier tools', () => {
       v: 1,
       actions: {
         'subagents.plan.start': {
-          disabledSurfaces: ['session_agent'],
+          disabledSurfaces: ['agent'],
         },
       },
     });
@@ -389,11 +383,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
@@ -441,6 +431,7 @@ describe('built-in Happier tools', () => {
       toolName: 'plugins_reload',
       args: { pluginId: 'acme.dev.plugin' },
       sessionId: 'sess-1',
+      surface: 'cli',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName: async () => unsupported(),
@@ -472,7 +463,7 @@ describe('built-in Happier tools', () => {
         instructions: 'Review.',
       },
       sessionId: 'sess-1',
-      surface: 'session_agent',
+      surface: 'agent',
       deps: {
         changeTitle: async () => ({ success: true }),
         executeActionByToolName,
@@ -662,11 +653,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
@@ -697,22 +684,18 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
-  it('dispatches action-backed tools that are only surfaced on the session_agent surface', async () => {
+  it('dispatches action-backed tools that are only surfaced on the agent surface', async () => {
     const executeActionByToolName = vi.fn(async () => ok({ ok: true }));
     const actionsSettings = ActionsSettingsV1Schema.parse({
       v: 1,
       actions: {
         'session.list': {
           toolExposureModes: {
-            session_agent: 'direct',
+            agent: 'direct',
           },
         },
       },
@@ -722,7 +705,7 @@ describe('built-in Happier tools', () => {
       toolName: 'session_list',
       args: { limit: 10 },
       sessionId: 'sess-1',
-      surface: 'session_agent',
+      surface: 'agent',
       actionsSettings,
       deps: {
         changeTitle: async () => ({ success: true }),
@@ -745,7 +728,7 @@ describe('built-in Happier tools', () => {
       actions: {
         'session.list': {
           toolExposureModes: {
-            session_agent: 'direct',
+            agent: 'direct',
           },
         },
       },
@@ -762,7 +745,7 @@ describe('built-in Happier tools', () => {
       toolName: 'session_list',
       args: { limit: 10 },
       sessionId: 'sess-1',
-      surface: 'session_agent',
+      surface: 'agent',
       approvalOrigin,
       actionsSettings,
       deps: {
@@ -794,9 +777,8 @@ describe('built-in Happier tools', () => {
       },
       sessionId: 'sess-1',
       registry: createResolvedContributionRegistry({
-        providers: [],
-        backends: [],
-        actions: [
+        agents: [],
+                actions: [
           {
             provenance: 'external',
             source: { kind: 'path' },
@@ -816,6 +798,7 @@ describe('built-in Happier tools', () => {
               title: 'Acme Review Start',
               description: 'Start a plugin-defined review workflow',
               safety: 'safe',
+              dangerLevel: 'safe',
               placements: [],
               slash: null,
               bindings: {
@@ -825,7 +808,7 @@ describe('built-in Happier tools', () => {
               surfaces: {
                 ui: false,
                 voice: false,
-                session_agent: true,
+                agent: true,
                 mcp: true,
                 cli: true,
                 rpc: false,
@@ -890,9 +873,8 @@ describe('built-in Happier tools', () => {
       sessionId: 'sess-1',
       surface: 'cli',
       registry: createResolvedContributionRegistry({
-        providers: [],
-        backends: [],
-        actions: [
+        agents: [],
+                actions: [
           {
             provenance: 'external',
             source: { kind: 'path' },
@@ -912,6 +894,7 @@ describe('built-in Happier tools', () => {
               title: 'Acme CLI Review Start',
               description: 'Start a CLI-only plugin-defined review workflow',
               safety: 'safe',
+              dangerLevel: 'safe',
               placements: [],
               slash: null,
               bindings: {},
@@ -919,7 +902,7 @@ describe('built-in Happier tools', () => {
               surfaces: {
                 ui: false,
                 voice: false,
-                session_agent: true,
+                agent: true,
                 mcp: false,
                 cli: true,
                 rpc: false,
@@ -981,9 +964,8 @@ describe('built-in Happier tools', () => {
       sessionId: 'sess-1',
       surface: 'cli',
       registry: createResolvedContributionRegistry({
-        providers: [],
-        backends: [],
-        actions: [
+        agents: [],
+                actions: [
           {
             provenance: 'external',
             source: { kind: 'path' },
@@ -1003,6 +985,7 @@ describe('built-in Happier tools', () => {
               title: 'Acme Review Start',
               description: 'Start a plugin-defined review workflow',
               safety: 'safe',
+              dangerLevel: 'safe',
               placements: [],
               slash: null,
               bindings: {
@@ -1012,7 +995,7 @@ describe('built-in Happier tools', () => {
               surfaces: {
                 ui: false,
                 voice: false,
-                session_agent: true,
+                agent: true,
                 mcp: true,
                 cli: true,
                 rpc: false,
@@ -1041,11 +1024,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 
@@ -1061,9 +1040,8 @@ describe('built-in Happier tools', () => {
       sessionId: 'sess-1',
       surface: 'cli',
       registry: createResolvedContributionRegistry({
-        providers: [],
-        backends: [],
-        actions: [
+        agents: [],
+                actions: [
           {
             provenance: 'external',
             source: { kind: 'path' },
@@ -1083,6 +1061,7 @@ describe('built-in Happier tools', () => {
               title: 'Acme Review Start',
               description: 'Start a plugin-defined review workflow',
               safety: 'safe',
+              dangerLevel: 'safe',
               placements: [],
               slash: null,
               bindings: {
@@ -1092,7 +1071,7 @@ describe('built-in Happier tools', () => {
               surfaces: {
                 ui: false,
                 voice: false,
-                session_agent: true,
+                agent: true,
                 mcp: true,
                 cli: false,
                 rpc: false,
@@ -1121,11 +1100,7 @@ describe('built-in Happier tools', () => {
       },
     });
 
-    expect(result).toEqual({
-      ok: false,
-      errorCode: 'action_disabled',
-      error: 'Action is disabled',
-    });
+    expectActionDisabled(result);
     expect(executeActionByToolName).not.toHaveBeenCalled();
   });
 });

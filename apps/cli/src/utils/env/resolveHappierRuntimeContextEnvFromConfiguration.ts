@@ -20,6 +20,9 @@ import {
 export function resolveHappierRuntimeContextEnvFromConfiguration(): Record<string, string> {
   return resolveHappierRuntimeContextEnv({
     homeDir: configuration.happyHomeDir,
+    daemonLifecycleScopeId:
+      String(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID ?? '').trim()
+      || configuration.activeServerId,
     server: {
       activeServerId: configuration.activeServerId,
       canonicalServerUrl: configuration.serverUrl,

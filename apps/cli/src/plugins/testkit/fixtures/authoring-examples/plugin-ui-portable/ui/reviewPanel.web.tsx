@@ -2,8 +2,8 @@
 //
 // This is a *plugin* source compiled by `happier-plugin-build-ui` into
 // `dist/happier-plugin-ui/hosted-web/preview-web/...`. It is intentionally
-// sandboxed: a plugin UI talks to the host only through the SDK host-API client
-// (`@happier-dev/plugin-sdk/ui/hostApiClient`) and does NOT import host chrome,
+// isolated: a plugin UI talks to the host only through the SDK host-API client
+// (`@happier-dev/plugin-sdk/ui/client`) and does NOT import host chrome,
 // themed tokens, or `@/` app modules — the package boundary forbids it.
 //
 // The fixture build is exercised end-to-end by the daemon static-asset

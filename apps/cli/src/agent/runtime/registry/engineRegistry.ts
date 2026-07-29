@@ -2,7 +2,6 @@ export type {
     BackendRuntimeOwnerCandidate,
     BackendRuntimeOwnerKind,
     BackendRuntimeOwnerResolution,
-    BackendRuntimeOwnerTakeoverMarker,
     BackendExecutionSurfaces,
     EngineAdapterResolution,
     EngineResolutionDiagnostic,

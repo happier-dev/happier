@@ -35,7 +35,7 @@ import {
   mergeSelfHostServerEnvText,
   parseEnvText,
   renderPrismaCompatibleSqliteDatabaseUrl,
-  resolvePrismaSqliteDatabaseUrlOptionsFromEnv,
+  resolveServerLightSqliteDatabaseUrlOptionsFromEnv,
   resolveSelfHostSqliteAutoMigrateValue,
   renderSelfHostServerEnvTextFromResolvedValues,
   resolveConfiguredSelfHostBaseUrl,
@@ -62,7 +62,7 @@ function renderRelaySqliteDatabaseUrl(params: Readonly<{
   return renderPrismaCompatibleSqliteDatabaseUrl({
     dbPath: params.dbPath,
     platform: params.platform,
-    sqlite: resolvePrismaSqliteDatabaseUrlOptionsFromEnv(params.env ?? process.env),
+    sqlite: resolveServerLightSqliteDatabaseUrlOptionsFromEnv(params.env ?? process.env),
   });
 }
 

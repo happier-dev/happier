@@ -32,6 +32,15 @@ export type SessionModelState = {
   availableModels: SessionModel[];
 };
 
+export type SessionModelProjector = (
+  rawModel: Readonly<Record<string, unknown>>,
+  normalizedModel: SessionModel,
+) => SessionModel;
+export type AwaitableSessionModelProjector = (
+  rawModel: Readonly<Record<string, unknown>>,
+  normalizedModel: SessionModel,
+) => SessionModel | Promise<SessionModel>;
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
@@ -126,7 +135,26 @@ export function readSessionModeStateFromSessionResponse(sessionResponse: unknown
   return { currentModeId, availableModes };
 }
 
-export function readSessionModelStateFromSessionResponse(sessionResponse: unknown): SessionModelState | null {
+function normalizeSessionModel(model: Record<string, unknown>): SessionModel | null {
+  const id = getString(model, 'id') ?? getString(model, 'modelId');
+  const name = getString(model, 'name');
+  if (!id || !name) return null;
+  const description = getString(model, 'description');
+  const modelOptionsCandidate = model.modelOptions ?? model.model_options;
+  const modelOptionsRaw: unknown[] | null = Array.isArray(modelOptionsCandidate) ? modelOptionsCandidate : null;
+  const modelOptions = modelOptionsRaw ? normalizeSessionConfigOptions(modelOptionsRaw) : null;
+  return {
+    id,
+    name,
+    ...(description ? { description } : {}),
+    ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
+  };
+}
+
+export function readSessionModelStateFromSessionResponse(
+  sessionResponse: unknown,
+  projectModel?: SessionModelProjector,
+): SessionModelState | null {
   const response = asRecord(sessionResponse);
   if (!response) return null;
   const modelsRaw = asRecord(response.models);
@@ -141,24 +169,59 @@ export function readSessionModelStateFromSessionResponse(sessionResponse: unknow
     .map((model: unknown) => asRecord(model))
     .filter((model): model is Record<string, unknown> => Boolean(model))
     .map((model) => {
-      const id = getString(model, 'id') ?? getString(model, 'modelId');
-      const name = getString(model, 'name');
-      if (!id || !name) return null;
-      const description = getString(model, 'description');
-      const modelOptionsCandidate = model['modelOptions'] ?? model['model_options'];
-      const modelOptionsRaw: unknown[] | null = Array.isArray(modelOptionsCandidate) ? modelOptionsCandidate : null;
-      const modelOptions = modelOptionsRaw ? normalizeSessionConfigOptions(modelOptionsRaw) : null;
-      return {
-        id,
-        name,
-        ...(description ? { description } : {}),
-        ...(modelOptions && modelOptions.length > 0 ? { modelOptions } : {}),
-      };
+      const normalized = normalizeSessionModel(model);
+      if (!normalized || !projectModel) return normalized;
+      const projected = projectModel(model, normalized);
+      const revalidated = normalizeSessionModel(projected as unknown as Record<string, unknown>);
+      if (!revalidated || revalidated.id !== normalized.id) {
+        throw new Error('ACP model projector returned an invalid model');
+      }
+      return revalidated;
     })
     .filter((model): model is SessionModel => Boolean(model));
 
-  if (availableModels.length === 0) return null;
+  if (
+    availableModels.length === 0
+    || !availableModels.some((model) => model.id === currentModelId)
+  ) return null;
 
+  return { currentModelId, availableModels };
+}
+
+export async function readSessionModelStateFromSessionResponseAwaitable(
+  sessionResponse: unknown,
+  projectModel?: AwaitableSessionModelProjector,
+): Promise<SessionModelState | null> {
+  const response = asRecord(sessionResponse);
+  if (!response) return null;
+  const modelsRaw = asRecord(response.models);
+  if (!modelsRaw) return null;
+
+  const currentModelId = getString(modelsRaw, 'currentModelId');
+  const availableModelsCandidate = modelsRaw.availableModels;
+  if (!currentModelId || !Array.isArray(availableModelsCandidate)) return null;
+
+  const availableModels: SessionModel[] = [];
+  for (const modelValue of availableModelsCandidate) {
+    const model = asRecord(modelValue);
+    if (!model) continue;
+    const normalized = normalizeSessionModel(model);
+    if (!normalized) continue;
+    const projected = projectModel
+      ? await projectModel(model, normalized)
+      : normalized;
+    const revalidated = normalizeSessionModel(projected as unknown as Record<string, unknown>);
+    if (!revalidated || revalidated.id !== normalized.id) {
+      throw new Error('ACP model projector returned an invalid model');
+    }
+    availableModels.push(revalidated);
+  }
+  if (
+    availableModels.length === 0
+    || !availableModels.some((model) => model.id === currentModelId)
+  ) {
+    return null;
+  }
   return { currentModelId, availableModels };
 }
 

@@ -5,21 +5,27 @@ import { type ExecutionRunIntent, ExecutionRunStartRequestSchema } from '@happie
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readFlagValue } from '@/cli/commands/shared/argvFlags';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import {
   defaultIoModeForExecutionRunIntent,
   defaultPermissionModeForExecutionRunIntent,
+  defaultRetentionPolicyForExecutionRunIntent,
   defaultRunClassForExecutionRunIntent,
 } from '@/session/services/executionRunStartDefaults';
 import { parseSingleBackendTargetFromFlag } from '@/cli/commands/session/shared/normalizeBackendTargetKeys';
 import { resolveConcreteCompatBackendTargetRefs } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
-import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import {
+  normalizeActionExecuteResult,
+  unwrapCliActionSuccessPayload,
+} from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import {
   resolveSessionEncryptionContextFromCredentials,
   resolveSessionStoredContentEncryptionMode,
 } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 
 export async function cmdSessionRunStart(
   argv: string[],
@@ -28,7 +34,7 @@ export async function cmdSessionRunStart(
   const json = wantsJson(argv);
   const idOrPrefix = String(argv[2] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session run start <session-id-or-prefix> --intent <intent> --backend <backend-target> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
 
   const intent = (readFlagValue(argv, '--intent') ?? '').trim() as ExecutionRunIntent;
@@ -36,16 +42,16 @@ export async function cmdSessionRunStart(
   const instructions = readFlagValue(argv, '--instructions') ?? undefined;
 
   if (!intent || !backendTargetRaw) {
-    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
 
   const backendTarget = parseSingleBackendTargetFromFlag(backendTargetRaw);
   if (!backendTarget) {
-    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
   const resolvedBackendTarget = resolveConcreteCompatBackendTargetRefs(backendTarget);
   if (!resolvedBackendTarget) {
-    throw new Error('Usage: happier session run start <session-id> --intent <intent> --backend <backend-target> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStart}`);
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -57,6 +63,8 @@ export async function cmdSessionRunStart(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  await ensureCliActionPolicySettings(credentials);
 
   const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
   if (!resolved.ok) {
@@ -83,7 +91,7 @@ export async function cmdSessionRunStart(
   }
 
   const permissionMode = (readFlagValue(argv, '--permission-mode') ?? '').trim() || defaultPermissionModeForExecutionRunIntent(intent);
-  const retentionPolicy = (readFlagValue(argv, '--retention') ?? '').trim() || 'ephemeral';
+  const retentionPolicy = (readFlagValue(argv, '--retention') ?? '').trim() || defaultRetentionPolicyForExecutionRunIntent(intent);
   const runClass = ((readFlagValue(argv, '--run-class') ?? '').trim() as any) || defaultRunClassForExecutionRunIntent(intent);
   const ioMode = ((readFlagValue(argv, '--io-mode') ?? '').trim() as any) || defaultIoModeForExecutionRunIntent(intent);
 
@@ -118,8 +126,7 @@ export async function cmdSessionRunStart(
     throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
 
-  const result = normalized.data as any;
-  const runPayload = result && typeof result === 'object' && result.ok === true ? result.data : null;
+  const runPayload = unwrapCliActionSuccessPayload(normalized.data);
 
   if (json) {
     const backendId = request.backendTarget.backendId;

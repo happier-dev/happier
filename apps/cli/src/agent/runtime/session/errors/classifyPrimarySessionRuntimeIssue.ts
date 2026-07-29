@@ -257,42 +257,8 @@ function readRuntimeAuthClassification(error: unknown): Readonly<Record<string, 
   return sanitizeConnectedServiceRuntimeFailureClassification(readRecord(readRecord(error)?.runtimeAuthClassification));
 }
 
-function readRuntimeAuthRecoveryResult(error: unknown): Readonly<Record<string, unknown>> | null {
-  return readRecord(readRecord(error)?.runtimeAuthRecoveryResult);
-}
-
-function resolveRuntimeAuthRecoveryDecision(
-  recoveryResult: Readonly<Record<string, unknown>> | null,
-): NonNullable<SessionRuntimeUsageLimitDetailsV1['recoveryDecision']> | null {
-  const recoveryStatus = normalizeNonEmptyString(recoveryResult?.status);
-  if (recoveryStatus === 'temporary_retry_armed') return 'waiting_for_reset';
-  if (recoveryStatus === 'temporary_retry_unavailable') return 'manual_intervention';
-
-  const outerResult = readRecord(recoveryResult?.result);
-  if (!outerResult || normalizeNonEmptyString(outerResult.status) !== 'switch_attempted') return null;
-
-  const switchResult = readRecord(outerResult.result);
-  const switchResultStatus = normalizeNonEmptyString(switchResult?.status);
-  switch (switchResultStatus) {
-    case 'switched':
-    case 'observed_generation':
-      return 'switching';
-    case 'no_eligible_member':
-      return 'waiting_for_reset';
-    case 'apply_failed':
-    case 'manual_strategy':
-    case 'auto_switch_disabled':
-    case 'switch_reason_disabled':
-    case 'switch_limit_reached':
-      return 'manual_intervention';
-    default:
-      return null;
-  }
-}
-
 function buildUsageLimitDetailsFromRuntimeAuthClassification(
   classification: Readonly<Record<string, unknown>> | null,
-  recoveryDecision: NonNullable<SessionRuntimeUsageLimitDetailsV1['recoveryDecision']> | null,
 ): SessionRuntimeUsageLimitDetailsV1 | null {
   if (!classification) return null;
   const kind = normalizeNonEmptyString(classification.kind);
@@ -330,7 +296,6 @@ function buildUsageLimitDetailsFromRuntimeAuthClassification(
     ...(providerLimitId ? { providerLimitId } : {}),
     planType: normalizeNonEmptyString(classification.planType),
     ...(actionKind === 'open_url' && actionUrl ? { action: { kind: 'open_url', url: actionUrl } } : {}),
-    ...(recoveryDecision ? { recoveryDecision } : {}),
     ...(hasConnectedServiceRecovery ? {
       connectedService: {
         serviceId: serviceId.data,
@@ -368,12 +333,8 @@ export function classifyPrimarySessionRuntimeIssue(
   input: ClassifyPrimarySessionRuntimeIssueInput,
 ): SessionRuntimeIssueV1 {
   const runtimeAuthClassification = readRuntimeAuthClassification(input.error);
-  const runtimeAuthRecoveryDecision = resolveRuntimeAuthRecoveryDecision(
-    readRuntimeAuthRecoveryResult(input.error),
-  );
   const runtimeAuthUsageLimit = buildUsageLimitDetailsFromRuntimeAuthClassification(
     runtimeAuthClassification,
-    runtimeAuthRecoveryDecision,
   );
   const runtimeAuthSource = refineRuntimeAuthClassificationSource(runtimeAuthClassification);
   const agentProcessExitAfterSwitch = readProviderProcessExitAfterSwitchDetails(input.error);
@@ -391,7 +352,7 @@ export function classifyPrimarySessionRuntimeIssue(
   const temporaryThrottle = source === 'agent_status_error'
     ? buildTemporaryThrottleDetails(input.error)
     : null;
-  const provider = normalizeNonEmptyString(input.provider);
+  const agentId = normalizeNonEmptyString(input.provider);
   const agentTurnId = normalizeNonEmptyString(input.agentTurnId);
   const sessionSeq = normalizeNonNegativeInteger(input.sessionSeq);
 
@@ -403,7 +364,7 @@ export function classifyPrimarySessionRuntimeIssue(
     source,
     occurredAt,
     ...(sessionSeq === null ? {} : { sessionSeq }),
-    ...(provider === null ? {} : { provider }),
+    ...(agentId === null ? {} : { agentId }),
     ...(agentTurnId === null ? {} : { agentTurnId }),
     sanitizedPreview: buildSafeModelNotFoundPreview(input.error)
       ?? (temporaryThrottle ? 'Provider is temporarily limiting requests' : sanitizedPreviewBySource[source]),

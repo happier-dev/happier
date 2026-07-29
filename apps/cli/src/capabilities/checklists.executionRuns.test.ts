@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BUILT_IN_INSTALLABLES_REGISTRY, CODEX_ACP_DEP_ID } from '@happier-dev/protocol/installables';
+import {
+  BUILT_IN_INSTALLABLES_REGISTRY,
+  CODEX_ACP_DEP_ID,
+  resolveInstallablesRegistry,
+} from '@happier-dev/protocol/installables';
 
 import { CHECKLIST_IDS } from './checklistIds';
 import { resumeChecklistId } from './checklistIds';
-import { checklists } from './checklists';
+import { checklists, createCapabilityChecklists } from './checklists';
 
 describe('capabilities checklists', () => {
   afterEach(() => {
@@ -21,6 +25,32 @@ describe('capabilities checklists', () => {
     const expectedIds = BUILT_IN_INSTALLABLES_REGISTRY.descriptors.map((entry) => entry.descriptor.capabilityId);
 
     expect(entries.map((entry) => entry.id)).toEqual(expect.arrayContaining(expectedIds));
+  });
+
+  it('derives machine detail dependency checks from the runtime installables registry', () => {
+    const descriptor = {
+      ...BUILT_IN_INSTALLABLES_REGISTRY.descriptors[0]!.descriptor,
+      id: 'plugin-managed-tool',
+      key: 'plugin-managed-tool',
+      capabilityId: 'dep.plugin-managed-tool',
+      display: { name: 'Plugin managed tool' },
+    } as const;
+    const installablesRegistry = resolveInstallablesRegistry({
+      bundledFirstPartyPlugins: [{
+        owner: {
+          provenance: 'bundled_first_party_plugin',
+          ownerId: 'happier.agent.fixture',
+          pluginId: 'happier.agent.fixture',
+          manifestPath: 'bundled:happier.agent.fixture',
+          manifestDigest: 'sha256:fixture',
+        },
+        descriptor,
+      }],
+    });
+
+    const entries = createCapabilityChecklists(installablesRegistry)[CHECKLIST_IDS.MACHINE_DETAILS] ?? [];
+
+    expect(entries.map((entry) => entry.id)).toContain('dep.plugin-managed-tool');
   });
 
   it('does not request ACP capabilities in normal checklists', () => {

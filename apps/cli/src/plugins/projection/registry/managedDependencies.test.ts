@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-    CODEX_ACP_DEP_ID,
     GH_INSTALLABLE_DESCRIPTOR,
     INSTALLABLE_KEYS,
     InstallableDependencyDescriptorSchema,
@@ -11,6 +10,8 @@ import { buildPluginContributionRegistry } from './normalize/package';
 import { createResolvedContributionRegistry } from './createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from './resolveBuiltInContributions';
 import type { ResolvedContributionRegistry } from './types';
+import { readCanonicalPluginManifest } from '@/plugins/manifest/normalize';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 const sourceSpec = {
     kind: 'path' as const,
@@ -22,26 +23,18 @@ const sourceSpec = {
 function createEmptyRegistry(overrides: Partial<ResolvedContributionRegistry> = {}): ResolvedContributionRegistry {
     return {
         agents: [],
-        agentRuntimes: [],
-        actions: [],
+                actions: [],
         tools: [],
         commands: [],
         resources: [],
-        uiDescriptors: [],
         activationTargets: [],
-        hookRegistrations: [],
-        lifecycleHandlers: [],
         actionsById: new Map(),
         toolsById: new Map(),
         commandsById: new Map(),
         resourcesById: new Map(),
-        uiDescriptorsById: new Map(),
-        lifecycleHandlersById: new Map(),
-        surfaceHandlersByBackendId: new Map(),
-        catalogEntriesById: {},
+                catalogEntriesById: {},
         agentDefinitionsById: new Map(),
-        agentRuntimeDefinitionsById: new Map(),
-        pluginDiagnosticsByPluginId: {},
+                pluginDiagnosticsByPluginId: {},
         ...overrides,
     };
 }
@@ -74,16 +67,24 @@ const acmeManualDescriptor = InstallableDependencyDescriptorSchema.parse({
     },
 });
 
+const acmeManualContribution = {
+    id: 'acme-tool',
+    title: 'Acme Tool',
+    description: 'Acme tool dependency',
+    sources: [{ kind: 'manual' as const, instructions: 'Install Acme Tool manually' }],
+    executable: 'acme-tool',
+};
+
 describe('managed dependency plugin contributions', () => {
-    it('projects codex-acp from the bundled Codex plugin instead of core built-ins', () => {
+    it('projects the codex-acp dependency request from the bundled Codex plugin instead of core built-ins', () => {
         const builtIns = resolveBuiltInContributions();
 
         expect(builtIns.managedDependencies).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 pluginId: 'happier.agent.codex',
                 definition: expect.objectContaining({
-                    key: INSTALLABLE_KEYS.CODEX_ACP,
-                    capabilityId: CODEX_ACP_DEP_ID,
+                    id: INSTALLABLE_KEYS.CODEX_ACP,
+                    executable: INSTALLABLE_KEYS.CODEX_ACP,
                 }),
             }),
         ]));
@@ -91,7 +92,7 @@ describe('managed dependency plugin contributions', () => {
             expect.objectContaining({
                 pluginId: 'happier.core',
                 definition: expect.objectContaining({
-                    key: INSTALLABLE_KEYS.CODEX_ACP,
+                    id: INSTALLABLE_KEYS.CODEX_ACP,
                 }),
             }),
         ]));
@@ -122,29 +123,23 @@ describe('managed dependency plugin contributions', () => {
                     daemonEntryPath: null,
                     sourceSpec,
                     devDaemonEntryPath: null,
-                    manifest: {
+                    manifest: readCanonicalPluginManifest(createPluginManifestV2Fixture({
                         schemaVersion: 2,
                         id: 'acme.dependencies',
                         version: '1.0.0',
                         displayName: 'Acme Dependencies',
-                        engines: { happier: '^0.2.0' },
-                        activationEvents: [],
-                        uses: [],
-                        entrypoints: { main: './daemon.js' },
-                        permissions: [],
+                        engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
+                        entrypoints: { daemon: './daemon.js' },
                         contributes: {
                             agents: [],
-                            agentRuntimes: [],
                             actions: [],
                             tools: [],
                             commands: [],
                             resources: [],
-                            uiDescriptors: [],
-                            managedDependencies: [acmeManualDescriptor],
+                            managedDependencies: [acmeManualContribution],
                             hooks: [],
-                            lifecycleHandlers: [],
                         },
-                    },
+                    }))!,
                 },
             ],
         });
@@ -154,20 +149,18 @@ describe('managed dependency plugin contributions', () => {
                 pluginId: 'acme.dependencies',
                 daemonEntryPath: null,
                 definition: expect.objectContaining({
-                    key: 'acme-tool',
-                    source: expect.objectContaining({ kind: 'manual_only' }),
+                    id: 'acme-tool',
+                    sources: [expect.objectContaining({ kind: 'manual' })],
                 }),
             }),
         ]);
         expect(registry.agents).toEqual([]);
-        expect(registry.agentRuntimes).toEqual([]);
     });
 
     it('keeps built-in managed dependencies active when an external plugin duplicates a key or capability', () => {
         const registry = createResolvedContributionRegistry({
             agents: [],
-            agentRuntimes: [],
-            managedDependencies: [
+                        managedDependencies: [
                 {
                     provenance: 'first_party',
                     source: { kind: 'bundled' },
@@ -191,7 +184,7 @@ describe('managed dependency plugin contributions', () => {
                     devDaemonEntryPath: null,
                     definition: {
                         ...acmeManualDescriptor,
-                        id: 'codex-acp-shadow',
+                        id: 'codex-acp',
                         key: 'codex-acp',
                         capabilityId: 'dep.codex-acp-shadow',
                         display: { name: 'Shadow Codex ACP' },
@@ -212,8 +205,7 @@ describe('managed dependency plugin contributions', () => {
     it('keeps host built-ins ahead of bundled first-party plugin managed dependencies deterministically', () => {
         const registry = createResolvedContributionRegistry({
             agents: [],
-            agentRuntimes: [],
-            managedDependencies: [
+                        managedDependencies: [
                 {
                     provenance: 'first_party',
                     source: { kind: 'bundled' },
@@ -237,7 +229,7 @@ describe('managed dependency plugin contributions', () => {
                     devDaemonEntryPath: null,
                     definition: {
                         ...acmeManualDescriptor,
-                        id: 'acme-tool-plugin',
+                        id: 'acme-tool',
                         key: 'acme-tool',
                         capabilityId: 'dep.aaa-acme-tool',
                         display: { name: 'Bundled Acme Tool' },
@@ -292,5 +284,64 @@ describe('managed dependency plugin contributions', () => {
             },
             experimental: false,
         });
+    });
+
+    it('keeps same-local-id V2 dependencies qualified through registry lookup and projection', () => {
+        const managedDependencies = ['acme.one', 'acme.two'].map((pluginId) => ({
+            provenance: 'external' as const,
+            source: { kind: 'path' as const },
+            pluginId,
+            manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+            manifestDigest: `sha256:${pluginId}`,
+            daemonEntryPath: null,
+            sourceSpec: { ...sourceSpec, locator: `/plugins/${pluginId}` },
+            definition: {
+                id: 'tool',
+                title: `${pluginId} tool`,
+                sources: [{ kind: 'system' as const, executableNames: [`${pluginId}-tool`] }],
+                executable: `${pluginId}-tool`,
+            },
+        }));
+        const registry = createResolvedContributionRegistry({
+            agents: [],
+                        managedDependencies,
+        });
+
+        expect(registry.managedDependenciesByKey?.get('acme.one/tool')?.pluginId).toBe('acme.one');
+        expect(registry.managedDependenciesByKey?.get('acme.two/tool')?.pluginId).toBe('acme.two');
+
+        const projection = buildPluginProjectionV2({ registry, generation: 9 });
+        expect(Object.keys(projection.familiesById.managedDependencies?.entriesById ?? {})).toEqual([
+            'acme.one/tool',
+            'acme.two/tool',
+        ]);
+        expect(Object.values(
+            projection.familiesById.managedDependencies?.entriesById ?? {},
+        )).toEqual([
+            expect.not.objectContaining({ title: expect.anything() }),
+            expect.not.objectContaining({ title: expect.anything() }),
+        ]);
+    });
+
+    it('includes qualified V2 ownership in the resolved registry generation identity', () => {
+        const makeRegistry = (pluginId: string) => createResolvedContributionRegistry({
+            agents: [],
+                        managedDependencies: [{
+                provenance: 'external',
+                source: { kind: 'path' },
+                pluginId,
+                manifestPath: '/plugins/shared/.happier-plugin/plugin.json',
+                manifestDigest: 'sha256:shared',
+                daemonEntryPath: null,
+                sourceSpec,
+                definition: {
+                    id: 'tool', title: 'Shared tool',
+                    sources: [{ kind: 'system', executableNames: ['tool'] }],
+                    executable: 'tool',
+                },
+            }],
+        });
+
+        expect(makeRegistry('acme.one').generationId).not.toBe(makeRegistry('acme.two').generationId);
     });
 });

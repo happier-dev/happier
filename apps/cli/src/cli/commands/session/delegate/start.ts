@@ -9,6 +9,9 @@ import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredCon
 import { readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { normalizeBackendTargetKeysFromCsv } from '../shared/normalizeBackendTargetKeys';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
+import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
 
 export async function cmdSessionDelegateStart(
   argv: string[],
@@ -17,7 +20,7 @@ export async function cmdSessionDelegateStart(
   const json = wantsJson(argv);
   const idOrPrefix = String(argv[2] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session delegate start <session-id-or-prefix> --backends <id1,id2> --instructions <text> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.delegateStart}`);
   }
 
   const backendsRaw = readFlagValue(argv, '--backends') ?? readFlagValue(argv, '--backend');
@@ -30,7 +33,7 @@ export async function cmdSessionDelegateStart(
   const ioMode = readFlagValue(argv, '--io-mode') ?? undefined;
 
   if (backendTargetKeys.length === 0 || !instructions.trim()) {
-    throw new Error('Usage: happier session delegate start <session-id> --backends <id1,id2> --instructions <text> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.delegateStart}`);
   }
 
   const input = {
@@ -51,6 +54,8 @@ export async function cmdSessionDelegateStart(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  await ensureCliActionPolicySettings(credentials);
 
   const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
   if (!resolved.ok) {
@@ -81,17 +86,26 @@ export async function cmdSessionDelegateStart(
 
   const executor = createCliActionExecutor({ token: credentials.token, credentials, sessionId, mode, ctx });
   const started = await executor.execute('subagents.delegate.start', input, { defaultSessionId: sessionId });
+  const normalized = normalizeSessionStartActionResults(started);
 
-  if (!started.ok) {
+  if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_delegate_start', error: { code: started.errorCode } });
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_delegate_start',
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+        },
+      });
       return;
     }
-    console.error(chalk.red('Error:'), started.errorCode);
+    console.error(chalk.red('Error:'), normalized.errorMessage ?? normalized.errorCode);
     process.exit(1);
   }
 
-  const results = (started.result as any)?.results ?? [];
+  const results = normalized.results;
 
   if (json) {
     printJsonEnvelope({

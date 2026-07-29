@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,44 @@ import {
 } from './sessionHandoffPrepareTargetJobStore';
 
 describe('sessionHandoffPrepareTargetJobStore', () => {
+  it.each([
+    ['target_identity_conflict', 'reconciliation_required'],
+    ['agent_version_unsupported', 'failed'],
+  ] as const)('durably preserves typed native-import failure %s', async (code, statusCode) => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-import-failure-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const handoffId = `handoff_${code}`;
+      const jobId = `prepare_${code}`;
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: 1,
+        updatedAtMs: 2,
+        failedAtMs: 2,
+        lastErrorMessage: 'Safe native import failure',
+        status: {
+          handoffId,
+          jobId,
+          status: statusCode,
+          phase: 'staging_target',
+          recoveryActions: [],
+          failure: { code },
+        },
+      });
+
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        failedAtMs: 2,
+        status: {
+          status: statusCode,
+          failure: { code },
+        },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('fails closed when a persisted job file uses an unsupported schemaVersion', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-schema-'));
     try {
@@ -182,7 +220,7 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
     }
   });
 
-  it('keeps restart-recoverable pending jobs resumable instead of terminalizing them during daemon startup recovery', async () => {
+  it('hydrates restart-recoverable pending jobs as awaiting explicit user Resume', async () => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-recoverable-'));
     try {
       const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
@@ -242,13 +280,18 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
         jobId,
         handoffId,
         status: {
-          status: 'pending',
+          status: 'awaiting_user_resume',
           phase: 'staging_target',
+          progress: {
+            resumable: true,
+            current: {
+              phaseDetail: 'daemon_restart_awaiting_user_resume',
+            },
+          },
         },
-      });
-      await expect(store.read(jobId)).resolves.not.toMatchObject({
-        status: {
-          status: 'awaiting_recovery',
+        transitionRevision: 0,
+        prepareRecovery: {
+          status: 'awaiting_user_resume',
         },
       });
     } finally {
@@ -317,6 +360,580 @@ describe('sessionHandoffPrepareTargetJobStore', () => {
           status: 'awaiting_recovery',
         },
       });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('writes an interrupted v1 job forward once and fences explicit Resume by revision and attempt', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-resume-fence-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const jobId = 'prepare_resume_fence_1';
+      const handoffId = 'handoff_resume_fence_1';
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine-source',
+          targetMachineId: 'machine-target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+        },
+      });
+
+      const hydrated = await store.hydrateInterrupted(jobId, 30);
+      expect(hydrated).toMatchObject({
+        schemaVersion: 2,
+        recordKind: 'legacy_target',
+        transitionRevision: 0,
+        prepareRecovery: { status: 'awaiting_user_resume' },
+        status: {
+          status: 'awaiting_user_resume',
+          progress: { resumable: true },
+        },
+      });
+
+      const accepted = await store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-1',
+        nowMs: 40,
+      });
+      expect(accepted).toMatchObject({
+        ok: true,
+        disposition: 'accepted',
+        record: {
+          transitionRevision: 1,
+          prepareRecovery: {
+            status: 'attempted',
+            attemptId: 'attempt-1',
+            acceptedRevision: 0,
+          },
+        },
+      });
+
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-1',
+        nowMs: 50,
+      })).resolves.toMatchObject({
+        ok: true,
+        disposition: 'replay',
+        record: { transitionRevision: 1 },
+      });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 1,
+        attemptId: 'attempt-1',
+        nowMs: 50,
+      })).resolves.toEqual({ ok: false, errorCode: 'stale_revision' });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-2',
+        nowMs: 50,
+      })).resolves.toEqual({ ok: false, errorCode: 'attempt_conflict' });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 99,
+        attemptId: 'attempt-1',
+        nowMs: 50,
+      })).resolves.toEqual({ ok: false, errorCode: 'stale_revision' });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId: 'other-handoff',
+        expectedRevision: 1,
+        attemptId: 'attempt-1',
+        nowMs: 50,
+      })).resolves.toEqual({ ok: false, errorCode: 'identity_conflict' });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('reads a ready prospective predecessor v2 record without replacing its transition or runtime-Resume owners', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-predecessor-v2-'));
+    try {
+      const jobsDirectory = join(activeServerDir, 'session-handoff', 'prepare-target-jobs');
+      const jobId = 'prepare_predecessor_v2_1';
+      const handoffId = 'handoff_predecessor_v2_1';
+      await mkdir(jobsDirectory, { recursive: true });
+      const jobPath = join(jobsDirectory, `${jobId}.json`);
+      await writeFile(jobPath, JSON.stringify({
+        schemaVersion: 2,
+        recordKind: 'prepared_target',
+        jobId,
+        handoffId,
+        sessionId: 'session-predecessor-v2-1',
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId,
+          status: 'ready_for_cutover',
+          phase: 'cutover',
+          recoveryActions: [],
+        },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine-source',
+          targetMachineId: 'machine-target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+          handoffMetadataV2: {
+            providerBundleTransferPublication: {
+              transferId: `session-handoff:${handoffId}:provider-bundle`,
+              sizeBytes: 123,
+              manifestHash: 'sha256:predecessor-manifest',
+              endpointCandidates: [],
+            },
+          },
+        },
+        prepareTargetResult: {
+          handoffId,
+          status: {
+            handoffId,
+            jobId,
+            status: 'ready_for_cutover',
+            phase: 'cutover',
+            recoveryActions: [],
+          },
+          remoteSessionId: 'claude-session-predecessor-v2',
+          directSource: {
+            kind: 'claudeConfig',
+            configDir: null,
+            projectId: null,
+          },
+          resume: {
+            directory: '/repo',
+            agent: 'claude',
+            resume: 'claude-session-predecessor-v2',
+            transcriptStorage: 'direct',
+            approvedNewDirectoryCreation: true,
+          },
+        },
+        transitionRevision: 3,
+        resume: {
+          status: 'attempted',
+          attemptId: 'predecessor-runtime-attempt-1',
+          acceptedAtMs: 19,
+        },
+        terminal: { status: 'open' },
+        targetCleanup: { status: 'not_required' },
+      }), 'utf8');
+
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const predecessorBytes = await readFile(jobPath);
+      const parsed = await store.read(jobId);
+      expect(parsed).toMatchObject({
+        recordKind: 'prepared_target',
+        status: { status: 'ready_for_cutover' },
+        transitionRevision: 3,
+        prepareRecovery: { status: 'not_attempted' },
+        resume: {
+          status: 'attempted',
+          attemptId: 'predecessor-runtime-attempt-1',
+        },
+        terminal: { status: 'open' },
+        targetCleanup: { status: 'not_required' },
+        prepareTargetRequest: {
+          handoffMetadataV2: {
+            agentBundleTransferPublication: {
+              transferId: `session-handoff:${handoffId}:provider-bundle`,
+            },
+          },
+        },
+        prepareTargetResult: {
+          remoteSessionId: 'claude-session-predecessor-v2',
+        },
+      });
+      expect(parsed?.prepareTargetRequest?.handoffMetadataV2).not.toHaveProperty(
+        'providerBundleTransferPublication',
+      );
+      await expect(store.hydrateInterrupted(jobId, 30)).resolves.toMatchObject({
+        schemaVersion: 2,
+        recordKind: 'prepared_target',
+        sessionId: 'session-predecessor-v2-1',
+        transitionRevision: 3,
+        prepareRecovery: { status: 'not_attempted' },
+        resume: {
+          status: 'attempted',
+          attemptId: 'predecessor-runtime-attempt-1',
+        },
+        terminal: { status: 'open' },
+        targetCleanup: { status: 'not_required' },
+        status: { status: 'ready_for_cutover' },
+      });
+      expect(await readFile(jobPath)).toEqual(predecessorBytes);
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('serializes concurrent Resume attempts so only one transition wins', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-resume-race-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const jobId = 'prepare_resume_race_1';
+      const handoffId = 'handoff_resume_race_1';
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine-source',
+          targetMachineId: 'machine-target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+        },
+      });
+      await store.hydrateInterrupted(jobId, 30);
+
+      const results = await Promise.all([
+        store.acceptPrepareTargetResume({
+          jobId,
+          handoffId,
+          expectedRevision: 0,
+          attemptId: 'attempt-a',
+          nowMs: 40,
+        }),
+        store.acceptPrepareTargetResume({
+          jobId,
+          handoffId,
+          expectedRevision: 0,
+          attemptId: 'attempt-b',
+          nowMs: 40,
+        }),
+      ]);
+
+      expect(results.filter((result) => result.ok)).toHaveLength(1);
+      expect(results.filter((result) => !result.ok)).toEqual([
+        { ok: false, errorCode: 'attempt_conflict' },
+      ]);
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        transitionRevision: 1,
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('keeps the persisted prepare-target semantic request immutable after interruption hydration', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-request-immutable-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const jobId = 'prepare_request_immutable_1';
+      const handoffId = 'handoff_request_immutable_1';
+      const originalRequest = {
+        handoffId,
+        sourceMachineId: 'machine-source',
+        targetMachineId: 'machine-target',
+        negotiatedTransportStrategy: 'direct_peer' as const,
+        sourceSessionStorageMode: 'persisted' as const,
+        targetPath: '/repo-original',
+        endpointCandidates: [],
+      };
+      const status = {
+        handoffId,
+        jobId,
+        status: 'pending' as const,
+        phase: 'staging_target' as const,
+        recoveryActions: [],
+      };
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status,
+        prepareTargetRequest: originalRequest,
+      });
+      await store.hydrateInterrupted(jobId, 30);
+
+      await expect(store.write({
+        jobId,
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 40,
+        status,
+        prepareTargetRequest: {
+          ...originalRequest,
+          targetPath: '/repo-relinked',
+        },
+      })).rejects.toThrow('semantic request is immutable');
+
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        transitionRevision: 0,
+        prepareTargetRequest: {
+          targetPath: '/repo-original',
+        },
+        prepareRecovery: {
+          status: 'awaiting_user_resume',
+        },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('rejects a requested job id whose durable file contains a different job identity before acceptance', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-job-identity-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const persistedJobId = 'prepare_persisted_identity_1';
+      const requestedJobId = 'prepare_requested_identity_1';
+      const handoffId = 'handoff_job_identity_1';
+      await store.write({
+        jobId: persistedJobId,
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId: persistedJobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine-source',
+          targetMachineId: 'machine-target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+        },
+      });
+      await store.hydrateInterrupted(persistedJobId, 30);
+
+      const jobsDirectory = join(activeServerDir, 'session-handoff', 'prepare-target-jobs');
+      const persistedBytes = await readFile(join(jobsDirectory, `${persistedJobId}.json`), 'utf8');
+      await writeFile(join(jobsDirectory, `${requestedJobId}.json`), persistedBytes, 'utf8');
+
+      await expect(store.acceptPrepareTargetResume({
+        jobId: requestedJobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-mismatched-job',
+        nowMs: 40,
+      })).resolves.toEqual({ ok: false, errorCode: 'identity_conflict' });
+      await expect(store.read(requestedJobId)).resolves.toMatchObject({
+        jobId: persistedJobId,
+        transitionRevision: 0,
+        prepareRecovery: { status: 'awaiting_user_resume' },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('passively rehydrates a crash after Resume acceptance and rejoins only the original fenced attempt', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-resume-crash-rejoin-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const jobId = 'prepare_resume_crash_rejoin_1';
+      const handoffId = 'handoff_resume_crash_rejoin_1';
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine-source',
+          targetMachineId: 'machine-target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+        },
+      });
+      await store.hydrateInterrupted(jobId, 30);
+      await store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-original',
+        nowMs: 40,
+      });
+
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: 50,
+      });
+
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        transitionRevision: 2,
+        prepareRecovery: {
+          status: 'awaiting_user_resume',
+          interruptedAttempt: {
+            attemptId: 'attempt-original',
+            acceptedAtMs: 40,
+            acceptedRevision: 0,
+          },
+        },
+        status: {
+          status: 'awaiting_user_resume',
+          progress: { resumable: true },
+        },
+      });
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: 55,
+      });
+      await expect(store.read(jobId)).resolves.toMatchObject({
+        transitionRevision: 2,
+        prepareRecovery: {
+          status: 'awaiting_user_resume',
+          interruptedAttempt: {
+            attemptId: 'attempt-original',
+            acceptedRevision: 0,
+          },
+        },
+      });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 2,
+        attemptId: 'attempt-original',
+        nowMs: 60,
+      })).resolves.toEqual({ ok: false, errorCode: 'stale_revision' });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-original',
+        nowMs: 60,
+      })).resolves.toMatchObject({
+        ok: true,
+        disposition: 'replay',
+        record: {
+          transitionRevision: 3,
+          prepareRecovery: {
+            status: 'attempted',
+            attemptId: 'attempt-original',
+            acceptedRevision: 0,
+          },
+        },
+      });
+    } finally {
+      await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('allows one new current-revision attempt after a post-acceptance crash without reopening the old fence', async () => {
+    const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-handoff-prepare-resume-crash-new-attempt-'));
+    try {
+      const store = createSessionHandoffPrepareTargetJobStore({ activeServerDir });
+      const jobId = 'prepare_resume_crash_new_attempt_1';
+      const handoffId = 'handoff_resume_crash_new_attempt_1';
+      await store.write({
+        jobId,
+        handoffId,
+        createdAtMs: 10,
+        updatedAtMs: 20,
+        status: {
+          handoffId,
+          jobId,
+          status: 'pending',
+          phase: 'staging_target',
+          recoveryActions: [],
+        },
+        prepareTargetRequest: {
+          handoffId,
+          sourceMachineId: 'machine-source',
+          targetMachineId: 'machine-target',
+          negotiatedTransportStrategy: 'direct_peer',
+          sourceSessionStorageMode: 'persisted',
+          targetPath: '/repo',
+          endpointCandidates: [],
+        },
+      });
+      await store.hydrateInterrupted(jobId, 30);
+      await store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-lost-with-client',
+        nowMs: 40,
+      });
+      await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        activeServerDir,
+        nowMs: 50,
+      });
+
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 2,
+        attemptId: 'attempt-replacement',
+        nowMs: 60,
+      })).resolves.toMatchObject({
+        ok: true,
+        disposition: 'accepted',
+        record: {
+          transitionRevision: 3,
+          prepareRecovery: {
+            status: 'attempted',
+            attemptId: 'attempt-replacement',
+            acceptedRevision: 2,
+          },
+        },
+      });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 0,
+        attemptId: 'attempt-lost-with-client',
+        nowMs: 70,
+      })).resolves.toEqual({ ok: false, errorCode: 'attempt_conflict' });
+      await expect(store.acceptPrepareTargetResume({
+        jobId,
+        handoffId,
+        expectedRevision: 2,
+        attemptId: 'another-client',
+        nowMs: 70,
+      })).resolves.toEqual({ ok: false, errorCode: 'attempt_conflict' });
     } finally {
       await rm(activeServerDir, { recursive: true, force: true }).catch(() => undefined);
     }

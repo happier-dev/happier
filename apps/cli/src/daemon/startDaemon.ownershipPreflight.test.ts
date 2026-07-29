@@ -17,6 +17,10 @@ describe('startDaemon ownership preflight', () => {
     const envScope = createEnvKeyScope([
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_SERVER_URL',
+        'HAPPIER_LOCAL_SERVER_URL',
+        'HAPPIER_PUBLIC_SERVER_URL',
+        'HAPPIER_WEBAPP_URL',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
         'HAPPIER_DAEMON_STARTUP_SOURCE',
         'HAPPIER_DAEMON_RUNTIME_ID',
@@ -25,6 +29,7 @@ describe('startDaemon ownership preflight', () => {
         'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
         'HAPPIER_DAEMON_SERVICE_CHANNEL',
+        'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
     ]);
     const fetchMock = vi.fn(async () => ({
         ok: true,
@@ -45,6 +50,10 @@ describe('startDaemon ownership preflight', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_LOCAL_SERVER_URL: undefined,
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             });
             vi.resetModules();
@@ -308,11 +317,16 @@ describe('startDaemon ownership preflight', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_LOCAL_SERVER_URL: undefined,
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                 HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
                 HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
-                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             });
             vi.resetModules();
             vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
@@ -335,8 +349,9 @@ describe('startDaemon ownership preflight', () => {
                     description: 'Happier Daemon',
                     execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
                     env: {
-                        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
                         HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+                        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+                        HAPPIER_HOME_DIR: homeDir,
                         HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                     },
                     wantedBy: 'default.target',
@@ -345,13 +360,17 @@ describe('startDaemon ownership preflight', () => {
             );
 
             const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-                throw new Error(`process.exit(${code ?? ''})`);
+                return undefined as never;
             }) as typeof process.exit);
+            const flushSpy = vi.spyOn(logger, 'flushSync');
 
             try {
-                await expect(startDaemon()).rejects.toThrow('process.exit(1)');
+                await expect(startDaemon()).resolves.toBeUndefined();
+                expect(flushSpy).toHaveBeenCalledTimes(1);
+                expect(flushSpy.mock.invocationCallOrder[0]!).toBeLessThan(exitSpy.mock.invocationCallOrder[0]!);
             } finally {
                 exitSpy.mockRestore();
+                flushSpy.mockRestore();
             }
 
             const logContent = await readFile(logger.logFilePath, 'utf8');
@@ -366,12 +385,17 @@ describe('startDaemon ownership preflight', () => {
             envScope.patch({
                 HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+                HAPPIER_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_LOCAL_SERVER_URL: undefined,
+                HAPPIER_PUBLIC_SERVER_URL: 'https://api.happier.dev',
+                HAPPIER_WEBAPP_URL: 'https://app.happier.dev',
                 HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                 HAPPIER_DAEMON_TAKEOVER: '1',
                 HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
                 HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
-                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(homeDir, '.happier'),
+                HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
                 HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
             });
             vi.resetModules();
             vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
@@ -396,9 +420,10 @@ describe('startDaemon ownership preflight', () => {
                     description: 'Happier Daemon',
                     execStart: ['/Users/tester/.happier/cli/current/happier', 'daemon', 'start-sync'],
                     env: {
-                        HAPPIER_ACTIVE_SERVER_ID: 'cloud',
-                        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                         HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+                        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+                        HAPPIER_HOME_DIR: homeDir,
+                        HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
                     },
                     wantedBy: 'default.target',
                 }),
@@ -417,11 +442,11 @@ describe('startDaemon ownership preflight', () => {
             });
 
             const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
-                throw new Error(`process.exit(${code ?? ''})`);
+                return undefined as never;
             }) as typeof process.exit);
 
             try {
-                await expect(startDaemon()).rejects.toThrow('process.exit(1)');
+                await expect(startDaemon()).resolves.toBeUndefined();
             } finally {
                 exitSpy.mockRestore();
             }

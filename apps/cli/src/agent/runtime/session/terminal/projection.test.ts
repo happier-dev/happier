@@ -49,33 +49,16 @@ function createSessionFixture() {
 }
 
 describe('createTerminalRuntimeProjectionHostService', () => {
-    it('opens direct transcript mirrors through the transcript host service', async () => {
+    it('exposes only canonical terminal projection operations', async () => {
         const { createTerminalRuntimeProjectionHostService } = await loadProjectionModule();
         const fixture = createSessionFixture();
-        const handle = Object.freeze({ stop: vi.fn() });
-        const transcripts = Object.freeze({
-            openDirectMirror: vi.fn(async () => handle),
-        });
 
         const service = createTerminalRuntimeProjectionHostService({
             session: fixture.session,
-            transcripts,
             subagents: createHostSubagentStore(),
         });
-        const request = Object.freeze({
-            binding: Object.freeze({
-                agentId: 'codex',
-                source: Object.freeze({ kind: 'codexHome', home: 'user' }),
-                remoteSessionId: 'codex-session-1',
-            }),
-            onItems: vi.fn(),
-        });
 
-        await expect(service.openDirectTranscriptMirror(request)).resolves.toBe(handle);
-
-        expect(transcripts.openDirectMirror).toHaveBeenCalledWith(request);
         expect(Object.keys(service).sort()).toEqual([
-            'openDirectTranscriptMirror',
             'publishControlState',
             'publishProviderSessionId',
             'publishSubagentCompleted',
@@ -91,7 +74,6 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         const fixture = createSessionFixture();
         const service = createTerminalRuntimeProjectionHostService({
             session: fixture.session,
-            transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
             subagents: createHostSubagentStore(),
         });
 
@@ -110,7 +92,6 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         const fixture = createSessionFixture();
         const service = createTerminalRuntimeProjectionHostService({
             session: fixture.session,
-            transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
             subagents: createHostSubagentStore(),
         });
 
@@ -126,7 +107,6 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         const fixture = createSessionFixture();
         const service = createTerminalRuntimeProjectionHostService({
             session: fixture.session,
-            transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
             subagents: createHostSubagentStore(),
         });
 
@@ -143,7 +123,6 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         const subagents = createHostSubagentStore();
         const service = createTerminalRuntimeProjectionHostService({
             session: fixture.session,
-            transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
             subagents,
         });
 
@@ -185,7 +164,6 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         const subagents = createHostSubagentStore();
         const service = createTerminalRuntimeProjectionHostService({
             session: fixture.session,
-            transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
             subagents,
         });
 
@@ -212,7 +190,6 @@ describe('createTerminalRuntimeProjectionHostService', () => {
         const subagents = createHostSubagentStore();
         const service = createTerminalRuntimeProjectionHostService({
             session: fixture.session,
-            transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
             subagents,
         });
 

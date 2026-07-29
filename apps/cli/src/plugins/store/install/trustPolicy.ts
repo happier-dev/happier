@@ -56,7 +56,7 @@ export async function resolveLocalPluginInstallTrust(params: Readonly<{
           ].join(' '),
         } satisfies PluginCompatibilityDiagnostic];
     return {
-      trustPolicy: workspaceLocal ? 'local_trusted' : 'prompt',
+      trustPolicy: 'prompt',
       installPolicy: 'link',
       devWatch: workspaceLocal,
       diagnostics,

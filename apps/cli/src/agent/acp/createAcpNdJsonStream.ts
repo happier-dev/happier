@@ -1,5 +1,4 @@
-import type { AnyMessage } from '@agentclientprotocol/sdk/dist/jsonrpc.js';
-import type { Stream } from '@agentclientprotocol/sdk/dist/stream.js';
+import type { AnyMessage, Stream } from '@agentclientprotocol/sdk';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

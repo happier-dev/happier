@@ -7,6 +7,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 describe('server selection flags', () => {
   const envKeys = [
     'HAPPIER_HOME_DIR',
+    'HAPPIER_ACTIVE_SERVER_ID',
     'HAPPIER_SERVER_URL',
     'HAPPIER_LOCAL_SERVER_URL',
     'HAPPIER_PUBLIC_SERVER_URL',
@@ -189,6 +190,46 @@ describe('server selection flags', () => {
     });
   });
 
+  it('sets active id for prefix profile selection despite a stale matching env id', async () => {
+    await withTempDir('happier-cli-server-prefix-stale-env-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: 'stale-profile',
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+
+      const { addServerProfile, getActiveServerProfile } = await import('./serverProfiles');
+      await addServerProfile({
+        name: 'stale profile',
+        serverUrl: 'https://company.example.test',
+        webappUrl: 'https://stale.company.example.test',
+        use: false,
+      });
+      await addServerProfile({
+        name: 'company',
+        serverUrl: 'https://company.example.test',
+        webappUrl: 'https://app.company.example.test',
+        use: false,
+      });
+
+      const { applyEphemeralServerSelectionFromPrefixArgs } = await import('./serverSelection');
+      const remaining = await applyEphemeralServerSelectionFromPrefixArgs(['--server', 'company', 'doctor']);
+      expect(remaining).toEqual(['doctor']);
+
+      const config = await import('@/configuration');
+      expect(config.configuration.activeServerId).toBe('company');
+      expect(config.configuration.serverUrl).toBe('https://company.example.test');
+      expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
+      expect(process.env.HAPPIER_ACTIVE_SERVER_ID).toBe('company');
+      expect((await getActiveServerProfile()).id).toBe('cloud');
+    });
+  });
+
   it('does not persist selected profile when --server is combined with --no-persist', async () => {
     await withTempDir('happier-cli-server-select-profile-np-', async (homeDir) => {
       envScope.patch({
@@ -217,6 +258,45 @@ describe('server selection flags', () => {
       expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
       expect(process.env.HAPPIER_SERVER_URL).toBe('https://company.example.test');
       expect(process.env.HAPPIER_WEBAPP_URL).toBe('https://app.company.example.test');
+      expect((await getActiveServerProfile()).id).toBe('cloud');
+    });
+  });
+
+  it('sets active id for --server --no-persist despite a stale matching env id', async () => {
+    await withTempDir('happier-cli-server-select-profile-np-stale-env-', async (homeDir) => {
+      envScope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: 'stale-profile',
+        HAPPIER_SERVER_URL: undefined,
+        HAPPIER_LOCAL_SERVER_URL: undefined,
+        HAPPIER_PUBLIC_SERVER_URL: undefined,
+        HAPPIER_WEBAPP_URL: undefined,
+      });
+
+      vi.resetModules();
+      const { addServerProfile, getActiveServerProfile } = await import('./serverProfiles');
+      await addServerProfile({
+        name: 'stale profile',
+        serverUrl: 'https://company.example.test',
+        webappUrl: 'https://stale.company.example.test',
+        use: false,
+      });
+      await addServerProfile({
+        name: 'company',
+        serverUrl: 'https://company.example.test',
+        webappUrl: 'https://app.company.example.test',
+        use: false,
+      });
+
+      const { applyServerSelectionFromArgs } = await import('./serverSelection');
+      const config = await import('@/configuration');
+
+      await applyServerSelectionFromArgs(['--server', 'company', '--no-persist']);
+
+      expect(config.configuration.activeServerId).toBe('company');
+      expect(config.configuration.serverUrl).toBe('https://company.example.test');
+      expect(config.configuration.webappUrl).toBe('https://app.company.example.test');
+      expect(process.env.HAPPIER_ACTIVE_SERVER_ID).toBe('company');
       expect((await getActiveServerProfile()).id).toBe('cloud');
     });
   });

@@ -107,6 +107,22 @@ describe('zellij actions', () => {
     expect(options?.env).toMatchObject({ ZELLIJ_SOCKET_DIR: '/tmp/zellij sock' });
   });
 
+  it('sends the pinned zellij Escape key name to the explicit pane', async () => {
+    const { sendEscape } = await import('./actions');
+
+    await sendEscape({
+      zellijBinary: '/tools/zellij',
+      paneId: 'terminal_7',
+      env: { ZELLIJ_SOCKET_DIR: '/tmp/zellij sock' },
+    });
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/tools/zellij',
+      ['action', 'send-keys', '--pane-id', 'terminal_7', 'Esc'],
+      expect.objectContaining({ shell: false }),
+    );
+  });
+
   it('pastes prompt text through zellij action paste without shell interpolation', async () => {
     const { pasteText } = await import('./actions');
 

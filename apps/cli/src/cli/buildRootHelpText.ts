@@ -23,7 +23,9 @@ ${usage}
 ${bold('Examples:')}
   happier                    Start session
   happier --refresh-settings  Force-refresh account settings before starting
-  happier --profile <id-or-name> Start with a backend profile from your settings
+  happier --launch-profile <id-or-name> Start with a launch profile from your settings
+  happier --auth cs:<id>    Start with an exact Connected Services profile or pool
+  happier --auth native     Start with native provider authentication
   happier --yolo             Start with bypassing permissions
                               happier sugar for --dangerously-skip-permissions
   happier --chrome           Enable Chrome browser access for this session

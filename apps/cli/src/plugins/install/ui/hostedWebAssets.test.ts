@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
 import { resolveHostedWebAssetRuntime } from './hostedWebAssets';
-import { createPluginUiArtifactRevocationState } from './revocation';
 
 const manifest = {
   version: 1,
@@ -11,8 +10,16 @@ const manifest = {
       tier: 'hostedWeb',
       entry: 'hosted-web/preview-web/index.html',
       files: [
-        'hosted-web/preview-web/index.html',
-        'hosted-web/preview-web/assets/index.js',
+        {
+          relativePath: 'hosted-web/preview-web/index.html',
+          digest: `sha256:${'a'.repeat(64)}`,
+          byteSize: 1,
+        },
+        {
+          relativePath: 'hosted-web/preview-web/assets/index.js',
+          digest: `sha256:${'b'.repeat(64)}`,
+          byteSize: 1,
+        },
       ],
       digest: 'sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
       builtWith: { bundler: 'vite', version: '6.0.0' },
@@ -39,15 +46,6 @@ const artifact = {
   },
   byteSize: 2048,
   contentType: 'text/html',
-} as const;
-
-const revocableArtifact = {
-  ...artifact,
-  integrity: {
-    ...artifact.integrity,
-    signingKeyId: 'web-key-1',
-  },
-  installSourceId: 'marketplace:acme',
 } as const;
 
 describe('hosted web installed asset runtime resolution', () => {
@@ -135,7 +133,7 @@ describe('hosted web installed asset runtime resolution', () => {
     });
   });
 
-  it('requires hosted-web artifact integrity and revocation validation when installed artifact metadata is provided', () => {
+  it('requires hosted-web artifact integrity when installed artifact metadata is provided', () => {
     expect(resolveHostedWebAssetRuntime({
       contributionId: 'preview-web',
       pluginId: 'acme.preview',
@@ -146,7 +144,6 @@ describe('hosted web installed asset runtime resolution', () => {
       },
       manifest,
       artifact,
-      revokedDigests: new Set(),
     })).toMatchObject({
       ok: true,
       artifactId: 'artifact-preview-web',
@@ -159,79 +156,5 @@ describe('hosted web installed asset runtime resolution', () => {
       },
     });
 
-    expect(resolveHostedWebAssetRuntime({
-      contributionId: 'preview-web',
-      pluginId: 'acme.preview',
-      runtimeMode: {
-        kind: 'installedStaticAssets',
-        artifactId: 'artifact-preview-web',
-        assetRootId: 'hosted-web/preview-web',
-      },
-      manifest,
-      artifact,
-      revokedDigests: new Set(['sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff']),
-    })).toEqual({
-      ok: false,
-      code: 'artifact_revoked',
-      diagnostics: ['hosted_web_artifact_revoked'],
-    });
-  });
-
-  it('rejects signing-key scoped revocations for installed hosted-web artifacts', () => {
-    const resolutionInput = {
-      contributionId: 'preview-web',
-      pluginId: 'acme.preview',
-      runtimeMode: {
-        kind: 'installedStaticAssets' as const,
-        artifactId: 'artifact-preview-web',
-        assetRootId: 'hosted-web/preview-web',
-      },
-      manifest,
-      artifact: revocableArtifact,
-      revokedDigests: new Set<string>(),
-      revocationState: createPluginUiArtifactRevocationState({
-        revocations: [{
-          id: 'revoke-web-signing-key',
-          scope: { kind: 'signingKey', signingKeyId: 'web-key-1' },
-          reason: 'compromised',
-          revokedAt: '2026-06-20T00:00:00.000Z',
-        }],
-      }),
-    };
-
-    expect(resolveHostedWebAssetRuntime(resolutionInput)).toEqual({
-      ok: false,
-      code: 'artifact_revoked',
-      diagnostics: ['hosted_web_artifact_revoked'],
-    });
-  });
-
-  it('rejects install-source scoped revocations for installed hosted-web artifacts', () => {
-    const resolutionInput = {
-      contributionId: 'preview-web',
-      pluginId: 'acme.preview',
-      runtimeMode: {
-        kind: 'installedStaticAssets' as const,
-        artifactId: 'artifact-preview-web',
-        assetRootId: 'hosted-web/preview-web',
-      },
-      manifest,
-      artifact: revocableArtifact,
-      revokedDigests: new Set<string>(),
-      revocationState: createPluginUiArtifactRevocationState({
-        revocations: [{
-          id: 'revoke-web-install-source',
-          scope: { kind: 'installSource', sourceId: 'marketplace:acme' },
-          reason: 'policy_denied',
-          revokedAt: '2026-06-21T00:00:00.000Z',
-        }],
-      }),
-    };
-
-    expect(resolveHostedWebAssetRuntime(resolutionInput)).toEqual({
-      ok: false,
-      code: 'artifact_revoked',
-      diagnostics: ['hosted_web_artifact_revoked'],
-    });
   });
 });

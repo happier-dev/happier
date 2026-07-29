@@ -1,4 +1,5 @@
 import {
+    createLocalServiceInventoryEntryRemovedEvent,
     createLocalServiceInventoryEntryUpsertedEvent,
     createLocalServiceInventorySnapshotEvent,
     type LocalServiceInventoryRegistryEvent,
@@ -18,6 +19,10 @@ export type LocalServiceInventorySubscriber = (event: LocalServiceInventoryRegis
 export type LocalServiceInventoryRegistry = Readonly<{
     getSnapshot(): NormalizedLocalServiceInventorySnapshot;
     replaceSnapshot(snapshot: NormalizedLocalServiceInventorySnapshot): void;
+    forgetEntry(input: Readonly<{
+        inventoryId: string;
+        updatedAt: number;
+    }>): Readonly<{ ok: true } | { ok: false; reason: 'unknown_inventory_entry' }>;
     applyLabelPatch(input: Readonly<{
         inventoryId: string;
         text: string;
@@ -25,6 +30,27 @@ export type LocalServiceInventoryRegistry = Readonly<{
         updatedAt: number;
     }>): LocalServiceInventoryLabelPatchResult;
     subscribe(subscriber: LocalServiceInventorySubscriber): () => void;
+}>;
+
+export type LocalServiceInventoryRegistryOptions = Readonly<{
+    maxForgottenEntries?: number;
+    forgottenEntryTtlMs?: number;
+}>;
+
+const DEFAULT_MAX_FORGOTTEN_ENTRIES = 512;
+const DEFAULT_FORGOTTEN_ENTRY_TTL_MS = 30 * 60_000;
+
+type ForgottenSuppression = Readonly<{
+    forgottenAt: number;
+    runIdentity: InventoryRunIdentity;
+}>;
+
+type InventoryRunIdentity = Readonly<{
+    kind: 'process';
+    pid: number;
+    processStartTimeMs: number | null;
+}> | Readonly<{
+    kind: 'unattributed';
 }>;
 
 function createEmptySnapshot(): NormalizedLocalServiceInventorySnapshot {
@@ -45,9 +71,82 @@ function attachStoredLabels(
     return labels.length > 0 ? { ...entry, labels } : entry;
 }
 
-export function createLocalServiceInventoryRegistry(): LocalServiceInventoryRegistry {
+function inventoryFallbackKey(entry: Pick<NormalizedLocalServiceInventoryEntry, 'machineId' | 'address' | 'port' | 'protocol'>): string {
+    return `${entry.machineId}:${entry.protocol}:${entry.address.kind}:${entry.address.host}:${entry.port}`;
+}
+
+function inventoryRunIdentity(entry: NormalizedLocalServiceInventoryEntry): InventoryRunIdentity {
+    const process = entry.provenance?.process;
+    if (process) {
+        const processStartTimeMs = typeof process.processStartTimeMs === 'number' && Number.isFinite(process.processStartTimeMs)
+            ? Math.max(0, Math.trunc(process.processStartTimeMs))
+            : null;
+        return {
+            kind: 'process',
+            pid: process.pid,
+            processStartTimeMs,
+        };
+    }
+    return { kind: 'unattributed' };
+}
+
+function isDefinitelyDifferentRun(
+    forgotten: InventoryRunIdentity,
+    current: InventoryRunIdentity,
+): boolean {
+    if (forgotten.kind !== 'process' || current.kind !== 'process') {
+        return false;
+    }
+    if (forgotten.pid !== current.pid) {
+        return true;
+    }
+    return forgotten.processStartTimeMs !== null
+        && current.processStartTimeMs !== null
+        && forgotten.processStartTimeMs !== current.processStartTimeMs;
+}
+
+function resolvePositiveInt(value: number | undefined, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0
+        ? Math.max(1, Math.trunc(value))
+        : fallback;
+}
+
+function addSuppression(
+    suppressions: Map<string, ForgottenSuppression>,
+    key: string,
+    value: ForgottenSuppression,
+    maxEntries: number,
+): void {
+    suppressions.delete(key);
+    suppressions.set(key, value);
+    while (suppressions.size > maxEntries) {
+        const oldest = suppressions.keys().next().value;
+        if (oldest === undefined) break;
+        suppressions.delete(oldest);
+    }
+}
+
+function pruneExpiredSuppressions(
+    suppressions: Map<string, ForgottenSuppression>,
+    now: number,
+    ttlMs: number,
+): void {
+    for (const [key, suppression] of suppressions) {
+        if (now - suppression.forgottenAt >= ttlMs) {
+            suppressions.delete(key);
+        }
+    }
+}
+
+export function createLocalServiceInventoryRegistry(
+    options: LocalServiceInventoryRegistryOptions = {},
+): LocalServiceInventoryRegistry {
     const subscribers = new Set<LocalServiceInventorySubscriber>();
     const labels = createLocalServiceInventoryLabelStore();
+    const maxForgottenEntries = resolvePositiveInt(options.maxForgottenEntries, DEFAULT_MAX_FORGOTTEN_ENTRIES);
+    const forgottenEntryTtlMs = resolvePositiveInt(options.forgottenEntryTtlMs, DEFAULT_FORGOTTEN_ENTRY_TTL_MS);
+    const forgottenInventoryIds = new Map<string, ForgottenSuppression>();
+    const forgottenFallbackKeys = new Map<string, ForgottenSuppression>();
     let snapshot = createEmptySnapshot();
 
     const publish = (event: LocalServiceInventoryRegistryEvent) => {
@@ -61,11 +160,47 @@ export function createLocalServiceInventoryRegistry(): LocalServiceInventoryRegi
             return snapshot;
         },
         replaceSnapshot(nextSnapshot) {
+            pruneExpiredSuppressions(forgottenInventoryIds, nextSnapshot.generatedAt, forgottenEntryTtlMs);
+            pruneExpiredSuppressions(forgottenFallbackKeys, nextSnapshot.generatedAt, forgottenEntryTtlMs);
+            const visibleEntries = nextSnapshot.entries.filter((entry) => {
+                if (forgottenInventoryIds.has(entry.id)) {
+                    return false;
+                }
+                const fallbackKey = inventoryFallbackKey(entry);
+                const fallbackSuppression = forgottenFallbackKeys.get(fallbackKey);
+                if (!fallbackSuppression) {
+                    return true;
+                }
+                if (isDefinitelyDifferentRun(fallbackSuppression.runIdentity, inventoryRunIdentity(entry))) {
+                    forgottenFallbackKeys.delete(fallbackKey);
+                    return true;
+                }
+                return false;
+            });
             snapshot = {
                 ...nextSnapshot,
-                entries: nextSnapshot.entries.map((entry) => attachStoredLabels(entry, labels.labelsFor(entry))),
+                entries: visibleEntries.map((entry) => attachStoredLabels(entry, labels.labelsFor(entry))),
             };
             publish(createLocalServiceInventorySnapshotEvent(snapshot));
+        },
+        forgetEntry(input) {
+            const target = snapshot.entries.find((entry) => entry.id === input.inventoryId);
+            if (!target) {
+                return { ok: false, reason: 'unknown_inventory_entry' };
+            }
+            const suppression = {
+                forgottenAt: input.updatedAt,
+                runIdentity: inventoryRunIdentity(target),
+            };
+            addSuppression(forgottenInventoryIds, target.id, suppression, maxForgottenEntries);
+            addSuppression(forgottenFallbackKeys, inventoryFallbackKey(target), suppression, maxForgottenEntries);
+            snapshot = {
+                ...snapshot,
+                generatedAt: input.updatedAt,
+                entries: snapshot.entries.filter((entry) => entry.id !== target.id),
+            };
+            publish(createLocalServiceInventoryEntryRemovedEvent(snapshot, target.id));
+            return { ok: true };
         },
         applyLabelPatch(input) {
             const result = labels.applyPatch({ ...input, knownEntries: snapshot.entries });

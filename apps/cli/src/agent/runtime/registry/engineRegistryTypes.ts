@@ -51,20 +51,6 @@ export type CliRuntimeCore = RuntimeCore<
     CliExecutionRunRuntime
 >;
 
-export type CliRuntimeCoreParams = Readonly<{
-    backend: ResolvedAgentRuntimeContribution;
-    provider: ResolvedAgentContribution;
-    executionSurfaces: BackendExecutionSurfaces;
-}>;
-
-export type CliRuntimeCoreFactory = (params: CliRuntimeCoreParams) =>
-    | CliEngineAdapter
-    | Promise<CliEngineAdapter>;
-
-export type CliRuntimeCoreGetter = () =>
-    | CliRuntimeCoreFactory
-    | Promise<CliRuntimeCoreFactory>;
-
 export type CliEngineAdapter = EngineAdapter<
     unknown,
     CliSessionRuntime,
@@ -74,15 +60,9 @@ export type CliEngineAdapter = EngineAdapter<
 
 export type EngineResolutionDiagnosticCode =
     | 'engine_backend_missing'
-    | 'engine_provider_missing'
-    | 'engine_runtime_owner_conflict'
-    | 'engine_runtime_owner_takeover_missing'
     | 'engine_plugin_backend_surface_missing'
     | 'engine_plugin_backend_surface_static_mismatch'
-    | 'engine_plugin_backend_surface_non_daemon_target'
-    | 'engine_plugin_daemon_entry_missing'
     | 'engine_plugin_daemon_module_load_failed'
-    | 'engine_plugin_backend_surface_handler_missing'
     | 'engine_plugin_backend_surface_handler_invalid'
     | 'engine_plugin_registry_diagnostic';
 
@@ -90,43 +70,51 @@ export type EngineResolutionDiagnostic = Readonly<{
     code: EngineResolutionDiagnosticCode;
     message: string;
     backendId: string;
-    providerId?: string;
+    agentId?: string;
     pluginId?: string;
     detailCode?: string;
 }>;
 
-export type EngineResolutionSelectedSource = 'system' | 'managed' | 'plugin';
+export type EngineResolutionSelectedSource = 'system' | 'managed' | 'plugin' | 'configured';
 
-export type BackendRuntimeOwnerKind = 'legacy_host' | 'plugin_engine';
+export type ConfiguredEngineResolutionSource = Readonly<{ kind: 'configured' }>;
+export type EngineResolutionProvenance = ResolvedContributionProvenance | 'configured';
+export type EngineResolutionBackend = ResolvedAgentRuntimeContribution | Readonly<
+    Omit<ResolvedAgentRuntimeContribution, 'provenance' | 'source'> & {
+        provenance: 'configured';
+        source: ConfiguredEngineResolutionSource;
+    }
+>;
+export type EngineResolutionAgent = ResolvedAgentContribution | Readonly<
+    Omit<ResolvedAgentContribution, 'provenance' | 'source'> & {
+        provenance: 'configured';
+        source: ConfiguredEngineResolutionSource;
+    }
+>;
+
+export type BackendRuntimeOwnerKind = 'plugin_engine' | 'host_configured';
 
 export type BackendRuntimeOwnerCandidate = Readonly<{
     kind: BackendRuntimeOwnerKind;
     ownerId: string;
-    provenance: ResolvedContributionProvenance;
+    provenance: EngineResolutionProvenance;
     pluginId?: string;
-}>;
-
-export type BackendRuntimeOwnerTakeoverMarker = Readonly<{
-    selectedOwner: 'plugin_engine';
-    acceptedBy: string;
 }>;
 
 export type BackendRuntimeOwnerResolution = Readonly<{
     backendId: string;
     selected: BackendRuntimeOwnerCandidate | null;
     candidates: readonly BackendRuntimeOwnerCandidate[];
-    takeover?: BackendRuntimeOwnerTakeoverMarker;
-    conflictDiagnostic?: EngineResolutionDiagnostic;
 }>;
 
 export type EngineAdapterResolution = Readonly<{
     backendId: string;
     agentId: string;
-    provenance: ResolvedContributionProvenance;
+    provenance: EngineResolutionProvenance;
     selectedSource?: EngineResolutionSelectedSource;
     runtimeOwner: BackendRuntimeOwnerResolution;
-    backend: ResolvedAgentRuntimeContribution;
-    provider: ResolvedAgentContribution;
+    backend: EngineResolutionBackend;
+    agent: EngineResolutionAgent;
     engineAdapter: CliEngineAdapter;
     executionSurfaces: BackendExecutionSurfaces;
     diagnostics: readonly EngineResolutionDiagnostic[];

@@ -1,3 +1,10 @@
+import { pluginJsonValuesEqual } from '@happier-dev/protocol';
+
+import {
+    clonePluginPlainData,
+    PLUGIN_RUNTIME_JSON_VALUE_LIMITS,
+} from '../plainData';
+
 type JsonSchemaObject = Readonly<Record<string, unknown>>;
 
 type ValidationResult = Readonly<
@@ -76,11 +83,11 @@ function validateSchemaValue(
     }
 
     const enumValues = schema.enum;
-    if (Array.isArray(enumValues) && !enumValues.some((entry) => Object.is(entry, value))) {
+    if (Array.isArray(enumValues) && !enumValues.some((entry) => pluginJsonValuesEqual(entry, value))) {
         return schemaAtPath(path, 'value is not in the allowed enum set');
     }
 
-    if ('const' in schema && !Object.is(schema.const, value)) {
+    if ('const' in schema && !pluginJsonValuesEqual(schema.const, value)) {
         return schemaAtPath(path, 'value does not match const');
     }
 
@@ -143,5 +150,15 @@ export function validatePluginEventPayloadSchema(params: Readonly<{
     payloadSchema: JsonSchemaObject;
     payload: unknown;
 }>): ValidationResult {
-    return validateSchemaValue(params.payloadSchema, params.payload, 'payload');
+    try {
+        const payload = clonePluginPlainData(params.payload, {
+            path: 'payload',
+            limits: PLUGIN_RUNTIME_JSON_VALUE_LIMITS,
+            invalid: (message) => new Error(message),
+            limitExceeded: (message) => new Error(message),
+        });
+        return validateSchemaValue(params.payloadSchema, payload, 'payload');
+    } catch {
+        return schemaAtPath('payload', 'value must contain bounded strict JSON data');
+    }
 }

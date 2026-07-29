@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createPluginAgentsService } from './agents';
+import { createPluginAgentCliReadinessService } from './agents';
 
 const ENV_KEYS = [
     'HAPPIER_CLAUDE_PATH',
@@ -56,75 +56,41 @@ afterEach(async () => {
     tempDirs.clear();
 });
 
-describe('createPluginAgentsService', () => {
+describe('createPluginAgentCliReadinessService', () => {
     it('reports any-candidate agent CLI readiness from provider CLI resolution', async () => {
         await createIsolatedEnv();
-        const service = createPluginAgentsService();
+        const service = createPluginAgentCliReadinessService();
 
-        const result = await service.cli.checkReadiness({
+        const result = await service.checkReadiness({
             candidates: ['claude', 'codex'],
             requirement: 'any',
             cwd: '/repo',
         });
 
-        expect(result).toMatchObject({
-            status: 'launchable',
-            launchable: [expect.objectContaining({
-                agentId: 'claude',
-                status: 'launchable',
-                source: 'override',
-                scope: 'launch',
-                checks: {
-                    launch: 'passed',
-                    auth: 'not_checked',
-                    buildPolicy: 'not_checked',
-                },
-            })],
-            missing: [expect.objectContaining({
-                agentId: 'codex',
-                status: 'missing',
-            })],
-            blocked: [],
-        });
+        expect(result).toEqual({ launchable: [{ agentId: 'claude' }] });
     });
 
     it('describes launchable agent CLI candidates without claiming auth or build-policy readiness', async () => {
         await createIsolatedEnv();
-        const service = createPluginAgentsService();
+        const service = createPluginAgentCliReadinessService();
 
-        const result = await service.cli.checkReadiness({
+        const result = await service.checkReadiness({
             candidates: ['claude'],
             requirement: 'any',
         });
 
-        expect(result.launchable).toEqual([expect.objectContaining({
-            agentId: 'claude',
-            status: 'launchable',
-            scope: 'launch',
-            checks: {
-                launch: 'passed',
-                auth: 'not_checked',
-                buildPolicy: 'not_checked',
-            },
-            diagnostics: [expect.objectContaining({
-                code: 'agent_cli_launch_only',
-                severity: 'info',
-                messageKey: 'plugins.agents.cli.launchOnly',
-            })],
-        })]);
+        expect(result).toEqual({ launchable: [{ agentId: 'claude' }] });
     });
 
     it('reports all-candidate agent CLI readiness as missing when one candidate is unavailable', async () => {
         await createIsolatedEnv();
-        const service = createPluginAgentsService();
+        const service = createPluginAgentCliReadinessService();
 
-        const result = await service.cli.checkReadiness({
+        const result = await service.checkReadiness({
             candidates: ['claude', 'codex'],
             requirement: 'all',
         });
 
-        expect(result.status).toBe('missing');
         expect(result.launchable.map((entry) => entry.agentId)).toEqual(['claude']);
-        expect(result.missing.map((entry) => entry.agentId)).toEqual(['codex']);
     });
 });

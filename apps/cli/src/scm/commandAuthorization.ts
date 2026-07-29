@@ -1,5 +1,9 @@
 import type { ScmBackendCommandRunResult } from '@happier-dev/plugin-sdk/experimental/scm/backend';
-import type { ScmBackendContributionToolCommand } from '@happier-dev/protocol';
+
+type ScmBackendContributionToolCommand = Readonly<{
+    installableKey: string;
+    command: string;
+}>;
 
 export type ScmInstallableCommandAuthorization = ReadonlyMap<string, ReadonlySet<string>>;
 

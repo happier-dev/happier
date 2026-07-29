@@ -15,6 +15,7 @@ describe('buildConnectedServiceAuthGroupSwitchState', () => {
       policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
       activeProfileId: 'primary',
       generation: 2,
+      runtimeStateRevision: 0,
       state: {},
       createdAt: 1,
       updatedAt: 2,

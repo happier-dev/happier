@@ -11,13 +11,17 @@ import { resolvePromptRegistryItemDownloadSource } from '@/transfers/targets/res
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerMachineDownloadTransferRpcHandlers } from './transfers/registerMachineDownloadTransferRpcHandlers';
 
+export type MachinePromptRegistryTransferRpcRegistration = Readonly<{
+  transferSessionStore: TransferSessionStore;
+  downloadStore: TransferSessionStore;
+  dispose: () => Promise<void>;
+}>;
+
 export function registerMachinePromptRegistryTransferRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   registry: PromptRegistryRegistry;
-}>): Readonly<{
-  downloadStore: TransferSessionStore;
-}> {
-  const downloadStore = registerMachineDownloadTransferRpcHandlers({
+}>): MachinePromptRegistryTransferRpcRegistration {
+  const downloadRegistration = registerMachineDownloadTransferRpcHandlers({
     rpcHandlerManager: params.rpcHandlerManager,
     methods: {
       init: RPC_METHODS.DAEMON_PROMPT_REGISTRY_DOWNLOAD_INIT,
@@ -40,9 +44,8 @@ export function registerMachinePromptRegistryTransferRpcHandlers(params: Readonl
 
       return {
         source: source.source,
-        logContext: {
-          sourceId: request.sourceId,
-          itemId: request.itemId,
+        diagnosticContext: {
+          transferKind: 'prompt_registry',
         },
       };
     },
@@ -50,6 +53,8 @@ export function registerMachinePromptRegistryTransferRpcHandlers(params: Readonl
   });
 
   return {
-    downloadStore,
+    transferSessionStore: downloadRegistration.transferSessionStore,
+    downloadStore: downloadRegistration.transferSessionStore,
+    dispose: downloadRegistration.dispose,
   };
 }

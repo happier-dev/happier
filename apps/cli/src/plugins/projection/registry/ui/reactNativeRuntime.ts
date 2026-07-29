@@ -1,12 +1,8 @@
-import type { PluginUiArtifactTrustRootV1 } from '@happier-dev/protocol';
-
 import {
     validateInstalledReactNativeBundleArtifact,
     type ReactNativeBundleCacheIdentity,
-    type ReactNativeBundleArtifactExecutionTrust,
     type ReactNativeBundleHostRuntime,
 } from '@/plugins/install/ui/reactNativeBundles';
-import type { PluginUiArtifactRevocationState } from '@/plugins/install/ui/revocation';
 
 type ReactNativeRuntimeBundleProjection = Readonly<{
     pluginId: string;
@@ -122,10 +118,6 @@ export function resolveReactNativeBundleRuntimeProjection(params: Readonly<{
     featureEnabled: boolean;
     loaderBackendAvailable: boolean;
     loaderBackendDiagnostics?: readonly string[];
-    revokedDigests: ReadonlySet<string>;
-    revocationState?: PluginUiArtifactRevocationState;
-    executionTrust?: ReactNativeBundleArtifactExecutionTrust;
-    signatureTrustRoots?: readonly PluginUiArtifactTrustRootV1[];
     crashDisabled: boolean;
     devHotReloadEnabled?: boolean;
     pluginSource?: 'local' | 'internal' | 'marketplace' | 'external';
@@ -163,10 +155,6 @@ export function resolveReactNativeBundleRuntimeProjection(params: Readonly<{
         expectedPluginId: params.bundle.pluginId,
         expectedContributionId: params.bundle.contributionId,
         hostRuntime: params.hostRuntime,
-        revokedDigests: params.revokedDigests,
-        ...(params.revocationState ? { revocationState: params.revocationState } : {}),
-        ...(params.executionTrust ? { executionTrust: params.executionTrust } : {}),
-        ...(params.signatureTrustRoots?.length ? { signatureTrustRoots: params.signatureTrustRoots } : {}),
     });
     if (!validation.ok) {
         return Object.freeze({ state: 'fallback', diagnostics: Object.freeze([validation.code]) });

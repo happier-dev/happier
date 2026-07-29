@@ -1,36 +1,36 @@
-import {
-    readAcpBackendSpec,
-    type AgentRuntimeV1,
-    type CreateExecutionRunBackendParamsV1,
-    type PluginContextV1,
-    type RegisterAgentRuntimeV1,
-} from '@happier-dev/plugin-sdk';
+import type { AgentRuntime } from '@happier-dev/plugin-sdk/agent-runtime';
 import type {
     ResolvedAgentContribution,
     ResolvedAgentRuntimeContribution,
 } from '@/plugins/projection/registry/types';
+import { readAgentExecutionRunCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import {
-    createAcpRuntimeCoreFromDefinition,
-    normalizePluginAcpDefinition,
-    normalizePluginBackendContributionAcpDefinition,
-} from '@/agent/acp/runtime/definition';
-import { createPublicPluginSessionRuntimePlan } from '@/plugins/runtime/runtimeCore/plugin/session';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import {
     type BackendExecutionSurfaces,
     type CliEngineAdapter,
     type CliRuntimeCore,
-    type CliRuntimeCoreGetter,
 } from '../engineRegistryTypes';
-import { requireExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { bindPluginContextToRuntimeCore } from './runtimeCoreBinding';
-import { readPluginContextV1Binder } from './pluginContext/binder';
-import { isRecord } from './pluginContext/values';
 import type {
     BackendRuntimeOwnerResolution,
 } from '../engineRegistryTypes';
 import type { RuntimeRegistryBackendEngineEntry } from './runtimeOwnerResolution';
+import { resolveLeasedAgentRuntime } from './agentRuntimeLease';
+import { createNativeAgentRuntimeSessionPlan } from './nativeAgentSession';
+import { createNativeAgentSessionHostServiceOwners } from './nativeAgentSessionHostServiceOwners';
+import { createNativeAgentExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/nativeAgentExecutionRun';
+import { resolveAgentSessionRealtimeVoiceAuthority } from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
+import type {
+    PluginRuntimeAuthoritySnapshotV1,
+} from '@/plugins/runtime/lifecycle/activation/runtimeAuthority';
+import type { ExternalSessionHostOperationPortFactory } from './types';
+import type {
+    AgentSessionRealtimeVoiceAuthority,
+} from '@/agent/runtime/session/realtime/registerAgentSessionRealtimeVoiceRpc';
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
 
 export function shouldNormalizeManifestOnlyAcpBackend(backend: ResolvedAgentRuntimeContribution): boolean {
     if (backend.runtimeKind === 'acp') {
@@ -47,47 +47,28 @@ export function shouldNormalizeManifestOnlyAcpBackend(backend: ResolvedAgentRunt
     return isRecord(engine) && engine.kind === 'acp';
 }
 
-function resolveManifestOnlyAcpBackendAdapter(params: Readonly<{
-    backend: ResolvedAgentRuntimeContribution;
-    pluginContext: PluginContextV1;
-}>): CliEngineAdapter | null {
-    const richDefinition = params.backend.richDefinition;
-    if (richDefinition?.provenance !== 'external') {
-        return null;
-    }
-    if (!shouldNormalizeManifestOnlyAcpBackend(params.backend)) {
-        return null;
-    }
-
-    try {
-        const acpDefinition = normalizePluginBackendContributionAcpDefinition({
-            pluginId: params.backend.pluginId,
-            backend: richDefinition.definition,
-        });
-        const adapter = createAcpRuntimeCoreFromDefinition(acpDefinition, {
-            pluginContext: params.pluginContext,
-        });
-        const binder = readPluginContextV1Binder(params.pluginContext);
-        return {
-            ...adapter,
-            runtimeCore: bindPluginContextToRuntimeCore(adapter.runtimeCore, binder),
-        };
-    } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        throw new Error(`Invalid manifest-only ACP backend '${params.backend.id}' from plugin '${params.backend.pluginId ?? 'unknown'}': ${reason}`);
-    }
-}
-
 export async function resolveBackendRuntimeCore(params: Readonly<{
     backend: ResolvedAgentRuntimeContribution;
-    provider: ResolvedAgentContribution;
+    agent: ResolvedAgentContribution;
     executionSurfaces: BackendExecutionSurfaces;
-    runtimeCoreGetter: CliRuntimeCoreGetter | null;
     runtimeOwner: BackendRuntimeOwnerResolution;
     engineEntry?: RuntimeRegistryBackendEngineEntry;
     runtimeRegistry: ResolvedExecutablePluginRuntimeRegistry | null;
-    pluginContext: PluginContextV1;
-    pluginEngine?: AgentRuntimeV1 | null;
+    nativeAgentRuntimeVoiceAuthority?:
+        AgentSessionRealtimeVoiceAuthority | null;
+    happyHomeDir?: string;
+    nativeAgentRuntime?: AgentRuntime | null;
+    externalSessionHostOperations?: ExternalSessionHostOperationPortFactory | null;
+    nativeAgentRuntimeIdentity?: Readonly<{
+        pluginId: string;
+        pluginVersion: string;
+        agentId: string;
+        generation: string;
+        immutableGenerationId?: string | null;
+        runtimeAuthority?: PluginRuntimeAuthoritySnapshotV1;
+        retirementSignal?: AbortSignal;
+        isCurrent(): boolean;
+    }>;
 }>): Promise<CliEngineAdapter | null> {
     const selectedOwnerKind = params.runtimeOwner.selected?.kind ?? null;
     if (!selectedOwnerKind) {
@@ -97,84 +78,135 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
     if (selectedOwnerKind === 'plugin_engine') {
         const runtimeRegistry = params.runtimeRegistry;
         const engineEntry = params.engineEntry;
-        const registration = engineEntry?.registration as RegisterAgentRuntimeV1 | undefined;
-        if (runtimeRegistry && registration) {
-            const engine = params.pluginEngine ?? await registration.create(params.pluginContext);
-            const acpSpec = readAcpBackendSpec(engine);
-            if (acpSpec) {
-                const acpDefinition = normalizePluginAcpDefinition({
-                    pluginId: engineEntry?.pluginId,
-                    spec: acpSpec,
-                });
-                const adapter = createAcpRuntimeCoreFromDefinition(acpDefinition, {
-                    pluginContext: params.pluginContext,
-                });
-                const binder = readPluginContextV1Binder(params.pluginContext);
-                return {
-                    ...adapter,
-                    runtimeCore: bindPluginContextToRuntimeCore(adapter.runtimeCore, binder),
-                };
-            }
-            if (!engine.runtimeCore) {
-                return null;
-            }
-            const binder = readPluginContextV1Binder(params.pluginContext);
-            const rawRuntimeCore = engine.runtimeCore;
-            const publicRuntimeCore: CliRuntimeCore = Object.freeze({
-                async createSessionRuntime(sessionParams: unknown) {
-                    return await createPublicPluginSessionRuntimePlan({
-                        backend: params.backend,
-                        provider: params.provider,
-                        createSessionRuntime: async (runtimeParams) =>
-                            await rawRuntimeCore.createSessionRuntime(runtimeParams),
-                        sessionInput: buildPluginSessionBindingInput(sessionParams),
+        if ((runtimeRegistry && engineEntry)
+            || (params.nativeAgentRuntime && params.nativeAgentRuntimeIdentity)) {
+            const nativeAgentRuntime = params.nativeAgentRuntime
+                ?? (engineEntry
+                    ? await resolveLeasedAgentRuntime({ lease: engineEntry })
+                    : null);
+            if (nativeAgentRuntime) {
+                const nativeIdentity = params.nativeAgentRuntimeIdentity ?? engineEntry;
+                if (!nativeIdentity) {
+                    throw new Error('Native Agent runtime identity is unavailable');
+                }
+                const agentRetirementSignal =
+                    nativeIdentity.retirementSignal
+                    ?? engineEntry?.retirementSignal;
+                const daemonAgentRuntimeCarrierRetirementSignal =
+                    params.nativeAgentRuntimeIdentity?.retirementSignal;
+                const agentSessionRealtimeVoiceAuthority =
+                    params.nativeAgentRuntimeVoiceAuthority
+                    ?? resolveAgentSessionRealtimeVoiceAuthority({
+                        runtimeRegistry: params.runtimeRegistry,
+                        policyAgentRef: params.agent.identity ?? null,
+                        agentRuntimeIdentity: nativeIdentity,
+                        ...(agentRetirementSignal
+                            ? { agentRetirementSignal }
+                            : {}),
                     });
-                },
-                createExecutionRunBackend(opts) {
-                    const runtime = rawRuntimeCore.createExecutionRunBackend(
-                        opts as CreateExecutionRunBackendParamsV1,
-                    );
-                    return requireExecutionRunHostRuntime(
-                        runtime,
-                        `Execution-run plugin backend '${params.backend.id}' from plugin '${params.backend.pluginId ?? 'unknown'}' must implement ExecutionRunHostRuntime`,
-                    );
-                },
-            });
-            const wrappedRuntimeCore = bindPluginContextToRuntimeCore(publicRuntimeCore, binder);
-            return {
-                runtimeCore: wrappedRuntimeCore,
-                facets: engine.facets ?? undefined,
-                messageMeta: engine.messageMeta ?? undefined,
-            };
+                const runtimeCore: CliRuntimeCore = Object.freeze({
+                    async createSessionRuntime(sessionParams: unknown) {
+                        return await createNativeAgentRuntimeSessionPlan({
+                            runtime: nativeAgentRuntime,
+                            identity: nativeIdentity,
+                            backend: params.backend,
+                            agent: params.agent,
+                            executionSurfaces: params.executionSurfaces,
+                            externalSessionHostOperations:
+                                params.externalSessionHostOperations,
+                            createSessionHostServiceOwners: ({
+                                hostRuntimeParams,
+                                sessionId,
+                                directory,
+                                signal,
+                            }) => createNativeAgentSessionHostServiceOwners({
+                                runtimeRegistry,
+                                identity: nativeIdentity,
+                                backend: params.backend,
+                                agent: params.agent,
+                                hostRuntimeParams,
+                                sessionId,
+                                directory,
+                                signal,
+                                ...(params.nativeAgentRuntimeIdentity
+                                    ?.runtimeAuthority
+                                    ? {
+                                        runtimeAuthority:
+                                            params.nativeAgentRuntimeIdentity
+                                                .runtimeAuthority,
+                                    }
+                                    : {}),
+                                ...(params.happyHomeDir
+                                    ? { happyHomeDir: params.happyHomeDir }
+                                    : {}),
+                            }),
+                            ...(runtimeRegistry?.createAgentInvocationServices && engineEntry ? {
+                                createInvocationServices: ({ correlationId, cwd, environment, providerBindingActive, signal, session }) => (
+                                    runtimeRegistry.createAgentInvocationServices!({
+                                        pluginId: engineEntry.pluginId,
+                                        pluginVersion: engineEntry.pluginVersion,
+                                        agentId: engineEntry.agentId,
+                                        generation: engineEntry.generation,
+                                        correlationId,
+                                        cwd,
+                                        environment,
+                                        providerBindingActive,
+                                        signal,
+                                        session,
+                                        isGenerationCurrent: engineEntry.isCurrent,
+                                    })
+                                ),
+                            } : {}),
+                            ...(agentRetirementSignal
+                                ? { generationSignal: agentRetirementSignal }
+                                : {}),
+                            ...(daemonAgentRuntimeCarrierRetirementSignal
+                                ? {
+                                    daemonAgentRuntimeCarrierRetirementSignal,
+                                }
+                                : {}),
+                            ...(agentSessionRealtimeVoiceAuthority
+                                ? { agentSessionRealtimeVoiceAuthority }
+                                : {}),
+                            sessionInput: buildPluginSessionBindingInput(sessionParams),
+                        });
+                    },
+                    createExecutionRunBackend(options) {
+                        if (!engineEntry || !runtimeRegistry) {
+                            throw new Error('Daemon session runtime carrier does not own execution runs');
+                        }
+                        const openCapabilities = readAgentExecutionRunCapabilities(
+                            params.agent.richDefinition?.definition,
+                        )?.open;
+                        const runId = options.runId?.trim();
+                        const services = runId && runtimeRegistry.createAgentInvocationServices
+                            ? runtimeRegistry.createAgentInvocationServices({
+                                pluginId: engineEntry.pluginId,
+                                pluginVersion: engineEntry.pluginVersion,
+                                agentId: engineEntry.agentId,
+                                generation: engineEntry.generation,
+                                correlationId: runId,
+                                cwd: options.cwd,
+                                ...(options.isolation?.env ? { environment: options.isolation.env } : {}),
+                                signal: engineEntry.retirementSignal,
+                                isGenerationCurrent: engineEntry.isCurrent,
+                            })
+                            : undefined;
+                        return createNativeAgentExecutionRunHostRuntime({
+                            runtime: nativeAgentRuntime,
+                            lease: engineEntry,
+                            options,
+                            supportsResume: openCapabilities?.includes('resume') === true,
+                            generationSignal: engineEntry.retirementSignal,
+                            ...(services ? { services } : {}),
+                        });
+                    },
+                });
+                return { runtimeCore };
+            }
         }
 
-        const manifestOnlyAdapter = resolveManifestOnlyAcpBackendAdapter({
-            backend: params.backend,
-            pluginContext: params.pluginContext,
-        });
-        if (manifestOnlyAdapter) {
-            return manifestOnlyAdapter;
-        }
-
-        if (params.backend.provenance === 'external' && params.runtimeCoreGetter) {
-            const runtimeCoreFactory = await params.runtimeCoreGetter();
-            return await runtimeCoreFactory({
-                backend: params.backend,
-                provider: params.provider,
-                executionSurfaces: params.executionSurfaces,
-            });
-        }
         return null;
     }
-
-    const getRuntimeCore = params.runtimeCoreGetter;
-    if (!getRuntimeCore) {
-        return null;
-    }
-    const runtimeCoreFactory = await getRuntimeCore();
-    return await runtimeCoreFactory({
-        backend: params.backend,
-        provider: params.provider,
-        executionSurfaces: params.executionSurfaces,
-    });
+    return null;
 }

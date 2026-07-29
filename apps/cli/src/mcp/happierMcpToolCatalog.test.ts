@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ActionsSettingsV1Schema, getActionSpec, listActionSpecs } from '@happier-dev/protocol';
+import { RUNTIME_ACTION_IDS_V1 } from '@happier-dev/protocol/actions';
 
 import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { HAPPIER_MCP_TOOL_CATALOG, HAPPIER_MCP_TOOL_CATALOG_NAMES } from './happierMcpToolCatalog';
@@ -20,7 +21,7 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
     }
 
     const directSessionAgentNames = listBuiltInHappierTools({
-      surface: 'session_agent',
+      surface: 'agent',
       isActionEnabled: () => true,
       actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
     }).map((tool) => tool.name);
@@ -30,6 +31,26 @@ describe('HAPPIER_MCP_TOOL_CATALOG_NAMES', () => {
     expect(directSessionAgentNames).toContain('action_execute');
     expect(directSessionAgentNames).not.toContain('execution_run_start');
     expect(directSessionAgentNames).not.toContain('subagents_delegate_start');
+  });
+
+  it('does not project fail-closed runtime actions as MCP tools', () => {
+    const mcpToolNames = new Set(HAPPIER_MCP_TOOL_CATALOG_NAMES);
+    const directMcpToolNames = new Set(listBuiltInHappierTools({
+      surface: 'mcp',
+      isActionEnabled: () => true,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }),
+    }).map((tool) => tool.name));
+
+    for (const runtimeActionId of RUNTIME_ACTION_IDS_V1) {
+      const spec = getActionSpec(runtimeActionId);
+      expect(spec.surfaces.mcp).toBe(false);
+      if (spec.bindings?.mcpToolName) {
+        expect(mcpToolNames.has(spec.bindings.mcpToolName)).toBe(false);
+        expect(directMcpToolNames.has(spec.bindings.mcpToolName)).toBe(false);
+      }
+    }
+    expect(mcpToolNames.has('browser_navigate')).toBe(false);
+    expect(directMcpToolNames.has('browser_navigate')).toBe(false);
   });
 
   it('reuses ActionSpec inputSchema objects for mcp start actions (no schema drift)', () => {

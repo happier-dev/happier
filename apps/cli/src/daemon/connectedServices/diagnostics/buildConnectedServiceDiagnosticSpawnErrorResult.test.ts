@@ -40,7 +40,6 @@ describe('buildConnectedServiceCredentialRefreshSpawnErrorResult', () => {
       failurePhase: 'materialization',
       source: 'spawn_resume',
       agentId: 'claude',
-      providerId: 'claude',
       serviceId: 'claude-subscription',
       retryable: false,
       suggestedActions: ['reconnect_profile', 'open_connected_accounts'],

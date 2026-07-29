@@ -1,6 +1,11 @@
 import type { HookEventEnvelopeV1 } from '@happier-dev/protocol';
 
-import type { ResolvedHookRegistration } from '@/plugins/projection/registry/types';
+import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
+
+type FilterableHookDefinition = Pick<
+  ResolvedActivatedHookRegistration['definition'],
+  'category' | 'scope' | 'filters'
+>;
 
 function normalizeNonEmpty(value: unknown): string | null {
   const normalized = typeof value === 'string' ? value.trim() : '';
@@ -10,7 +15,7 @@ function normalizeNonEmpty(value: unknown): string | null {
 function readEnvelopeSessionIds(envelope: HookEventEnvelopeV1): readonly string[] {
   return [
     normalizeNonEmpty(envelope.happySessionId),
-    normalizeNonEmpty(envelope.providerSessionId),
+    normalizeNonEmpty(envelope.agentSessionId),
   ].filter((value): value is string => Boolean(value));
 }
 
@@ -20,29 +25,37 @@ function readEnvelopeAgentId(envelope: HookEventEnvelopeV1): string | null {
 
 export function matchesHookRegistrationFilters(
   envelope: HookEventEnvelopeV1,
-  registration: ResolvedHookRegistration,
+  registration: ResolvedActivatedHookRegistration,
 ): boolean {
-  const definition = registration.definition;
+  return matchesHookDefinitionFilters(envelope, registration.definition);
+}
+
+export function matchesHookDefinitionFilters(
+  envelope: HookEventEnvelopeV1,
+  definition: FilterableHookDefinition,
+): boolean {
   if (definition.category !== envelope.category) return false;
   if (definition.scope !== envelope.scope) return false;
 
   const filters = definition.filters;
   if (!filters) return true;
 
-  if (normalizeNonEmpty(filters.providerId) || normalizeNonEmpty(filters.backendId)) {
+  // Retired backend-vocabulary filters fail closed (they no longer exist on the schema).
+  const legacyFilters = filters as { providerId?: unknown; backendId?: unknown; backendTargetId?: unknown };
+  if (
+    normalizeNonEmpty(legacyFilters.providerId)
+    || normalizeNonEmpty(legacyFilters.backendId)
+    || normalizeNonEmpty(legacyFilters.backendTargetId)
+  ) {
     return false;
   }
 
-  if (normalizeNonEmpty((filters as { backendTargetId?: unknown }).backendTargetId)) {
-    return false;
-  }
-
-  const agentIdFilter = normalizeNonEmpty((filters as { agentId?: unknown }).agentId);
+  const agentIdFilter = normalizeNonEmpty(filters.agentId);
   if (agentIdFilter && agentIdFilter !== readEnvelopeAgentId(envelope)) {
     return false;
   }
 
-  const runtimeTargetIdFilter = normalizeNonEmpty((filters as { runtimeTargetId?: unknown }).runtimeTargetId);
+  const runtimeTargetIdFilter = normalizeNonEmpty(filters.runtimeTargetId);
   if (runtimeTargetIdFilter && runtimeTargetIdFilter !== normalizeNonEmpty(envelope.backendTarget)) {
     return false;
   }

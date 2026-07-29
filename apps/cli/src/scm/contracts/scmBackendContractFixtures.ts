@@ -44,7 +44,8 @@ export function checkExecutableAvailability(executable: string): ScmExecutableAv
 }
 
 export function createScmContractTempDirectory(prefix: string): string {
-    return mkdtempSync(join(tmpdir(), prefix));
+    const filesystemSafePrefix = prefix.replace(/[^a-zA-Z0-9._-]/gu, '-');
+    return mkdtempSync(join(tmpdir(), filesystemSafePrefix));
 }
 
 export function runScmExecutable(cwd: string, executable: string, args: readonly string[]): string {

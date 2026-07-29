@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -16,6 +19,47 @@ const classifiedFailure = {
 } as const;
 
 describe('runtimeAuthFailureReportOutboxDrain', () => {
+  it('drains a persisted old-generation item without forwarding launcher-daemon authority', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-legacy-generation-');
+    const reportKey = 'runtime-auth-failure-report:v1:legacy-generation-key';
+    const fileId = `report-${createHash('sha256').update(reportKey).digest('base64url').slice(0, 32)}`;
+    try {
+      await writeFile(join(outboxDir, `${fileId}.json`), JSON.stringify({
+        schemaVersion: 1,
+        fileId,
+        reportKey,
+        reportId: 'runtime-auth-report:legacy-generation-report',
+        originDaemonExecutionGenerationV1: 'daemon-before-replacement',
+        sessionId: 'sess_legacy_generation',
+        switchesThisTurn: 1,
+        classification: classifiedFailure,
+        attemptCount: 1,
+        createdAtMs: 1_700_000_000_000,
+        updatedAtMs: 1_700_000_000_000,
+      }));
+      const notify = vi.fn(async (body: Readonly<{ reportId: string }>) => ({
+        ok: true,
+        result: { status: 'credential_refreshed' },
+        recoveryReceipt: {
+          reportId: body.reportId,
+          attemptId: 'attempt_legacy_generation',
+        },
+      }));
+
+      await expect(drainRuntimeAuthFailureReportOutboxToDaemon({ outboxDir, notify })).resolves.toEqual({
+        delivered: 1,
+        dropped: 0,
+        retried: 0,
+      });
+      expect(notify).toHaveBeenCalledWith(expect.not.objectContaining({
+        originDaemonExecutionGenerationV1: expect.anything(),
+      }));
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toEqual([]);
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
   it('replays reports through daemon runtime-auth intake and removes accepted items', async () => {
     const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-daemon-drain-');
     try {
@@ -29,12 +73,20 @@ describe('runtimeAuthFailureReportOutboxDrain', () => {
         },
         nowMs: () => 1_700_000_000_000,
       });
-      const notify = vi.fn(async () => ({ ok: true, result: { status: 'credential_refreshed' } }));
+      const notify = vi.fn(async (body: Readonly<{ reportId: string }>) => ({
+        ok: true,
+        result: { status: 'credential_refreshed' },
+        recoveryReceipt: {
+          reportId: body.reportId,
+          attemptId: 'attempt_group_401',
+        },
+      }));
 
       const result = await drainRuntimeAuthFailureReportOutboxToDaemon({ outboxDir, notify });
 
       expect(result).toEqual({ delivered: 1, dropped: 0, retried: 0 });
       expect(notify).toHaveBeenCalledWith({
+        reportId: expect.stringMatching(/^runtime-auth-report:/),
         sessionId: 'sess_group_401',
         switchesThisTurn: 2,
         resumePromptMode: 'custom',
@@ -46,6 +98,71 @@ describe('runtimeAuthFailureReportOutboxDrain', () => {
         }),
       });
       expect(await readRuntimeAuthFailureReportOutboxItems({ outboxDir })).toEqual([]);
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it('retains an accepted-looking report until the daemon returns the matching custody receipt', async () => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-daemon-unreceipted-');
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: 'sess_unreceipted',
+          switchesThisTurn: 0,
+          classification: classifiedFailure,
+        },
+        nowMs: () => 1_700_000_000_000,
+      });
+      const notify = vi.fn(async () => ({
+        ok: true,
+        result: { status: 'credential_refreshed' },
+      }));
+
+      await expect(drainRuntimeAuthFailureReportOutboxToDaemon({
+        outboxDir,
+        notify,
+      })).resolves.toEqual({
+        delivered: 0,
+        dropped: 0,
+        retried: 1,
+      });
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toHaveLength(1);
+    } finally {
+      await removeTempDir(outboxDir);
+    }
+  });
+
+  it.each([
+    'temporary_retry_armed',
+    'temporary_retry_unavailable',
+  ] as const)('drops a report after the dedicated temporary-retry owner returns %s', async (status) => {
+    const outboxDir = await createTempDir('happier-runtime-auth-report-outbox-temporary-retry-owner-');
+    try {
+      await enqueueRuntimeAuthFailureReportOutboxItem({
+        outboxDir,
+        report: {
+          sessionId: `sess_${status}`,
+          switchesThisTurn: 0,
+          classification: classifiedFailure,
+        },
+        nowMs: () => 1_700_000_000_000,
+      });
+      const notify = vi.fn(async () => ({
+        ok: true,
+        result: { status },
+      }));
+
+      await expect(drainRuntimeAuthFailureReportOutboxToDaemon({
+        outboxDir,
+        notify,
+      })).resolves.toEqual({
+        delivered: 0,
+        dropped: 1,
+        retried: 0,
+      });
+      await expect(readRuntimeAuthFailureReportOutboxItems({ outboxDir })).resolves.toEqual([]);
     } finally {
       await removeTempDir(outboxDir);
     }

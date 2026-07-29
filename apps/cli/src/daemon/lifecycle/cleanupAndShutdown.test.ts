@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import type { DaemonState } from '@/api/types';
 
 const envScope = createEnvKeyScope([
     'HAPPIER_HOME_DIR',
@@ -46,8 +47,10 @@ describe('cleanupAndShutdown', () => {
                     },
                 },
                 connectedServiceQuotasLoopHandle: {
-                    stop: () => {
+                    stop: async () => {
                         calls.push('quotaLoopStop');
+                        await Promise.resolve();
+                        calls.push('quotaLoopStopDone');
                     },
                     pause: () => {},
                     resume: () => {},
@@ -89,6 +92,7 @@ describe('cleanupAndShutdown', () => {
             expect(calls).toEqual([
                 'refreshLoopStop',
                 'quotaLoopStop',
+                'quotaLoopStopDone',
                 'beforeShutdown',
                 'directPeerStop',
                 'tailscaleStop',
@@ -96,6 +100,66 @@ describe('cleanupAndShutdown', () => {
                 'sshTunnelsStop',
                 'controlServerStop',
                 'caffeinateStop',
+                'exit:0',
+            ]);
+            exitSpy.mockRestore();
+        });
+    });
+
+    it('stops transfer listeners before shutting down the machine-state publisher', async () => {
+        await withTempDir('happier-cleanup-transfer-state-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'cloud',
+            });
+            vi.resetModules();
+
+            const { cleanupAndShutdown } = await import('./cleanupAndShutdown');
+            const calls: string[] = [];
+            const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: string | number | null) => {
+                calls.push(`exit:${code ?? ''}`);
+                return undefined as never;
+            }) as typeof process.exit);
+
+            await cleanupAndShutdown({
+                source: 'happier-cli',
+                processEnv: {},
+                resolvePositiveIntEnv: (_raw, fallback) => fallback,
+                restartOnStaleVersionAndHeartbeat: null,
+                connectedServiceRefreshLoopHandle: null,
+                connectedServiceQuotasLoopHandle: null,
+                apiMachine: {
+                    updateDaemonState: async (updater: (state: DaemonState | null) => DaemonState) => {
+                        calls.push('shutdownStatePublish');
+                        updater(null);
+                    },
+                    shutdown: async () => {
+                        calls.push('apiMachineShutdown');
+                    },
+                } as never,
+                machineConnectionStateCleanup: null,
+                automationWorker: null,
+                memoryWorker: null,
+                voiceInferenceWorker: null,
+                trackedSessionCount: 0,
+                stopDirectPeerServer: async () => {
+                    calls.push('directPeerStop');
+                },
+                stopTailscaleTransferServeLifecycle: async () => {
+                    calls.push('tailscaleStop');
+                },
+                stopManagedServersOnShutdown: async () => {},
+                stopControlServer: async () => {},
+                stopCaffeinate: async () => {},
+                daemonLockHandle: null,
+                releaseDaemonLock: async () => {},
+            });
+
+            expect(calls).toEqual([
+                'directPeerStop',
+                'tailscaleStop',
+                'shutdownStatePublish',
+                'apiMachineShutdown',
                 'exit:0',
             ]);
             exitSpy.mockRestore();

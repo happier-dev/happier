@@ -1,5 +1,5 @@
-import { createReadStream } from 'node:fs';
-import { lstat, stat } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { lstat, open } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,20 +22,12 @@ export type SessionMediaProviderFileDownloadResult =
     }>
   | Readonly<{ success: false; code: string; error: string }>;
 
-export type PreparedMediaSource =
-  | Readonly<{
-      kind: 'buffer';
-      bytes: Buffer;
-      mimeType: SupportedSessionMediaMimeType;
-      suggestedName?: string;
-    }>
-  | Readonly<{
-      kind: 'file';
-      path: string;
-      sizeBytes: number;
-      mimeType: SupportedSessionMediaMimeType;
-      suggestedName?: string;
-    }>;
+export type PreparedMediaSource = Readonly<{
+  kind: 'buffer';
+  bytes: Buffer;
+  mimeType: SupportedSessionMediaMimeType;
+  suggestedName?: string;
+}>;
 
 type PrepareMediaSourceFailure = Readonly<{
   success: false;
@@ -45,6 +37,15 @@ type PrepareMediaSourceFailure = Readonly<{
 
 function failure(code: string, error: string): PrepareMediaSourceFailure {
   return { success: false, code, error };
+}
+
+function hasSameFileIdentity(
+  left: Readonly<{ dev: number; ino: number }>,
+  right: Readonly<{ dev: number; ino: number }>,
+): boolean {
+  const deviceMatches = left.dev === 0 || right.dev === 0 || left.dev === right.dev;
+  const inodeMatches = left.ino === 0 || right.ino === 0 || left.ino === right.ino;
+  return deviceMatches && inodeMatches;
 }
 
 export function resolveSourceSuggestedName(source: SessionMediaIngestionSource, fallback?: string): string {
@@ -62,16 +63,66 @@ export function resolveSourceSuggestedName(source: SessionMediaIngestionSource, 
   return 'image';
 }
 
-async function readFilePrefix(path: string, maxBytes: number): Promise<Buffer> {
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-  for await (const chunk of createReadStream(path, { start: 0, end: Math.max(0, maxBytes - 1) })) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    chunks.push(bytes);
-    totalBytes += bytes.byteLength;
-    if (totalBytes >= maxBytes) break;
+async function readAuthorizedLocalFile(input: Readonly<{
+  path: string;
+  maxBytes: number;
+  reauthorize(): boolean;
+}>): Promise<Buffer | PrepareMediaSourceFailure> {
+  const { path, maxBytes } = input;
+  const sourceLstat = await lstat(path).catch(() => null);
+  if (!sourceLstat || !sourceLstat.isFile() || sourceLstat.isSymbolicLink()) {
+    return failure('invalid_source_file', 'Media source must be a regular file');
   }
-  return Buffer.concat(chunks).subarray(0, maxBytes);
+  if (sourceLstat.size > maxBytes) {
+    return failure('media_too_large', 'Media exceeds the configured size limit');
+  }
+
+  const noFollow = typeof constants.O_NOFOLLOW === 'number' ? constants.O_NOFOLLOW : 0;
+  const handle = await open(path, constants.O_RDONLY | noFollow).catch(() => null);
+  if (!handle) {
+    return failure('invalid_source_file', 'Media source must be a regular file');
+  }
+
+  const chunks: Buffer[] = [];
+  let offset = 0;
+  try {
+    const openedStat = await handle.stat();
+    if (
+      !openedStat.isFile()
+      || !hasSameFileIdentity(openedStat, sourceLstat)
+    ) {
+      return failure('invalid_source_file', 'Media source changed while it was being authorized');
+    }
+    if (openedStat.size > maxBytes) {
+      return failure('media_too_large', 'Media exceeds the configured size limit');
+    }
+    if (!input.reauthorize()) {
+      return failure('unauthorized_source_path', 'Media source changed outside the allowed directories while it was being authorized');
+    }
+    const currentPathStat = await lstat(path).catch(() => null);
+    if (
+      !currentPathStat
+      || currentPathStat.isSymbolicLink()
+      || !currentPathStat.isFile()
+      || !hasSameFileIdentity(currentPathStat, openedStat)
+    ) {
+      return failure('invalid_source_file', 'Media source changed while it was being authorized');
+    }
+
+    while (offset <= maxBytes) {
+      const chunk = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1 - offset));
+      const { bytesRead } = await handle.read(chunk, 0, chunk.byteLength, offset);
+      if (bytesRead === 0) break;
+      chunks.push(chunk.subarray(0, bytesRead));
+      offset += bytesRead;
+    }
+  } finally {
+    await handle.close();
+  }
+  if (offset > maxBytes) {
+    return failure('media_too_large', 'Media exceeds the configured size limit');
+  }
+  return Buffer.concat(chunks, offset);
 }
 
 function resolveLocalUriPath(uri: string): Readonly<{ success: true; path: string } | { success: false; code: string; error: string }> {
@@ -118,6 +169,7 @@ export async function prepareSource(input: Readonly<{
       bytes,
       declaredMimeType: downloaded.mimeType ?? input.source.mimeType,
       suggestedName,
+      allowVideoByDeclarationOrExtension: true,
     });
     if (!mimeType) {
       return failure('unsupported_mime', 'Media MIME type is unsupported');
@@ -158,30 +210,33 @@ export async function prepareSource(input: Readonly<{
     return failure('unauthorized_source_path', sourceAuthorization.error);
   }
 
-  const sourceLstat = await lstat(sourceAuthorization.resolvedPath).catch(() => null);
-  if (!sourceLstat || !sourceLstat.isFile() || sourceLstat.isSymbolicLink()) {
-    return failure('invalid_source_file', 'Media source must be a regular file');
-  }
-  const sourceStat = await stat(sourceAuthorization.resolvedPath);
-  if (sourceStat.size > input.maxBytes) {
-    return failure('media_too_large', 'Media exceeds the configured size limit');
+  const bytes = await readAuthorizedLocalFile({
+    path: sourceAuthorization.resolvedPath,
+    maxBytes: input.maxBytes,
+    reauthorize: () => authorizeFilesystemPath({
+      targetPath: sourceAuthorization.resolvedPath,
+      defaultDirectory: input.workingDirectory,
+      accessPolicy: input.accessPolicy ?? { kind: 'osUser' },
+    }).valid,
+  });
+  if (!Buffer.isBuffer(bytes)) {
+    return bytes;
   }
 
   const suggestedName = resolveSourceSuggestedName(input.source, input.suggestedName);
-  const prefix = await readFilePrefix(sourceAuthorization.resolvedPath, 4096);
   const mimeType = resolveSessionMediaMimeType({
-    bytes: prefix,
+    bytes: bytes.subarray(0, 4096),
     declaredMimeType: input.source.mimeType,
     suggestedName,
+    allowVideoByDeclarationOrExtension: true,
   });
   if (!mimeType) {
     return failure('unsupported_mime', 'Media MIME type is unsupported');
   }
 
   return {
-    kind: 'file',
-    path: sourceAuthorization.resolvedPath,
-    sizeBytes: sourceStat.size,
+    kind: 'buffer',
+    bytes,
     mimeType,
     suggestedName,
   };

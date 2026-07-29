@@ -6,32 +6,35 @@ import type { ClientToServerEvents, ServerToClientEvents } from '../types';
 import { resolveServerHttpBaseUrl } from '../client/serverHttpBaseUrl';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import {
+    ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
+    AcceptedPendingSettlementRequestV1Schema,
+    AcceptedPendingSettlementResponseV1Schema,
     normalizePendingDeliveryBlockedReason,
     normalizePendingDeliveryStatusV1,
+    normalizePendingRequestedActionV1,
+    PendingProviderActionSchema,
     parsePendingDeliveryStatusV1,
+    readPendingLocalId,
     SessionMessageRoleSchema,
     type PendingDeliveryBlockedReason,
     type PendingDeliveryStatusV1,
+    type PendingProviderAction,
     type SessionMessageRole,
 } from '@happier-dev/protocol';
 import { SessionMessageContentSchema, type SessionMessageContent } from '../types';
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
+import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers';
 
-export type PendingMaterializationDeliveryTiming = 'after_runtime_idle';
+export type PendingMaterializationDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
+export type PendingClaimForegroundState = 'ready' | 'active_steerable' | 'active_unsteerable';
+export type { PendingProviderAction } from '@happier-dev/protocol';
 
 export type PendingMaterializationProviderDeliveryState = Readonly<{
     mode: 'provider';
     unresolved: boolean;
 }>;
 
-export type PendingMaterializationAwaitingRuntimeIdleDeliveryState = Readonly<{
-    mode: 'awaiting_runtime_idle';
-    unresolved: true;
-}>;
-
-export type PendingMaterializationDeliveryState =
-    | PendingMaterializationProviderDeliveryState
-    | PendingMaterializationAwaitingRuntimeIdleDeliveryState;
+export type PendingMaterializationDeliveryState = PendingMaterializationProviderDeliveryState;
 
 export type PendingQueueMaterializedMessage = {
     id: string | null;
@@ -41,6 +44,8 @@ export type PendingQueueMaterializedMessage = {
     content: SessionMessageContent | null;
     createdAt: number | null;
     updatedAt: number | null;
+    requestedAction: ReturnType<typeof normalizePendingRequestedActionV1>;
+    providerAction: PendingProviderAction | null;
     deliveryState?: PendingMaterializationDeliveryState | null;
     deliveryStateMalformed?: boolean;
 };
@@ -52,21 +57,32 @@ export type PendingQueueMaterializeNextResult = {
     pendingQueueState: KnownPendingQueueState | null;
     message: PendingQueueMaterializedMessage | null;
     deliveryState?: PendingMaterializationDeliveryState | null;
+    deferredReason?: 'waiting_for_foreground_turn' | 'waiting_for_runtime_activity' | 'runtime_activity_unknown' | 'waiting_for_predecessor' | 'steering_unavailable';
 };
 
-type PendingQueueWriteBody = Readonly<
-    | { localId: string; ciphertext: string; messageRole?: SessionMessageRole }
-    | { localId: string; content: { t: 'plain'; v: unknown }; messageRole?: SessionMessageRole }
->;
+export type ReleasedServerPendingQueueMaterializeResult =
+    | Readonly<{
+        type: 'materialized';
+        didWrite: boolean;
+        message: Readonly<{ id: string; seq: number; localId: string }>;
+    }>
+    | Readonly<{ type: 'no_pending' }>
+    | Readonly<{ type: 'error'; error: string }>;
+
+export type PendingQueueWriteBody = Readonly<(
+    | { localId: string; ciphertext: string; messageRole?: SessionMessageRole; requestedAction: ReturnType<typeof normalizePendingRequestedActionV1> }
+    | { localId: string; content: { t: 'plain'; v: unknown }; messageRole?: SessionMessageRole; requestedAction: ReturnType<typeof normalizePendingRequestedActionV1> }
+) & Readonly<{
+    deliveryMode?: 'continuation_if_no_queued_user_input';
+}>>;
 
 type PendingQueueSocketMaterializeResult =
     | { ok: true; didMaterialize: true; localId: string | null; didWrite: boolean; pendingQueueState: KnownPendingQueueState | null; message: PendingQueueMaterializedMessage | null }
-    | { ok: true; didMaterialize: false; pendingQueueState: KnownPendingQueueState | null; deliveryState: PendingMaterializationDeliveryState | null }
-    | { ok: false };
+    | { ok: true; didMaterialize: false; pendingQueueState: KnownPendingQueueState | null; deliveryState: PendingMaterializationDeliveryState | null; localId: string | null; deferredReason?: PendingQueueMaterializeNextResult['deferredReason'] };
 
 type PendingQueueHttpMaterializeResult =
     | { ok: true; didMaterialize: true; localId: string | null; didWrite: boolean; pendingQueueState: KnownPendingQueueState | null; message: PendingQueueMaterializedMessage | null }
-    | { ok: true; didMaterialize: false; pendingQueueState: KnownPendingQueueState | null; deliveryState: PendingMaterializationDeliveryState | null };
+    | { ok: true; didMaterialize: false; pendingQueueState: KnownPendingQueueState | null; deliveryState: PendingMaterializationDeliveryState | null; localId: string | null; deferredReason?: PendingQueueMaterializeNextResult['deferredReason'] };
 
 type AckSocket = Parameters<typeof emitSocketWithAck>[0]['socket'];
 
@@ -75,9 +91,58 @@ type PendingMaterializePayload = Readonly<{
     pendingVersion?: number;
     deliveryState?: 'provider';
     deliveryTiming?: PendingMaterializationDeliveryTiming;
+    foregroundState?: PendingClaimForegroundState;
+    expectedRuntimeActivityRevision?: number;
 }>;
 
 export type PendingQueueDeliveryBlockedReason = PendingDeliveryBlockedReason;
+
+export type AcceptedPendingQueueV2DeliveryRetryDirective = Readonly<{
+    retryAfterMs: number;
+    correlationId?: string;
+}>;
+
+export class PendingQueueAcceptedSettlementError extends Error {
+    readonly code = 'pending_queue_accepted_settlement_failed' as const;
+
+    constructor(
+        readonly settlementError: string,
+        readonly retryAfterMs?: number,
+        readonly correlationId?: string,
+    ) {
+        super(`Pending delivery accepted settlement failed: ${settlementError}`);
+        this.name = 'PendingQueueAcceptedSettlementError';
+    }
+}
+
+export function readAcceptedPendingQueueV2DeliveryRetryDirective(
+    error: unknown,
+): AcceptedPendingQueueV2DeliveryRetryDirective | null {
+    if (
+        error instanceof PendingQueueAcceptedSettlementError
+        && error.settlementError === 'transaction-unavailable'
+        && typeof error.retryAfterMs === 'number'
+        && Number.isSafeInteger(error.retryAfterMs)
+        && error.retryAfterMs >= 0
+    ) {
+        return {
+            retryAfterMs: error.retryAfterMs,
+            ...(error.correlationId ? { correlationId: error.correlationId } : {}),
+        };
+    }
+    return null;
+}
+
+export function isAcceptedPendingQueueV2DeliveryAckResponseLoss(error: unknown): boolean {
+    return Boolean(
+        error
+        && typeof error === 'object'
+        && 'code' in error
+        && (error as { code?: unknown }).code === 'socket_ack_timeout'
+        && 'retryable' in error
+        && (error as { retryable?: unknown }).retryable === true,
+    );
+}
 
 export type PendingQueueBlockedDelivery = Readonly<{
     localId: string;
@@ -90,7 +155,7 @@ function readResolvedLocalIds(value: unknown): string[] {
     if (!Array.isArray(rawLocalIds)) return [];
     const resolvedLocalIds: string[] = [];
     for (const rawLocalId of rawLocalIds) {
-        const localId = typeof rawLocalId === 'string' ? rawLocalId.trim() : '';
+        const localId = readPendingLocalId(rawLocalId);
         if (!localId || resolvedLocalIds.includes(localId)) continue;
         resolvedLocalIds.push(localId);
     }
@@ -122,7 +187,12 @@ function readPendingMaterializePayload(payload: unknown): PendingMaterializePayl
             ? { pendingVersion }
             : {}),
         ...(record.deliveryState === 'provider' ? { deliveryState: 'provider' } : {}),
-        ...(record.deliveryTiming === 'after_runtime_idle' ? { deliveryTiming: 'after_runtime_idle' } : {}),
+        ...(record.deliveryTiming === 'after_runtime_idle' || record.deliveryTiming === 'after_foreground_ready'
+            ? { deliveryTiming: record.deliveryTiming }
+            : {}),
+        ...(record.foregroundState === 'ready' || record.foregroundState === 'active_steerable' || record.foregroundState === 'active_unsteerable'
+            ? { foregroundState: record.foregroundState }
+            : {}),
     };
 }
 
@@ -138,6 +208,98 @@ function createPendingMaterializeAckSocket(socket: Socket<ServerToClientEvents, 
         timeout: (ms) => build(target.timeout(ms)),
     });
     return build(socket);
+}
+
+function createAcceptedPendingSettlementAckSocket(
+    socket: Socket<ServerToClientEvents, ClientToServerEvents>,
+): AckSocket {
+    const build = (target: Socket<ServerToClientEvents, ClientToServerEvents>): AckSocket => ({
+        connected: target.connected,
+        emitWithAck: async (event, payload) => {
+            if (event !== ACCEPTED_PENDING_SETTLEMENT_EVENT_V1) {
+                throw new Error(`Unexpected accepted pending settlement socket ACK event: ${event}`);
+            }
+            return await target.emitWithAck(
+                ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
+                AcceptedPendingSettlementRequestV1Schema.parse(payload),
+            );
+        },
+        timeout: (ms) => build(target.timeout(ms)),
+    });
+    return build(socket);
+}
+
+function hasExactKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
+    const actual = Object.keys(record);
+    return actual.length === keys.length && keys.every((key) => Object.hasOwn(record, key));
+}
+
+const RELEASED_SERVER_MATERIALIZE_ERRORS = new Set([
+    'invalid-params',
+    'session-not-found',
+    'forbidden',
+    'internal',
+]);
+
+function parseReleasedServerPendingQueueMaterializeAck(rawAck: unknown): ReleasedServerPendingQueueMaterializeResult {
+    if (!rawAck || typeof rawAck !== 'object' || Array.isArray(rawAck)) {
+        return { type: 'error', error: 'malformed_ack' };
+    }
+    const ack = rawAck as Record<string, unknown>;
+    if (
+        hasExactKeys(ack, ['ok', 'didMaterialize'])
+        && ack.ok === true
+        && ack.didMaterialize === false
+    ) {
+        return { type: 'no_pending' };
+    }
+    if (
+        hasExactKeys(ack, ['ok', 'error'])
+        && ack.ok === false
+        && typeof ack.error === 'string'
+        && RELEASED_SERVER_MATERIALIZE_ERRORS.has(ack.error)
+    ) {
+        return { type: 'error', error: ack.error };
+    }
+    if (
+        !hasExactKeys(ack, ['ok', 'didMaterialize', 'didWrite', 'message'])
+        || ack.ok !== true
+        || ack.didMaterialize !== true
+        || typeof ack.didWrite !== 'boolean'
+        || !ack.message
+        || typeof ack.message !== 'object'
+        || Array.isArray(ack.message)
+    ) {
+        return { type: 'error', error: 'malformed_ack' };
+    }
+    const message = ack.message as Record<string, unknown>;
+    if (
+        !hasExactKeys(message, ['id', 'seq', 'localId'])
+        || readNonBlankOpaqueIdentifier(message.id) === null
+        || readPendingLocalId(message.localId) === null
+        || typeof message.seq !== 'number'
+        || !Number.isSafeInteger(message.seq)
+        || message.seq < 0
+    ) {
+        return { type: 'error', error: 'malformed_ack' };
+    }
+    return {
+        type: 'materialized',
+        didWrite: ack.didWrite,
+        message: { id: message.id as string, seq: message.seq, localId: message.localId as string },
+    };
+}
+
+export async function materializeNextPendingQueueV2MessageViaReleasedServerSocket(params: Readonly<{
+    socket: Socket<ServerToClientEvents, ClientToServerEvents>;
+    sessionId: string;
+}>): Promise<ReleasedServerPendingQueueMaterializeResult> {
+    const rawAck = await emitSocketWithAck<unknown>({
+        socket: params.socket as AckSocket,
+        event: 'pending-materialize-next',
+        payload: { sid: params.sessionId },
+    });
+    return parseReleasedServerPendingQueueMaterializeAck(rawAck);
 }
 
 function parseMaterializedMessageTimestamp(value: unknown): number | null {
@@ -162,15 +324,6 @@ function parseDeliveryState(value: unknown): {
         return { deliveryState: null, malformed: true };
     }
     const record = value as Record<string, unknown>;
-    if (record.mode === 'awaiting_runtime_idle' && record.unresolved === true) {
-        return {
-            deliveryState: {
-                mode: 'awaiting_runtime_idle',
-                unresolved: true,
-            },
-            malformed: false,
-        };
-    }
     if (record.mode !== 'provider' || typeof record.unresolved !== 'boolean') {
         return { deliveryState: null, malformed: true };
     }
@@ -193,10 +346,11 @@ function parseMaterializedMessage(value: unknown): PendingQueueMaterializedMessa
             : undefined;
     if (seq === undefined) return null;
     const id = typeof record.id === 'string' && record.id.length > 0 ? record.id : null;
-    const localId = typeof record.localId === 'string' && record.localId.length > 0 ? record.localId : null;
+    const localId = readPendingLocalId(record.localId);
     const parsedRole = SessionMessageRoleSchema.nullable().safeParse(record.messageRole ?? null);
     const parsedContent = SessionMessageContentSchema.safeParse(record.content);
     const deliveryState = parseDeliveryState(record.deliveryState);
+    const parsedProviderAction = PendingProviderActionSchema.safeParse(record.providerAction);
     return {
         id,
         seq,
@@ -205,6 +359,8 @@ function parseMaterializedMessage(value: unknown): PendingQueueMaterializedMessa
         content: parsedContent.success ? parsedContent.data : null,
         createdAt: parseMaterializedMessageTimestamp(record.createdAt),
         updatedAt: parseMaterializedMessageTimestamp(record.updatedAt),
+        requestedAction: normalizePendingRequestedActionV1(record.requestedAction),
+        providerAction: parsedProviderAction.success ? parsedProviderAction.data : null,
         deliveryState: deliveryState.deliveryState,
         ...(deliveryState.malformed ? { deliveryStateMalformed: true } : {}),
     };
@@ -231,25 +387,36 @@ function readMaterializedLocalIdFromAck(value: unknown, message: PendingQueueMat
     if (message?.localId) return message.localId;
     if (!value || typeof value !== 'object') return null;
     const record = value as Record<string, unknown>;
-    if (typeof record.localId === 'string' && record.localId.length > 0) return record.localId;
+    const localId = readPendingLocalId(record.localId);
+    if (localId !== null) return localId;
     const nested = record.message;
     if (!nested || typeof nested !== 'object') return null;
     const nestedLocalId = (nested as Record<string, unknown>).localId;
-    return typeof nestedLocalId === 'string' && nestedLocalId.length > 0 ? nestedLocalId : null;
+    return readPendingLocalId(nestedLocalId);
 }
 
-class PendingProviderDeliveryMaterializationContractError extends Error {
-    constructor() {
+function readPendingMaterializeDeferredReason(value: unknown): PendingQueueMaterializeNextResult['deferredReason'] {
+    return value === 'waiting_for_foreground_turn'
+        || value === 'waiting_for_runtime_activity'
+        || value === 'runtime_activity_unknown'
+        || value === 'waiting_for_predecessor'
+        || value === 'steering_unavailable'
+        ? value
+        : undefined;
+}
+
+export class PendingProviderDeliveryMaterializationContractError extends Error {
+    readonly localId: string | null;
+
+    constructor(localId: string | null) {
         super('Invalid pending provider delivery materialize response');
         this.name = 'PendingProviderDeliveryMaterializationContractError';
+        this.localId = localId;
     }
 }
 
 function readProviderClaimLocalId(message: PendingQueueMaterializedMessage | null, fallbackLocalId: string | null): string | null {
-    if (typeof message?.localId === 'string' && message.localId.length > 0) {
-        return message.localId;
-    }
-    return typeof fallbackLocalId === 'string' && fallbackLocalId.length > 0 ? fallbackLocalId : null;
+    return readPendingLocalId(message?.localId) ?? readPendingLocalId(fallbackLocalId);
 }
 
 function assertProviderDeliveryClaimMaterialization(params: {
@@ -271,6 +438,23 @@ function assertProviderDeliveryClaimMaterialization(params: {
         && message.deliveryStateMalformed !== true
         && message.deliveryState?.mode === 'provider'
         && message.deliveryState.unresolved === true
+        && message.providerAction !== null
+    ) {
+        return;
+    }
+    if (
+        params.didWrite === false
+        && message
+        && typeof message.id === 'string'
+        && message.id.length > 0
+        && typeof message.seq === 'number'
+        && Number.isSafeInteger(message.seq)
+        && message.seq >= 0
+        && localId !== null
+        && message.deliveryStateMalformed !== true
+        && message.deliveryState?.mode === 'provider'
+        && message.deliveryState.unresolved === true
+        && message.providerAction !== null
     ) {
         return;
     }
@@ -280,6 +464,7 @@ function assertProviderDeliveryClaimMaterialization(params: {
         && message.seq === null
         && localId !== null
         && message.deliveryStateMalformed === true
+        && message.providerAction !== null
     ) {
         return;
     }
@@ -289,6 +474,7 @@ function assertProviderDeliveryClaimMaterialization(params: {
         && message.seq === null
         && localId !== null
         && message.deliveryStateMalformed !== true
+        && message.providerAction !== null
         && (
             !message.deliveryState
             || message.deliveryState.mode === 'provider'
@@ -296,7 +482,7 @@ function assertProviderDeliveryClaimMaterialization(params: {
     ) {
         return;
     }
-    throw new PendingProviderDeliveryMaterializationContractError();
+    throw new PendingProviderDeliveryMaterializationContractError(localId);
 }
 
 export async function listPendingQueueV2LocalIdsFromServer(params: {
@@ -351,7 +537,7 @@ export async function listPendingQueueV2DeliveryStatusesFromServer(params: {
     for (const row of pending) {
         if (!row || typeof row !== 'object') continue;
         const record = row as Record<string, unknown>;
-        const localId = typeof record.localId === 'string' ? record.localId.trim() : '';
+        const localId = readPendingLocalId(record.localId);
         if (!localId || seen.has(localId)) continue;
         seen.add(localId);
         entries.push({ localId, status: readPendingDeliveryStatusFromRecord(record).status });
@@ -376,11 +562,10 @@ export async function listPendingQueueV2ProviderDeliveryLocalIdsFromServer(param
         for (const row of pending) {
             if (!row || typeof row !== 'object') continue;
             const record = row as Record<string, unknown>;
-            const localId = record.localId;
+            const localId = readPendingLocalId(record.localId);
             const deliveryStatus = readPendingDeliveryStatusFromRecord(record);
             if (
-                typeof localId !== 'string'
-                || localId.length === 0
+                localId === null
                 || seen.has(localId)
                 || record.status === 'discarded'
                 || deliveryStatus.status !== 'delivering'
@@ -466,9 +651,9 @@ export async function enqueuePendingQueueV2MessageViaHttp(params: {
     token: string;
     sessionId: string;
     body: PendingQueueWriteBody;
-}): Promise<void> {
+}): Promise<Readonly<{ didWrite: boolean | null; terminal: boolean; suppressed: boolean }>> {
     const serverUrl = resolveServerHttpBaseUrl();
-    await axios.post(
+    const response = await axios.post(
         `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending`,
         params.body,
         {
@@ -479,78 +664,48 @@ export async function enqueuePendingQueueV2MessageViaHttp(params: {
             timeout: 10_000,
         },
     );
-}
-
-export async function resolveAcceptedPendingQueueV2Delivery(params: {
-    token: string;
-    sessionId: string;
-    localId: string;
-}): Promise<{ pendingQueueState?: KnownPendingQueueState; message?: PendingQueueMaterializedMessage | null }> {
-    return postPendingQueueV2DeliveryAction({
-        ...params,
-        action: 'accepted',
-        body: {},
-    });
-}
-
-export async function reconcileAcceptedPendingQueueV2DeliveriesThroughSeq(params: {
-    token: string;
-    sessionId: string;
-    maxAcceptedSeq: number;
-}): Promise<{ pendingQueueState?: KnownPendingQueueState; resolvedLocalIds: string[] }> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const response = await axios.post(
-        `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/delivery/accepted-through-seq`,
-        { maxAcceptedSeq: params.maxAcceptedSeq },
-        {
-            headers: {
-                Authorization: `Bearer ${params.token}`,
-                'Content-Type': 'application/json',
-            },
-            timeout: 10_000,
-        },
-    );
     const data = response?.data;
-    if (!data || typeof data !== 'object') {
-        throw new Error('Invalid pending delivery accepted-through-seq response');
-    }
-    if ((data as Record<string, unknown>).ok !== true) {
-        const error = (data as Record<string, unknown>).error;
-        throw new Error(`Pending delivery accepted-through-seq failed: ${typeof error === 'string' ? error : 'unknown'}`);
-    }
-    const pendingQueueState = readKnownPendingQueueState(data);
     return {
-        ...(pendingQueueState ? { pendingQueueState } : {}),
-        resolvedLocalIds: readResolvedLocalIds(data),
+        didWrite: data && typeof data === 'object' && typeof (data as { didWrite?: unknown }).didWrite === 'boolean'
+            ? (data as { didWrite: boolean }).didWrite
+            : null,
+        terminal: data && typeof data === 'object' && (data as { terminal?: unknown }).terminal === true,
+        suppressed: data && typeof data === 'object' && (data as { suppressed?: unknown }).suppressed === true,
     };
 }
 
-export async function blockPendingQueueV2ProviderDeliveriesOnAttach(params: {
-    token: string;
+export async function resolveAcceptedPendingQueueV2Delivery(params: {
+    socket: Socket<ServerToClientEvents, ClientToServerEvents>;
     sessionId: string;
-}): Promise<{ pendingQueueState?: KnownPendingQueueState }> {
-    const serverUrl = resolveServerHttpBaseUrl();
-    const response = await axios.post(
-        `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/delivery/provider-attach`,
-        {},
-        {
-            headers: {
-                Authorization: `Bearer ${params.token}`,
-                'Content-Type': 'application/json',
-            },
-            timeout: 10_000,
-        },
-    );
-    const data = response?.data;
-    if (!data || typeof data !== 'object') {
-        throw new Error('Invalid pending delivery provider-attach response');
+    localId: string;
+}): Promise<{ didResolve: boolean; pendingQueueState?: KnownPendingQueueState; message?: PendingQueueMaterializedMessage | null }> {
+    const localId = readPendingLocalId(params.localId);
+    if (localId === null) throw new Error('Invalid pending delivery accepted local id');
+    const raw = await emitSocketWithAck<Record<string, unknown>>({
+        socket: createAcceptedPendingSettlementAckSocket(params.socket),
+        event: ACCEPTED_PENDING_SETTLEMENT_EVENT_V1,
+        payload: { v: 1, sessionId: params.sessionId, localId },
+    });
+    const parsed = AcceptedPendingSettlementResponseV1Schema.safeParse(raw);
+    if (!parsed.success) throw new Error('Invalid pending delivery accepted settlement acknowledgement');
+    const result = parsed.data;
+    if (!result.ok) {
+        throw new PendingQueueAcceptedSettlementError(
+            result.error,
+            result.error === 'transaction-unavailable' ? result.retryAfterMs : undefined,
+            result.error === 'transaction-unavailable' ? result.correlationId : undefined,
+        );
     }
-    if ((data as Record<string, unknown>).ok !== true) {
-        const error = (data as Record<string, unknown>).error;
-        throw new Error(`Pending delivery provider-attach failed: ${typeof error === 'string' ? error : 'unknown'}`);
+    const pendingQueueState = readKnownPendingQueueState(result);
+    const message = 'message' in result ? readMaterializedMessageFromAck(result) : null;
+    if ((result.didResolve || 'message' in result) && message?.localId !== localId) {
+        throw new Error('Invalid pending delivery accepted settlement acknowledgement');
     }
-    const pendingQueueState = readKnownPendingQueueState(data);
-    return pendingQueueState ? { pendingQueueState } : {};
+    return {
+        didResolve: result.didResolve === true,
+        ...(pendingQueueState ? { pendingQueueState } : {}),
+        ...('message' in result ? { message } : { message: null }),
+    };
 }
 
 export async function blockPendingQueueV2Delivery(params: {
@@ -563,18 +718,6 @@ export async function blockPendingQueueV2Delivery(params: {
         ...params,
         action: 'block',
         body: { reason: params.reason },
-    });
-}
-
-export async function retryPendingQueueV2Delivery(params: {
-    token: string;
-    sessionId: string;
-    localId: string;
-}): Promise<{ pendingQueueState?: KnownPendingQueueState }> {
-    return postPendingQueueV2DeliveryAction({
-        ...params,
-        action: 'retry',
-        body: {},
     });
 }
 
@@ -594,9 +737,9 @@ async function postPendingQueueV2DeliveryAction(params: {
     token: string;
     sessionId: string;
     localId: string;
-    action: 'accepted' | 'block' | 'retry' | 'handled';
+    action: 'block' | 'handled';
     body: Record<string, unknown>;
-}): Promise<{ pendingQueueState?: KnownPendingQueueState; message?: PendingQueueMaterializedMessage | null }> {
+}): Promise<{ pendingQueueState?: KnownPendingQueueState }> {
     const serverUrl = resolveServerHttpBaseUrl();
     const response = await axios.post(
         `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/${encodeURIComponent(params.localId)}/delivery/${params.action}`,
@@ -618,10 +761,8 @@ async function postPendingQueueV2DeliveryAction(params: {
         throw new Error(`Pending delivery ${params.action} failed: ${typeof error === 'string' ? error : 'unknown'}`);
     }
     const pendingQueueState = readKnownPendingQueueState(data);
-    const message = params.action === 'accepted' ? readMaterializedMessageFromAck(data) : null;
     return {
         ...(pendingQueueState ? { pendingQueueState } : {}),
-        ...(params.action === 'accepted' ? { message } : {}),
     };
 }
 
@@ -631,6 +772,8 @@ async function tryMaterializeNextViaSocket(params: {
     knownPendingVersion?: number;
     deliveryStateOptIn?: boolean;
     deliveryTiming?: PendingMaterializationDeliveryTiming;
+    foregroundState?: PendingClaimForegroundState;
+    expectedRuntimeActivityRevision?: number;
 }): Promise<PendingQueueSocketMaterializeResult> {
     try {
         const rawAck = await emitSocketWithAck<Record<string, unknown>>({
@@ -640,18 +783,29 @@ async function tryMaterializeNextViaSocket(params: {
                 sid: params.sessionId,
                 ...(typeof params.knownPendingVersion === 'number' ? { pendingVersion: params.knownPendingVersion } : {}),
                 ...(params.deliveryStateOptIn === true ? { deliveryState: 'provider' } : {}),
-                ...(params.deliveryTiming === 'after_runtime_idle' ? { deliveryTiming: 'after_runtime_idle' } : {}),
+                ...(params.deliveryTiming ? { deliveryTiming: params.deliveryTiming } : {}),
+                ...(params.foregroundState ? { foregroundState: params.foregroundState } : {}),
+                ...(typeof params.expectedRuntimeActivityRevision === 'number'
+                    ? { expectedRuntimeActivityRevision: params.expectedRuntimeActivityRevision }
+                    : {}),
             },
         });
-        if (!rawAck || typeof rawAck !== 'object') return { ok: false };
-        if (rawAck.ok !== true) return { ok: false };
+        if (!rawAck || typeof rawAck !== 'object') {
+            throw new Error('Invalid pending queue socket materialize response');
+        }
+        if (rawAck.ok !== true) {
+            throw new Error(`Pending queue socket materialize failed: ${typeof rawAck.error === 'string' ? rawAck.error : 'unknown'}`);
+        }
         const pendingQueueState = readKnownPendingQueueState(rawAck);
         if (rawAck.didMaterialize !== true) {
+            const deferredReason = readPendingMaterializeDeferredReason(rawAck.deferredReason);
             return {
                 ok: true,
                 didMaterialize: false,
                 pendingQueueState,
                 deliveryState: parseDeliveryState(rawAck.deliveryState).deliveryState,
+                localId: deferredReason ? readPendingLocalId(rawAck.localId) : null,
+                ...(deferredReason ? { deferredReason } : {}),
             };
         }
         const parsedMessage = readMaterializedMessageFromAck(rawAck);
@@ -662,10 +816,7 @@ async function tryMaterializeNextViaSocket(params: {
         }
         return { ok: true, didMaterialize: true, localId, didWrite, pendingQueueState, message: parsedMessage };
     } catch (error) {
-        if (error instanceof PendingProviderDeliveryMaterializationContractError || isAuthenticationError(error)) {
-            throw error;
-        }
-        return { ok: false };
+        throw error;
     }
 }
 
@@ -674,11 +825,14 @@ async function tryMaterializeNextViaHttp(params: {
     sessionId: string;
     deliveryStateOptIn?: boolean;
     deliveryTiming?: PendingMaterializationDeliveryTiming;
+    foregroundState?: PendingClaimForegroundState;
+    expectedRuntimeActivityRevision?: number;
 }): Promise<PendingQueueHttpMaterializeResult> {
     const serverUrl = resolveServerHttpBaseUrl();
     const body = {
         ...(params.deliveryStateOptIn === true ? { deliveryState: 'provider' } : {}),
-        ...(params.deliveryTiming === 'after_runtime_idle' ? { deliveryTiming: 'after_runtime_idle' } : {}),
+        ...(params.deliveryTiming ? { deliveryTiming: params.deliveryTiming } : {}),
+        ...(params.foregroundState ? { foregroundState: params.foregroundState } : {}),
     };
     const response = await axios.post(
         `${serverUrl}/v2/sessions/${encodeURIComponent(params.sessionId)}/pending/materialize-next`,
@@ -700,11 +854,14 @@ async function tryMaterializeNextViaHttp(params: {
     }
     const pendingQueueState = readKnownPendingQueueState(data);
     if (data.didMaterialize !== true) {
+        const deferredReason = readPendingMaterializeDeferredReason(data.deferredReason);
         return {
             ok: true,
             didMaterialize: false,
             pendingQueueState,
             deliveryState: parseDeliveryState(data.deliveryState).deliveryState,
+            localId: deferredReason ? readPendingLocalId(data.localId) : null,
+            ...(deferredReason ? { deferredReason } : {}),
         };
     }
     const message = readMaterializedMessageFromAck(data);
@@ -721,6 +878,7 @@ export async function materializeNextPendingQueueV2MessageViaHttp(params: {
     sessionId: string;
     deliveryStateOptIn?: boolean;
     deliveryTiming?: PendingMaterializationDeliveryTiming;
+    foregroundState?: PendingClaimForegroundState;
 }): Promise<PendingQueueMaterializeNextResult> {
     const res = await tryMaterializeNextViaHttp({
         ...params,
@@ -734,6 +892,8 @@ export async function materializeNextPendingQueueV2MessageViaHttp(params: {
             pendingQueueState: res.pendingQueueState,
             message: null,
             deliveryState: res.deliveryState,
+            ...(res.deferredReason ? { deferredReason: res.deferredReason } : {}),
+            ...(res.localId ? { localId: res.localId } : {}),
         };
     }
     return {
@@ -752,7 +912,10 @@ export async function materializeNextPendingQueueV2Message(params: {
     knownPendingVersion?: number;
     deliveryStateOptIn?: boolean;
     deliveryTiming?: PendingMaterializationDeliveryTiming;
+    foregroundState?: PendingClaimForegroundState;
+    expectedRuntimeActivityRevision?: number;
 }): Promise<PendingQueueMaterializeNextResult> {
+    const requiresBoundSessionSocket = Boolean(params.deliveryStateOptIn);
     const socketRes = params.socket.connected
         ? await tryMaterializeNextViaSocket({
             socket: params.socket,
@@ -760,17 +923,22 @@ export async function materializeNextPendingQueueV2Message(params: {
             knownPendingVersion: params.knownPendingVersion,
             deliveryStateOptIn: params.deliveryStateOptIn === true,
             deliveryTiming: params.deliveryTiming,
+            foregroundState: params.foregroundState,
+            expectedRuntimeActivityRevision: params.expectedRuntimeActivityRevision,
         })
-        : ({ ok: false } as const);
+        : null;
     let res: PendingQueueSocketMaterializeResult | PendingQueueHttpMaterializeResult;
-    if (socketRes.ok) {
+    if (socketRes) {
         res = socketRes;
+    } else if (requiresBoundSessionSocket) {
+        throw new Error('Provider pending materialization requires the bound session socket');
     } else {
         res = await tryMaterializeNextViaHttp({
             token: params.token,
             sessionId: params.sessionId,
             deliveryStateOptIn: params.deliveryStateOptIn === true,
             deliveryTiming: params.deliveryTiming,
+            foregroundState: params.foregroundState,
         });
     }
     if (!res.didMaterialize) {
@@ -781,6 +949,8 @@ export async function materializeNextPendingQueueV2Message(params: {
             pendingQueueState: res.pendingQueueState,
             message: null,
             deliveryState: res.deliveryState,
+            ...(res.deferredReason ? { deferredReason: res.deferredReason } : {}),
+            ...(res.localId ? { localId: res.localId } : {}),
         };
     }
     return {

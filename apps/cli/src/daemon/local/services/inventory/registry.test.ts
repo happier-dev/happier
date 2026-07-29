@@ -83,4 +83,75 @@ describe('createLocalServiceInventoryRegistry', () => {
 
         expect(registry.getSnapshot().entries[0]?.labels.map((label) => label.text)).toEqual(['Web app']);
     });
+
+    it('stops suppressing a dismissed endpoint when a new process run owns the same port', () => {
+        const registry = createLocalServiceInventoryRegistry();
+        const firstRun = {
+            ...snapshot,
+            entries: [{
+                ...snapshot.entries[0],
+                id: 'entry-pid-400-start-1000',
+                provenance: {
+                    process: {
+                        pid: 400,
+                        processStartTimeMs: 1_000,
+                        lineagePids: [400],
+                        command: 'npm run dev',
+                        redacted: true,
+                    },
+                },
+            }],
+        } as const;
+        registry.replaceSnapshot(firstRun);
+
+        expect(registry.forgetEntry({ inventoryId: 'entry-pid-400-start-1000', updatedAt: 1_500 })).toEqual({ ok: true });
+        expect(registry.getSnapshot().entries).toEqual([]);
+
+        registry.replaceSnapshot({
+            ...snapshot,
+            generatedAt: 2_000,
+            entries: [{
+                ...snapshot.entries[0],
+                id: 'entry-pid-400-start-2000',
+                lastSeenAt: 2_000,
+                provenance: {
+                    process: {
+                        pid: 400,
+                        processStartTimeMs: 2_000,
+                        lineagePids: [400],
+                        command: 'npm run dev',
+                        redacted: true,
+                    },
+                },
+            }],
+        });
+
+        expect(registry.getSnapshot().entries.map((entry) => entry.id)).toEqual(['entry-pid-400-start-2000']);
+    });
+
+    it('bounds forgotten suppression state by capacity', () => {
+        const registry = createLocalServiceInventoryRegistry({ maxForgottenEntries: 2 });
+        const entryFor = (index: number) => ({
+            ...snapshot.entries[0],
+            id: `entry-${index}`,
+            port: 5_170 + index,
+        });
+
+        for (const index of [1, 2, 3]) {
+            registry.replaceSnapshot({
+                ...snapshot,
+                generatedAt: 1_000 + index,
+                entries: [entryFor(index)],
+            });
+            expect(registry.forgetEntry({ inventoryId: `entry-${index}`, updatedAt: 1_100 + index })).toEqual({ ok: true });
+        }
+
+        registry.replaceSnapshot({
+            ...snapshot,
+            generatedAt: 2_000,
+            entries: [entryFor(1)],
+        });
+
+        expect(registry.getSnapshot().entries.map((entry) => entry.id)).toEqual(['entry-1']);
+    });
 });

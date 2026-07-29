@@ -1,14 +1,16 @@
-import { readFile } from 'node:fs/promises';
-
 import { z } from 'zod';
 
-import { PluginSourceSpecV1Schema } from '@happier-dev/protocol';
-
-import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+import { PluginIdSchema, PluginSourceSpecV1Schema } from '@happier-dev/protocol';
 
 import { PluginCompatibilityDiagnosticSchema } from '@/plugins/validation/diagnostics/types';
-import { PLUGIN_STATE_LOCK_NAME, withPluginStoreLock } from './lock';
-import { ensurePluginStoreDirectories, resolvePluginStorePaths, type PluginStorePaths } from './paths';
+import {
+  createDefaultPluginAccessScopeRegistry,
+  PluginAccessSelectionSchema,
+} from './install/accessScopeRegistry';
+import {
+  PluginTrustRecordSchema,
+  PluginUpdatePolicySchema,
+} from './install/trustIdentity';
 
 export const PluginCompatibilityStatusSchema = z.enum(['unknown', 'compatible', 'incompatible', 'load_error']);
 export type PluginCompatibilityStatus = z.infer<typeof PluginCompatibilityStatusSchema>;
@@ -35,6 +37,9 @@ export const PluginStateInstallRecordSchema = z.object({
   manifestVersion: z.string().min(1),
   manifestDigest: z.string().min(1).nullable().optional(),
   installedPath: z.string().min(1).nullable().optional(),
+  trust: PluginTrustRecordSchema.optional(),
+  updatePolicy: PluginUpdatePolicySchema.optional(),
+  optionalAccess: z.array(PluginAccessSelectionSchema).optional(),
 }).strict();
 export type PluginStateInstallRecord = z.infer<typeof PluginStateInstallRecordSchema>;
 
@@ -53,83 +58,48 @@ export const PluginStateRecordSchema = z.object({
 }).strict();
 export type PluginStateRecord = z.infer<typeof PluginStateRecordSchema>;
 
-export const PluginStateFileV1Schema = z.object({
+const PluginStateFileV1BaseSchema = z.object({
   t: z.literal('happier_plugin_state_v1'),
   schemaVersion: z.literal(1),
-  plugins: z.record(z.string(), PluginStateRecordSchema),
+  plugins: z.record(z.string().superRefine((value, context) => {
+    const parsed = PluginIdSchema.safeParse(value);
+    if (!parsed.success || parsed.data !== value) {
+      context.addIssue({ code: 'custom', message: 'Expected a canonical plugin id' });
+    }
+  }), PluginStateRecordSchema),
 }).strict();
-export type PluginStateFileV1 = z.infer<typeof PluginStateFileV1Schema>;
 
-function createEmptyPluginStateFile(): PluginStateFileV1 {
-  return {
-    t: 'happier_plugin_state_v1',
-    schemaVersion: 1,
-    plugins: {},
-  };
-}
+const pluginAccessScopeRegistry = createDefaultPluginAccessScopeRegistry();
 
-export function createPluginStateStore(params?: Readonly<{ happyHomeDir?: string }>): Readonly<{
-  paths: PluginStorePaths;
-  read: () => Promise<PluginStateFileV1>;
-  write: (next: PluginStateFileV1) => Promise<void>;
-  update: (transform: (current: PluginStateFileV1) => Promise<PluginStateFileV1> | PluginStateFileV1) => Promise<PluginStateFileV1>;
-}> {
-  const paths = resolvePluginStorePaths(params);
-
-  async function readUnlocked(): Promise<PluginStateFileV1> {
-    try {
-      const raw = await readFile(paths.stateFilePath, 'utf8');
-      const parsedJson = JSON.parse(raw) as unknown;
-      const parsed = PluginStateFileV1Schema.safeParse(parsedJson);
-      if (!parsed.success) {
-        throw new Error('Invalid plugin state file');
+export const PluginStateFileV1Schema = PluginStateFileV1BaseSchema.superRefine((state, context) => {
+  for (const [pluginId, record] of Object.entries(state.plugins)) {
+    if (record.install.trust && record.install.trust.pluginId !== pluginId) {
+      context.addIssue({
+        code: 'custom',
+        path: ['plugins', pluginId, 'install', 'trust', 'pluginId'],
+        message: 'Plugin trust identity must match its installed-state plugin id',
+      });
+    }
+    const accessIds = new Set<string>();
+    for (const [index, selection] of (record.install.optionalAccess ?? []).entries()) {
+      if (selection.pluginId !== pluginId || !pluginAccessScopeRegistry.validateSelection(selection)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['plugins', pluginId, 'install', 'optionalAccess', index],
+          message: 'Invalid canonical plugin optional access selection',
+        });
       }
-      return parsed.data;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException | null)?.code;
-      if (code === 'ENOENT') {
-        return createEmptyPluginStateFile();
+      if (accessIds.has(selection.accessId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['plugins', pluginId, 'install', 'optionalAccess', index, 'accessId'],
+          message: 'Duplicate plugin optional access selection id',
+        });
       }
-      if (error instanceof SyntaxError) {
-        throw new Error('Invalid plugin state file');
-      }
-      throw error;
+      accessIds.add(selection.accessId);
     }
   }
-
-  async function writeUnlocked(next: PluginStateFileV1): Promise<void> {
-    const parsed = PluginStateFileV1Schema.parse(next);
-    await ensurePluginStoreDirectories({ happyHomeDir: paths.happyHomeDir });
-    await writeJsonAtomic(paths.stateFilePath, parsed);
-  }
-
-  return {
-    paths,
-    async read(): Promise<PluginStateFileV1> {
-      return await readUnlocked();
-    },
-    async write(next: PluginStateFileV1): Promise<void> {
-      await withPluginStoreLock({
-        paths,
-        lockName: PLUGIN_STATE_LOCK_NAME,
-        fn: async () => {
-          await writeUnlocked(next);
-        },
-      });
-    },
-    async update(transform): Promise<PluginStateFileV1> {
-      return await withPluginStoreLock({
-        paths,
-        lockName: PLUGIN_STATE_LOCK_NAME,
-        fn: async () => {
-          const current = await readUnlocked();
-          const next = PluginStateFileV1Schema.parse(await transform(current));
-          await writeUnlocked(next);
-          return next;
-        },
-      });
-    },
-  };
-}
+});
+export type PluginStateFileV1 = z.infer<typeof PluginStateFileV1Schema>;
 
 export { resolvePluginStorePaths } from './paths';

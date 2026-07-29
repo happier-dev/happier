@@ -79,6 +79,8 @@ describe('createSessionSocketTransport', () => {
             expect.objectContaining({
                 headers: expect.objectContaining({
                     Authorization: 'Bearer token-1',
+                    'x-happier-client-kind': 'session-runner',
+                    'x-happier-session-sync-protocol': '2',
                 }),
             }),
         );
@@ -90,6 +92,8 @@ describe('createSessionSocketTransport', () => {
             expect.objectContaining({
                 headers: expect.objectContaining({
                     Authorization: 'Bearer token-1',
+                    'x-happier-client-kind': 'session-runner',
+                    'x-happier-session-sync-protocol': '2',
                 }),
             }),
         );

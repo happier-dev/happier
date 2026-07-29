@@ -3,9 +3,9 @@ import {
   isAgentId,
   legacyCustomAcpCompat,
 } from '@happier-dev/agents';
-import type { CatalogAgentLookupId } from '@/backends/types';
+import type { CatalogAgentLookupId } from '@/agent/catalog/types';
 
-import type { CliDetectSpec } from '@/backends/types';
+import type { CliDetectSpec } from '@/agent/catalog/types';
 
 export function createBuiltInCliDetect(agentId: CatalogAgentLookupId): CliDetectSpec {
   const authConfig = isAgentId(agentId)

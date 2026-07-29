@@ -1,7 +1,9 @@
 import { logger } from '@/ui/logger';
-import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
-import { readStartedByArg } from '@/cli/readStartedByArg';
 import { warn } from '@happier-dev/cli-common/output';
+export {
+  applyDaemonAutostartEnvForInvocation,
+  shouldEnsureDaemonForInvocation,
+} from '@/daemon/daemonAutostartPolicy';
 
 import { isDaemonRunningCurrentlyInstalledHappyVersion } from '@/daemon/controlClient';
 import { evaluateCurrentDaemonOwner } from '@/daemon/ownership/evaluateCurrentDaemonOwner';
@@ -11,35 +13,11 @@ import {
   resolveDaemonStartupSourceFromEnv,
 } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
-
-const DEFAULT_STARTUP_WAIT_TIMEOUT_MS = 5000;
-const DEFAULT_STARTUP_POLL_MS = 250;
-
-export function shouldEnsureDaemonForInvocation(params: Readonly<{ args: string[] }>): boolean {
-  const args = Array.isArray(params.args) ? params.args : [];
-  if (args.includes('-h') || args.includes('--help')) return false;
-  if (args.includes('-v') || args.includes('--version')) return false;
-
-  const subcommand = args[0];
-  const nonSession = new Set([
-    'auth',
-    'doctor',
-    'daemon',
-    'notify',
-    'connect',
-    'logout',
-    'attach',
-    'capabilities',
-    'self',
-    'server',
-    'session',
-    'sessions',
-  ]);
-  if (subcommand && nonSession.has(subcommand)) return false;
-
-  // Default invocation (no explicit subcommand) starts a session.
-  return true;
-}
+import {
+  DEFAULT_SESSION_AUTOSTART_DAEMON_WAIT_POLL_MS,
+  readDaemonStartWaitPollMs,
+  readDaemonStartWaitTimeoutMs,
+} from '@/daemon/startupWaitDefaults';
 
 export function shouldAutoStartDaemonAfterAuth(
   params: Readonly<{ env: NodeJS.ProcessEnv; isDaemonProcess: boolean; startedBy: 'daemon' | 'terminal' }>,
@@ -48,14 +26,6 @@ export function shouldAutoStartDaemonAfterAuth(
   if (params.startedBy === 'daemon') return false;
   const raw = (params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim().toLowerCase();
   return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
-}
-
-export function applyDaemonAutostartEnvForInvocation(params: Readonly<{ args: string[]; env: NodeJS.ProcessEnv }>): void {
-  if (!shouldEnsureDaemonForInvocation({ args: params.args })) return;
-  if (readStartedByArg(params.args).value === 'daemon') return;
-  const current = (params.env.HAPPIER_SESSION_AUTOSTART_DAEMON ?? '').toString().trim();
-  if (current.length > 0) return;
-  params.env.HAPPIER_SESSION_AUTOSTART_DAEMON = '1';
 }
 
 export async function ensureDaemonRunningForSessionCommand(): Promise<void> {
@@ -85,8 +55,8 @@ export async function ensureDaemonRunningForSessionCommand(): Promise<void> {
     const daemonProcess = await spawnDetachedDaemonStartSync();
     daemonProcess.unref();
 
-    const timeoutMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_TIMEOUT_MS', DEFAULT_STARTUP_WAIT_TIMEOUT_MS);
-    const pollMs = readPositiveIntEnv('HAPPIER_DAEMON_START_WAIT_POLL_MS', DEFAULT_STARTUP_POLL_MS);
+    const timeoutMs = readDaemonStartWaitTimeoutMs();
+    const pollMs = readDaemonStartWaitPollMs(DEFAULT_SESSION_AUTOSTART_DAEMON_WAIT_POLL_MS);
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, pollMs));

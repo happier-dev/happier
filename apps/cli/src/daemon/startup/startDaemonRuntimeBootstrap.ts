@@ -2,13 +2,23 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { ApiClient } from '@/api/api';
+import {
+  acquireQualifiedConnectedAccountRefreshLeaseV4,
+  mutateQualifiedConnectedAccountCredentialV4,
+  mutateQualifiedConnectedAccountCredentialHealthV4,
+  readQualifiedConnectedAccountQuotaV4,
+  readQualifiedConnectedAccountCredentialV4,
+  writeQualifiedProviderAccountUsageV4,
+  type QualifiedConnectedAccountPeerClass,
+  type QualifiedConnectedAccountPeerOperationTransport,
+} from '@/api/client/qualifiedConnectedAccountApi';
 import type { DaemonState } from '@/api/types';
 import {
   createDirectTransferServerLifecycle,
   type DirectTransferServerLifecycle,
 } from '@/machines/transfer/directTransferServerLifecycle';
 import { createTailscaleTransferServeLifecycle } from '@/machines/transfer/tailscaleTransferServeLifecycle';
-import { isLoopbackTransferBindHost, resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
+import { resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { createDaemonTransferRuntimeState, createDaemonTransferRuntimeStatePublisher } from '../transferRuntimeState';
 import { resolveTailscaleTransferListenerState } from '../resolveTailscaleTransferListenerState';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
@@ -20,24 +30,64 @@ import {
 } from '../connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal';
 import { logConnectedServiceDaemonRestartDiagnostic } from './logConnectedServiceDaemonRestartDiagnostic';
 import { ConnectedServiceRefreshCoordinator } from '../connectedServices/refresh/ConnectedServiceRefreshCoordinator';
+import type {
+  QualifiedConnectedAccountEstablishedRuntimeOwner,
+} from '../connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import type {
+  QualifiedConnectedAccountV4Support,
+} from '../connectedServices/qualifiedConnectedAccountV4Support';
 import { startConnectedServiceRefreshLoop } from '../connectedServices/refresh/startConnectedServiceRefreshLoop';
 import { dispatchConnectedServiceCredentialHealthNotificationAsync } from '../connectedServices/notifications/dispatchConnectedServiceCredentialHealthNotification';
-import { ConnectedServiceQuotasCoordinator } from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import { dispatchConnectedServiceQuotaLifecycleNotificationAsync } from '../connectedServices/notifications/dispatchConnectedServiceQuotaLifecycleNotification';
+import {
+  ConnectedServiceQuotasCoordinator,
+  type ConsumeCommittedAuthGroupGeneration,
+} from '../connectedServices/quotas/ConnectedServiceQuotasCoordinator';
+import { commitConnectedServiceQuotaLifecycleSessionEvents } from '../connectedServices/quotas/commitConnectedServiceQuotaLifecycleSessionEvents';
 import { createConnectedServiceQuotaFetchers } from '../connectedServices/quotas/createConnectedServiceQuotaFetchers';
+import type { ConnectedServiceQuotaFetcherDescriptor } from '../connectedServices/quotas/types';
 import { resolveConnectedServiceQuotasDaemonOptions } from '../connectedServices/quotas/resolveConnectedServiceQuotasDaemonOptions';
 import { resolveConnectedServicesQuotasDaemonEnabled } from '../connectedServices/quotas/resolveConnectedServicesQuotasDaemonEnabled';
 import { startConnectedServiceQuotasLoop } from '../connectedServices/quotas/startConnectedServiceQuotasLoop';
+import { createConnectedServiceRuntimeIdentityFanoutReader } from '../connectedServices/quotas/identity/readConnectedServiceRuntimeIdentityForQuotaFanout';
+import {
+  resolveConnectedServiceCredentialResolutions,
+} from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import { readConnectedServiceCredentialProviderAccountId } from '../connectedServices/shared/connectedServiceCredentialRecord';
+import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
+import {
+  listConnectedServiceNoRestartRequiredServiceIdsByAgentId,
+  shouldRestartConnectedServiceOnCredentialUpdate,
+} from '../connectedServices/catalogHooks';
+import type { StopSessionResult } from '../sessions/stopSessionContract';
+import { resolveConnectedServicesMaterializationBaseDir } from '../connectedServices/materialize/resolveConnectedServicesMaterializationBaseDir';
+import type { ProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
+import { hydrateProviderAccountUsageStoreFromConnectedServiceInventory } from '../connectedServices/accountUsage/currentSourceHydration';
+import { activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration } from '../connectedServices/accountUsage/startupActivation';
 import {
   createDaemonServerWorkBudget,
   createDaemonServerWorkScheduler,
   type DaemonServerWorkScheduler,
 } from '../serverWork';
-import { parseBooleanEnv } from '@happier-dev/protocol';
+import {
+  parseBooleanEnv,
+  type BuiltInLegacyConnectedAccountOperation,
+  type ConnectedServiceId,
+  type QualifiedConnectedAccountProfileV4,
+  type QualifiedConnectedAccountRef,
+} from '@happier-dev/protocol';
+import { resolveStackDebugDirectPeerStartServer } from './resolveStackDebugDirectPeerStartServer';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
 import { getSessionNotificationTitle } from '@/agent/runtime/notifications/sessionNotificationContext';
+import { getConnectedServiceRecoveryCapabilities } from '../connectedServices/catalogHooks';
+import type {
+  CatalogAgentId,
+  ConnectedServiceRuntimeAuthApplyCapability,
+} from '@/agent/catalog/types';
 
 import { writeDaemonState } from '@/persistence';
 import type { Credentials, DaemonLocallyPersistedState } from '@/persistence';
@@ -86,8 +136,30 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
   activeServerDir: string;
   filesystemAccessPolicy: FilesystemAccessPolicy;
   publicReleaseChannel: NonNullable<DaemonState['publicReleaseChannel']>;
+  isDaemonQuiescing?: () => boolean;
   connectedServicesRestartRequestedPids: Set<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
+  qualifiedConnectedAccountEstablishedRuntimeOwner?: Pick<
+    QualifiedConnectedAccountEstablishedRuntimeOwner,
+    'invokeWithReceipt'
+  >;
+  resolveQualifiedConnectedAccountV4Support?: () =>
+    QualifiedConnectedAccountV4Support;
+  resolveQualifiedConnectedAccountPeerClass?: () =>
+    QualifiedConnectedAccountPeerClass;
+  resolveQualifiedConnectedAccountPeerOperationTransport?: (
+    input: Readonly<{
+      service: QualifiedConnectedAccountRef['service'];
+      operation: BuiltInLegacyConnectedAccountOperation;
+    }>,
+  ) => QualifiedConnectedAccountPeerOperationTransport;
+  listScheduledQualifiedConnectedAccounts?: () => Promise<
+    readonly QualifiedConnectedAccountProfileV4[]
+  >;
+  onQualifiedConnectedAccountCredentialUpdated?: (
+    account: QualifiedConnectedAccountRef,
+  ) => void | Promise<void>;
+  stopSession?: (sessionId: string) => Promise<StopSessionResult>;
   /**
    * K2: FSM-routed proactive quota pre-turn switch coordinator, built by
    * startDaemonSessionControlRuntime (where the FSM/deferral/hot-apply primitives live).
@@ -99,9 +171,24 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
       sessionId?: string;
       serviceId: string;
       groupId: string;
-      reason: 'usage_limit' | 'soft_threshold' | 'auth_expired' | 'account_changed' | 'refresh_failed';
+      reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
     }>) => Promise<unknown>;
+    applyCommittedGeneration: (input: Readonly<{
+      sessionId: string;
+      serviceId: string;
+      groupId: string;
+      activeProfileId: string;
+      generation: number;
+      reason: string;
+    }>) => Promise<Readonly<{
+      status: string;
+      activeProfileId?: string | null;
+      generation: number;
+      errorCode?: string;
+    }>>;
   }>;
+  consumeCommittedAuthGroupGeneration?: ConsumeCommittedAuthGroupGeneration;
+  connectedServicePredictiveSwitchGuard?: ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['predictiveSwitchGuard'];
   /**
    * K3 (D7): gated credential-refresh / reconnect restart adapter. Routes the refresh
    * handler's restart through the turn-deferral queue + spawn-time reachability gate
@@ -117,13 +204,27 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
     recordRestartDiagnostic?: (record: ConnectedServiceDaemonRestartDiagnosticRecord) => void;
       nowMs?: () => number;
   }>) => Promise<Readonly<{ signaled: boolean }>>;
-  connectedServiceRecoverySoftSwitchGuard?: ConstructorParameters<typeof ConnectedServiceQuotasCoordinator>[0]['softSwitchRecoveryGuard'];
+  connectedServiceRuntimeAuthApplyCapabilityResolver?: (input: Readonly<{
+    sessionId: string;
+    agentId?: string | null;
+    serviceId: ConnectedServiceId;
+    groupId: string;
+    reason: 'same_provider_account_exhausted';
+  }>) => ConnectedServiceRuntimeAuthApplyCapability | Promise<ConnectedServiceRuntimeAuthApplyCapability>;
   /**
    * K2: the single runtime quota-snapshot store, owned by startDaemonSessionControlRuntime.
    * The quotas coordinator must record into the SAME store the proactive pre-turn coordinator
    * reads from, so proactive candidate selection sees probed snapshots (single-store design).
    */
   connectedServiceRuntimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
+  /**
+   * Canonical provider-account usage read model, owned by startDaemonSessionControlRuntime.
+   * The quotas coordinator must consume this store directly for switch/fanout authority instead
+   * of falling back to runtime quota snapshots when canonical usage evidence exists.
+   */
+  providerAccountUsageStore: Pick<ProviderAccountUsageStore, 'recordSnapshot' | 'resolveRecordId' | 'resolveBySource'>;
+  connectedServiceRuntimeRegistry?: ConnectedServiceRuntimeRegistry;
+  connectedServiceQuotaFetcherDescriptors?: readonly ConnectedServiceQuotaFetcherDescriptor[];
 }>;
 
 export type StartDaemonRuntimeBootstrapResult = Readonly<{
@@ -154,22 +255,18 @@ export async function startDaemonRuntimeBootstrap(
     credentials: params.credentials,
     logger: params.logger,
   });
-
   const directPeerRuntimeConfig = resolveMachineTransferRuntimeConfig();
+  const stackDebugDirectPeerStartServer =
+    await resolveStackDebugDirectPeerStartServer();
   const directTransferPromptAssetAdapterRegistry = createPromptAssetAdapterRegistry();
   const directTransferPromptRegistryRegistry = createPromptRegistryAdapterRegistry();
   const directPeerServerEnabled = directPeerRuntimeConfig.directPeer.serverEnabled;
-  const directPeerLocalListenerClasses: readonly ('loopback_http' | 'lan_http')[] =
-    isLoopbackTransferBindHost(directPeerRuntimeConfig.directPeer.bindHost)
-      ? ['loopback_http' as const]
-      : ['lan_http' as const];
+  const directPeerLocalListenerClasses = ['loopback_http' as const];
   const directPeerTransferListenerClasses = [
     ...directPeerLocalListenerClasses,
     ...(directPeerRuntimeConfig.tailscaleServe.enabled ? ['tailscale_serve_https' as const] : []),
   ] as const;
-  const directPeerAdvertisedHosts = directPeerLocalListenerClasses.includes('loopback_http')
-    ? ['127.0.0.1']
-    : directPeerRuntimeConfig.directPeer.advertisedHosts;
+  const directPeerAdvertisedHosts = ['127.0.0.1'];
 
   let tailscaleTransferServeLifecycle: ReturnType<typeof createTailscaleTransferServeLifecycle> | null = null;
   let transferRuntimeStatePublisher: ReturnType<typeof createDaemonTransferRuntimeStatePublisher> | null = null;
@@ -185,6 +282,9 @@ export async function startDaemonRuntimeBootstrap(
         promptAssetUpload: {
           adapterRegistry: directTransferPromptAssetAdapterRegistry,
         },
+        ...(stackDebugDirectPeerStartServer
+          ? { startServer: stackDebugDirectPeerStartServer }
+          : {}),
         resolveTailscaleServeHttpsBaseUrl: () => tailscaleTransferServeLifecycle?.getHttpsBaseUrlWithServePath() ?? null,
         onStateChange: (state) => {
           void transferRuntimeStatePublisher?.publishDirectTransferServerLifecycleState(state);
@@ -245,6 +345,7 @@ export async function startDaemonRuntimeBootstrap(
   };
   transferRuntimeStatePublisher = createDaemonTransferRuntimeStatePublisher({
     initialTransferState,
+    isDaemonQuiescing: params.isDaemonQuiescing,
     warn: (message, error) => {
       params.logger.warn(message, error);
     },
@@ -267,7 +368,12 @@ export async function startDaemonRuntimeBootstrap(
     };
   }
 
-  const connectedServicesRefreshEnabled = parseBooleanEnv(params.processEnv.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED, true);
+  const connectedServicesRefreshEnabled =
+    parseBooleanEnv(
+      params.processEnv.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED,
+      true,
+    );
+  const connectedServiceRuntimeRegistry = params.connectedServiceRuntimeRegistry ?? new ConnectedServiceRuntimeRegistry();
   let connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null = null;
   let connectedServiceRefreshLoopHandle: ConnectedServiceRefreshLoopHandle = null;
   if (connectedServicesRefreshEnabled) {
@@ -295,23 +401,25 @@ export async function startDaemonRuntimeBootstrap(
       logConnectedServiceDaemonRestartDiagnostic(params.logger, record);
     };
 
-    const onAuthUpdated =
-      restartPiOnAuthUpdate
-        ? createConnectedServicesAuthUpdatedRestartHandler({
-            restartRequestedPids: params.connectedServicesRestartRequestedPids,
-            pidToTrackedSession: params.pidToTrackedSession,
-            restartAgentIds: new Set(['pi']),
-            // K3: route refresh/reconnect restarts through the gated deferral primitive
-            // (turn-deferral + spawn-time reachability), not a raw mid-turn SIGTERM.
-            requestRestartSignal: params.requestConnectedServiceRefreshRestartSignal,
-            restartSignalDelayMs: resolvePositiveIntEnv(
-              params.processEnv.HAPPIER_CONNECTED_SERVICES_REFRESH_RESTART_SIGNAL_DELAY_MS,
-              250,
-              { min: 0, max: 5_000 },
-            ),
-            recordRestartDiagnostic: recordConnectedServiceRestartDiagnostic,
-          })
-        : undefined;
+    const onAuthUpdated = restartPiOnAuthUpdate
+      ? createConnectedServicesAuthUpdatedRestartHandler({
+        restartRequestedPids: params.connectedServicesRestartRequestedPids,
+        pidToTrackedSession: params.pidToTrackedSession,
+        restartAgentIds: new Set(['pi']),
+        shouldRestartForCredentialUpdate: ({ agentId, serviceId }) =>
+          shouldRestartConnectedServiceOnCredentialUpdate(agentId, serviceId),
+        noRestartRequiredServiceIdsByAgentId: listConnectedServiceNoRestartRequiredServiceIdsByAgentId(),
+        // K3: route refresh/reconnect restarts through the gated deferral primitive
+        // (turn-deferral + spawn-time reachability), not a raw mid-turn SIGTERM.
+        requestRestartSignal: params.requestConnectedServiceRefreshRestartSignal,
+        restartSignalDelayMs: resolvePositiveIntEnv(
+          params.processEnv.HAPPIER_CONNECTED_SERVICES_REFRESH_RESTART_SIGNAL_DELAY_MS,
+          250,
+          { min: 0, max: 5_000 },
+        ),
+        recordRestartDiagnostic: recordConnectedServiceRestartDiagnostic,
+      })
+      : undefined;
 
     connectedServiceRefreshCoordinator = new ConnectedServiceRefreshCoordinator({
       api: params.api,
@@ -319,13 +427,51 @@ export async function startDaemonRuntimeBootstrap(
       machineIdProvider: params.machineIdProvider,
       ownerIdProvider: () => `${params.machineId}:${params.runtimeId}`,
       activeServerDir: params.activeServerDir,
-      baseDir: join(params.happyHomeDir, 'daemon', 'connected-services', 'materialized'),
+      baseDir: resolveConnectedServicesMaterializationBaseDir(params.happyHomeDir),
       refreshWindowMs,
       refreshLeaseMs,
       now: () => Date.now(),
       accountSettingsProvider: () => getActiveAccountSettingsSnapshot()?.settings ?? null,
       processEnv: params.processEnv,
-      ...(onAuthUpdated ? { onAuthUpdated } : {}),
+      runtimeRegistry: connectedServiceRuntimeRegistry,
+      ...(params.qualifiedConnectedAccountEstablishedRuntimeOwner
+        && params.resolveQualifiedConnectedAccountPeerClass
+        ? {
+            qualifiedConnectedAccountRuntime: {
+              resolvePeerClass:
+                params.resolveQualifiedConnectedAccountPeerClass,
+              ...(params.resolveQualifiedConnectedAccountPeerOperationTransport
+                ? {
+                    resolveOperationTransport:
+                      params.resolveQualifiedConnectedAccountPeerOperationTransport,
+                  }
+                : {}),
+              establishedRuntimeOwner:
+                params.qualifiedConnectedAccountEstablishedRuntimeOwner,
+              mutateCredentialHealth:
+                mutateQualifiedConnectedAccountCredentialHealthV4,
+              readCredential:
+                readQualifiedConnectedAccountCredentialV4,
+              acquireRefreshLease:
+                acquireQualifiedConnectedAccountRefreshLeaseV4,
+              mutateCredential:
+                mutateQualifiedConnectedAccountCredentialV4,
+              ...(params.listScheduledQualifiedConnectedAccounts
+                ? {
+                    listScheduledAccounts:
+                      params.listScheduledQualifiedConnectedAccounts,
+                  }
+                : {}),
+              ...(params.onQualifiedConnectedAccountCredentialUpdated
+                ? {
+                    onCredentialUpdated:
+                      params.onQualifiedConnectedAccountCredentialUpdated,
+                  }
+                : {}),
+            },
+          }
+        : {}),
+      onAuthUpdated,
       onCredentialHealthNotification: async ({ diagnostic, healthStatus, affectedTargets }) => {
         const settingsSnapshot = getActiveAccountSettingsSnapshot();
         const notificationTargets = affectedTargets.length > 0
@@ -368,17 +514,19 @@ export async function startDaemonRuntimeBootstrap(
       enabled: true,
       tickMs: refreshTickMs,
       coordinator: connectedServiceRefreshCoordinator,
+      runImmediately: true,
       onTickError: (error) => {
         params.logger.debug('[DAEMON RUN] Connected services refresh tick failed (non-fatal)', error);
       },
     });
   }
 
-  const connectedServicesQuotasEnabled = await resolveConnectedServicesQuotasDaemonEnabled({
-    env: params.processEnv,
-    serverUrl: configuration.serverUrl,
-    timeoutMs: 1500,
-  });
+  const connectedServicesQuotasEnabled =
+    await resolveConnectedServicesQuotasDaemonEnabled({
+      env: params.processEnv,
+      serverUrl: configuration.serverUrl,
+      timeoutMs: 1500,
+    });
   let connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null = null;
   let connectedServiceQuotasLoopHandle: ConnectedServiceQuotasLoopHandle = null;
   // K2: share the single runtime quota-snapshot store owned by the session-control runtime
@@ -434,10 +582,37 @@ export async function startDaemonRuntimeBootstrap(
       { min: 0, max: 30 * 60_000 },
     );
 
-    connectedServiceQuotasCoordinator = new ConnectedServiceQuotasCoordinator({
+    const quotaFetchers = createConnectedServiceQuotaFetchers(
+      params.processEnv,
+      params.connectedServiceQuotaFetcherDescriptors ?? [],
+    );
+
+    const activation = await activateConnectedServiceQuotaAutomationAfterProviderAccountUsageHydration({
+      enabled: true,
+      quotaFetchers,
+      awaitReadiness: async () => {
+        const settingsReady = await warmActiveAccountSettingsSnapshotBestEffort({
+          credentials: params.credentials,
+          logger: params.logger,
+        });
+        if (!settingsReady) {
+          throw new Error('Connected-service account settings are unavailable during quota startup');
+        }
+      },
+      hydrate: async ({ serviceIds }) => (
+        await hydrateProviderAccountUsageStoreFromConnectedServiceInventory({
+          serviceIds,
+          api: params.api,
+          credentials: params.credentials,
+          store: params.providerAccountUsageStore,
+          nowMs: Date.now(),
+          randomBytes: (length) => randomBytes(length),
+        })
+      ).hydration,
+      createCoordinator: () => new ConnectedServiceQuotasCoordinator({
       api: params.api,
       credentials: params.credentials,
-      quotaFetchers: createConnectedServiceQuotaFetchers(params.processEnv),
+      quotaFetchers,
       fetchTimeoutMs,
       discoveryEnabled,
       discoveryIntervalMs,
@@ -449,6 +624,31 @@ export async function startDaemonRuntimeBootstrap(
       quotaFetchLeaseMs,
       quotaFetchLeaseContentionWaitMaxMs,
       runtimeQuotaSnapshots: connectedServiceQuotaRuntimeSnapshots,
+      accountUsageStore: params.providerAccountUsageStore,
+      runtimeRegistry: connectedServiceRuntimeRegistry,
+      ...(params.qualifiedConnectedAccountEstablishedRuntimeOwner
+        && params.resolveQualifiedConnectedAccountPeerClass
+        && params.listScheduledQualifiedConnectedAccounts
+        ? {
+            qualifiedConnectedAccountRuntime: {
+              resolvePeerClass:
+                params.resolveQualifiedConnectedAccountPeerClass,
+              ...(params.resolveQualifiedConnectedAccountPeerOperationTransport
+                ? {
+                    resolveOperationTransport:
+                      params.resolveQualifiedConnectedAccountPeerOperationTransport,
+                  }
+                : {}),
+              establishedRuntimeOwner:
+                params.qualifiedConnectedAccountEstablishedRuntimeOwner,
+              listScheduledAccounts:
+                params.listScheduledQualifiedConnectedAccounts,
+              readQuota: readQualifiedConnectedAccountQuotaV4,
+              writeProviderAccountUsage:
+                writeQualifiedProviderAccountUsageV4,
+            },
+          }
+        : {}),
       serverWorkScheduler: daemonServerWorkScheduler,
       quotaPersistenceServerScope: params.activeServerDir,
       quotaPersistenceMaxConsecutiveFailures: resolvePositiveIntEnv(
@@ -457,25 +657,109 @@ export async function startDaemonRuntimeBootstrap(
         { min: 1, max: 100 },
       ),
       groupSwitchCheckMinIntervalMs,
+      onQuotaLifecycleTransition: async (transition) => {
+        const settingsSnapshot = getActiveAccountSettingsSnapshot();
+        await dispatchConnectedServiceQuotaLifecycleNotificationAsync({
+          settings: settingsSnapshot?.settings ?? null,
+          settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
+          expoPushSender: params.api.push(),
+          transition,
+        }).catch((error) => {
+          params.logger.debug('[DAEMON RUN] Connected-service quota lifecycle notification failed (non-fatal)', error);
+        });
+        await commitConnectedServiceQuotaLifecycleSessionEvents({
+          credentials: params.credentials,
+          transition,
+        }).catch((error) => {
+          params.logger.debug('[DAEMON RUN] Connected-service quota lifecycle transcript event failed (non-fatal)', error);
+        });
+      },
       // K2 (cmpn4hhdi fix): the proactive quota pre-turn switch coordinator is built by
       // startDaemonSessionControlRuntime (where the FSM/deferral/hot-apply primitives live)
       // and injected here. It routes the proactive usage-limit switch through the FSM
       // hot-apply/gated-apply path (no raw mid-turn SIGTERM); the previous raw coordinator
       // that bypassed the FSM/deferral/reachability gate has been removed.
       authGroupSwitchCoordinator: params.connectedServiceAuthGroupPreTurnSwitchCoordinator,
-      softSwitchRecoveryGuard: params.connectedServiceRecoverySoftSwitchGuard ?? null,
+      consumeCommittedAuthGroupGeneration: params.consumeCommittedAuthGroupGeneration ?? null,
+      predictiveSwitchGuard: params.connectedServicePredictiveSwitchGuard ?? null,
+      runtimeAuthApplyCapabilityResolver: params.connectedServiceRuntimeAuthApplyCapabilityResolver ?? null,
+      sameAccountFanoutStrategyResolver: async ({ agentId }) => {
+        const catalogAgentId = typeof agentId === 'string' && agentId.trim()
+          ? agentId.trim() as CatalogAgentId
+          : null;
+        if (!catalogAgentId) return 'none';
+        const capabilities = await getConnectedServiceRecoveryCapabilities(catalogAgentId).catch(() => null);
+        return capabilities?.sameAccountFanoutStrategy ?? 'none';
+      },
+      readRuntimeAccountIdentityForFanout: createConnectedServiceRuntimeIdentityFanoutReader({
+        credentials: params.credentials,
+      }),
+      // Durable same-account fanout fallback (codex): when the live runtime-identity probe cannot
+      // verify a sibling's account, prove it from PERSISTED artifacts that survive daemon restarts —
+      // the session's persisted metadata (canonical session read proves durability) plus the persisted
+      // profile's credential provider-account id (canonical resolver). Best-effort under a bounded 2s
+      // timeout: any read failure yields null so the candidate stays suppressed (fail-closed).
+      readPersistedSessionAccountIdentity: async (input) => {
+        const boundedMs = 2_000;
+        const runBounded = async <T>(work: Promise<T>): Promise<T | null> => {
+          let timer: ReturnType<typeof setTimeout> | null = null;
+          try {
+            return await Promise.race<T | null>([
+              work,
+              new Promise<null>((resolve) => {
+                timer = setTimeout(() => resolve(null), boundedMs);
+                (timer as unknown as { unref?: () => void })?.unref?.();
+              }),
+            ]);
+          } catch {
+            return null;
+          } finally {
+            if (timer) clearTimeout(timer);
+          }
+        };
+        const token = typeof params.credentials.token === 'string' ? params.credentials.token.trim() : '';
+        if (!token) return null;
+        // Require durable evidence the session persists (canonical session read) before trusting a
+        // persisted-identity fanout proof; do NOT introduce a second metadata reader.
+        const persistedSession = await runBounded(fetchSessionByIdCompat({ token, sessionId: input.sessionId }));
+        if (!persistedSession) return null;
+        const byServiceId = await runBounded(resolveConnectedServiceCredentialResolutions({
+          credentials: params.credentials,
+          api: params.api,
+          bindings: [{ serviceId: input.serviceId, profileId: input.profileId }],
+        }));
+        const resolution = byServiceId?.get(input.serviceId) ?? null;
+        if (resolution?.revisionSemantics !== 'revisioned') return null;
+        const record = resolution.record;
+        const providerAccountId = readConnectedServiceCredentialProviderAccountId(record);
+        if (!providerAccountId) return null;
+        return {
+          providerAccountId,
+          serviceId: input.serviceId,
+          groupId: input.groupId,
+          profileId: input.profileId,
+          groupGeneration: input.expectedGroupGeneration,
+        };
+      },
       now: () => Date.now(),
       randomBytes: (length) => randomBytes(length),
-    });
-
-    connectedServiceQuotasLoopHandle = startConnectedServiceQuotasLoop({
-      enabled: true,
-      tickMs: quotasTickMs,
-      coordinator: connectedServiceQuotasCoordinator,
-      onTickError: (error) => {
-        params.logger.debug('[DAEMON RUN] Connected services quotas tick failed (non-fatal)', error);
+      }),
+      startLoop: (coordinator) => startConnectedServiceQuotasLoop({
+        enabled: true,
+        tickMs: quotasTickMs,
+        coordinator,
+        onTickError: (error) => {
+          params.logger.debug('[DAEMON RUN] Connected services quotas tick failed (non-fatal)', error);
+        },
+      }),
+      onActivationError: (error) => {
+        params.logger.warn('[DAEMON RUN] Connected-service quota automation disabled because startup hydration failed', error);
       },
     });
+    if (activation.status === 'active') {
+      connectedServiceQuotasCoordinator = activation.coordinator;
+      connectedServiceQuotasLoopHandle = activation.loopHandle;
+    }
   }
 
   return {

@@ -60,4 +60,53 @@ describe('normalizeExecutionRunStartToolInput', () => {
       }),
     });
   });
+
+  // R4-3: the canonical action path (protocol actionExecutor `execution.run.start`) rejects a
+  // malformed connected-services selection with `invalid_parameters`. The legacy manual tool must
+  // keep the SAME contract — a malformed selection is a bad parameter, not an unparseable payload.
+  it('rejects a malformed connected-services selection with invalid_parameters (action-path parity)', () => {
+    const result = normalizeExecutionRunStartToolInput({
+      sessionId: 'sess_mcp_1',
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        connectedServices: { v: 999, bindingsByServiceId: 'not-an-object' },
+      },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  });
+
+  it('forwards a valid connected-services selection into the run-start request', () => {
+    const result = normalizeExecutionRunStartToolInput({
+      sessionId: 'sess_mcp_1',
+      args: {
+        intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+        connectedServices: {
+          v: 1,
+          bindingsByServiceId: {
+            'openai-codex': { source: 'connected', selection: 'group', groupId: 'happier' },
+          },
+        },
+      },
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      request: expect.objectContaining({
+        connectedServices: expect.objectContaining({
+          bindingsByServiceId: expect.objectContaining({
+            'openai-codex': expect.objectContaining({ groupId: 'happier' }),
+          }),
+        }),
+      }),
+    });
+  });
+
+  it('keeps invalid_action_input for an unparseable payload (missing intent)', () => {
+    const result = normalizeExecutionRunStartToolInput({
+      sessionId: 'sess_mcp_1',
+      args: { backendTarget: { kind: 'builtInAgent', agentId: 'claude' } },
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'invalid_action_input' });
+  });
 });

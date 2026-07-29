@@ -39,6 +39,44 @@ describe('serializeAxiosErrorForLog', () => {
     expect(serialized).not.toHaveProperty('data');
   });
 
+  it('includes safe machine-readable response error fields without logging request or response bodies', () => {
+    const config = createAxiosConfig({
+      method: 'post',
+      url: 'https://api.example.test/v2/connect/provider-account-usage/record?token=secret',
+      headers: new AxiosHeaders({ Authorization: 'Bearer SECRET', 'Content-Type': 'application/json' }),
+      data: { sealed: { ciphertext: 'SECRET_CIPHERTEXT' } },
+    });
+    const err = new AxiosError(
+      'Request failed with status 400',
+      'ERR_BAD_REQUEST',
+      config,
+      undefined,
+      {
+        status: 400,
+        statusText: 'Bad Request',
+        headers: {},
+        config,
+        data: {
+          error: 'invalid-params',
+          reason: 'connected_service_usage_source_incompatible',
+          message: 'secret should not be logged',
+        },
+      },
+    );
+
+    const serialized = serializeAxiosErrorForLog(err);
+
+    expect(serialized).toEqual(expect.objectContaining({
+      status: 400,
+      responseError: 'invalid-params',
+      responseReason: 'connected_service_usage_source_incompatible',
+    }));
+    expect(serialized).not.toHaveProperty('data');
+    expect(serialized).not.toHaveProperty('headers');
+    expect(JSON.stringify(serialized)).not.toContain('SECRET_CIPHERTEXT');
+    expect(JSON.stringify(serialized)).not.toContain('secret should not be logged');
+  });
+
   it('redacts Telegram bot tokens embedded in path segments', () => {
     const err = new AxiosError('boom', 'ECONNRESET', createAxiosConfig({
       method: 'post',

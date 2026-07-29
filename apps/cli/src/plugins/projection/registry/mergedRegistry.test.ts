@@ -4,7 +4,7 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createPluginStateStore } from '@/plugins/store/state';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import {
@@ -13,45 +13,20 @@ import {
     resolveMergedContributionRegistry,
 } from './createResolvedContributionRegistry';
 
-function createTestAcpBackendEngine(): Record<string, unknown> {
-    return {
-        kind: 'acp',
-        transport: {
-            kind: 'stdio',
-            launch: {
-                kind: 'executable',
-                command: 'acme-agent',
-            },
-        },
-        ux: {
-            title: 'Acme Agent',
-        },
-    };
-}
-
 function createTestAgentContribution(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
-        id: 'acme.ohmypi',
-        catalogAgentId: 'claude',
-        display: {
-            name: 'Acme Oh My Pi',
-            tags: ['plugin'],
-        },
-        runtime: createTestAcpBackendEngine(),
-        capabilities: {},
-        ownedBackendIds: ['acme.ohmypi'],
-        surfaceHandlers: [
-            {
-                surfaceApiVersion: 1,
-                id: 'backend.terminalRuntime.launch',
-                kind: 'terminalRuntime',
-                operation: 'launch',
-                handler: {
-                    target: 'daemon',
-                    exportName: 'launch',
-                },
+        id: 'acme-agent',
+        title: 'Acme Agent',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: {
+            surfaces: ['terminal'],
+            sessions: {
+                open: ['create'],
+                delivery: ['newTurn'],
+                cancel: true,
             },
-        ],
+        },
         ...overrides,
     };
 }
@@ -59,14 +34,11 @@ function createTestAgentContribution(overrides: Record<string, unknown> = {}): R
 function createResolvePrerequisitesHook(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
         hookApiVersion: 1,
-        id: 'agent.resolvePrerequisites',
+        id: 'resolve-prerequisites',
+        on: 'agent.resolvePrerequisites',
         category: 'decision',
         scope: 'agent',
         executionKind: 'decide',
-        handler: {
-            target: 'plugin',
-            exportName: 'resolveTranscriptBinding',
-        },
         ...overrides,
     };
 }
@@ -87,29 +59,21 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
                 engines: {
                     happier: '^0.2.0',
                 },
-                uses: ['agents', 'actions', 'hooks'],
                 entrypoints: {
-                    main: './daemon.js',
+                    daemon: './daemon.js',
                 },
-                permissions: {
-                    required: [],
-                    optional: [],
-                },
+                activation: { events: [{ kind: 'startup' }] },
+                hostAccess: { required: [], optional: [] },
                 contributes: {
                     agents: [createTestAgentContribution()],
                     actions: [{
-                        kind: 'action',
-                        id: 'acme.ohmypi.review.start',
+                        id: 'review-start',
                         title: 'Acme Review Start',
                         description: 'Starts a plugin-defined review workflow',
                         scopes: ['global'],
                         surfaces: ['cli'],
                         placement: 'commandPalette',
                         dangerLevel: 'safe',
-                        handler: {
-                            target: 'daemon',
-                            exportName: 'launch',
-                        },
                     }],
                     hooks: [createResolvePrerequisitesHook()],
                 },
@@ -171,58 +135,38 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme.ohmypi')).toMatchObject({
-            id: 'acme.ohmypi',
+        expect(registry.agentDefinitionsById.get('acme-agent')).toMatchObject({
+            id: 'acme-agent',
             provenance: 'external',
             source: { kind: 'path' },
             definition: {
                 kindVersion: 1,
-                id: 'acme.ohmypi',
-                ownedBackendIds: ['acme.ohmypi'],
+                id: 'acme-agent',
+                ownedBackendIds: [],
             },
         });
-        expect(registry.agentRuntimeDefinitionsById.get('acme.ohmypi')).toMatchObject({
-            id: 'acme.ohmypi',
-            agentId: 'acme.ohmypi',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: {
-                kindVersion: 1,
-                id: 'acme.ohmypi',
-                agentId: 'acme.ohmypi',
-            },
-            surfaceHandlers: [
-                expect.objectContaining({
-                    id: 'backend.terminalRuntime.launch',
-                    kind: 'terminalRuntime',
-                }),
-            ],
-        });
-        expect(registry.agentRuntimeDefinitionsById.get('acme.ohmypi')?.getRuntimeCore).toEqual(expect.any(Function));
-        expect(registry.surfaceHandlersByBackendId.get('acme.ohmypi')).toEqual([
-            expect.objectContaining({
-                backendId: 'acme.ohmypi',
-                definition: expect.objectContaining({
-                    id: 'backend.terminalRuntime.launch',
-                    kind: 'terminalRuntime',
-                }),
-            }),
-        ]);
-        expect(registry.actions).toHaveLength(1);
-        expect(registry.actions[0]).toMatchObject({
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
+        expect(registry).not.toHaveProperty('surfaceHandlersByBackendId');
+        const externalAction = registry.actions.find((action) => action.pluginId === 'acme.ohmypi');
+        expect(externalAction).toMatchObject({
             pluginId: 'acme.ohmypi',
             definition: expect.objectContaining({
-                id: 'acme.ohmypi.review.start',
+                id: 'review-start',
             }),
         });
-        expect(registry.hookRegistrations).toEqual([
+        expect(registry.activationTargets).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 pluginId: 'acme.ohmypi',
-                definition: expect.objectContaining({
-                    id: 'agent.resolvePrerequisites',
+                manifest: expect.objectContaining({
+                    contributes: expect.objectContaining({
+                        hooks: [expect.objectContaining({
+                            id: 'resolve-prerequisites',
+                            on: 'agent.resolvePrerequisites',
+                        })],
+                    }),
                 }),
             }),
-        ]);
+        ]));
         expect(registry.catalogEntriesById.codex?.id).toBe('codex');
         expect(registry.catalogEntriesById['acme.ohmypi']).toBeUndefined();
         expect(registry.pluginDiagnosticsByPluginId['acme.ohmypi']).toEqual([]);
@@ -236,29 +180,14 @@ describe('resolveMergedContributionRegistry', () => {
         await writePluginManifest(pluginRoot, {
             contributes: {
                 agents: [createTestAgentContribution({
-                    id: 'acme.ohmypi',
-                    catalogAgentId: 'claude',
-                    display: {
-                        name: 'Acme Oh My Pi',
-                        subtitle: 'Plugin provider',
-                        tags: ['plugin'],
-                    },
-                    install: {
-                        docsUrl: 'https://example.com/plugins/acme.ohmypi',
-                        managedInstallBehavior: 'manual',
-                        sourcePreference: 'system-first',
-                    },
-                    auth: {
-                        machineLoginSupport: 'status_only',
-                        connectedServiceCompatibility: ['anthropic'],
-                    },
-                    ownedBackendIds: ['acme.ohmypi'],
+                    description: 'Plugin Agent definition retained by the merged registry.',
+                    metadata: { fixture: 'rich-definition' },
                     capabilities: {
-                        terminalRuntime: true,
-                    },
-                    probe: {
-                        models: {
-                            strategy: 'best_effort',
+                        surfaces: ['terminal'],
+                        sessions: {
+                            open: ['create', 'resume'],
+                            delivery: ['newTurn', 'steer'],
+                            cancel: true,
                         },
                     },
                 })],
@@ -316,67 +245,30 @@ describe('resolveMergedContributionRegistry', () => {
             }),
             pluginId: 'happier.agent.codex',
         });
-        expect(registry.agentDefinitionsById.get('codex')).not.toHaveProperty('richDefinition');
-        expect(registry.agentRuntimeDefinitionsById.get('codex')).toMatchObject({
-            id: 'codex',
-            agentId: 'codex',
+        expect(registry.agentDefinitionsById.get('codex')?.richDefinition).toMatchObject({
             provenance: 'first_party',
-            source: { kind: 'bundled' },
-            definition: {
-                kindVersion: 1,
+            definition: expect.objectContaining({
                 id: 'codex',
-                agentId: 'codex',
-            },
-            runtimeKind: 'appServer',
-            pluginId: 'happier.agent.codex',
+                capabilities: expect.objectContaining({
+                    surfaces: ['terminal', 'externalSessions'],
+                }),
+            }),
         });
-        expect(registry.agentRuntimeDefinitionsById.get('codex')).not.toHaveProperty('richDefinition');
-        expect(registry.agentRuntimeDefinitionsById.get('codex')).not.toHaveProperty('getRuntimeCore');
-        expect(registry.agentDefinitionsById.get('acme.ohmypi')).toMatchObject({
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
+        expect(registry.agentDefinitionsById.get('codex')).not.toHaveProperty('getRuntimeCore');
+        expect(registry.agentDefinitionsById.get('acme-agent')).toMatchObject({
             richDefinition: {
                 provenance: 'external',
                 definition: expect.objectContaining({
-                    display: expect.objectContaining({
-                        name: 'Acme Oh My Pi',
-                        subtitle: 'Plugin provider',
-                    }),
-                    install: expect.objectContaining({
-                        docsUrl: 'https://example.com/plugins/acme.ohmypi',
-                    }),
-                    auth: expect.objectContaining({
-                        machineLoginSupport: 'status_only',
-                    }),
+                    id: 'acme-agent',
+                    title: 'Acme Agent',
+                    description: 'Plugin Agent definition retained by the merged registry.',
+                    metadata: { fixture: 'rich-definition' },
+                    capabilities: expect.objectContaining({ surfaces: ['terminal'] }),
                 }),
             },
         });
-        expect(registry.agentRuntimeDefinitionsById.get('acme.ohmypi')).toMatchObject({
-            richDefinition: {
-                provenance: 'external',
-                definition: expect.objectContaining({
-                    runtimeKind: 'acp',
-                    capabilities: expect.objectContaining({
-                        executionRun: expect.objectContaining({
-                            supported: true,
-                        }),
-                    }),
-                    surfaceHandlers: expect.arrayContaining([
-                        expect.objectContaining({
-                            kind: 'terminalRuntime',
-                            operation: 'launch',
-                        }),
-                    ]),
-                    install: expect.objectContaining({
-                        sourcePreference: 'system-first',
-                    }),
-                    probe: expect.objectContaining({
-                        models: expect.objectContaining({
-                            strategy: 'best_effort',
-                        }),
-                    }),
-                }),
-            },
-        });
-        expect(registry.agentRuntimeDefinitionsById.get('acme.ohmypi')?.getRuntimeCore).toEqual(expect.any(Function));
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
     });
 
     it('promotes a primed merged registry snapshot to the active contribution registry cache', async () => {
@@ -424,7 +316,7 @@ describe('resolveMergedContributionRegistry', () => {
         expect(activeRegistry.catalogEntriesById['acme.ohmypi']).toBeUndefined();
     });
 
-    it('records a diagnostic and excludes plugin agents whose declared runtime does not resolve', async () => {
+    it('records a diagnostic and excludes plugin agents using retired runtime-owner fields', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-invalid-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -436,13 +328,8 @@ describe('resolveMergedContributionRegistry', () => {
             contributes: {
                 agents: [
                     createTestAgentContribution({
-                        id: 'acme.invalid',
-                        display: {
-                            name: 'Acme Invalid',
-                            tags: ['plugin'],
-                        },
+                        id: 'acme-invalid',
                         ownedBackendIds: ['acme.missing.runtime'],
-                        surfaceHandlers: [],
                     }),
                 ],
             },
@@ -480,11 +367,11 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme.invalid')).toBeUndefined();
-        expect(registry.agentRuntimeDefinitionsById.get('acme.invalid')).toBeUndefined();
+        expect(registry.agentDefinitionsById.get('acme-invalid')).toBeUndefined();
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(registry.pluginDiagnosticsByPluginId['acme.invalid']).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                code: 'plugin_manifest_semantic_invalid',
+                code: 'plugin_manifest_invalid',
             }),
         ]));
     });
@@ -498,41 +385,40 @@ describe('resolveMergedContributionRegistry', () => {
             id: 'acme.review.coderabbit',
             displayName: 'CodeRabbit Review',
             description: 'Review-only CodeRabbit engine',
-            uses: ['agents', 'executionRunProfiles'],
             contributes: {
                 agents: [
                     createTestAgentContribution({
                         id: 'acme-review',
-                        catalogAgentId: undefined,
-                        ownedBackendIds: ['acme-review'],
-                        display: {
-                            name: 'Acme Review',
-                            tags: ['review'],
-                        },
+                        title: 'Acme Review',
                         runtime: { kind: 'custom' },
+                        primary: 'executionRuns',
                         capabilities: {
-                            session: { supported: false },
-                            executionRun: {
-                                supported: true,
-                                review: {
-                                    intents: ['review'],
-                                    modes: ['change_scoped_review'],
-                                    directCommentWrite: false,
-                                },
-                            },
+                            executionRuns: { open: ['create'], checkpoint: false, stop: true },
                         },
-                        surfaceHandlers: [],
                     }),
                 ],
                 executionRunProfiles: [
                     {
-                        id: 'acme.review',
-                        kind: 'executionRun.profile',
-                        version: '1',
+                        id: 'review',
                         intent: 'review',
-                        displayKey: 'plugins.coderabbit.executionRuns.review.label',
+                        title: 'Acme review',
+                        promptAsset: 'review-prompt',
+                        defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
+                        compatibleAgents: ['acme-review'],
                     },
                 ],
+                resources: [{
+                    id: 'review-prompt-resource',
+                    kind: 'prompt',
+                    path: './prompt.md',
+                    contentType: 'text/markdown',
+                }],
+                promptAssets: [{
+                    id: 'review-prompt',
+                    kind: 'systemPrompt',
+                    resource: 'review-prompt-resource',
+                    target: { kind: 'agent', agent: 'acme-review' },
+                }],
             },
         });
 
@@ -568,38 +454,25 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
+        expect(registry.pluginDiagnosticsByPluginId['acme.review.coderabbit']).toEqual([]);
         expect(registry.agentDefinitionsById.get('acme-review')).toMatchObject({
             id: 'acme-review',
             pluginId: 'acme.review.coderabbit',
             runtimeSpec: null,
         });
         expect(registry.catalogEntriesById['acme-review']).toBeUndefined();
-        expect(registry.agentRuntimeDefinitionsById.get('acme-review')).toMatchObject({
-            id: 'acme-review',
-            agentId: 'acme-review',
-            pluginId: 'acme.review.coderabbit',
-            capabilities: {
-                session: expect.objectContaining({ supported: false }),
-                executionRun: expect.objectContaining({
-                    supported: true,
-                    review: expect.objectContaining({
-                        directCommentWrite: false,
-                    }),
-                }),
-            },
-        });
-        expect(registry.agentRuntimeDefinitionsById.get('acme-review')).not.toHaveProperty('getRuntimeCore');
-        expect(registry.executionRunProfilesById?.get('acme.review')).toMatchObject({
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
+        expect(registry.executionRunProfilesById?.get('acme.review.coderabbit/review')).toMatchObject({
             pluginId: 'acme.review.coderabbit',
             definition: expect.objectContaining({
-                id: 'acme.review',
-                intent: 'review',
+                id: 'review',
+                compatibleAgents: ['acme-review'],
             }),
         });
         expect(registry.pluginDiagnosticsByPluginId['acme.review.coderabbit']).toEqual([]);
     });
 
-    it('records a diagnostic and excludes plugin agents whose owned runtime ids do not resolve', async () => {
+    it('records a diagnostic and excludes another plugin Agent using retired runtime-owner fields', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-orphaned-provider-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -610,13 +483,8 @@ describe('resolveMergedContributionRegistry', () => {
             description: 'Agent points at a missing runtime',
             contributes: {
                 agents: [createTestAgentContribution({
-                    id: 'acme.orphaned',
-                    display: {
-                        name: 'Acme Orphaned',
-                        tags: ['plugin'],
-                    },
+                    id: 'acme-orphaned',
                     ownedBackendIds: ['acme.orphaned.backend'],
-                    surfaceHandlers: [],
                 })],
             },
         });
@@ -653,15 +521,15 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme.orphaned')).toBeUndefined();
+        expect(registry.agentDefinitionsById.get('acme-orphaned')).toBeUndefined();
         expect(registry.pluginDiagnosticsByPluginId['acme.orphaned']).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                code: 'plugin_manifest_semantic_invalid',
+                code: 'plugin_manifest_invalid',
             }),
         ]));
     });
 
-    it('records a diagnostic and excludes plugin hooks that target plugin exports without an exportName', async () => {
+    it('keeps current hooks on the activation target instead of the retired static hook table', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-hook-export-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -669,14 +537,9 @@ describe('resolveMergedContributionRegistry', () => {
         await writePluginManifest(pluginRoot, {
             id: 'acme.hook-export-missing',
             displayName: 'Acme Hook Export Missing',
-            description: 'Plugin hook omits exportName',
-            uses: ['hooks'],
+            description: 'Current target-owned plugin hook',
             contributes: {
-                hooks: [createResolvePrerequisitesHook({
-                    handler: {
-                        target: 'plugin',
-                    },
-                })],
+                hooks: [createResolvePrerequisitesHook()],
             },
         });
 
@@ -712,17 +575,19 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.hookRegistrations).toEqual([
+        expect(registry.activationTargets).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 pluginId: 'acme.hook-export-missing',
-                definition: expect.objectContaining({
-                    id: 'agent.resolvePrerequisites',
-                    handler: expect.objectContaining({
-                        target: 'plugin',
+                manifest: expect.objectContaining({
+                    contributes: expect.objectContaining({
+                        hooks: [expect.objectContaining({
+                            id: 'resolve-prerequisites',
+                            on: 'agent.resolvePrerequisites',
+                        })],
                     }),
                 }),
             }),
-        ]);
+        ]));
         expect(registry.pluginDiagnosticsByPluginId['acme.hook-export-missing']).toEqual([]);
     });
 
@@ -738,7 +603,7 @@ describe('resolveMergedContributionRegistry', () => {
                     kindVersion: 1,
                     id: 'acme.ohmypi.acp',
                     agentId: 'codex',
-                    engine: createTestAcpBackendEngine(),
+                    engine: { kind: 'acp' },
                     capabilities: {},
                     surfaceHandlers: [],
                 },
@@ -777,15 +642,15 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentRuntimeDefinitionsById.get('acme.ohmypi.acp')).toBeUndefined();
-        expect(registry.pluginDiagnosticsByPluginId['acme.ohmypi']).toEqual([
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
+        expect(registry.pluginDiagnosticsByPluginId['acme.ohmypi']).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 code: 'plugin_manifest_invalid',
             }),
-        ]);
+        ]));
     });
 
-    it('records diagnostics and strips alias-shaped built-in compatibility ids from plugin contributes while preserving agent entries', async () => {
+    it('rejects alias-shaped built-in compatibility ids under the strict current Agent schema', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-compat-ids-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-compat-ids-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -793,16 +658,8 @@ describe('resolveMergedContributionRegistry', () => {
         await writePluginManifest(pluginRoot, {
             contributes: {
                 agents: [createTestAgentContribution({
-                    id: 'acme.ohmypi',
-                    display: {
-                        name: 'Acme Oh My Pi',
-                        tags: ['plugin'],
-                    },
-                    ownedBackendIds: ['acme.ohmypi'],
                     catalogAgentId: 'gpt',
                     iconAgentId: 'open-code',
-                    capabilities: {},
-                    surfaceHandlers: [],
                 })],
             },
         });
@@ -839,37 +696,16 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentDefinitionsById.get('acme.ohmypi')).toMatchObject({
-            richDefinition: {
-                provenance: 'external',
-                definition: expect.not.objectContaining({
-                    catalogAgentId: expect.anything(),
-                    iconAgentId: expect.anything(),
-                }),
-            },
-        });
-        expect(registry.agentRuntimeDefinitionsById.get('acme.ohmypi')).toMatchObject({
-            richDefinition: {
-                provenance: 'external',
-                definition: expect.not.objectContaining({
-                    catalogAgentId: expect.anything(),
-                    iconAgentId: expect.anything(),
-                }),
-            },
-        });
+        expect(registry.agentDefinitionsById.get('acme-agent')).toBeUndefined();
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
         expect(registry.pluginDiagnosticsByPluginId['acme.ohmypi']).toEqual(expect.arrayContaining([
             expect.objectContaining({
-                code: 'plugin_manifest_semantic_invalid',
-                message: expect.stringMatching(/catalogAgentId/i),
-            }),
-            expect.objectContaining({
-                code: 'plugin_manifest_semantic_invalid',
-                message: expect.stringMatching(/iconAgentId/i),
+                code: 'plugin_manifest_invalid',
             }),
         ]));
     });
 
-    it('keeps plugin agent runtimes visible for projection while withholding live runtime when no exact built-in compatibility carrier exists', async () => {
+    it('keeps current plugin Agents visible without reviving the retired static runtime tables', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-runtime-gating-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-runtime-gating-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -880,26 +716,9 @@ describe('resolveMergedContributionRegistry', () => {
             description: 'Runtime without an exact built-in compatibility carrier',
             contributes: {
                 agents: [createTestAgentContribution({
-                    id: 'acme.runtime',
-                    catalogAgentId: undefined,
-                    display: {
-                        name: 'Acme Runtime',
-                        tags: ['plugin'],
-                    },
-                    ownedBackendIds: ['acme.runtime'],
-                    capabilities: {},
-                    surfaceHandlers: [
-                        {
-                            surfaceApiVersion: 1,
-                            id: 'launch-adapter',
-                            kind: 'terminalRuntime',
-                            operation: 'launch',
-                            handler: {
-                                target: 'daemon',
-                                exportName: 'launch',
-                            },
-                        },
-                    ],
+                    id: 'acme-runtime',
+                    title: 'Acme Runtime',
+                    metadata: { fixture: 'runtime-gating' },
                 })],
             },
         });
@@ -936,28 +755,22 @@ describe('resolveMergedContributionRegistry', () => {
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-        expect(registry.agentRuntimeDefinitionsById.get('acme.runtime')).toMatchObject({
-            id: 'acme.runtime',
-            agentId: 'acme.runtime',
-        });
-        expect(registry.agentRuntimeDefinitionsById.get('acme.runtime')).not.toHaveProperty('getRuntimeCore');
-        expect(registry.surfaceHandlersByBackendId.get('acme.runtime')).toEqual([
-            expect.objectContaining({
-                backendId: 'acme.runtime',
+        expect(registry.agentDefinitionsById.get('acme-runtime')).toMatchObject({
+            id: 'acme-runtime',
+            richDefinition: {
+                provenance: 'external',
                 definition: expect.objectContaining({
-                    kind: 'terminalRuntime',
-                    operation: 'launch',
+                    id: 'acme-runtime',
+                    metadata: { fixture: 'runtime-gating' },
                 }),
-            }),
-        ]);
-        expect(registry.pluginDiagnosticsByPluginId['acme.runtime']).toEqual(expect.arrayContaining([
-            expect.objectContaining({
-                code: 'plugin_manifest_semantic_invalid',
-            }),
-        ]));
+            },
+        });
+        expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
+        expect(registry).not.toHaveProperty('surfaceHandlersByBackendId');
+        expect(registry.pluginDiagnosticsByPluginId['acme.runtime']).toEqual([]);
     });
 
-    it('projects external agent CLI runtime facts from final agent vocabulary', async () => {
+    it('rejects retired Agent CLI runtime facts outside the current Agent manifest contract', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-merged-registry-agent-cli-runtime-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-agent-cli-runtime-'));
         const store = createPluginStateStore({ happyHomeDir });
@@ -968,13 +781,9 @@ describe('resolveMergedContributionRegistry', () => {
             description: 'Runtime with plugin-authored agent CLI facts',
             contributes: {
                 agents: [createTestAgentContribution({
-                    id: 'acme.runtime',
-                    display: {
-                        name: 'Acme Runtime',
-                        tags: ['plugin'],
-                    },
+                    id: 'acme-runtime',
                     agentCliRuntime: {
-                        id: 'acme.runtime',
+                        id: 'acme-runtime',
                         title: 'Acme Runtime',
                         binaryName: 'acme-runtime',
                         sourcePreferenceDefault: 'system-first',
@@ -983,8 +792,6 @@ describe('resolveMergedContributionRegistry', () => {
                         manualInstallRecipes: null,
                         acceptsJavaScriptFileOverride: false,
                     },
-                    ownedBackendIds: [],
-                    surfaceHandlers: [],
                 })],
             },
         });
@@ -1020,29 +827,9 @@ describe('resolveMergedContributionRegistry', () => {
         });
 
         const registry = await resolveMergedContributionRegistry({ happyHomeDir });
-        const provider = registry.agentDefinitionsById.get('acme.runtime');
-
-        expect(provider).toBeDefined();
-        if (!provider) {
-            throw new Error('Expected acme.runtime provider contribution to be registered');
-        }
-        expect(provider.richDefinition).toBeDefined();
-        if (!provider.richDefinition) {
-            throw new Error('Expected acme.runtime provider contribution to keep its rich definition');
-        }
-
-        expect(provider.runtimeSpec).toEqual(expect.objectContaining({
-            id: 'acme.runtime',
-            title: 'Acme Runtime',
-            binaryName: 'acme-runtime',
-        }));
-        expect(provider.richDefinition.definition).toEqual(expect.objectContaining({
-            agentCliRuntime: expect.objectContaining({
-                id: 'acme.runtime',
-                title: 'Acme Runtime',
-                binaryName: 'acme-runtime',
-            }),
-        }));
-        expect(provider.richDefinition.definition).not.toHaveProperty('providerCliRuntime');
+        expect(registry.agentDefinitionsById.get('acme-runtime')).toBeUndefined();
+        expect(registry.pluginDiagnosticsByPluginId['acme.runtime']).toEqual(expect.arrayContaining([
+            expect.objectContaining({ code: 'plugin_manifest_invalid' }),
+        ]));
     });
 });

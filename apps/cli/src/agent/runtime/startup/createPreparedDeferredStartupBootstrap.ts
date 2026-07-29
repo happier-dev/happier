@@ -2,12 +2,18 @@ import { randomUUID } from 'node:crypto';
 
 import type { SessionAttachMetadataIdentityPolicy, SessionModelSelectionV1 } from '@happier-dev/protocol';
 
-import type { ApiSessionClient } from '@/api/session/sessionClient';
+import type {
+  ApiSessionClient,
+  ApiSessionClientOptions,
+} from '@/api/session/sessionClient';
 import type { MachineMetadata, PermissionMode } from '@/api/types';
 import type { BackendFlavor, SessionLaunchControlMetadata } from '@/agent/runtime/createSessionMetadata';
 import { createDeferredStartupBootstrap } from '@/agent/runtime/startup/createDeferredStartupBootstrap';
 import { createDeferredStartupMetadataPlan } from '@/agent/runtime/startup/createDeferredStartupMetadataPlan';
-import type { DeferredStartupPushSender } from '@/agent/runtime/startup/deferredStartupTypes';
+import type {
+  DeferredStartupPushSender,
+  DeferredStartupRegisteredStateMutationFactory,
+} from '@/agent/runtime/startup/deferredStartupTypes';
 import { createStartupTiming } from '@/agent/runtime/startup/startupTiming';
 import type { InitializeBackendRunSessionOptions } from '@/agent/runtime/initializeBackendRunSession';
 import type { Credentials } from '@/persistence';
@@ -40,6 +46,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
   terminalRuntime?: TerminalRuntimeFlags | null;
   launchControlMetadata: SessionLaunchControlMetadata;
   existingSessionId?: string;
+  sessionAttachFilePath?: string;
   attachMetadataIdentityPolicy?: SessionAttachMetadataIdentityPolicy | null;
   sessionTag?: string;
   allowOfflineStub?: boolean;
@@ -52,6 +59,8 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
     timing: StartupTiming;
   }>) => void | Promise<void>;
   onPushSenderReady?: ((pushSender: DeferredStartupPushSender) => void | Promise<void>) | null;
+  createInitialRegisteredSessionStateFieldMutations?: DeferredStartupRegisteredStateMutationFactory;
+  transformSessionInputBeforeCommit?: ApiSessionClientOptions['transformSessionInputBeforeCommit'];
 }>): Promise<TimedDeferredStartupBootstrapResult<DeferredStartupBootstrapResult>> {
   const metadataPlan = createDeferredStartupMetadataPlan({
     flavor: params.flavor,
@@ -77,6 +86,7 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
     missingMachineIdMessage: params.missingMachineIdMessage ?? DEFAULT_MISSING_MACHINE_ID_MESSAGE,
     sessionTag: params.sessionTag ?? randomUUID(),
     existingSessionId: params.existingSessionId,
+    sessionAttachFilePath: params.sessionAttachFilePath,
     attachMetadataIdentityPolicy: params.attachMetadataIdentityPolicy,
     initialMetadata: metadataPlan.initialMetadata,
     createInitializedSessionMetadata: metadataPlan.createInitializedSessionMetadata,
@@ -94,6 +104,9 @@ export async function createPreparedDeferredStartupBootstrap(params: Readonly<{
       });
     },
     onPushSenderReady: params.onPushSenderReady,
+    createInitialRegisteredSessionStateFieldMutations:
+      params.createInitialRegisteredSessionStateFieldMutations,
+    transformSessionInputBeforeCommit: params.transformSessionInputBeforeCommit,
   });
 
   return createTimedDeferredStartupBootstrap({

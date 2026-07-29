@@ -32,7 +32,6 @@ describe('resolveConcreteBackendTargetRefV2', () => {
       kind: 'backend',
       backendId: ' review-bot ',
       configuredBackendId: ' review-bot ',
-      sourceKind: 'configured',
     })).toEqual({
       kind: 'backend',
       backendId: 'review-bot',
@@ -53,6 +52,14 @@ describe('resolveConcreteBackendTargetRefV2', () => {
       configuredBackendId: 'review-bot',
       sourceKind: 'configured',
     });
+  });
+
+  it('fails closed when configured identity becomes empty after normalization', () => {
+    expect(resolveConcreteBackendTargetRefV2({
+      kind: 'backend',
+      backendId: 'codex',
+      configuredBackendId: '   ',
+    })).toBeNull();
   });
 
   it('fails closed when V1 compat carriers are passed into the canonical helper', () => {

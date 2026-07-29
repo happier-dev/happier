@@ -1,7 +1,8 @@
 import { realpath, stat } from 'node:fs/promises';
-import { extname, isAbsolute, relative, resolve } from 'node:path';
+import { extname, isAbsolute, relative } from 'node:path';
 
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
+import { resolvePortablePluginRelativePath } from './portableRelativePath';
 import type { CanonicalPluginManifest } from './types';
 
 const SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS = new Set(['.js', '.mjs', '.cjs']);
@@ -35,13 +36,35 @@ export type ResolvePluginDaemonEntryPathResult = Readonly<
   | { ok: false; diagnostic: PluginCompatibilityDiagnostic }
 >;
 
+export function shouldResolvePluginDevelopmentEntrypoint(record: Readonly<{
+  source: Readonly<{ kind: string; devWatch?: boolean }>;
+  install: Readonly<{ mode: string }>;
+}>): boolean {
+  return record.source.kind === 'path'
+    && (record.source.devWatch === true || record.install.mode === 'link');
+}
+
 async function resolveEntrypointPath(params: Readonly<{
   pluginRootPath: string;
   entry: string;
   label: 'daemon entry' | 'daemon dev entry';
   supportedExtensions: ReadonlySet<string>;
 }>): Promise<Readonly<{ ok: true; entryPath: string } | { ok: false; diagnostic: PluginCompatibilityDiagnostic }>> {
-  const resolvedPath = resolve(params.pluginRootPath, params.entry);
+  const portableResolution = resolvePortablePluginRelativePath({
+    rootPath: params.pluginRootPath,
+    value: params.entry,
+    label: params.label,
+  });
+  if (!portableResolution.ok) {
+    return {
+      ok: false,
+      diagnostic: {
+        code: 'plugin_manifest_semantic_invalid',
+        message: `Plugin ${portableResolution.message}`,
+      },
+    };
+  }
+  const resolvedPath = portableResolution.path;
   const extension = extname(resolvedPath).toLowerCase();
   if (!params.supportedExtensions.has(extension)) {
     return {
@@ -105,27 +128,19 @@ export async function resolvePluginDaemonEntryPath(params: Readonly<{
   // non-canonical-but-equivalent root strings.
   const canonicalPluginRootPath = await resolveCanonicalExistingPath(params.pluginRootPath) ?? params.pluginRootPath;
 
-  const daemonEntry = params.manifest.entrypoints.main;
-  if (!daemonEntry) {
+  const daemonEntry = params.manifest.entrypoints?.daemon;
+  const declaredDevEntry = params.manifest.entrypoints?.development?.trim() ?? '';
+  if (!daemonEntry && declaredDevEntry && !params.resolveDevEntrypoint) {
     return {
-      ok: true,
-      daemonEntryPath: null,
-      devDaemonEntryPath: null,
+      ok: false,
+      diagnostic: {
+        code: 'plugin_source_kind_unsupported',
+        message: 'A development-only daemon entrypoint requires an active development path source',
+      },
     };
   }
-
-  const daemonEntryResolution = await resolveEntrypointPath({
-    pluginRootPath: canonicalPluginRootPath,
-    entry: daemonEntry,
-    label: 'daemon entry',
-    supportedExtensions: SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS,
-  });
-  if (!daemonEntryResolution.ok) {
-    return daemonEntryResolution;
-  }
-
   let devDaemonEntryPath: string | null = null;
-  const devEntry = params.resolveDevEntrypoint ? params.manifest.entrypoints.dev?.trim() : '';
+  const devEntry = params.resolveDevEntrypoint ? declaredDevEntry : '';
   if (devEntry) {
     const devEntryResolution = await resolveEntrypointPath({
       pluginRootPath: canonicalPluginRootPath,
@@ -139,9 +154,29 @@ export async function resolvePluginDaemonEntryPath(params: Readonly<{
     devDaemonEntryPath = devEntryResolution.entryPath;
   }
 
+  let daemonEntryPath: string | null = null;
+  if (daemonEntry) {
+    const daemonEntryResolution = await resolveEntrypointPath({
+      pluginRootPath: canonicalPluginRootPath,
+      entry: daemonEntry,
+      label: 'daemon entry',
+      supportedExtensions: SUPPORTED_PLUGIN_DAEMON_ENTRY_EXTENSIONS,
+    });
+    if (!daemonEntryResolution.ok) {
+      // A fresh development scaffold intentionally has source before its first
+      // production build. Ignore only that missing-build case; malformed,
+      // escaping, or unsupported production entries still fail closed.
+      if (!(devDaemonEntryPath && daemonEntryResolution.diagnostic.code === 'plugin_source_missing')) {
+        return daemonEntryResolution;
+      }
+    } else {
+      daemonEntryPath = daemonEntryResolution.entryPath;
+    }
+  }
+
   return {
     ok: true,
-    daemonEntryPath: daemonEntryResolution.entryPath,
+    daemonEntryPath,
     devDaemonEntryPath,
   };
 }

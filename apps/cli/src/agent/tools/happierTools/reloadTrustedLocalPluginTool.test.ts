@@ -4,9 +4,10 @@ import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { createPluginStateStore } from '@/plugins/store/state';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
 import { reloadTrustedLocalPluginTool } from './reloadTrustedLocalPluginTool';
+import { createPluginInstallationReviewFixture } from '@/plugins/testkit/pluginInstallationReviewFixture';
 
 async function writePluginState(params: Readonly<{
   happyHomeDir: string;
@@ -51,17 +52,12 @@ async function writePluginState(params: Readonly<{
 describe('reloadTrustedLocalPluginTool', () => {
   it('reloads enabled local trusted link plugins', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-tool-reload-home-'));
-    const reload = vi.fn(async () => ({
-      ok: true as const,
-      generation: 1,
-      attemptedGeneration: 1,
-      changedPluginIds: ['acme.dev.plugin'],
-      affectedPluginIds: ['acme.dev.plugin'],
-      activeGenerationId: 'reload:1',
-      registryStatus: 'active' as const,
-      diagnostics: [],
-      diagnosticsByPluginId: {},
-      registry: {} as never,
+    const requestChange = vi.fn(async () => ({
+      kind: 'committed' as const,
+      pluginId: 'acme.dev.plugin',
+      desiredGeneration: 'generation-1',
+      appliedGeneration: 'generation-1',
+      pendingSurfaces: [],
     }));
 
     try {
@@ -73,15 +69,22 @@ describe('reloadTrustedLocalPluginTool', () => {
       const result = await reloadTrustedLocalPluginTool({
         happyHomeDir,
         pluginId: 'acme.dev.plugin',
-        reload,
+        requestChange,
       });
 
-      expect(reload).toHaveBeenCalledWith({ pluginId: 'acme.dev.plugin' });
+      expect(requestChange).toHaveBeenCalledWith({
+        request: {
+          kind: 'development',
+          pluginId: 'acme.dev.plugin',
+          sourceRootPath: '/plugins/acme.dev.plugin',
+        },
+        approval: 'none',
+      });
       expect(result).toEqual({
         ok: true,
         result: {
           pluginId: 'acme.dev.plugin',
-          activeGenerationId: 'reload:1',
+          activeGenerationId: 'generation-1',
           changedPluginIds: ['acme.dev.plugin'],
           registryStatus: 'active',
           diagnostics: [],
@@ -92,22 +95,31 @@ describe('reloadTrustedLocalPluginTool', () => {
     }
   });
 
-  it('fails closed for plugins that are not trusted local dev links', async () => {
+  it('lets daemon policy reject an unapproved local dev source instead of trusting the source-policy string', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-tool-reload-home-'));
-    const reload = vi.fn();
+    const requestChange = vi.fn(async () => ({
+      kind: 'reviewRequired' as const,
+      pendingChangeId: 'pending-1',
+      review: createPluginInstallationReviewFixture({
+        pluginId: 'acme.remote.plugin',
+        displayName: 'Remote',
+        source: { kind: 'path' as const, locator: '/plugins/acme.remote.plugin' },
+        updateChannel: { kind: 'path', locator: '/plugins/acme.remote.plugin', development: true },
+        executableRealms: ['daemon' as const],
+      }),
+    }));
 
     try {
       await writePluginState({
         happyHomeDir,
         pluginId: 'acme.remote.plugin',
         trustPolicy: 'prompt',
-        installMode: 'managed_install',
       });
 
       const result = await reloadTrustedLocalPluginTool({
         happyHomeDir,
         pluginId: 'acme.remote.plugin',
-        reload,
+        requestChange,
       });
 
       expect(result).toEqual({
@@ -115,7 +127,7 @@ describe('reloadTrustedLocalPluginTool', () => {
         errorCode: 'plugin_reload_not_allowed',
         error: 'Only enabled trusted local dev plugins can be reloaded from the tool bridge',
       });
-      expect(reload).not.toHaveBeenCalled();
+      expect(requestChange).toHaveBeenCalledTimes(1);
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
     }

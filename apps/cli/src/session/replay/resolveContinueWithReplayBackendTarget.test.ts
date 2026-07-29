@@ -13,7 +13,7 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       },
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
       replayFlavor: 'claude',
-      providerHintProviderId: 'claude',
+      agentHintAgentId: 'claude',
     });
   });
 
@@ -33,7 +33,7 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       },
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       replayFlavor: 'acp:review-bot',
-      providerHintProviderId: 'acp:review-bot',
+      agentHintAgentId: 'acp:review-bot',
     });
   });
 
@@ -57,7 +57,7 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       },
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       replayFlavor: 'acp:review-bot',
-      providerHintProviderId: 'acp:review-bot',
+      agentHintAgentId: 'acp:review-bot',
     });
   });
 
@@ -72,7 +72,7 @@ describe('resolveContinueWithReplayBackendTarget', () => {
       },
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'review-bot' },
       replayFlavor: 'acp:review-bot',
-      providerHintProviderId: 'acp:review-bot',
+      agentHintAgentId: 'acp:review-bot',
     });
   });
 

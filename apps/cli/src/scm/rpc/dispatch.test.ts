@@ -5,6 +5,8 @@ import { join } from 'path';
 import { describe, expect, it, vi } from 'vitest';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 
+import { createScmBackendRegistry } from '@/scm/registry';
+import type { ScmBackend } from '@/scm/types';
 import { runScmRoute } from './dispatch';
 
 type TestResponse = {
@@ -12,6 +14,8 @@ type TestResponse = {
     error?: string;
     errorCode?: string;
 };
+
+const emptyRegistry = createScmBackendRegistry([]);
 
 describe('runScmRoute', () => {
     it('uses the non-repository handler for cwd outside the default directory when unrestricted', async () => {
@@ -32,6 +36,7 @@ describe('runScmRoute', () => {
             workingDirectory: workspace,
             onNonRepository,
             runWithBackend,
+            registry: emptyRegistry,
         });
 
         expect(response.success).toBe(false);
@@ -50,6 +55,7 @@ describe('runScmRoute', () => {
             accessPolicy: { kind: 'restrictedRoots', roots: [workspace] },
             onNonRepository: () => ({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY }),
             runWithBackend,
+            registry: emptyRegistry,
         });
 
         expect(response.success).toBe(false);
@@ -71,6 +77,7 @@ describe('runScmRoute', () => {
             workingDirectory: workspace,
             onNonRepository,
             runWithBackend,
+            registry: emptyRegistry,
         });
 
         expect(response.success).toBe(false);
@@ -99,11 +106,53 @@ describe('runScmRoute', () => {
             workingDirectory: workspace,
             onNonRepository,
             runWithBackend,
+            registry: emptyRegistry,
         });
 
         expect(response.success).toBe(false);
         expect(response.errorCode).toBe(SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY);
         expect(onNonRepository).toHaveBeenCalledTimes(1);
         expect(runWithBackend).not.toHaveBeenCalled();
+    });
+
+    it('accepts a unique legacy local-id preference resolved to a qualified backend', async () => {
+        const workspace = mkdtempSync(join(tmpdir(), 'happier-scm-dispatch-'));
+        const registry = createScmBackendRegistry([{
+            id: 'happier.scm.backend.sapling/sapling',
+            localId: 'sapling',
+            selection: {
+                modeSelectionScores: { '.git': 100 },
+                preferenceAllowedModes: ['.git'],
+            },
+            detectRepo: async () => ({
+                isRepo: true,
+                rootPath: workspace,
+                mode: '.git',
+            }),
+        } as unknown as ScmBackend]); // Narrow route fixture; backend operations are exercised by runWithBackend.
+        const runWithBackend = vi.fn().mockResolvedValue({ success: true });
+
+        const response = await runScmRoute<{
+            cwd?: string;
+            backendPreference?: { kind: 'prefer'; backendId: 'sapling' };
+        }, TestResponse>({
+            request: {
+                cwd: '.',
+                backendPreference: { kind: 'prefer', backendId: 'sapling' },
+            },
+            workingDirectory: workspace,
+            onNonRepository: () => ({ success: false }),
+            runWithBackend,
+            registry,
+        });
+
+        expect(response.success).toBe(true);
+        expect(runWithBackend).toHaveBeenCalledWith(expect.objectContaining({
+            selection: expect.objectContaining({
+                backend: expect.objectContaining({
+                    id: 'happier.scm.backend.sapling/sapling',
+                }),
+            }),
+        }));
     });
 });

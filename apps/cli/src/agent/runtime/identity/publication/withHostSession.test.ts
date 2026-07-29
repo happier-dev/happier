@@ -13,7 +13,6 @@ function createRuntimeTurnOperations(
 ): RuntimeTurnOperations {
   return {
     beginTurnLifecycle: vi.fn(),
-    startOrLoadSession: vi.fn(async () => undefined),
     sendTurnPrompt: vi.fn(async () => undefined),
     steerInFlightTurn: vi.fn(async () => undefined),
     waitForTurnCompletion: vi.fn(async () => undefined),
@@ -108,10 +107,49 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     expect(sendTurnPrompt).toHaveBeenCalledWith('resume prompt', { userMessageSeq: 92 });
   });
 
-  it('publishes provider session identity from the runtime when fallback identity is emitted', async () => {
+  it('preserves the explicit terminal mode binding alongside runtime publication decoration', async () => {
+    const runtime = createRuntimeTurnOperations();
+    const terminalRemoteModeLoop = {
+      startingMode: 'remote' as const,
+      remoteExitCode: 0,
+      runTerminal: vi.fn(async () => ({ type: 'exit' as const, code: 0 })),
+      runRemote: vi.fn(async () => 'exit' as const),
+      onModeChange: vi.fn(),
+    };
+    const plan = {
+      kind: HOST_SESSION_RUNTIME_PLAN_KIND,
+      agentId: 'antigravity',
+      opts: {},
+      config: {
+        createSessionRuntime: vi.fn(async () => ({
+          operations: runtime,
+          terminalRemoteModeLoop,
+        })),
+      },
+    } as unknown as HostSessionRuntimePlan;
+
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan,
+      identity: {
+        runtimeDescriptor: null,
+        runtimeCapabilities: null,
+        runtimeFacets: null,
+      },
+    });
+
+    const created = await wrapped.config.createSessionRuntime?.({} as never);
+
+    expect(created?.terminalRemoteModeLoop).toBe(terminalRemoteModeLoop);
+    expect(
+      (created?.operations as unknown as Readonly<Record<string, unknown>>)
+        ?.resolveTerminalRemoteSessionModeLoop,
+    ).toBeUndefined();
+  });
+
+  it('publishes fallback identity before the first prompt and refreshes its lazy provider session id', async () => {
     let providerSessionId: string | null = null;
     const runtime = createRuntimeTurnOperations({
-      startOrLoadSession: vi.fn(async () => {
+      sendTurnPrompt: vi.fn(async () => {
         providerSessionId = 'vendor-session-1';
       }),
       readSessionIdentity: vi.fn(() => ({ sessionId: providerSessionId })),
@@ -155,7 +193,29 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
       messages.push(message);
     });
 
-    await created?.operations.startOrLoadSession();
+    expect(messages).toContainEqual({
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: {
+        v: 1,
+        agentId: 'codex',
+        agent: {
+          backendMode: 'appServer',
+          agentExtra: {
+            owner: 'happier',
+            schemaId: 'happier.hostSessionRuntimeIdentity',
+            v: 1,
+            runtimeHandle: {
+              backendId: 'codex.appServer',
+              agentId: 'codex',
+              provenance: 'first_party',
+            },
+          },
+        },
+      },
+    });
+
+    await created?.operations.sendTurnPrompt('hello');
     unsubscribe?.();
 
     expect(messages).toContainEqual({
@@ -170,6 +230,72 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
         }),
       },
     });
+    expect(messages.filter((message) => (
+      Boolean(message)
+      && typeof message === 'object'
+      && (message as Readonly<Record<string, unknown>>).type === 'event'
+      && (message as Readonly<Record<string, unknown>>).name === 'runtime.descriptor'
+    ))).toHaveLength(2);
+  });
+
+  it('does not overwrite an upstream-authoritative descriptor with fallback refreshes', async () => {
+    const upstreamDescriptor = {
+      v: 1,
+      agentId: 'codex',
+      agent: {
+        backendMode: 'appServer',
+        providerSessionId: 'upstream-session-1',
+      },
+    } as const;
+    const runtime = createRuntimeTurnOperations({
+      sendTurnPrompt: vi.fn(async () => undefined),
+      readSessionIdentity: vi.fn(() => ({ sessionId: 'fallback-session-1' })),
+      subscribeRuntimeEvents: vi.fn((handler) => {
+        handler({
+          kind: 'descriptor-update',
+          sessionId: 'happier-session-1',
+          emittedAtMs: 1,
+          descriptor: upstreamDescriptor,
+        });
+        return () => undefined;
+      }),
+    });
+    const plan = {
+      kind: HOST_SESSION_RUNTIME_PLAN_KIND,
+      agentId: 'codex',
+      opts: {},
+      config: {
+        createSessionRuntime: vi.fn(async () => ({ operations: runtime })),
+      },
+    } as unknown as HostSessionRuntimePlan;
+    const wrapped = withHostSessionRuntimeIdentityPublication({
+      plan,
+      identity: {
+        runtimeDescriptor: {
+          v: 1,
+          agentId: 'codex',
+          agent: {
+            backendMode: 'fallback',
+          },
+        },
+        runtimeCapabilities: null,
+        runtimeFacets: null,
+      },
+    });
+    const created = await wrapped.config.createSessionRuntime?.({} as never);
+    const messages: unknown[] = [];
+    const unsubscribe = created?.operations.subscribeRuntimeEvents((message) => {
+      messages.push(message);
+    });
+
+    await created?.operations.sendTurnPrompt('hello');
+    unsubscribe?.();
+
+    expect(messages).toEqual([{
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: upstreamDescriptor,
+    }]);
   });
 
   it('persists RuntimeEvent descriptor updates through normalized host-session publication', async () => {
@@ -251,7 +377,7 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
     let started = false;
     const respondToPermission = vi.fn(async () => ({ delivered: true as const }));
     const runtime = createRuntimeTurnOperations({
-      startOrLoadSession: vi.fn(async () => {
+      sendTurnPrompt: vi.fn(async () => {
         started = true;
       }),
     });
@@ -289,7 +415,7 @@ describe('withHostSessionRuntimeIdentityPublication', () => {
 
     expect(created?.operations.permissionCapability).toBeUndefined();
     expect(created?.operations.respondToPermission).toBeUndefined();
-    await created?.operations.startOrLoadSession();
+    await created?.operations.sendTurnPrompt('hello');
     expect(created?.operations.permissionCapability).toBe('responds');
     expect(created?.operations.respondToPermission).toBeTypeOf('function');
     await expect(created?.operations.respondToPermission?.('permission-1', true)).resolves.toEqual({ delivered: true });

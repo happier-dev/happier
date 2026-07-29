@@ -1,27 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  buildRuntimeAuthRecoveryKey,
-  parseRuntimeAuthRecoveryKey,
-} from './runtimeAuthRecoveryKey';
+import { buildRuntimeAuthRecoveryKey } from './runtimeAuthRecoveryKey';
 
 describe('runtimeAuthRecoveryKey', () => {
-  it('round-trips a versioned composite recovery identity without delimiter collisions', () => {
-    const parts = {
+  it('builds a versioned composite in-process identity without delimiter collisions', () => {
+    const key = buildRuntimeAuthRecoveryKey({
       sessionId: 'session:with/slashes',
       serviceId: 'openai-codex',
       profileId: 'profile:primary',
       groupId: null,
-    };
-
-    const key = buildRuntimeAuthRecoveryKey(parts);
+    });
+    const collisionCandidate = buildRuntimeAuthRecoveryKey({
+      sessionId: 'session',
+      serviceId: 'with/slashes:openai-codex',
+      profileId: 'profile:primary',
+      groupId: null,
+    });
 
     expect(key).toMatch(/^runtime-auth:v1:/);
     expect(key).not.toContain('session:with/slashes');
-    expect(parseRuntimeAuthRecoveryKey(key)).toEqual(parts);
+    expect(key).not.toBe(collisionCandidate);
   });
 
-  it('canonicalizes group-backed keys so profile changes in the same group share one durable key', () => {
+  it('canonicalizes group-backed keys so profile changes in the same group share one in-process identity', () => {
     const a = buildRuntimeAuthRecoveryKey({
       sessionId: 'session-1',
       serviceId: 'openai-codex',
@@ -36,12 +37,6 @@ describe('runtimeAuthRecoveryKey', () => {
     });
 
     expect(a).toBe(b);
-    expect(parseRuntimeAuthRecoveryKey(a)).toEqual({
-      sessionId: 'session-1',
-      serviceId: 'openai-codex',
-      groupId: 'codex-main',
-      profileId: null,
-    });
   });
 
   it('keeps group-backed keys distinct for different failing access-token fingerprints', () => {
@@ -61,12 +56,5 @@ describe('runtimeAuthRecoveryKey', () => {
     });
 
     expect(a).not.toBe(b);
-    expect(parseRuntimeAuthRecoveryKey(a)).toEqual({
-      sessionId: 'session-1',
-      serviceId: 'openai-codex',
-      groupId: 'codex-main',
-      profileId: null,
-      failingAccessTokenFingerprint: 'token-a',
-    });
   });
 });

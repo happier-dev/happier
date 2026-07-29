@@ -1,4 +1,10 @@
-import type { ConnectedServiceAuthGroupV1 } from '@happier-dev/protocol';
+import type {
+    ConnectedServiceAuthGroupMemberStateV1,
+    ConnectedServiceAuthGroupV1,
+    QualifiedConnectedAccountGroupV4,
+    QualifiedConnectedAccountProfileV4,
+    QualifiedConnectedAccountServiceRef,
+} from '@happier-dev/protocol';
 
 import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import {
@@ -9,7 +15,7 @@ import {
 import type { ConnectedServiceAuthGroupSwitchState } from './ConnectedServiceAuthGroupSwitchCoordinator';
 
 export function normalizeConnectedServiceAuthGroupPolicy(
-    value: ConnectedServiceAuthGroupV1['policy'],
+    value: ConnectedServiceAuthGroupPolicyV1,
 ): ConnectedServiceAuthGroupPolicyV1 {
     return {
         ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1,
@@ -33,7 +39,7 @@ function readStringState(value: unknown): string | null | undefined {
 
 export function mergePersistedMemberRuntimeState(
     runtimeState: ConnectedServiceAuthGroupMemberRuntimeState | null,
-    persistedState: ConnectedServiceAuthGroupV1['members'][number]['state'],
+    persistedState: ConnectedServiceAuthGroupMemberStateV1,
 ): ConnectedServiceAuthGroupMemberRuntimeState {
     const persisted = memberStateFromApiState(persistedState);
     return {
@@ -43,7 +49,7 @@ export function mergePersistedMemberRuntimeState(
 }
 
 function memberStateFromApiState(
-    state: ConnectedServiceAuthGroupV1['members'][number]['state'],
+    state: ConnectedServiceAuthGroupMemberStateV1,
 ): ConnectedServiceAuthGroupMemberRuntimeState {
     return {
         ...(readNumberState(state.cooldownStartedAtMs) === undefined ? {} : { cooldownStartedAtMs: readNumberState(state.cooldownStartedAtMs) }),
@@ -58,6 +64,57 @@ function memberStateFromApiState(
         ...(readNumberState(state.providerResetsAtMs) === undefined ? {} : { providerResetsAtMs: readNumberState(state.providerResetsAtMs) }),
         ...(readStringState(state.lastFailureKind) === undefined ? {} : { lastFailureKind: readStringState(state.lastFailureKind) }),
         ...(readNumberState(state.lastObservedAtMs) === undefined ? {} : { lastObservedAtMs: readNumberState(state.lastObservedAtMs) }),
+    };
+}
+
+export function buildQualifiedConnectedAccountAuthGroupSwitchState(input: Readonly<{
+    group: QualifiedConnectedAccountGroupV4;
+    profiles: readonly QualifiedConnectedAccountProfileV4[];
+}>): ConnectedServiceAuthGroupSwitchState<QualifiedConnectedAccountServiceRef> {
+    const profilesByAccountId = new Map(
+        input.profiles.flatMap((profile) => (
+            profile.ref.service.pluginId === input.group.ref.service.pluginId
+            && profile.ref.service.localId === input.group.ref.service.localId
+                ? [[profile.ref.accountId, profile] as const]
+                : []
+        )),
+    );
+    const memberStatesByProfileId = new Map<
+        string,
+        ConnectedServiceAuthGroupMemberRuntimeState
+    >();
+    for (const member of input.group.members) {
+        const profile = profilesByAccountId.get(member.connectedAccountId);
+        memberStatesByProfileId.set(
+            member.connectedAccountId,
+            mergePersistedMemberRuntimeState(
+                profile
+                    ? { credentialHealthStatus: profile.status }
+                    : null,
+                member.state,
+            ),
+        );
+    }
+    const activeProfile = input.group.activeConnectedAccountId
+        ? profilesByAccountId.get(input.group.activeConnectedAccountId)
+        : null;
+    return {
+        serviceId: input.group.ref.service,
+        groupId: input.group.ref.groupId,
+        activeProfileId: input.group.activeConnectedAccountId,
+        generation: input.group.generation,
+        runtimeStateRevision: input.group.runtimeStateRevision,
+        credentialRevision: activeProfile?.credentialRevision ?? null,
+        configurationRevision:
+            activeProfile?.configurationRevision ?? null,
+        policy: normalizeConnectedServiceAuthGroupPolicy(input.group.policy),
+        members: input.group.members.map((member) => ({
+            profileId: member.connectedAccountId,
+            priority: member.priority,
+            enabled: member.enabled,
+            createdAtMs: member.createdAt,
+        })),
+        memberStatesByProfileId,
     };
 }
 

@@ -7,10 +7,14 @@ import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerManagerLike } from '@/api/rpc/types';
 import type { AgentState, Metadata, UserMessage } from '@/api/types';
 import type { MaterializeNextPendingResult } from '@/api/session/sessionClientPort';
-import type { PendingMaterializationActiveTurnPolicy } from '@/api/session/pendingMaterializationActiveTurnPolicy';
 import type { PendingMaterializationDeliveryTiming } from '@/api/session/pendingQueueV2Transport';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
 import type { ProviderTranscriptDispatchRequest } from '@/api/session/client/transcript/providerDispatch';
+import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import {
+  createEphemeralSendFailure,
+  type EphemeralSendResult,
+} from '@/api/session/client/transcript/ephemeralSendOutcome';
 
 export type DeferredApiSessionTarget = Readonly<{
   sessionId: string;
@@ -18,8 +22,8 @@ export type DeferredApiSessionTarget = Readonly<{
   sendSessionEvent: (event: unknown, id?: string) => void;
   sendProviderMessage: (request: ProviderTranscriptDispatchRequest) => void;
   sendAgentMessage: (provider: unknown, body: unknown, opts?: unknown) => void;
-  sendAgentMessageEphemeral?: (provider: unknown, body: unknown, opts: unknown) => void | Promise<void>;
-  sendAgentMessageEphemeralDelta?: (provider: unknown, body: unknown, opts: unknown) => void | Promise<void>;
+  sendAgentMessageEphemeral?: (provider: unknown, body: unknown, opts: unknown) => EphemeralSendResult;
+  sendAgentMessageEphemeralDelta?: (provider: unknown, body: unknown, opts: unknown) => EphemeralSendResult;
   getEphemeralStreamConnectionEpoch?: () => number;
   enqueueAgentMessageCommitted?: (
     provider: unknown,
@@ -29,6 +33,14 @@ export type DeferredApiSessionTarget = Readonly<{
   sendAgentMessageCommitted: (provider: unknown, body: unknown, opts: unknown) => Promise<void>;
   sendUserTextMessage: (text: string, opts?: { localId?: string; meta?: Record<string, unknown> }) => void;
   onUserMessage?: (callback: (data: UserMessage) => boolean | void) => void;
+  on?: (eventName: 'metadata-updated', listener: () => void) => unknown;
+  off?: (eventName: 'metadata-updated', listener: () => void) => unknown;
+  subscribeExecutionRunActivitySnapshots?: (
+    listener: (activeCount: number) => void,
+  ) => () => void;
+  enqueueRegisteredSessionStateFieldMutation?: (
+    mutation: RegisteredSessionStateFieldMutationV1,
+  ) => void | Promise<void>;
   updateMetadata: (updater: (metadata: Metadata) => Metadata) => void | Promise<void>;
   updateAgentState: (updater: (state: AgentState) => AgentState) => void | Promise<void>;
   keepAlive: (thinking: boolean, mode: 'local' | 'remote') => void;
@@ -39,33 +51,47 @@ export type DeferredApiSessionTarget = Readonly<{
   refreshSessionSnapshotFromServerBestEffort?: (opts?: { reason?: 'connect' | 'waitForMetadataUpdate' }) => Promise<void>;
   waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
   popPendingMessage: () => Promise<boolean>;
-  shouldAttemptPendingMaterialization?: (opts?: {
-    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
-  }) => boolean;
+  shouldAttemptPendingMaterialization?: () => boolean;
+  reconcilePendingProviderInputCustodyBeforeMaterialization?: () => Promise<boolean>;
   reconcilePendingQueueState?: (opts?: { force?: boolean }) => Promise<boolean>;
   materializeNextPendingMessageSafely?: (opts?: {
     reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
-    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
     deliveryTiming?: PendingMaterializationDeliveryTiming;
   }) => Promise<MaterializeNextPendingResult>;
+  wakePendingMaterialization?: () => void;
   peekPendingMessageQueueV2Count: () => Promise<number>;
   discardPendingMessageQueueV2All: (opts: { reason: 'switch_to_local' | 'manual' }) => Promise<number>;
   discardCommittedMessageLocalIds: (opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }) => Promise<number>;
-  sendSessionDeath: () => void;
   setSessionRuntimeControls: (controls: SessionRuntimeControls | null) => void;
   flush: () => Promise<void>;
   close: () => Promise<void>;
 }>;
+
+export type DeferredApiSessionAttachOptions = Readonly<{
+  beforeBufferedDrain?: (
+    target: DeferredApiSessionTarget,
+  ) => void | Promise<void>;
+}>;
+
+type DeferredExecutionRunActivitySubscription = {
+  readonly listener: (activeCount: number) => void;
+  unsubscribeTarget: (() => void) | null;
+};
 
 /**
  * Deferred session client that buffers writes until a real ApiSessionClient is available.
  */
 export class DeferredApiSessionClient {
   sessionId: string;
+  private readonly placeholderSessionId: string;
   private readonly limits: DeferredSessionBufferLimits;
   readonly rpcHandlerManager: RpcHandlerManagerLike;
   private readonly registeredHandlers = new Map<string, RpcHandler>();
   private readonly userMessageHandlers: Array<(data: UserMessage) => boolean | void> = [];
+  private readonly metadataUpdatedHandlers = new Set<() => void>();
+  private readonly boundMetadataUpdatedHandlers = new Set<() => void>();
+  private readonly executionRunActivitySubscriptions =
+    new Set<DeferredExecutionRunActivitySubscription>();
   private target: DeferredApiSessionTarget | null = null;
   private attachPromise: Promise<void> | null = null;
   private flushInFlight: Promise<void> | null = null;
@@ -76,11 +102,14 @@ export class DeferredApiSessionClient {
   private flushHadErrors = false;
   private flushErrorWarningSent = false;
   private cancelled = false;
+  private pendingPresence: Readonly<{ thinking: boolean; mode: 'local' | 'remote' }> | null = null;
+  private pendingWakeDebt = false;
   private attachWaiters: Array<(attached: boolean) => void> = [];
   private runtimeControlsSnapshot: SessionRuntimeControls | null | undefined;
 
   constructor(opts: { placeholderSessionId: string; limits: DeferredSessionBufferLimits }) {
     this.sessionId = opts.placeholderSessionId;
+    this.placeholderSessionId = opts.placeholderSessionId;
     this.limits = opts.limits;
     this.rpcHandlerManager = {
       registerHandler: <TRequest = any, TResponse = any>(
@@ -142,28 +171,31 @@ export class DeferredApiSessionClient {
     this.pushBufferedCall((t) => t.sendAgentMessage(_provider, _body, _opts), { hint: 'sendAgentMessage' });
   }
 
-  sendAgentMessageEphemeral(_provider: unknown, _body: unknown, _opts: unknown): void {
+  sendAgentMessageEphemeral(_provider: unknown, _body: unknown, _opts: unknown): EphemeralSendResult {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      target.sendAgentMessageEphemeral?.(_provider, _body, _opts);
-      return;
+      const send = target.sendAgentMessageEphemeral;
+      return typeof send === 'function'
+        ? send.call(target, _provider, _body, _opts)
+        : createEphemeralSendFailure('transport_unavailable', target.getEphemeralStreamConnectionEpoch?.() ?? 0);
     }
-
-    if (this.cancelled) {
-      return;
-    }
-    this.pushBufferedCall((t) => t.sendAgentMessageEphemeral?.(_provider, _body, _opts), { hint: 'sendAgentMessageEphemeral' });
+    // Live state has one buffer/coalescer in the streamed transcript writer. Buffering here would
+    // replay a stale snapshot after attach and race the writer's required recovery checkpoint.
+    return createEphemeralSendFailure('transport_unavailable', this.getEphemeralStreamConnectionEpoch());
   }
 
-  sendAgentMessageEphemeralDelta(_provider: unknown, _body: unknown, _opts: unknown): void {
+  sendAgentMessageEphemeralDelta(_provider: unknown, _body: unknown, _opts: unknown): EphemeralSendResult {
     const target = this.target;
     if (target && !this.flushInFlight) {
-      target.sendAgentMessageEphemeralDelta?.(_provider, _body, _opts);
-      return;
+      const send = target.sendAgentMessageEphemeralDelta;
+      return typeof send === 'function'
+        ? send.call(target, _provider, _body, _opts)
+        : createEphemeralSendFailure('transport_unavailable', target.getEphemeralStreamConnectionEpoch?.() ?? 0);
     }
 
     // Never buffer deltas: they carry partial appended text chained to live assembly state that no
     // receiver holds while we are detached. Receivers resync from the next full-snapshot checkpoint.
+    return createEphemeralSendFailure('transport_unavailable', this.getEphemeralStreamConnectionEpoch());
   }
 
   getEphemeralStreamConnectionEpoch(): number {
@@ -246,9 +278,87 @@ export class DeferredApiSessionClient {
     this.userMessageHandlers.push(callback);
 
     const target = this.target;
-    if (target?.onUserMessage) {
+    if (target?.onUserMessage && !this.flushInFlight) {
       target.onUserMessage(callback);
     }
+  }
+
+  on(eventName: 'metadata-updated', listener: () => void): this {
+    this.metadataUpdatedHandlers.add(listener);
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      try {
+        this.bindMetadataUpdatedHandler(target, listener);
+      } catch (error) {
+        this.metadataUpdatedHandlers.delete(listener);
+        throw error;
+      }
+    }
+    return this;
+  }
+
+  off(eventName: 'metadata-updated', listener: () => void): this {
+    this.metadataUpdatedHandlers.delete(listener);
+    if (this.boundMetadataUpdatedHandlers.delete(listener)) {
+      this.target?.off?.(eventName, listener);
+    }
+    return this;
+  }
+
+  subscribeExecutionRunActivitySnapshots(
+    listener: (activeCount: number) => void,
+  ): () => void {
+    const subscription: DeferredExecutionRunActivitySubscription = {
+      listener,
+      unsubscribeTarget: null,
+    };
+    this.executionRunActivitySubscriptions.add(subscription);
+
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      try {
+        this.bindExecutionRunActivitySubscription(target, subscription);
+      } catch (error) {
+        this.executionRunActivitySubscriptions.delete(subscription);
+        throw error;
+      }
+    } else {
+      listener(0);
+    }
+
+    return () => {
+      if (!this.executionRunActivitySubscriptions.delete(subscription)) {
+        return;
+      }
+      subscription.unsubscribeTarget?.();
+      subscription.unsubscribeTarget = null;
+    };
+  }
+
+  async enqueueRegisteredSessionStateFieldMutation(
+    mutation: RegisteredSessionStateFieldMutationV1,
+  ): Promise<void> {
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      await this.enqueueRegisteredSessionStateFieldMutationOnTarget(
+        target,
+        mutation,
+      );
+      return;
+    }
+
+    if (this.cancelled) {
+      return;
+    }
+
+    this.pushBufferedCall(
+      (attachedTarget) =>
+        this.enqueueRegisteredSessionStateFieldMutationOnTarget(
+          attachedTarget,
+          mutation,
+        ),
+      { hint: 'enqueueRegisteredSessionStateFieldMutation' },
+    );
   }
 
   updateMetadata(_updater: (metadata: Metadata) => Metadata): void | Promise<void> {
@@ -305,8 +415,12 @@ export class DeferredApiSessionClient {
 
   keepAlive(_thinking: boolean, _mode: 'local' | 'remote'): void {
     const target = this.target;
-    if (!target) return;
-    target.keepAlive(_thinking, _mode);
+    if (target && !this.flushInFlight) {
+      target.keepAlive(_thinking, _mode);
+      return;
+    }
+    if (this.cancelled) return;
+    this.pendingPresence = { thinking: _thinking, mode: _mode };
   }
 
   getMetadataSnapshot(): Metadata | null {
@@ -383,10 +497,15 @@ export class DeferredApiSessionClient {
     return await this.withAttachedTarget((t) => t.popPendingMessage(), false);
   }
 
-  shouldAttemptPendingMaterialization(opts?: {
-    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
-  }): boolean {
-    return this.target?.shouldAttemptPendingMaterialization?.(opts) ?? true;
+  shouldAttemptPendingMaterialization(): boolean {
+    return this.target?.shouldAttemptPendingMaterialization?.() ?? true;
+  }
+
+  async reconcilePendingProviderInputCustodyBeforeMaterialization(): Promise<boolean> {
+    return await this.withAttachedTarget(
+      (target) => target.reconcilePendingProviderInputCustodyBeforeMaterialization?.() ?? Promise.resolve(true),
+      true,
+    );
   }
 
   async reconcilePendingQueueState(opts?: { force?: boolean }): Promise<boolean> {
@@ -395,7 +514,6 @@ export class DeferredApiSessionClient {
 
   async materializeNextPendingMessageSafely(opts?: {
     reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
-    activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
     deliveryTiming?: PendingMaterializationDeliveryTiming;
   }): Promise<MaterializeNextPendingResult> {
     const deferred = { type: 'deferred' as const, reason: 'supervisor_offline' as const };
@@ -418,19 +536,6 @@ export class DeferredApiSessionClient {
     return await this.withAttachedTarget((t) => t.discardCommittedMessageLocalIds(opts), 0);
   }
 
-  sendSessionDeath(): void {
-    const target = this.target;
-    if (target && !this.flushInFlight) {
-      target.sendSessionDeath();
-      return;
-    }
-
-    if (this.cancelled) {
-      return;
-    }
-    this.pushBufferedCall((t) => t.sendSessionDeath(), { hint: 'sendSessionDeath' });
-  }
-
   setSessionRuntimeControls(controls: SessionRuntimeControls | null): void {
     this.runtimeControlsSnapshot = controls;
     this.target?.setSessionRuntimeControls(controls);
@@ -444,7 +549,20 @@ export class DeferredApiSessionClient {
     await this.withAttachedTarget((t) => t.close(), undefined);
   }
 
-  attach(_real: DeferredApiSessionTarget): Promise<void> {
+  wakePendingMaterialization(): void {
+    if (this.cancelled) return;
+    const target = this.target;
+    if (target && !this.flushInFlight) {
+      target.wakePendingMaterialization?.();
+      return;
+    }
+    this.pendingWakeDebt = true;
+  }
+
+  attach(
+    _real: DeferredApiSessionTarget,
+    options: DeferredApiSessionAttachOptions = {},
+  ): Promise<void> {
     const existingPromise = this.attachPromise;
     if (existingPromise) {
       return existingPromise;
@@ -455,30 +573,84 @@ export class DeferredApiSessionClient {
       return this.attachPromise;
     }
 
+    // Establish the delivery barrier before binding any real-session callback.
+    // Some observer registrations synchronously publish their current snapshot.
+    this.flushInFlight = Promise.resolve();
     this.target = _real;
     this.sessionId = _real.sessionId;
 
-    for (const [method, handler] of this.registeredHandlers.entries()) {
-      _real.rpcHandlerManager.registerHandler(method, handler);
-    }
-    for (const handler of this.userMessageHandlers) {
-      _real.onUserMessage?.(handler);
-    }
-    if (this.runtimeControlsSnapshot !== undefined) {
-      _real.setSessionRuntimeControls(this.runtimeControlsSnapshot);
-    }
+    const preparationAndDrain = Promise.resolve().then(async () => {
+      this.assertRetainedTargetObserverSupport(_real);
+      for (const [method, handler] of this.registeredHandlers.entries()) {
+        _real.rpcHandlerManager.registerHandler(method, handler);
+      }
+      this.bindRetainedTargetObservers(_real);
+      if (this.runtimeControlsSnapshot !== undefined) {
+        _real.setSessionRuntimeControls(this.runtimeControlsSnapshot);
+      }
 
-    this.flushInFlight = this.drainBufferedCallsUntilEmpty();
-    this.attachPromise = this.flushInFlight.finally(() => {
-      this.flushInFlight = null;
+      await options.beforeBufferedDrain?.(_real);
+      if (this.cancelled) return;
+
+      // Include observers registered while preparation was awaiting authority.
+      this.bindRetainedTargetObservers(_real);
+      await this.drainBufferedCallsUntilEmpty();
+      if (this.cancelled) return;
+
+      // Authority is established and the generic FIFO is empty. Release the
+      // delivery barrier before user-input catch-up, presence, and pending wake.
+      if (this.flushInFlight === preparationAndDrain) {
+        this.flushInFlight = null;
+      }
+      for (const handler of this.userMessageHandlers) {
+        _real.onUserMessage?.(handler);
+      }
+      const pendingPresence = this.pendingPresence;
+      this.pendingPresence = null;
+      if (pendingPresence) {
+        _real.keepAlive(pendingPresence.thinking, pendingPresence.mode);
+      }
+      if (this.pendingWakeDebt) {
+        this.pendingWakeDebt = false;
+        _real.wakePendingMaterialization?.();
+      }
     });
-    this.flushAttachWaiters(true);
-    return this.attachPromise;
+    this.flushInFlight = preparationAndDrain;
+    const attachPromise = preparationAndDrain
+      .then(() => {
+        this.flushAttachWaiters(true);
+      })
+      .catch((error: unknown) => {
+        this.detachRetainedTargetObservers(_real);
+        if (this.target === _real) {
+          this.target = null;
+          this.sessionId = this.placeholderSessionId;
+        }
+        this.flushAttachWaiters(false);
+        throw error;
+      })
+      .finally(() => {
+        if (this.flushInFlight === preparationAndDrain) {
+          this.flushInFlight = null;
+        }
+      });
+    const retryableAttachPromise = attachPromise.catch((error: unknown) => {
+      this.attachPromise = null;
+      throw error;
+    });
+    this.attachPromise = retryableAttachPromise;
+    return retryableAttachPromise;
   }
 
   cancel(): void {
     if (this.cancelled) return;
     this.cancelled = true;
+    this.pendingPresence = null;
+    this.pendingWakeDebt = false;
+    const target = this.target;
+    if (target) {
+      this.detachRetainedTargetObservers(target);
+    }
 
     const entries = this.buffer;
     this.buffer = [];
@@ -528,6 +700,111 @@ export class DeferredApiSessionClient {
     if (hadError) {
       this.flushHadErrors = true;
     }
+  }
+
+  private bindRetainedTargetObservers(target: DeferredApiSessionTarget): void {
+    this.assertRetainedTargetObserverSupport(target);
+    for (const listener of this.metadataUpdatedHandlers) {
+      this.bindMetadataUpdatedHandler(target, listener);
+    }
+    for (const subscription of this.executionRunActivitySubscriptions) {
+      this.bindExecutionRunActivitySubscription(target, subscription);
+    }
+  }
+
+  private assertRetainedTargetObserverSupport(
+    target: DeferredApiSessionTarget,
+  ): void {
+    if (
+      this.metadataUpdatedHandlers.size > 0 &&
+      (
+        typeof target.on !== 'function' ||
+        typeof target.off !== 'function'
+      )
+    ) {
+      throw new Error(
+        'Attached session target does not support metadata observer binding and detachment',
+      );
+    }
+    if (
+      this.executionRunActivitySubscriptions.size > 0 &&
+      typeof target.subscribeExecutionRunActivitySnapshots !== 'function'
+    ) {
+      throw new Error(
+        'Attached session target does not support execution activity snapshots',
+      );
+    }
+  }
+
+  private bindMetadataUpdatedHandler(
+    target: DeferredApiSessionTarget,
+    listener: () => void,
+  ): void {
+    if (this.boundMetadataUpdatedHandlers.has(listener)) {
+      return;
+    }
+    if (
+      typeof target.on !== 'function' ||
+      typeof target.off !== 'function'
+    ) {
+      throw new Error(
+        'Attached session target does not support metadata observer binding and detachment',
+      );
+    }
+
+    this.boundMetadataUpdatedHandlers.add(listener);
+    try {
+      target.on('metadata-updated', listener);
+    } catch (error) {
+      this.boundMetadataUpdatedHandlers.delete(listener);
+      throw error;
+    }
+  }
+
+  private bindExecutionRunActivitySubscription(
+    target: DeferredApiSessionTarget,
+    subscription: DeferredExecutionRunActivitySubscription,
+  ): void {
+    if (subscription.unsubscribeTarget) {
+      return;
+    }
+    if (typeof target.subscribeExecutionRunActivitySnapshots !== 'function') {
+      throw new Error(
+        'Attached session target does not support execution activity snapshots',
+      );
+    }
+
+    const unsubscribeTarget =
+      target.subscribeExecutionRunActivitySnapshots(subscription.listener);
+    if (!this.executionRunActivitySubscriptions.has(subscription)) {
+      unsubscribeTarget();
+      return;
+    }
+    subscription.unsubscribeTarget = unsubscribeTarget;
+  }
+
+  private detachRetainedTargetObservers(target: DeferredApiSessionTarget): void {
+    for (const listener of this.boundMetadataUpdatedHandlers) {
+      target.off?.('metadata-updated', listener);
+    }
+    this.boundMetadataUpdatedHandlers.clear();
+
+    for (const subscription of this.executionRunActivitySubscriptions) {
+      subscription.unsubscribeTarget?.();
+      subscription.unsubscribeTarget = null;
+    }
+  }
+
+  private async enqueueRegisteredSessionStateFieldMutationOnTarget(
+    target: DeferredApiSessionTarget,
+    mutation: RegisteredSessionStateFieldMutationV1,
+  ): Promise<void> {
+    if (typeof target.enqueueRegisteredSessionStateFieldMutation !== 'function') {
+      throw new Error(
+        'Attached session target does not support registered session-state mutations',
+      );
+    }
+    await target.enqueueRegisteredSessionStateFieldMutation(mutation);
   }
 
   private async drainBufferedCallsUntilEmpty(): Promise<void> {

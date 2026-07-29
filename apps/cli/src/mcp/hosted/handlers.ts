@@ -1,13 +1,24 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AnySchema, ZodRawShapeCompat } from '@modelcontextprotocol/sdk/server/zod-compat.js';
-import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type {
+    CallToolResult,
+    ServerNotification,
+    ServerRequest,
+    ToolAnnotations,
+} from '@modelcontextprotocol/sdk/types.js';
 import type {
     McpHostedToolDefinitionV1,
     McpHostedToolResultV1,
     McpServerSpecV1,
-} from '@happier-dev/plugin-sdk';
-import Ajv, { type ValidateFunction } from 'ajv';
+} from '@happier-dev/plugin-sdk/experimental/mcp';
+import type { ValidateFunction } from 'ajv';
 import { z } from 'zod';
+
+import {
+    compilePluginJsonSchema,
+    isValidPluginJsonSchemaValue,
+} from '@/plugins/runtime/invocation/services/jsonSchemaValidation';
 
 import { assertHostedMcpServerRegistration } from './validation';
 
@@ -28,13 +39,14 @@ type JsonSchemaCompilation = Readonly<{
     validateJsonSchema?: ValidateFunction;
     invalidJsonSchema?: boolean;
 }>;
+type JsonObjectSchemaCandidate = Readonly<
+    | { kind: 'json'; schema: Record<string, unknown> }
+    | { kind: 'not-json' }
+    | { kind: 'invalid' }
+>;
 
 const HOSTED_INPUT_SCHEMA_META_KEY = 'happier.dev/hostedInputSchema';
 const HOSTED_OUTPUT_SCHEMA_META_KEY = 'happier.dev/hostedOutputSchema';
-const ajv = new Ajv({
-    allErrors: false,
-    strict: false,
-});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -62,6 +74,22 @@ function isSdkToolSchema(value: unknown): value is SdkToolSchema {
     return isZodSchemaLike(value) || isZodRawShapeLike(value);
 }
 
+function createSdkCompatibleObjectSchema(jsonSchema?: Record<string, unknown>): SdkToolSchema {
+    const adapter = z.object({}).passthrough();
+    if (jsonSchema) {
+        // Protocol/AJV remains the schema-semantics owner. This hook only
+        // preserves the already-validated schema in MCP tool discovery.
+        adapter._zod.processJSONSchema = (_ctx, json) => {
+            Object.assign(json, jsonSchema);
+        };
+    }
+    const candidate: unknown = adapter;
+    if (!isSdkToolSchema(candidate)) {
+        throw new Error('Hosted MCP schema adapter is incompatible with the MCP SDK');
+    }
+    return candidate;
+}
+
 function readTrimmedString(value: string | null | undefined): string | undefined {
     const trimmed = value?.trim() ?? '';
     return trimmed.length > 0 ? trimmed : undefined;
@@ -76,41 +104,70 @@ export function assertHostedMcpHandlerSpec(params: Readonly<{
 
 function compileJsonSchema(schema: Record<string, unknown>): JsonSchemaCompilation {
     try {
-        return { validateJsonSchema: ajv.compile(schema) };
+        return { validateJsonSchema: compilePluginJsonSchema(schema) };
     } catch {
         return { invalidJsonSchema: true };
     }
 }
 
+function readJsonObjectSchemaCandidate(schema: unknown): JsonObjectSchemaCandidate {
+    if (!isRecord(schema)) {
+        return { kind: 'not-json' };
+    }
+    try {
+        const descriptor = Object.getOwnPropertyDescriptor(schema, 'type');
+        if (!descriptor) {
+            return { kind: 'not-json' };
+        }
+        if (!('value' in descriptor)) {
+            return { kind: 'invalid' };
+        }
+        return descriptor.value === 'object'
+            ? { kind: 'json', schema }
+            : { kind: 'not-json' };
+    } catch {
+        return { kind: 'invalid' };
+    }
+}
+
 function resolveInputSchema(schema: unknown): HostedInputSchemaResolution {
     if (schema === undefined) {
-        return { schema: z.any(), native: false };
+        return { schema: createSdkCompatibleObjectSchema(), native: false };
+    }
+    const jsonSchema = readJsonObjectSchemaCandidate(schema);
+    if (jsonSchema.kind === 'invalid') {
+        return { schema: createSdkCompatibleObjectSchema(), native: false, invalidJsonSchema: true };
+    }
+    if (jsonSchema.kind === 'json') {
+        return {
+            schema: createSdkCompatibleObjectSchema(jsonSchema.schema),
+            native: false,
+            ...compileJsonSchema(jsonSchema.schema),
+        };
     }
     if (isSdkToolSchema(schema)) {
         return { schema, native: true };
     }
-    if (isRecord(schema) && schema.type === 'object') {
-        return {
-            schema: z.object({}).passthrough(),
-            native: false,
-            ...compileJsonSchema(schema),
-        };
-    }
-    return { schema: z.any(), native: false, invalidJsonSchema: true };
+    return { schema: createSdkCompatibleObjectSchema(), native: false, invalidJsonSchema: true };
 }
 
 function resolveOutputSchema(schema: unknown): HostedOutputSchemaResolution {
     if (schema === undefined) {
         return { native: false };
     }
+    const jsonSchema = readJsonObjectSchemaCandidate(schema);
+    if (jsonSchema.kind === 'invalid') {
+        return { native: false, invalidJsonSchema: true };
+    }
+    if (jsonSchema.kind === 'json') {
+        return {
+            schema: createSdkCompatibleObjectSchema(jsonSchema.schema),
+            native: false,
+            ...compileJsonSchema(jsonSchema.schema),
+        };
+    }
     if (isSdkToolSchema(schema)) {
         return { schema, native: true };
-    }
-    if (isRecord(schema) && schema.type === 'object') {
-        return {
-            native: false,
-            ...compileJsonSchema(schema),
-        };
     }
     return { native: false, invalidJsonSchema: true };
 }
@@ -199,24 +256,30 @@ export function registerHostedMcpHandlers(params: Readonly<{
                     outputSchemaIsNative: output.native,
                 }),
             },
-            async (args: unknown) => {
-                if (input.invalidJsonSchema || (input.validateJsonSchema && !input.validateJsonSchema(args ?? {}))) {
+            async (
+                args: unknown,
+                extra: RequestHandlerExtra<ServerRequest, ServerNotification>,
+            ) => {
+                if (input.invalidJsonSchema || (input.validateJsonSchema && !isValidPluginJsonSchemaValue(input.validateJsonSchema, args ?? {}))) {
                     return toSdkToolResult(invalidHostedToolInput());
                 }
                 if (output.invalidJsonSchema) {
                     return toSdkToolResult(invalidHostedToolOutput());
                 }
                 try {
+                    const signal = extra?.signal && extra.signal !== params.signal
+                        ? AbortSignal.any([params.signal, extra.signal])
+                        : params.signal;
                     const result = await tool.handler(args, {
                         pluginId: params.pluginId,
                         serverId: params.spec.id,
                         toolName: tool.name,
-                        signal: params.signal,
+                        signal,
                     });
                     if (
                         !result.isError
                         && output.validateJsonSchema
-                        && !output.validateJsonSchema(result.structuredContent ?? {})
+                        && !isValidPluginJsonSchemaValue(output.validateJsonSchema, result.structuredContent ?? {})
                     ) {
                         return toSdkToolResult(invalidHostedToolOutput());
                     }

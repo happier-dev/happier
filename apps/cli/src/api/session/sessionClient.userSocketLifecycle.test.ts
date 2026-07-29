@@ -25,7 +25,9 @@ vi.mock('./connection/createSessionSocketTransport', () => ({
       transport: {
         connect: async () => {},
         disconnect: async () => {},
-        destroy: async () => {},
+        destroy: async () => {
+          sessionSocketStub?.close();
+        },
         isConnected: () => sessionSocketStub?.connected === true,
         onConnected: () => () => {},
         onDisconnected: () => () => {},
@@ -37,13 +39,21 @@ vi.mock('./connection/createSessionSocketTransport', () => ({
 
 vi.mock('@happier-dev/connection-supervisor', () => ({
   DEFAULT_MANAGED_CONNECTION_POLICY: {},
-  createManagedConnectionSupervisor: (params: { createTransport: () => unknown; onConnected?: () => Promise<void> | void }) => ({
-    start: async () => {
-      params.createTransport();
-      await params.onConnected?.();
-    },
-    stop: async () => {},
-  }),
+  createManagedConnectionSupervisor: (params: {
+    createTransport: () => { destroy?: () => Promise<void> | void };
+    onConnected?: () => Promise<void> | void;
+  }) => {
+    let transport: { destroy?: () => Promise<void> | void } | null = null;
+    return {
+      start: async () => {
+        transport = params.createTransport();
+        await params.onConnected?.();
+      },
+      stop: async () => {
+        await transport?.destroy?.();
+      },
+    };
+  },
 }));
 
 vi.mock('./sessionMessageCatchUp', () => ({
@@ -82,6 +92,57 @@ describe('ApiSessionClient user socket lifecycle', () => {
     expect(userSocketStub.connect).toHaveBeenCalledTimes(1);
 
     await client.close();
+  });
+
+  it('closes the exact session publisher before disconnecting the session socket', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({
+      id: 'session-socket',
+      connected: true,
+      emitWithAckResult: { status: 'closed', sessionId: 's1' },
+    });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+
+    await client.close();
+
+    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
+      'session-runtime-activity-close',
+      { sessionId: 's1' },
+    );
+    const closeRequestOrder = sessionSocketStub.emitWithAck.mock.invocationCallOrder.at(-1) ?? 0;
+    const socketCloseOrder = sessionSocketStub.close.mock.invocationCallOrder.at(-1) ?? 0;
+    expect(closeRequestOrder).toBeGreaterThan(0);
+    expect(socketCloseOrder).toBeGreaterThan(closeRequestOrder);
+  });
+
+  it('accepts an authoritative inactive session when the close acknowledgement is lost', async () => {
+    vi.resetModules();
+    sessionSocketStub = createApiSessionSocketStub({
+      id: 'session-socket',
+      connected: true,
+      emitWithAck: async (event) => {
+        if (event === 'session-runtime-activity-close') {
+          throw new Error('ack lost');
+        }
+        return { ok: true };
+      },
+    });
+    userSocketStub = createApiSessionSocketStub({ id: 'user-socket', connected: false });
+    fetchSessionByIdCompatMock.mockResolvedValue({ active: false });
+
+    const { ApiSessionClient } = await import('./sessionClient');
+    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
+
+    await client.close();
+
+    expect(fetchSessionByIdCompatMock).toHaveBeenCalledWith({
+      token: 'tok',
+      sessionId: 's1',
+      reason: 'legacy-compat-proof',
+    });
   });
 
   it('keeps the user-scoped socket connected while a user-message callback is attached', async () => {

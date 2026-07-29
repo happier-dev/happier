@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildPowerShellStartProcessInvocation, parsePowerShellStartProcessPid } from './visibleConsoleSpawn';
+import {
+  buildPowerShellStartProcessInvocation,
+  parsePowerShellStartProcessIdentity,
+  parsePowerShellStartProcessPid,
+} from './visibleConsoleSpawn';
 
 describe('visibleConsoleSpawn', () => {
   it('builds a powershell Start-Process invocation that prints the pid', () => {
@@ -17,6 +21,8 @@ describe('visibleConsoleSpawn', () => {
     expect(script).toContain('Start-Process');
     expect(script).toContain('-PassThru');
     expect(script).toContain('$p.Id');
+    expect(script).toContain('$p.StartTime');
+    expect(script).toContain('HAPPIER_LAUNCH:');
     expect(script).toContain('-WorkingDirectory');
     expect(script).toContain('C:\\repo');
   });
@@ -49,5 +55,18 @@ describe('visibleConsoleSpawn', () => {
   it('returns null when powershell output has no pid', () => {
     expect(parsePowerShellStartProcessPid('oops')).toBeNull();
     expect(parsePowerShellStartProcessPid('')).toBeNull();
+  });
+
+  it('parses the exact PID and birth captured by Start-Process', () => {
+    expect(parsePowerShellStartProcessIdentity(
+      'HAPPIER_LAUNCH:43210:1717171717000\r\n',
+    )).toEqual({
+      pid: 43_210,
+      processStartTimeMs: 1_717_171_717_000,
+    });
+  });
+
+  it('does not infer launch birth from PID-only output', () => {
+    expect(parsePowerShellStartProcessIdentity('43210\r\n')).toBeNull();
   });
 });

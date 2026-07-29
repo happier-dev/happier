@@ -5,8 +5,12 @@ import { ExecutionRunGetRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { hasFlag } from '@/cli/commands/shared/argvFlags';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
+import {
+  normalizeActionExecuteResult,
+  unwrapCliActionSuccessPayload,
+} from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
 export async function cmdSessionRunGet(
   argv: string[],
@@ -18,7 +22,7 @@ export async function cmdSessionRunGet(
   const runId = String(argv[3] ?? '').trim();
 
   if (!idOrPrefix || !runId) {
-    throw new Error('Usage: happier session run get <session-id-or-prefix> <run-id> [--include-structured] [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runGet}`);
   }
 
   const credentials = await deps.readCredentialsFn();
@@ -55,8 +59,7 @@ export async function cmdSessionRunGet(
     throw new Error(normalized.errorMessage ?? normalized.errorCode);
   }
 
-  const result = normalized.data as any;
-  const runPayload = result && typeof result === 'object' && result.ok === true ? result.data : null;
+  const runPayload = unwrapCliActionSuccessPayload(normalized.data);
 
   if (json) {
     printJsonEnvelope({ ok: true, kind: 'session_run_get', data: { sessionId: idOrPrefix, ...(runPayload as any) } });

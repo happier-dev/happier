@@ -38,4 +38,5 @@ describe('ensureDaemonRunningForSessionCommand', () => {
     expect(unref).toHaveBeenCalledTimes(1);
     expect(isRunning).toHaveBeenCalledTimes(3);
   });
+
 });

@@ -10,9 +10,8 @@ import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { materializeSamplePluginFixture, SAMPLE_PLUGIN_ID } from '@/plugins/testkit/samplePackage';
-import { createPluginStateStore } from '@/plugins/store/state';
-import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
-import { installPluginFromSource } from './source';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
+import { inspectPluginSource } from './source';
 
 async function createArchivedSamplePluginFixture(rootName = `sample-plugin-${randomUUID()}`): Promise<Readonly<{
   pluginSourceRoot: string;
@@ -20,21 +19,44 @@ async function createArchivedSamplePluginFixture(rootName = `sample-plugin-${ran
   archiveBytes: Buffer;
 }>> {
   const pluginSourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-source-'));
-  const archiveRoot = join(pluginSourceRoot, rootName);
+  const archiveRoot = join(pluginSourceRoot, 'package');
   await materializeSamplePluginFixture(archiveRoot);
+  await writeFile(join(archiveRoot, 'package.json'), JSON.stringify({
+    name: '@acme/sample-plugin',
+    version: '1.0.0',
+    keywords: ['happier-plugin'],
+    files: ['.happier-plugin', 'daemon.mjs'],
+    happier: { manifest: '.happier-plugin/plugin.json' },
+  }), 'utf8');
   const archivePath = join(pluginSourceRoot, `${rootName}.tar.gz`);
   await tar.c({
     gzip: true,
     file: archivePath,
     cwd: pluginSourceRoot,
     portable: true,
-  }, [rootName]);
+  }, ['package']);
 
   return {
     pluginSourceRoot,
     archivePath,
     archiveBytes: await readFile(archivePath),
   } as const;
+}
+
+async function createLegacyReleaseArchiveFixture(): Promise<Readonly<{
+  pluginSourceRoot: string;
+  archivePath: string;
+}>> {
+  const pluginSourceRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-legacy-release-source-'));
+  await materializeSamplePluginFixture(join(pluginSourceRoot, 'package'));
+  const archivePath = join(pluginSourceRoot, `sample-plugin-${randomUUID()}.tar.gz`);
+  await tar.c({
+    gzip: true,
+    file: archivePath,
+    cwd: pluginSourceRoot,
+    portable: true,
+  }, ['package']);
+  return { pluginSourceRoot, archivePath };
 }
 
 function createRemoteArchiveResponse(archiveBytes: Buffer, options?: Readonly<{
@@ -66,7 +88,29 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('installPluginFromSource remote archive downloads', () => {
+describe('inspectPluginSource remote archive downloads', () => {
+  it('rejects legacy release archives that do not satisfy the canonical npm plugin package contract', async () => {
+    const home = await createTempDir('happier-plugin-legacy-release-rejection-');
+    const { pluginSourceRoot, archivePath } = await createLegacyReleaseArchiveFixture();
+
+    try {
+      await expect(inspectPluginSource({
+        happyHomeDir: home,
+        locator: archivePath,
+        sourceKind: 'archive',
+      })).resolves.toEqual({
+        ok: false,
+        errorCode: 'plugin_install_failed',
+        errorMessage: 'Archive plugin candidate rejected (package_json_missing): Candidate is missing required file: "package.json"',
+      });
+      const cacheEntries = await readdir(createPluginRegistryStateStore({ happyHomeDir: home }).paths.cacheDir);
+      expect(cacheEntries.filter((entry) => entry.startsWith('.candidate-') || entry.startsWith('plugin-archive-preview-'))).toEqual([]);
+    } finally {
+      await removeTempDir(home);
+      await rm(pluginSourceRoot, { recursive: true, force: true });
+    }
+  });
+
   it('infers local .tgz archives as installable plugin archives', async () => {
     const home = await createTempDir('happier-plugin-local-tgz-install-');
     const envScope = createEnvKeyScope(['HAPPIER_HOME_DIR', 'PATH']);
@@ -81,16 +125,17 @@ describe('installPluginFromSource remote archive downloads', () => {
     await cp(archivePath, tgzPath);
 
     try {
-      const result = await installPluginFromSource({
+      const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: tgzPath,
-        skipIfInstalled: true,
       });
 
-      expect(result.ok).toBe(true);
+      expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
       if (!result.ok) return;
       expect(result.pluginId).toBe(SAMPLE_PLUGIN_ID);
       expect(result.sourceKind).toBe('archive');
+      expect(result.source.trustPolicy).toBe('prompt');
+      expect((await createPluginRegistryStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
     } finally {
       envScope.restore();
       reloadConfiguration();
@@ -118,17 +163,23 @@ describe('installPluginFromSource remote archive downloads', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
 
     try {
-      const result = await installPluginFromSource({
+      const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: archiveUrl,
         sourceKind: 'archive',
-        skipIfInstalled: true,
+        sourceSpecOverride: {
+          kind: 'archive',
+          locator: 'https://example.test/plugins/substituted-provenance.tar.gz',
+          trustPolicy: 'local_trusted',
+          installPolicy: 'managed_install',
+        },
       });
 
-      expect(result.ok).toBe(true);
+      expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
       if (!result.ok) return;
       expect(result.pluginId).toBe(SAMPLE_PLUGIN_ID);
-      expect(result.manifestPath).toBe(join(result.installedPath ?? '', '.happier-plugin', 'plugin.json'));
+      expect(result.installedPath).toBeNull();
+      expect(result.manifestPath).toContain('.happier-plugin/plugin.json');
       expect(fetchMock).toHaveBeenCalledWith(
         archiveUrl,
         expect.objectContaining({
@@ -140,29 +191,13 @@ describe('installPluginFromSource remote archive downloads', () => {
       );
       expect(response.arrayBuffer).not.toHaveBeenCalled();
 
-      const store = createPluginStateStore({ happyHomeDir: home });
-      const state = await store.read();
-      expect(state.plugins[SAMPLE_PLUGIN_ID]).toMatchObject({
-        source: {
-          kind: 'archive',
-          locator: archiveUrl,
-          trustPolicy: 'prompt',
-        },
-        install: {
-          mode: 'managed_install',
-        },
+      expect(result.source).toMatchObject({
+        kind: 'archive',
+        locator: archiveUrl,
+        trustPolicy: 'prompt',
       });
-
-      const loaded = await loadInstalledPlugins({ happyHomeDir: home });
-      expect(loaded.loadedPlugins.map((plugin) => plugin.manifest.id)).toEqual([SAMPLE_PLUGIN_ID]);
-      expect(loaded.loadedPlugins[0]).toMatchObject({
-        sourceSpec: {
-          kind: 'archive',
-          locator: archiveUrl,
-          installPolicy: 'managed_install',
-        },
-      });
-
+      const store = createPluginRegistryStateStore({ happyHomeDir: home });
+      expect((await store.read()).plugins).toEqual({});
       const cacheEntries = await readdir(store.paths.cacheDir);
       expect(cacheEntries.filter((entry) => entry.startsWith('plugin-download-'))).toHaveLength(0);
     } finally {
@@ -196,14 +231,19 @@ describe('installPluginFromSource remote archive downloads', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(createRemoteArchiveResponse(archiveBytes));
 
     try {
-      const result = await installPluginFromSource({
+      const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: archiveUrl,
         sourceKind: 'archive',
-        skipIfInstalled: true,
+        sourceSpecOverride: {
+          kind: 'archive',
+          locator: archiveUrl,
+          trustPolicy: 'local_trusted',
+          installPolicy: 'managed_install',
+        },
       });
 
-      expect(result.ok).toBe(true);
+      expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
       expect(timeoutSpy).toHaveBeenCalledWith(12345);
       expect(fetchMock).toHaveBeenCalledWith(
         archiveUrl,
@@ -234,25 +274,18 @@ describe('installPluginFromSource remote archive downloads', () => {
     await symlink(archivePath, archiveSymlinkPath);
 
     try {
-      const result = await installPluginFromSource({
+      const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: archiveSymlinkPath,
         sourceKind: 'archive',
-        skipIfInstalled: true,
       });
 
-      expect(result.ok).toBe(true);
+      expect(result.ok, result.ok ? undefined : result.errorMessage).toBe(true);
       if (!result.ok) return;
       expect(result.pluginId).toBe(SAMPLE_PLUGIN_ID);
 
-      const store = createPluginStateStore({ happyHomeDir: home });
-      const state = await store.read();
-      expect(state.plugins[SAMPLE_PLUGIN_ID]).toMatchObject({
-        source: {
-          kind: 'archive',
-          locator: archiveSymlinkPath,
-        },
-      });
+      expect(result.source).toMatchObject({ kind: 'archive', locator: archiveSymlinkPath });
+      expect((await createPluginRegistryStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
     } finally {
       envScope.restore();
       reloadConfiguration();
@@ -279,7 +312,7 @@ describe('installPluginFromSource remote archive downloads', () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(response);
 
     try {
-      const result = await installPluginFromSource({
+      const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: archiveUrl,
         sourceKind: 'archive',
@@ -292,7 +325,7 @@ describe('installPluginFromSource remote archive downloads', () => {
       expect(result.errorCode).toBe('plugin_install_failed');
       expect(result.errorMessage).toContain('exceeds the configured size limit');
 
-      const store = createPluginStateStore({ happyHomeDir: home });
+      const store = createPluginRegistryStateStore({ happyHomeDir: home });
       const cacheEntries = await readdir(store.paths.cacheDir);
       expect(cacheEntries.filter((entry) => entry.startsWith('plugin-download-'))).toHaveLength(0);
     } finally {
@@ -329,7 +362,7 @@ describe('installPluginFromSource remote archive downloads', () => {
     }, [rootName]);
 
     try {
-      const result = await installPluginFromSource({
+      const result = await inspectPluginSource({
         happyHomeDir: home,
         locator: archivePath,
         sourceKind: 'archive',
@@ -340,7 +373,7 @@ describe('installPluginFromSource remote archive downloads', () => {
       if (result.ok) return;
       expect(result.errorCode).toBe('plugin_install_failed');
 
-      const store = createPluginStateStore({ happyHomeDir: home });
+      const store = createPluginRegistryStateStore({ happyHomeDir: home });
       const state = await store.read();
       expect(state.plugins[SAMPLE_PLUGIN_ID]).toBeUndefined();
     } finally {

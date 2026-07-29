@@ -8,13 +8,11 @@ import {
   type ConnectedServiceBindingsV1,
   type ConnectedServiceMaterializationIdentityV1,
 } from '@happier-dev/protocol';
-import type { HostRuntimeControlServiceV1 } from '@happier-dev/agents';
-import { CODEX_PROVIDER_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-codex/agent/contributions/runtime';
+import { CODEX_AGENT_RUNTIME_CONTRIBUTION } from '@happier-dev/plugins-codex/agent/contributions/runtime';
 
 import type { TrackedSession } from '@/daemon/types';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
-import { createSessionContinuationRecoveryController } from '../continuation/sessionContinuationRecovery';
 import { ConnectedServiceSessionAuthSwitchLockRegistry, createConnectedServiceSessionAuthSwitchCore } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
 import {
   switchSessionConnectedServiceAuth,
@@ -61,32 +59,6 @@ type SwitchInputWithVerification = SwitchInputWithPostSwitchRecovery & Readonly<
   verifyProviderAccountAdoption?: VerifyProviderAccountAdoption;
 }>;
 
-const TEST_CODEX_RUNTIME_CONTROL: HostRuntimeControlServiceV1 = {
-  context: { agentId: 'codex' },
-  appServer: {
-    checkAvailable: async () => ({ ok: false, code: 'app_server_control_unavailable', error: 'unavailable' }),
-    request: async () => ({ ok: false, code: 'app_server_control_unavailable', error: 'unavailable' }),
-  },
-  session: {
-    checkConnectedServiceAuthTransportInvalidation: async () => ({ ok: false, code: 'session_transport_unavailable', error: 'unavailable' }),
-    invalidateConnectedServiceAuthTransports: async () => ({ ok: false, code: 'session_transport_unavailable', error: 'unavailable' }),
-  },
-  connectedServices: {
-    refreshRuntimeAuth: async () => ({ ok: false, code: 'connected_service_refresh_unavailable', error: 'unavailable' }),
-  },
-  reachability: {
-    verifyMaterializedState: async () => ({ ok: false, code: 'resume_reachability_unavailable', error: 'unavailable' }),
-  },
-};
-
-function getCodexRuntimeControlHooks() {
-  const hooks = CODEX_PROVIDER_RUNTIME_CONTRIBUTION.runtimeControl?.connectedServices;
-  if (!hooks?.createRuntimeAuthAdapter || !hooks.resolveSwitchContinuity) {
-    throw new Error('Codex runtime-control connected-service hooks are unavailable');
-  }
-  return hooks;
-}
-
 function trackedSession(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
     startedBy: 'daemon',
@@ -126,6 +98,7 @@ function group(overrides: Partial<ConnectedServiceAuthGroupV1> = {}): ConnectedS
     policy: ConnectedServiceAuthGroupPolicyV1Schema.parse({ autoSwitch: true }),
     activeProfileId: 'group-active',
     generation: 4,
+    runtimeStateRevision: 0,
     state: { v: 1 },
     members: [
       {
@@ -471,6 +444,63 @@ describe('switchSessionConnectedServiceAuth', () => {
       type: 'connected_service_account_switch',
       serviceId: 'anthropic',
       reason: 'pre_turn_group_policy',
+    }));
+  });
+
+  it('keeps a declined predictive soft-threshold hot-apply out of the transcript (benign fail-safe)', async () => {
+    // Live incident 2026-07-10 19:10: the burn-rate soft-switch targeted several sessions; idle
+    // siblings hot-applied instantly, but the one MID-TURN session had no safe apply window and
+    // surfaced "Authentication could not be switched (hot_apply_failed)" to the user. A predictive
+    // soft-threshold switch is a background optimization that fails BEFORE side effects by design: it
+    // only ever hot-applies (never restarts a working session), the session keeps working on its
+    // current account, the next poll/in-band tick retries, and hard-limit recovery remains the
+    // backstop. The benign decline must not surface as a user-facing failure. Side-effectful failure
+    // codes stay loud, and the FSM result is unchanged so coordinator retry bookkeeping still works.
+    const tracked = trackedSession();
+    const emitSessionEvent = vi.fn();
+
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      runtimeAuthApplyReason: 'soft_threshold',
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      restartSession: vi.fn(),
+      // Mid-turn decline: the hot-apply found no safe apply window and failed BEFORE side effects.
+      // The service-level failure does not require a restart (a predictive switch never restarts a
+      // working session), so the switch surfaces a top-level hot_apply_failed.
+      hotApply: async () => ({
+        ok: false,
+        errorCode: 'hot_apply_failed',
+        serviceId: 'anthropic',
+        serviceResultsByServiceId: {
+          anthropic: { status: 'failed', errorCode: 'no_safe_apply_window' },
+        },
+        underlyingError: 'no safe apply window within bound',
+      }),
+      persistSessionBindings: vi.fn(),
+      registerHotApplyTargets: vi.fn(),
+      emitSessionEvent,
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: bindings('new-profile'),
+      },
+    });
+
+    // The coordinator still sees the failure (retry bookkeeping)…
+    expect(result).toMatchObject({ ok: false, errorCode: 'hot_apply_failed' });
+    // …but the user-facing failed switch-attempt event is NOT committed.
+    expect(emitSessionEvent).not.toHaveBeenCalledWith('sess_1', expect.objectContaining({
+      type: 'connected_service_account_switch_attempt',
+      ok: false,
     }));
   });
 
@@ -862,7 +892,7 @@ describe('switchSessionConnectedServiceAuth', () => {
             failurePhase: 'materialization',
             source: expectedSource,
             serviceId: 'claude-subscription',
-            providerId: 'claude',
+            agentId: 'claude',
             retryable: false,
           }),
         },
@@ -1321,11 +1351,86 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('old-profile'));
   });
 
-  it('resolves group active profile under the lock and rejects stale expected generations before mutation', async () => {
+  it('converges a real switch onto the CURRENT group truth when the expected generation is stale', async () => {
+    // Live regression 2026-07-10: the settings pool-switch fan-out is a long-running per-session
+    // loop while the group generation legitimately keeps moving (concurrent daemons, recovery
+    // switches, member edits). A strict expected==current CAS here turned every such advance into a
+    // per-session "Authentication could not be switched (group_generation_conflict)" transcript
+    // error, even though applying the group's CURRENT active profile is always the correct
+    // convergence. A stale expectation must converge, not fail; only dry-run preflights keep the
+    // strict semantics (they gate a NOT-yet-committed prospective generation).
+    const tracked = trackedSession({
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        connectedServices: bindings('old-profile'),
+      },
+    });
+    const restartSession = vi.fn(async () => {
+      // The child env adopts the CURRENT generation (5), not the caller's stale expectation (4).
+      expect(tracked.spawnOptions?.environmentVariables).toEqual({
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
+          {
+            kind: 'group',
+            serviceId: 'anthropic',
+            groupId: 'work',
+            activeProfileId: 'group-active',
+            fallbackProfileId: 'group-active',
+            generation: 5,
+          },
+        ]),
+      });
+    });
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'group-active', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => group({ generation: 5 }),
+      },
+      resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+      restartSession,
+      hotApply: async () => ({ ok: true }),
+      registerHotApplyTargets: () => {},
+      emitSessionEvent: () => {},
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        expectedGroupGenerationByServiceId: { anthropic: 4 },
+        bindings: {
+          v: 1,
+          bindingsByServiceId: {
+            anthropic: {
+              source: 'connected',
+              selection: 'group',
+              groupId: 'work',
+              profileId: 'stale-ui-profile',
+            },
+          },
+        },
+      },
+    })).resolves.toMatchObject({
+      ok: true,
+      action: 'restart_requested',
+    });
+
+    expect(restartSession).toHaveBeenCalledWith(tracked);
+  });
+
+  it('keeps the strict generation check for dry-run preflights (prospective generations only)', async () => {
+    // A dry-run preflight validates a PROSPECTIVE switch (expected == current + 1 is the committed
+    // shape). A stale/other expectation must still abort so the coordinator re-resolves before
+    // committing — convergence applies only to REAL applies.
     const tracked = trackedSession();
 
     await expect(switchSessionConnectedServiceAuth({
       core: createCore(),
+      dryRun: true,
       postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
       getChildren: () => [tracked],
       api: {
@@ -1340,7 +1445,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       request: {
         sessionId: 'sess_1',
         agentId: 'claude',
-        expectedGroupGenerationByServiceId: { anthropic: 4 },
+        expectedGroupGenerationByServiceId: { anthropic: 3 },
         bindings: {
           v: 1,
           bindingsByServiceId: {
@@ -1732,10 +1837,72 @@ describe('switchSessionConnectedServiceAuth', () => {
       normalizedBindings: bindings('new-profile'),
     }));
     expect(calls).toEqual(['persist', 'hotApply']);
-    expect(registerHotApplyTargets).toHaveBeenCalledWith(tracked);
+    expect(registerHotApplyTargets).toHaveBeenCalledWith(expect.objectContaining({
+      tracked,
+      runtimeAuthSelectionsByServiceId: expect.any(Map),
+    }));
   });
 
-  it('does not hot-apply live runtime auth when metadata persistence fails', async () => {
+  it('keeps the applied epoch and reports pending reconciliation when post-hot-apply registration fails', async () => {
+    const tracked = trackedSession();
+    const runtimeAuthSelection = {
+      targetMaterializedRoot: '/tmp/materialized/csm_atomic',
+      targetMaterializedEnv: {
+        HAPPIER_TEST_CONNECTED_SERVICE_SELECTION_IDENTITY: 'selection-atomic',
+      },
+    };
+    const persistSessionBindings = vi.fn(async () => undefined);
+    const registerHotApplyTargets = vi.fn(async (input: unknown) => {
+      expect(input).toEqual(expect.objectContaining({
+        tracked,
+        runtimeAuthSelectionsByServiceId: new Map([['anthropic', runtimeAuthSelection]]),
+      }));
+      throw new Error('runtime target registration rejected');
+    });
+
+    await expect(switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(),
+      getChildren: () => [tracked],
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity: async () => ({ mode: 'hot_apply' }),
+      materializeRuntimeAuthSelection: async () => runtimeAuthSelection,
+      restartSession: vi.fn(),
+      persistSessionBindings,
+      hotApply: async () => ({ ok: true as const }),
+      registerHotApplyTargets,
+      emitSessionEvent: () => {},
+      request: {
+        sessionId: 'sess_1',
+        agentId: 'claude',
+        bindings: bindings('new-profile'),
+      },
+    })).resolves.toMatchObject({
+      ok: false,
+      errorCode: 'partial_applied_pending_reconciliation',
+      diagnostics: {
+        failurePhase: 'reconciliation',
+        rollback: {
+          status: 'post_apply_commit_failed',
+          pendingReconciliation: true,
+        },
+      },
+    });
+
+    expect(persistSessionBindings).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      normalizedBindings: bindings('new-profile'),
+    }));
+    expect(persistSessionBindings).toHaveBeenCalledTimes(1);
+    expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('new-profile'));
+  });
+
+   it('does not hot-apply live runtime auth when metadata persistence fails', async () => {
     const tracked = trackedSession();
     const restartSession = vi.fn();
     const hotApply = vi.fn(async () => ({ ok: true as const }));
@@ -1900,7 +2067,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
     expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
     expect(restartSession).not.toHaveBeenCalled();
-    expect(registerHotApplyTargets).toHaveBeenCalledWith(tracked);
+    expect(registerHotApplyTargets).toHaveBeenCalledWith(expect.objectContaining({ tracked }));
   });
 
   it('falls back to restart when hot-apply verification still sees the old provider account (cmptxauhy0k2ptmqe6o4l8i48)', async () => {
@@ -2383,12 +2550,9 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
   });
 
-  it('records durable continuation state after requesting restart recovery', async () => {
+  it('invokes the continuation producer after requesting restart recovery', async () => {
     const tracked = trackedSession();
     const calls: string[] = [];
-    const store = createContinuationStore();
-    const controller = createSessionContinuationRecoveryController({ nowMs: () => 2_000, store });
-    const sentPrompts: string[] = [];
     const restartSession = vi.fn(async () => {
       calls.push('restart');
     });
@@ -2410,24 +2574,6 @@ describe('switchSessionConnectedServiceAuth', () => {
       action: 'hot_applied' | 'restart_requested';
     }) => {
       calls.push('continue');
-      await controller.beginAttempt({
-        sessionId: context.sessionId,
-        attemptId: context.attemptId,
-        failureAtMs: 1_000,
-        resumePromptMode: 'standard',
-      });
-      if (context.action === 'restart_requested') return;
-      await controller.resolveAttempt({
-        sessionId: context.sessionId,
-        attemptId: context.attemptId,
-        failureAtMs: 1_000,
-        resumePromptMode: 'standard',
-        exactProviderContextAvailable: true,
-        hasUserMessageAfterFailure: () => false,
-        sendContinuationPrompt: ({ prompt }) => {
-          sentPrompts.push(prompt);
-        },
-      });
     });
 
     const input = {
@@ -2470,14 +2616,6 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
     expect(verifyProviderAccountAdoption).not.toHaveBeenCalled();
     expect(calls).toEqual(['restart', 'continue']);
-    expect(sentPrompts).toHaveLength(0);
-    const persisted = store.stored.get('sess_1');
-    const attemptsById =
-      persisted && typeof persisted === 'object' && !Array.isArray(persisted)
-        ? (persisted as { attemptsById?: Record<string, { status?: string }> }).attemptsById
-        : null;
-    expect(Object.keys(attemptsById ?? {})).toEqual([expect.stringContaining('anthropic')]);
-    expect(Object.values(attemptsById ?? {})[0]).toMatchObject({ status: 'pending_provider_context' });
   });
 
   it('preserves automatic runtime failure as the application actor and reason', async () => {
@@ -2755,7 +2893,6 @@ describe('switchSessionConnectedServiceAuth', () => {
             source: 'connected',
             selection: 'group',
             groupId: 'work',
-            profileId: 'group-active',
           },
         },
       },
@@ -2766,12 +2903,12 @@ describe('switchSessionConnectedServiceAuth', () => {
     expect(verifyProviderAccountAdoption).toHaveBeenCalledOnce();
     expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess_1',
-      attemptId: 'connected-service-auth-switch|hot_applied|anthropic:group:work:group-active:67',
+      attemptId: 'connected-service-auth-switch|hot_applied|anthropic:group:work::67',
       action: 'hot_applied',
     }));
   });
 
-  it('does not hot-apply an unchanged group binding when the tracked runtime already adopted the expected generation', async () => {
+  it('does not treat tracked launch selection and generation as proof that the live runtime adopted an unchanged group binding', async () => {
     const tracked = trackedSession({
       spawnOptions: {
         directory: '/tmp/project',
@@ -2852,7 +2989,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       },
     })).resolves.toMatchObject({
       ok: true,
-      action: 'unchanged',
+      action: 'hot_applied',
       normalizedBindings: {
         v: 1,
         bindingsByServiceId: {
@@ -2860,18 +2997,16 @@ describe('switchSessionConnectedServiceAuth', () => {
             source: 'connected',
             selection: 'group',
             groupId: 'work',
-            profileId: 'group-active',
           },
         },
       },
-      continuityByServiceId: {},
+      continuityByServiceId: { anthropic: 'hot_apply' },
     });
-    expect(materializeRuntimeAuthSelection).not.toHaveBeenCalled();
-    expect(resolveContinuity).not.toHaveBeenCalled();
-    expect(hotApply).not.toHaveBeenCalled();
-    expect(verifyProviderAccountAdoption).not.toHaveBeenCalled();
-    expect(continueAfterRuntimeAuthSwitch).not.toHaveBeenCalled();
-    expect(emitSessionEvent).not.toHaveBeenCalled();
+    expect(materializeRuntimeAuthSelection).toHaveBeenCalledOnce();
+    expect(resolveContinuity).toHaveBeenCalledOnce();
+    expect(hotApply).toHaveBeenCalledOnce();
+    expect(verifyProviderAccountAdoption).toHaveBeenCalledOnce();
+    expect(continueAfterRuntimeAuthSwitch).toHaveBeenCalledOnce();
   });
 
   it('does not treat tracked env adoption as runtime proof for direct-live-required same-account fanout', async () => {
@@ -3113,10 +3248,12 @@ describe('switchSessionConnectedServiceAuth', () => {
       activeProfileId: 'backup',
       fallbackProfileId: 'fallback',
       generation: 7,
+      credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
       record,
       client: {
         request: vi.fn(async () => ({ ok: true })),
       },
+      applyConnectedServiceAuthGeneration: async () => ({ ok: true }),
       invalidateTransports: async () => undefined,
     };
     const tracked = trackedSession({
@@ -3148,26 +3285,20 @@ describe('switchSessionConnectedServiceAuth', () => {
         },
       },
     });
-    const codexRuntimeControl = getCodexRuntimeControlHooks();
+    const codexRuntimeAuthAdapter = CODEX_AGENT_RUNTIME_CONTRIBUTION.connectedServices.runtimeAuthAdapter;
     const hotApply = createSessionConnectedServiceAuthHotApply({
-      resolveRuntimeAuthAdapter: async () => codexRuntimeControl.createRuntimeAuthAdapter(),
+      resolveRuntimeAuthAdapter: async () => codexRuntimeAuthAdapter,
     });
     const resolveContinuity = vi.fn(async (input: RuntimeAuthSelectionContinuityInput) => {
-      const continuity = await codexRuntimeControl.resolveSwitchContinuity({
-        runtimeControl: TEST_CODEX_RUNTIME_CONTROL,
-        params: {
-          sessionId: input.sessionId,
-          agentId: input.agentId,
-          serviceId: input.serviceId,
-          previousBinding: input.previous,
-          nextBinding: input.next,
-          runtimeAuthSelection: input.runtimeAuthSelection,
-        },
+      const hotApplySupport = codexRuntimeAuthAdapter.canHotApply({
+        target: { agentId: input.agentId },
+        selection: input.runtimeAuthSelection,
       });
-      if (continuity.mode === 'hot_apply') return { mode: 'hot_apply' as const };
-      throw new Error(`Expected hot_apply continuity, got ${continuity.mode}`);
+      if (hotApplySupport.supported === true) return { mode: 'hot_apply' as const };
+      throw new Error('Expected native Codex hot_apply continuity');
     });
     const hotApplySelections: unknown[] = [];
+    const registerHotApplyTargets = vi.fn<SwitchSessionConnectedServiceAuthInput['registerHotApplyTargets']>();
 
     await expect(switchSessionConnectedServiceAuth({
       core: createCore(),
@@ -3197,7 +3328,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         return await hotApply(input);
       },
       persistSessionBindings: async () => undefined,
-      registerHotApplyTargets: () => {},
+      registerHotApplyTargets,
       emitSessionEvent: () => {},
       request: {
         sessionId: 'sess_1',
@@ -3224,6 +3355,31 @@ describe('switchSessionConnectedServiceAuth', () => {
       runtimeAuthSelection,
     }));
     expect(hotApplySelections).toEqual([runtimeAuthSelection]);
+    expect(registerHotApplyTargets).toHaveBeenCalledWith(expect.objectContaining({
+      acceptedConnectedServicesBindingsRaw: {
+        v: 1,
+        bindingsByServiceId: {
+          'openai-codex': {
+            source: 'connected',
+            selection: 'group',
+            groupId: 'work',
+          },
+        },
+      },
+      acceptedConnectedServiceSelectionsEnv: {
+        [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
+          {
+            kind: 'group',
+            serviceId: 'openai-codex',
+            groupId: 'work',
+            activeProfileId: 'backup',
+            fallbackProfileId: 'fallback',
+            generation: 7,
+            credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
+          },
+        ]),
+      },
+    }));
     expect(tracked.spawnOptions?.environmentVariables?.[HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]).toBe(JSON.stringify([
       {
         kind: 'group',
@@ -3232,6 +3388,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         activeProfileId: 'backup',
         fallbackProfileId: 'fallback',
         generation: 7,
+        credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb',
       },
     ]));
   });

@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { loadInstalledPlugins } from './installed';
-import { createPluginStateStore } from '@/plugins/store/state';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 
 async function writePluginManifest(rootDir: string, pluginId: string): Promise<void> {
   const manifestDir = join(rootDir, '.happier-plugin');
@@ -22,11 +22,13 @@ async function writePluginManifest(rootDir: string, pluginId: string): Promise<v
       engines: {
         happier: '^0.2.0',
       },
-      uses: [],
-      entrypoints: {
-        main: './daemon.js',
+      runtime: {
+        apiVersion: 1,
       },
-      permissions: {
+      entrypoints: {
+        daemon: './daemon.js',
+      },
+      hostAccess: {
         required: [],
         optional: [],
       },
@@ -36,12 +38,10 @@ async function writePluginManifest(rootDir: string, pluginId: string): Promise<v
   );
 }
 
-async function writePluginManifestWithEntrypoints(rootDir: string, pluginId: string): Promise<void> {
+async function writeDevelopmentOnlyPluginManifest(rootDir: string, pluginId: string): Promise<void> {
   const manifestDir = join(rootDir, '.happier-plugin');
-  await mkdir(join(rootDir, 'dist'), { recursive: true });
   await mkdir(join(rootDir, 'src'), { recursive: true });
   await mkdir(manifestDir, { recursive: true });
-  await writeFile(join(rootDir, 'dist', 'daemon.mjs'), 'export const version = "compiled";\n', 'utf8');
   await writeFile(join(rootDir, 'src', 'daemon.ts'), 'export const version: string = "dev";\n', 'utf8');
   await writeFile(
     join(manifestDir, 'plugin.json'),
@@ -54,12 +54,13 @@ async function writePluginManifestWithEntrypoints(rootDir: string, pluginId: str
       engines: {
         happier: '^0.2.0',
       },
-      uses: [],
-      entrypoints: {
-        main: './dist/daemon.mjs',
-        dev: './src/daemon.ts',
+      runtime: {
+        apiVersion: 1,
       },
-      permissions: {
+      entrypoints: {
+        development: './src/daemon.ts',
+      },
+      hostAccess: {
         required: [],
         optional: [],
       },
@@ -83,11 +84,13 @@ async function writeStandaloneManifest(manifestPath: string, pluginId: string): 
       engines: {
         happier: '^0.2.0',
       },
-      uses: [],
-      entrypoints: {
-        main: './daemon.js',
+      runtime: {
+        apiVersion: 1,
       },
-      permissions: {
+      entrypoints: {
+        daemon: './daemon.js',
+      },
+      hostAccess: {
         required: [],
         optional: [],
       },
@@ -167,12 +170,12 @@ describe('loadInstalledPlugins', () => {
     expect(result.diagnosticsByPluginId['acme.disabled']).toBeUndefined();
   });
 
-  it('carries the TypeScript dev daemon entry for enabled local trusted path plugins', async () => {
+  it('selects the TypeScript dev entry from local link mode without treating source trust text as authority', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-dev-entry-'));
     const store = createPluginStateStore({ happyHomeDir });
 
-    await writePluginManifestWithEntrypoints(pluginRoot, 'acme.dev-entry');
+    await writeDevelopmentOnlyPluginManifest(pluginRoot, 'acme.dev-entry');
 
     await store.write({
       t: 'happier_plugin_state_v1',
@@ -182,7 +185,7 @@ describe('loadInstalledPlugins', () => {
           source: {
             kind: 'path',
             locator: pluginRoot,
-            trustPolicy: 'local_trusted',
+            trustPolicy: 'prompt',
             installPolicy: 'link',
             resolvedPath: pluginRoot,
             manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
@@ -208,10 +211,43 @@ describe('loadInstalledPlugins', () => {
 
     expect(result.loadedPlugins).toHaveLength(1);
     expect(result.loadedPlugins[0]).toMatchObject({
-      daemonEntryPath: expect.stringMatching(/dist[/\\]daemon\.mjs$/),
+      daemonEntryPath: null,
       devDaemonEntryPath: expect.stringMatching(/src[/\\]daemon\.ts$/),
     });
     expect(result.diagnosticsByPluginId['acme.dev-entry']).toEqual([]);
+  });
+
+  it('does not misclassify a managed development-only plugin as descriptor-only', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-dev-entry-managed-'));
+    const store = createPluginStateStore({ happyHomeDir });
+
+    await writeDevelopmentOnlyPluginManifest(pluginRoot, 'acme.managed-dev-entry');
+    await store.write({
+      t: 'happier_plugin_state_v1', schemaVersion: 1,
+      plugins: {
+        'acme.managed-dev-entry': {
+          source: {
+            kind: 'archive', locator: 'https://example.invalid/plugin.tgz',
+            trustPolicy: 'local_trusted', installPolicy: 'managed_install',
+            resolvedPath: pluginRoot, manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+          },
+          compatibility: { status: 'compatible', diagnostics: [] },
+          install: {
+            mode: 'managed_install', manifestVersion: '1.0.0', manifestDigest: 'sha256:managed-dev',
+            installedPath: pluginRoot,
+          },
+          state: { enabled: true },
+        },
+      },
+    });
+
+    const result = await loadInstalledPlugins({ happyHomeDir });
+
+    expect(result.loadedPlugins).toEqual([]);
+    expect(result.diagnosticsByPluginId['acme.managed-dev-entry']).toEqual([
+      expect.objectContaining({ code: 'plugin_source_kind_unsupported' }),
+    ]);
   });
 
   it('loads managed-install plugins from the installed payload path even when their source is archived', async () => {
@@ -557,11 +593,13 @@ describe('loadInstalledPlugins', () => {
         engines: {
           happier: '^0.2.0',
         },
-        uses: [],
-        entrypoints: {
-          main: '../../outside.js',
+        runtime: {
+          apiVersion: 1,
         },
-        permissions: {
+        entrypoints: {
+          daemon: '../../outside.js',
+        },
+        hostAccess: {
           required: [],
           optional: [],
         },
@@ -628,11 +666,13 @@ describe('loadInstalledPlugins', () => {
         engines: {
           happier: '^0.2.0',
         },
-        uses: [],
-        entrypoints: {
-          main: './missing-daemon.mjs',
+        runtime: {
+          apiVersion: 1,
         },
-        permissions: {
+        entrypoints: {
+          daemon: './missing-daemon.mjs',
+        },
+        hostAccess: {
           required: [],
           optional: [],
         },
@@ -682,7 +722,7 @@ describe('loadInstalledPlugins', () => {
     ]);
   });
 
-  it('records a semantic diagnostic and skips plugins with unsupported daemon entry plugins', async () => {
+  it('records a manifest diagnostic and skips plugins with unsupported daemon entry plugins', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-daemon-extension-'));
     const store = createPluginStateStore({ happyHomeDir });
@@ -700,11 +740,13 @@ describe('loadInstalledPlugins', () => {
         engines: {
           happier: '^0.2.0',
         },
-        uses: [],
-        entrypoints: {
-          main: './daemon.ts',
+        runtime: {
+          apiVersion: 1,
         },
-        permissions: {
+        entrypoints: {
+          daemon: './daemon.ts',
+        },
+        hostAccess: {
           required: [],
           optional: [],
         },
@@ -749,13 +791,13 @@ describe('loadInstalledPlugins', () => {
     expect(result.loadedPlugins).toEqual([]);
     expect(result.diagnosticsByPluginId['acme.bad-daemon-extension']).toEqual([
       expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
+        code: 'plugin_manifest_invalid',
         message: expect.stringMatching(/unsupported extension/i),
       }),
     ]);
   });
 
-  it('records a semantic diagnostic and skips plugins whose manifests advertise unsupported descriptor targets', async () => {
+  it('rejects predecessor manifests that advertise retired descriptor targets', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-loader-'));
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-unsupported-targets-'));
     const store = createPluginStateStore({ happyHomeDir });
@@ -823,12 +865,14 @@ describe('loadInstalledPlugins', () => {
     const result = await loadInstalledPlugins({ happyHomeDir });
 
     expect(result.loadedPlugins).toEqual([]);
-    expect(result.diagnosticsByPluginId['acme.unsupported-targets']).toEqual([
-      expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
-        message: expect.stringMatching(/uiDescriptor/i),
-      }),
-    ]);
+    expect(result.diagnosticsByPluginId['acme.unsupported-targets']).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: 'plugin_manifest_invalid',
+          message: expect.stringMatching(/targets/i),
+        }),
+      ]),
+    );
   });
 
   it('records a source-kind diagnostic when plugin state source kind is non-path for non-managed installs', async () => {

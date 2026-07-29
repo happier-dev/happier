@@ -134,7 +134,7 @@ describe('happier resume command (integration)', () => {
 
   it('fetches encrypted session, decrypts metadata, and passes attach file to the agent handler', async () => {
     const { handleResumeCommand } = await import('./resume');
-    const { readSessionAttachFromEnv } = await import('@/agent/runtime/sessionAttach');
+    const { readSessionAttachFromFile } = await import('@/agent/runtime/sessionAttach');
 
     const token = 'token_test';
     const machineKeySeed = new Uint8Array(32).fill(8);
@@ -157,7 +157,7 @@ describe('happier resume command (integration)', () => {
         observedAgentId = agentId;
         return async (context) => {
           observedArgs = context.args;
-          const attach = await readSessionAttachFromEnv();
+          const attach = await readSessionAttachFromFile(context.directSessionLaunch!.sessionAttachFilePath!);
           expect(attach).not.toBeNull();
           observedAttach = attach;
         };

@@ -211,7 +211,7 @@ export async function routeSessionUsageLimitRecoverySwitchAccountNow(
   }
 
   const requestedProvider = readString(params.request?.provider);
-  if (requestedProvider && issue.provider && issue.provider !== requestedProvider) {
+  if (requestedProvider && issue.agentId && issue.agentId !== requestedProvider) {
     return stableError('session_usage_limit_recovery_control_issue_mismatch', params.sessionId);
   }
 

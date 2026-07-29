@@ -34,6 +34,7 @@ function createSessionStub() {
         createdAt: Number(opts.createdAt),
         updatedAt: Number(opts.updatedAt),
       });
+      return { accepted: true as const, epoch: 0 };
     },
     sendAgentMessageCommitted: async (provider: any, body: any, opts: any) => {
       durableCalls.push({
@@ -748,14 +749,10 @@ describe('createStreamedTranscriptWriter', () => {
       didResolveFlush = true;
     });
 
-    await Promise.resolve();
-    await Promise.resolve();
-    await settleCommittedSnapshot();
-    await settleCommittedSnapshot();
+    await flushPromise;
 
     expect(session.sendAgentMessage).not.toHaveBeenCalled();
     expect(didResolveFlush).toBe(true);
-    await flushPromise;
   });
 
   it('prevents duplicate durable commits when flushAll is called concurrently or repeatedly', async () => {
@@ -779,9 +776,9 @@ describe('createStreamedTranscriptWriter', () => {
 
     expect(durableCalls).toHaveLength(0);
 
-    // Call flushAll twice in quick succession (simulating abort followed by turn-end)
+    // Call flushAll twice in quick succession for the same terminal settlement.
     await Promise.all([
-      writer.flushAll({ reason: 'abort', interruptedReason: 'cancelled' }),
+      writer.flushAll({ reason: 'turn-end' }),
       writer.flushAll({ reason: 'turn-end' }),
     ]);
 
@@ -991,6 +988,7 @@ function createDeltaSessionStub() {
         updatedAt: Number(opts.updatedAt),
         ...(typeof opts.tick === 'number' ? { tick: opts.tick } : {}),
       });
+      return { accepted: true as const, epoch: connectionEpoch };
     },
     sendAgentMessageEphemeralDelta: (provider: any, body: any, opts: any) => {
       deltaCalls.push({
@@ -1003,6 +1001,7 @@ function createDeltaSessionStub() {
         createdAt: Number(opts.createdAt),
         updatedAt: Number(opts.updatedAt),
       });
+      return { accepted: true as const, epoch: connectionEpoch };
     },
     getEphemeralStreamConnectionEpoch: () => connectionEpoch,
   };
@@ -1287,5 +1286,124 @@ describe('createStreamedTranscriptWriter delta live streaming', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it.each(['sync', 'async'] as const)('does not advance its baseline after a %s local send failure', async (failureMode) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(0));
+    const snapshotBodies: unknown[] = [];
+    let attempts = 0;
+    const session = {
+      sendAgentMessageCommitted: vi.fn(async () => undefined),
+      getEphemeralStreamConnectionEpoch: () => 1,
+      sendAgentMessageEphemeral: vi.fn((_provider: unknown, body: unknown) => {
+        attempts += 1;
+        if (attempts === 1) {
+          if (failureMode === 'sync') {
+            throw new Error('sync failure');
+          }
+          return Promise.resolve({
+            accepted: false as const,
+            epoch: 1,
+            reason: 'emit_failed' as const,
+          });
+        }
+        snapshotBodies.push(body);
+        return { accepted: true as const, epoch: 1 };
+      }),
+      sendAgentMessageEphemeralDelta: vi.fn(() => ({ accepted: true as const, epoch: 1 })),
+    };
+
+    try {
+      const writer = createDeltaWriter(session, { liveSnapshotIntervalMs: 0 });
+      writer.appendAssistantDelta('hello');
+      await settleCommittedSnapshot();
+      writer.appendAssistantDelta(' world');
+      await settleCommittedSnapshot();
+
+      expect(session.sendAgentMessageEphemeralDelta).not.toHaveBeenCalled();
+      expect(snapshotBodies).toEqual([{ type: 'message', message: 'hello world' }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('coalesces updates while one publication is in flight and drains terminal live state before durable commit', async () => {
+    let resolveFirst!: (outcome: { accepted: true; epoch: number }) => void;
+    const order: string[] = [];
+    const liveBodies: unknown[] = [];
+    const session = {
+      getEphemeralStreamConnectionEpoch: () => 1,
+      sendAgentMessageEphemeral: vi.fn(async (_provider: unknown, body: unknown) => {
+        liveBodies.push(body);
+        order.push(`live:${(body as { message: string }).message}`);
+        if (liveBodies.length === 1) {
+          return await new Promise<{ accepted: true; epoch: number }>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return { accepted: true as const, epoch: 1 };
+      }),
+      sendAgentMessageEphemeralDelta: vi.fn(() => ({ accepted: true as const, epoch: 1 })),
+      sendAgentMessageCommitted: vi.fn(async (_provider: unknown, body: unknown) => {
+        order.push(`durable:${(body as { message: string }).message}`);
+      }),
+    };
+    const writer = createDeltaWriter(session, { liveSnapshotIntervalMs: 0 });
+
+    writer.appendAssistantDelta('a');
+    writer.appendAssistantDelta('b');
+    writer.appendAssistantDelta('c');
+    const flush = writer.flushAll({ reason: 'turn-end' });
+    await Promise.resolve();
+
+    expect(liveBodies).toEqual([{ type: 'message', message: 'a' }]);
+    expect(order.some((entry) => entry.startsWith('durable:'))).toBe(false);
+
+    resolveFirst({ accepted: true, epoch: 1 });
+    await flush;
+
+    expect(liveBodies).toEqual([
+      { type: 'message', message: 'a' },
+      { type: 'message', message: 'abc' },
+    ]);
+    expect(order).toEqual(['live:a', 'live:abc', 'durable:abc']);
+  });
+
+  it('starts a successor segment while the prior terminal live publication is draining', async () => {
+    let resolveFirst!: (outcome: { accepted: true; epoch: number }) => void;
+    let nextLocalId = 0;
+    const durableCalls: Array<{ localId: string; body: unknown }> = [];
+    const session = {
+      getEphemeralStreamConnectionEpoch: () => 1,
+      sendAgentMessageEphemeral: vi.fn(async () => {
+        if (resolveFirst === undefined) {
+          return await new Promise<{ accepted: true; epoch: number }>((resolve) => {
+            resolveFirst = resolve;
+          });
+        }
+        return { accepted: true as const, epoch: 1 };
+      }),
+      sendAgentMessageCommitted: vi.fn(async (_provider: unknown, body: unknown, opts: { localId: string }) => {
+        durableCalls.push({ localId: opts.localId, body });
+      }),
+    };
+    const writer = createDeltaWriter(session, {
+      liveSnapshotIntervalMs: 0,
+      makeLocalId: () => `segment-${++nextLocalId}`,
+    });
+
+    writer.appendAssistantDelta('First answer');
+    const firstFlush = writer.flushAll({ reason: 'turn-end' });
+    writer.appendAssistantDelta('Second answer');
+
+    resolveFirst({ accepted: true, epoch: 1 });
+    await firstFlush;
+    await writer.flushAll({ reason: 'turn-end' });
+
+    expect(durableCalls).toEqual([
+      { localId: 'segment-1', body: { type: 'message', message: 'First answer' } },
+      { localId: 'segment-2', body: { type: 'message', message: 'Second answer' } },
+    ]);
   });
 });

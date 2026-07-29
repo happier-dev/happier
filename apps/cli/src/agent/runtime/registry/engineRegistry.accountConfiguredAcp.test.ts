@@ -30,17 +30,15 @@ function createCredentials(): Credentials {
 function createEmptyRegistry(): ResolvedContributionRegistry {
   return {
     agents: [],
-    agentRuntimes: [],
-    actions: [],
+        actions: [],
     resources: [],
-    uiDescriptors: [],
+    uiViewsV2: [],
+    uiRenderersV2: [],
+    uiTranslationsV2: [],
     activationTargets: [],
-    hookRegistrations: [],
-    surfaceHandlersByBackendId: new Map(),
-    catalogEntriesById: {},
+        catalogEntriesById: {},
     agentDefinitionsById: new Map(),
-    agentRuntimeDefinitionsById: new Map(),
-    pluginDiagnosticsByPluginId: {},
+        pluginDiagnosticsByPluginId: {},
   };
 }
 
@@ -100,10 +98,14 @@ describe('engineRegistry account-configured ACP ingestion', () => {
       contributes: createEmptyRegistry(),
     });
 
-    expect(registry.contributions.agentRuntimeDefinitionsById.has('account-configured-acp')).toBe(true);
+    expect(registry.contributions).not.toHaveProperty('agentRuntimeDefinitionsById');
     const resolution = await registry.resolveForBackendId('account-configured-acp');
     expect(resolution?.backendId).toBe('account-configured-acp');
     expect(resolution?.agentId).toBe('acp:account-configured-acp');
+    expect(resolution?.provenance).toBe('configured');
+    expect(resolution?.selectedSource).toBe('configured');
+    expect(resolution?.backend.source).toEqual({ kind: 'configured' });
+    expect(resolution?.agent.source).toEqual({ kind: 'configured' });
 
     await expect(resolution?.engineAdapter.runtimeCore.createSessionRuntime({
       cwd: '/workspace',

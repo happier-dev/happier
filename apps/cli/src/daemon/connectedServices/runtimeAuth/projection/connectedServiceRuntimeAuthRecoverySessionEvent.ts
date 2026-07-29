@@ -13,41 +13,6 @@ export type ConnectedServiceRuntimeAuthRecoveryProjectionResult = Readonly<{
   emitted: boolean;
 }>;
 
-const NON_TERMINAL_RUNTIME_AUTH_RECOVERY_STATUS_CODES = new Set([
-  'credential_refreshed_restart_requested',
-  'credential_refreshed_awaiting_provider_outcome',
-  'recovery_retry_scheduled',
-  'temporary_retry_armed',
-  'switch_attempted_no_eligible_member',
-  'switch_attempted_switch_limit_reached',
-]);
-
-function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Readonly<Record<string, unknown>>
-    : null;
-}
-
-function readNonEmptyString(value: unknown): string | null {
-  const normalized = typeof value === 'string' ? value.trim() : '';
-  return normalized.length > 0 ? normalized : null;
-}
-
-export function connectedServiceRuntimeAuthRecoveryCanOwnTurnFailure(recoveryReport: unknown): boolean {
-  const report = readRecord(recoveryReport);
-  if (!report) return false;
-  if (report.handled !== true) return false;
-
-  const projection = readRecord(report.projection);
-  if (projection?.terminal === true) return false;
-
-  const uxDiagnostic = readRecord(report.uxDiagnostic) ?? readRecord(projection?.uxDiagnostic);
-  if (uxDiagnostic?.retryable === true) return true;
-
-  const statusCode = readNonEmptyString(report.statusCode);
-  return statusCode !== null && NON_TERMINAL_RUNTIME_AUTH_RECOVERY_STATUS_CODES.has(statusCode);
-}
-
 export function projectConnectedServiceRuntimeAuthRecoveryReport(input: Readonly<{
   report: ConnectedServiceRuntimeAuthFailureDaemonReport;
   classification?: ConnectedServiceRuntimeFailureClassification;
@@ -69,6 +34,7 @@ export function projectConnectedServiceRuntimeAuthRecoveryReport(input: Readonly
   }
 
   const hasDaemonTranscriptEvent = Boolean(projection?.transcriptEvent);
+  const daemonHandledTranscriptProjection = Boolean(input.report.handled && hasDaemonTranscriptEvent);
   const hasProviderTypedProjection = Boolean(projection?.uxDiagnostic) && !hasDaemonTranscriptEvent;
   if (projection && hasProviderTypedProjection && input.commitTypedProjection) {
     typedProjectionCommitted = input.commitTypedProjection(projection) !== false;
@@ -80,7 +46,7 @@ export function projectConnectedServiceRuntimeAuthRecoveryReport(input: Readonly
       classification: input.classification,
     })
     : null;
-  if (usageLimitMetadataUpdater && input.commitUsageLimitRecoveryMetadata) {
+  if (usageLimitMetadataUpdater && input.commitUsageLimitRecoveryMetadata && !daemonHandledTranscriptProjection) {
     const result = input.commitUsageLimitRecoveryMetadata(usageLimitMetadataUpdater);
     usageLimitMetadataCommitted = result === false ? false : true;
   }

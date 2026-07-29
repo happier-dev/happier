@@ -5,7 +5,6 @@ import tweetnacl from 'tweetnacl';
 import {
     createReviewCommentPrincipalSigningInputV1,
     decodeBase64,
-    REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
     ReviewCommentActionIdV1Schema,
     ReviewCommentActionInputSchemasV1,
@@ -21,16 +20,22 @@ import { createHttpStatusError, isAuthenticationStatus } from '@/api/client/http
 import { configuration } from '@/configuration';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { readSettings, type Credentials } from '@/persistence';
-import { signPluginInstallationPublisherHeader } from '@/plugins/installations/publisherProof';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { resolveServerHttpBaseUrl } from '@/session/transport/http/serverHttpBaseUrl';
-import { publishPluginPermissionGrantRequest } from '@/plugins/runtime/permissions/pending';
 
-import type { ReviewCommentActionExecutionOptions, ReviewCommentActionExecutor } from './pluginApi';
+export type ReviewCommentActionExecutionOptions = Readonly<{
+    signal?: AbortSignal;
+    principal?: ReviewCommentPrincipalHeaderV1;
+}>;
+
+export type ReviewCommentActionExecutor = (
+    actionId: ReviewCommentActionIdV1,
+    input: unknown,
+    options?: ReviewCommentActionExecutionOptions,
+) => Promise<unknown>;
 
 type JsonRecord = Record<string, unknown>;
 type ReviewCommentHttpMethod = 'get' | 'post' | 'patch';
-const REVIEW_COMMENT_DIRECT_WRITE_GRANT_REQUEST_REASON = 'Plugin requested direct review-comment write access.';
 
 export type ReviewCommentPrincipalSigningContext = Readonly<{
     machineId: string;
@@ -176,8 +181,10 @@ async function signedReviewCommentPrincipalHeader(params: Readonly<{
     principal: ReviewCommentPrincipalHeaderV1;
     request: ReviewCommentHttpRequest;
     resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
+    assertPrincipalCurrent?: (principal: ReviewCommentPrincipalHeaderV1) => void;
 }>): Promise<ReviewCommentPrincipalHeaderV1> {
     const signingContext = await (params.resolvePrincipalSigningContext ?? resolveDefaultPrincipalSigningContext)();
+    params.assertPrincipalCurrent?.(params.principal);
     const proof = {
         v: 1 as const,
         alg: 'ed25519-machine-installation-v1' as const,
@@ -193,13 +200,14 @@ async function signedReviewCommentPrincipalHeader(params: Readonly<{
     const signature = tweetnacl.sign.detached(
         createReviewCommentPrincipalSigningInputV1({
             actor: params.principal.actor,
+            ...(params.principal.currentIntent ? { currentIntent: params.principal.currentIntent } : {}),
             proof,
         }),
         privateKey,
     );
     return {
         actor: params.principal.actor,
-        grants: [],
+        ...(params.principal.currentIntent ? { currentIntent: params.principal.currentIntent } : {}),
         proof: {
             ...proof,
             signatureBase64Url: Buffer.from(signature).toString('base64url'),
@@ -207,35 +215,11 @@ async function signedReviewCommentPrincipalHeader(params: Readonly<{
     };
 }
 
-function createGrantRequestPublisherHeaderResolver(
-    resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>,
-): Parameters<typeof publishPluginPermissionGrantRequest>[0]['createPublisherHeader'] | undefined {
-    if (!resolvePrincipalSigningContext) {
-        return undefined;
-    }
-    return async (request) => {
-        const signingContext = await resolvePrincipalSigningContext();
-        const privateKey = decodeBase64(signingContext.privateKeyBase64Url, 'base64url');
-        const keyPair = tweetnacl.sign.keyPair.fromSecretKey(privateKey);
-        return signPluginInstallationPublisherHeader({
-            identity: {
-                version: 1,
-                installationId: signingContext.installationId,
-                createdAt: 0,
-                publicKey: Buffer.from(keyPair.publicKey).toString('base64url'),
-                privateKey: signingContext.privateKeyBase64Url,
-            },
-            machineId: signingContext.machineId,
-            path: request.path,
-            body: request.body,
-        });
-    };
-}
-
 async function encodeReviewCommentPrincipalHeader(params: Readonly<{
     principal: ReviewCommentPrincipalHeaderV1;
     request: ReviewCommentHttpRequest;
     resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
+    assertPrincipalCurrent?: (principal: ReviewCommentPrincipalHeaderV1) => void;
 }>): Promise<string> {
     return Buffer
         .from(JSON.stringify(ReviewCommentPrincipalHeaderV1Schema.parse(await signedReviewCommentPrincipalHeader(params))), 'utf8')
@@ -314,93 +298,38 @@ function readFailureMessage(error: unknown): string {
     return error instanceof Error ? error.message : readFailureCode(error);
 }
 
-function readPluginDirectWriteGrantRequestInput(params: Readonly<{
-    actionId: ReviewCommentActionIdV1;
-    input: JsonRecord;
-    principal?: ReviewCommentPrincipalHeaderV1;
-}>): Parameters<typeof publishPluginPermissionGrantRequest>[0]['input'] | null {
-    if (params.actionId !== 'reviews.comments.create') return null;
-    if (params.input.authorIntent !== 'open') return null;
-    if (params.principal?.actor.kind !== 'plugin') return null;
-    const projectId = params.input.projectId;
-    if (typeof projectId !== 'string' || projectId.trim().length === 0) return null;
-    return {
-        pluginId: params.principal.actor.pluginId,
-        capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-        targetScope: { kind: 'project', projectId: projectId.trim() },
-        requester: { kind: 'plugin', pluginId: params.principal.actor.pluginId },
-        reason: REVIEW_COMMENT_DIRECT_WRITE_GRANT_REQUEST_REASON,
-    };
-}
-
-async function publishPendingGrantRequestForDirectWriteDenial(params: Readonly<{
-    credentials: Credentials;
-    resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
-    actionId: ReviewCommentActionIdV1;
-    input: JsonRecord;
-    options?: ReviewCommentActionExecutionOptions;
-    error: unknown;
-}>): Promise<void> {
-    if (readFailureCode(params.error) !== 'review_comment_direct_write_permission_required') return;
-    const requestInput = readPluginDirectWriteGrantRequestInput({
-        actionId: params.actionId,
-        input: params.input,
-        principal: params.options?.principal,
-    });
-    if (!requestInput) return;
-    try {
-        await publishPluginPermissionGrantRequest({
-            credentials: params.credentials,
-            input: requestInput,
-            ...(params.resolvePrincipalSigningContext
-                ? { createPublisherHeader: createGrantRequestPublisherHeaderResolver(params.resolvePrincipalSigningContext) }
-                : {}),
-            ...(params.options?.signal ? { signal: params.options.signal } : {}),
-        });
-    } catch {
-        // Preserve the original review-comment denial; the user-facing operation still failed closed.
-    }
-}
-
 export function createCliReviewCommentActionExecutorFromCredentials(
     params: Readonly<{
         credentials: Credentials;
         resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
+        assertPrincipalCurrent?: (principal: ReviewCommentPrincipalHeaderV1) => void;
     }>,
 ): ReviewCommentActionExecutor {
     return async (actionId, input, options) => {
         const parsedActionId = ReviewCommentActionIdV1Schema.parse(actionId);
         const parsedInput = asRecord(ReviewCommentActionInputSchemasV1[parsedActionId].parse(input));
         const request = createReviewCommentHttpRequest(parsedActionId, parsedInput);
-        let output: unknown;
-        try {
-            output = await executeReviewCommentHttpRequest({
-                credentials: params.credentials,
+        const principalHeader = options?.principal
+            ? await encodeReviewCommentPrincipalHeader({
+                principal: options.principal,
                 request,
-                ...(options?.principal
-                    ? {
-                        principalHeader: await encodeReviewCommentPrincipalHeader({
-                            principal: options.principal,
-                            request,
-                            ...(params.resolvePrincipalSigningContext
-                                ? { resolvePrincipalSigningContext: params.resolvePrincipalSigningContext }
-                                : {}),
-                        }),
-                    }
+                ...(params.resolvePrincipalSigningContext
+                    ? { resolvePrincipalSigningContext: params.resolvePrincipalSigningContext }
                     : {}),
-                ...(options?.signal ? { signal: options.signal } : {}),
-            });
-        } catch (error) {
-        await publishPendingGrantRequestForDirectWriteDenial({
-            credentials: params.credentials,
-            resolvePrincipalSigningContext: params.resolvePrincipalSigningContext,
-            actionId: parsedActionId,
-                input: parsedInput,
-                options,
-                error,
-            });
-            throw error;
+                ...(params.assertPrincipalCurrent
+                    ? { assertPrincipalCurrent: params.assertPrincipalCurrent }
+                    : {}),
+            })
+            : undefined;
+        if (options?.principal) {
+            params.assertPrincipalCurrent?.(options.principal);
         }
+        const output = await executeReviewCommentHttpRequest({
+            credentials: params.credentials,
+            request,
+            ...(principalHeader ? { principalHeader } : {}),
+            ...(options?.signal ? { signal: options.signal } : {}),
+        });
         return ReviewCommentActionOutputSchemasV1[parsedActionId].parse(output);
     };
 }
@@ -409,6 +338,7 @@ export function createCliReviewCommentRpcActionExecutorFromCredentials(
     params: Readonly<{
         credentials: Credentials;
         resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
+        assertPrincipalCurrent?: (principal: ReviewCommentPrincipalHeaderV1) => void;
     }>,
 ): RpcActionExecutor {
     const executeReviewCommentAction = createCliReviewCommentActionExecutorFromCredentials(params);

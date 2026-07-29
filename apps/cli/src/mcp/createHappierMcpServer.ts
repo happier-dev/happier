@@ -11,19 +11,27 @@ import { normalizeExecutionRunRpcPayload } from '@/session/services/executionRun
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import type { Credentials } from '@/persistence';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { resolvePermissionIntentFromMetadataSnapshot } from '@/agent/runtime/permissions/modeFromMetadata';
 import {
   PromptRegistryInstallRequestV1Schema,
   PromptRegistryInstallResponseV1Schema,
   type ActionId,
   type AccountSettings,
+  type BackendTargetRefV2,
   getActionSpec,
   isActionSpecSurfacedOn,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MemorySearchResultV1Schema, MemoryWindowV1Schema, type MemorySearchResultV1, type MemoryWindowV1, type SessionStateCapabilitiesV1 } from '@happier-dev/protocol';
 import { createSessionStateSyncEngine } from '@happier-dev/agents';
-import { createMcpActionApprovalRequirement, createMcpActionEnablement } from '@/mcp/server/createMcpActionEnablement';
+import {
+  createMcpActionApprovalRequirement,
+  createMcpActionEnablement,
+  createMcpActionSettingsProvider,
+} from '@/mcp/server/createMcpActionEnablement';
+import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 
 const MCP_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
   display: {
@@ -34,6 +42,23 @@ const MCP_SESSION_STATE_CAPABILITIES: SessionStateCapabilitiesV1 = {
     },
   },
 };
+
+function resolveLiveClientPermissionMode(client: HappyMcpSessionClient): string | null {
+  const mode = client.getPermissionMode?.();
+  return typeof mode === 'string' && mode.trim().length > 0 ? mode.trim() : null;
+}
+
+function resolveLiveClientBackendTarget(client: HappyMcpSessionClient): BackendTargetRefV2 | null {
+  return client.getBackendTarget?.() ?? null;
+}
+
+function resolveLiveClientLocation(client: HappyMcpSessionClient): Readonly<{
+  path?: string | null;
+  host?: string | null;
+  machineId?: string | null;
+}> | null {
+  return client.getCurrentSessionLocation?.() ?? null;
+}
 
 async function writeMcpSessionTitleMetadata(params: Readonly<{
   client: HappyMcpSessionClient;
@@ -66,22 +91,33 @@ async function writeMcpSessionTitleMetadata(params: Readonly<{
 
 export function createHappierMcpServer(
   client: HappyMcpSessionClient,
-  opts?: Readonly<{ credentials?: Credentials | null; accountSettings?: AccountSettings | null }>,
+  opts?: Readonly<{
+    credentials?: Credentials | null;
+    accountSettings?: AccountSettings | null;
+    getAccountSettings?: (() => AccountSettings | null) | null;
+    pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
+  }>,
 ): { mcp: McpServer; toolNames: string[] } {
   // This server is the per-session MCP bridge that a running session agent uses.
-  // It must use the `session_agent` surface so action enablement + approvals can be
+  // It must use the `agent` surface so action enablement + approvals can be
   // configured separately from the external MCP surface (`mcp`).
-  const toolSurface = 'session_agent' as const;
+  const toolSurface = 'agent' as const;
   const credentials = opts?.credentials ?? null;
-  const isActionEnabled = createMcpActionEnablement({
+  const actionSettingsProvider = createMcpActionSettingsProvider({
     accountSettings: opts?.accountSettings ?? null,
+    getAccountSettings: opts?.getAccountSettings ?? null,
+  });
+  const readActionsSettings = () => actionSettingsProvider.getActionsSettings();
+  const readSessionAgentSpawnPolicyV1 = () =>
+    actionSettingsProvider.getAccountSettings()?.sessionAgentSpawnPolicyV1;
+  const isActionEnabled = createMcpActionEnablement({
+    actionSettingsProvider,
     surface: toolSurface,
   });
   const isActionApprovalRequired = createMcpActionApprovalRequirement({
-    accountSettings: opts?.accountSettings ?? null,
+    actionSettingsProvider,
     surface: toolSurface,
   });
-  const actionsSettings = opts?.accountSettings?.actionsSettingsV1 ?? null;
   const ctx = credentials
     ? resolveSessionEncryptionContextFromCredentials(credentials)
     : { encryptionKey: new Uint8Array(0), encryptionVariant: 'legacy' as const };
@@ -94,7 +130,15 @@ export function createHappierMcpServer(
   const sessionScopedRpc = async (method: string, params: unknown) =>
     await client.rpcHandlerManager.invokeLocal(method, params);
   const sessionMetadataSnapshot = client.getMetadataSnapshot?.() ?? null;
-  const rawSession = sessionMetadataSnapshot ? { metadata: sessionMetadataSnapshot } : null;
+  const sessionLocation = resolveLiveClientLocation(client);
+  const rawSession = sessionMetadataSnapshot || sessionLocation
+    ? {
+        ...(sessionMetadataSnapshot ? { metadata: sessionMetadataSnapshot } : {}),
+        ...(typeof sessionLocation?.path === 'string' ? { path: sessionLocation.path } : {}),
+        ...(typeof sessionLocation?.host === 'string' ? { host: sessionLocation.host } : {}),
+        ...(typeof sessionLocation?.machineId === 'string' ? { machineId: sessionLocation.machineId } : {}),
+      }
+    : null;
   const executionRuns = {
     start: async (request: unknown) =>
       normalizeExecutionRunRpcPayload(
@@ -134,6 +178,8 @@ export function createHappierMcpServer(
       sessionId: client.sessionId,
       ctx,
       rawSession,
+      getCallerPermissionMode: () => resolveLiveClientPermissionMode(client),
+      getCurrentSessionBackendTarget: () => resolveLiveClientBackendTarget(client),
     },
     {
       sessionTitleSet: async ({ sessionId, title }) => {
@@ -213,7 +259,7 @@ export function createHappierMcpServer(
     },
   );
 
-  const executor = harness.executor;
+  const executor = createDaemonPluginActionExecutor({ base: harness.executor });
 
   registerHappierMcpResources(mcp as any, {
     surface: toolSurface,
@@ -227,13 +273,24 @@ export function createHappierMcpServer(
       return isActionSpecSurfacedOn(spec, toolSurface) && isActionEnabled(id as any);
     },
     surface: toolSurface,
-    actionsSettings,
+    actionsSettings: readActionsSettings(),
+    getActionsSettings: readActionsSettings,
+    resolveCallerPermissionMode: () => resolveLiveClientPermissionMode(client)
+      ?? resolvePermissionIntentFromMetadataSnapshot({
+        metadata: client.getMetadataSnapshot?.() ?? null,
+      })?.intent
+      ?? null,
+    sessionAgentSpawnPolicyV1: readSessionAgentSpawnPolicyV1(),
+    getSessionAgentSpawnPolicyV1: readSessionAgentSpawnPolicyV1,
+    pluginToolCatalog: opts?.pluginToolCatalog,
   });
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
     sessionId: client.sessionId,
     surface: toolSurface,
-    actionsSettings,
+    actionsSettings: readActionsSettings(),
+    getActionsSettings: readActionsSettings,
+    pluginToolCatalog: opts?.pluginToolCatalog,
     deps: {
       changeTitle: createChangeTitleToolHandler({
         executor,

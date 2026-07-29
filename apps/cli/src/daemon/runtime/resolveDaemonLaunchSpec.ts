@@ -7,7 +7,11 @@ import { projectPath } from '@/projectPath';
 import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { ensureJavaScriptRuntimeExecutable } from '@/packagedRuntime/js/ensureJavaScriptRuntimeExecutable';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
-import { resolveCliTsxTsconfigPath, resolveTsxImportHookSpecifier } from '@/utils/spawnHappyCLI';
+import {
+  buildHappyCliSubprocessLaunchSpec,
+  resolveCliTsxTsconfigPath,
+  resolveTsxImportHookSpecifier,
+} from '@/utils/spawnHappyCLI';
 
 export type DaemonLaunchSpec = Readonly<{
   filePath: string;
@@ -37,27 +41,30 @@ function isPackagedEntrypointPath(pathLike: string): boolean {
   return normalized.endsWith('/package-dist/index.mjs') || normalized.endsWith('/dist/index.mjs');
 }
 
-function hasDaemonStackContext(): boolean {
+function hasDaemonStackContext(env: NodeJS.ProcessEnv = process.env): boolean {
   return Boolean(
-    process.env.HAPPIER_STACK_REPO_DIR ||
-    process.env.HAPPIER_STACK_CLI_ROOT_DIR ||
-    process.env.HAPPIER_STACK_STACK
+    env.HAPPIER_STACK_REPO_DIR ||
+    env.HAPPIER_STACK_CLI_ROOT_DIR ||
+    env.HAPPIER_STACK_STACK
   );
 }
 
-function shouldPreferDaemonTsxSourceEntrypoint(): boolean {
+function shouldPreferDaemonTsxSourceEntrypoint(env: NodeJS.ProcessEnv = process.env): boolean {
   if (
-    typeof process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string'
-    && process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0
+    typeof env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT === 'string'
+    && env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT.trim().length > 0
   ) {
     return false;
   }
-  const explicitPreference = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX);
+  const explicitPreference = parseOptionalBooleanEnv(env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX);
   if (explicitPreference !== null) return explicitPreference;
-  return process.env.HAPPIER_VARIANT === 'dev' || hasDaemonStackContext();
+  return env.HAPPIER_VARIANT === 'dev' || hasDaemonStackContext(env);
 }
 
-function resolveBundledCurrentProcessLaunchSpec(cliArgs: readonly string[]): DaemonLaunchSpec | null {
+function resolveBundledCurrentProcessLaunchSpec(
+  cliArgs: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): DaemonLaunchSpec | null {
   const currentExecPath = String(process.execPath ?? '').trim();
   if (!currentExecPath) return null;
 
@@ -72,7 +79,7 @@ function resolveBundledCurrentProcessLaunchSpec(cliArgs: readonly string[]): Dae
   // When we are already running through a managed JS runtime wrapper with a concrete packaged
   // entrypoint, keep using the same executable + entrypoint pair. This prevents detached daemon
   // relaunch from drifting to a runtime resolved from a different home/profile.
-  if (isPackagedEntrypointPath(bundledScriptPath) && !shouldPreferDaemonTsxSourceEntrypoint()) {
+  if (isPackagedEntrypointPath(bundledScriptPath) && !shouldPreferDaemonTsxSourceEntrypoint(env)) {
     const currentExecBase = normalizeExecutableBase(currentExecPath);
     if (currentExecBase !== 'bun' && currentExecBase !== 'bun.exe') {
       return {
@@ -102,10 +109,10 @@ function resolveBundledCurrentProcessLaunchSpec(cliArgs: readonly string[]): Dae
   };
 }
 
-function shouldAllowDaemonTsxFallback(): boolean {
-  const explicit = parseOptionalBooleanEnv(process.env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
+function shouldAllowDaemonTsxFallback(env: NodeJS.ProcessEnv = process.env): boolean {
+  const explicit = parseOptionalBooleanEnv(env.HAPPIER_CLI_SUBPROCESS_ALLOW_TSX_FALLBACK);
   if (explicit !== null) return explicit;
-  return process.env.HAPPIER_VARIANT === 'dev' || hasDaemonStackContext();
+  return env.HAPPIER_VARIANT === 'dev' || hasDaemonStackContext(env);
 }
 
 function resolveSourceEntrypoint(): string {
@@ -170,10 +177,34 @@ function resolveWindowsSiblingPackagedBinary(packagedEntrypoint: string): string
   return siblingBinaryNativeSeparators;
 }
 
-export async function resolveDaemonLaunchSpec(cliArgs: readonly string[]): Promise<DaemonLaunchSpec> {
-  const bundledCurrentProcessLaunchSpec = resolveBundledCurrentProcessLaunchSpec(cliArgs);
+export async function resolveDaemonLaunchSpec(
+  cliArgs: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<DaemonLaunchSpec> {
+  const bundledCurrentProcessLaunchSpec = resolveBundledCurrentProcessLaunchSpec(cliArgs, env);
   if (bundledCurrentProcessLaunchSpec) {
     return bundledCurrentProcessLaunchSpec;
+  }
+
+  const admittedDaemonDistFingerprint = String(
+    env.HAPPIER_CLI_SUBPROCESS_DAEMON_DIST_CLOSURE_FINGERPRINT ?? '',
+  ).trim();
+  if (
+    hasDaemonStackContext(env)
+    && cliArgs[0] === 'daemon'
+    && cliArgs[1] === 'start-sync'
+    && admittedDaemonDistFingerprint
+    && parseOptionalBooleanEnv(env.HAPPIER_CLI_SUBPROCESS_PREFER_TSX) !== true
+  ) {
+    const launchSpec = buildHappyCliSubprocessLaunchSpec([...cliArgs], {
+      allowAdmittedDaemonStartupClosure: true,
+      environment: env,
+    });
+    return {
+      filePath: launchSpec.filePath,
+      args: launchSpec.args,
+      ...(launchSpec.env ? { env: launchSpec.env } : {}),
+    };
   }
 
   const packagedEntrypoint = resolvePackagedRuntimeEntrypoint('index.mjs');
@@ -195,7 +226,7 @@ export async function resolveDaemonLaunchSpec(cliArgs: readonly string[]): Promi
     throw new Error('Daemon launch requires a JavaScript runtime, but none could be resolved');
   }
 
-  if (shouldPreferDaemonTsxSourceEntrypoint()) {
+  if (shouldPreferDaemonTsxSourceEntrypoint(env)) {
     const sourceLaunchSpec = resolveDaemonTsxSourceLaunchSpec(runtimeExecutable, cliArgs);
     if (sourceLaunchSpec) return sourceLaunchSpec;
   }
@@ -209,7 +240,7 @@ export async function resolveDaemonLaunchSpec(cliArgs: readonly string[]): Promi
     };
   }
 
-  if (shouldAllowDaemonTsxFallback()) {
+  if (shouldAllowDaemonTsxFallback(env)) {
     const sourceLaunchSpec = resolveDaemonTsxSourceLaunchSpec(runtimeExecutable, cliArgs);
     if (sourceLaunchSpec) return sourceLaunchSpec;
   }

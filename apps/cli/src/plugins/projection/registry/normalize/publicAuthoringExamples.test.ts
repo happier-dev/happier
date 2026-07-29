@@ -61,27 +61,19 @@ describe('plugin SDK public installable examples', () => {
       'examples.descriptor-only',
       'examples.hosted-web',
       'examples.multi-mode-fallback',
+      'examples.public-sdk-review-assistant',
       'examples.react-native-dev-hot-reload',
       'examples.react-native-installed',
     ]);
 
     const registry = buildPluginContributionRegistry({ loadedPlugins });
+    const examplePluginIds = loadedPlugins.map((plugin) => plugin.pluginId).sort();
 
-    expect(registry.uiDescriptors.map((entry) => entry.pluginId)).toContain('examples.descriptor-only');
-    expect(registry.surfacePlacements.map((entry) => entry.pluginId)).toEqual(expect.arrayContaining([
-      'examples.hosted-web',
-      'examples.multi-mode-fallback',
-      'examples.react-native-dev-hot-reload',
-      'examples.react-native-installed',
-    ]));
-    expect(registry.hostedWeb.map((entry) => entry.pluginId)).toEqual(expect.arrayContaining([
-      'examples.hosted-web',
-      'examples.multi-mode-fallback',
-    ]));
-    expect(registry.reactNativeBundles.map((entry) => entry.pluginId)).toEqual(expect.arrayContaining([
-      'examples.multi-mode-fallback',
-      'examples.react-native-dev-hot-reload',
-      'examples.react-native-installed',
-    ]));
+    expect([...new Set(registry.uiViewsV2.map((entry) => entry.pluginId))].sort()).toEqual(examplePluginIds);
+    expect([...new Set(registry.uiRenderersV2.map((entry) => entry.pluginId))].sort()).toEqual(examplePluginIds);
+    expect(registry.surfacePlacements).toEqual([]);
+    expect(registry.hostedWeb).toEqual([]);
+    expect(registry.reactNativeBundles).toEqual([]);
+    expect(registry.uiArtifacts).toEqual([]);
   });
 });

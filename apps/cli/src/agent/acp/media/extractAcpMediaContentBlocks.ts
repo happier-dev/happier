@@ -17,7 +17,7 @@ export type AcpSessionMediaDiagnostic = Readonly<{
 export type ExtractAcpMediaContentOptions = Readonly<{
   originSource: Extract<SessionMediaOrigin['source'], 'acp-content' | 'mcp-content' | 'provider-generated' | 'tool-output'>;
   toolCallId?: string;
-  providerEventId?: string;
+  agentEventId?: string;
   generationId?: string;
 }>;
 
@@ -101,7 +101,7 @@ function buildOrigin(options: ExtractAcpMediaContentOptions): SessionMediaOrigin
   return {
     source: options.originSource,
     ...(options.toolCallId ? { toolCallId: options.toolCallId } : {}),
-    ...(options.providerEventId ? { providerEventId: options.providerEventId } : {}),
+    ...(options.agentEventId ? { agentEventId: options.agentEventId } : {}),
     ...(options.generationId ? { generationId: options.generationId } : {}),
   };
 }

@@ -140,6 +140,7 @@ export async function updateInstalledCliPayloadFromReleaseAssets(params: Readonl
       componentId: 'happier-cli',
       versionId: bundle.version,
       payloadRoot,
+      payloadRootAlreadyFiltered: true,
       channel: params.channel,
       processEnv,
     });

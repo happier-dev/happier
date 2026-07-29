@@ -2,8 +2,8 @@ import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { readSessionHandoffProviderBundleRecords } from '@/session/handoff/providerBundle/records';
-import type { SessionHandoffProviderBundle } from '@/session/handoff/types';
+import { readSessionHandoffAgentBundleRecords } from '@/session/handoff/agentBundle/records';
+import type { SessionHandoffAgentBundle } from '@/session/handoff/types';
 
 const SESSION_MEDIA_ENVELOPE_KIND = 'session_media.v1';
 const ATTACHMENTS_ENVELOPE_KIND = 'attachments.v1';
@@ -256,12 +256,12 @@ export function collectTransientSessionMediaReadFiles(
   return [...files].sort((left, right) => left.localeCompare(right));
 }
 
-export async function collectReferencedSessionMediaWorkspacePathsFromProviderBundle(
-  providerBundle: SessionHandoffProviderBundle | undefined,
+export async function collectReferencedSessionMediaWorkspacePathsFromAgentBundle(
+  agentBundle: SessionHandoffAgentBundle | undefined,
 ): Promise<readonly string[]> {
-  if (!providerBundle) return [];
+  if (!agentBundle) return [];
   return collectReferencedSessionMediaWorkspacePaths(
-    await readSessionHandoffProviderBundleRecords(providerBundle),
+    await readSessionHandoffAgentBundleRecords(agentBundle),
   );
 }
 

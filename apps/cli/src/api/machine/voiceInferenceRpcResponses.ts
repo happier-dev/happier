@@ -11,14 +11,17 @@ function toVoiceInferencePublicErrorMessage(errorCode: string): string {
     case 'request_timeout':
     case 'invalid_audio_input':
     case 'unsupported_codec':
+    case 'unsupported_runtime_family':
     case 'cancelled':
+    case 'stream_not_found':
+    case 'invalid_stream_state':
       return `voice_inference_${errorCode}`;
     default:
       return 'voice_inference_internal_error';
   }
 }
 
-export function toVoiceInferenceErrorCode(error: unknown): string {
+export function toVoiceInferenceErrorCode(error: unknown): DaemonVoiceInferenceErrorCode {
   const code = typeof (error as { code?: unknown } | null)?.code === 'string'
     ? (error as { code: string }).code
     : '';
@@ -29,8 +32,13 @@ export function toVoiceInferenceErrorCode(error: unknown): string {
     case 'request_timeout':
     case 'invalid_audio_input':
     case 'unsupported_codec':
+    case 'unsupported_runtime_family':
     case 'cancelled':
+    case 'stream_not_found':
+    case 'invalid_stream_state':
       return code;
+    case 'runtime_timeout':
+      return 'request_timeout';
     default:
       return 'internal_error';
   }
@@ -52,3 +60,4 @@ export function parseVoiceInferenceResponse<T>(schema: VoiceInferenceSchemaParse
   }
   return schema.parse(toVoiceInferenceError(new Error('invalid_voice_inference_response')));
 }
+import type { DaemonVoiceInferenceErrorCode } from '@happier-dev/protocol';

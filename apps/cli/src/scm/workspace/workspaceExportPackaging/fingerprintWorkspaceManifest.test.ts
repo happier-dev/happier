@@ -4,11 +4,13 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import type { WorkspaceManifestEntry } from './buildWorkspaceManifestEntry';
 import { fingerprintWorkspaceManifest } from './fingerprintWorkspaceManifest';
 import { scanWorkspaceManifest } from './scanWorkspaceManifest';
 
 const tempRoots: string[] = [];
+const scmRegistry = createScmBackendRegistry([]);
 
 async function makeTempDir(prefix: string): Promise<string> {
     const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -85,7 +87,7 @@ describe('fingerprintWorkspaceManifest', () => {
         await writeFile(join(root, 'src', 'nested', 'index.ts'), 'export const value = 1;\n');
         await symlink('../README.md', join(root, 'src', 'readme-link'));
 
-        const manifest = await scanWorkspaceManifest({ workspaceRoot: root });
+        const manifest = await scanWorkspaceManifest({ workspaceRoot: root, scmRegistry });
 
         expect(fingerprintWorkspaceManifest(manifest)).toBe('sha256:ecc9071a7df045ba58e5f2b770556771fdb62fd37cb1f69d6ff5cc870e6d644e');
     });

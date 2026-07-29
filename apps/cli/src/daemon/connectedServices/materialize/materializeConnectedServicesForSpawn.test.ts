@@ -125,6 +125,19 @@ describe('materializeConnectedServicesForSpawn', () => {
       activeServerDir,
       baseDir,
       recordsByServiceId: new Map([['openai-codex', record]]),
+      requestAuthPurposeBindings: [{
+        purpose: {
+          consumer: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+          purpose: 'openai-codex-model-request',
+        },
+        target: {
+          kind: 'account',
+          account: {
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            accountId: 'work',
+          },
+        },
+      }],
     });
 
     expect(result).not.toBeNull();
@@ -479,6 +492,19 @@ describe('materializeConnectedServicesForSpawn', () => {
         ['openai-codex', codex],
         ['anthropic', claude],
       ]),
+      requestAuthPurposeBindings: [{
+        purpose: {
+          consumer: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+          purpose: 'openai-codex-model-request',
+        },
+        target: {
+          kind: 'account',
+          account: {
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            accountId: 'work',
+          },
+        },
+      }],
     });
 
     expect(result).not.toBeNull();
@@ -491,14 +517,16 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env.HAPPIER_OPENCODE_SERVER_STATE_PATH).toContain(join('opencode', 'managed-servers'));
 
     const auth = JSON.parse(result!.env.OPENCODE_AUTH_CONTENT ?? '{}');
-    // OpenCode Codex subscription auth is brokered: a stable, non-refreshable `type:'api'` marker is
-    // emitted (the broker plugin supplies the real fetch out-of-band). No OAuth refresh/access token is
-    // ever embedded in OPENCODE_AUTH_CONTENT (no-leak). The Anthropic Console key stays direct x-api-key.
+    // OpenCode receives a stable request-auth marker and a scoped child capability path. OAuth
+    // refresh/access tokens never enter OPENCODE_AUTH_CONTENT; the Anthropic Console key stays direct.
     expect(auth.openai.type).toBe('api');
-    expect(auth.openai.key).toMatch(/^happier-broker:openai:/);
+    expect(auth.openai.key).toBe('happier-request-auth:openai:1');
     expect(auth.openai.refresh).toBeUndefined();
     expect(auth.openai.access).toBeUndefined();
     expect(auth.anthropic).toEqual({ type: 'api', key: 'sk-ant-123' });
+    expect(result!.env.HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH).toContain(
+      join('request-auth', 'capability.json'),
+    );
     expect(result!.env.OPENCODE_AUTH_CONTENT).not.toContain('refresh');
     expect(result!.env.OPENCODE_AUTH_CONTENT).not.toContain('access');
     expect(fetchMock).not.toHaveBeenCalled();
@@ -589,6 +617,19 @@ describe('materializeConnectedServicesForSpawn', () => {
       recordsByServiceId: new Map([
         ['openai-codex', codex],
       ]),
+      requestAuthPurposeBindings: [{
+        purpose: {
+          consumer: { pluginId: 'happier.agent.opencode', localId: 'opencode' },
+          purpose: 'openai-codex-model-request',
+        },
+        target: {
+          kind: 'account',
+          account: {
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            accountId: 'work',
+          },
+        },
+      }],
     });
 
     expect(result?.env.OPENCODE_AUTH_CONTENT).toBeTruthy();
@@ -624,10 +665,10 @@ describe('materializeConnectedServicesForSpawn', () => {
       recordsByServiceId: new Map([
         ['anthropic', claude],
       ]),
-    })).rejects.toThrow(/anthropic auth requires token credentials/i);
+    })).rejects.toThrow(/anthropic auth requires an api key/i);
   });
 
-  it('materializes Pi auth.json with openai-codex oauth and Anthropic API key credentials', async () => {
+  it('materializes Pi request-auth for openai-codex oauth and direct Anthropic API key credentials', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
     const codex = buildConnectedServiceCredentialRecord({
@@ -663,6 +704,19 @@ describe('materializeConnectedServicesForSpawn', () => {
         ['openai-codex', codex],
         ['anthropic', claudeSetup],
       ]),
+      requestAuthPurposeBindings: [{
+        purpose: {
+          consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
+          purpose: 'openai-codex-model-request',
+        },
+        target: {
+          kind: 'account',
+          account: {
+            service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+            accountId: 'work',
+          },
+        },
+      }],
     });
 
     expect(result).not.toBeNull();
@@ -671,23 +725,19 @@ describe('materializeConnectedServicesForSpawn', () => {
     expect(result!.env.PI_CODING_AGENT_DIR).toBe(
       join(activeServerDir, 'daemon', 'connected-services', 'homes', 'openai-codex', 'work', 'pi', 'pi-agent-dir'),
     );
-    expect(result!.env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(result!.env.ANTHROPIC_API_KEY).toBe('');
 
     const authPath = join(result!.env.PI_CODING_AGENT_DIR, 'auth.json');
     const auth = JSON.parse(await readFile(authPath, 'utf8'));
     expect(auth).toEqual({
-      'openai-codex': {
-        type: 'oauth',
-        access: 'access',
-        refresh: 'refresh',
-        expires: 123,
-        accountId: 'acct',
-      },
       anthropic: {
         type: 'api_key',
         key: 'sk-ant-123',
       },
     });
+    expect(result!.env.HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH).toContain(
+      join('request-auth', 'capability.json'),
+    );
 
     result!.cleanupOnFailure?.();
     result!.cleanupOnExit?.();
@@ -858,6 +908,17 @@ describe('materializeConnectedServicesForSpawn', () => {
         ['openai-codex', openaiCodex],
       ]),
       selectionsByServiceId: new Map([['openai-codex', selection]]),
+      requestAuthPurposeBindings: [{
+        purpose: {
+          consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
+          purpose: 'openai-codex-model-request',
+        },
+        target: {
+          kind: 'group',
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          groupId: 'pi-main',
+        },
+      }],
     });
     const reentry = await materializeConnectedServicesForSpawn({
       agentId: 'pi',
@@ -868,6 +929,17 @@ describe('materializeConnectedServicesForSpawn', () => {
         ['openai-codex', openaiCodex],
       ]),
       selectionsByServiceId: new Map([['openai-codex', selection]]),
+      requestAuthPurposeBindings: [{
+        purpose: {
+          consumer: { pluginId: 'happier.agent.pi', localId: 'pi' },
+          purpose: 'openai-codex-model-request',
+        },
+        target: {
+          kind: 'group',
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          groupId: 'pi-main',
+        },
+      }],
     });
 
     expect(firstSpawn).not.toBeNull();
@@ -1149,7 +1221,7 @@ describe('materializeConnectedServicesForSpawn', () => {
     });
   });
 
-  it('materializes Claude subscription oauth as native Claude Code credentials only', async () => {
+  it('materializes Claude subscription oauth as access-token-only native Claude Code credentials', async () => {
     const baseDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-test-'));
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-connected-services-server-test-'));
     const sourceClaudeConfigDir = await mkdtemp(join(tmpdir(), 'happier-source-claude-config-test-'));
@@ -1210,16 +1282,18 @@ describe('materializeConnectedServicesForSpawn', () => {
     await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR, 'commands', 'review.md'), 'utf8')).resolves.toBe(
       'Review this\n',
     );
-    await expect(lstat(join(result!.env.CLAUDE_CONFIG_DIR, 'projects'))).rejects.toThrow();
+    await expect(readFile(join(result!.env.CLAUDE_CONFIG_DIR, 'projects', 'history.jsonl'), 'utf8')).resolves.toBe(
+      '{"sessionId":"local"}\n',
+    );
     const nativeCredentials = JSON.parse(await readFile(join(result!.env.CLAUDE_CONFIG_DIR, '.credentials.json'), 'utf8'));
     expect(nativeCredentials).toEqual({
       claudeAiOauth: {
         accessToken: 'claude-access',
-        refreshToken: 'claude-refresh',
         expiresAt: 123,
         scopes: ['user:inference', 'user:profile', 'user:sessions:claude_code', 'user:mcp_servers', 'user:file_upload'],
       },
     });
+    expect(nativeCredentials.claudeAiOauth).not.toHaveProperty('refreshToken');
     expect('CLAUDE_CODE_OAUTH_TOKEN' in result!.env).toBe(false);
     expect('CLAUDE_CODE_SETUP_TOKEN' in result!.env).toBe(false);
     expect('ANTHROPIC_API_KEY' in result!.env).toBe(false);

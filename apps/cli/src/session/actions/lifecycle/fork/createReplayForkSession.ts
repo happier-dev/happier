@@ -2,7 +2,7 @@ import { configuration } from '@/configuration';
 import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import { createReplaySeededSession } from '@/session/replay/createReplaySeededSession';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
@@ -11,6 +11,7 @@ import { logger } from '@/ui/logger';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { applySessionStateUpdatesToMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol';
+import { projectAgentVisibleSessionMetadata } from '@/agent/runtime/sessionMetadataVisibility';
 
 import { archiveSessionBestEffort } from './forkChildSessionRecovery';
 import type {
@@ -46,7 +47,8 @@ export async function createReplayForkSession(params: Readonly<{
     const replayForkContinuation = params.forkSurface?.resolveReplayChildLaunch
         ? await params.forkSurface.resolveReplayChildLaunch({
             parentSessionId: params.parentSessionId,
-            parentMetadata: params.parentMetadata,
+            parentMetadata:
+                projectAgentVisibleSessionMetadata(params.parentMetadata),
             directory: params.directory,
             forkPoint: params.forkPointType === 'seq'
                 ? { kind: 'message_seq', upToSeqInclusive: params.effectiveCutoffSeqInclusive }
@@ -155,9 +157,13 @@ export async function createReplayForkSession(params: Readonly<{
         };
     }
 
+    const parentMachineId = typeof params.parentMetadata.machineId === 'string'
+        ? params.parentMetadata.machineId.trim()
+        : '';
     const spawnResult = await params.spawnSession({
         directory: replayChildDirectory,
         backendTarget: params.forkBackendResolution.backendTargetV2,
+        ...(parentMachineId ? { machineId: parentMachineId } : {}),
         approvedNewDirectoryCreation: true,
         spawnNonce: params.spawnNonce,
         existingSessionId: created.sessionId,

@@ -47,11 +47,13 @@ describe('ApiSessionClient (Codex MCP) diagnostics', () => {
             },
         }));
         try {
-            client.sendCodexMessage({
-                type: 'tool-call-result',
-                callId: 'call-missing',
-                output: { stdout: 'x' },
-                id: 'msg-1',
+            client.sendProviderMessage({
+                body: {
+                    type: 'tool-call-result',
+                    callId: 'call-missing',
+                    output: { stdout: 'x' },
+                    id: 'msg-1',
+                },
             });
 
             expect(mockLoggerDebug).toHaveBeenCalledWith(

@@ -6,6 +6,22 @@ import type { Credentials } from '@/persistence';
 import type { RpcHandler, RpcHandlerRegistrar } from '../rpc/types';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
+const routeMocks = vi.hoisted(() => ({
+  routeSessionUsageLimitRecoveryWaitResumeEnable: vi.fn(),
+  routeSessionUsageLimitRecoveryWaitResumeCancel: vi.fn(),
+  routeSessionUsageLimitRecoveryCheckNow: vi.fn(),
+  routeSessionUsageLimitRecoverySwitchAccountNow: vi.fn(),
+}));
+
+vi.mock('@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryControlRouter', () => ({
+  routeSessionUsageLimitRecoveryWaitResumeEnable: routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable,
+  routeSessionUsageLimitRecoveryWaitResumeCancel: routeMocks.routeSessionUsageLimitRecoveryWaitResumeCancel,
+  routeSessionUsageLimitRecoveryCheckNow: routeMocks.routeSessionUsageLimitRecoveryCheckNow,
+}));
+vi.mock('@/session/usageLimitRecoveryControls/sessionUsageLimitRecoverySwitchAccountNow', () => ({
+  routeSessionUsageLimitRecoverySwitchAccountNow: routeMocks.routeSessionUsageLimitRecoverySwitchAccountNow,
+}));
+
 import { registerMachineSessionGoalRpcHandlers } from './rpcHandlers.sessionGoals';
 
 describe('rpcHandlers.sessionGoals', () => {
@@ -22,9 +38,11 @@ describe('rpcHandlers.sessionGoals', () => {
   let sessionUsageLimitWaitResumeCancel: ReturnType<typeof vi.fn>;
   let sessionUsageLimitCheckNow: ReturnType<typeof vi.fn>;
   let sessionUsageLimitSwitchAccountNow: ReturnType<typeof vi.fn>;
+  let sessionUsageLimitConsumeResetCredit: ReturnType<typeof vi.fn>;
   let sessionVendorPluginCatalogList: ReturnType<typeof vi.fn>;
   let sessionSkillCatalogList: ReturnType<typeof vi.fn>;
   let createCliActionDepsParams: unknown;
+  let stageUsageLimitRecoveryMutation: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     handlers = new Map();
@@ -35,9 +53,19 @@ describe('rpcHandlers.sessionGoals', () => {
     sessionUsageLimitWaitResumeCancel = vi.fn(async () => ({ ok: true, recovery: { status: 'cancelled' } }));
     sessionUsageLimitCheckNow = vi.fn(async () => ({ ok: true, status: 'waiting' }));
     sessionUsageLimitSwitchAccountNow = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+    sessionUsageLimitConsumeResetCredit = vi.fn(async () => ({ ok: true, status: 'ready' }));
     sessionVendorPluginCatalogList = vi.fn(async () => ({ vendorPlugins: [] }));
     sessionSkillCatalogList = vi.fn(async () => ({ skills: [] }));
     createCliActionDepsParams = null;
+    stageUsageLimitRecoveryMutation = vi.fn(async () => undefined);
+    routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable.mockReset();
+    routeMocks.routeSessionUsageLimitRecoveryWaitResumeCancel.mockReset();
+    routeMocks.routeSessionUsageLimitRecoveryCheckNow.mockReset();
+    routeMocks.routeSessionUsageLimitRecoverySwitchAccountNow.mockReset();
+    routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable.mockResolvedValue({ ok: true, status: 'waiting' });
+    routeMocks.routeSessionUsageLimitRecoveryWaitResumeCancel.mockResolvedValue({ ok: true, status: 'cancelled' });
+    routeMocks.routeSessionUsageLimitRecoveryCheckNow.mockResolvedValue({ ok: true, status: 'waiting' });
+    routeMocks.routeSessionUsageLimitRecoverySwitchAccountNow.mockResolvedValue({ ok: true, status: 'waiting' });
   });
 
   function registerWithTransport(extraDeps: Partial<Parameters<typeof registerMachineSessionGoalRpcHandlers>[0]['deps']> = {}) {
@@ -68,6 +96,10 @@ describe('rpcHandlers.sessionGoals', () => {
           },
           mode: 'plain',
         }),
+        currentMachineId: 'machine-1',
+        stageUsageLimitRecoveryMutation: async ({ mutation }) => {
+          await stageUsageLimitRecoveryMutation(mutation);
+        },
         createCliActionDeps: (input) => {
           createCliActionDepsParams = input;
           return {
@@ -78,6 +110,7 @@ describe('rpcHandlers.sessionGoals', () => {
             sessionUsageLimitWaitResumeCancel,
             sessionUsageLimitCheckNow,
             sessionUsageLimitSwitchAccountNow,
+            sessionUsageLimitConsumeResetCredit,
             sessionVendorPluginCatalogList,
             sessionSkillCatalogList,
           };
@@ -156,7 +189,7 @@ describe('rpcHandlers.sessionGoals', () => {
     });
   });
 
-  it('routes inactive-session usage-limit controls through CLI action deps', async () => {
+  it('makes the daemon handler the sole local inactive usage-limit control owner', async () => {
     const resumeInactiveSessionWhenUsageLimitReady = vi.fn(async () => true);
     const scheduleInactiveSessionUsageLimitRecoveryCheck = vi.fn();
     const cancelInactiveSessionUsageLimitRecoveryCheck = vi.fn();
@@ -174,7 +207,9 @@ describe('rpcHandlers.sessionGoals', () => {
     })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'resolved-session' });
     await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL)?.({
       sessionId: 'session-prefix',
-      issueFingerprint: null,
+      issueFingerprint: 'usage-limit:session-prefix:reset',
+      armedAtMs: 123,
+      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
     })).resolves.toEqual({ ok: true, status: 'cancelled', sessionId: 'resolved-session' });
     await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW)?.({
       sessionId: 'session-prefix',
@@ -187,31 +222,46 @@ describe('rpcHandlers.sessionGoals', () => {
       operation: 'switch_account_now',
       resumePromptMode: 'custom',
     })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'resolved-session' });
+    await expect(handlers.get(RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT)?.({
+      sessionId: 'session-prefix',
+      provider: ' codex ',
+      issueFingerprint: 'usage-limit:codex:turn-1',
+      resumePromptMode: 'custom',
+    })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'resolved-session' });
 
-    expect(sessionUsageLimitWaitResumeEnable).toHaveBeenCalledWith({
+    expect(routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'resolved-session',
-      issueFingerprint: 'usage-limit:session-prefix:reset',
-      remember: true,
-      resumePromptMode: 'custom',
-    });
-    expect(sessionUsageLimitWaitResumeCancel).toHaveBeenCalledWith({
+      currentMachineId: 'machine-1',
+      stageUsageLimitRecoveryMutation: expect.any(Function),
+    }));
+    expect(routeMocks.routeSessionUsageLimitRecoveryWaitResumeCancel).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'resolved-session',
-      issueFingerprint: null,
-    });
-    expect(sessionUsageLimitCheckNow).toHaveBeenCalledWith({
+      stageUsageLimitRecoveryMutation: expect.any(Function),
+    }));
+    expect(routeMocks.routeSessionUsageLimitRecoveryCheckNow).toHaveBeenCalledTimes(2);
+    expect(routeMocks.routeSessionUsageLimitRecoverySwitchAccountNow).toHaveBeenCalledTimes(1);
+    expect(createCliActionDepsParams).toBeNull();
+    expect(sessionUsageLimitWaitResumeEnable).not.toHaveBeenCalled();
+    expect(sessionUsageLimitWaitResumeCancel).not.toHaveBeenCalled();
+    expect(sessionUsageLimitCheckNow).not.toHaveBeenCalled();
+    expect(sessionUsageLimitSwitchAccountNow).not.toHaveBeenCalled();
+    expect(sessionUsageLimitConsumeResetCredit).not.toHaveBeenCalled();
+
+    const daemonStage = routeMocks.routeSessionUsageLimitRecoveryWaitResumeEnable.mock.calls[0]?.[0]
+      ?.stageUsageLimitRecoveryMutation;
+    await daemonStage?.({
+      v: 1,
       sessionId: 'resolved-session',
-      provider: 'codex',
-      resumePromptMode: 'custom',
+      mutationId: 'usage-mutation-1',
+      fieldId: 'runtime.usageLimitRecovery',
+      deliveryClass: 'durable_required',
+      source: 'daemon',
+      observedAt: 1,
+      op: { kind: 'clear' },
     });
-    expect(sessionUsageLimitSwitchAccountNow).toHaveBeenCalledWith({
-      sessionId: 'resolved-session',
-      provider: 'codex',
-      resumePromptMode: 'custom',
-    });
-    expect(createCliActionDepsParams).toEqual(expect.objectContaining({
-      resumeInactiveSessionWhenUsageLimitReady,
-      scheduleInactiveSessionUsageLimitRecoveryCheck,
-      cancelInactiveSessionUsageLimitRecoveryCheck,
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledWith(expect.objectContaining({
+      fieldId: 'runtime.usageLimitRecovery',
+      source: 'daemon',
     }));
   });
 

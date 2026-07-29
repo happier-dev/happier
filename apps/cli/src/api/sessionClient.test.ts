@@ -16,9 +16,11 @@ import { createMockSession, createSessionRecordFixture } from '@/testkit/backend
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { HttpStatusError } from './client/httpStatusError';
 
-// Use vi.hoisted to ensure mock function is available when vi.mock factory runs
-const { mockIo } = vi.hoisted(() => ({
+// Use vi.hoisted to ensure mock functions are available when vi.mock factories run.
+const { mockFetchSessionSystemRecordHttp, mockIo, mockUpsertSessionSystemRecordHttp } = vi.hoisted(() => ({
+    mockFetchSessionSystemRecordHttp: vi.fn(),
     mockIo: vi.fn(),
+    mockUpsertSessionSystemRecordHttp: vi.fn(),
 }));
 
 let mockSocket: any;
@@ -28,23 +30,31 @@ vi.mock('socket.io-client', () => ({
     io: mockIo
 }));
 
+vi.mock('@/session/transport/http/sessionSystemRecordsHttp', () => ({
+    fetchSessionSystemRecord: (...args: unknown[]) => mockFetchSessionSystemRecordHttp(...args),
+    upsertSessionSystemRecord: (...args: unknown[]) => mockUpsertSessionSystemRecordHttp(...args),
+}));
+
 vi.mock('./session/connection/createSessionSocketTransport', () => ({
-    createSessionSocketTransport: () => ({
-        socket: mockSocket,
-        transport: {
-            connect: async () => {},
-            disconnect: async () => {
-                mockSocket.disconnect();
+    createSessionSocketTransport: () => {
+        const socket = mockSocket;
+        return {
+            socket,
+            transport: {
+                connect: async () => {},
+                disconnect: async () => {
+                    socket.disconnect();
+                },
+                destroy: async () => {
+                    socket.removeAllListeners();
+                },
+                isConnected: () => true,
+                onConnected: () => () => {},
+                onDisconnected: () => () => {},
+                onError: () => () => {},
             },
-            destroy: async () => {
-                mockSocket.removeAllListeners();
-            },
-            isConnected: () => true,
-            onConnected: () => () => {},
-            onDisconnected: () => () => {},
-            onError: () => () => {},
-        },
-    }),
+        };
+    },
 }));
 
 vi.mock('@happier-dev/connection-supervisor', () => ({
@@ -239,6 +249,38 @@ function buildEncryptedSessionContent(session: any, value: unknown): {
     return {
         t: 'encrypted',
         c: encryptSessionValue(session, value),
+    };
+}
+
+function selectRuntimeBackend(
+    session: any,
+    params: Readonly<{
+        backendId: string;
+        providerId?: string;
+        backendMode?: string;
+    }>,
+): void {
+    const providerId = params.providerId ?? params.backendId;
+    const backendMode = params.backendMode ?? 'plugin';
+    session.metadata = {
+        ...session.metadata,
+        runtimeDescriptorV1: {
+            v: 1,
+            providerId,
+            provider: {
+                backendMode,
+                providerExtra: {
+                    owner: 'happier',
+                    schemaId: 'test.runtime',
+                    v: 1,
+                    runtimeHandle: {
+                        backendId: params.backendId,
+                        providerId,
+                        backendMode,
+                    },
+                },
+            },
+        },
     };
 }
 
@@ -446,11 +488,20 @@ function emitEncryptedSessionMetadataUpdate(
 
 describe('ApiSessionClient connection handling', () => {
     let mockSession: any;
+    let sessionFixtureSequence = 0;
     let envScope: ReturnType<typeof createEnvKeyScope>;
     let originalArgv: string[];
     const createdClients: ApiSessionClient[] = [];
     const createClient = (token: string, session: any): ApiSessionClient => {
-        const client = new ApiSessionClient(token, session);
+        const client = new ApiSessionClient(token, session, {
+            credentials: {
+                token,
+                encryption: {
+                    type: 'legacy',
+                    secret: session.encryptionKey ?? new Uint8Array(32),
+                },
+            },
+        });
         createdClients.push(client);
         return client;
     };
@@ -467,6 +518,7 @@ describe('ApiSessionClient connection handling', () => {
                     lastDisconnectedAt: null,
                     lastErrorMessage: null,
                 }),
+                captureProbeReportScope: () => ({ generation: 1 }),
                 reportProbeResult,
             },
         });
@@ -476,15 +528,17 @@ describe('ApiSessionClient connection handling', () => {
         envScope = createEnvKeyScope([
             'HAPPIER_STACK_TOOL_TRACE',
             'HAPPIER_STACK_TOOL_TRACE_FILE',
-            'HAPPIER_DAEMON_INITIAL_PROMPT',
             'HAPPIER_FEATURE_EXECUTION_RUNS__ENABLED',
         ]);
         originalArgv = [...process.argv];
         vi.spyOn(console, 'log').mockImplementation(() => {});
+        mockFetchSessionSystemRecordHttp.mockReset();
+        mockUpsertSessionSystemRecordHttp.mockReset();
 
         replaceSocketPair();
 
         mockSession = createMockSession({
+            id: `test-session-id-${++sessionFixtureSequence}`,
             metadata: {
                 path: '/tmp',
                 host: 'localhost',
@@ -546,6 +600,80 @@ describe('ApiSessionClient connection handling', () => {
     it('exposes last observed transcript seq for fork/resume heuristics', () => {
         const client = createClient('token', mockSession);
         expect(client.getLastObservedMessageSeq()).toBe(0);
+    });
+
+    it('upserts session system records through the canonical HTTP helper', async () => {
+        const socket = connectSessionSocket(mockSocket);
+        socket.emitWithAck = vi.fn();
+        mockUpsertSessionSystemRecordHttp.mockResolvedValueOnce({
+            id: 'record-1',
+            sessionId: mockSession.id,
+            namespace: 'activity',
+            kind: 'workflow_run.v1',
+            localId: 'activity:workflow_run:v1:run-1',
+            content: { t: 'plain', v: { v: 1 } },
+            createdAt: '2026-06-30T00:00:00.000Z',
+            updatedAt: '2026-06-30T00:00:01.000Z',
+        });
+        const client = createClient('token', mockSession);
+
+        await client.upsertSessionSystemRecord({
+            namespace: 'activity',
+            kind: 'workflow_run.v1',
+            localId: 'activity:workflow_run:v1:run-1',
+            content: { t: 'plain', v: { v: 1 } },
+        });
+
+        expect(mockUpsertSessionSystemRecordHttp).toHaveBeenCalledWith({
+            token: 'token',
+            sessionId: mockSession.id,
+            namespace: 'activity',
+            kind: 'workflow_run.v1',
+            localId: 'activity:workflow_run:v1:run-1',
+            content: { t: 'plain', v: { v: 1 } },
+        });
+        expect(socket.emitWithAck).not.toHaveBeenCalledWith('upsert-system-record', expect.anything());
+    });
+
+    it('fetches session system records through the canonical HTTP helper', async () => {
+        const client = createClient('token', mockSession);
+        const record = {
+            record: {
+                id: 'record-1',
+                sessionId: mockSession.id,
+                namespace: 'activity',
+                kind: 'workflow_run.v1',
+                localId: 'activity:workflow_run:v1:run-1',
+                content: { t: 'plain', v: { v: 1 } },
+                createdAt: '2026-06-30T00:00:00.000Z',
+                updatedAt: '2026-06-30T00:00:00.000Z',
+            },
+        }.record;
+        mockFetchSessionSystemRecordHttp.mockResolvedValueOnce(record);
+
+        await expect(client.fetchSessionSystemRecord({
+            namespace: 'activity',
+            localId: 'activity:workflow_run:v1:run-1',
+        })).resolves.toBe(record);
+
+        expect(mockFetchSessionSystemRecordHttp).toHaveBeenCalledWith({
+            token: 'token',
+            sessionId: mockSession.id,
+            namespace: 'activity',
+            localId: 'activity:workflow_run:v1:run-1',
+        });
+    });
+
+    it('exposes the current stored-content encryption context for session-owned records', () => {
+        const client = createClient('token', mockSession);
+
+        expect(client.getStoredContentEncryptionContext()).toEqual({
+            mode: 'e2ee',
+            ctx: {
+                encryptionKey: mockSession.encryptionKey,
+                encryptionVariant: mockSession.encryptionVariant,
+            },
+        });
     });
 
     it('keeps execution.run.send RPC registered even when execution.runs is disabled', async () => {
@@ -628,7 +756,7 @@ describe('ApiSessionClient connection handling', () => {
         expect(onUserMessage).not.toHaveBeenCalled();
     });
 
-    it('delivers first wake catch-up user messages when an explicit startup cursor is zero', async () => {
+    it('keeps first wake catch-up user messages observation-only even with an explicit startup cursor', async () => {
         const axiosMod = await import('axios');
         const axios = axiosMod.default as any;
 
@@ -659,12 +787,7 @@ describe('ApiSessionClient connection handling', () => {
 
         await waitForNextTick();
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'wake prompt committed before runner attach' },
-            }),
-        );
+        expect(onUserMessage).not.toHaveBeenCalled();
     });
 
     it('does not let stale catch-up rows authorize later stale rows for provider delivery', async () => {
@@ -780,125 +903,6 @@ describe('ApiSessionClient connection handling', () => {
         await waitForNextTick();
         expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
         expect(onUserMessage).not.toHaveBeenCalled();
-    });
-
-    it('delivers exact daemon-initial-prompt catch-up messages for daemon-started respawns', async () => {
-        const axiosMod = await import('axios');
-        const axios = axiosMod.default as any;
-        const localId = `daemon-initial-prompt:${mockSession.id}`;
-
-        const plaintext = {
-            role: 'user',
-            content: { type: 'text', text: 'recover daemon prompt after respawn' },
-            meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
-        };
-        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
-            buildMessagesListResponse([
-                buildEncryptedTranscriptMessage({
-                    session: mockSession,
-                    plaintext,
-                    id: 'm-daemon-initial-prompt-old-1',
-                    seq: 1,
-                    localId,
-                    createdAt: Date.now() - 120_000,
-                }),
-            ]),
-        );
-
-        mockSession.metadata.startedBy = 'daemon';
-
-        const client = createClient('token', mockSession);
-        const onUserMessage = vi.fn();
-        client.onUserMessage(onUserMessage);
-
-        await waitForNextTick();
-        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'recover daemon prompt after respawn' },
-                localId,
-                meta: expect.objectContaining({
-                    source: 'daemon-initial-prompt',
-                    sentFrom: 'cli',
-                }),
-            }),
-        );
-    });
-
-    it('rejects daemon-initial-prompt catch-up messages without the deterministic localId', async () => {
-        const axiosMod = await import('axios');
-        const axios = axiosMod.default as any;
-
-        const plaintext = {
-            role: 'user',
-            content: { type: 'text', text: 'spoofed daemon prompt' },
-            meta: { source: 'daemon-initial-prompt', sentFrom: 'cli' },
-        };
-        const getSpy = vi.spyOn(axios, 'get').mockResolvedValue(
-            buildMessagesListResponse([
-                buildEncryptedTranscriptMessage({
-                    session: mockSession,
-                    plaintext,
-                    id: 'm-daemon-initial-prompt-wrong-local-id',
-                    seq: 1,
-                    localId: 'daemon-initial-prompt:another-session',
-                    createdAt: Date.now(),
-                }),
-                buildEncryptedTranscriptMessage({
-                    session: mockSession,
-                    plaintext,
-                    id: 'm-daemon-initial-prompt-missing-local-id',
-                    seq: 2,
-                    createdAt: Date.now(),
-                }),
-            ]),
-        );
-
-        mockSession.metadata.startedBy = 'daemon';
-
-        const client = createClient('token', mockSession);
-        const onUserMessage = vi.fn();
-        client.onUserMessage(onUserMessage);
-
-        await waitForNextTick();
-        expect(getSessionMessagesGetCalls(getSpy, mockSession.id).length).toBeGreaterThanOrEqual(1);
-        expect(onUserMessage).not.toHaveBeenCalled();
-    });
-
-    it('uses a deterministic localId for daemon initial prompt commits so respawn replays stay idempotent', async () => {
-        envScope.patch({
-            HAPPIER_DAEMON_INITIAL_PROMPT: 'recover daemon prompt after respawn',
-        });
-
-        configureCommittedMessageAck(mockSocket, {
-            ok: true,
-            id: 'msg-daemon-initial-prompt-1',
-            seq: 1,
-        });
-        mockSession.metadata.startedBy = 'daemon';
-
-        const client = createClient('token', mockSession);
-        const onUserMessage = vi.fn();
-        client.onUserMessage(onUserMessage);
-        await flushClientQueue(client);
-
-        const payload = getLastCommittedMessagePayload(mockSocket);
-        expect(payload).toEqual(
-            expect.objectContaining({
-                sid: mockSession.id,
-                localId: `daemon-initial-prompt:${mockSession.id}`,
-            }),
-        );
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                localId: `daemon-initial-prompt:${mockSession.id}`,
-                meta: expect.objectContaining({
-                    source: 'daemon-initial-prompt',
-                    sentFrom: 'cli',
-                }),
-            }),
-        );
     });
 
     it('suppresses recent zero-boundary catch-up user messages for terminal-started sessions without an explicit cursor', async () => {
@@ -1081,7 +1085,7 @@ describe('ApiSessionClient connection handling', () => {
 
         expect(getLastCommittedMessagePayload(mockSocket)).toEqual(
             expect.objectContaining({
-                sid: 'test-session-id',
+                sid: mockSession.id,
                 message: expect.objectContaining({ t: 'plain', v: expect.anything() }),
                 localId: expect.any(String),
             }),
@@ -1104,12 +1108,38 @@ describe('ApiSessionClient connection handling', () => {
         const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
         expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.provider).toBe('opencode');
+        expect(decrypted.content.agentId).toBe('opencode');
         expect(decrypted.content.data).toMatchObject({
             type: 'tool-call',
             name: 'Bash',
             input: expect.objectContaining({ command: 'echo hi' }),
         });
+    });
+
+    it('bounds unresolved ACP tool-call input caches so aborted calls cannot retain inputs forever', async () => {
+        connectSessionSocket();
+        const client = createClient('fake-token', mockSession);
+
+        for (let index = 0; index < 1_050; index += 1) {
+            client.sendAgentMessage('opencode', {
+                type: 'tool-call',
+                callId: `call-${index}`,
+                name: 'execute',
+                input: { command: ['bash', '-lc', `echo ${index}`], retained: 'x'.repeat(512) },
+                id: `msg-${index}`,
+            });
+        }
+
+        await flushClientQueue(client);
+
+        const toolInputs = (client as any).toolCallInputByProviderAndId as Map<string, unknown>;
+        const toolNames = (client as any).toolCallCanonicalNameByProviderAndId as Map<string, unknown>;
+        expect(toolInputs.size).toBeLessThanOrEqual(1_000);
+        expect(toolNames.size).toBeLessThanOrEqual(1_000);
+        expect(toolInputs.has('opencode:call-0')).toBe(false);
+        expect(toolNames.has('opencode:call-0')).toBe(false);
+        expect(toolInputs.has('opencode:call-1049')).toBe(true);
+        expect(toolNames.has('opencode:call-1049')).toBe(true);
     });
 
     it('does not emit metadata-updated after close() when a snapshot sync resolves late', async () => {
@@ -1331,7 +1361,9 @@ describe('ApiSessionClient connection handling', () => {
         const client = createClient('fake-token', mockSession);
 
         const received: any[] = [];
-        client.onUserMessage((msg: any) => received.push(msg));
+        client.onUserMessage((msg: any) => {
+            received.push(msg);
+        });
 
         const plaintext = {
             role: 'user',
@@ -1363,7 +1395,9 @@ describe('ApiSessionClient connection handling', () => {
         const client = createClient('fake-token', mockSession);
 
         const received: any[] = [];
-        client.onUserMessage((msg: any) => received.push(msg));
+        client.onUserMessage((msg: any) => {
+            received.push(msg);
+        });
 
         const plaintext = {
             role: 'user',
@@ -1397,40 +1431,6 @@ describe('ApiSessionClient connection handling', () => {
         });
     });
 
-    it('consumes daemon initial prompt env and seeds one user prompt on callback attach', () => {
-        envScope.patch({ HAPPIER_DAEMON_INITIAL_PROMPT: '  run nightly health check  ' });
-
-        const client = createClient('fake-token', mockSession);
-        const enqueueSessionUserMessageSpy = vi.spyOn((client as any).transcriptApi, 'enqueueSessionUserMessage');
-        const onUserMessage = vi.fn();
-
-        client.onUserMessage(onUserMessage);
-        client.onUserMessage(onUserMessage);
-
-        expect(onUserMessage).toHaveBeenCalledTimes(1);
-        expect(onUserMessage).toHaveBeenCalledWith(
-            expect.objectContaining({
-                role: 'user',
-                content: { type: 'text', text: 'run nightly health check' },
-                meta: expect.objectContaining({
-                    source: 'daemon-initial-prompt',
-                    sentFrom: 'cli',
-                }),
-            }),
-        );
-        expect(enqueueSessionUserMessageSpy).toHaveBeenCalledTimes(1);
-        expect(enqueueSessionUserMessageSpy).toHaveBeenCalledWith(
-            expect.objectContaining({
-                text: 'run nightly health check',
-                meta: {
-                    source: 'daemon-initial-prompt',
-                    sentFrom: 'cli',
-                },
-            }),
-        );
-        expect(process.env.HAPPIER_DAEMON_INITIAL_PROMPT).toBeUndefined();
-    });
-
     it('routes session user-message RPC through the runtime queue and transcript commit path', async () => {
         configureCommittedMessageAck(mockSocket, {
             ok: true,
@@ -1461,7 +1461,7 @@ describe('ApiSessionClient connection handling', () => {
                 localId: 'rpc-local-1',
                 content: { type: 'text', text: 'hello from session send' },
                 meta: expect.objectContaining({
-                    source: 'cli',
+                    source: 'ui',
                     sentFrom: 'cli',
                     permissionMode: 'default',
                 }),
@@ -1478,11 +1478,15 @@ describe('ApiSessionClient connection handling', () => {
     });
 
     it('reuses one generated localId for queued RPC user messages and their transcript echo suppression', async () => {
-        configureCommittedMessageAck(mockSocket, {
+        mockSocket.connected = true;
+        mockSocket.timeout = vi.fn().mockReturnThis();
+        mockSocket.emitWithAck = vi.fn(async (_event: string, payload: any) => ({
             ok: true,
             id: 'msg-rpc-2',
             seq: 2,
-        });
+            localId: payload?.localId ?? null,
+            didWrite: true,
+        }));
 
         const client = createClient('fake-token', mockSession);
         const onUserMessage = vi.fn();
@@ -1520,7 +1524,7 @@ describe('ApiSessionClient connection handling', () => {
                 role: 'user',
                 content: { type: 'text', text: 'hello without explicit local id' },
                 localId: emittedLocalId,
-                meta: { sentFrom: 'cli', source: 'cli' },
+                meta: { sentFrom: 'cli', source: 'ui' },
             },
         });
 
@@ -1877,7 +1881,7 @@ describe('ApiSessionClient connection handling', () => {
         const decrypted = getLastDecryptedOutboundMessage(mockSession);
 
         expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.provider).toBe('gemini');
+        expect(decrypted.content.agentId).toBe('gemini');
         expect(decrypted.content.data.type).toBe('permission-request');
         expect(decrypted.content.data.options).toMatchObject({
             options: {
@@ -1951,7 +1955,7 @@ describe('ApiSessionClient connection handling', () => {
         const decrypted = messages[1];
 
         expect(decrypted.content.type).toBe('acp');
-        expect(decrypted.content.provider).toBe('gemini');
+        expect(decrypted.content.agentId).toBe('gemini');
         expect(decrypted.content.data).toMatchObject({
             type: 'tool-result',
             callId: 'write_todos-1',
@@ -1963,13 +1967,16 @@ describe('ApiSessionClient connection handling', () => {
 
     it('normalizes outbound Codex MCP tool-call names to V2 canonical keys', async () => {
         connectSessionSocket();
+        selectRuntimeBackend(mockSession, { backendId: 'codex', providerId: 'codex', backendMode: 'appServer' });
         const client = createClient('fake-token', mockSession);
-        client.sendCodexMessage({
-            type: 'tool-call',
-            callId: 'call-1',
-            name: 'CodexBash',
-            input: { command: ['bash', '-lc', 'echo hi'] },
-            id: 'msg-1',
+        client.sendProviderMessage({
+            body: {
+                type: 'tool-call',
+                callId: 'call-1',
+                name: 'CodexBash',
+                input: { command: ['bash', '-lc', 'echo hi'] },
+                id: 'msg-1',
+            },
         });
 
         await flushClientQueue(client);
@@ -1985,21 +1992,26 @@ describe('ApiSessionClient connection handling', () => {
 
     it('normalizes outbound Codex MCP tool-call-result outputs using the canonical tool name for the callId', async () => {
         connectSessionSocket();
+        selectRuntimeBackend(mockSession, { backendId: 'codex', providerId: 'codex', backendMode: 'appServer' });
         const client = createClient('fake-token', mockSession);
 
-        client.sendCodexMessage({
-            type: 'tool-call',
-            callId: 'call-1',
-            name: 'CodexBash',
-            input: { command: ['bash', '-lc', 'echo hi'] },
-            id: 'msg-1',
+        client.sendProviderMessage({
+            body: {
+                type: 'tool-call',
+                callId: 'call-1',
+                name: 'CodexBash',
+                input: { command: ['bash', '-lc', 'echo hi'] },
+                id: 'msg-1',
+            },
         });
 
-        client.sendCodexMessage({
-            type: 'tool-call-result',
-            callId: 'call-1',
-            output: { stdout: 'TRACE_OK\n', exit_code: 0 },
-            id: 'msg-2',
+        client.sendProviderMessage({
+            body: {
+                type: 'tool-call-result',
+                callId: 'call-1',
+                output: { stdout: 'TRACE_OK\n', exit_code: 0 },
+                id: 'msg-2',
+            },
         });
 
         await flushClientQueue(client);
@@ -2038,6 +2050,30 @@ describe('ApiSessionClient connection handling', () => {
         expect(mockSocket.on).toHaveBeenCalledWith('error', expect.any(Function));
     });
 
+    it('fails closed when the server rejects a provider-starting RPC registration as upgrade-required', () => {
+        const client = createClient('fake-token', mockSession);
+        const reportProbeResult = vi.fn();
+        overrideSessionSupervisor(client, reportProbeResult);
+
+        mockSocket.trigger(SOCKET_RPC_EVENTS.ERROR, {
+            type: 'register',
+            error: 'client-upgrade-required',
+            requirement: {
+                v: 1,
+                minimumSessionSyncProtocolVersion: 2,
+                clientKind: 'session-runner',
+                minimumAppVersion: '0.3.0',
+                updateUrl: null,
+            },
+        });
+
+        expect(reportProbeResult).toHaveBeenCalledWith({
+            status: 'auth_failed',
+            statusCode: 426,
+            errorMessage: 'This Happier session runner must be upgraded before it can sync sessions.',
+        }, { generation: 1 });
+    });
+
     it('close tears down the supervised session socket and closes the user-scoped socket', async () => {
         const client = createClient('fake-token', mockSession);
 
@@ -2050,6 +2086,10 @@ describe('ApiSessionClient connection handling', () => {
 
     it('waitForMetadataUpdate ensures the user-scoped socket is connected so metadata updates can wake idle agents', async () => {
         connectSessionSocket();
+        mockUserSocket.connect.mockImplementation(() => {
+            mockUserSocket.connected = true;
+            return mockUserSocket;
+        });
         const client = createClient('fake-token', mockSession);
 
         const controller = new AbortController();
@@ -2075,6 +2115,7 @@ describe('ApiSessionClient connection handling', () => {
             userSocket: mockUserSocket,
         });
 
+        selectRuntimeBackend(mockSession, { backendId: 'claude', providerId: 'claude', backendMode: 'sdk' });
         const client = createClient('fake-token', mockSession);
 
         const payload: RawJSONLines = {
@@ -2085,7 +2126,7 @@ describe('ApiSessionClient connection handling', () => {
             },
         } as const;
 
-        client.sendClaudeSessionMessage(payload);
+        client.sendProviderMessage({ body: payload });
         await flushClientQueue(client);
 
         expect(mockSocket.emit).not.toHaveBeenCalledWith(
@@ -2112,6 +2153,7 @@ describe('ApiSessionClient connection handling', () => {
 
     it('merges optional meta into outbound Claude session messages', async () => {
         connectSessionSocket();
+        selectRuntimeBackend(mockSession, { backendId: 'claude', providerId: 'claude', backendMode: 'sdk' });
         const client = createClient('fake-token', mockSession);
 
         const payload: RawJSONLines = {
@@ -2123,7 +2165,7 @@ describe('ApiSessionClient connection handling', () => {
             },
         } as const;
 
-        client.sendClaudeSessionMessage(payload, { importedFrom: 'claude-taskoutput' });
+        client.sendProviderMessage({ body: payload, meta: { importedFrom: 'claude-taskoutput' } });
 
         await flushClientQueue(client);
 
@@ -2165,6 +2207,33 @@ describe('ApiSessionClient connection handling', () => {
                 expect.objectContaining({ sid: mockSession.id, thinking: false, mode: 'remote' }),
             ],
         ]);
+    });
+
+    it('replays the latest keepAlive state as non-volatile presence after reconnect', async () => {
+        mockSocket.connected = false;
+        mockSocket.volatile = { emit: vi.fn() };
+
+        const client = createClient('fake-token', mockSession);
+        await Promise.resolve();
+        mockSocket.emit.mockClear();
+        mockSocket.volatile.emit.mockClear();
+
+        client.keepAlive(true, 'remote');
+        client.keepAlive(false, 'remote');
+
+        expect(getSocketEventCalls(mockSocket, 'session-alive')).toHaveLength(0);
+        expect(getSocketVolatileEventCalls(mockSocket, 'session-alive')).toHaveLength(0);
+
+        mockSocket.connected = true;
+        await (client as any).sessionConnectionSupervisor.start();
+
+        expect(getSocketEventCalls(mockSocket, 'session-alive')).toEqual([
+            [
+                'session-alive',
+                expect.objectContaining({ sid: mockSession.id, thinking: false, mode: 'remote' }),
+            ],
+        ]);
+        expect(getSocketVolatileEventCalls(mockSocket, 'session-alive')).toHaveLength(0);
     });
 
 		    it('attaches server localId onto decrypted user messages', async () => {
@@ -2421,11 +2490,22 @@ describe('ApiSessionClient connection handling', () => {
                     serverMetadata,
                 );
 
-                const emitWithAck = vi.fn().mockResolvedValueOnce({
+                const emitWithAck = vi.fn(async (_event: string, payload: any) => ({
                     result: 'success',
-                    version: 6,
-                    metadata: encryptedServerMetadata,
-                });
+                    metadataLayoutVersion: 1,
+                    metadata: {
+                        value: payload.sharedMetadata.ciphertext,
+                        version: 6,
+                    },
+                    ownerMetadata: {
+                        value: payload.ownerMetadata.ciphertext,
+                        version: 0,
+                    },
+                    agentState: {
+                        value: payload.agentState.ciphertext,
+                        version: payload.agentState.expectedVersion + 1,
+                    },
+                }));
                 sessionSocket.emitWithAck = emitWithAck;
 
                 replaceSocketPair({ sessionSocket, userSocket });
@@ -2455,7 +2535,10 @@ describe('ApiSessionClient connection handling', () => {
 
                 expect(emitWithAck).toHaveBeenCalledWith(
                     'update-metadata',
-                    expect.objectContaining({ expectedVersion: 5 }),
+                    expect.objectContaining({
+                        mode: 'owner',
+                        sharedMetadata: expect.objectContaining({ expectedVersion: 5 }),
+                    }),
                 );
     });
 

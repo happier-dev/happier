@@ -55,13 +55,13 @@ export function copyCliBinRuntimeFiles(options: {
     cpSync(resolve(runtimeBinDir, file), join(options.binDir, file));
   }
 
-  copyCliCommonBuildLockRuntimeFile({
+  copyCliCommonBootstrapRuntimeFiles({
     packageDir: resolve(options.binDir, '..', 'node_modules', '@happier-dev', 'cli-common'),
     repoRoot,
   });
 }
 
-function copyCliCommonBuildLockRuntimeFile(options: {
+function copyCliCommonBootstrapRuntimeFiles(options: {
   packageDir: string;
   repoRoot: string;
 }): void {
@@ -73,13 +73,17 @@ function copyCliCommonBuildLockRuntimeFile(options: {
       type: 'module',
       exports: {
         './jsonOwnerBuildLockState': './jsonOwnerBuildLockState.cjs',
+        './cliDistBuildManifest': './cliDistBuildManifest.cjs',
       },
     },
   });
-  cpSync(
-    resolve(options.repoRoot, 'packages', 'cli-common', 'jsonOwnerBuildLockState.cjs'),
-    join(options.packageDir, 'jsonOwnerBuildLockState.cjs'),
-  );
+
+  for (const file of ['jsonOwnerBuildLockState.cjs', 'cliDistBuildManifest.cjs']) {
+    cpSync(
+      resolve(options.repoRoot, 'packages', 'cli-common', file),
+      join(options.packageDir, file),
+    );
+  }
 }
 
 export function copyCliWorkspaceSyncRuntimeFiles(options: {
@@ -94,6 +98,20 @@ export function copyCliWorkspaceSyncRuntimeFiles(options: {
   for (const file of ['syncBundledWorkspacePackages.mjs', 'vendorBundledWorkspaceRuntimeDependenciesFallback.mjs']) {
     cpSync(resolve(workspaceScriptsDir, file), join(options.scriptsDir, file));
   }
+
+  const sandboxRoot = resolve(options.scriptsDir, '..', '..');
+  const cliCommonPackageDir = resolve(sandboxRoot, 'packages', 'cli-common');
+  ensureDirectorySync(cliCommonPackageDir);
+  cpSync(
+    resolve(repoRoot, 'packages', 'cli-common', 'workspaceRuntimeDependencies.mjs'),
+    resolve(cliCommonPackageDir, 'workspaceRuntimeDependencies.mjs'),
+  );
+  ensureDirectorySync(resolve(sandboxRoot, 'node_modules'));
+  cpSync(
+    resolve(repoRoot, 'node_modules', 'semver'),
+    resolve(sandboxRoot, 'node_modules', 'semver'),
+    { recursive: true },
+  );
 }
 
 export function runHappierBin(options: {

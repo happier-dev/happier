@@ -3,10 +3,9 @@ import {
   type BuiltInAcpYesNoAuto,
   type AgentId,
 } from '@happier-dev/agents';
-import type { AcpPromptImageSupportV1 } from '@happier-dev/plugin-sdk';
 
-import type { AcpRuntimeDefinitionV1 } from './_types';
-import { createAcpRuntimeDefinition } from './runtimeCore';
+import type { AcpRuntimeDefinition } from './_types';
+import { createAcpRuntimeDefinition } from './create';
 
 function normalizeBuiltInSupportFlag(value: BuiltInAcpYesNoAuto): boolean | 'unknown' {
   if (value === 'yes') {
@@ -18,11 +17,11 @@ function normalizeBuiltInSupportFlag(value: BuiltInAcpYesNoAuto): boolean | 'unk
   return 'unknown';
 }
 
-function normalizeBuiltInPromptImageSupport(value: BuiltInAcpYesNoAuto): AcpPromptImageSupportV1 {
+function normalizeBuiltInPromptImageSupport(value: BuiltInAcpYesNoAuto): 'yes' | 'no' | 'unknown' {
   return value === 'auto' ? 'unknown' : value;
 }
 
-export function normalizeBuiltInAcpDefinition(agentId: AgentId): AcpRuntimeDefinitionV1 {
+export function normalizeBuiltInAcpDefinition(agentId: AgentId): AcpRuntimeDefinition {
   const config = getBuiltInAcpConfig(agentId);
   if (!config) {
     throw new Error(`No built-in ACP runtime definition is configured for agent '${agentId}'.`);

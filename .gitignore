@@ -132,6 +132,9 @@ _.env.pipeline.production.local
 
 # Local probe/debug scratch files
 /apps/cli/tmp-*
+/apps/cli/-
+/apps/cli/vitest.*.temp.config.ts
+/apps/cli/vitest.*-composed.config.ts
 /--fullpage
 
 # Local QA screenshots

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createExternalMcpServer as createExternalMcpServerStatic } from '@/mcp/createExternalMcpServer';
 
 const env = process.env;
 
@@ -20,9 +21,7 @@ describe('createExternalMcpServer', () => {
       },
     });
 
-    const { createExternalMcpServer } = await import('@/mcp/createExternalMcpServer');
-
-    const { toolNames } = createExternalMcpServer({
+    const { toolNames } = createExternalMcpServerStatic({
       credentials: {
         token: 'token',
         encryption: {
@@ -36,9 +35,7 @@ describe('createExternalMcpServer', () => {
   });
 
   it('includes action-backed tools and the action_execute escape hatch', async () => {
-    const { createExternalMcpServer } = await import('@/mcp/createExternalMcpServer');
-
-    const { toolNames } = createExternalMcpServer({
+    const { toolNames } = createExternalMcpServerStatic({
       credentials: {
         token: 'token',
         encryption: {
@@ -210,4 +207,5 @@ describe('createExternalMcpServer', () => {
       actionId: 'session.title.set',
     });
   });
+
 });

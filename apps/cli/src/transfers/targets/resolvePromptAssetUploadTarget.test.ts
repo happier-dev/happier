@@ -49,6 +49,7 @@ describe('resolvePromptAssetUploadTarget', () => {
     }
 
     await expect(result.target.finalizeUpload({
+      uploadId: 'upload-1',
       tempPath,
       sizeBytes: Buffer.byteLength(payloadText),
       sha256: 'sha256',
@@ -119,6 +120,7 @@ describe('resolvePromptAssetUploadTarget', () => {
     }
 
     await expect(result.target.finalizeUpload({
+      uploadId: 'upload-2',
       tempPath,
       sizeBytes: Buffer.byteLength(payloadText),
       sha256: 'sha256',

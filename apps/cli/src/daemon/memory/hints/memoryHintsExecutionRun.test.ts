@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentBackend, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { MemoryHintsExecutionRunBackendFactory } from './runMemoryHintsExecutionRun';
 
 describe('runMemoryHintsExecutionRun', () => {
@@ -9,29 +8,19 @@ describe('runMemoryHintsExecutionRun', () => {
     const { runMemoryHintsExecutionRun } = await import('./runMemoryHintsExecutionRun');
 
     const observed: Parameters<MemoryHintsExecutionRunBackendFactory>[0][] = [];
-    const handlers = new Set<AgentMessageHandler>();
 
-    const backend: AgentBackend = {
-      async startSession(): Promise<{ sessionId: SessionId }> {
-        return { sessionId: 'vendor-sess-1' };
-      },
-      async sendPrompt(_sessionId: string, _prompt: string): Promise<void> {
+    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    runtime = createTestExecutionRunHostRuntime({
+      sessionId: 'vendor-sess-1',
+      onSendPrompt() {
         // Emit fullText immediately for determinism.
-        for (const handler of handlers) {
-          handler({ type: 'model-output', fullText: '{"ok":true}' });
-        }
+        runtime.emitMessage({ type: 'model-output', fullText: '{"ok":true}' });
       },
-      async cancel(): Promise<void> {},
-      onMessage(handler: AgentMessageHandler): void {
-        handlers.add(handler);
-      },
-      async waitForResponseComplete(): Promise<void> {},
-      async dispose(): Promise<void> {},
-    };
+    });
 
     const createBackend: MemoryHintsExecutionRunBackendFactory = (opts) => {
       observed.push(opts);
-      return createExecutionRunHostRuntimeFromAgentBackend(backend);
+      return runtime;
     };
 
     const raw = await runMemoryHintsExecutionRun({
@@ -47,5 +36,5 @@ describe('runMemoryHintsExecutionRun', () => {
     expect(raw).toContain('{"ok":true}');
     expect(observed[0]?.start?.retentionPolicy).toBe('ephemeral');
     expect(observed[0]?.start?.intent).toBe('memory_hints');
-  });
+  }, 1_000);
 });

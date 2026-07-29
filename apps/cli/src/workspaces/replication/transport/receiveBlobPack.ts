@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, open, readdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, posix, win32 } from 'node:path';
+
+import { writeFileHandleFully } from '@/utils/fs/writeFileHandleFully';
 
 import { createWorkspaceReplicationCasStore } from '../cas/workspaceReplicationCasStore';
 import { createWorkspaceReplicationPaths } from '../state/workspaceReplicationPaths';
@@ -49,12 +51,20 @@ async function readExactBytes(input: Readonly<{
   return buffer.subarray(0, totalBytesRead);
 }
 
-async function removeEmptyDirectoriesUpTo(input: Readonly<{
+export async function removeEmptyDirectoriesUpTo(input: Readonly<{
   startDirectory: string;
   stopDirectory: string;
 }>): Promise<void> {
+  const pathApi = process.platform === 'win32' ? win32 : posix;
+  const relativeStart = pathApi.relative(input.stopDirectory, input.startDirectory);
+  if (relativeStart === '..'
+    || relativeStart.startsWith(`..${pathApi.sep}`)
+    || pathApi.isAbsolute(relativeStart)) {
+    return;
+  }
+
   let currentDirectory = input.startDirectory;
-  while (currentDirectory.startsWith(input.stopDirectory)) {
+  for (;;) {
     if (currentDirectory === input.stopDirectory) {
       const entries = await readdir(currentDirectory).catch(() => []);
       if (entries.length === 0) {
@@ -67,7 +77,11 @@ async function removeEmptyDirectoriesUpTo(input: Readonly<{
       return;
     }
     await rm(currentDirectory, { recursive: true, force: true }).catch(() => undefined);
-    currentDirectory = currentDirectory.slice(0, currentDirectory.lastIndexOf('/'));
+    const parentDirectory = pathApi.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return;
+    }
+    currentDirectory = parentDirectory;
   }
 }
 
@@ -206,6 +220,8 @@ export async function receiveWorkspaceReplicationBlobPack(input: Readonly<{
       const digest = createHash('sha256');
       let remainingBytes = recordHeader.sizeBytes;
 
+      let writeFailed = false;
+      let writeFailure: unknown;
       try {
         while (remainingBytes > 0) {
           const chunkLength = Math.min(remainingBytes, BLOB_PACK_STREAM_CHUNK_BYTES);
@@ -220,22 +236,37 @@ export async function receiveWorkspaceReplicationBlobPack(input: Readonly<{
               'Workspace replication blob pack ended before a blob payload completed',
             );
           }
-          await temporaryFile.write(chunk);
+          await writeFileHandleFully({
+            fileHandle: temporaryFile,
+            buffer: chunk,
+            position: recordHeader.sizeBytes - remainingBytes,
+          });
           digest.update(chunk);
           remainingBytes -= chunk.length;
           position += chunk.length;
         }
       } catch (error) {
+        writeFailed = true;
+        writeFailure = error;
+      }
+
+      try {
         await temporaryFile.close();
+      } catch (error) {
+        if (!writeFailed) {
+          writeFailed = true;
+          writeFailure = error;
+        }
+      }
+
+      if (writeFailed) {
         await cleanupTemporaryBlobFile({
           temporaryPath,
           packDirectory,
           stagingDirectory: paths.stagingDirectory,
         });
-        throw error;
+        throw writeFailure;
       }
-
-      await temporaryFile.close();
 
       const computedDigest = `sha256:${digest.digest('hex')}`;
       if (computedDigest !== recordHeader.digest) {
@@ -260,15 +291,18 @@ export async function receiveWorkspaceReplicationBlobPack(input: Readonly<{
         continue;
       }
 
-      await casStore.commitFile({
-        digest: recordHeader.digest,
-        sourcePath: temporaryPath,
-      });
-      await cleanupTemporaryBlobFile({
-        temporaryPath,
-        packDirectory,
-        stagingDirectory: paths.stagingDirectory,
-      });
+      try {
+        await casStore.commitFile({
+          digest: recordHeader.digest,
+          sourcePath: temporaryPath,
+        });
+      } finally {
+        await cleanupTemporaryBlobFile({
+          temporaryPath,
+          packDirectory,
+          stagingDirectory: paths.stagingDirectory,
+        });
+      }
       committedDigests.push(recordHeader.digest);
       transferredBytes += recordHeader.sizeBytes;
       transferredBlobs += 1;

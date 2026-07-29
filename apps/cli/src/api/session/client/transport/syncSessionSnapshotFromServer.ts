@@ -2,6 +2,8 @@ import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSup
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
 
 import type { AgentState, Metadata } from '../../../types';
+import type { Credentials } from '@/persistence';
+import type { SessionMetadataEnvelopeTupleSnapshot } from '@/session/metadata/updateSessionMetadataWithRetry';
 import type { KnownPendingQueueState } from '../../pendingQueueState';
 import { fetchSessionSnapshotUpdateFromServer } from '../../snapshotSync';
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
@@ -11,16 +13,21 @@ export async function syncSessionSnapshotFromServer(
     params: Readonly<{
         token: string;
         sessionId: string;
+        credentials?: Credentials | null;
         encryptionKey: Uint8Array;
         encryptionVariant: 'legacy' | 'dataKey';
+        currentMetadataLayoutVersion: number;
         currentMetadataVersion: number;
         currentAgentStateVersion: number;
         currentMetadata: Metadata | null;
         currentAgentState: AgentState | null;
         sessionConnectionSupervisor: ManagedConnectionSupervisor | null;
         isClosed: () => boolean;
-        setMetadataSnapshot: (metadata: Metadata, version: number) => void;
+        setMetadataSnapshot: (metadata: Metadata | null, version: number, layoutVersion: number) => void;
         setAgentStateSnapshot: (agentState: AgentState | null, version: number) => void;
+        setMetadataEnvelopeTupleSnapshot: (
+            snapshot: SessionMetadataEnvelopeTupleSnapshot,
+        ) => void;
         applyPendingQueueState: (state: KnownPendingQueueState) => void;
         applyLatestTurnStatus: (status: LatestTurnStatusSnapshot, observedAt?: number) => void;
         reason: SessionSnapshotRefreshReason;
@@ -29,8 +36,10 @@ export async function syncSessionSnapshotFromServer(
     const request = () => fetchSessionSnapshotUpdateFromServer({
         token: params.token,
         sessionId: params.sessionId,
+        credentials: params.credentials,
         encryptionKey: params.encryptionKey,
         encryptionVariant: params.encryptionVariant,
+        currentMetadataLayoutVersion: params.currentMetadataLayoutVersion,
         currentMetadataVersion: params.currentMetadataVersion,
         currentAgentStateVersion: params.currentAgentStateVersion,
         currentMetadata: params.currentMetadata,
@@ -48,11 +57,17 @@ export async function syncSessionSnapshotFromServer(
 
     if (params.isClosed()) return false;
 
-    if (update.metadata) {
-        params.setMetadataSnapshot(update.metadata.metadata, update.metadata.metadataVersion);
+    if (update.metadataTuple) {
+        params.setMetadataEnvelopeTupleSnapshot(update.metadataTuple);
+    } else if (update.metadata) {
+        params.setMetadataSnapshot(
+            update.metadata.metadata,
+            update.metadata.metadataVersion,
+            update.metadataLayoutVersion ?? params.currentMetadataLayoutVersion,
+        );
     }
 
-    if (update.agentState) {
+    if (!update.metadataTuple && update.agentState) {
         params.setAgentStateSnapshot(update.agentState.agentState, update.agentState.agentStateVersion);
     }
 

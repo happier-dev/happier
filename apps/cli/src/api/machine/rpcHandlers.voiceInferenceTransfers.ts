@@ -42,6 +42,8 @@ import {
 } from '@/daemon/voiceInference/voiceInferenceWorker.shared';
 
 import type { VoiceInferenceWorkerHandle } from '@/daemon/voiceInference/voiceInferenceWorker';
+import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
+import type { VoiceSpeechDiagnosticFormatV1 } from '@happier-dev/protocol';
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 
 import {
@@ -62,10 +64,29 @@ function parseTransferLifecycleResponse<T>(schema: VoiceInferenceSchemaParser<T>
   });
 }
 
+function resolveDiagnosticFormat(inputMimeType: string): VoiceSpeechDiagnosticFormatV1 | null {
+  const normalized = normalizeVoiceInferenceInputMimeType(inputMimeType);
+  if (isVoiceInferenceWavMimeType(normalized)) return 'wav';
+  if (normalized === 'audio/webm') return 'webm';
+  if (normalized === 'audio/ogg' || normalized === 'audio/opus') return 'ogg';
+  if (normalized === 'audio/mpeg' || normalized === 'audio/mp3') return 'mpeg';
+  if (normalized === 'audio/mp4' || normalized === 'audio/x-m4a' || normalized === 'audio/m4a') return 'mp4';
+  if (normalized === 'audio/flac' || normalized === 'audio/x-flac') return 'flac';
+  if (normalized === 'audio/pcm' || normalized === 'audio/l16') return 'pcm16';
+  return null;
+}
+
+export type MachineVoiceInferenceTransferRpcRegistration = Readonly<{
+  downloadStore: TransferSessionStore;
+  uploadStore: TransferSessionStore;
+  dispose: () => Promise<void>;
+}>;
+
 export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonly<{
   rpcHandlerManager: RpcHandlerManager;
   voiceInferenceWorker: VoiceInferenceWorkerHandle;
-}>): void {
+  voiceDiagnostics?: VoiceDiagnosticsController;
+}>): MachineVoiceInferenceTransferRpcRegistration {
   const voiceInferencePaths = resolveVoiceInferencePaths();
   const voiceInferenceTransfersRoot = join(voiceInferencePaths.tempDir, 'transfers');
   const sessionTtlMs = Number.isFinite(configuration.filesTransferSessionTtlMs)
@@ -97,6 +118,7 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
   const ttsDownloadReleaseTimerById = new Map<string, ReturnType<typeof setTimeout>>();
   const ttsDownloadFilePathById = new Map<string, string>();
   const uploadMimeTypeById = new Map<string, string>();
+  let disposePromise: Promise<void> | null = null;
 
   function toPublicUploadTempPath(uploadId: string, absoluteUploadPath: string): string {
     // Avoid leaking absolute local machine paths over RPC. Keep a stable, relative hint for debugging.
@@ -176,6 +198,18 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
         output: parsed.data.output,
       });
       synthesizedFilePath = synthesized.filePath;
+      if (parsed.data.diagnostics?.captureAllowed === true) {
+        await params.voiceDiagnostics?.captureFile({
+          direction: 'tts_output',
+          format: 'wav',
+          filePath: synthesized.filePath,
+          durationMs: parsed.data.diagnostics.durationMs,
+          sessionId: parsed.data.diagnostics.sessionId,
+          authorizationId: parsed.data.diagnostics.authorizationId,
+          providerId: parsed.data.packId ?? 'daemon-default',
+          attemptId: parsed.data.requestId,
+        });
+      }
       const session = await transferLifecycle.openDownloadTransferSession({
         source: {
           filePath: synthesized.filePath,
@@ -429,6 +463,7 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
     }
     await clearFinalizedUpload(parsed.data.uploadId, { deleteFile: false });
     try {
+      const diagnosticFormat = resolveDiagnosticFormat(uploaded.inputMimeType);
       const transcribed = await params.voiceInferenceWorker.transcribeAudio({
         requestId: parsed.data.requestId,
         uploadId: parsed.data.uploadId,
@@ -438,6 +473,21 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
         filePath: uploaded.path,
         inputMimeType: uploaded.inputMimeType,
       });
+      // Diagnostics are evidence of a completed provider operation, not merely an accepted
+      // upload. Persist only after transcription succeeds so failed/cancelled attempts never
+      // leave a misleading audio artifact behind.
+      if (parsed.data.diagnostics?.captureAllowed === true && diagnosticFormat) {
+        await params.voiceDiagnostics?.captureFile({
+          direction: 'stt_input',
+          format: diagnosticFormat,
+          filePath: uploaded.path,
+          durationMs: parsed.data.diagnostics.durationMs,
+          sessionId: parsed.data.diagnostics.sessionId,
+          authorizationId: parsed.data.diagnostics.authorizationId,
+          providerId: parsed.data.packId ?? 'daemon-default',
+          attemptId: parsed.data.requestId,
+        });
+      }
       return parseVoiceInferenceResponse(DaemonVoiceInferenceSttTranscribeResponseSchema, {
         ok: true,
         ...transcribed,
@@ -459,4 +509,36 @@ export function registerMachineVoiceInferenceTransferRpcHandlers(params: Readonl
       return toVoiceInferenceError(error);
     }
   });
+
+  return {
+    downloadStore,
+    uploadStore,
+    dispose: async () => {
+      if (disposePromise) {
+        return await disposePromise;
+      }
+
+      disposePromise = (async () => {
+        await Promise.all([
+          ...[...finalizedUploadsById.keys()].map(async (uploadId) => {
+            await clearFinalizedUpload(uploadId);
+          }),
+          ...[...ttsDownloadFilePathById.keys()].map(async (downloadId) => {
+            await abortTtsDownloadTransfer(downloadId);
+          }),
+        ]);
+        finalizedUploadsById.clear();
+        finalizedUploadReleaseTimerById.clear();
+        ttsDownloadReleaseTimerById.clear();
+        ttsDownloadFilePathById.clear();
+        uploadMimeTypeById.clear();
+        await Promise.all([
+          downloadStore.dispose(),
+          uploadStore.dispose(),
+        ]);
+      })();
+
+      return await disposePromise;
+    },
+  };
 }

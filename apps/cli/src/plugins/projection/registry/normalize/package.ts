@@ -1,6 +1,6 @@
 import type {
   ActionDefinitionV1,
-  AgentDefinitionV1,
+  PluginAgentContributionV2,
   PluginBrowserActionContributionV1,
   PluginBrowserTargetContributionV1,
   PluginActionContributionV2,
@@ -9,12 +9,11 @@ import type {
   PluginEventContributionV1,
   PluginHookContributionV2,
   PluginHostedWebContributionV1,
-  PluginEmbeddedWebBundleContributionV1,
-  PluginLifecycleHandlerContributionV2,
   PluginMcpDiscoveryProviderContributionV1,
   PluginMcpServerContributionV1,
   PluginNotificationCategoryContributionV2,
   PluginNotificationChannelContributionV2,
+  PluginPromptAssetContributionV1,
   PluginReactNativeBundleContributionV1,
   PluginRequestInterceptorContributionV1,
   PluginResourceContributionV2,
@@ -22,34 +21,46 @@ import type {
   PluginSurfacePlacementDescriptorV1,
   PluginSettingsContributionV2,
   PluginStructuredMessageDescriptorV1,
+  PluginSystemToolContributionV1,
   PluginUiArtifactContributionV1,
   ScmHostingProviderContribution,
   PluginConnectedAccountDescriptorContributionV2,
   PluginSourceSpecV1,
   PluginToolContributionV2,
-  PluginUiDescriptorContributionV2,
   PluginUiTranslationsContributionV1,
-  HookRegistrationV1,
-  InstallableDependencyDescriptor,
+  PluginUiRendererV2,
+  PluginUiTranslationBundleV2,
+  PluginUiViewV2,
+  PluginManagedDependencyContributionV2,
   ScmBackendContribution,
+  ProviderContributionV1,
+  VoiceModelPackContributionV1,
+  PluginVoiceProviderContributionV1,
 } from '@happier-dev/protocol';
-import { createPluginContributionIdentity, qualifyPluginEventIdV1 } from '@happier-dev/protocol';
+import {
+  buildQualifiedPluginContributionKey,
+  createPluginContributionIdentity,
+  PLUGIN_CONTRIBUTION_CATALOG_V2,
+  qualifyPluginEventIdV1,
+  resolvePluginManifestSetReferencesV2,
+} from '@happier-dev/protocol';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol';
+import type { PluginUiArtifactsManifestV1 } from '@happier-dev/protocol/plugins/ui';
 
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
-import type { CanonicalPluginAgentRuntimeDefinition } from '@/plugins/manifest/types';
-import { resolvePluginResourcePath } from '@/plugins/projection/resources/package/resolve';
+import { resolvePluginResourcePath } from '../../resources/package/resolve';
 import type {
   ResolvedCommandDefinition,
+  ResolvedActionDefinition,
   ResolvedEventDefinition,
-  ResolvedLifecycleHandlerDefinition,
   ResolvedResourceDefinition,
   ResolvedToolDefinition,
-  ResolvedUiDescriptorDefinition,
+  PluginLocaleScopedIdentity,
 } from '../types';
 
 export type PluginOwnedContribution<T> = Readonly<{
   pluginId: string;
+  pluginVersion?: string;
   identity?: PluginContributionIdentityV1;
   pluginRootPath: string;
   manifestPath: string;
@@ -60,21 +71,45 @@ export type PluginOwnedContribution<T> = Readonly<{
   definition: T;
 }>;
 
+export type PluginOwnedSemanticContribution = PluginOwnedContribution<unknown> & Readonly<{
+  pluginVersion: string;
+  family: string;
+  conflictKey: string | null;
+  introspection: ReturnType<(typeof PLUGIN_CONTRIBUTION_CATALOG_V2)[number]['projectIntrospection']>;
+}>;
+
+export type PluginOwnedLocaleContribution<T> = Readonly<
+  Omit<PluginOwnedContribution<T>, 'identity'> & {
+    localeIdentity: PluginLocaleScopedIdentity;
+  }
+>;
+
+export type PluginOwnedUiRendererContribution = PluginOwnedContribution<PluginUiRendererV2> & Readonly<{
+  generatedUiArtifactsManifest?: PluginUiArtifactsManifestV1;
+}>;
+
+export type PluginOwnedVoiceProviderContribution = PluginOwnedContribution<PluginVoiceProviderContributionV1> & Readonly<{
+  generatedUiArtifactsManifest?: PluginUiArtifactsManifestV1;
+}>;
+
 export type PluginContributionRegistry = Readonly<{
-  agents: readonly PluginOwnedContribution<AgentDefinitionV1>[];
-  agentRuntimes: readonly PluginOwnedContribution<CanonicalPluginAgentRuntimeDefinition>[];
-  actions: readonly PluginOwnedContribution<ActionDefinitionV1>[];
+  semanticContributionsByFamily: ReadonlyMap<string, readonly PluginOwnedSemanticContribution[]>;
+  uiViewsV2: readonly PluginOwnedContribution<PluginUiViewV2>[];
+  uiRenderersV2: readonly PluginOwnedUiRendererContribution[];
+  uiTranslationsV2: readonly PluginOwnedLocaleContribution<PluginUiTranslationBundleV2>[];
+  agents: readonly PluginOwnedContribution<PluginAgentContributionV2>[];
+  providers: readonly PluginOwnedContribution<ProviderContributionV1>[];
+  actions: readonly PluginOwnedContribution<ResolvedActionDefinition>[];
   tools: readonly PluginOwnedContribution<ResolvedToolDefinition>[];
   commands: readonly PluginOwnedContribution<ResolvedCommandDefinition>[];
-  hooks: readonly PluginOwnedContribution<HookRegistrationV1>[];
+  hooks: readonly PluginOwnedContribution<PluginHookContributionV2>[];
   resources: readonly PluginOwnedContribution<ResolvedResourceDefinition>[];
-  uiDescriptors: readonly PluginOwnedContribution<ResolvedUiDescriptorDefinition>[];
+  promptAssets: readonly PluginOwnedContribution<PluginPromptAssetContributionV1>[];
   uiTranslations: readonly PluginOwnedContribution<PluginUiTranslationsContributionV1>[];
   structuredMessages: readonly PluginOwnedContribution<PluginStructuredMessageDescriptorV1>[];
   sessionHeaderActions: readonly PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[];
   surfacePlacements: readonly PluginOwnedContribution<PluginSurfacePlacementDescriptorV1>[];
   hostedWeb: readonly PluginOwnedContribution<PluginHostedWebContributionV1>[];
-  embeddedWebBundles: readonly PluginOwnedContribution<PluginEmbeddedWebBundleContributionV1>[];
   reactNativeBundles: readonly PluginOwnedContribution<PluginReactNativeBundleContributionV1>[];
   uiArtifacts: readonly PluginOwnedContribution<PluginUiArtifactContributionV1>[];
   browserTargets: readonly PluginOwnedContribution<PluginBrowserTargetContributionV1>[];
@@ -89,9 +124,11 @@ export type PluginContributionRegistry = Readonly<{
   scmHostingProviders: readonly PluginOwnedContribution<ScmHostingProviderContribution>[];
   scmBackends: readonly PluginOwnedContribution<ScmBackendContribution>[];
   connectedAccountDescriptors: readonly PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[];
-  managedDependencies: readonly PluginOwnedContribution<InstallableDependencyDescriptor>[];
+  managedDependencies: readonly PluginOwnedContribution<PluginManagedDependencyContributionV2>[];
+  systemTools: readonly PluginOwnedContribution<PluginSystemToolContributionV1>[];
   requestInterceptors: readonly PluginOwnedContribution<PluginRequestInterceptorContributionV1>[];
-  lifecycleHandlers: readonly PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[];
+  voiceModelPacks: readonly PluginOwnedContribution<VoiceModelPackContributionV1>[];
+  voiceProviders: readonly PluginOwnedVoiceProviderContribution[];
 }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -106,21 +143,46 @@ function readContributionArray<T>(contributes: unknown, key: string): readonly T
   return Array.isArray(value) ? value as readonly T[] : [];
 }
 
-function toActionDefinition(definition: PluginActionContributionV2): ActionDefinitionV1 {
+function displayText(value: string | Readonly<{ fallback: string }>): string {
+  return typeof value === 'string' ? value : value.fallback;
+}
+
+function resolveReferenceKey(pluginId: string, reference: string | Readonly<{ pluginId: string; localId: string }>): string {
+  return buildQualifiedPluginContributionKey(typeof reference === 'string'
+    ? createPluginContributionIdentity({ pluginId, localId: reference })
+    : createPluginContributionIdentity(reference));
+}
+
+function normalizeVoiceProviderDefinition(
+  pluginId: string,
+  definition: PluginVoiceProviderContributionV1,
+): PluginVoiceProviderContributionV1 {
+  if (definition.kind !== 'conversation' || !definition.execution) return definition;
+  const agent = definition.execution.agent;
   return Object.freeze({
+    ...definition,
+    execution: Object.freeze({
+      ...definition.execution,
+      agent: createPluginContributionIdentity(
+        typeof agent === 'string' ? { pluginId, localId: agent } : agent,
+      ),
+    }),
+  });
+}
+
+function toActionDefinition(definition: PluginActionContributionV2): ResolvedActionDefinition {
+  const normalized = {
     kindVersion: 1,
     id: definition.id,
-    title: definition.title,
-    description: definition.description ?? null,
+    title: displayText(definition.title),
+    description: definition.description ? displayText(definition.description) : null,
     safety: definition.dangerLevel === 'safe' ? 'safe' : 'danger',
     placements: [],
     slash: null,
     bindings: null,
     examples: null,
     surfaces: {
-      ui: definition.surfaces.some((surface) => (
-        surface === 'cli'
-      )),
+      ui: definition.surfaces.includes('ui'),
       voice: false,
       agent: definition.surfaces.includes('agent'),
       mcp: definition.surfaces.includes('mcp'),
@@ -131,67 +193,39 @@ function toActionDefinition(definition: PluginActionContributionV2): ActionDefin
     inputHints: null,
     inputSchema: definition.inputSchema ?? {},
     ...(definition.resultSchema ? { outputSchema: definition.resultSchema } : {}),
-    execution: {
-      routing: 'daemon',
-      handler: definition.handler,
-    },
+    scopes: definition.scopes,
+    contributionSurfaces: definition.surfaces,
+    placement: definition.placement,
+    availability: definition.availability,
+    hostAccess: definition.hostAccess,
+    priority: definition.priority,
+  } satisfies ActionDefinitionV1;
+  if (definition.dangerLevel === 'safe') {
+    return Object.freeze({ ...normalized, dangerLevel: 'safe' });
+  }
+  if (!definition.confirmation) {
+    throw new Error(`Non-safe plugin action '${definition.id}' has no confirmation metadata after manifest normalization`);
+  }
+  return Object.freeze({
+    ...normalized,
+    dangerLevel: definition.dangerLevel,
+    confirmation: definition.confirmation,
   });
 }
 
-function toToolDefinition(definition: PluginToolContributionV2): ResolvedToolDefinition {
+function toToolDefinition(pluginId: string, definition: PluginToolContributionV2): ResolvedToolDefinition {
   return Object.freeze({
+    ...definition,
     kindVersion: 1,
-    id: definition.id,
-    name: definition.name,
-    title: definition.title,
-    description: definition.description,
-    safety: definition.safety,
-    surfaces: {
-      cli: definition.surfaces.includes('cli'),
-      mcp: definition.surfaces.includes('mcp'),
-      agent: definition.surfaces.includes('agent'),
-    },
-    inputSchema: definition.inputSchema ?? {},
-    ...(definition.outputSchema ? { outputSchema: definition.outputSchema } : {}),
-    ...(definition.inputHints ? { inputHints: definition.inputHints } : {}),
-    ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
-    ...(definition.examples ? { examples: definition.examples } : {}),
-    ...(definition.promptSnippet !== undefined ? { promptSnippet: definition.promptSnippet } : {}),
-    ...(definition.promptGuidelines ? { promptGuidelines: Object.freeze([...definition.promptGuidelines]) } : {}),
-    actionId: definition.id,
-    execution: {
-      routing: 'daemon',
-      handler: definition.handler,
-    },
+    actionId: resolveReferenceKey(pluginId, definition.action),
   });
 }
 
-function toCommandDefinition(definition: PluginCommandContributionV2): ResolvedCommandDefinition {
+function toCommandDefinition(pluginId: string, definition: PluginCommandContributionV2): ResolvedCommandDefinition {
   return Object.freeze({
+    ...definition,
     kindVersion: 1,
-    id: definition.id,
-    command: definition.command,
-    ...(definition.rootHelpLabel ? { rootHelpLabel: definition.rootHelpLabel } : {}),
-    ...(definition.rootHelpDescription ? { rootHelpDescription: definition.rootHelpDescription } : {}),
-    ...(definition.rootHelpDetail ? { rootHelpDetail: definition.rootHelpDetail } : {}),
-    allowTmux: definition.allowTmux,
-    ...(definition.visibility ? { visibility: definition.visibility } : {}),
-    ...(definition.featureGate ? { featureGate: definition.featureGate } : {}),
-    actionId: definition.id,
-  });
-}
-
-function toHookRegistration(definition: PluginHookContributionV2): HookRegistrationV1 {
-  return Object.freeze({
-    hookApiVersion: definition.hookApiVersion,
-    id: definition.id,
-    category: definition.category,
-    scope: definition.scope,
-    ...(definition.filters ? { filters: definition.filters } : {}),
-    executionKind: definition.executionKind,
-    handler: definition.handler,
-    ...(typeof definition.priority === 'number' ? { priority: definition.priority } : {}),
-    ...(definition.compatibility ? { compatibility: definition.compatibility } : {}),
+    actionId: resolveReferenceKey(pluginId, definition.action),
   });
 }
 
@@ -199,55 +233,10 @@ function toResourceDefinition(definition: PluginResourceContributionV2): Resolve
   return Object.freeze({
     kindVersion: 1,
     id: definition.id,
-    type: definition.resourceKind,
+    type: definition.kind,
     path: definition.path,
     ...(definition.digest ? { digest: definition.digest } : {}),
     ...(definition.contentType ? { contentType: definition.contentType } : {}),
-  });
-}
-
-function toUiDescriptorDefinition(definition: PluginUiDescriptorContributionV2): ResolvedUiDescriptorDefinition {
-  return Object.freeze({
-    kindVersion: 1,
-    id: definition.id,
-    surface: definition.surface,
-    title: definition.title,
-    description: definition.description,
-    ...(typeof definition.order === 'number' ? { order: definition.order } : {}),
-    ...(definition.tone ? { tone: definition.tone } : {}),
-    ...(definition.featureGate !== undefined ? { featureGate: definition.featureGate } : {}),
-    ...(definition.helpUrl !== undefined ? { helpUrl: definition.helpUrl } : {}),
-    fields: Object.freeze(definition.fields.map((field) => Object.freeze({
-      id: field.id,
-      kind: field.type,
-      title: field.title,
-      description: field.description,
-      ...(typeof field.order === 'number' ? { order: field.order } : {}),
-      ...(field.groupId !== undefined ? { groupId: field.groupId } : {}),
-      ...(field.featureGate !== undefined ? { featureGate: field.featureGate } : {}),
-      ...(field.actionId !== undefined ? { actionId: field.actionId } : {}),
-      options: Object.freeze((field.options ?? []).map((option) => Object.freeze({
-        value: option.value,
-        label: option.label,
-      }))),
-    }))),
-  });
-}
-
-function toLifecycleHandlerDefinition(
-  definition: PluginLifecycleHandlerContributionV2,
-): ResolvedLifecycleHandlerDefinition {
-  const normalizedId = typeof definition.id === 'string' && definition.id.trim().length > 0
-    ? definition.id.trim()
-    : null;
-  if (normalizedId === null) {
-    throw new Error(`Lifecycle handler for event '${definition.event}' must declare a stable lifecycle handler id`);
-  }
-  return Object.freeze({
-    kindVersion: 1,
-    id: normalizedId,
-    event: definition.event,
-    priority: definition.priority ?? 0,
   });
 }
 
@@ -256,52 +245,51 @@ function toEventDefinition(pluginId: string, definition: PluginEventContribution
     ...definition,
     id: qualifyPluginEventIdV1(pluginId, definition.id),
     localId: definition.id,
-    deprecated: definition.deprecated ?? false,
   });
-}
-
-type CanonicalAgentCompatibilityDefinition = LoadedPlugin['manifest']['contributes']['agents'][number];
-
-function toAgentDefinitionProjection(definition: CanonicalAgentCompatibilityDefinition): AgentDefinitionV1 {
-  const raw = definition as CanonicalAgentCompatibilityDefinition & Readonly<{
-    agentCliRuntime?: AgentDefinitionV1['agentCliRuntime'];
-    catalogAgentId?: string | null;
-    providerAgentId?: string | null;
-    providerCliRuntime?: AgentDefinitionV1['agentCliRuntime'];
-  }>;
-  const {
-    providerAgentId: _providerAgentId,
-    providerCliRuntime: _providerCliRuntime,
-    ...base
-  } = raw;
-  return Object.freeze({
-    ...base,
-    catalogAgentId: raw.catalogAgentId ?? raw.providerAgentId ?? null,
-    ...(raw.agentCliRuntime !== undefined
-      ? { agentCliRuntime: raw.agentCliRuntime }
-      : raw.providerCliRuntime !== undefined
-        ? { agentCliRuntime: raw.providerCliRuntime }
-        : {}),
-  }) as AgentDefinitionV1;
 }
 
 export function buildPluginContributionRegistry(params: Readonly<{
   loadedPlugins: readonly LoadedPlugin[];
+  referencePlugins?: readonly LoadedPlugin[];
 }>): PluginContributionRegistry {
-  const agents: PluginOwnedContribution<AgentDefinitionV1>[] = [];
-  const agentRuntimes: PluginOwnedContribution<CanonicalPluginAgentRuntimeDefinition>[] = [];
-  const actions: PluginOwnedContribution<ActionDefinitionV1>[] = [];
+  const referencePlugins = params.referencePlugins ?? [];
+  const validationPlugins = [...referencePlugins, ...params.loadedPlugins];
+  const seenPluginIds = new Set<string>();
+  for (const plugin of validationPlugins) {
+    if (seenPluginIds.has(plugin.pluginId)) {
+      throw new Error(`Duplicate plugin identity '${plugin.pluginId}' in contribution reference universe`);
+    }
+    seenPluginIds.add(plugin.pluginId);
+  }
+  const referenceUniverseResolution = resolvePluginManifestSetReferencesV2(
+    referencePlugins.map((plugin) => plugin.manifest),
+  );
+  if (!referenceUniverseResolution.ok) {
+    throw new Error(`Invalid cross-plugin contribution reference: ${referenceUniverseResolution.diagnostics.map((diagnostic) => diagnostic.message).join('; ')}`);
+  }
+  const referenceResolution = resolvePluginManifestSetReferencesV2(
+    validationPlugins.map((plugin) => plugin.manifest),
+  );
+  if (!referenceResolution.ok) {
+    throw new Error(`Invalid cross-plugin contribution reference: ${referenceResolution.diagnostics.map((diagnostic) => diagnostic.message).join('; ')}`);
+  }
+  const semanticContributionsByFamily = new Map<string, PluginOwnedSemanticContribution[]>();
+  const uiViewsV2: PluginOwnedContribution<PluginUiViewV2>[] = [];
+  const uiRenderersV2: PluginOwnedUiRendererContribution[] = [];
+  const uiTranslationsV2: PluginOwnedLocaleContribution<PluginUiTranslationBundleV2>[] = [];
+  const agents: PluginOwnedContribution<PluginAgentContributionV2>[] = [];
+  const providers: PluginOwnedContribution<ProviderContributionV1>[] = [];
+  const actions: PluginOwnedContribution<ResolvedActionDefinition>[] = [];
   const tools: PluginOwnedContribution<ResolvedToolDefinition>[] = [];
   const commands: PluginOwnedContribution<ResolvedCommandDefinition>[] = [];
-  const hooks: PluginOwnedContribution<HookRegistrationV1>[] = [];
+  const hooks: PluginOwnedContribution<PluginHookContributionV2>[] = [];
   const resources: PluginOwnedContribution<ResolvedResourceDefinition>[] = [];
-  const uiDescriptors: PluginOwnedContribution<ResolvedUiDescriptorDefinition>[] = [];
+  const promptAssets: PluginOwnedContribution<PluginPromptAssetContributionV1>[] = [];
   const uiTranslations: PluginOwnedContribution<PluginUiTranslationsContributionV1>[] = [];
   const structuredMessages: PluginOwnedContribution<PluginStructuredMessageDescriptorV1>[] = [];
   const sessionHeaderActions: PluginOwnedContribution<PluginSessionHeaderActionDescriptorV1>[] = [];
   const surfacePlacements: PluginOwnedContribution<PluginSurfacePlacementDescriptorV1>[] = [];
   const hostedWeb: PluginOwnedContribution<PluginHostedWebContributionV1>[] = [];
-  const embeddedWebBundles: PluginOwnedContribution<PluginEmbeddedWebBundleContributionV1>[] = [];
   const reactNativeBundles: PluginOwnedContribution<PluginReactNativeBundleContributionV1>[] = [];
   const uiArtifacts: PluginOwnedContribution<PluginUiArtifactContributionV1>[] = [];
   const browserTargets: PluginOwnedContribution<PluginBrowserTargetContributionV1>[] = [];
@@ -316,26 +304,166 @@ export function buildPluginContributionRegistry(params: Readonly<{
   const scmHostingProviders: PluginOwnedContribution<ScmHostingProviderContribution>[] = [];
   const scmBackends: PluginOwnedContribution<ScmBackendContribution>[] = [];
   const connectedAccountDescriptors: PluginOwnedContribution<PluginConnectedAccountDescriptorContributionV2>[] = [];
-  const managedDependencies: PluginOwnedContribution<InstallableDependencyDescriptor>[] = [];
+  const managedDependencies: PluginOwnedContribution<PluginManagedDependencyContributionV2>[] = [];
+  const systemTools: PluginOwnedContribution<PluginSystemToolContributionV1>[] = [];
   const requestInterceptors: PluginOwnedContribution<PluginRequestInterceptorContributionV1>[] = [];
-  const lifecycleHandlers: PluginOwnedContribution<ResolvedLifecycleHandlerDefinition>[] = [];
+  const voiceModelPacks: PluginOwnedContribution<VoiceModelPackContributionV1>[] = [];
+  const voiceProviders: PluginOwnedVoiceProviderContribution[] = [];
 
   for (const plugin of params.loadedPlugins) {
-    for (const definition of plugin.manifest.contributes.agents ?? []) {
-      agents.push({
+    const semanticContributionsForPlugin = new Map<string, PluginOwnedSemanticContribution[]>();
+    for (const catalogEntry of PLUGIN_CONTRIBUTION_CATALOG_V2) {
+      for (const rawDefinition of catalogEntry.readEntries(plugin.manifest.contributes)) {
+        const definition = catalogEntry.canonicalize(rawDefinition);
+        if (!isRecord(definition)) continue;
+        const introspection = catalogEntry.projectIntrospection(definition);
+        const familyContributions = semanticContributionsByFamily.get(catalogEntry.manifestKey) ?? [];
+        familyContributions.push(Object.freeze({
+          pluginId: plugin.pluginId,
+          pluginVersion: plugin.manifest.version,
+          ...(introspection.localId
+            ? { identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: introspection.localId }) }
+            : {}),
+          family: catalogEntry.manifestKey,
+          conflictKey: catalogEntry.conflictKey(definition),
+          introspection,
+          pluginRootPath: plugin.pluginRootPath,
+          manifestPath: plugin.manifestPath,
+          manifestDigest: plugin.manifestDigest,
+          daemonEntryPath: plugin.daemonEntryPath,
+          devDaemonEntryPath: plugin.devDaemonEntryPath,
+          sourceSpec: plugin.sourceSpec,
+          definition,
+        }));
+        semanticContributionsByFamily.set(catalogEntry.manifestKey, familyContributions);
+        const pluginFamilyContributions = semanticContributionsForPlugin.get(catalogEntry.manifestKey) ?? [];
+        pluginFamilyContributions.push(familyContributions.at(-1)!);
+        semanticContributionsForPlugin.set(catalogEntry.manifestKey, pluginFamilyContributions);
+      }
+    }
+    const readSemanticDefinitions = <T>(family: string): readonly T[] => (
+      semanticContributionsForPlugin.get(family)?.map((entry) => entry.definition as T) ?? []
+    );
+
+    for (const definition of readSemanticDefinitions<PluginUiViewV2>('ui.views')) {
+      uiViewsV2.push({
         pluginId: plugin.pluginId,
+        pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
         devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
-        definition: toAgentDefinitionProjection(definition),
+        definition,
+      });
+    }
+    for (const definition of readSemanticDefinitions<PluginUiRendererV2>('ui.renderers')) {
+      uiRenderersV2.push({
+        pluginId: plugin.pluginId,
+        pluginVersion: plugin.manifest.version,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        ...(plugin.generatedUiArtifactsManifest
+          ? { generatedUiArtifactsManifest: plugin.generatedUiArtifactsManifest }
+          : {}),
+        definition,
+      });
+    }
+    for (const definition of readSemanticDefinitions<PluginUiTranslationBundleV2>('ui.translations')) {
+      uiTranslationsV2.push({
+        pluginId: plugin.pluginId,
+        localeIdentity: { pluginId: plugin.pluginId, locale: definition.locale },
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+    for (const definition of readSemanticDefinitions<PluginAgentContributionV2>('agents')) {
+      agents.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
       });
     }
 
-    for (const definition of plugin.manifest.contributes.agentRuntimes ?? []) {
-      agentRuntimes.push({
+    for (const definition of readSemanticDefinitions<ProviderContributionV1>('providers')) {
+      providers.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({
+          pluginId: plugin.pluginId,
+          localId: definition.id,
+        }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<PluginActionContributionV2>('actions')) {
+      actions.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition: toActionDefinition(definition),
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<PluginToolContributionV2>('tools')) {
+      tools.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition: toToolDefinition(plugin.pluginId, definition),
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<PluginCommandContributionV2>('commands')) {
+      commands.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition: toCommandDefinition(plugin.pluginId, definition),
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<PluginHookContributionV2>('hooks')) {
+      hooks.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
@@ -347,59 +475,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginActionContributionV2>(plugin.manifest.contributes, 'actions')) {
-      actions.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition: toActionDefinition(definition),
-      });
-    }
-
-    for (const definition of readContributionArray<PluginToolContributionV2>(plugin.manifest.contributes, 'tools')) {
-      tools.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition: toToolDefinition(definition),
-      });
-    }
-
-    for (const definition of readContributionArray<PluginCommandContributionV2>(plugin.manifest.contributes, 'commands')) {
-      commands.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition: toCommandDefinition(definition),
-      });
-    }
-
-    for (const definition of readContributionArray<PluginHookContributionV2>(plugin.manifest.contributes, 'hooks')) {
-      hooks.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition: toHookRegistration(definition),
-      });
-    }
-
-    for (const definition of readContributionArray<PluginResourceContributionV2>(plugin.manifest.contributes, 'resources')) {
+    for (const definition of readSemanticDefinitions<PluginResourceContributionV2>('resources')) {
       const normalized = toResourceDefinition(definition);
       const resourcePath = normalized.path;
       if (resourcePath) {
@@ -437,20 +513,6 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginUiDescriptorContributionV2>(plugin.manifest.contributes, 'uiDescriptors')) {
-      const normalized = toUiDescriptorDefinition(definition);
-      uiDescriptors.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition: normalized,
-      });
-    }
-
     for (const definition of readContributionArray<PluginUiTranslationsContributionV1>(plugin.manifest.contributes, 'uiTranslations')) {
       uiTranslations.push({
         pluginId: plugin.pluginId,
@@ -464,7 +526,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginStructuredMessageDescriptorV1>(plugin.manifest.contributes, 'structuredMessages')) {
+    for (const definition of readSemanticDefinitions<PluginStructuredMessageDescriptorV1>('structuredMessages')) {
       structuredMessages.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -477,7 +539,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginSessionHeaderActionDescriptorV1>(plugin.manifest.contributes, 'sessionHeaderActions')) {
+    for (const definition of readSemanticDefinitions<PluginSessionHeaderActionDescriptorV1>('sessionHeaderActions')) {
       sessionHeaderActions.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -516,22 +578,6 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginEmbeddedWebBundleContributionV1>(
-      plugin.manifest.contributes,
-      'embeddedWebBundles',
-    )) {
-      embeddedWebBundles.push({
-        pluginId: plugin.pluginId,
-        pluginRootPath: plugin.pluginRootPath,
-        manifestPath: plugin.manifestPath,
-        manifestDigest: plugin.manifestDigest,
-        daemonEntryPath: plugin.daemonEntryPath,
-        devDaemonEntryPath: plugin.devDaemonEntryPath,
-        sourceSpec: plugin.sourceSpec,
-        definition,
-      });
-    }
-
     for (const definition of readContributionArray<PluginReactNativeBundleContributionV1>(plugin.manifest.contributes, 'reactNativeBundles')) {
       reactNativeBundles.push({
         pluginId: plugin.pluginId,
@@ -558,7 +604,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginBrowserTargetContributionV1>(plugin.manifest.contributes, 'browserTargets')) {
+    for (const definition of readSemanticDefinitions<PluginBrowserTargetContributionV1>('browserTargets')) {
       browserTargets.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -571,7 +617,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginBrowserActionContributionV1>(plugin.manifest.contributes, 'browserActions')) {
+    for (const definition of readSemanticDefinitions<PluginBrowserActionContributionV1>('browserActions')) {
       browserActions.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -584,7 +630,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginSettingsContributionV2>(plugin.manifest.contributes, 'settings')) {
+    for (const definition of readSemanticDefinitions<PluginSettingsContributionV2>('settings')) {
       settings.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -597,7 +643,21 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginNotificationCategoryContributionV2>(plugin.manifest.contributes, 'notifications')) {
+    for (const definition of readSemanticDefinitions<PluginPromptAssetContributionV1>('promptAssets')) {
+      promptAssets.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<PluginNotificationCategoryContributionV2>('notifications')) {
       notifications.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -610,7 +670,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginNotificationChannelContributionV2>(plugin.manifest.contributes, 'notificationChannels')) {
+    for (const definition of readSemanticDefinitions<PluginNotificationChannelContributionV2>('notificationChannels')) {
       notificationChannels.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -623,7 +683,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginEventContributionV1>(plugin.manifest.contributes, 'events')) {
+    for (const definition of readSemanticDefinitions<PluginEventContributionV1>('events')) {
       events.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -636,7 +696,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginExecutionRunProfileContributionV2>(plugin.manifest.contributes, 'executionRunProfiles')) {
+    for (const definition of readSemanticDefinitions<PluginExecutionRunProfileContributionV2>('executionRunProfiles')) {
       executionRunProfiles.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -649,8 +709,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    const mcp = isRecord(plugin.manifest.contributes.mcp) ? plugin.manifest.contributes.mcp : {};
-    for (const definition of readContributionArray<PluginMcpServerContributionV1>(mcp, 'servers')) {
+    for (const definition of readSemanticDefinitions<PluginMcpServerContributionV1>('mcp.servers')) {
       mcpServers.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -663,7 +722,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginMcpDiscoveryProviderContributionV1>(mcp, 'discoveryProviders')) {
+    for (const definition of readSemanticDefinitions<PluginMcpDiscoveryProviderContributionV1>('mcp.discoveryProviders')) {
       mcpDiscoveryProviders.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -676,14 +735,12 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<ScmHostingProviderContribution>(plugin.manifest.contributes, 'scmHostingProviders')) {
+    for (const definition of readSemanticDefinitions<ScmHostingProviderContribution>('scmHostingProviders')) {
       scmHostingProviders.push({
         pluginId: plugin.pluginId,
         identity: createPluginContributionIdentity({
           pluginId: plugin.pluginId,
-          family: 'scmHostingProviders',
-          contributionId: definition.id,
-          provenance: 'external',
+          localId: definition.id,
         }),
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
@@ -695,14 +752,12 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<ScmBackendContribution>(plugin.manifest.contributes, 'scmBackends')) {
+    for (const definition of readSemanticDefinitions<ScmBackendContribution>('scmBackends')) {
       scmBackends.push({
         pluginId: plugin.pluginId,
         identity: createPluginContributionIdentity({
           pluginId: plugin.pluginId,
-          family: 'scmBackends',
-          contributionId: definition.id,
-          provenance: 'external',
+          localId: definition.id,
         }),
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
@@ -714,7 +769,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginConnectedAccountDescriptorContributionV2>(plugin.manifest.contributes, 'connectedAccountDescriptors')) {
+    for (const definition of readSemanticDefinitions<PluginConnectedAccountDescriptorContributionV2>('connectedAccountDescriptors')) {
       connectedAccountDescriptors.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -727,7 +782,7 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<InstallableDependencyDescriptor>(plugin.manifest.contributes, 'managedDependencies')) {
+    for (const definition of readSemanticDefinitions<PluginManagedDependencyContributionV2>('managedDependencies')) {
       managedDependencies.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -740,7 +795,20 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginRequestInterceptorContributionV1>(plugin.manifest.contributes, 'requestInterceptors')) {
+    for (const definition of readSemanticDefinitions<PluginSystemToolContributionV1>('systemTools')) {
+      systemTools.push({
+        pluginId: plugin.pluginId,
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        definition,
+      });
+    }
+
+    for (const definition of readSemanticDefinitions<PluginRequestInterceptorContributionV1>('requestInterceptors')) {
       requestInterceptors.push({
         pluginId: plugin.pluginId,
         pluginRootPath: plugin.pluginRootPath,
@@ -753,38 +821,60 @@ export function buildPluginContributionRegistry(params: Readonly<{
       });
     }
 
-    for (const definition of readContributionArray<PluginLifecycleHandlerContributionV2>(
-      plugin.manifest.contributes,
-      'lifecycleHandlers',
-    )) {
-      lifecycleHandlers.push({
+    for (const definition of readSemanticDefinitions<VoiceModelPackContributionV1>('voiceModelPacks')) {
+      voiceModelPacks.push({
         pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
         pluginRootPath: plugin.pluginRootPath,
         manifestPath: plugin.manifestPath,
         manifestDigest: plugin.manifestDigest,
         daemonEntryPath: plugin.daemonEntryPath,
         devDaemonEntryPath: plugin.devDaemonEntryPath,
         sourceSpec: plugin.sourceSpec,
-        definition: toLifecycleHandlerDefinition(definition),
+        definition,
       });
     }
+
+    for (const definition of readSemanticDefinitions<PluginVoiceProviderContributionV1>('voiceProviders')) {
+      voiceProviders.push({
+        pluginId: plugin.pluginId,
+        identity: createPluginContributionIdentity({ pluginId: plugin.pluginId, localId: definition.id }),
+        pluginRootPath: plugin.pluginRootPath,
+        manifestPath: plugin.manifestPath,
+        manifestDigest: plugin.manifestDigest,
+        daemonEntryPath: plugin.daemonEntryPath,
+        devDaemonEntryPath: plugin.devDaemonEntryPath,
+        sourceSpec: plugin.sourceSpec,
+        ...(plugin.generatedUiArtifactsManifest
+          ? { generatedUiArtifactsManifest: plugin.generatedUiArtifactsManifest }
+          : {}),
+        definition: normalizeVoiceProviderDefinition(plugin.pluginId, definition),
+      });
+    }
+
+
   }
 
   return Object.freeze({
+    semanticContributionsByFamily: Object.freeze(new Map(
+      [...semanticContributionsByFamily.entries()].map(([family, contributions]) => [family, Object.freeze(contributions)]),
+    )),
+    uiViewsV2: Object.freeze(uiViewsV2),
+    uiRenderersV2: Object.freeze(uiRenderersV2),
+    uiTranslationsV2: Object.freeze(uiTranslationsV2),
     agents: Object.freeze(agents),
-    agentRuntimes: Object.freeze(agentRuntimes),
+    providers: Object.freeze(providers),
     actions: Object.freeze(actions),
     tools: Object.freeze(tools),
     commands: Object.freeze(commands),
     hooks: Object.freeze(hooks),
     resources: Object.freeze(resources),
-    uiDescriptors: Object.freeze(uiDescriptors),
+    promptAssets: Object.freeze(promptAssets),
     uiTranslations: Object.freeze(uiTranslations),
     structuredMessages: Object.freeze(structuredMessages),
     sessionHeaderActions: Object.freeze(sessionHeaderActions),
     surfacePlacements: Object.freeze(surfacePlacements),
     hostedWeb: Object.freeze(hostedWeb),
-    embeddedWebBundles: Object.freeze(embeddedWebBundles),
     reactNativeBundles: Object.freeze(reactNativeBundles),
     uiArtifacts: Object.freeze(uiArtifacts),
     browserTargets: Object.freeze(browserTargets),
@@ -800,7 +890,9 @@ export function buildPluginContributionRegistry(params: Readonly<{
     scmBackends: Object.freeze(scmBackends),
     connectedAccountDescriptors: Object.freeze(connectedAccountDescriptors),
     managedDependencies: Object.freeze(managedDependencies),
+    systemTools: Object.freeze(systemTools),
     requestInterceptors: Object.freeze(requestInterceptors),
-    lifecycleHandlers: Object.freeze(lifecycleHandlers),
+    voiceModelPacks: Object.freeze(voiceModelPacks),
+    voiceProviders: Object.freeze(voiceProviders),
   });
 }

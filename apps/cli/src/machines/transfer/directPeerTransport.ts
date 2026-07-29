@@ -6,6 +6,8 @@ import type { FileHandle } from 'node:fs/promises';
 import fastify, { type FastifyInstance, type FastifyReply } from 'fastify';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
 import {
+  DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER,
+  isSafeDirectTransferEndpointCandidate,
   TransferChunkEnvelopeSchema,
   type TransferEndpointCandidate,
 } from '@happier-dev/protocol';
@@ -14,6 +16,7 @@ import {
   createEncryptedTransferChunkEnvelope,
   createTransferManifestHash,
   parseTransferRecipientPublicKeyBase64,
+  resolveEncryptedTransferChunkJsonBodyMaxBytes,
 } from './transferChunkEncryption';
 import {
   resolveDirectPeerAdvertisedHosts,
@@ -56,6 +59,8 @@ import {
   type DirectTransferImportSessionManager,
 } from './directTransferImportSession';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
+import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@/transfers/targets/uploadTransferTarget';
 
 // Direct-peer transfers are used for session handoff + workspace replication, which can take
 // significantly longer than 30s on large repos/slow disks/VMs (host <-> Lima). Keep the default
@@ -124,6 +129,20 @@ export type DirectPeerOnDemandTransferScope = Readonly<{
   maxResolvedTransfers?: number;
 }>;
 
+export function filterDirectTransferEndpointCandidatesForAdvertisement(
+  endpointCandidates: readonly TransferEndpointCandidate[],
+): readonly TransferEndpointCandidate[] {
+  return endpointCandidates.filter(isSafeDirectTransferEndpointCandidate);
+}
+
+export function buildDirectPeerTransferEndpointPath(transferId: string): string {
+  return `/machine-transfers/direct/${encodeDirectPeerTransferPathKey(transferId)}`;
+}
+
+export function buildDirectTransferImportSessionEndpointPath(uploadId: string): string {
+  return `/machine-transfers/direct/imports/${encodeURIComponent(uploadId)}`;
+}
+
 export function buildDirectTransferImportOpenEndpointCandidates(params: Readonly<{
   advertisedPort: number;
   authorizationToken: string;
@@ -134,7 +153,7 @@ export function buildDirectTransferImportOpenEndpointCandidates(params: Readonly
     ? [...params.advertisedHosts]
     : readAdvertisedHosts(networkInterfaces);
 
-  return resolvedHosts
+  return filterDirectTransferEndpointCandidatesForAdvertisement(resolvedHosts
     .map((host) => ({
       kind: 'http' as const,
       url: `http://${formatCandidateHost(host)}:${params.advertisedPort}/machine-transfers/direct/imports/open`,
@@ -148,7 +167,7 @@ export function buildDirectTransferImportOpenEndpointCandidates(params: Readonly
             entry.url === candidate.url
             && entry.authorizationToken === candidate.authorizationToken,
         ) === index,
-    );
+    ));
 }
 
 export function buildDirectTransferImportSessionEndpointCandidates(params: Readonly<{
@@ -160,18 +179,18 @@ export function buildDirectTransferImportSessionEndpointCandidates(params: Reado
   const resolvedHosts = params.advertisedHosts && params.advertisedHosts.length > 0
     ? [...params.advertisedHosts]
     : readAdvertisedHosts(networkInterfaces);
-  const encodedUploadId = encodeURIComponent(params.uploadId);
+  const endpointPath = buildDirectTransferImportSessionEndpointPath(params.uploadId);
 
-  return resolvedHosts
+  return filterDirectTransferEndpointCandidatesForAdvertisement(resolvedHosts
     .map((host) => ({
       kind: 'http' as const,
-      url: `http://${formatCandidateHost(host)}:${params.advertisedPort}/machine-transfers/direct/imports/${encodedUploadId}`,
+      url: `http://${formatCandidateHost(host)}:${params.advertisedPort}${endpointPath}`,
       expiresAt: params.expiresAt,
     }))
     .filter(
       (candidate, index, all) =>
         all.findIndex((entry) => entry.url === candidate.url) === index,
-    );
+    ));
 }
 
 type StoredOnDemandScope = Readonly<{
@@ -186,51 +205,100 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
   advertisedPort: number;
   now?: () => number;
   networkInterfacesFn?: typeof networkInterfaces;
+  onPublishedTransfersChanged?: () => void;
 }>) {
   const now = params.now ?? Date.now;
   const networkInterfacesFn = params.networkInterfacesFn ?? networkInterfaces;
   const publishedTransfers = new Map<string, StoredPublishedTransfer>();
   const onDemandScopesByToken = new Map<string, StoredOnDemandScope>();
+  const inFlightOnDemandTransfers = new Map<string, Promise<TransferPayloadSource | null>>();
+  const disposedPayloadSources = new WeakSet<object>();
+  const pendingPayloadDisposals = new Set<Promise<void>>();
+  let disposed = false;
+  let disposePromise: Promise<void> | null = null;
 
-  const disposePayloadSourceBestEffort = (source: TransferPayloadSource) => {
-    void disposeTransferPayloadSource(source).catch(() => undefined);
+  const disposePayloadSourceOnce = (source: TransferPayloadSource): Promise<void> => {
+    if (disposedPayloadSources.has(source)) {
+      return Promise.resolve();
+    }
+    disposedPayloadSources.add(source);
+    const disposal = disposeTransferPayloadSource(source)
+      .catch(() => undefined)
+      .finally(() => {
+        pendingPayloadDisposals.delete(disposal);
+      });
+    pendingPayloadDisposals.add(disposal);
+    return disposal;
   };
 
-  const clearPublishedTransfersForToken = (token: string): void => {
-    onDemandScopesByToken.delete(token);
+  const disposePayloadSourceBestEffort = (source: TransferPayloadSource): void => {
+    void disposePayloadSourceOnce(source);
+  };
+
+  const emitPublishedTransfersChanged = (): void => {
+    try {
+      params.onPublishedTransfersChanged?.();
+    } catch {
+      // Registry cleanup must not be disrupted by lifecycle observers.
+    }
+  };
+
+  const clearPublishedTransfersForToken = (token: string): boolean => {
+    let changed = onDemandScopesByToken.delete(token);
 
     for (const [candidateId, entry] of publishedTransfers.entries()) {
       if (entry.transferToken !== token) {
         continue;
       }
       publishedTransfers.delete(candidateId);
+      changed = true;
       disposePayloadSourceBestEffort(entry.payloadSource);
     }
+    return changed;
   };
 
-  const pruneExpiredPublishedTransfers = (): void => {
-    const nowMs = now();
+  function getNextPublishedTransferExpiryAt(): number | null {
+    if (disposed) return null;
+
+    let nextExpiryAt: number | null = null;
+    for (const scope of onDemandScopesByToken.values()) {
+      nextExpiryAt = nextExpiryAt === null ? scope.expiresAt : Math.min(nextExpiryAt, scope.expiresAt);
+    }
+    for (const entry of publishedTransfers.values()) {
+      nextExpiryAt = nextExpiryAt === null ? entry.expiresAt : Math.min(nextExpiryAt, entry.expiresAt);
+    }
+    return nextExpiryAt;
+  }
+
+  function cleanupExpiredPublishedTransfers(nowMs = now()): void {
+    if (disposed) {
+      return;
+    }
+    let changed = false;
 
     const expiredTokens: string[] = [];
     for (const [token, scope] of onDemandScopesByToken.entries()) {
-      if (scope.expiresAt < nowMs) {
+      if (scope.expiresAt <= nowMs) {
         expiredTokens.push(token);
       }
     }
     for (const token of expiredTokens) {
-      clearPublishedTransfersForToken(token);
+      changed = clearPublishedTransfersForToken(token) || changed;
     }
 
     const expiredPublishedTokens: string[] = [];
     for (const entry of publishedTransfers.values()) {
-      if (entry.expiresAt < nowMs) {
+      if (entry.expiresAt <= nowMs) {
         expiredPublishedTokens.push(entry.transferToken);
       }
     }
     for (const token of new Set(expiredPublishedTokens)) {
-      clearPublishedTransfersForToken(token);
+      changed = clearPublishedTransfersForToken(token) || changed;
     }
-  };
+    if (changed) {
+      emitPublishedTransfersChanged();
+    }
+  }
 
   const assertRegistryHasCapacityForTransferId = (transferId: string): void => {
     if (publishedTransfers.has(transferId)) {
@@ -243,7 +311,10 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
   };
 
   function publishTransfer(input: PublishDirectPeerTransferInput): PublishedDirectPeerTransfer {
-    pruneExpiredPublishedTransfers();
+    if (disposed) {
+      throw new Error('Direct peer transfer registry is disposed');
+    }
+    cleanupExpiredPublishedTransfers();
     assertRegistryHasCapacityForTransferId(input.transferId);
 
     // Re-publishing should clean up any prior payload sources/scope to avoid leaks and drift.
@@ -259,11 +330,11 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     }
     const transferToken = randomBytes(24).toString('base64url');
     const expiresAt = now() + readDirectPeerTtlMs();
-    const transferPathKey = encodeDirectPeerTransferPathKey(input.transferId);
-    const httpEndpointCandidates: TransferEndpointCandidate[] = readAdvertisedHosts(networkInterfacesFn)
+    const endpointPath = buildDirectPeerTransferEndpointPath(input.transferId);
+    const httpEndpointCandidates = filterDirectTransferEndpointCandidatesForAdvertisement(readAdvertisedHosts(networkInterfacesFn)
       .map((host) => ({
         kind: 'http' as const,
-        url: `http://${formatCandidateHost(host)}:${params.advertisedPort}/machine-transfers/direct/${transferPathKey}`,
+        url: `http://${formatCandidateHost(host)}:${params.advertisedPort}${endpointPath}`,
         authorizationToken: transferToken,
         expiresAt,
       }))
@@ -274,7 +345,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
               entry.url === candidate.url
               && entry.authorizationToken === candidate.authorizationToken,
           ) === index,
-      );
+      ));
     const endpointCandidates: TransferEndpointCandidate[] = [...httpEndpointCandidates];
 
     publishedTransfers.set(input.transferId, {
@@ -294,6 +365,8 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
       });
     }
 
+    emitPublishedTransfersChanged();
+
     return {
       transferId: input.transferId,
       transferToken,
@@ -310,10 +383,9 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     const stored = publishedTransfers.get(input.transferId);
     if (!stored) return null;
     // `expiresAt` is generated locally; do not apply requester clock-skew tolerance to auth TTL.
-    if (stored.expiresAt < now()) {
-      publishedTransfers.delete(input.transferId);
-      onDemandScopesByToken.delete(stored.transferToken);
-      disposePayloadSourceBestEffort(stored.payloadSource);
+    if (stored.expiresAt <= now()) {
+      const changed = clearPublishedTransfersForToken(stored.transferToken);
+      if (changed) emitPublishedTransfersChanged();
       return null;
     }
     // Hash only the untrusted inbound token. Stored tokens are already pre-hashed at publish time
@@ -330,7 +402,10 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     transferToken: string;
     requestBody: unknown;
   }>): Promise<TransferPayloadSource | null> {
-    pruneExpiredPublishedTransfers();
+    if (disposed) {
+      return null;
+    }
+    cleanupExpiredPublishedTransfers();
     const scope = onDemandScopesByToken.get(input.transferToken);
     if (!scope) {
       return null;
@@ -342,28 +417,65 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     if (!scope.allowTransferId(input.transferId)) {
       return null;
     }
+
+    const existing = publishedTransfers.get(input.transferId);
+    if (existing?.transferToken === input.transferToken) {
+      return existing.payloadSource;
+    }
     if (scope.resolvedTransferIds.size >= scope.maxResolvedTransfers) {
       throw new Error('Direct peer on-demand transfer scope exceeded max resolved transfers');
     }
-    const payloadSource = await scope.resolvePayloadSourceOnOpen({
-      transferId: input.transferId,
-      requestBody: input.requestBody,
-    });
-    const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
-    if (payloadSource.kind === 'buffer' && payloadSource.payload.length > inMemoryMaxBytes) {
-      disposePayloadSourceBestEffort(payloadSource);
-      throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
+    const inFlightKey = `${input.transferToken}\0${input.transferId}`;
+    const existingResolution = inFlightOnDemandTransfers.get(inFlightKey);
+    if (existingResolution) {
+      return await existingResolution;
     }
 
-    assertRegistryHasCapacityForTransferId(input.transferId);
-    publishedTransfers.set(input.transferId, {
-      transferToken: input.transferToken,
-      transferTokenDigest: hashTransferToken(input.transferToken),
-      expiresAt: scope.expiresAt,
-      payloadSource,
-    });
-    scope.resolvedTransferIds.add(input.transferId);
-    return payloadSource;
+    const resolution = (async (): Promise<TransferPayloadSource | null> => {
+      const payloadSource = await scope.resolvePayloadSourceOnOpen({
+        transferId: input.transferId,
+        requestBody: input.requestBody,
+      });
+      const currentScope = onDemandScopesByToken.get(input.transferToken);
+      if (currentScope !== scope || scope.expiresAt <= now()) {
+        disposePayloadSourceBestEffort(payloadSource);
+        return null;
+      }
+      const inMemoryMaxBytes = resolveInMemoryTransferMaxBytes();
+      if (payloadSource.kind === 'buffer' && payloadSource.payload.length > inMemoryMaxBytes) {
+        disposePayloadSourceBestEffort(payloadSource);
+        throw new Error(`${IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR}:${inMemoryMaxBytes}`);
+      }
+
+      if (!scope.resolvedTransferIds.has(input.transferId) && scope.resolvedTransferIds.size >= scope.maxResolvedTransfers) {
+        disposePayloadSourceBestEffort(payloadSource);
+        throw new Error('Direct peer on-demand transfer scope exceeded max resolved transfers');
+      }
+
+      try {
+        assertRegistryHasCapacityForTransferId(input.transferId);
+      } catch (error) {
+        disposePayloadSourceBestEffort(payloadSource);
+        throw error;
+      }
+      publishedTransfers.set(input.transferId, {
+        transferToken: input.transferToken,
+        transferTokenDigest: hashTransferToken(input.transferToken),
+        expiresAt: scope.expiresAt,
+        payloadSource,
+      });
+      scope.resolvedTransferIds.add(input.transferId);
+      emitPublishedTransfersChanged();
+      return payloadSource;
+    })();
+    inFlightOnDemandTransfers.set(inFlightKey, resolution);
+    try {
+      return await resolution;
+    } finally {
+      if (inFlightOnDemandTransfers.get(inFlightKey) === resolution) {
+        inFlightOnDemandTransfers.delete(inFlightKey);
+      }
+    }
   }
 
   function clearPublishedTransfer(transferId: string): void {
@@ -373,7 +485,29 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     }
 
     // Clearing a token carrier should also clear any on-demand transfers resolved under the same token.
-    clearPublishedTransfersForToken(stored.transferToken);
+    const changed = clearPublishedTransfersForToken(stored.transferToken);
+    if (changed) emitPublishedTransfersChanged();
+  }
+
+  function dispose(): Promise<void> {
+    if (disposePromise) {
+      return disposePromise;
+    }
+
+    disposed = true;
+    onDemandScopesByToken.clear();
+    const retainedPayloadSources = [...publishedTransfers.values()].map((entry) => entry.payloadSource);
+    const inFlightResolutions = [...inFlightOnDemandTransfers.values()];
+    publishedTransfers.clear();
+    inFlightOnDemandTransfers.clear();
+    emitPublishedTransfersChanged();
+
+    disposePromise = (async () => {
+      await Promise.allSettled(retainedPayloadSources.map(disposePayloadSourceOnce));
+      await Promise.allSettled(inFlightResolutions);
+      await Promise.allSettled([...pendingPayloadDisposals]);
+    })();
+    return disposePromise;
   }
 
   return {
@@ -381,8 +515,17 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     readPublishedTransfer,
     resolveOnDemandTransferOnOpen,
     clearPublishedTransfer,
-    hasPublishedTransfers: () => publishedTransfers.size > 0,
-    countPublishedTransfers: () => publishedTransfers.size,
+    cleanupExpiredPublishedTransfers,
+    getNextPublishedTransferExpiryAt,
+    dispose,
+    hasPublishedTransfers: () => {
+      cleanupExpiredPublishedTransfers();
+      return publishedTransfers.size > 0;
+    },
+    countPublishedTransfers: () => {
+      cleanupExpiredPublishedTransfers();
+      return publishedTransfers.size;
+    },
   };
 }
 
@@ -455,6 +598,23 @@ const DirectTransferImportChunkResponseSchema = z
   .strict()
   .or(z.object({ success: z.literal(false), error: z.string() }).strict());
 
+const DirectTransferImportFinalizeOrdinaryFailureResponseSchema = z
+  .object({
+    success: z.literal(false),
+    error: z.string(),
+    keepSession: z.boolean().optional(),
+  })
+  .strict();
+
+const DirectTransferImportFinalizeRecoveryFailureResponseSchema = z
+  .object({
+    success: z.literal(false),
+    error: z.string(),
+    errorCode: z.literal(TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE),
+    keepSession: z.literal(true),
+  })
+  .strict();
+
 const DirectTransferImportFinalizeResponseSchema = z
   .object({
     success: z.literal(true),
@@ -467,7 +627,8 @@ const DirectTransferImportFinalizeResponseSchema = z
     sha256: z.string().min(1),
   })
   .strict()
-  .or(z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict());
+  .or(DirectTransferImportFinalizeOrdinaryFailureResponseSchema)
+  .or(DirectTransferImportFinalizeRecoveryFailureResponseSchema);
 
 const DirectTransferImportAbortResponseSchema = z
   .object({ success: z.literal(true) }).strict()
@@ -561,6 +722,13 @@ export function createDirectPeerTransferApp(params: Readonly<{
     }
 
     return digest;
+  };
+
+  const validateRecipientPublicKey = (recipientPublicKeyBase64: string): void => {
+    if (recipientPublicKeyBase64.length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
+      throw new Error('Oversized recipient public key');
+    }
+    parseTransferRecipientPublicKeyBase64(recipientPublicKeyBase64);
   };
 
   const closeFileHandleBestEffort = async (handlePromise: Promise<FileHandle>): Promise<void> => {
@@ -689,6 +857,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
   });
 
   typed.put('/machine-transfers/direct/imports/:uploadId/chunks/:sequence', {
+    bodyLimit: resolveEncryptedTransferChunkJsonBodyMaxBytes(),
     schema: {
       params: z.object({
         uploadId: z.string().min(1),
@@ -721,9 +890,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
       params: z.object({ uploadId: z.string().min(1) }),
       response: {
         200: DirectTransferImportFinalizeResponseSchema,
-        400: z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict(),
-        404: z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict(),
-        409: z.object({ success: z.literal(false), error: z.string(), keepSession: z.boolean().optional() }).strict(),
+        400: DirectTransferImportFinalizeOrdinaryFailureResponseSchema,
+        404: DirectTransferImportFinalizeOrdinaryFailureResponseSchema,
+        409: DirectTransferImportFinalizeOrdinaryFailureResponseSchema,
+        500: DirectTransferImportFinalizeRecoveryFailureResponseSchema,
       },
     },
   }, async (request, reply) => {
@@ -731,15 +901,22 @@ export function createDirectPeerTransferApp(params: Readonly<{
       uploadId: request.params.uploadId,
     });
     if (!result.success) {
+      const { expiresAt, ...response } = result;
       const error = result.error;
-      if (error === 'Upload session not found') {
+      if (result.errorCode === TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE) {
+        reply.code(500);
+        if (typeof expiresAt === 'number' && Number.isSafeInteger(expiresAt) && expiresAt > 0) {
+          reply.header(DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER, String(expiresAt));
+          reply.header('access-control-expose-headers', DIRECT_TRANSFER_SESSION_EXPIRES_AT_HEADER);
+        }
+      } else if (error === 'Upload session not found') {
         reply.code(404);
       } else if (error === 'Upload is incomplete' || error === 'Upload hash mismatch') {
         reply.code(409);
       } else {
         reply.code(400);
       }
-      return result;
+      return response;
     }
     return result;
   });
@@ -780,38 +957,36 @@ export function createDirectPeerTransferApp(params: Readonly<{
         404: z.object({ ok: z.literal(false), error: z.string() }).strict(),
       },
     },
-	  }, async (request, reply) => {
-	    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
-	    if (!transferId) {
-	      reply.code(404);
-	      return { ok: false as const, error: 'Direct peer transfer not available' };
-	    }
-	    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
-	    if (transferToken.length === 0) {
-	      reply.code(404);
-	      return { ok: false as const, error: 'Direct peer transfer not available' };
-	    }
-	    if (transferToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS) {
-	      reply.code(401);
-	      return { ok: false as const, error: 'Direct peer transfer not available' };
-	    }
-	    const transferTokenDigest = resolveOpenTransferTokenDigest(transferToken);
-	    let payloadSource = params.readPublishedTransfer({
-	      transferId,
-	      transferToken,
-	      transferTokenDigest,
-	    });
+  }, async (request, reply) => {
+    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
+    if (!transferId) {
+      reply.code(404);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
+    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
+    if (transferToken.length === 0) {
+      reply.code(404);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
+    if (transferToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS) {
+      reply.code(401);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
+    try {
+      validateRecipientPublicKey(
+        request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER],
+      );
+    } catch {
+      reply.code(400);
+      return { ok: false as const, error: 'Invalid direct peer transfer request' };
+    }
+    const transferTokenDigest = resolveOpenTransferTokenDigest(transferToken);
+    let payloadSource = params.readPublishedTransfer({
+      transferId,
+      transferToken,
+      transferTokenDigest,
+    });
     if (!payloadSource && params.resolveOnDemandTransfer) {
-      try {
-        // Validate recipient key before any on-demand resolution work (blob pack building, hashing, IO).
-        if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
-          throw new Error('Oversized recipient public key');
-	        }
-	        parseTransferRecipientPublicKeyBase64(request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]);
-	      } catch {
-	        reply.code(400);
-	        return { ok: false as const, error: 'Invalid direct peer transfer request' };
-	      }
       try {
         payloadSource = await params.resolveOnDemandTransfer({
           transferId,
@@ -827,19 +1002,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
         return { ok: false as const, error: 'Invalid direct peer transfer request' };
       }
     }
-		    if (!payloadSource) {
-		      reply.code(401);
-		      return { ok: false as const, error: 'Direct peer transfer not available' };
-		    }
-		    try {
-		      if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
-		        throw new Error('Oversized recipient public key');
-		      }
-		      parseTransferRecipientPublicKeyBase64(request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]);
-		    } catch {
-		      reply.code(400);
-		      return { ok: false as const, error: 'Invalid direct peer transfer request' };
-		    }
+    if (!payloadSource) {
+      reply.code(401);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
     const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
     const sizeBytes = await cachePromise(
       openSizeBytesCache,
@@ -879,45 +1045,42 @@ export function createDirectPeerTransferApp(params: Readonly<{
         404: z.object({ ok: z.literal(false), error: z.string() }).strict(),
       },
     },
-	  }, async (request, reply) => {
-	    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
-	    if (!transferId) {
-	      reply.code(404);
-	      return { ok: false as const, error: 'Direct peer transfer not available' };
-	    }
-	    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
-	    if (transferToken.length === 0) {
-	      reply.code(404);
-	      return { ok: false as const, error: 'Direct peer transfer not available' };
-	    }
-	    if (transferToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS) {
-	      reply.code(401);
-	      return { ok: false as const, error: 'Direct peer transfer not available' };
-	    }
-	    const transferTokenDigest = resolveOpenTransferTokenDigest(transferToken);
-	    const payloadSource = params.readPublishedTransfer({
-	      transferId,
-	      transferToken,
-	      transferTokenDigest,
-	    });
-		    if (!payloadSource) {
-		      reply.code(401);
-		      return { ok: false as const, error: 'Direct peer transfer not available' };
-		    }
-		    try {
-		      // Fail fast before reading payload bytes to avoid wasted IO on malformed keys.
-		      if (request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER].length > DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS) {
-		        throw new Error('Oversized recipient public key');
-		      }
-		      parseTransferRecipientPublicKeyBase64(request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER]);
-		    } catch {
-		      reply.code(400);
-		      return { ok: false as const, error: 'Invalid direct peer transfer request' };
-		    }
-
-	    const chunkBytes = readDirectPeerChunkBytes();
-	    const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
-	    const sizeBytes = await cachePromise(
+  }, async (request, reply) => {
+    const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
+    if (!transferId) {
+      reply.code(404);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
+    const transferToken = (readDirectPeerAuthorizationToken(request.headers.authorization) ?? '').trim();
+    if (transferToken.length === 0) {
+      reply.code(404);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
+    if (transferToken.length > DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS) {
+      reply.code(401);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
+    try {
+      validateRecipientPublicKey(
+        request.headers[DIRECT_PEER_RECIPIENT_PUBLIC_KEY_HEADER],
+      );
+    } catch {
+      reply.code(400);
+      return { ok: false as const, error: 'Invalid direct peer transfer request' };
+    }
+    const transferTokenDigest = resolveOpenTransferTokenDigest(transferToken);
+    const payloadSource = params.readPublishedTransfer({
+      transferId,
+      transferToken,
+      transferTokenDigest,
+    });
+    if (!payloadSource) {
+      reply.code(401);
+      return { ok: false as const, error: 'Direct peer transfer not available' };
+    }
+    const chunkBytes = readDirectPeerChunkBytes();
+    const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
+    const sizeBytes = await cachePromise(
       openSizeBytesCache,
       cacheKey,
       async () => await resolveTransferPayloadSizeBytes(payloadSource),
@@ -958,12 +1121,17 @@ export function createDirectPeerTransferApp(params: Readonly<{
 }
 
 export async function startDirectPeerTransferServer(params: Readonly<{
-  readPublishedTransfer: (input: Readonly<{ transferId: string; transferToken: string }>) => TransferPayloadSource | null;
+  readPublishedTransfer: (input: Readonly<{
+    transferId: string;
+    transferToken: string;
+    transferTokenDigest?: Buffer;
+  }>) => TransferPayloadSource | null;
   resolveOnDemandTransfer?: Parameters<typeof createDirectPeerTransferApp>[0]['resolveOnDemandTransfer'];
   accessPolicy?: FilesystemAccessPolicy;
   bindPort?: number;
   bindHost?: string;
   onImportSessionCountChanged?: (count: number) => void;
+  onImportSessionActivity?: () => void;
   promptAssetUpload?: Parameters<typeof createDirectTransferImportSessionManager>[0] extends infer T
     ? T extends Readonly<object>
       ? T extends { promptAssetUpload?: infer P }
@@ -971,6 +1139,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
         : never
       : never
     : never;
+  finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): Promise<Readonly<{
   port: number;
   stop: () => Promise<void>;
@@ -982,20 +1151,31 @@ export async function startDirectPeerTransferServer(params: Readonly<{
     | Readonly<{ success: true; response: DirectTransferImportOpenResponse }>
     | Readonly<{ success: false; error: string }>
   >;
+  abortImportTransferSession: (
+    input: Readonly<{ uploadId: string }>,
+  ) => Promise<void | Readonly<{ aborted: boolean }>>;
+  cleanupExpiredImportSessions: (now?: number) => void;
+  getNextImportSessionExpiryAt: () => number | null;
 }>> {
   const importSessionManager = createDirectTransferImportSessionManager({
     onActiveSessionCountChanged: params.onImportSessionCountChanged,
+    onActivity: params.onImportSessionActivity,
     accessPolicy: params.accessPolicy,
     ...(params.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
+    ...(params.finalizeFileOperations
+      ? { finalizeFileOperations: params.finalizeFileOperations }
+      : {}),
   });
   const app = createDirectPeerTransferApp({
     ...params,
     importSessionManager,
   });
   await app.ready();
+  // bindHost is local listener configuration. Clamp it independently from any advertised remote
+  // candidates so a direct caller cannot restore plaintext nonloopback exposure.
   const address = await app.listen({
     port: typeof params.bindPort === 'number' && params.bindPort > 0 ? Math.floor(params.bindPort) : readDirectPeerBindPort(),
-    host: typeof params.bindHost === 'string' && params.bindHost.length > 0 ? params.bindHost : resolveDirectPeerTransferBindHost(),
+    host: resolveDirectPeerTransferBindHost(params.bindHost),
   });
   const port = Number.parseInt(String(address).split(':').pop() ?? '', 10);
   if (!Number.isFinite(port) || port <= 0) {
@@ -1006,6 +1186,10 @@ export async function startDirectPeerTransferServer(params: Readonly<{
     port,
     issueImportOpenAuthorizationToken: (input) => importSessionManager.issueImportOpenAuthorizationToken(input),
     openTrustedImportSession: async (input) => await importSessionManager.openTrustedImportSession(input),
+    abortImportTransferSession: async (input) =>
+      await importSessionManager.abortImportTransferSession(input),
+    cleanupExpiredImportSessions: (now) => importSessionManager.cleanupExpiredImportSessions(now),
+    getNextImportSessionExpiryAt: () => importSessionManager.getNextImportSessionExpiryAt(),
     stop: async () => {
       await app.close();
     },

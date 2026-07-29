@@ -1,7 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { constants } from 'node:fs';
-import { copyFile, link, mkdir, rm, stat, writeFile } from 'node:fs/promises';
+import { link, mkdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 
@@ -21,6 +20,8 @@ import type { SessionMediaIngestionSource, SessionMediaItemV1, SessionMediaOrigi
 import { checkSessionMediaBudgets } from './budget';
 import {
   extensionForSessionMediaMimeType,
+  isSessionMediaImageMimeType,
+  sessionMediaKindForMimeType,
   type SupportedSessionMediaMimeType,
 } from './mime';
 import {
@@ -71,14 +72,14 @@ function sanitizeOrigin(origin: SessionMediaOrigin): SessionMediaOrigin {
   const agentId = sanitizeSessionMediaIdentifier(origin.agentId);
   const toolCallId = sanitizeSessionMediaIdentifier(origin.toolCallId);
   const generationId = sanitizeSessionMediaIdentifier(origin.generationId);
-  const providerEventId = sanitizeSessionMediaIdentifier(origin.providerEventId);
+  const agentEventId = sanitizeSessionMediaIdentifier(origin.agentEventId);
   const providerFileId = sanitizeSessionMediaIdentifier(origin.providerFileId);
   return {
     source: origin.source,
     ...(agentId ? { agentId } : {}),
     ...(toolCallId ? { toolCallId } : {}),
     ...(generationId ? { generationId } : {}),
-    ...(providerEventId ? { providerEventId } : {}),
+    ...(agentEventId ? { agentEventId } : {}),
     ...(providerFileId ? { providerFileId } : {}),
   };
 }
@@ -107,9 +108,7 @@ function readPositiveImageDimension(value: number | undefined): number | null {
 async function readPreparedImageDimensions(source: PreparedMediaSource): Promise<ImageDimensions | null> {
   try {
     const sharp = (await import('sharp')).default;
-    const image = source.kind === 'buffer'
-      ? sharp(source.bytes, { failOn: 'none' })
-      : sharp(source.path, { failOn: 'none' });
+    const image = sharp(source.bytes, { failOn: 'none' });
     const metadata = await image.metadata();
     const width = readPositiveImageDimension(metadata.width);
     const height = readPositiveImageDimension(metadata.height);
@@ -117,25 +116,6 @@ async function readPreparedImageDimensions(source: PreparedMediaSource): Promise
   } catch {
     return null;
   }
-}
-
-async function adoptSourceFile(input: Readonly<{
-  sourcePath: string;
-  destinationPath: string;
-}>): Promise<void> {
-  try {
-    await copyFile(input.sourcePath, input.destinationPath, constants.COPYFILE_FICLONE);
-    return;
-  } catch {
-    // Reflink is opportunistic; fall through to byte-preserving fallbacks.
-  }
-  try {
-    await link(input.sourcePath, input.destinationPath);
-    return;
-  } catch {
-    // Hard links are not portable across all filesystems.
-  }
-  await copyFile(input.sourcePath, input.destinationPath);
 }
 
 type WritePreparedSourceAtomicResult = 'written' | 'exists-same-hash' | 'exists-different-hash';
@@ -148,11 +128,7 @@ async function writePreparedSourceAtomically(input: Readonly<{
   await mkdir(dirname(input.destinationPath), { recursive: true });
   const tempPath = join(dirname(input.destinationPath), `.happier-session-media-${randomUUID()}.tmp`);
   try {
-    if (input.source.kind === 'buffer') {
-      await writeFile(tempPath, input.source.bytes);
-    } else {
-      await adoptSourceFile({ sourcePath: input.source.path, destinationPath: tempPath });
-    }
+    await writeFile(tempPath, input.source.bytes);
     await link(tempPath, input.destinationPath);
     await rm(tempPath, { force: true });
     return 'written';
@@ -186,9 +162,12 @@ function buildStoredFileName(input: Readonly<{
   source: SessionMediaIngestionSource;
   suggestedName?: string;
   mimeType: SupportedSessionMediaMimeType;
+  mediaKind: 'image' | 'video';
   collisionIndex?: number;
 }>): string {
-  const fallback = input.category === 'tool-artifact' ? 'artifact-image' : 'generated-image';
+  const fallback = input.category === 'tool-artifact'
+    ? `artifact-${input.mediaKind}`
+    : `generated-${input.mediaKind}`;
   const rawName = resolveSourceSuggestedName(input.source, input.suggestedName || fallback);
   const safeName = sanitizeSessionMediaFileName(rawName, fallback);
   const nameWithExtension = withSessionMediaFileExtension(safeName, extensionForSessionMediaMimeType(input.mimeType));
@@ -247,10 +226,9 @@ export async function persistSessionMedia(params: Readonly<{
     return prepared;
   }
 
-  const sha256 = prepared.kind === 'buffer'
-    ? createHash('sha256').update(prepared.bytes).digest('hex')
-    : await hashFile(prepared.path);
-  const sizeBytes = prepared.kind === 'buffer' ? prepared.bytes.byteLength : prepared.sizeBytes;
+  const sha256 = createHash('sha256').update(prepared.bytes).digest('hex');
+  const sizeBytes = prepared.bytes.byteLength;
+  const mediaKind = sessionMediaKindForMimeType(prepared.mimeType);
 
   let storedFileName: string | null = null;
   let mediaPath: string | null = null;
@@ -264,6 +242,7 @@ export async function persistSessionMedia(params: Readonly<{
       source: params.input.source,
       suggestedName: prepared.suggestedName,
       mimeType: prepared.mimeType,
+      mediaKind,
       collisionIndex,
     });
     const candidateMediaPath = joinSessionMediaPath(resolvedTarget.uploadBasePath, sessionId, messageLocalId, candidateFileName);
@@ -319,7 +298,9 @@ export async function persistSessionMedia(params: Readonly<{
     return failure('media_path_collision', 'Unable to allocate a collision-free session media path');
   }
 
-  const dimensions = await readPreparedImageDimensions(prepared);
+  const dimensions = isSessionMediaImageMimeType(prepared.mimeType)
+    ? await readPreparedImageDimensions(prepared)
+    : null;
 
   try {
     await ensureSessionMediaIgnoreRule({
@@ -340,7 +321,7 @@ export async function persistSessionMedia(params: Readonly<{
       id: sha256.slice(0, 16),
       role: params.input.role,
       category: params.input.category,
-      mediaKind: 'image',
+      mediaKind,
       mimeType: prepared.mimeType,
       name: storedFileName.slice(13),
       path: mediaPath,

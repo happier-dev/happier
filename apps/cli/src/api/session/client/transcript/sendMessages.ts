@@ -20,6 +20,10 @@ import {
 } from '../../outbound/shared';
 import { extractAssistantTextSnapshotFromAcpMessage } from '../../turns/extractAssistantTextSnapshot';
 import type { TurnAssistantTextSnapshotStore } from '../../turns/assistantTextSnapshot';
+import {
+    createEphemeralSendFailure,
+    type EphemeralSendOutcome,
+} from './ephemeralSendOutcome';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
@@ -61,6 +65,7 @@ export type SessionClientTranscriptSendPort = Readonly<{
         connected: boolean;
         emit: (event: 'transcript-stream-segment' | 'transcript-stream-segment-delta', payload: unknown) => void;
     };
+    getEphemeralStreamConnectionEpoch?: () => number;
     outboundShapeLogger: {
         log: (label: string, payload: unknown) => void;
     };
@@ -76,6 +81,11 @@ export type SessionClientTranscriptSendPort = Readonly<{
     toolCallInputByProviderAndId: Map<string, unknown>;
     maxToolCallCacheEntries?: number | undefined;
 }>;
+
+function readEphemeralStreamConnectionEpoch(port: SessionClientTranscriptSendPort): number {
+    const epoch = port.getEphemeralStreamConnectionEpoch?.();
+    return typeof epoch === 'number' && Number.isFinite(epoch) ? Math.max(0, Math.trunc(epoch)) : 0;
+}
 
 function observeAcpAssistantText(params: Readonly<{
     store?: TurnAssistantTextSnapshotStore;
@@ -174,23 +184,35 @@ export function sendAgentMessageEphemeralViaPort(
     provider: ACPProvider,
     body: ACPMessageData,
     opts: Readonly<{ localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }>,
-): void {
+): EphemeralSendOutcome {
+    const epoch = readEphemeralStreamConnectionEpoch(port);
     if (!port.socket.connected) {
-        return;
+        return createEphemeralSendFailure('disconnected', epoch);
     }
 
-    const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
-        provider,
-        body,
-        meta: opts.meta,
-        localId: opts.localId,
-        toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
-        permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
-        toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
-        maxToolCallCacheEntries: port.maxToolCallCacheEntries,
-    });
+    let prepared: ReturnType<typeof prepareAcpTranscriptDispatch>;
+    try {
+        prepared = prepareAcpTranscriptDispatch({
+            provider,
+            body,
+            meta: opts.meta,
+            localId: opts.localId,
+            toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
+            permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
+            toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
+            maxToolCallCacheEntries: port.maxToolCallCacheEntries,
+        });
+    } catch (error) {
+        return createEphemeralSendFailure('prepare_failed', readEphemeralStreamConnectionEpoch(port), error);
+    }
+    const { normalizedBody, content, localId, sidechainId } = prepared;
     const messageRole = resolveAcpSessionMessageRole(normalizedBody);
-    const payload = port.buildOutboundSessionMessagePayload(content);
+    let payload: PlainOrEncryptedPayload;
+    try {
+        payload = port.buildOutboundSessionMessagePayload(content);
+    } catch (error) {
+        return createEphemeralSendFailure('serialize_failed', readEphemeralStreamConnectionEpoch(port), error);
+    }
     const createdAt =
         typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
             ? Math.max(0, Math.trunc(opts.createdAt))
@@ -210,6 +232,18 @@ export function sendAgentMessageEphemeralViaPort(
                 : Date.now();
 
     try {
+        observeAcpAssistantText({
+            store: port.turnAssistantTextSnapshotStore,
+            provider,
+            body: normalizedBody,
+            localId,
+            source: 'ephemeral',
+        });
+    } catch (error) {
+        return createEphemeralSendFailure('observe_failed', readEphemeralStreamConnectionEpoch(port), error);
+    }
+
+    try {
         port.socket.emit('transcript-stream-segment', {
             sid: port.sessionId,
             message: {
@@ -224,16 +258,10 @@ export function sendAgentMessageEphemeralViaPort(
                 updatedAt,
             },
         });
-    } catch {
-        // best effort
+    } catch (error) {
+        return createEphemeralSendFailure('emit_failed', readEphemeralStreamConnectionEpoch(port), error);
     }
-    observeAcpAssistantText({
-        store: port.turnAssistantTextSnapshotStore,
-        provider,
-        body: normalizedBody,
-        localId,
-        source: 'ephemeral',
-    });
+    return { accepted: true, epoch: readEphemeralStreamConnectionEpoch(port) };
 }
 
 /**
@@ -248,23 +276,35 @@ export function sendAgentMessageEphemeralDeltaViaPort(
     provider: ACPProvider,
     body: ACPMessageData,
     opts: Readonly<{ localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }>,
-): void {
+): EphemeralSendOutcome {
+    const epoch = readEphemeralStreamConnectionEpoch(port);
     if (!port.socket.connected) {
-        return;
+        return createEphemeralSendFailure('disconnected', epoch);
     }
 
-    const { normalizedBody, content, localId, sidechainId } = prepareAcpTranscriptDispatch({
-        provider,
-        body,
-        meta: opts.meta,
-        localId: opts.localId,
-        toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
-        permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
-        toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
-        maxToolCallCacheEntries: port.maxToolCallCacheEntries,
-    });
+    let prepared: ReturnType<typeof prepareAcpTranscriptDispatch>;
+    try {
+        prepared = prepareAcpTranscriptDispatch({
+            provider,
+            body,
+            meta: opts.meta,
+            localId: opts.localId,
+            toolCallCanonicalNameByProviderAndId: port.toolCallCanonicalNameByProviderAndId,
+            permissionToolCallRawInputByProviderAndId: port.permissionToolCallRawInputByProviderAndId,
+            toolCallInputByProviderAndId: port.toolCallInputByProviderAndId,
+            maxToolCallCacheEntries: port.maxToolCallCacheEntries,
+        });
+    } catch (error) {
+        return createEphemeralSendFailure('prepare_failed', readEphemeralStreamConnectionEpoch(port), error);
+    }
+    const { normalizedBody, content, localId, sidechainId } = prepared;
     const messageRole = resolveAcpSessionMessageRole(normalizedBody);
-    const payload = port.buildOutboundSessionMessagePayload(content);
+    let payload: PlainOrEncryptedPayload;
+    try {
+        payload = port.buildOutboundSessionMessagePayload(content);
+    } catch (error) {
+        return createEphemeralSendFailure('serialize_failed', readEphemeralStreamConnectionEpoch(port), error);
+    }
     const createdAt =
         typeof opts.createdAt === 'number' && Number.isFinite(opts.createdAt)
             ? Math.max(0, Math.trunc(opts.createdAt))
@@ -292,9 +332,10 @@ export function sendAgentMessageEphemeralDeltaViaPort(
                 updatedAt,
             },
         });
-    } catch {
-        // best effort
+    } catch (error) {
+        return createEphemeralSendFailure('emit_failed', readEphemeralStreamConnectionEpoch(port), error);
     }
+    return { accepted: true, epoch: readEphemeralStreamConnectionEpoch(port) };
 }
 
 export function sendSessionEventViaPort(

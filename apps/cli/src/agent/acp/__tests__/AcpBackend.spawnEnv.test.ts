@@ -20,6 +20,11 @@ function writeEnvCaptureAcpAgentScript(params: { dir: string }): string {
         Gemini_Model: process.env.Gemini_Model ?? null,
         gemini_model: process.env.gemini_model ?? null,
         [${JSON.stringify(preservedEnvKey)}]: process.env[${JSON.stringify(preservedEnvKey)}] ?? null,
+        CLAUDECODE: process.env.CLAUDECODE ?? null,
+        HAPPIER_DAEMON_RUNTIME_ID: process.env.HAPPIER_DAEMON_RUNTIME_ID ?? null,
+        HAPPIER_SESSION_PROFILE_ID: process.env.HAPPIER_SESSION_PROFILE_ID ?? null,
+        HAPPIER_SESSION_ATTACH_FILE: process.env.HAPPIER_SESSION_ATTACH_FILE ?? null,
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: process.env.HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON ?? null,
       }), 'utf8');
     }
 
@@ -74,7 +79,17 @@ function writeEnvCaptureAcpAgentScript(params: { dir: string }): string {
 
 describe('AcpBackend spawn environment', () => {
   const preservedEnvKey = 'HAPPIER_ACP_ENV_PRESERVED_KEY';
-  const envScope = createEnvKeyScope(['GEMINI_MODEL', 'Gemini_Model', 'gemini_model', preservedEnvKey]);
+  const envScope = createEnvKeyScope([
+    'GEMINI_MODEL',
+    'Gemini_Model',
+    'gemini_model',
+    preservedEnvKey,
+    'CLAUDECODE',
+    'HAPPIER_DAEMON_RUNTIME_ID',
+    'HAPPIER_SESSION_PROFILE_ID',
+    'HAPPIER_SESSION_ATTACH_FILE',
+    'HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON',
+  ]);
 
   afterEach(() => {
     envScope.restore();
@@ -86,6 +101,11 @@ describe('AcpBackend spawn environment', () => {
         GEMINI_MODEL: 'inherited-upper',
         Gemini_Model: 'inherited-mixed',
         gemini_model: 'inherited-lower',
+        CLAUDECODE: '1',
+        HAPPIER_DAEMON_RUNTIME_ID: 'runtime-parent',
+        HAPPIER_SESSION_PROFILE_ID: 'ambient-profile',
+        HAPPIER_SESSION_ATTACH_FILE: '/tmp/ambient-attach.json',
+        HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: 'ambient-selections',
       });
       const capturePath = join(dir, 'env.json');
       const scriptPath = writeEnvCaptureAcpAgentScript({ dir });
@@ -102,6 +122,8 @@ describe('AcpBackend spawn environment', () => {
             Gemini_Model: 'explicit-mixed',
             gemini_model: 'explicit-lower',
             [preservedEnvKey]: 'preserved-explicit',
+            HAPPIER_SESSION_PROFILE_ID: 'plugin-spoof',
+            HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: 'plugin-spoof',
           },
           unsetEnv: ['GEMINI_MODEL'],
           transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
@@ -116,6 +138,11 @@ describe('AcpBackend spawn environment', () => {
           Gemini_Model: 'explicit-mixed',
           gemini_model: 'explicit-lower',
           [preservedEnvKey]: 'preserved-explicit',
+          CLAUDECODE: null,
+          HAPPIER_DAEMON_RUNTIME_ID: null,
+          HAPPIER_SESSION_PROFILE_ID: null,
+          HAPPIER_SESSION_ATTACH_FILE: null,
+          HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: null,
         });
       } finally {
         await backendForCleanup?.dispose().catch(() => {});

@@ -56,7 +56,7 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
   const discardStatusesByLocalId = new Map<string, number>();
   const discardedLocalIds: string[] = [];
 
-  async function createClient() {
+  async function createClient(sessionOverrides: Record<string, unknown> = {}) {
     const { reloadConfiguration } = await import('@/configuration');
     const { ApiSessionClient } = await import('./session/sessionClient');
 
@@ -71,6 +71,7 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     reloadConfiguration();
     const session = createMockSession({
       metadata: { path: '/tmp', host: 'localhost' },
+      ...sessionOverrides,
     });
     return new ApiSessionClient('test-token', session);
   }
@@ -158,11 +159,12 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     await expect(client.listPendingMessageQueueV2LocalIds()).resolves.toEqual(['a', 'b']);
   });
 
-  it('peeks pending count via list', async () => {
+  it('peeks pending count via list when the session snapshot indicates queued work', async () => {
     pendingRows = [{ localId: 'a' }];
-    const client = await createClient();
+    const client = await createClient({ pendingCount: 1, pendingVersion: 1 });
 
     await expect(client.peekPendingMessageQueueV2Count()).resolves.toBe(1);
+    expect(pendingListRequestCount).toBe(1);
   });
 
   it('reports authentication failures from pending list calls to the session supervisor', async () => {
@@ -191,11 +193,11 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     expect(pendingListRequestCount).toBe(0);
   });
 
-  it('keeps non-auth pending list failures best-effort', async () => {
+  it('propagates non-auth pending list failures without marking authentication failed', async () => {
     pendingListStatus = 500;
     const client = await createClient();
 
-    await expect(client.listPendingMessageQueueV2LocalIds()).resolves.toEqual([]);
+    await expect(client.listPendingMessageQueueV2LocalIds()).rejects.toMatchObject({ response: { status: 500 } });
     expect(supervisedInternals(client).currentConnectionState.phase).not.toBe('auth_failed');
   });
 
@@ -236,13 +238,13 @@ describe('ApiSessionClient pending queue V2 helpers', () => {
     expect(discardRequestCount).toBe(0);
   });
 
-  it('keeps non-auth pending discard failures best-effort', async () => {
+  it('propagates non-auth pending discard failures without marking authentication failed', async () => {
     pendingRows = [{ localId: 'a' }, { localId: 'b' }];
     discardStatusesByLocalId.set('a', 500);
     const client = await createClient();
 
-    await expect(client.discardPendingMessageQueueV2All({ reason: 'manual' })).resolves.toBe(1);
-    expect(discardedLocalIds).toEqual(['b']);
+    await expect(client.discardPendingMessageQueueV2All({ reason: 'manual' })).rejects.toMatchObject({ response: { status: 500 } });
+    expect(discardedLocalIds).toEqual([]);
     expect(supervisedInternals(client).currentConnectionState.phase).not.toBe('auth_failed');
   });
 });

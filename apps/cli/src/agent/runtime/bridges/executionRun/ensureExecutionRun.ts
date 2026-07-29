@@ -2,7 +2,11 @@ import type { ExecutionRunController, ExecutionRunVoiceAgentController } from '@
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import type { ExecutionRunState } from './executionRunTypes';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import { convertBackendTargetRefV2ToV1, type BackendTargetRefV1 } from '@happier-dev/protocol';
+import {
+  convertBackendTargetRefV2ToV1,
+  type BackendTargetRefV1,
+  type ConnectedServiceBindingsV1,
+} from '@happier-dev/protocol';
 import { resumeBackendControllerForResumableRun } from './resumeBackendController';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from '@/api/session/streamedTranscriptWriter';
@@ -29,6 +33,7 @@ export async function ensureExecutionRun(args: Readonly<{
     permissionMode: string;
     modelId?: string;
     accountSettings?: Readonly<Record<string, unknown>> | null;
+    connectedServices?: ConnectedServiceBindingsV1 | null;
     start?: any;
   }) => ExecutionRunHostRuntime;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
@@ -92,7 +97,7 @@ export async function ensureExecutionRun(args: Readonly<{
         chatModelId: config.chatModelId,
         commitModelId: config.commitModelId,
         commitIsolation: config.commitIsolation,
-        permissionPolicy: config.permissionPolicy,
+        permissionIntent: config.permissionIntent,
         idleTtlSeconds: config.idleTtlSeconds,
         initialContext: config.initialContext,
         initialContextMode: config.initialContextMode,
@@ -100,6 +105,17 @@ export async function ensureExecutionRun(args: Readonly<{
         ...(typeof config.bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs: config.bootstrapTimeoutMs } : {}),
         disabledActionIds: config.disabledActionIds,
         resumeHandle,
+      }, {
+        createRuntime: ({ agentId, modelId, permissionIntent, start, connectedServices }) =>
+          args.createRuntime({
+            runId: args.runId,
+            backendId: agentId,
+            backendTarget: { kind: 'builtInAgent', agentId },
+            modelId,
+            permissionMode: permissionIntent,
+            ...(start ? { start } : {}),
+            ...(connectedServices !== undefined ? { connectedServices } : {}),
+          }),
       });
 
       const voiceCtrl: ExecutionRunVoiceAgentController = {
@@ -112,7 +128,9 @@ export async function ensureExecutionRun(args: Readonly<{
         transcript: config.transcript,
         externalStreamIdByInternal: new Map(),
         internalStreamIdByExternal: new Map(),
-        persistedDoneByExternalStreamId: new Set(),
+        pendingTranscriptTurnByExternalStreamId: new Map(),
+        terminalReadByExternalStreamId: new Map(),
+        readInFlightByExternalStreamId: new Map(),
       };
       args.controllers.set(args.runId, voiceCtrl);
 

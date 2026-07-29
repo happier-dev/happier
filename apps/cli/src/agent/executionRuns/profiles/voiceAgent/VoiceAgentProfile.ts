@@ -1,16 +1,27 @@
+import type { ExecutionRunReplaySeedRequest } from '@happier-dev/protocol';
 import type { ExecutionRunIntentProfile } from '../ExecutionRunIntentProfile';
 import { configuration } from '@/configuration';
 import { readCredentials } from '@/persistence';
 import { resolveReplaySeedDraft } from '@/session/replay/resolveReplaySeedDraft';
+
+function isVoiceSessionReplay(value: unknown): value is ExecutionRunReplaySeedRequest {
+  return Boolean(
+    value
+    && typeof value === 'object'
+    && 'kind' in value
+    && value.kind === 'voice_session.v1',
+  );
+}
 
 export const VoiceAgentProfile: ExecutionRunIntentProfile = {
   intent: 'voice_agent',
   transcriptMaterialization: 'none',
   buildPrompt: (params) => params.instructions,
   prepareStartParams: async ({ request, cwd }) => {
-    if (request.replay?.kind !== 'voice_session.v1') {
+    if (!isVoiceSessionReplay(request.replay)) {
       return undefined;
     }
+    const replay = request.replay;
 
     const credentials = await readCredentials().catch(() => null);
     if (!credentials) {
@@ -18,23 +29,23 @@ export const VoiceAgentProfile: ExecutionRunIntentProfile = {
     }
 
     const replayStrategy =
-      request.replay.strategy === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
+      replay.strategy === 'summary_plus_recent' ? 'summary_plus_recent' : 'recent_messages';
     const replaySeed = await resolveReplaySeedDraft({
       credentials,
       cwd,
       source: {
         kind: 'voice_session.v1',
-        previousSessionId: request.replay.previousSessionId,
-        transcriptEpoch: request.replay.transcriptEpoch,
+        previousSessionId: replay.previousSessionId,
+        transcriptEpoch: replay.transcriptEpoch,
       },
       strategy: replayStrategy,
-      recentMessagesCount: request.replay.recentMessagesCount ?? 16,
+      recentMessagesCount: replay.recentMessagesCount ?? 16,
       maxSeedChars:
-        typeof request.replay.maxSeedChars === 'number'
-          ? request.replay.maxSeedChars
+        typeof replay.maxSeedChars === 'number'
+          ? replay.maxSeedChars
           : configuration.replaySeedMaxChars,
       candidateLimit: configuration.replaySeedCandidateLimit,
-      summaryRunner: request.replay.summaryRunner ?? null,
+      summaryRunner: replay.summaryRunner ?? null,
     }).catch(() => null);
 
     if (!replaySeed?.seedDraft) {

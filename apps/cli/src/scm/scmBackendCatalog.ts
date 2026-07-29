@@ -1,8 +1,8 @@
 import { createScmBackendCatalog as createBuiltInScmBackendCatalog } from './providers/catalog';
 import { createScmBackendRegistry, type ScmBackendRegistry } from './registry';
 import type { ScmBackend } from './types';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import {
-    activateScmProviderRuntimeEvents,
     createPluginScmBackendsFromRuntimeRegistry,
     type ScmBackendPluginRuntimeRegistry,
 } from './pluginBackends/runtimeRegistry';
@@ -25,72 +25,70 @@ export function createScmBackendCatalogWithPlugins(input?: Readonly<{
 
 export { createScmBackendCatalogWithPlugins as createScmBackendCatalog };
 
-export const defaultScmBackendRegistry: ScmBackendRegistry = createScmBackendRegistry(createScmBackendCatalogWithPlugins());
-
-export function resolveScmRuntimePluginIds(contributes: Readonly<{
-    activationTargets?: readonly Readonly<{ pluginId: string }>[];
-    scmBackends?: readonly Readonly<{ pluginId?: string }>[];
-    scmHostingProviders?: readonly Readonly<{ pluginId?: string }>[];
-}>): readonly string[] {
-    const activationTargetPluginIds = new Set((contributes.activationTargets ?? []).map((target) => target.pluginId));
-    const pluginIds = new Set<string>();
-
-    for (const contribution of [
-        ...(contributes.scmBackends ?? []),
-        ...(contributes.scmHostingProviders ?? []),
-    ]) {
-        if (contribution.pluginId && activationTargetPluginIds.has(contribution.pluginId)) {
-            pluginIds.add(contribution.pluginId);
-        }
+export async function activateScmRuntimeContributionsOnDemand(
+    runtimeRegistry: ScmBackendPluginRuntimeRegistry & Pick<
+        ResolvedExecutablePluginRuntimeRegistry,
+        'activateContributionsOnDemand'
+    >,
+): Promise<void> {
+    const hostingProviderDemands = (runtimeRegistry.contributes.scmHostingProviders ?? []).flatMap((contribution) => (
+        contribution.pluginId
+            ? [{
+                pluginId: contribution.pluginId,
+                family: 'scmHostingProviders' as const,
+                localId: contribution.definition.id,
+            }]
+            : []
+    ));
+    if (hostingProviderDemands.length > 0) {
+        await runtimeRegistry.activateContributionsOnDemand(hostingProviderDemands);
     }
 
-    return Object.freeze([...pluginIds].sort());
+    const backendDemands = (runtimeRegistry.contributes.scmBackends ?? []).flatMap((contribution) => (
+        contribution.pluginId
+            ? [{
+                pluginId: contribution.pluginId,
+                family: 'scmBackends' as const,
+                localId: contribution.definition.id,
+            }]
+            : []
+    ));
+    if (backendDemands.length > 0) {
+        await runtimeRegistry.activateContributionsOnDemand(backendDemands);
+    }
 }
 
-export async function resolveDefaultScmBackendRegistry(input?: Readonly<{
-    happyHomeDir?: string;
-    pluginRuntimeRegistry?: ScmBackendPluginRuntimeRegistry;
+export async function resolveDefaultScmBackendRegistry(input: Readonly<{
+    pluginRuntimeRegistry: ScmBackendPluginRuntimeRegistry & Pick<
+        ResolvedExecutablePluginRuntimeRegistry,
+        'activateContributionsOnDemand'
+    >;
 }>): Promise<ScmBackendRegistry> {
-    if (input?.pluginRuntimeRegistry) {
-        await activateScmProviderRuntimeEvents(input.pluginRuntimeRegistry);
-        return createScmBackendRegistry(createScmBackendCatalogWithPlugins({
-            pluginRuntimeRegistry: input.pluginRuntimeRegistry,
-        }));
-    }
-
-    if (!input?.happyHomeDir) {
-        const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-        try {
-            await activateScmProviderRuntimeEvents(lease.registry);
-            return createScmBackendRegistry(createScmBackendCatalogWithPlugins({
-                pluginRuntimeRegistry: lease.registry,
-            }));
-        } finally {
-            await lease.release();
-        }
-    }
-
-    const pluginRuntimeRegistry = await (async () => {
-        const { resolveMergedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
-        const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
-        const contributes = await resolveMergedContributionRegistry({
-            happyHomeDir: input?.happyHomeDir,
-        });
-
-        return await resolveExecutablePluginRuntimeRegistry({
-            happyHomeDir: input?.happyHomeDir,
-            contributes,
-            pluginIds: resolveScmRuntimePluginIds(contributes),
-        });
-    })();
-
+    await activateScmRuntimeContributionsOnDemand(input.pluginRuntimeRegistry);
     return createScmBackendRegistry(createScmBackendCatalogWithPlugins({
-        pluginRuntimeRegistry,
+        pluginRuntimeRegistry: input.pluginRuntimeRegistry,
     }));
 }
 
-export async function resolveScmBackendRegistry(
-    registry?: ScmBackendRegistry,
-): Promise<ScmBackendRegistry> {
-    return registry ?? await resolveDefaultScmBackendRegistry();
+export async function runWithScmBackendRegistryLease<T>(
+    registry: ScmBackendRegistry | undefined,
+    run: (registry: ScmBackendRegistry) => Promise<T>,
+    input?: Readonly<{ happyHomeDir?: string }>,
+): Promise<T> {
+    if (registry) {
+        return await run(registry);
+    }
+
+    const lease = await acquireAuthoritativePluginRuntimeRegistryLease({
+        happyHomeDir: input?.happyHomeDir,
+    });
+    try {
+        await activateScmRuntimeContributionsOnDemand(lease.registry);
+        const resolvedRegistry = createScmBackendRegistry(createScmBackendCatalogWithPlugins({
+            pluginRuntimeRegistry: lease.registry,
+        }));
+        return await run(resolvedRegistry);
+    } finally {
+        await lease.release();
+    }
 }

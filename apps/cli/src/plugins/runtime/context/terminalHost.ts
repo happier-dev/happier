@@ -1,10 +1,6 @@
 import type {
-    ExecAgentCliLaunchInputV1,
-    TerminalHostCreateOrAttachRequestV1,
-    TerminalHostResolutionReasonV1,
-    TerminalHostResolveResultV1,
-    TerminalHostRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+    AgentSessionHostServices,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 import type {
     TerminalHostAdapter,
     TerminalHostHandle,
@@ -18,25 +14,40 @@ import {
 } from '@happier-dev/agents';
 
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
-import { createTerminalHostRegistry } from '@/integrations/terminal/host/registry';
 import { resolveTerminalHost } from '@/integrations/terminal/host/resolveTerminalHost';
 import type { TerminalHostResolution } from '@/integrations/terminal/host/_types';
-import { createTmuxTerminalHostAdapter, isTmuxAvailable } from '@/integrations/tmux';
+import { createDefaultTerminalHostAdapterInventory } from '@/integrations/terminal/host/defaultAdapters';
 import {
-    createZellijTerminalHostAdapter,
-    prepareZellijSocketDir,
-    resolveZellijRuntimeBinary,
-    resolveZellijSocketDir,
-} from '@/integrations/zellij';
-import { createPtyTerminalHostAdapter } from '@/terminal/pty/hostAdapter';
+    readTerminalHostAttachmentInfo,
+    writeTerminalHostAttachmentInfo,
+} from '@/terminal/attachment/terminalAttachmentInfo';
+import {
+    executeTerminalHostDisposition,
+    resolveRuntimeTerminalHostDispositionIntent,
+} from '@/terminal/attachment/terminalHostDisposition';
+import { notifyTerminalAttachmentRetiredThroughCatalog } from '@/terminal/attachment/catalogHooks';
 import type { TerminalPromptSubmitVerificationPolicy } from '@/integrations/terminalHost/promptSubmitVerification';
 import {
-    requireProviderCliLaunchSpec,
-    type ProviderCliLaunchSpec,
-} from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+    requireAgentCliLaunchSpec,
+    type AgentCliLaunchSpec,
+} from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { finalizeSessionChildEnvironment } from '@/session/runtime/control/finalizeSessionChildEnvironment';
+import { selectTrustedSessionControlEnvironment } from '@/session/runtime/control/sessionControlEnvironment';
+import { logger } from '@/ui/logger';
+
+type AgentTerminalHostService = NonNullable<AgentSessionHostServices['terminalHost']>;
+type AgentTerminalHostCreateOrAttachRequest =
+    Parameters<AgentTerminalHostService['createOrAttachHost']>[0];
+type AgentTerminalHostDisposeIntent = Parameters<AgentTerminalHostService['dispose']>[1];
+type AgentTerminalHostLaunchInput = AgentTerminalHostCreateOrAttachRequest['launch'];
+type AgentTerminalHostResolveResult = Awaited<ReturnType<AgentTerminalHostService['resolve']>>;
+type AgentTerminalHostResolutionReason =
+    Extract<AgentTerminalHostResolveResult, { reason: unknown }>['reason'];
 
 export type PluginTerminalHostErrorCode =
     | 'PLUGIN_TERMINAL_HOST_CAPABILITY_REQUIRED'
+    | 'PLUGIN_TERMINAL_HOST_SCOPE_RETIRED'
     | 'PLUGIN_TERMINAL_HOST_UNAVAILABLE'
     | 'PLUGIN_TERMINAL_HOST_UNRESOLVED_LAUNCH'
     | 'PLUGIN_TERMINAL_HOST_HANDLE_NOT_ACTIVE'
@@ -56,14 +67,21 @@ export class PluginTerminalHostError extends Error {
 export type CreatePluginTerminalHostServiceParams = Readonly<{
     hasCapability: (capability: string) => boolean;
     resolveTerminalHost: (preference: TerminalHostPreference) => TerminalHostResolution | Promise<TerminalHostResolution>;
-    resolveAgentCliLaunch: (launch: ExecAgentCliLaunchInputV1) => Pick<ProviderCliLaunchSpec, 'command' | 'args'> & Readonly<{
+    resolveAgentCliLaunch: (launch: AgentTerminalHostLaunchInput) => Pick<AgentCliLaunchSpec, 'command' | 'args'> & Readonly<{
         env?: Readonly<Record<string, string>>;
     }>;
+    onHostCreated?: (handle: TerminalHostHandle) => Promise<TerminalHostHandle | void> | TerminalHostHandle | void;
+    disposeHost: (input: Readonly<{
+        handle: TerminalHostHandle;
+        adapter: TerminalHostAdapter;
+        intent: AgentTerminalHostDisposeIntent;
+    }>) => Promise<void> | void;
 }>;
 
 export type CreateDefaultPluginTerminalHostServiceParams = Readonly<{
     happyHomeDir: string;
     hasCapability: (capability: string) => boolean;
+    readSessionId?: () => string | null;
     resolvePromptSubmitVerification?: (() => Promise<TerminalPromptSubmitVerificationPolicy | null>) | undefined;
     platform?: NodeJS.Platform;
     arch?: NodeJS.Architecture;
@@ -89,34 +107,36 @@ function assertCapability(params: CreatePluginTerminalHostServiceParams): void {
     }
 }
 
-function toPublicResolution(resolution: TerminalHostResolution): TerminalHostResolveResultV1 {
+function toPublicResolution(resolution: TerminalHostResolution): AgentTerminalHostResolveResult {
     if (resolution.status === 'disabled') {
         return {
             status: 'disabled',
-            reason: resolution.reason as TerminalHostResolutionReasonV1,
+            reason: resolution.reason as AgentTerminalHostResolutionReason,
             message: resolution.message,
         };
     }
     return {
         status: 'resolved',
         hostKind: resolution.adapter.kind,
-        reason: resolution.reason as TerminalHostResolutionReasonV1,
+        reason: resolution.reason as AgentTerminalHostResolutionReason,
     };
 }
 
 function mergeLaunchEnv(
     hostEnv: Readonly<Record<string, string>> | undefined,
-    pluginEnv: ExecAgentCliLaunchInputV1['env'],
+    pluginEnv: AgentTerminalHostLaunchInput['env'],
+    unsetEnvKeys: AgentTerminalHostLaunchInput['unsetEnvKeys'],
 ): Readonly<Record<string, string>> {
-    const env: Record<string, string> = {};
-    for (const source of [hostEnv, pluginEnv]) {
-        for (const [key, value] of Object.entries(source ?? {})) {
-            if (typeof value === 'string') {
-                env[key] = value;
-            }
-        }
-    }
-    return Object.freeze(env);
+    return Object.freeze(finalizeSessionChildEnvironment({
+        environment: buildScopedProcessEnv({
+            baseEnv: hostEnv ?? {},
+            explicitEnv: pluginEnv,
+            unsetEnvKeys,
+        }),
+        canonicalSessionControlEnvironment: selectTrustedSessionControlEnvironment(hostEnv ?? {}),
+        enableCgroupSelfMigration: false,
+        stackProcessKind: null,
+    }) as Record<string, string>);
 }
 
 function resolveActiveHost(
@@ -197,15 +217,15 @@ async function requireResolvedHost(
 
 export function createPluginTerminalHostService(
     params: CreatePluginTerminalHostServiceParams,
-): TerminalHostRuntimeServiceV1 {
+): AgentTerminalHostService {
     const activeHosts = new Map<TerminalHostHandle, ActiveTerminalHost>();
 
     return Object.freeze({
-        async resolve(request: Parameters<TerminalHostRuntimeServiceV1['resolve']>[0]) {
+        async resolve(request: Parameters<AgentTerminalHostService['resolve']>[0]) {
             assertCapability(params);
             return toPublicResolution(await params.resolveTerminalHost(request.preference));
         },
-        async createOrAttachHost(request: TerminalHostCreateOrAttachRequestV1) {
+        async createOrAttachHost(request: AgentTerminalHostCreateOrAttachRequest) {
             assertCapability(params);
             if (request.launch.kind !== 'agent-cli') {
                 throw new PluginTerminalHostError(
@@ -221,7 +241,7 @@ export function createPluginTerminalHostService(
                     'ctx.terminalHost could not resolve an agent CLI launch command',
                 );
             }
-            const handle = await resolution.adapter.createOrAttachHost({
+            const createdHandle = await resolution.adapter.createOrAttachHost({
                 sessionName: request.sessionName,
                 workingDirectory: request.workingDirectory,
                 spawnArgv: [
@@ -229,15 +249,29 @@ export function createPluginTerminalHostService(
                     ...launch.args,
                     ...(request.launch.args ?? []),
                 ],
-                spawnEnv: mergeLaunchEnv(launch.env, request.launch.env),
+                spawnEnv: mergeLaunchEnv(
+                    launch.env,
+                    request.launch.env,
+                    request.launch.unsetEnvKeys,
+                ),
+                ...(request.launch.unsetEnvKeys
+                    ? { unsetEnvKeys: request.launch.unsetEnvKeys }
+                    : {}),
                 isolatedEnv: request.isolatedEnv,
             });
+            let handle = createdHandle;
+            try {
+                handle = await params.onHostCreated?.(createdHandle) ?? createdHandle;
+            } catch (error) {
+                await resolution.adapter.dispose(createdHandle).catch(() => {});
+                throw error;
+            }
             activeHosts.set(handle, { adapter: resolution.adapter, handle });
             return handle;
         },
         async injectUserPrompt(
-            handle: Parameters<TerminalHostRuntimeServiceV1['injectUserPrompt']>[0],
-            input: Parameters<TerminalHostRuntimeServiceV1['injectUserPrompt']>[1],
+            handle: Parameters<AgentTerminalHostService['injectUserPrompt']>[0],
+            input: Parameters<AgentTerminalHostService['injectUserPrompt']>[1],
         ) {
             const active = resolveActiveHost(activeHosts, handle);
             const preparedInput = preparePromptInputForAdapter(input);
@@ -246,28 +280,31 @@ export function createPluginTerminalHostService(
             }
             return active.adapter.injectUserPrompt(active.handle, preparedInput);
         },
-        async interruptTurn(handle: Parameters<TerminalHostRuntimeServiceV1['interruptTurn']>[0]) {
+        async interruptTurn(handle: Parameters<AgentTerminalHostService['interruptTurn']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
             await active.adapter.interruptTurn(active.handle);
         },
-        async evaluateLiveness(handle: Parameters<TerminalHostRuntimeServiceV1['evaluateLiveness']>[0]) {
+        async evaluateLiveness(handle: Parameters<AgentTerminalHostService['evaluateLiveness']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
             return active.adapter.evaluateLiveness(active.handle);
         },
-        async captureInputState(handle: Parameters<TerminalHostRuntimeServiceV1['captureInputState']>[0]) {
+        async captureInputState(handle: Parameters<AgentTerminalHostService['captureInputState']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
             if (!active.adapter.captureInputState) return null;
             return active.adapter.captureInputState(active.handle);
         },
-        async controlPort(handle: Parameters<TerminalHostRuntimeServiceV1['controlPort']>[0]) {
+        async controlPort(handle: Parameters<AgentTerminalHostService['controlPort']>[0]) {
             const active = resolveActiveHost(activeHosts, handle);
             if (!active.adapter.createControlPort) return null;
             return active.adapter.createControlPort(active.handle);
         },
-        async dispose(handle: Parameters<TerminalHostRuntimeServiceV1['dispose']>[0]) {
+        async dispose(
+            handle: Parameters<AgentTerminalHostService['dispose']>[0],
+            intent: Parameters<AgentTerminalHostService['dispose']>[1],
+        ) {
             const active = resolveActiveHost(activeHosts, handle);
+            await params.disposeHost({ handle: active.handle, adapter: active.adapter, intent });
             activeHosts.delete(handle);
-            await active.adapter.dispose(active.handle);
         },
     });
 }
@@ -276,31 +313,14 @@ async function resolveDefaultTerminalHost(
     params: CreateDefaultPluginTerminalHostServiceParams,
     preference: TerminalHostPreference,
 ): Promise<TerminalHostResolution> {
-    const adapters: TerminalHostAdapter[] = [];
     const platform = params.platform ?? process.platform;
     const promptSubmitVerification = await params.resolvePromptSubmitVerification?.() ?? null;
-    const tmuxAvailable = platform === 'win32' ? false : await isTmuxAvailable();
-    if (tmuxAvailable) {
-        adapters.push(createTmuxTerminalHostAdapter({
-            ...(promptSubmitVerification ? { promptSubmitVerification } : {}),
-        }));
-    }
-
-    if (platform === 'win32') {
-        adapters.push(createPtyTerminalHostAdapter());
-    }
-
-    const shouldConfigureZellij = platform !== 'win32' || preference === 'zellij';
-    const zellijBinary = shouldConfigureZellij ? await resolveZellijRuntimeBinary() : null;
-    if (zellijBinary) {
-        const socketDir = resolveZellijSocketDir(params.happyHomeDir);
-        await prepareZellijSocketDir(socketDir);
-        adapters.push(createZellijTerminalHostAdapter({
-            zellijBinary,
-            socketDir,
-            ...(promptSubmitVerification ? { promptSubmitVerification } : {}),
-        }));
-    }
+    const inventory = await createDefaultTerminalHostAdapterInventory({
+        happyHomeDir: params.happyHomeDir,
+        preference,
+        platform,
+        ...(promptSubmitVerification ? { promptSubmitVerification } : {}),
+    });
 
     return resolveTerminalHost({
         preference,
@@ -308,30 +328,80 @@ async function resolveDefaultTerminalHost(
             os: platform,
             arch: params.arch ?? process.arch,
         },
-        adapters: createTerminalHostRegistry(adapters),
-        tmuxAvailable,
-        zellijAvailable: zellijBinary !== null,
+        adapters: inventory.adapters,
+        tmuxAvailable: inventory.tmuxAvailable,
+        zellijAvailable: inventory.zellijAvailable,
     });
 }
 
-function buildProviderCliProcessEnv(input: ExecAgentCliLaunchInputV1): NodeJS.ProcessEnv {
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    for (const [key, value] of Object.entries(input.env ?? {})) {
-        if (typeof value === 'string') {
-            env[key] = value;
-        }
-    }
-    return env;
+function buildProviderCliProcessEnv(input: AgentTerminalHostLaunchInput): NodeJS.ProcessEnv {
+    return buildScopedProcessEnv({
+        baseEnv: process.env,
+        explicitEnv: input.env,
+        unsetEnvKeys: input.unsetEnvKeys,
+    });
 }
 
 export function createDefaultPluginTerminalHostService(
     params: CreateDefaultPluginTerminalHostServiceParams,
-): TerminalHostRuntimeServiceV1 {
+): AgentTerminalHostService {
     return createPluginTerminalHostService({
         hasCapability: params.hasCapability,
         resolveTerminalHost: (preference) => resolveDefaultTerminalHost(params, preference),
-        resolveAgentCliLaunch: (launch) => requireProviderCliLaunchSpec(launch.agentId as CatalogAgentLookupId, {
+        resolveAgentCliLaunch: (launch) => requireAgentCliLaunchSpec(launch.agentId as CatalogAgentLookupId, {
             processEnv: buildProviderCliProcessEnv(launch),
         }),
+        onHostCreated: async (handle) => {
+            const sessionId = params.readSessionId?.()?.trim() ?? '';
+            if (!sessionId) return;
+            const attachmentInfo = await writeTerminalHostAttachmentInfo({
+                happyHomeDir: params.happyHomeDir,
+                sessionId,
+                handle,
+            });
+            return attachmentInfo.handle;
+        },
+        disposeHost: async ({ handle, adapter, intent }) => {
+            const sessionId = params.readSessionId?.()?.trim() ?? '';
+            const attachmentId = handle.attachmentId;
+            const mustDestroyExactHost = intent.kind === 'destroy_owned_host';
+            if (!sessionId || !attachmentId) {
+                if (mustDestroyExactHost) {
+                    throw new Error('Exact terminal-host disposal requires persisted session and attachment identity');
+                }
+                return;
+            }
+            const attachmentInfo = await readTerminalHostAttachmentInfo({
+                happyHomeDir: params.happyHomeDir,
+                sessionId,
+            });
+            if (attachmentInfo?.version !== 2 || attachmentInfo.attachmentId !== attachmentId) {
+                if (mustDestroyExactHost) {
+                    throw new Error('Exact terminal-host disposal could not confirm the current attachment identity');
+                }
+                return;
+            }
+            const disposition = await executeTerminalHostDisposition({
+                happyHomeDir: params.happyHomeDir,
+                sessionId,
+                expectedAttachmentId: attachmentId,
+                intent: resolveRuntimeTerminalHostDispositionIntent(intent),
+                adapter,
+            });
+            if (mustDestroyExactHost && disposition.status !== 'destroyed') {
+                const failure = disposition.status === 'parked' ? disposition.reason : disposition.status;
+                throw new Error(`Exact terminal-host disposal did not complete: ${failure}`);
+            }
+            if (disposition.status === 'destroyed') {
+                await notifyTerminalAttachmentRetiredThroughCatalog({
+                    happyHomeDir: params.happyHomeDir,
+                    sessionId,
+                    attachmentInfo,
+                }).catch((error) => {
+                    // Host retirement is already irreversible; provider cleanup remains advisory.
+                    logger.warn('[PLUGIN TERMINAL HOST] Provider artifacts could not be cleaned after exact host retirement', error);
+                });
+            }
+        },
     });
 }

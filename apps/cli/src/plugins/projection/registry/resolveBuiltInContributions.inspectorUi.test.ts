@@ -1,0 +1,100 @@
+import { readFileSync } from 'node:fs';
+
+import { describe, expect, it } from 'vitest';
+
+import { resolveBuiltInContributions } from './resolveBuiltInContributions';
+
+const INSPECTOR_PLUGIN_ID = 'happier.inspector';
+
+describe('bundled Inspector canonical UI graph', () => {
+    it('resolves manifest semantics and the generated physical graph without a handwritten UI map', () => {
+        const contributions = resolveBuiltInContributions();
+        const inspectorRenderer = contributions.uiRenderersV2?.find(
+            (entry) => entry.pluginId === INSPECTOR_PLUGIN_ID,
+        );
+        const inspectorArtifacts = inspectorRenderer?.generatedUiArtifactsManifest?.entries ?? [];
+
+        expect(contributions.settings?.filter((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toEqual([
+            expect.objectContaining({
+                definition: expect.objectContaining({
+                    id: 'settings',
+                    target: { kind: 'plugin' },
+                    scope: 'local',
+                }),
+            }),
+        ]);
+        expect(contributions.uiViewsV2?.filter((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toEqual([
+            expect.objectContaining({
+                definition: expect.objectContaining({
+                    id: 'inspector-app',
+                    placement: 'app.rightSidebarTab',
+                    renderer: 'inspector-renderer',
+                }),
+            }),
+        ]);
+        expect(inspectorRenderer).toMatchObject({
+            pluginId: INSPECTOR_PLUGIN_ID,
+            definition: {
+                id: 'inspector-renderer',
+                kind: 'reactNative',
+                artifact: 'inspector-app-native',
+                requiredHostMethods: ['executeAction'],
+            },
+        });
+        expect(contributions.uiTranslationsV2?.filter(
+            (entry) => entry.pluginId === INSPECTOR_PLUGIN_ID,
+        )).toEqual([
+            expect.objectContaining({
+                definition: expect.objectContaining({
+                    locale: 'en',
+                    messages: expect.objectContaining({
+                        'plugins.inspector.title': 'Plugin Inspector',
+                        'plugins.inspector.settings.showDiagnostics':
+                            'Show diagnostics in Plugin Inspector',
+                    }),
+                }),
+            }),
+        ]);
+
+        expect(inspectorArtifacts.map((entry) => entry.platform).sort()).toEqual([
+            'android',
+            'ios',
+            'web',
+        ]);
+        expect(inspectorArtifacts.find((entry) => entry.platform === 'web')).toMatchObject({
+            contributionId: 'inspector-app-native',
+            tier: 'reactNative',
+            builtWith: { bundler: 'vite' },
+        });
+        expect(inspectorArtifacts.find((entry) => entry.platform === 'web')).not.toHaveProperty('repack');
+        expect(inspectorArtifacts.filter((entry) => entry.platform !== 'web')).toEqual([
+            expect.objectContaining({
+                builtWith: expect.objectContaining({ bundler: 'repack' }),
+                repack: {
+                    containerName: 'happier_inspector_inspector_app_native',
+                    modulePath: './renderSurface',
+                    exportName: 'renderSurface',
+                },
+            }),
+            expect.objectContaining({
+                builtWith: expect.objectContaining({ bundler: 'repack' }),
+                repack: {
+                    containerName: 'happier_inspector_inspector_app_native',
+                    modulePath: './renderSurface',
+                    exportName: 'renderSurface',
+                },
+            }),
+        ]);
+
+        expect(contributions.uiTranslations?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
+        expect(contributions.surfacePlacements?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
+        expect(contributions.reactNativeBundles?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
+        expect(contributions.uiArtifacts?.some((entry) => entry.pluginId === INSPECTOR_PLUGIN_ID)).toBe(false);
+
+        const resolverSource = readFileSync(
+            new URL('./resolveBuiltInContributions.ts', import.meta.url),
+            'utf8',
+        );
+        expect(resolverSource).not.toMatch(/firstPartyUiContributions|FIRST_PARTY_(?:UI|SURFACE|REACT_NATIVE)/u);
+    });
+});

@@ -63,16 +63,6 @@ function readErrorMessage(error: unknown): string | undefined {
   return undefined;
 }
 
-function reportUnhealthyProbe(
-  supervisor: ManagedConnectionSupervisor,
-  params: Readonly<{ reason: Extract<TranscriptLookupOutcome, { type: 'unhealthy' }>['reason']; error: unknown }>,
-): void {
-  supervisor.reportProbeResult?.({
-    status: params.reason === 'server_5xx' ? 'retry_later' : 'server_unreachable',
-    errorMessage: readErrorMessage(params.error),
-  });
-}
-
 export class TranscriptRecoveryCoordinator {
   private static instancesByServerUrl = new Map<string, TranscriptRecoveryCoordinator>();
 
@@ -162,7 +152,6 @@ export class TranscriptRecoveryCoordinator {
         });
         return { type: 'error', reason: 'auth_failed', error: outcome.error };
       case 'unhealthy':
-        reportUnhealthyProbe(supervisor, { reason: outcome.reason, error: outcome.error });
         this.applyBackoff(key);
         return { type: 'error', reason: 'unhealthy', error: outcome.error };
       case 'protocol_error':
@@ -188,7 +177,6 @@ export class TranscriptRecoveryCoordinator {
 
     const statusCode = readHttpStatus(error);
     if (typeof statusCode === 'number' && statusCode >= 500) {
-      reportUnhealthyProbe(supervisor, { reason: 'server_5xx', error });
       this.applyBackoff(key);
       return { type: 'error', reason: 'unhealthy', error };
     }

@@ -381,9 +381,9 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     expect((axios as any).delete).toHaveBeenCalledWith(
       'https://api.example.test/v1/push-tokens/ExponentPushToken%5Bdead-token%5D',
       expect.objectContaining({
-        headers: expect.objectContaining({
+        headers: {
           Authorization: 'Bearer t',
-        }),
+        },
       }),
     );
     expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);

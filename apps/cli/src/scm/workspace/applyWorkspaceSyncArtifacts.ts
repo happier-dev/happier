@@ -5,6 +5,7 @@ import { dirname, join, parse } from 'node:path';
 import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
 
 import type { ScmBackendRegistry } from '@/scm/registry';
+import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import { assertPortableWorkspaceEntriesWithScmWorkspace } from '@/scm/workspace/workspacePortability';
 import { applyWorkspaceMetadata } from '@/scm/workspace/workspaceExportStaging/applyWorkspaceMetadata';
 import { cleanupWorkspaceStaging } from '@/scm/workspace/workspaceExportStaging/cleanupWorkspaceStaging';
@@ -424,6 +425,14 @@ export async function applyWorkspaceSyncArtifacts(params: Readonly<{
     registry?: ScmBackendRegistry;
     assertCanContinue?: () => Promise<void>;
 }>): Promise<Readonly<{ targetPath: string }>> {
+    if (!params.registry) {
+        return await runWithScmBackendRegistryLease(undefined, async (registry) =>
+            await applyWorkspaceSyncArtifacts({
+                ...params,
+                registry,
+            }));
+    }
+
     const targetWorkspaceRootInitiallyExisted = await (async () => {
         try {
             await lstat(params.targetPath);
@@ -452,6 +461,7 @@ export async function applyWorkspaceSyncArtifacts(params: Readonly<{
             stagingRoot,
             expectedManifest: params.syncArtifacts.changedWorkspaceArtifacts.manifest,
             blobProvider: params.blobProvider,
+            scmRegistry: params.registry,
             assertCanContinue: params.assertCanContinue,
         });
         if (!staged.verification.isVerified) {

@@ -1,27 +1,28 @@
+import type { PermissionMode } from '@/api/types';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { HappierStructuredInputV1 } from '@happier-dev/protocol/runtime';
+
+export type PermissionModeQueuedPromptMode = Readonly<{
+  permissionMode: PermissionMode;
+  appendSystemPrompt?: string | null;
+  modelSelection?: ProviderBoundModelRef;
+  suppressUserEcho?: boolean;
+  providerPromptAlreadyResolved?: boolean;
+}>;
+
 export type PermissionModeQueuedPrompt = Readonly<{
   text: string;
   localId: string | null;
   localIds?: readonly string[];
-  /**
-   * Committed transcript seq of the user row this prompt came from (HF-1 watermark custody).
-   * Travels with the prompt through the queue so provider acceptance can confirm the
-   * owed-delivery watermark for exactly the accepted rows. Absent when the row seq is unknown
-   * (the watermark then stays behind — at-least-once redelivery, never silent loss).
-   */
+  structuredInput?: HappierStructuredInputV1;
+  /** Exact transcript rows used only to suppress replay of host-consumed local commands. */
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
-  /**
-   * Pending-queue local ids whose delivery is already owned by the provider path.
-   * These prompts intentionally may not have a committed transcript seq yet, so
-   * the prompt loop must not wait for a committed row before dispatching them.
-   */
-  providerClaimedPendingLocalIds?: readonly string[];
 }>;
 
 function appendUniqueString(target: string[], value: unknown): void {
-  const normalized = typeof value === 'string' ? value.trim() : '';
-  if (!normalized || target.includes(normalized)) return;
-  target.push(normalized);
+  if (typeof value !== 'string' || value.trim().length === 0 || target.includes(value)) return;
+  target.push(value);
 }
 
 function appendUniqueSeq(target: number[], value: unknown): void {
@@ -52,16 +53,6 @@ export function normalizePermissionModeQueuedPromptUserMessageSeqs(
   return seqs;
 }
 
-export function normalizePermissionModeQueuedPromptProviderClaimedPendingLocalIds(
-  prompt: PermissionModeQueuedPrompt,
-): string[] {
-  const localIds: string[] = [];
-  for (const localId of prompt.providerClaimedPendingLocalIds ?? []) {
-    appendUniqueString(localIds, localId);
-  }
-  return localIds;
-}
-
 export function readHighestPermissionModeQueuedPromptUserMessageSeq(
   prompt: PermissionModeQueuedPrompt,
 ): number | null {
@@ -75,7 +66,6 @@ export function combinePermissionModeQueuedPrompts(
   const [first] = prompts;
   const localIds: string[] = [];
   const userMessageSeqs: number[] = [];
-  const providerClaimedPendingLocalIds: string[] = [];
   for (const prompt of prompts) {
     for (const localId of normalizePermissionModeQueuedPromptLocalIds(prompt)) {
       appendUniqueString(localIds, localId);
@@ -83,17 +73,14 @@ export function combinePermissionModeQueuedPrompts(
     for (const seq of normalizePermissionModeQueuedPromptUserMessageSeqs(prompt)) {
       appendUniqueSeq(userMessageSeqs, seq);
     }
-    for (const localId of normalizePermissionModeQueuedPromptProviderClaimedPendingLocalIds(prompt)) {
-      appendUniqueString(providerClaimedPendingLocalIds, localId);
-    }
   }
   const maxUserMessageSeq = userMessageSeqs.length === 0 ? null : Math.max(...userMessageSeqs);
   return {
     text: prompts.map((prompt) => prompt.text).join('\n'),
     localId: first?.localId ?? null,
+    ...(first?.structuredInput ? { structuredInput: first.structuredInput } : {}),
     ...(localIds.length === 0 ? {} : { localIds }),
     ...(maxUserMessageSeq === null ? {} : { userMessageSeq: maxUserMessageSeq }),
     ...(userMessageSeqs.length === 0 ? {} : { userMessageSeqs }),
-    ...(providerClaimedPendingLocalIds.length === 0 ? {} : { providerClaimedPendingLocalIds }),
   };
 }

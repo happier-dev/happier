@@ -1,5 +1,4 @@
 import type { AgentMessage } from '@/agent/core/AgentMessage';
-import { publishRuntimePluginEvent } from '@/plugins/runtime/context/events';
 import { RuntimeEventV1Schema } from '@happier-dev/protocol';
 
 import {
@@ -58,9 +57,6 @@ export function createNormalizedRuntimeEventPublicationHub<TMessage>(params: Rea
         });
       } else {
         runtimeEventWriter.handleMessage(message as unknown as AgentMessage);
-      }
-      if (parsedRuntimeEvent.success) {
-        void publishRuntimePluginEvent(parsedRuntimeEvent.data).catch(() => undefined);
       }
     });
   };

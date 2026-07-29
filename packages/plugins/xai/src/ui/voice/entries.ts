@@ -85,6 +85,9 @@ export const BUNDLED_VOICE_UI_ENTRIES = Object.freeze([
       createSettingsSection: createXaiRealtimeSettingsSection,
       createAccountOperationClient: createXaiRealtimeVoiceUiClient,
       projectCredentialReadiness: projectXaiCredentialReadiness,
+      resolveAccountOperationTarget() {
+        return Object.freeze({ kind: 'savedSecret' as const });
+      },
       resolveSurfaceCapabilities(providerConfig: unknown) {
         if (!XaiRealtimeSettingsV1Schema.safeParse(providerConfig).success) return null;
         const turn = xaiVoiceProviderDeclaration.capabilities.turn;

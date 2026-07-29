@@ -4,6 +4,121 @@ import axios from 'axios';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 
 describe('commitConnectedServiceRuntimeAuthRecoverySessionEvent', () => {
+  it('builds a bounded deterministic local id from durable attempt and transition identity', async () => {
+    const { buildRuntimeAuthRecoveryAttemptTransitionLocalId } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
+    const attemptId = `runtime-auth-attempt:${'opaque-'.repeat(100)}A`;
+    const first = buildRuntimeAuthRecoveryAttemptTransitionLocalId({ attemptId, transition: 'scheduled' });
+    expect(buildRuntimeAuthRecoveryAttemptTransitionLocalId({ attemptId, transition: 'scheduled' })).toBe(first);
+    expect(buildRuntimeAuthRecoveryAttemptTransitionLocalId({ attemptId: `${attemptId}B`, transition: 'scheduled' })).not.toBe(first);
+    expect(first.length).toBeLessThan(200);
+  });
+
+  it('commits a durable visible-event delivery with its exact attempt and transition tuple', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    vi.resetModules();
+    const {
+      buildRuntimeAuthRecoveryAttemptTransitionLocalId,
+      commitRuntimeAuthRecoveryVisibleEventDelivery,
+    } = await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({
+      status: 200,
+      data: { session: {
+        id: 'sess-visible', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        encryptionMode: 'plain', metadata: '{}', metadataVersion: 1,
+        agentState: null, agentStateVersion: 1, dataEncryptionKey: null,
+      } },
+    });
+    const postSpy = vi.spyOn(axios, 'post').mockResolvedValueOnce({
+      status: 200,
+      data: { didWrite: true, message: { id: 'msg-visible', seq: 2, localId: 'local-visible', createdAt: 2 } },
+    });
+    const attemptId = 'runtime-auth-attempt:visible-delivery';
+    const transition = 'scheduled';
+
+    await commitRuntimeAuthRecoveryVisibleEventDelivery({
+      credentials: {
+        token: 'token-visible',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      delivery: {
+        sessionId: 'sess-visible',
+        attemptId,
+        transition,
+        transcriptEvent: {
+          type: 'connected-service-runtime-auth-recovery',
+          status: 'dead_lettered',
+          serviceId: 'openai-codex',
+          profileId: 'primary',
+          groupId: 'team-pool',
+          attempt: 1,
+          nextRetryAtMs: null,
+          terminal: true,
+          reason: 'max_attempts_exhausted',
+          diagnostic: {
+            code: 'recovery_dead_lettered',
+            failurePhase: 'runtime_auth_recovery',
+            source: 'runtime_auth_recovery',
+            serviceId: 'openai-codex',
+            profileId: 'primary',
+            groupId: 'team-pool',
+            retryable: false,
+            suggestedActions: ['open_connected_accounts'],
+            diagnostics: { reason: 'max_attempts_exhausted' },
+          },
+        },
+      },
+    });
+
+    expect(postSpy).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        localId: buildRuntimeAuthRecoveryAttemptTransitionLocalId({ attemptId, transition }),
+      }),
+      expect.any(Object),
+    );
+  });
+
+  it('does not acknowledge a durable visible event when the session snapshot is missing', async () => {
+    process.env.HAPPIER_SERVER_URL = 'http://server.example.test';
+    vi.resetModules();
+    const { commitRuntimeAuthRecoveryVisibleEventDelivery } =
+      await import('./commitConnectedServiceRuntimeAuthRecoverySessionEvent');
+    vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 404, data: {} });
+
+    await expect(commitRuntimeAuthRecoveryVisibleEventDelivery({
+      credentials: {
+        token: 'token-missing',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      delivery: {
+        sessionId: 'sess-missing',
+        attemptId: 'runtime-auth-attempt:missing',
+        transition: 'terminal',
+        transcriptEvent: {
+          type: 'connected-service-runtime-auth-recovery',
+          status: 'dead_lettered',
+          serviceId: 'openai-codex',
+          profileId: 'primary',
+          groupId: 'team-pool',
+          attempt: 1,
+          nextRetryAtMs: null,
+          terminal: true,
+          reason: 'max_attempts_exhausted',
+          diagnostic: {
+            code: 'recovery_dead_lettered',
+            failurePhase: 'runtime_auth_recovery',
+            source: 'runtime_auth_recovery',
+            serviceId: 'openai-codex',
+            profileId: 'primary',
+            groupId: 'team-pool',
+            retryable: false,
+            suggestedActions: ['open_connected_accounts'],
+            diagnostics: { reason: 'max_attempts_exhausted' },
+          },
+        },
+      },
+    })).rejects.toThrow('runtime_auth_recovery_session_unavailable');
+  });
   let envScope = createEnvKeyScope(['HAPPIER_SERVER_URL']);
 
   afterEach(() => {

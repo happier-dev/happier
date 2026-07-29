@@ -7,6 +7,7 @@ import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnos
 import { readPluginManifest } from '@/plugins/manifest/read';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
 import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
 export type ResolvedLocalPathPluginSourceSuccess = Readonly<{
   ok: true;
@@ -26,25 +27,8 @@ export type ResolvedLocalPathPluginSource =
   | ResolvedLocalPathPluginSourceSuccess
   | ResolvedLocalPathPluginSourceFailure;
 
-function expandTildePath(locator: string): string {
-  if (!locator.startsWith('~')) {
-    return locator;
-  }
-  const home = String(process.env.HOME ?? process.env.USERPROFILE ?? '').trim();
-  if (!home) {
-    return locator;
-  }
-  if (locator === '~') {
-    return home;
-  }
-  if (locator.startsWith('~/') || locator.startsWith('~\\')) {
-    return resolve(home, locator.slice(2));
-  }
-  return locator;
-}
-
 async function resolveCanonicalPath(locator: string): Promise<string | null> {
-  const expanded = expandTildePath(String(locator ?? '').trim());
+  const expanded = expandHomeDirPath(String(locator ?? '').trim());
   if (!expanded) return null;
   const absolute = isAbsolute(expanded) ? expanded : resolve(expanded);
   try {
@@ -137,7 +121,7 @@ export async function resolveLocalPathPluginSource(params: Readonly<{ locator: s
     sourceSpec: {
       kind: 'path',
       locator: sourceLocator ?? pluginRootPath,
-      trustPolicy: 'local_trusted',
+      trustPolicy: 'prompt',
       installPolicy: 'link',
       resolvedDigest: manifestRead.manifestDigest,
       resolvedVersion: manifestRead.manifest.version,

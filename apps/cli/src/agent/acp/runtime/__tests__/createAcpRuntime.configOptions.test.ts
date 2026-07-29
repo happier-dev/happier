@@ -27,7 +27,7 @@ describe('createAcpRuntime (configOptions)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     const configEvent: EventMessage = {
       type: 'event',
@@ -51,7 +51,7 @@ describe('createAcpRuntime (configOptions)', () => {
     const metadata: Metadata = getMetadata();
     expect(metadata.acpConfigOptionsV1).toMatchObject({
       v: 1,
-      provider: 'opencode',
+      agentId: 'opencode',
       configOptions: [
         expect.objectContaining({ id: 'telemetry', type: 'boolean', currentValue: false }),
         expect.objectContaining({ id: 'mode', type: 'select', currentValue: 'ask' }),
@@ -77,7 +77,7 @@ describe('createAcpRuntime (configOptions)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'event',
@@ -121,7 +121,7 @@ describe('createAcpRuntime (configOptions)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     await runtime.setSessionConfigOption('telemetry', true);
 
     expect(lastSet).toEqual({ sessionId: 'sess_main', configId: 'telemetry', value: 'true' });
@@ -146,7 +146,7 @@ describe('createAcpRuntime (configOptions)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
     await runtime.setSessionConfigOption('mode', '  ask  ');
 
     expect(lastSet).toEqual({ sessionId: 'sess_main', configId: 'mode', value: 'ask' });
@@ -169,7 +169,7 @@ describe('createAcpRuntime (configOptions)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'event',
@@ -210,7 +210,7 @@ describe('createAcpRuntime (configOptions)', () => {
     });
 
     expect(getMetadata().acpSessionModelsV1).toMatchObject({
-      provider: 'opencode',
+      agentId: 'opencode',
       currentModelId: 'claude-4',
     });
   });

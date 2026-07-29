@@ -132,12 +132,18 @@ function parseTranscriptLookupMessageFromUnknown(found: unknown): TranscriptMess
     const sidechainIdRaw = record.sidechainId;
     const sidechainId = typeof sidechainIdRaw === 'string' ? (sidechainIdRaw.trim() || null) : null;
     const createdAtRaw = record.createdAt;
-    if (!(typeof createdAtRaw === 'number' && Number.isFinite(createdAtRaw) && createdAtRaw >= 0)) return null;
-    const createdAt = Math.trunc(createdAtRaw);
+    if (!(typeof createdAtRaw === 'number' && Number.isSafeInteger(createdAtRaw) && createdAtRaw >= 0)) return null;
     const updatedAtRaw = record.updatedAt;
-    if (!(typeof updatedAtRaw === 'number' && Number.isFinite(updatedAtRaw) && updatedAtRaw >= 0)) return null;
-    const updatedAt = Math.trunc(updatedAtRaw);
-    return { id: record.id, seq: record.seq, localId: foundLocalId, sidechainId, createdAt, updatedAt, content: content.data };
+    if (!(typeof updatedAtRaw === 'number' && Number.isSafeInteger(updatedAtRaw) && updatedAtRaw >= 0)) return null;
+    return {
+        id: record.id,
+        seq: record.seq,
+        localId: foundLocalId,
+        sidechainId,
+        createdAt: createdAtRaw,
+        updatedAt: updatedAtRaw,
+        content: content.data,
+    };
 }
 
 export async function findTranscriptEncryptedMessageByLocalIdV2(params: {

@@ -39,6 +39,7 @@ const harness = vi.hoisted(() => {
     setRPCHandlers: vi.fn(),
     onUpdate: vi.fn(),
     onAccountSettingsVersionHint: vi.fn(),
+    onConnectedServicesProjection: vi.fn(),
     onConnectionStateChange: vi.fn((listener: (state: any) => void) => {
       machineConnectionStateListener = listener;
       return () => {
@@ -55,7 +56,14 @@ const harness = vi.hoisted(() => {
     }),
     updateMachineMetadata: vi.fn(async () => {}),
     updateDaemonState: vi.fn(async () => {}),
-    emitSessionEnd: vi.fn(),
+    registerConnectedAccountDaemonRuntime: vi.fn(),
+    recoverDaemonTerminalSessionMutationJournals: vi.fn(async (params: {
+      bindUsageLimitRecoveryJournals: (sessionIds: readonly string[]) => Promise<unknown>;
+    }) => {
+      await params.bindUsageLimitRecoveryJournals([]);
+      return { recoveredSessionIds: [], retainedSessionIds: [] };
+    }),
+    enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
     shutdown: vi.fn(),
   };
 
@@ -100,13 +108,37 @@ vi.mock('@/api/api', () => ({
   ApiClient: {
     create: vi.fn(async () => ({
       machineSyncClient: () => harness.apiMachine,
+      setServerFeaturesSnapshotProvider: vi.fn(),
+      getAccountEncryptionMode: vi.fn(async () => 'plain'),
+      getConnectedServiceAuthGroup: vi.fn(async () => null),
     })),
   },
   isMachineContentPublicKeyMismatchError: vi.fn(() => false),
 }));
 
+vi.mock('@/settings/accountSettings/updateAccountSettingsV2WithRetry', () => {
+  let settings: Record<string, unknown> = {};
+  let version = 0;
+  return {
+    updateAccountSettingsV2WithRetry: vi.fn(async (input: Readonly<{
+      mutate(current: Readonly<Record<string, unknown>>): Record<string, unknown>;
+    }>) => {
+      settings = input.mutate(settings);
+      version += 1;
+      return { settings, version };
+    }),
+  };
+});
+
 vi.mock('@/api/client/serializeAxiosErrorForLog', () => ({
   serializeAxiosErrorForLog: vi.fn(() => ({})),
+}));
+
+vi.mock('@/features/serverFeaturesClient', () => ({
+  fetchServerFeaturesSnapshot: vi.fn(async () => ({
+    status: 'unsupported',
+    reason: 'endpoint_missing',
+  })),
 }));
 
 vi.mock('@/api/machine/ensureMachineRegistered', () => ({
@@ -126,13 +158,21 @@ vi.mock('@/ui/logger', () => ({
     debugLargeJson: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
+    flushSync: vi.fn(),
     logFilePath: '/tmp/happier-daemon.log',
   },
 }));
 
 vi.mock('@/ui/auth', () => ({
   authAndSetupMachineIfNeeded: vi.fn(async () => ({
-    credentials: { token: 'token-automation', encryption: { publicKey: 'a', machineKey: 'b' } },
+    credentials: {
+      token: 'token-automation',
+      encryption: {
+        type: 'dataKey',
+        publicKey: new Uint8Array(32).fill(1),
+        machineKey: new Uint8Array(32).fill(2),
+      },
+    },
     machineId: 'machine-automation',
   })),
 }));
@@ -168,10 +208,17 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
   spawnHappyCLI: vi.fn(),
 }));
 
-vi.mock('@/backends/catalog', () => ({
-  AGENTS: {},
+vi.mock('@/session/runtime/catalogHooks', () => ({
   getVendorResumeSupport: vi.fn(async () => () => true),
+}));
+
+vi.mock('@/daemon/managedServers/catalogHooks', () => ({
   getManagedServerShutdownCleanup: vi.fn(async () => null),
+  listManagedServerClaimDescriptors: vi.fn(async () => []),
+}));
+
+vi.mock('@/agent/catalog/resolution', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/agent/catalog/resolution')>(),
   resolveAgentCliSubcommand: vi.fn(),
   resolveCatalogAgentId: vi.fn(() => 'codex'),
 }));
@@ -180,7 +227,14 @@ vi.mock('@/persistence', () => ({
   writeDaemonState: vi.fn(),
   acquireDaemonLock: vi.fn(async () => harness.lockHandle),
   releaseDaemonLock: vi.fn(async () => {}),
-  readCredentials: vi.fn(async () => null),
+  readCredentials: vi.fn(async () => ({
+    token: 'token-automation',
+    encryption: {
+      type: 'dataKey',
+      publicKey: new Uint8Array(32).fill(1),
+      machineKey: new Uint8Array(32).fill(2),
+    },
+  })),
   readSettings: vi.fn(async () => ({ experiments: true })),
 }));
 
@@ -190,6 +244,7 @@ vi.mock('./controlClient', () => ({
   isDaemonRunningCurrentlyInstalledHappyVersion: vi.fn(async () => false),
   listDaemonSshTunnels: vi.fn(async () => []),
   releaseDaemonSshTunnel: vi.fn(async () => ({ ok: true })),
+  resolveDaemonSpawnSessionByNonce: vi.fn(async () => null),
   stopDaemon: vi.fn(async () => {}),
   stopDaemonSshTunnel: vi.fn(async () => ({ ok: true })),
 }));
@@ -204,6 +259,7 @@ vi.mock('./controlServer', () => ({
 vi.mock('./sessions/reattachFromMarkers', () => ({
   reattachTrackedSessionsFromMarkers: vi.fn(async () => ({
     orphanedDeadDaemonSessions: [],
+    connectedServiceRestartIntents: [],
   })),
 }));
 
@@ -220,7 +276,7 @@ vi.mock('./sessions/visibleConsoleSpawnWaiter', () => ({
 }));
 
 vi.mock('./sessions/stopSession', () => ({
-  createStopSession: vi.fn(() => vi.fn(async () => ({ stopped: true }))),
+  createStopSession: vi.fn(() => vi.fn(async () => ({ status: 'stopped' as const }))),
 }));
 
 vi.mock('./sessions/resolveSpawnWebhookResult', () => ({
@@ -637,6 +693,150 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
+  it('fences daemon publication and resumes retained startup work after an aborted handoff', async () => {
+    harness.setAutoShutdownAfterAutomationStart(false);
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    let quiescing = false;
+    const transferRuntimeStateResume = vi.fn(async () => {});
+    const machineRegistrationResume = vi.fn();
+    const machineConnectionPublicationsResume = vi.fn(async () => {});
+    const runtimeBootstrapParams: {
+      current: Parameters<
+        typeof import('./startup/startDaemonRuntimeBootstrap').startDaemonRuntimeBootstrap
+      >[0] | null;
+    } = { current: null };
+    const machineRegistrationParams: {
+      current: Parameters<
+        typeof import('./startup/startDaemonMachineRegistrationRuntime').startDaemonMachineRegistrationRuntime
+      >[0] | null;
+    } = { current: null };
+    const pluginChangeService = {
+      requestPluginChange: vi.fn(),
+      decidePluginChange: vi.fn(),
+      shutdown: vi.fn(async () => {}),
+      quiesceForHandoff: vi.fn(async () => {
+        quiescing = true;
+        return { resume: () => { quiescing = false; } };
+      }),
+      isQuiescing: () => quiescing,
+      runAutomaticCurrentnessChange: vi.fn(),
+    };
+    vi.doMock('@/plugins/daemon/runtimeOwner', () => ({
+      createDaemonPluginRuntimeOwner: vi.fn(() => ({
+        changeService: pluginChangeService,
+        initialize: vi.fn(async () => {}),
+        readCatalog: vi.fn(async () => []),
+      })),
+    }));
+    vi.doMock('./startup/startDaemonMachineRegistrationRuntime', () => ({
+      startDaemonMachineRegistrationRuntime: vi.fn((params) => {
+        machineRegistrationParams.current = params;
+        return { resume: machineRegistrationResume };
+      }),
+    }));
+    vi.doMock('./startup/startDaemonRuntimeBootstrap', async () => {
+      const actual = await vi.importActual<typeof import('./startup/startDaemonRuntimeBootstrap')>(
+        './startup/startDaemonRuntimeBootstrap',
+      );
+      return {
+        ...actual,
+        startDaemonRuntimeBootstrap: vi.fn(async (params) => {
+          runtimeBootstrapParams.current = params;
+          const runtime = await actual.startDaemonRuntimeBootstrap(params);
+          return {
+            ...runtime,
+            transferRuntimeStatePublisher: runtime.transferRuntimeStatePublisher
+              ? {
+                  ...runtime.transferRuntimeStatePublisher,
+                  resume: transferRuntimeStateResume,
+                }
+              : null,
+          };
+        }),
+      };
+    });
+    vi.doMock('./lifecycle/requestDaemonSelfRestartWithLockHandoff', async () => {
+      const actual = await vi.importActual<
+        typeof import('./lifecycle/requestDaemonSelfRestartWithLockHandoff')
+      >('./lifecycle/requestDaemonSelfRestartWithLockHandoff');
+      return {
+        ...actual,
+        requestDaemonSelfRestartWithLockHandoff: vi.fn(async (params) => {
+          const handoffQuiescence = await params.quiesceBeforeLockRelease();
+          await handoffQuiescence.resume();
+          return { status: 'spawn_failed' };
+        }),
+      };
+    });
+
+    let run: Promise<void> | null = null;
+    try {
+      const { writeDaemonState } = await import('@/persistence');
+      const { startDaemonHeartbeatLoop } = await import('./lifecycle/heartbeat');
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+      await vi.waitFor(() => {
+        expect(machineRegistrationParams.current).not.toBeNull();
+        expect(startDaemonHeartbeatLoop).toHaveBeenCalledOnce();
+      }, { timeout: 30_000 });
+
+      vi.mocked(writeDaemonState).mockClear();
+      quiescing = true;
+      const heartbeatParams = vi.mocked(startDaemonHeartbeatLoop).mock.calls[0]?.[0];
+      machineRegistrationParams.current?.setMachineId('machine-after-handoff');
+
+      expect.soft(heartbeatParams?.isShuttingDown?.()).toBe(true);
+      expect.soft(runtimeBootstrapParams.current?.isDaemonQuiescing?.()).toBe(true);
+      expect.soft(machineRegistrationParams.current?.isShuttingDown()).toBe(false);
+      expect.soft(machineRegistrationParams.current?.isQuiescing?.()).toBe(true);
+      expect.soft(machineRegistrationParams.current?.bootstrapRuntime.isShuttingDown()).toBe(true);
+      expect.soft(writeDaemonState).not.toHaveBeenCalledWith(expect.objectContaining({
+        machineId: 'machine-after-handoff',
+      }));
+
+      harness.apiMachine.recoverDaemonTerminalSessionMutationJournals.mockClear();
+      const onMachineSyncRuntime = machineRegistrationParams.current?.onMachineSyncRuntime;
+      if (!onMachineSyncRuntime) throw new Error('expected machine sync runtime callback');
+      // Test harness boundary: this fixture supplies only the settled runtime fields the callback reads.
+      await onMachineSyncRuntime({
+        apiMachine: harness.apiMachine,
+        apiMachineForSessions: null,
+        automationWorker: null,
+        memoryWorker: null,
+        voiceInferenceWorker: null,
+        daemonConnectivityCoordinator: null,
+        machineConnectionStateCleanup: null,
+        stopPeerMediationLoopbackServer: async () => {},
+        resumeMachineConnectionPublications: machineConnectionPublicationsResume,
+        daemonUsageLimitRecoveryMutationCustody: {
+          bindRecoveredJournals: async () => ({
+            boundSessionIds: [],
+            retainedSessionIds: [],
+          }),
+          close: async () => {},
+          stage: async () => {},
+        },
+      } as unknown as Parameters<typeof onMachineSyncRuntime>[0]);
+      expect(harness.apiMachine.recoverDaemonTerminalSessionMutationJournals).not.toHaveBeenCalled();
+
+      await heartbeatParams?.requestSelfRestart?.({} as never);
+      expect(pluginChangeService.quiesceForHandoff).toHaveBeenCalledOnce();
+      expect(quiescing).toBe(false);
+      expect(machineRegistrationResume).toHaveBeenCalledOnce();
+      expect(machineConnectionPublicationsResume).toHaveBeenCalledOnce();
+      expect(transferRuntimeStateResume).toHaveBeenCalledOnce();
+      expect(harness.apiMachine.recoverDaemonTerminalSessionMutationJournals).toHaveBeenCalledOnce();
+    } finally {
+      harness.requestShutdown('happier-cli');
+      await run?.catch(() => undefined);
+      vi.doUnmock('./startup/startDaemonMachineRegistrationRuntime');
+      vi.doUnmock('./startup/startDaemonRuntimeBootstrap');
+      vi.doUnmock('./lifecycle/requestDaemonSelfRestartWithLockHandoff');
+      vi.doUnmock('@/plugins/daemon/runtimeOwner');
+      exitSpy.mockRestore();
+    }
+  });
+
   it('starts automation worker after machine sync bootstrap and stops it on shutdown', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
@@ -662,7 +862,37 @@ describe('startDaemon automation wiring (integration)', () => {
     }
   });
 
-  it('publishes session-end events for orphaned daemon startup sessions after machine sync connects', async () => {
+  it('constructs and attaches the connected-account command owner before machine RPC becomes reachable', async () => {
+    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+    let run: Promise<void> | null = null;
+
+    try {
+      harness.setAutoShutdownAfterAutomationStart(false);
+      const { startDaemon } = await import('./startDaemon');
+      run = startDaemon();
+
+      await vi.waitFor(() => {
+        expect(harness.apiMachine.registerConnectedAccountDaemonRuntime).toHaveBeenCalledTimes(1);
+        expect(harness.apiMachine.setRPCHandlers).toHaveBeenCalledTimes(1);
+      }, { timeout: 30_000 });
+      expect(harness.apiMachine.registerConnectedAccountDaemonRuntime).toHaveBeenCalledWith(
+        expect.objectContaining({
+          execute: expect.any(Function),
+        }),
+      );
+      expect(harness.apiMachine.registerConnectedAccountDaemonRuntime)
+        .toHaveBeenCalledBefore(harness.apiMachine.setRPCHandlers);
+
+      harness.requestShutdown('happier-cli');
+      await run;
+    } finally {
+      harness.requestShutdown('happier-cli');
+      await run?.catch(() => undefined);
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('recovers daemon journals before staging exact orphan terminal evidence after machine sync', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
 
     try {
@@ -672,24 +902,25 @@ describe('startDaemon automation wiring (integration)', () => {
           {
             sessionId: 'sess-orphaned-6480',
             pid: 6480,
+            activeTurnId: 'turn-exact-orphan',
           },
         ],
+        connectedServiceRestartIntents: [],
       });
 
       const { startDaemon } = await import('./startDaemon');
       await startDaemon();
 
-      expect(harness.apiMachine.emitSessionEnd).toHaveBeenCalledWith({
-        sid: 'sess-orphaned-6480',
-        time: expect.any(Number),
-        exit: {
-          observedBy: 'daemon',
-          pid: 6480,
-          reason: 'process-missing',
-          code: null,
-          signal: null,
-        },
-      });
+      await vi.waitFor(() => expect(harness.apiMachine.enqueueDaemonTerminalExactTurnEnd).toHaveBeenCalledWith({
+        v: 1,
+        sessionId: 'sess-orphaned-6480',
+        mutationId: expect.stringMatching(/^daemon-observed-exit:/),
+        action: 'end_session',
+        turnId: 'turn-exact-orphan',
+        observedAt: expect.any(Number),
+      }));
+      expect(harness.apiMachine.recoverDaemonTerminalSessionMutationJournals)
+        .toHaveBeenCalledBefore(harness.apiMachine.enqueueDaemonTerminalExactTurnEnd);
     } finally {
       exitSpy.mockRestore();
     }

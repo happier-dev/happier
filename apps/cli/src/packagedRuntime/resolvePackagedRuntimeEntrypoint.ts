@@ -1,15 +1,18 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   readDefaultManagedReleaseChannelSync,
   resolveInstalledFirstPartyComponentPaths,
   resolveFirstPartyComponentPublicReleaseVariant,
 } from '@happier-dev/cli-common/firstPartyRuntime';
-import { projectPath } from '@/projectPath';
+import { projectPath, projectPathFromModuleUrl } from '@/projectPath';
 import { isEmbeddedBunBundlePath } from '@/packagedRuntime/js/isEmbeddedBunBundlePath';
 import {
   isRunnerSnapshotRuntimeRoot,
+  resolveRunnerSnapshotBackingRuntimeRootFromPath,
+  resolveRunnerSnapshotRuntimeRootFromPath,
   resolveRuntimeRootsFromLaunchedProcess,
 } from '@/packagedRuntime/resolveRuntimeEntrypointArgv';
 
@@ -140,6 +143,128 @@ export function resolvePackagedRuntimeProjectRoots(): string[] {
     }
   }
   return [...new Set(roots)];
+}
+
+export type AuthoritativePackagedRuntimeProjectRoot = Readonly<{
+  root: string;
+  provenance:
+    | 'source-module'
+    | 'source-snapshot'
+    | 'packaged-module'
+    | 'packaged-snapshot'
+    | 'packaged-launch'
+    | 'packaged-shim';
+}>;
+
+function isExplicitStackSourceRoot(
+  root: string,
+  processEnv: NodeJS.ProcessEnv,
+): boolean {
+  const configuredRoot = String(processEnv.HAPPIER_STACK_CLI_ROOT_DIR ?? '').trim();
+  if (!configuredRoot) return false;
+  const normalizeForEquality = (value: string): string => {
+    const normalized = normalizePathLike(value).replace(/\/+$/, '');
+    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  };
+  if (normalizeForEquality(configuredRoot) !== normalizeForEquality(root)) {
+    return false;
+  }
+  try {
+    const physicalRoot = realpathSync(root);
+    const physicalConfiguredRoot = realpathSync(configuredRoot);
+    const sourceDir = realpathSync(join(physicalRoot, 'src'));
+    const packageJsonPath = realpathSync(join(physicalRoot, 'package.json'));
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as { name?: unknown };
+    return normalizeForEquality(physicalConfiguredRoot) === normalizeForEquality(physicalRoot)
+      && normalizeForEquality(dirname(sourceDir)) === normalizeForEquality(physicalRoot)
+      && statSync(sourceDir).isDirectory()
+      && normalizeForEquality(dirname(packageJsonPath)) === normalizeForEquality(physicalRoot)
+      && statSync(packageJsonPath).isFile()
+      && packageJson.name === '@happier-dev/cli';
+  } catch {
+    return false;
+  }
+}
+
+function resolveModuleRuntimeAuthority(
+  moduleUrl: string,
+  processEnv: NodeJS.ProcessEnv,
+): AuthoritativePackagedRuntimeProjectRoot | null {
+  try {
+    const modulePath = normalizePathLike(fileURLToPath(moduleUrl));
+    if (isEmbeddedBunBundlePath(modulePath)) {
+      return null;
+    }
+    const snapshotRoot = resolveRunnerSnapshotRuntimeRootFromPath(modulePath);
+    if (snapshotRoot) {
+      const backingRoot = resolveRunnerSnapshotBackingRuntimeRootFromPath(snapshotRoot);
+      if (!backingRoot) return null;
+      return {
+        root: backingRoot,
+        provenance: isExplicitStackSourceRoot(backingRoot, processEnv)
+          ? 'source-snapshot'
+          : 'packaged-snapshot',
+      };
+    }
+
+    const moduleProjectRoot = projectPathFromModuleUrl(moduleUrl);
+    const normalizedModuleProjectRoot = normalizePathLike(moduleProjectRoot).replace(/\/+$/u, '');
+    const moduleTree = modulePath.startsWith(`${normalizedModuleProjectRoot}/`)
+      ? modulePath.slice(normalizedModuleProjectRoot.length + 1).split('/')[0]
+      : null;
+    if (moduleTree === 'src') {
+      return { root: moduleProjectRoot, provenance: 'source-module' };
+    }
+    if (moduleTree === 'dist') {
+      return {
+        root: moduleProjectRoot,
+        provenance: existsSync(join(moduleProjectRoot, 'src'))
+          ? 'source-module'
+          : 'packaged-module',
+      };
+    }
+    if (moduleTree === 'package-dist') {
+      return { root: moduleProjectRoot, provenance: 'packaged-module' };
+    }
+  } catch {
+    // Runtime process evidence remains available below.
+  }
+  return null;
+}
+
+export function resolveAuthoritativePackagedRuntimeProjectRoot(params: Readonly<{
+  moduleUrl?: string;
+  argv?: readonly string[];
+  currentExecPath?: string;
+  processEnv?: NodeJS.ProcessEnv;
+}> = {}): AuthoritativePackagedRuntimeProjectRoot | null {
+  const processEnv = params.processEnv ?? process.env;
+  const moduleAuthority = resolveModuleRuntimeAuthority(params.moduleUrl ?? import.meta.url, processEnv);
+  if (moduleAuthority) {
+    return moduleAuthority;
+  }
+
+  const argv = params.argv ?? process.argv;
+  const launchedRoot = resolveRuntimeRootsFromLaunchedProcess({
+    argv,
+    currentExecPath: params.currentExecPath ?? process.execPath,
+  })[0];
+  if (launchedRoot) {
+    const backingRoot = resolveRunnerSnapshotBackingRuntimeRootFromPath(launchedRoot);
+    if (backingRoot) {
+      return {
+        root: backingRoot,
+        provenance: isExplicitStackSourceRoot(backingRoot, processEnv)
+          ? 'source-snapshot'
+          : 'packaged-snapshot',
+      };
+    }
+    return { root: launchedRoot, provenance: 'packaged-launch' };
+  }
+
+  const exactShimRoot = resolveRuntimeRootFromInstalledShimPath(params.currentExecPath ?? process.execPath)
+    ?? resolveRuntimeRootFromInstalledShimPath(argv[0] ?? '');
+  return exactShimRoot ? { root: exactShimRoot, provenance: 'packaged-shim' } : null;
 }
 
 export function resolvePackagedRuntimeEntrypoint(

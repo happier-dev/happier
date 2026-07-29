@@ -64,8 +64,14 @@ describe('apps/cli package publish contract', () => {
     expect(bundled).toContain('@happier-dev/peer-mediation');
     expect(bundled).toContain('@happier-dev/protocol');
     expect(bundled).toContain('@happier-dev/transfers');
+    expect(bundled).toContain('@happier-dev/bundled-voice-runtime-contract');
     expect(bundled).toContain('@happier-dev/release-runtime');
+    expect(bundled).toContain('proper-lockfile');
     expect(bundled).toContain('tweetnacl');
+
+    for (const packageName of bundled.filter((name) => name.startsWith('@happier-dev/'))) {
+      expect(cliPackageJson.dependencies?.[packageName]).toBeTruthy();
+    }
 
     for (const pluginPackageName of readBundledPluginWorkspacePackageNames()) {
       expect(bundled).toContain(pluginPackageName);
@@ -85,12 +91,42 @@ describe('apps/cli package publish contract', () => {
     expect(protocolPackageJson.dependencies?.['tweetnacl']).toBeTruthy();
 
     // Only deps used directly by the CLI should be declared on the CLI package itself.
+    expect(cliPackageJson.dependencies?.['proper-lockfile']).toBeTruthy();
     expect(cliPackageJson.dependencies?.['tweetnacl']).toBeTruthy();
     expect(cliPackageJson.dependencies?.['base64-js']).toBeFalsy();
     expect(cliPackageJson.dependencies?.['@noble/hashes']).toBeFalsy();
     expect(cliPackageJson.dependencies?.['@happier-dev/plugin-sdk']).toBeTruthy();
     expect(cliPackageJson.dependencies?.['@happier-dev/peer-mediation']).toBeTruthy();
 
+  });
+
+  it('keeps React external so Ink and bundled plugins share the host singleton', () => {
+    const cliPackageJson = JSON.parse(
+      readFileSync(resolve(cliRoot, 'package.json'), 'utf8'),
+    ) as {
+      bundledDependencies?: unknown;
+      dependencies?: Record<string, string> | undefined;
+    };
+    const bundled = Array.isArray(cliPackageJson.bundledDependencies)
+      ? cliPackageJson.bundledDependencies.map((value) => String(value))
+      : [];
+
+    expect(cliPackageJson.dependencies?.react).toBeTruthy();
+    expect(bundled).not.toContain('react');
+
+    const pluginsRoot = resolve(repoRoot, 'packages', 'plugins');
+    for (const pluginPackageName of readBundledPluginWorkspacePackageNames()) {
+      const pluginId = pluginPackageName.slice('@happier-dev/plugins-'.length);
+      const pluginPackageJson = JSON.parse(
+        readFileSync(resolve(pluginsRoot, pluginId, 'package.json'), 'utf8'),
+      ) as {
+        dependencies?: Record<string, string> | undefined;
+      };
+      expect(
+        pluginPackageJson.dependencies?.react,
+        `${pluginPackageName} must consume the host React singleton instead of installing a private copy`,
+      ).toBeFalsy();
+    }
   });
 
   it('explicitly includes generated dist outputs in npm publish inputs', () => {
@@ -119,6 +155,8 @@ describe('apps/cli package publish contract', () => {
 
     expect(publishedFiles).not.toContain('scripts/**/*.mjs');
     expect(publishedFiles).toContain('scripts/**/*.cjs');
-    expect(publishedFiles).toContain('scripts/shims/**');
+    expect(publishedFiles).not.toContain('scripts/shims/**');
+    expect(publishedFiles).toContain('scripts/shims/git');
+    expect(publishedFiles).toContain('scripts/shims/rg');
   });
 });

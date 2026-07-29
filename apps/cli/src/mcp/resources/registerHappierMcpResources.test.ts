@@ -21,7 +21,7 @@ describe('registerHappierMcpResources', () => {
         },
       },
       {
-        surface: 'session_agent',
+        surface: 'agent',
         isActionEnabled: (id) => id !== 'review.start',
       },
     );
@@ -41,7 +41,7 @@ describe('registerHappierMcpResources', () => {
   });
 
   it('filters the action-specs catalog by surface', async () => {
-    const readCatalog = async (surface: 'session_agent' | 'mcp') => {
+    const readCatalog = async (surface: 'agent' | 'mcp') => {
       const resources: Array<{
         handler: () => Promise<{ contents: Array<{ uri: string; mimeType: string; text: string }> }>;
       }> = [];
@@ -61,7 +61,7 @@ describe('registerHappierMcpResources', () => {
       return Array.isArray(parsed.actionSpecs) ? parsed.actionSpecs.map((spec) => String(spec.id ?? '')).filter(Boolean) : [];
     };
 
-    const sessionAgentIds = await readCatalog('session_agent');
+    const sessionAgentIds = await readCatalog('agent');
     const mcpIds = await readCatalog('mcp');
 
     expect(sessionAgentIds).not.toContain('session.target.primary.set');

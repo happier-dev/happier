@@ -1,6 +1,7 @@
 export type {
   InstallAgentCliResult,
   AgentCliInstallCommand,
+  AgentCliInstallIntent,
   AgentCliInstallMode,
   AgentCliInstallPlan,
   AgentCliInstallPlanResult,
@@ -77,3 +78,7 @@ export {
   resolveExistingPnpmCommand,
 } from './managedPnpm.js';
 export { resolveHappyHomeDirFromEnvironment } from './resolveHappyHomeDir.js';
+export {
+  expandHomeDirPath,
+  resolveHomeDirFromEnvironment,
+} from '../path/expandHomeDirPath.js';

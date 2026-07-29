@@ -59,7 +59,9 @@ describe('ApiSessionClient socket message commits', () => {
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     await client.sendUserTextMessageCommitted('hello', { localId: 'l1' });
 
-    expect(sessionSocketStub.emitWithAck).toHaveBeenCalledTimes(1);
+    expect(
+      sessionSocketStub.emitWithAck.mock.calls.filter(([event]) => event === 'message'),
+    ).toHaveLength(1);
     expect(sessionSocketStub.emitWithAck).toHaveBeenCalledWith(
       'message',
       expect.objectContaining({ echoToSender: true, messageRole: 'user' }),

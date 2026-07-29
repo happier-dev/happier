@@ -14,22 +14,13 @@ describe('createOfflineSessionStub', () => {
         expect(calls).toBe(1);
     });
 
-    it('implements the session transport surface used while offline', async () => {
+    it('does not claim that committed transcript writes were persisted', async () => {
         const session = createOfflineSessionStub('tag');
 
-        expect(session.getMetadataSnapshot()).toBeNull();
-        await expect(session.ensureMetadataSnapshot()).resolves.toBeNull();
-        await expect(session.refreshSessionSnapshotFromServerBestEffort()).resolves.toBeUndefined();
-        await expect(session.listPendingMessageQueueV2LocalIds()).resolves.toEqual([]);
-        await expect(session.peekPendingMessageQueueV2Count()).resolves.toBe(0);
-        await expect(session.discardPendingMessageQueueV2All({ reason: 'manual' })).resolves.toBe(0);
-        await expect(session.discardCommittedMessageLocalIds({ localIds: ['l1'], reason: 'manual' })).resolves.toBe(0);
-        await expect(session.materializeNextPendingMessageSafely()).resolves.toEqual({
-            type: 'deferred',
-            reason: 'supervisor_offline',
-        });
-        expect(() => session.setSessionRuntimeControls(null)).not.toThrow();
-        expect(session.getCommittedUserMessageSeq('l1')).toBeNull();
-        await expect(session.waitForCommittedUserMessageSeq('l1')).resolves.toBeNull();
+        await expect(session.sendAgentMessageCommitted(
+            'claude',
+            { type: 'message', message: 'must survive reconnect' },
+            { localId: 'offline-segment-1' },
+        )).rejects.toThrow('Offline transcript write was not persisted');
     });
 });

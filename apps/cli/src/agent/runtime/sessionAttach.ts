@@ -1,5 +1,6 @@
 import { decodeBase64 } from '@/api/encryption';
 import type { AgentState, Metadata } from '@/api/types';
+import type { SessionOwnerMetadataV1 } from '@happier-dev/protocol';
 import { assertSessionAttachFilePathWithinBaseDir, resolveSessionAttachBaseDir } from '@/agent/runtime/sessionAttachPaths';
 import { SessionAttachPayloadSchema } from '@/agent/runtime/sessionAttachPayload';
 import { configuration } from '@/configuration';
@@ -16,6 +17,9 @@ export type SessionAttachSnapshot = Readonly<{
   metadataVersion: number;
   agentState: AgentState | null;
   agentStateVersion: number;
+  metadataLayoutVersion?: 1;
+  ownerMetadata?: SessionOwnerMetadataV1;
+  ownerMetadataCiphertext?: string;
 }>;
 
 function readNonNegativeIntegerProperty(payload: unknown, key: string): number | undefined {
@@ -29,7 +33,15 @@ export async function readSessionAttachFromEnv(): Promise<SessionAttachSecret | 
   if (!rawPath) return null;
   delete process.env.HAPPIER_SESSION_ATTACH_FILE;
 
-  const filePath = resolve(rawPath);
+  return await readSessionAttachFromFile(rawPath);
+}
+
+/** Reads a trusted, launch-scoped attach file without consulting or mutating process.env. */
+export async function readSessionAttachFromFile(rawPath: string): Promise<SessionAttachSecret> {
+  const normalizedRawPath = rawPath.trim();
+  if (!normalizedRawPath) throw new Error('Missing session attach file path');
+
+  const filePath = resolve(normalizedRawPath);
   const baseDir = resolveSessionAttachBaseDir(configuration.happyHomeDir, configuration.publicReleaseRing);
 
   // Safety: require attach file to live within the session-attach temp dir.

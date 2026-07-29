@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   SessionUsageLimitRecoveryResumePromptModeV1Schema,
   type SessionUsageLimitRecoveryResumePromptModeV1,
@@ -7,7 +9,6 @@ import { notifyDaemonConnectedServiceRuntimeAuthFailure } from '@/daemon/control
 import { logger as defaultLogger } from '@/ui/logger';
 
 import {
-  isRetryableConnectedServiceRuntimeAuthFailureReportDelivery,
   resolveConnectedServiceRuntimeAuthFailureStatusMessage,
 } from './resolveConnectedServiceRuntimeAuthFailureStatusMessage';
 import {
@@ -16,13 +17,17 @@ import {
 } from './projection/connectedServiceRuntimeAuthRecoveryProjection';
 import {
   enqueueRuntimeAuthFailureReportOutboxItem,
+  readRuntimeAuthFailureReportOutboxItem,
   removeRuntimeAuthFailureReportOutboxItem,
   resolveRuntimeAuthFailureReportOutboxKey,
 } from './reportOutbox/runtimeAuthFailureReportOutbox';
+import type { RuntimeAuthFailureReportOutboxItem } from './reportOutbox/runtimeAuthFailureReportOutboxTypes';
 import { scheduleRuntimeAuthFailureReportOutboxDrainToDaemon } from './reportOutbox/runtimeAuthFailureReportOutboxDrainScheduler';
+import { resolveRuntimeAuthFailureReportOutboxDelivery } from './reportOutbox/resolveRuntimeAuthFailureReportOutboxDelivery';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 
 type RuntimeAuthFailureNotifyBody = Readonly<{
+  reportId: string;
   sessionId: string;
   switchesThisTurn?: number;
   resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
@@ -54,6 +59,10 @@ export type ConnectedServiceRuntimeAuthFailureDaemonReport = Readonly<{
   ok?: unknown;
   result?: unknown;
   errorCode?: unknown;
+  recoveryReceipt?: Readonly<{
+    reportId: string;
+    attemptId: string;
+  }>;
   resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
   uxDiagnostic?: ConnectedServiceRuntimeAuthRecoveryProjection['uxDiagnostic'];
   projection?: ConnectedServiceRuntimeAuthRecoveryProjection;
@@ -88,6 +97,26 @@ function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
 function readResumePromptMode(value: unknown): SessionUsageLimitRecoveryResumePromptModeV1 | null {
   const parsed = SessionUsageLimitRecoveryResumePromptModeV1Schema.safeParse(value);
   return parsed.success ? parsed.data : null;
+}
+
+function readRuntimeAuthRecoveryReceipt(value: unknown): Readonly<{
+  reportId: string;
+  attemptId: string;
+}> | null {
+  const record = readRecord(value);
+  const reportId = record?.reportId;
+  const attemptId = record?.attemptId;
+  if (
+    typeof reportId !== 'string'
+    || reportId.length < 1
+    || reportId.length > 256
+    || typeof attemptId !== 'string'
+    || attemptId.length < 1
+    || attemptId.length > 256
+  ) {
+    return null;
+  }
+  return { reportId, attemptId };
 }
 
 // Stable failure fingerprint: identity + failure kind + provider-declared reset horizon
@@ -142,6 +171,7 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
   reportOutboxDir?: string;
   scheduleOutboxDrain?: RuntimeAuthFailureReportOutboxDrainScheduler;
   nowMs?: () => number;
+  createReportId?: () => string;
 }>): Promise<ConnectedServiceRuntimeAuthFailureDaemonReport> {
   const notify = input.notify ?? notifyDaemonConnectedServiceRuntimeAuthFailure;
   const logger = input.logger ?? defaultLogger;
@@ -165,44 +195,76 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
       ...(resumePromptMode ? { resumePromptMode } : {}),
     };
   }
-  const reportBody: RuntimeAuthFailureNotifyBody = {
+  let reportBody: RuntimeAuthFailureNotifyBody = {
+    reportId: input.createReportId?.() ?? `runtime-auth-report:${randomUUID()}`,
     sessionId: input.sessionId,
     switchesThisTurn: input.switchesThisTurn ?? 0,
     ...(resumePromptMode ? { resumePromptMode } : {}),
     classification: sanitizedClassification,
   };
 
-  async function enqueueOutboxBestEffort(): Promise<void> {
+  async function enqueueOutboxBestEffort(scheduleDrain: boolean): Promise<RuntimeAuthFailureReportOutboxItem | null> {
     try {
       const result = await enqueueRuntimeAuthFailureReportOutboxItem({
         ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),
         report: reportBody,
         ...(input.nowMs ? { nowMs: input.nowMs } : {}),
       });
-      if (result.status === 'enqueued' && result.enqueue === 'accepted') {
+      if (result.status === 'enqueued' && scheduleDrain && result.enqueue === 'accepted') {
         scheduleOutboxDrain({
           ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),
         });
       }
+      return result.status === 'enqueued' ? result.item : null;
     } catch (error) {
       logger.debug(`${logPrefix} Failed to enqueue connected-service runtime auth failure report outbox item (non-fatal)`, error);
+      return null;
     }
   }
 
-  async function removeOutboxBestEffort(): Promise<void> {
+  async function readExpectedOutboxItemBestEffort(): Promise<RuntimeAuthFailureReportOutboxItem | null> {
     const reportKey = resolveRuntimeAuthFailureReportOutboxKey(reportBody);
-    if (!reportKey) return;
+    if (!reportKey) return null;
+    try {
+      return await readRuntimeAuthFailureReportOutboxItem({
+        ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),
+        reportKey,
+      });
+    } catch (error) {
+      logger.debug(`${logPrefix} Failed to snapshot connected-service runtime auth failure report outbox item (non-fatal)`, error);
+      return null;
+    }
+  }
+
+  async function removeOutboxBestEffort(expectedItem: RuntimeAuthFailureReportOutboxItem | null): Promise<void> {
+    if (!expectedItem) return;
     try {
       await removeRuntimeAuthFailureReportOutboxItem({
         ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),
-        reportKey,
+        reportKey: expectedItem.reportKey,
+        expectedItem,
       });
     } catch (error) {
       logger.debug(`${logPrefix} Failed to remove connected-service runtime auth failure report outbox item (non-fatal)`, error);
     }
   }
 
+  async function retainOutboxBestEffort(expectedItem: RuntimeAuthFailureReportOutboxItem | null): Promise<void> {
+    if (expectedItem) {
+      scheduleOutboxDrain({
+        ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}),
+      });
+      return;
+    }
+    await enqueueOutboxBestEffort(true);
+  }
+
   async function performReport(): Promise<ConnectedServiceRuntimeAuthFailureDaemonReport> {
+    const stagedItem = await enqueueOutboxBestEffort(false);
+    if (stagedItem) {
+      reportBody = { ...reportBody, reportId: stagedItem.reportId };
+    }
+    const expectedOutboxItem = stagedItem ?? await readExpectedOutboxItemBestEffort();
     try {
       const report = await notify(reportBody, {
         timeoutMs: CONNECTED_SERVICE_RUNTIME_AUTH_FAILURE_REPORT_TIMEOUT_MS,
@@ -212,12 +274,19 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
         report,
         statusNote,
       });
-      if (projection.handled) {
-        await removeOutboxBestEffort();
-      } else if (isRetryableConnectedServiceRuntimeAuthFailureReportDelivery(report)) {
-        await enqueueOutboxBestEffort();
-      }
       const reportRecord = readRecord(report);
+      const recoveryReceipt = readRuntimeAuthRecoveryReceipt(reportRecord?.recoveryReceipt);
+      const deliveryDisposition = expectedOutboxItem
+        ? resolveRuntimeAuthFailureReportOutboxDelivery({
+            expectedReportId: expectedOutboxItem.reportId,
+            response: report,
+          })
+        : 'retry';
+      if (deliveryDisposition === 'delivered' || deliveryDisposition === 'drop') {
+        await removeOutboxBestEffort(expectedOutboxItem);
+      } else {
+        await retainOutboxBestEffort(expectedOutboxItem);
+      }
       return {
         handled: projection.handled,
         report,
@@ -226,12 +295,17 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
         ...(Object.prototype.hasOwnProperty.call(reportRecord ?? {}, 'ok') ? { ok: reportRecord?.ok } : {}),
         ...(Object.prototype.hasOwnProperty.call(reportRecord ?? {}, 'result') ? { result: reportRecord?.result } : {}),
         ...(Object.prototype.hasOwnProperty.call(reportRecord ?? {}, 'errorCode') ? { errorCode: reportRecord?.errorCode } : {}),
+        ...(recoveryReceipt ? { recoveryReceipt } : {}),
         ...(resumePromptMode ? { resumePromptMode } : {}),
         ...(projection.uxDiagnostic ? { uxDiagnostic: projection.uxDiagnostic } : {}),
         projection,
       };
     } catch (error) {
-      await enqueueOutboxBestEffort();
+      if (stagedItem?.attemptCount === 1) {
+        scheduleOutboxDrain({ ...(input.reportOutboxDir ? { outboxDir: input.reportOutboxDir } : {}) });
+      } else if (!expectedOutboxItem) {
+        await retainOutboxBestEffort(null);
+      }
       logger.debug(`${logPrefix} Failed to report connected-service runtime auth failure to daemon (non-fatal)`, error);
       return {
         handled: false,
@@ -244,15 +318,16 @@ export async function reportConnectedServiceRuntimeAuthFailureToDaemon(input: Re
   }
 
   const nowMs = (input.nowMs ?? Date.now)();
-  const dedupeKey = buildStableRuntimeAuthFailureReportDedupeKey({
+  const stableDedupeKey = buildStableRuntimeAuthFailureReportDedupeKey({
     sessionId: input.sessionId,
     switchesThisTurn: input.switchesThisTurn ?? 0,
     ...(resumePromptMode ? { resumePromptMode } : {}),
     classification: sanitizedClassification,
   });
-  if (!dedupeKey) {
+  if (!stableDedupeKey) {
     return await performReport();
   }
+  const dedupeKey = stableDedupeKey;
   pruneStaleRuntimeAuthFailureReportDedupeEntries(nowMs);
   const recent = recentRuntimeAuthFailureReportsByStableKey.get(dedupeKey);
   if (recent && nowMs - recent.reportedAtMs <= RUNTIME_AUTH_FAILURE_REPORT_DEDUPE_WINDOW_MS) {

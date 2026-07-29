@@ -3,12 +3,16 @@ import { randomUUID } from 'node:crypto';
 
 import {
   ApprovalRequestV1Schema,
+  ExecutionRunHostActionApprovalRequestV1Schema,
+  TargetActionApprovalRequestV1Schema,
   ActionIdSchema,
   openEncryptedDataKeyEnvelopeV1,
   sealEncryptedDataKeyEnvelopeV1,
   type ActionId,
   type ApprovalQueueListItemV1,
   type ApprovalRequestV1,
+  type ExecutionRunHostActionApprovalRequestV1,
+  type TargetActionApprovalRequestV1,
 } from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
@@ -22,6 +26,11 @@ import {
 } from '@/api/encryption';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { deriveKey } from '@/utils/deriveKey';
+import { targetActionApprovalRequestsEqual, targetActionApprovalSubjectsEqual } from './targetActionApprovalSubject';
+import {
+  executionRunHostActionApprovalRequestsEqual,
+  executionRunHostActionApprovalSubjectsEqual,
+} from './executionRunHostActionApprovalSubject';
 
 type ArtifactFullRecord = Readonly<{
   id: string;
@@ -124,7 +133,61 @@ function decryptApprovalArtifactHeader(
   dataEncryptionKey: Uint8Array,
 ): Record<string, unknown> | null {
   const header = decryptWithDataKey(decodeBase64(encryptedHeaderBase64), dataEncryptionKey) as Record<string, unknown> | null;
-  return header && header.kind === 'approval_request.v1' ? header : null;
+  return header && (
+    header.kind === 'approval_request.v1'
+    || header.kind === 'target_action_approval.v1'
+    || header.kind === 'execution_run_host_action_approval.v1'
+  ) ? header : null;
+}
+
+function buildTargetActionApprovalArtifactHeader(request: TargetActionApprovalRequestV1): Record<string, unknown> {
+  return {
+    v: 1, kind: 'target_action_approval.v1', title: request.summary,
+    approvalStatus: request.status, qualifiedActionId: request.qualifiedActionId,
+    subjectFingerprint: request.subjectFingerprint,
+  };
+}
+
+function readTargetActionApprovalBody(body: string, dataEncryptionKey: Uint8Array): TargetActionApprovalRequestV1 | null {
+  const decrypted = decryptWithDataKey(decodeBase64(body), dataEncryptionKey) as { body?: unknown } | null;
+  if (typeof decrypted?.body !== 'string') return null;
+  try {
+    const parsed = TargetActionApprovalRequestV1Schema.safeParse(JSON.parse(decrypted.body));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function buildExecutionRunHostActionApprovalArtifactHeader(
+  request: ExecutionRunHostActionApprovalRequestV1,
+): Record<string, unknown> {
+  return {
+    v: 1,
+    kind: 'execution_run_host_action_approval.v1',
+    title: request.summary,
+    approvalStatus: request.status,
+    actionId: request.actionId,
+    sessionId: request.sessionId,
+    sessions: [request.sessionId],
+    runId: request.runId,
+    subjectFingerprint: request.subjectFingerprint,
+    serverId: request.serverId,
+  };
+}
+
+function readExecutionRunHostActionApprovalBody(
+  body: string,
+  dataEncryptionKey: Uint8Array,
+): ExecutionRunHostActionApprovalRequestV1 | null {
+  const decrypted = decryptWithDataKey(decodeBase64(body), dataEncryptionKey) as { body?: unknown } | null;
+  if (typeof decrypted?.body !== 'string') return null;
+  try {
+    const parsed = ExecutionRunHostActionApprovalRequestV1Schema.safeParse(JSON.parse(decrypted.body));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
 }
 
 function approvalArtifactMatchesServerScope(
@@ -257,8 +320,124 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
   approvalsCreate: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsCreate']>;
   approvalsGet: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsGet']>;
   approvalsUpdate: NonNullable<import('@happier-dev/protocol').ActionExecutorDeps['approvalsUpdate']>;
+  targetActionApprovalsCreate(args: Readonly<{ request: TargetActionApprovalRequestV1 }>): Promise<Readonly<{ artifactId: string }>>;
+  targetActionApprovalsGet(args: Readonly<{ artifactId: string }>): Promise<TargetActionApprovalRequestV1 | null>;
+  targetActionApprovalsUpdate(args: Readonly<{ artifactId: string; request: TargetActionApprovalRequestV1 }>): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>>;
+  executionRunHostActionApprovalsCreate(args: Readonly<{ request: ExecutionRunHostActionApprovalRequestV1 }>): Promise<Readonly<{ artifactId: string }>>;
+  executionRunHostActionApprovalsGet(args: Readonly<{ artifactId: string }>): Promise<ExecutionRunHostActionApprovalRequestV1 | null>;
+  executionRunHostActionApprovalsUpdate(args: Readonly<{ artifactId: string; request: ExecutionRunHostActionApprovalRequestV1 }>): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>>;
 }> {
   return {
+    executionRunHostActionApprovalsCreate: async ({ request }) => {
+      const artifactId = randomUUID();
+      const dataEncryptionKey = getRandomBytes(32);
+      const encryptedKey = await sealArtifactDataEncryptionKey({ credentials: params.credentials, dataEncryptionKey });
+      const res = await createArtifact({ credentials: params.credentials, request: {
+        id: artifactId,
+        header: encodeBase64(encryptWithDataKey(buildExecutionRunHostActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'),
+        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'),
+        dataEncryptionKey: encryptedKey,
+      } });
+      if (!res.ok) throw new Error('execution_run_host_action_approval_create_failed');
+      return { artifactId: res.artifactId };
+    },
+    executionRunHostActionApprovalsGet: async ({ artifactId }) => {
+      const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
+      if (!artifact) return null;
+      const dataEncryptionKey = await openArtifactDataEncryptionKey({
+        credentials: params.credentials,
+        encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+      });
+      if (!dataEncryptionKey) return null;
+      const header = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      if (header?.kind !== 'execution_run_host_action_approval.v1') return null;
+      const parsed = readExecutionRunHostActionApprovalBody(artifact.body, dataEncryptionKey);
+      if (!parsed
+        || parsed.subjectFingerprint !== header.subjectFingerprint
+        || parsed.actionId !== header.actionId
+        || parsed.sessionId !== header.sessionId
+        || parsed.runId !== header.runId
+        || parsed.serverId !== header.serverId) return null;
+      return parsed;
+    },
+    executionRunHostActionApprovalsUpdate: async ({ artifactId, request }) => {
+      const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
+      if (!artifact) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' };
+      const dataEncryptionKey = await openArtifactDataEncryptionKey({
+        credentials: params.credentials,
+        encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey,
+      });
+      if (!dataEncryptionKey) return { ok: false, errorCode: 'invalid_parameters', error: 'artifact_key_unavailable' };
+      const existingHeader = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      if (existingHeader?.kind !== 'execution_run_host_action_approval.v1'
+        || existingHeader.subjectFingerprint !== request.subjectFingerprint) {
+        return { ok: false, errorCode: 'subject_mismatch', error: 'execution_run_host_action_approval_subject_mismatch' };
+      }
+      const existing = readExecutionRunHostActionApprovalBody(artifact.body, dataEncryptionKey);
+      if (!existing || !executionRunHostActionApprovalSubjectsEqual(existing, request)) {
+        return { ok: false, errorCode: 'subject_mismatch', error: 'execution_run_host_action_approval_subject_mismatch' };
+      }
+      if (executionRunHostActionApprovalRequestsEqual(existing, request)) return { ok: true };
+      if (existing.status !== 'open'
+        || (request.status !== 'approved' && request.status !== 'rejected' && request.status !== 'canceled')
+        || request.updatedAtMs < existing.updatedAtMs) {
+        return { ok: false, errorCode: 'invalid_transition', error: 'execution_run_host_action_approval_invalid_transition' };
+      }
+      const updated = await updateArtifact({ credentials: params.credentials, artifactId, request: {
+        header: encodeBase64(encryptWithDataKey(buildExecutionRunHostActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'),
+        expectedHeaderVersion: artifact.headerVersion,
+        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'),
+        expectedBodyVersion: artifact.bodyVersion,
+      } });
+      return updated.ok ? { ok: true } : updated;
+    },
+    targetActionApprovalsCreate: async ({ request }) => {
+      const artifactId = randomUUID();
+      const dataEncryptionKey = getRandomBytes(32);
+      const encryptedKey = await sealArtifactDataEncryptionKey({ credentials: params.credentials, dataEncryptionKey });
+      const res = await createArtifact({ credentials: params.credentials, request: {
+        id: artifactId,
+        header: encodeBase64(encryptWithDataKey(buildTargetActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'),
+        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'),
+        dataEncryptionKey: encryptedKey,
+      } });
+      if (!res.ok) throw new Error('target_action_approval_create_failed');
+      return { artifactId: res.artifactId };
+    },
+    targetActionApprovalsGet: async ({ artifactId }) => {
+      const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
+      if (!artifact) return null;
+      const dataEncryptionKey = await openArtifactDataEncryptionKey({ credentials: params.credentials, encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey });
+      if (!dataEncryptionKey) return null;
+      const header = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      if (header?.kind !== 'target_action_approval.v1') return null;
+      const parsed = readTargetActionApprovalBody(artifact.body, dataEncryptionKey);
+      if (!parsed || parsed.subjectFingerprint !== header.subjectFingerprint || parsed.qualifiedActionId !== header.qualifiedActionId) return null;
+      return parsed;
+    },
+    targetActionApprovalsUpdate: async ({ artifactId, request }) => {
+      const artifact = await fetchArtifactFullRecord({ credentials: params.credentials, artifactId });
+      if (!artifact) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found' };
+      const dataEncryptionKey = await openArtifactDataEncryptionKey({ credentials: params.credentials, encryptedDataEncryptionKeyBase64: artifact.dataEncryptionKey });
+      if (!dataEncryptionKey) return { ok: false, errorCode: 'invalid_parameters', error: 'artifact_key_unavailable' };
+      const existing = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
+      if (existing?.kind !== 'target_action_approval.v1' || existing.subjectFingerprint !== request.subjectFingerprint) return { ok: false, errorCode: 'subject_mismatch', error: 'target_action_approval_subject_mismatch' };
+      const existingRequest = readTargetActionApprovalBody(artifact.body, dataEncryptionKey);
+      if (!existingRequest || !targetActionApprovalSubjectsEqual(existingRequest, request)) {
+        return { ok: false, errorCode: 'subject_mismatch', error: 'target_action_approval_subject_mismatch' };
+      }
+      if (targetActionApprovalRequestsEqual(existingRequest, request)) return { ok: true };
+      if (existingRequest.status !== 'open'
+        || (request.status !== 'approved' && request.status !== 'rejected' && request.status !== 'canceled')
+        || request.updatedAtMs < existingRequest.updatedAtMs) {
+        return { ok: false, errorCode: 'invalid_transition', error: 'target_action_approval_invalid_transition' };
+      }
+      const updated = await updateArtifact({ credentials: params.credentials, artifactId, request: {
+        header: encodeBase64(encryptWithDataKey(buildTargetActionApprovalArtifactHeader(request), dataEncryptionKey), 'base64'), expectedHeaderVersion: artifact.headerVersion,
+        body: encodeBase64(encryptWithDataKey({ body: JSON.stringify(request) }, dataEncryptionKey), 'base64'), expectedBodyVersion: artifact.bodyVersion,
+      } });
+      return updated.ok ? { ok: true } : updated;
+    },
     approvalsList: async ({ status, limit, serverId }) => {
       const items: ApprovalQueueListItemV1[] = [];
       const normalizedServerId = typeof serverId === 'string' && serverId.trim().length > 0 ? serverId.trim() : null;
@@ -276,6 +455,7 @@ export function createCliApprovalsArtifactStore(params: Readonly<{ credentials: 
 
         const header = decryptApprovalArtifactHeader(artifact.header, dataEncryptionKey);
         if (!header) continue;
+        if (header.kind !== 'approval_request.v1') continue;
         if (typeof status === 'string' && header.approvalStatus !== status) continue;
         const headerServerId = normalizeArtifactServerId(header.serverId);
         if (!approvalArtifactMatchesServerScope(header, normalizedServerId)) continue;

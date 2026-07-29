@@ -1,9 +1,11 @@
 import {
   createCommandSurfaceCatalog,
   type CommandSurfaceCatalog,
+  type CommandSurfaceDescriptor,
   type CommandSurfaceDescriptorInput,
 } from '@/agent/runtime/registry/commandContracts';
-import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
+import { listProjectedPluginCommandRootHelpEntries } from '@/cli/pluginCommandContributions';
 
 export type CliCommandSurfaceEntry = CommandSurfaceDescriptorInput;
 
@@ -51,9 +53,29 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
     allowTmux: false,
   },
   {
+    command: 'completion',
+    rootHelpLabel: 'happier completion',
+    rootHelpDescription: 'Generate shell completion or list completion candidates',
+    allowTmux: false,
+  },
+  {
+    command: 'agents',
+    rootHelpLabel: 'happier agents',
+    rootHelpDescription: 'Install and manage agent CLIs',
+    allowTmux: false,
+  },
+  {
+    command: 'agent',
+    allowTmux: false,
+  },
+  {
     command: 'providers',
     rootHelpLabel: 'happier providers',
-    rootHelpDescription: 'Install and manage provider CLIs',
+    rootHelpDescription: 'Configure model providers and connections',
+    allowTmux: false,
+  },
+  {
+    command: 'provider',
     allowTmux: false,
   },
   {
@@ -71,7 +93,7 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
   {
     command: 'install',
     rootHelpLabel: 'happier install',
-    rootHelpDescription: 'Install provider CLIs and helpers',
+    rootHelpDescription: 'Install agent CLIs and helpers',
     allowTmux: false,
   },
   {
@@ -140,19 +162,14 @@ const COMMAND_SURFACE_MANIFEST: readonly CliCommandSurfaceEntry[] = [
 ];
 
 function readProjectedProviderRootHelpEntries(): readonly CliCommandSurfaceEntry[] {
-  const registry = getResolvedContributionRegistry();
   const entries: CliCommandSurfaceEntry[] = [];
 
-  for (const provider of registry.providerDefinitionsById.values()) {
-    const catalogEntry = registry.catalogEntriesById[provider.id];
-    if (!catalogEntry?.getCliCommandHandler) {
-      continue;
-    }
+  for (const provider of projectedProviderRegistry?.agentDefinitionsById.values() ?? []) {
+    const catalogEntry = projectedProviderRegistry?.catalogEntriesById[provider.id];
+    if (!catalogEntry?.getCliCommandHandler) continue;
 
     const command = catalogEntry.cliSubcommand;
-    if (!command) {
-      continue;
-    }
+    if (!command) continue;
 
     const title = provider.runtimeSpec?.title?.trim() || command;
     entries.push({
@@ -165,6 +182,13 @@ function readProjectedProviderRootHelpEntries(): readonly CliCommandSurfaceEntry
   }
 
   return entries;
+}
+
+let projectedProviderRegistry: Pick<ResolvedContributionRegistry, 'agentDefinitionsById' | 'catalogEntriesById'> | null = null;
+
+export async function primeProjectedCommandSurfaceEntries(): Promise<void> {
+  const { getResolvedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
+  projectedProviderRegistry = getResolvedContributionRegistry();
 }
 
 function mergeCommandSurfaceEntries(
@@ -194,9 +218,25 @@ export function isTmuxAllowedCommand(command: string | null | undefined): boolea
   return entry ? entry.allowTmux : true;
 }
 
+export function findCommandSurfaceEntry(command: string): CommandSurfaceDescriptor | null {
+  return resolveCommandSurfaceCatalog().findByCommand(command);
+}
+
+export function isStaticCommandSurfaceReserved(command: string): boolean {
+  return COMMAND_SURFACE_MANIFEST.some((entry) => entry.command === command);
+}
+
+export function isStaticCommandSurfaceProviderPlaceholder(command: string): boolean {
+  const entry = COMMAND_SURFACE_MANIFEST.find((candidate) => candidate.command === command);
+  if (!entry) return false;
+  return typeof entry.rootHelpLabel === 'string'
+    && typeof entry.rootHelpDescription === 'string';
+}
+
 export function resolveCommandSurfaceCatalog(): CommandSurfaceCatalog {
   return createCommandSurfaceCatalog(mergeCommandSurfaceEntries([
     ...COMMAND_SURFACE_MANIFEST,
     ...readProjectedProviderRootHelpEntries(),
+    ...listProjectedPluginCommandRootHelpEntries(),
   ]));
 }

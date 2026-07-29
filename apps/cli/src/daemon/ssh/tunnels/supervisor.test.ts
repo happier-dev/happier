@@ -1,3 +1,8 @@
+import {
+  clearTimeout as clearNodeTimeout,
+  setTimeout as setNodeTimeout,
+} from 'node:timers';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -223,12 +228,17 @@ describe('createSshTunnelSupervisor', () => {
     expect(await supervisor.listTunnels()).toEqual([]);
   });
 
-  it('stops an idle tunnel after the final lease is released', async () => {
+  it('cancels idle shutdown when a lease is reacquired and stops after the new final lease is released', async () => {
     const mod = await loadModule();
     expect(mod?.createSshTunnelSupervisor).toEqual(expect.any(Function));
 
     const close = vi.fn();
-    let scheduled: (() => void) | undefined;
+    const scheduled: Array<() => void> = [];
+    const timers: Array<ReturnType<typeof setNodeTimeout>> = [];
+    const clearTimer = vi.fn((timer: number | ReturnType<typeof setNodeTimeout>) => {
+      clearNodeTimeout(timer);
+    });
+    let leaseIdCounter = 0;
     const supervisor = mod!.createSshTunnelSupervisor({
       registry: createRegistry(),
       openForward: vi.fn(async () => ({
@@ -242,24 +252,31 @@ describe('createSshTunnelSupervisor', () => {
       isLocalPortAvailable: async () => true,
       probeUrl: async () => ({ state: 'healthy', checkedAt: '2026-05-06T00:00:00.000Z' }),
       nowMs: () => 0,
-      nextLeaseId: () => 'lease-1',
+      nextLeaseId: () => {
+        leaseIdCounter += 1;
+        return `lease-${leaseIdCounter}`;
+      },
       setTimeout: (fn: () => void) => {
-        scheduled = fn;
-        const timer = setTimeout(() => {}, 60_000);
+        scheduled.push(fn);
+        const timer = setNodeTimeout(() => {}, 60_000);
         timer.unref?.();
+        timers.push(timer);
         return timer;
       },
-      clearTimeout: vi.fn(),
+      clearTimeout: clearTimer,
     });
 
-    const lease = await supervisor.ensureTunnel(createRequest({ idleTtlMs: 25 }));
-    await supervisor.releaseTunnel(lease.leaseId);
+    const firstLease = await supervisor.ensureTunnel(createRequest({ idleTtlMs: 25 }));
+    await supervisor.releaseTunnel(firstLease.leaseId);
     expect(close).not.toHaveBeenCalled();
 
-    const runScheduled = scheduled;
-    expect(runScheduled).toEqual(expect.any(Function));
-    if (!runScheduled) throw new Error('expected idle timer callback');
-    runScheduled();
+    const secondLease = await supervisor.ensureTunnel(createRequest({ idleTtlMs: 25 }));
+    expect(clearTimer).toHaveBeenCalledWith(timers[0]);
+    expect(close).not.toHaveBeenCalled();
+
+    await supervisor.releaseTunnel(secondLease.leaseId);
+    expect(scheduled[1]).toEqual(expect.any(Function));
+    scheduled[1]?.();
     expect(close).toHaveBeenCalledTimes(1);
   });
 

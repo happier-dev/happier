@@ -45,7 +45,7 @@ describe('createAcpRuntime trace marker capture', () => {
       const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_1' });
       const runtime = createTraceMarkerRuntime(backend);
 
-      await runtime.startOrLoad({ resumeId: null });
+      await runtime.sendTurnPrompt('session setup');
       backend.emit({ type: 'model-output', textDelta: 'ACP_STUB_RUNNING primary=abc123' } as any);
 
       const raw = existsSync(traceFile) ? readFileSync(traceFile, 'utf8') : '';
@@ -61,7 +61,7 @@ describe('createAcpRuntime trace marker capture', () => {
       const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_1' });
       const runtime = createTraceMarkerRuntime(backend);
 
-      await runtime.startOrLoad({ resumeId: null });
+      await runtime.sendTurnPrompt('session setup');
       runtime.beginTurn();
       backend.emit({ type: 'status', status: 'running' } as any);
 
@@ -75,7 +75,7 @@ describe('createAcpRuntime trace marker capture', () => {
       const backend = createFakeAcpRuntimeBackend({ sessionId: 'sess_1' });
       const runtime = createTraceMarkerRuntime(backend);
 
-      await runtime.startOrLoad({ resumeId: null });
+      await runtime.sendTurnPrompt('session setup');
       runtime.beginTurn();
       backend.emit({ type: 'status', status: 'running' } as any);
 
@@ -93,7 +93,7 @@ describe('createAcpRuntime trace marker capture', () => {
       backend.sendSteerPrompt = async () => {};
       const runtime = createTraceMarkerRuntime(backend) as any;
 
-      await runtime.startOrLoad({ resumeId: null });
+      await runtime.sendTurnPrompt('session setup');
       await runtime.steerPrompt('steer text');
 
       const raw = existsSync(traceFile) ? readFileSync(traceFile, 'utf8') : '';
@@ -107,7 +107,7 @@ describe('createAcpRuntime trace marker capture', () => {
       backend.sendSteerPrompt = async () => {};
       const runtime = createTraceMarkerRuntime(backend) as any;
 
-      await runtime.startOrLoad({ resumeId: null });
+      await runtime.sendTurnPrompt('session setup');
       await runtime.steerPrompt('steer text');
 
       const raw = existsSync(traceFile) ? readFileSync(traceFile, 'utf8') : '';

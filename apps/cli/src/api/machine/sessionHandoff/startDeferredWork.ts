@@ -1,6 +1,9 @@
 import type { SessionHandoffStartRequest } from '@happier-dev/protocol';
+import type {
+  ExternalSessionOperationClaimMaintenance,
+} from '@/session/external/operationExclusion';
 
-import type { DeferredDirectPeerPreExportedProviderBundle } from './startDeferredDirectPeer';
+import type { DeferredDirectPeerPreExportedAgentBundle } from './startDeferredDirectPeer';
 
 type SessionHandoffSourceStopState = 'stopped' | 'already_inactive' | 'failed';
 
@@ -10,35 +13,38 @@ export function startDeferredWork(input: Readonly<{
   handoffId: string;
   request: SessionHandoffStartRequest;
   metadata: Record<string, unknown>;
-  preExportedProviderBundle?: DeferredDirectPeerPreExportedProviderBundle;
+  preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
   stopSessionForHandoff?: (sessionId: string) => Promise<SessionHandoffSourceStopState>;
   prepareStartedState: (params: Readonly<{
     handoffId: string;
     request: SessionHandoffStartRequest;
     metadata: Record<string, unknown>;
     sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
-    preExportedProviderBundle?: DeferredDirectPeerPreExportedProviderBundle;
+    preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
   }>) => Promise<unknown>;
   recordDeferredStartFailure: (error: unknown) => void;
+  claimMaintenance: ExternalSessionOperationClaimMaintenance;
 }>): void {
   const startWork =
     input.deferredStartWorkPromise
     ?? (async () => {
+      input.claimMaintenance.throwIfLost();
       const actualSourceStopState =
         input.stopSessionForHandoff
-          ? await input.stopSessionForHandoff(input.sessionId)
+          ? await input.claimMaintenance.race(() => input.stopSessionForHandoff!(input.sessionId))
           : 'already_inactive';
       if (actualSourceStopState === 'failed') {
         throw new Error('Failed to stop the active source session before handoff cutover');
       }
-      await input.prepareStartedState({
+      input.claimMaintenance.throwIfLost();
+      await input.claimMaintenance.race(() => input.prepareStartedState({
         handoffId: input.handoffId,
         request: input.request,
         metadata: input.metadata,
         sourceStopState: actualSourceStopState,
-        ...(input.preExportedProviderBundle ? { preExportedProviderBundle: input.preExportedProviderBundle } : {}),
-      });
+        ...(input.preExportedAgentBundle ? { preExportedAgentBundle: input.preExportedAgentBundle } : {}),
+      }));
     })();
 
-  void startWork.catch(input.recordDeferredStartFailure);
+  void input.claimMaintenance.race(() => startWork).catch(input.recordDeferredStartFailure);
 }

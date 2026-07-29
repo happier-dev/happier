@@ -4,6 +4,7 @@ import type { Credentials } from '@/persistence';
 import { ExecutionRunStopRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
@@ -16,7 +17,7 @@ export async function cmdSessionRunStop(
   const runId = String(argv[3] ?? '').trim();
 
   if (!idOrPrefix || !runId) {
-    throw new Error('Usage: happier session run stop <session-id-or-prefix> <run-id> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStop}`);
   }
 
   const credentials = await deps.readCredentialsFn();

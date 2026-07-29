@@ -83,7 +83,7 @@ export function registerTransferUploadRpcHandlers(
         kind: 'accepted',
         target: resolved.target,
         sha256Expected: resolved.sha256Expected,
-        logContext: resolved.logContext,
+        diagnosticContext: resolved.diagnosticContext,
       };
     },
     buildInitSuccessResponse: ({ session }) => ({

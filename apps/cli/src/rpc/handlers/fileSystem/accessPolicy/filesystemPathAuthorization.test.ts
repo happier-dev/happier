@@ -54,4 +54,47 @@ describe('authorizeFilesystemPath', () => {
     });
     expect(rejected.valid).toBe(false);
   });
+
+  it('keeps Windows drive and UNC roots bounded', () => {
+    const differentDrive = authorizeFilesystemPath({
+      targetPath: 'D:\\workspace\\file.txt',
+      defaultDirectory: 'C:\\workspace',
+      accessPolicy: { kind: 'restrictedRoots', roots: ['C:\\workspace'] },
+      platform: 'win32',
+    });
+    expect(differentDrive.valid).toBe(false);
+
+    const uncChild = authorizeFilesystemPath({
+      targetPath: '\\\\server\\share\\workspace\\nested/file.txt',
+      defaultDirectory: '\\\\server\\share\\workspace',
+      accessPolicy: {
+        kind: 'restrictedRoots',
+        roots: ['\\\\SERVER\\SHARE\\WORKSPACE'],
+      },
+      platform: 'win32',
+    });
+    expect(uncChild).toEqual({
+      valid: true,
+      resolvedPath: '\\\\server\\share\\workspace\\nested\\file.txt',
+    });
+
+    for (const targetPath of [
+      '\\\\server\\share\\workspace-sibling\\file.txt',
+      '\\\\server\\other-share\\workspace\\file.txt',
+      '\\\\other-server\\share\\workspace\\file.txt',
+      'C:\\workspace\\..\\outside\\file.txt',
+    ]) {
+      expect(
+        authorizeFilesystemPath({
+          targetPath,
+          defaultDirectory: '\\\\server\\share\\workspace',
+          accessPolicy: {
+            kind: 'restrictedRoots',
+            roots: ['\\\\server\\share\\workspace'],
+          },
+          platform: 'win32',
+        }).valid,
+      ).toBe(false);
+    }
+  });
 });

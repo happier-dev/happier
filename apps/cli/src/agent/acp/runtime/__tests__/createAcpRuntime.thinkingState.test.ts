@@ -35,7 +35,7 @@ describe('createAcpRuntime (thinking state)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     expect(thinkingChanges.at(-1)).toBe(true);
     expect(keepAliveThinking.at(-1)).toBe(true);
@@ -68,7 +68,7 @@ describe('createAcpRuntime (thinking state)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     await runtime.flushTurn();
 
@@ -102,7 +102,7 @@ describe('createAcpRuntime (thinking state)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({ type: 'status', status: 'running' } satisfies AgentMessage);
     expect(messages.some((msg) => msg.type === 'task_started')).toBe(false);
@@ -136,7 +136,7 @@ describe('createAcpRuntime (thinking state)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
 
     // Begin turn — thinking should be true
     runtime.beginTurn();
@@ -184,7 +184,7 @@ describe('createAcpRuntime (thinking state)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     expect(thinkingChanges.at(-1)).toBe(true);
 
@@ -219,7 +219,7 @@ describe('createAcpRuntime (thinking state)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({});
+    await runtime.sendTurnPrompt('session setup');
     runtime.beginTurn();
     expect(thinkingChanges.at(-1)).toBe(true);
     expect(keepAliveThinking.at(-1)).toBe(true);

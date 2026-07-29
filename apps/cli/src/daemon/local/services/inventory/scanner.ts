@@ -1,11 +1,15 @@
 import { classifyLocalServiceProcess } from './classification';
 import type { LocalServiceInventoryStoredLabel } from './labels';
 import {
+    LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH,
+    matchTerminalRegistration,
     matchWorkspaceAssociation,
     recoverProcessLineageFacts,
     type LocalServiceProcessFact,
     type LocalServiceWorkspaceFact,
 } from './provenance';
+import type { TerminalProcessRegistry } from './terminalRegistry';
+import type { LocalServiceEndpointFact } from './endpoint';
 
 export type LocalServiceInventoryDiagnostic = Readonly<{
     code: string;
@@ -28,29 +32,34 @@ export type NormalizedLocalServiceInventoryEntry = Readonly<{
         host: string;
         family: 'ipv4' | 'ipv6' | 'unknown';
     }>;
+    endpoint?: LocalServiceEndpointFact;
     port: number;
     protocol: 'tcp';
     detectedAt: number;
     lastSeenAt: number;
     state: 'listening' | 'stale' | 'gone' | 'unknown';
-    source: 'detected' | 'managed' | 'registered' | 'system';
+    source: 'detected';
     provenance?: Readonly<{
         process?: Readonly<{
             pid: number;
             ppid?: number;
+            processStartTimeMs?: number;
             lineagePids: readonly number[];
             command: string;
             cwd?: string;
             redacted: true;
         }>;
+        session?: Readonly<{ id: string; turnId?: string }>;
         workspace?: Readonly<{
             id?: string;
             path: string;
-            association: 'cwd_containment';
+            association: 'cwd_containment' | 'process_tree';
         }>;
     }>;
     classification?: ReturnType<typeof classifyLocalServiceProcess>;
     presentation?: Readonly<{
+        pageTitle?: string;
+        pageTitleSource?: 'application_name' | 'og_title' | 'twitter_title' | 'html_title';
         displayName?: string;
         folderLabel?: string;
         addressLabel: string;
@@ -103,9 +112,13 @@ function buildInventoryId(input: Readonly<{
     address: NormalizedLocalServiceInventoryEntry['address'];
     port: number;
     pid?: number;
+    processStartTimeMs?: number;
 }>): string {
     const pidPart = input.pid ? `pid-${input.pid}` : 'pid-unknown';
-    return `${input.machineId}:tcp:${addressKey(input.address)}:${input.port}:${pidPart}`;
+    const startPart = typeof input.processStartTimeMs === 'number' && Number.isFinite(input.processStartTimeMs)
+        ? `start-${Math.max(0, Math.trunc(input.processStartTimeMs))}`
+        : 'start-unknown';
+    return `${input.machineId}:tcp:${addressKey(input.address)}:${input.port}:${pidPart}:${startPart}`;
 }
 
 function addressLabel(address: NormalizedLocalServiceInventoryEntry['address'], port: number): string {
@@ -126,6 +139,7 @@ export function normalizeLocalServiceScan(input: Readonly<{
     listeners: readonly LocalServiceListenerFact[];
     processes: ReadonlyMap<number, LocalServiceProcessFact>;
     workspaces: readonly LocalServiceWorkspaceFact[];
+    terminalRegistry?: TerminalProcessRegistry;
     staleAfterMs?: number;
 }>): NormalizedLocalServiceInventorySnapshot {
     const entries = new Map<string, NormalizedLocalServiceInventoryEntry>();
@@ -139,14 +153,26 @@ export function normalizeLocalServiceScan(input: Readonly<{
         const recovered = listener.pid
             ? recoverProcessLineageFacts({
                 listenerPid: listener.pid,
-                maxDepth: 4,
+                maxDepth: LOCAL_SERVICE_PROCESS_LINEAGE_MAX_DEPTH,
                 processes: input.processes,
             })
             : undefined;
-        const workspaceMatch = matchWorkspaceAssociation({
+        // Deterministic terminal->port registration wins over probabilistic cwd
+        // containment (E2 §P7): it carries the workspace + originating session even
+        // when the listener's own cwd does not resolve. cwd-containment stays the fallback.
+        const terminalMatch = matchTerminalRegistration({
+            listenerPid: listener.pid,
+            lineagePids: recovered?.lineagePids ?? [],
+            registry: input.terminalRegistry,
+        });
+        const cwdMatch = matchWorkspaceAssociation({
             cwd: recovered?.cwd,
             workspaces: input.workspaces,
         });
+        const workspaceMatch = terminalMatch.workspace
+            ? terminalMatch
+            : cwdMatch;
+        const sessionAttribution = terminalMatch.workspace ? terminalMatch.session : undefined;
         const listenerProcess = listener.pid ? input.processes.get(listener.pid) : undefined;
         const classificationCommand = [listenerProcess?.command, recovered?.command].filter(Boolean).join(' ');
         const classification = classificationCommand
@@ -157,6 +183,7 @@ export function normalizeLocalServiceScan(input: Readonly<{
             address,
             port: listener.port,
             pid: listener.pid,
+            processStartTimeMs: listenerProcess?.processStartTimeMs,
         });
         const presentation = {
             ...(classification?.displayName ? { displayName: classification.displayName } : {}),
@@ -173,10 +200,11 @@ export function normalizeLocalServiceScan(input: Readonly<{
             lastSeenAt: now,
             state: 'listening',
             source: 'detected',
-            ...(recovered || workspaceMatch.workspace
+            ...(recovered || workspaceMatch.workspace || sessionAttribution
                 ? {
                     provenance: {
                         ...(recovered ? { process: recovered } : {}),
+                        ...(sessionAttribution ? { session: { id: sessionAttribution.id } } : {}),
                         ...(workspaceMatch.workspace ? { workspace: workspaceMatch.workspace } : {}),
                     },
                 }

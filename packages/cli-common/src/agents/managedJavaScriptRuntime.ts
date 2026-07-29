@@ -319,13 +319,14 @@ export async function ensureManagedJavaScriptRuntimeCommand(
         archiveName: release.name,
         extractDir,
         outputPath: nextRuntimeDir,
+        skipTarLinks: true,
       });
 
       await mkdir(dirname(nextNodeBinaryPath), { recursive: true });
       accessSync(nextNodeBinaryPath, process.platform === 'win32' ? fsConstants.F_OK : fsConstants.X_OK);
       await writeManagedJavaScriptRuntimeWrapper({
         outputPath: nextBinPath,
-        runtimeBinaryPath: process.platform === 'win32' ? '%~dp0..\\runtime\\node.exe' : '$(dirname "$0")/../runtime/bin/node',
+        runtimeBinaryPath: process.platform === 'win32' ? '%~dp0..\\runtime\\node.exe' : '${0%/*}/../runtime/bin/node',
       });
 
       await promoteManagedCurrentInstall({ installRoot: installDir, candidatePath: nextDir });

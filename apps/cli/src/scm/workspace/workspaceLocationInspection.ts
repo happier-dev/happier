@@ -1,6 +1,6 @@
 import type { ScmBackendId, ScmCapabilities, ScmRepoMode } from '@happier-dev/protocol';
 
-import { resolveScmBackendRegistry } from '../scmBackendCatalog';
+import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
 import type {
@@ -36,42 +36,43 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
     candidatePath: string;
     registry?: ScmBackendRegistry;
 }>): Promise<ScmWorkspaceIntegrationWorkspaceLocationResult | null> {
-    const registry = await resolveScmBackendRegistry(input.registry);
-    const resolved = await resolveScmSelection({
-        workingDirectory: input.candidatePath,
-        cwd: input.candidatePath,
-        registry,
-    });
-    if (!resolved) {
-        return null;
-    }
+    return runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        const resolved = await resolveScmSelection({
+            workingDirectory: input.candidatePath,
+            cwd: input.candidatePath,
+            registry,
+        });
+        if (!resolved) {
+            return null;
+        }
 
-    const workspaceIntegration = resolved.selection.backend.workspaceIntegration;
-    if (!workspaceIntegration?.inspectWorkspaceLocation) {
-        return null;
-    }
+        const workspaceIntegration = resolved.selection.backend.workspaceIntegration;
+        if (!workspaceIntegration?.inspectWorkspaceLocation) {
+            return null;
+        }
 
-    const inspection = await workspaceIntegration.inspectWorkspaceLocation({
-        context: resolved.context,
-    });
-    if (!inspection) {
-        return null;
-    }
+        const inspection = await workspaceIntegration.inspectWorkspaceLocation({
+            context: resolved.context,
+        });
+        if (!inspection) {
+            return null;
+        }
 
-    const checkoutDiscovery = normalizeCheckoutDiscovery(inspection);
+        const checkoutDiscovery = normalizeCheckoutDiscovery(inspection);
 
-    return {
-        backendId: resolved.selection.backend.id,
-        mode: resolved.selection.mode,
-        capabilities: resolved.selection.backend.getCapabilities({
+        return {
+            backendId: resolved.selection.backend.id,
             mode: resolved.selection.mode,
-        }),
-        inspection,
-        workspaceLocationScm: inspection.scmProvider ? {
-            provider: inspection.scmProvider,
-            rootPath: inspection.rootPath,
-        } : undefined,
-        checkoutDiscovery,
-        checkoutProviderKinds: checkoutDiscovery.map(({ kind }) => kind),
-    };
+            capabilities: resolved.selection.backend.getCapabilities({
+                mode: resolved.selection.mode,
+            }),
+            inspection,
+            workspaceLocationScm: inspection.scmProvider ? {
+                provider: inspection.scmProvider,
+                rootPath: inspection.rootPath,
+            } : undefined,
+            checkoutDiscovery,
+            checkoutProviderKinds: checkoutDiscovery.map(({ kind }) => kind),
+        };
+    });
 }

@@ -1,9 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import { getConnectedAccountDescriptor } from '@happier-dev/protocol';
 
-import { refreshConnectedAccountOauthTokens } from './serviceRefreshers';
+import {
+  isRevisionedLegacyOauthRefreshService,
+  refreshReleasedPeerLegacyConnectedAccountOauthTokens,
+} from './serviceRefreshers';
 
 describe('serviceRefreshers', () => {
+  it('admits only revisioned legacy OAuth refresh services, never PAT services', () => {
+    expect(isRevisionedLegacyOauthRefreshService('openai-codex'))
+      .toBe(true);
+    expect(isRevisionedLegacyOauthRefreshService('claude-subscription'))
+      .toBe(true);
+    expect(isRevisionedLegacyOauthRefreshService('openai')).toBe(false);
+    expect(isRevisionedLegacyOauthRefreshService('github')).toBe(false);
+    expect(isRevisionedLegacyOauthRefreshService('bitbucket')).toBe(false);
+  });
+
   it('refreshes OpenAI Codex tokens through injected runtime fetch without using global fetch', async () => {
     const globalFetch = vi.fn(async () => {
       throw new Error('global fetch must not be used by connected-service refreshers');
@@ -30,7 +42,7 @@ describe('serviceRefreshers', () => {
       now: 1000,
       runtimeFetch,
     };
-    const refreshed = await refreshConnectedAccountOauthTokens(params);
+    const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens(params);
 
     expect(globalFetch).not.toHaveBeenCalled();
     expect(runtimeFetch).toHaveBeenCalledWith(expect.objectContaining({
@@ -63,13 +75,13 @@ describe('serviceRefreshers', () => {
       arrayBuffer: async () => new ArrayBuffer(0),
     }));
 
-    await expect(refreshConnectedAccountOauthTokens({
+    await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 1000,
       runtimeFetch,
     })).rejects.toThrow(/Connected account refresh failed \(openai-codex, 400\): invalid_grant/);
-    await expect(refreshConnectedAccountOauthTokens({
+    await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 1000,
@@ -90,7 +102,7 @@ describe('serviceRefreshers', () => {
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const now = 1000;
-    const refreshed = await refreshConnectedAccountOauthTokens({
+    const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now,
@@ -113,7 +125,7 @@ describe('serviceRefreshers', () => {
     }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await expect(refreshConnectedAccountOauthTokens({
+    await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 1000,
@@ -126,27 +138,38 @@ describe('serviceRefreshers', () => {
     process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = 'https://example.test/anthropic/token';
     process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID = 'client-123';
 
-    const fetchMock = vi.fn(async (_input: unknown, _init?: unknown) => ({
-      ok: true,
-      json: async () => ({
-        access_token: 'new-access',
-        refresh_token: 'new-refresh',
-        expires_in: 123,
-        scope: 'user:inference user:profile user:sessions:claude_code',
-        token_type: 'Bearer',
-      }),
-    }));
+    const fetchMock = vi.fn(async (input: unknown, _init?: unknown) => {
+      if (String(input).endsWith('/api/oauth/profile')) {
+        return {
+          ok: true,
+          json: async () => ({
+            account: { has_claude_max: true },
+            organization: { organization_type: 'claude_max', rate_limit_tier: 'default_claude_max_20x' },
+          }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({
+          access_token: 'new-access',
+          refresh_token: 'new-refresh',
+          expires_in: 123,
+          scope: 'user:inference user:profile user:sessions:claude_code',
+          token_type: 'Bearer',
+        }),
+      };
+    });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const now = 2000;
     try {
-      const refreshed = await refreshConnectedAccountOauthTokens({
+      const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens({
         serviceId: 'claude-subscription',
         refreshToken: 'old-refresh',
         now,
       });
 
-      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
       expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.test/anthropic/token');
 
       const init: unknown = fetchMock.mock.calls[0]?.[1];
@@ -162,9 +185,105 @@ describe('serviceRefreshers', () => {
       expect(refreshed.expiresAt).toBe(now + 123 * 1000);
       expect(refreshed.scope).toBe('user:inference user:profile user:sessions:claude_code');
       expect(refreshed.tokenType).toBe('Bearer');
+      expect(refreshed.raw).toEqual({
+        claudeAiOauth: { subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' },
+      });
     } finally {
       process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = previousTokenUrl;
       process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID = previousClientId;
+    }
+  });
+
+  it('rejects a Claude refresh when the profile endpoint rejects the new access token', async () => {
+    const previousTokenUrl = process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL;
+    process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = 'https://example.test/anthropic/token';
+
+    const runtimeFetch = vi.fn(async (input: Readonly<{ url: string }>) => {
+      if (input.url === 'https://example.test/anthropic/token') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          text: async () => '',
+          json: async () => ({
+            access_token: 'provider-rejected-access',
+            refresh_token: 'rotated-refresh',
+            expires_in: 28_800,
+          }),
+          arrayBuffer: async () => new ArrayBuffer(0),
+        };
+      }
+      return {
+        ok: false,
+        status: 401,
+        statusText: 'Unauthorized',
+        headers: {},
+        text: async () => JSON.stringify({ error: 'invalid_token' }),
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    });
+
+    try {
+      await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
+        serviceId: 'claude-subscription',
+        refreshToken: 'previous-refresh',
+        now: 2_000,
+        runtimeFetch,
+      })).rejects.toThrow(
+        /refreshed access-token verification failed \(claude-subscription, 401\): invalid_token/,
+      );
+      expect(runtimeFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = previousTokenUrl;
+    }
+  });
+
+  it('does not reject a Claude refresh only because optional profile evidence is temporarily unavailable', async () => {
+    const previousTokenUrl = process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL;
+    process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = 'https://example.test/anthropic/token';
+
+    const runtimeFetch = vi.fn(async (input: Readonly<{ url: string }>) => {
+      if (input.url === 'https://example.test/anthropic/token') {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          headers: {},
+          text: async () => '',
+          json: async () => ({
+            access_token: 'accepted-access',
+            refresh_token: 'rotated-refresh',
+            expires_in: 28_800,
+          }),
+          arrayBuffer: async () => new ArrayBuffer(0),
+        };
+      }
+      return {
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        headers: {},
+        text: async () => '',
+        json: async () => ({}),
+        arrayBuffer: async () => new ArrayBuffer(0),
+      };
+    });
+
+    try {
+      await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
+        serviceId: 'claude-subscription',
+        refreshToken: 'previous-refresh',
+        now: 2_000,
+        runtimeFetch,
+      })).resolves.toMatchObject({
+        accessToken: 'accepted-access',
+        refreshToken: 'rotated-refresh',
+      });
+      expect(runtimeFetch).toHaveBeenCalledTimes(2);
+    } finally {
+      process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = previousTokenUrl;
     }
   });
 
@@ -178,7 +297,7 @@ describe('serviceRefreshers', () => {
     }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await expect(refreshConnectedAccountOauthTokens({
+    await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'claude-subscription',
       refreshToken: 'old-refresh',
       now: 2000,
@@ -191,7 +310,7 @@ describe('serviceRefreshers', () => {
     });
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await expect(refreshConnectedAccountOauthTokens({
+    await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'gemini',
       refreshToken: 'old-refresh',
       now: 3000,
@@ -199,7 +318,24 @@ describe('serviceRefreshers', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('refreshes standard OAuth tokens from descriptor metadata by service id', async () => {
+  it.each(['github', 'bitbucket'] as const)(
+    'refuses %s before transport because immutable old peers do not all accept that legacy identity',
+    async (serviceId) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+      await expect(
+        refreshReleasedPeerLegacyConnectedAccountOauthTokens({
+          serviceId,
+          refreshToken: 'must-not-leave-process',
+          now: 3000,
+        }),
+      ).rejects.toThrow(/does not support OAuth refresh/i);
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refreshes the explicit Claude old-peer OAuth mode by service id', async () => {
     const previousTokenUrl = process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL;
     const previousClientId = process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID;
     process.env.HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL = 'https://example.test/claude/token';
@@ -220,7 +356,7 @@ describe('serviceRefreshers', () => {
     }));
 
     try {
-      const refreshed = await refreshConnectedAccountOauthTokens({
+      const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens({
         serviceId: 'claude-subscription',
         refreshToken: 'old-refresh',
         now: 4000,
@@ -250,9 +386,7 @@ describe('serviceRefreshers', () => {
     }
   });
 
-  it('parses standard OAuth refresh responses from descriptor payload mapping', async () => {
-    const descriptor = getConnectedAccountDescriptor('openai-codex');
-    if (!descriptor?.oauth) throw new Error('fixture');
+  it('parses the explicit old-peer Codex OAuth refresh response', async () => {
     const runtimeFetch = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -268,7 +402,7 @@ describe('serviceRefreshers', () => {
       arrayBuffer: async () => new ArrayBuffer(0),
     }));
 
-    const refreshed = await refreshConnectedAccountOauthTokens({
+    const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 5000,
@@ -301,7 +435,7 @@ describe('serviceRefreshers', () => {
       arrayBuffer: async () => new ArrayBuffer(0),
     }));
 
-    const refreshed = await refreshConnectedAccountOauthTokens({
+    const refreshed = await refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'openai-codex',
       refreshToken: 'old-refresh',
       now: 7000,
@@ -318,7 +452,7 @@ describe('serviceRefreshers', () => {
     });
   });
 
-  it('does not parse Gemini OAuth refresh payloads because Gemini OAuth is not a supported descriptor mode', async () => {
+  it('does not parse Gemini OAuth refresh payloads because Gemini OAuth is not a released fallback mode', async () => {
     const fetchMock = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -328,7 +462,7 @@ describe('serviceRefreshers', () => {
     }));
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
-    await expect(refreshConnectedAccountOauthTokens({
+    await expect(refreshReleasedPeerLegacyConnectedAccountOauthTokens({
       serviceId: 'gemini',
       refreshToken: 'old-refresh',
       now: 3000,

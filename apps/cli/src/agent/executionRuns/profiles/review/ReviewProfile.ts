@@ -91,6 +91,9 @@ export const ReviewProfile: ExecutionRunIntentProfile = {
     if (!start.permissionMode || start.permissionMode.trim().length === 0) {
       return { ok: false, errorCode: 'execution_run_invalid_action_input', error: 'Missing permissionMode' };
     }
+    if (actionId === 'reviews.comments.create') {
+      return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Host actions are dispatched by the execution-run host' };
+    }
     if (actionId === 'review.follow_up') {
       return { ok: false, errorCode: 'execution_run_action_not_supported', error: 'Follow-up orchestration is handled by the execution-run runtime' };
     }

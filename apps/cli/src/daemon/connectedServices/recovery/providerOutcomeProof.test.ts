@@ -10,9 +10,7 @@ import {
 describe('providerOutcomeProof shared contract', () => {
   const recoveredKinds: ProviderOutcomeProofKind[] = [
     'provider_activity',
-    'native_resume',
     'quota_probe_fresh',
-    'account_adoption_verified',
   ];
   const intermediateKinds: ProviderOutcomeProofKind[] = [
     'fresh_candidate_selected',

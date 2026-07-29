@@ -1,6 +1,5 @@
 import { getSessionStateFieldDescriptor } from '@happier-dev/agents';
 import { SessionStateFieldIdSchema, type SessionStateFieldId } from '@happier-dev/protocol';
-import type { PluginContextV1 } from '@happier-dev/plugin-sdk';
 
 import {
   createRegisteredSessionStateFieldMutation,
@@ -78,7 +77,7 @@ function readMetadataRegisteredFieldIds(candidate: unknown): readonly SessionSta
 }
 
 function resolveMetadataWriteCandidate(
-  request: Parameters<PluginContextV1['sessions']['writeMetadata']>[0],
+  request: unknown,
 ): unknown | null {
   if (!isRecord(request) || typeof request.kind !== 'string') return null;
   if (request.kind === 'set') {
@@ -135,6 +134,13 @@ export async function deliverExecutionRunSessionStateField(
       reason: 'no_session_target',
     };
   }
+  if (fieldId === 'runtime.activity' || fieldId === 'runtime.externalAgent') {
+    return {
+      status: 'unsupported',
+      fieldId,
+      reason: 'scope_not_supported',
+    };
+  }
 
   const deliveryClass = getSessionStateFieldDescriptor(fieldId).deliveryClass;
   const enqueue = params.target.enqueueRegisteredSessionStateFieldMutation;
@@ -168,7 +174,7 @@ export async function deliverExecutionRunSessionStateField(
 export async function deliverExecutionRunSessionMetadata(
   params: Readonly<{
     target: ExecutionRunSessionStateTarget | null;
-    request: Parameters<PluginContextV1['sessions']['writeMetadata']>[0];
+    request: unknown;
   }>,
 ): Promise<ExecutionRunSessionStateDeliveryResultV1> {
   if (!params.target) {

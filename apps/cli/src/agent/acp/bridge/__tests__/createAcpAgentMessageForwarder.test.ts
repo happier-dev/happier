@@ -103,6 +103,51 @@ describe('createAcpAgentMessageForwarder', () => {
     });
   });
 
+  it('uses accumulator local ids for stable call and result revisions', () => {
+    const sent: Array<{ body: ACPMessageData; opts: unknown }> = [];
+    const sendAcp = vi.fn((_provider: any, body: ACPMessageData, opts?: unknown) => {
+      sent.push({ body, opts });
+    });
+    const forwarder = createAcpAgentMessageForwarder({
+      sendAcp,
+      provider: 'opencode' as any,
+      makeId: () => 'random-id-must-not-own-revision',
+    });
+
+    forwarder.forward({
+      type: 'tool-call',
+      callId: 'exact-call',
+      localId: 'acp-tool-call-v1:stable',
+      toolName: 'read',
+      args: { path: 'a.ts' },
+    } as any);
+    forwarder.forward({
+      type: 'tool-call',
+      callId: 'exact-call',
+      localId: 'acp-tool-call-v1:stable',
+      toolName: 'read',
+      args: { path: 'a.ts', line: 2 },
+    } as any);
+    forwarder.forward({
+      type: 'tool-result',
+      callId: 'exact-call',
+      localId: 'acp-tool-result-v1:stable',
+      toolName: 'read',
+      result: { text: 'newest' },
+    } as any);
+
+    expect(sent.map(({ body }) => (body as { id?: string }).id)).toEqual([
+      'acp-tool-call-v1:stable',
+      'acp-tool-call-v1:stable',
+      'acp-tool-result-v1:stable',
+    ]);
+    expect(sent.map(({ opts }) => opts)).toEqual([
+      { localId: 'acp-tool-call-v1:stable' },
+      { localId: 'acp-tool-call-v1:stable' },
+      { localId: 'acp-tool-result-v1:stable' },
+    ]);
+  });
+
   it('converts think tool calls into ACP thinking messages (suppressing tool-call + tool-result)', () => {
     const sent: ACPMessageData[] = [];
     const sendAcp = vi.fn((_provider: any, body: ACPMessageData) => {

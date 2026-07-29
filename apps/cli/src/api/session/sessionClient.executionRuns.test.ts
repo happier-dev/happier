@@ -134,6 +134,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sendUserTextMessage: vi.fn(),
       sendAgentMessage: vi.fn(),
       sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
@@ -188,6 +189,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sendUserTextMessage: vi.fn(),
       sendAgentMessage: vi.fn(),
       sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
@@ -236,6 +238,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sendUserTextMessage: vi.fn(),
       sendAgentMessage: vi.fn(),
       sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
@@ -277,6 +280,7 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       sendUserTextMessage: vi.fn(),
       sendAgentMessage: vi.fn(),
       sendUserTextMessageCommitted: vi.fn(async () => {}),
+      enqueueVoiceAgentTranscriptTurnCommitted: vi.fn(async () => ({ persisted: true, delivered: true })),
       sendAgentMessageCommitted: vi.fn(async () => {}),
       sendAgentMessageEphemeral: vi.fn(),
       getTranscriptQueryContext: () => ({
@@ -568,52 +572,59 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     await client.close();
   });
 
-  it('uses deterministic localIds for committed persistent voice transcript rows', async () => {
+  it('rejects a durable voice transcript pair whose role metadata does not describe one canonical turn', async () => {
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
-
     const transcriptWriter = sessionSocketStubState.executionRunHandlerContext.transcriptWriter as
       | {
-          appendUserTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
-          appendAssistantTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
+          commitVoiceAgentTranscriptTurn: (turn: Readonly<{
+            turnId: string;
+            user: Readonly<{ text: string; meta: Record<string, unknown> }>;
+            assistant: Readonly<{ text: string; meta: Record<string, unknown> }>;
+          }>) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
         }
       | undefined;
 
-    expect(transcriptWriter?.appendUserTextCommitted).toBeTypeOf('function');
-    expect(transcriptWriter?.appendAssistantTextCommitted).toBeTypeOf('function');
-
-    await transcriptWriter?.appendUserTextCommitted?.('hello', {
-      happier: {
-        kind: 'voice_agent_turn.v1',
-        payload: {
-          v: 1,
-          epoch: 7,
-          role: 'user',
-          voiceAgentId: 'va_1',
-          ts: 123,
+    await expect(transcriptWriter?.commitVoiceAgentTranscriptTurn({
+      turnId: 'stream-1',
+      user: {
+        text: 'hello',
+        meta: {
+          happier: {
+            kind: 'voice_agent_turn.v1',
+            payload: {
+              v: 1,
+              epoch: 7,
+              role: 'assistant',
+              voiceAgentId: 'va_1',
+              runId: 'run-1',
+              streamId: 'stream-1',
+              ts: 123,
+            },
+          },
         },
       },
-    });
-
-    await transcriptWriter?.appendAssistantTextCommitted?.('world', {
-      happier: {
-        kind: 'voice_agent_turn.v1',
-        payload: {
-          v: 1,
-          epoch: 7,
-          role: 'assistant',
-          voiceAgentId: 'va_1',
-          ts: 456,
+      assistant: {
+        text: 'world',
+        meta: {
+          happier: {
+            kind: 'voice_agent_turn.v1',
+            payload: {
+              v: 1,
+              epoch: 7,
+              role: 'assistant',
+              voiceAgentId: 'va_1',
+              runId: 'run-1',
+              streamId: 'stream-1',
+              ts: 456,
+            },
+          },
         },
       },
-    });
-
-    const messageCalls = sessionSocketStubState.sessionSocketStub.emitWithAck.mock.calls
-      .filter((call: unknown[]) => call[0] === 'message')
-      .map((call: unknown[]) => call[1] as { localId?: unknown });
-
-    expect(messageCalls).toHaveLength(2);
-    expect(messageCalls[0]?.localId).toBe('voice-turn:va_1:7:user:123');
-    expect(messageCalls[1]?.localId).toBe('voice-turn:va_1:7:assistant:456');
+    })).rejects.toThrow('one canonical user/assistant turn');
+    expect(sessionSocketStubState.sessionSocketStub.emitWithAck).not.toHaveBeenCalledWith(
+      'message',
+      expect.anything(),
+    );
 
     await client.close();
   });

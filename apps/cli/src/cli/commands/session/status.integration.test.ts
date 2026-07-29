@@ -24,9 +24,13 @@ describe('happier session status (integration)', () => {
   let server: Server | null = null;
   let happyHomeDir = '';
   let idleAgentStateCiphertext = '';
+  let sessionPendingCount = 0;
+  let sessionPendingBlockedCount = 0;
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-status-');
+    sessionPendingCount = 0;
+    sessionPendingBlockedCount = 0;
 
     const sessionId = 'sess_integration_status_123';
     const dek = new Uint8Array(32).fill(3);
@@ -91,7 +95,8 @@ describe('happier session status (integration)', () => {
               metadataVersion: 0,
               agentState: agentStateCiphertext,
               agentStateVersion: 0,
-              pendingCount: 0,
+              pendingCount: sessionPendingCount,
+              pendingBlockedCount: sessionPendingBlockedCount,
               pendingVersion: 0,
               dataEncryptionKey: dataEncryptionKeyBase64,
               share: null,
@@ -207,6 +212,35 @@ describe('happier session status (integration)', () => {
       expect(parsed.ok).toBe(true);
       expect(parsed.kind).toBe('session_status');
       expect(parsed.data?.agentState?.pendingRequestsCount).toBe(0);
+    } finally {
+      output.restore();
+    }
+  });
+
+  it('surfaces blocked pending count in session_status JSON', async () => {
+    sessionPendingCount = 1;
+    sessionPendingBlockedCount = 1;
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(['status', 'sess_integration_status_123', '--json'], {
+        readCredentialsFn: async () => ({
+          token: 'token_test',
+          encryption: {
+            type: 'dataKey',
+            publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+            machineKey: new Uint8Array(32).fill(8),
+          },
+        }),
+      });
+
+      const parsed = output.json();
+      expect(parsed.ok).toBe(true);
+      expect(parsed.kind).toBe('session_status');
+      expect(parsed.data?.session?.pendingCount).toBe(1);
+      expect(parsed.data?.session?.pendingBlockedCount).toBe(1);
     } finally {
       output.restore();
     }

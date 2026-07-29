@@ -4,7 +4,7 @@ import {
 } from '@happier-dev/agents';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-import { getSessionCatalogControlAdapter } from '@/backends/catalog';
+import { resolveInactiveSessionCatalogControls } from '@/agent/catalog/sessionControlAdapters';
 import type { Credentials } from '@/persistence';
 import { resolveMachineControlLocalityProof } from '@/session/machineControlLocality';
 import type {
@@ -139,7 +139,7 @@ export async function routeSessionCatalogControl(params: RouteSessionCatalogCont
     return unsupported(params.operation, 'session_catalog_control_remote_unavailable');
   }
 
-  const resolveAdapter = params.resolveAdapter ?? getSessionCatalogControlAdapter;
+  const resolveAdapter = params.resolveAdapter ?? resolveInactiveSessionCatalogControls;
   const adapter = await resolveAdapter(resolveAgentId(metadata));
   if (!adapter) {
     return unsupported(params.operation, 'session_catalog_control_unsupported');

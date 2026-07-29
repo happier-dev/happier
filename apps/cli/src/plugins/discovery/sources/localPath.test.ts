@@ -22,17 +22,11 @@ async function writePluginManifest(rootDir: string, manifestOverrides?: Record<s
       engines: {
         happier: '^0.2.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: [],
-      },
-      targets: {
-        daemon: {
-          entry: './daemon.js',
-        },
+      entrypoints: {
+        main: './daemon.js',
       },
       permissions: [],
-      contributes: [],
+      contributes: {},
       ...(manifestOverrides ?? {}),
     }), null, 2),
     'utf8',
@@ -53,17 +47,11 @@ async function writeStandaloneManifest(manifestPath: string, manifestOverrides?:
       engines: {
         happier: '^0.2.0',
       },
-      runtime: {
-        apiVersion: 1,
-        capabilities: [],
-      },
-      targets: {
-        daemon: {
-          entry: './daemon.js',
-        },
+      entrypoints: {
+        main: './daemon.js',
       },
       permissions: [],
-      contributes: [],
+      contributes: {},
       ...(manifestOverrides ?? {}),
     }), null, 2),
     'utf8',
@@ -88,7 +76,7 @@ describe('resolveLocalPathPluginSource', () => {
     expect(result.sourceSpec).toMatchObject({
       kind: 'path',
       locator: canonicalPluginRoot,
-      trustPolicy: 'local_trusted',
+      trustPolicy: 'prompt',
       installPolicy: 'link',
     });
     expect(result.manifestDigest).toMatch(/^sha256:[a-f0-9]{64}$/u);

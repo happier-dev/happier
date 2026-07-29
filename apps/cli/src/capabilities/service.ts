@@ -129,6 +129,9 @@ export function createCapabilitiesService(opts: {
         if (!cap || !cap.invoke) {
             return { ok: false, error: { message: `Unsupported capability: ${String(id)}`, code: 'unsupported-capability' } };
         }
+        if (!Object.prototype.hasOwnProperty.call(cap.descriptor.methods ?? {}, method)) {
+            return { ok: false, error: { message: `Unsupported method: ${method}`, code: 'unsupported-method' } };
+        }
 
         try {
             return await cap.invoke({ method, params: data?.params });

@@ -13,6 +13,69 @@ import { CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPE } from '@happier-dev/plugins-claude
 import { materializeSessionConnectedServiceRuntimeAuthSelection } from './materializeSessionConnectedServiceRuntimeAuthSelection';
 
 describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
+  it('carries the exact server credential revision into the provider auth generation', async () => {
+    const credentialRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1_000,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'oauth',
+      oauth: {
+        accessToken: 'access',
+        refreshToken: 'refresh',
+        idToken: null,
+        scope: null,
+        tokenType: null,
+        providerAccountId: 'acct-work',
+        providerEmail: null,
+      },
+    });
+    const bindings: ConnectedServiceBindingsV1 = {
+      v: 1,
+      bindingsByServiceId: {
+        'openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
+      },
+    };
+    const tracked = {
+      startedBy: 'daemon',
+      happySessionId: 'sess_revision',
+      pid: 123,
+      spawnOptions: {
+        directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        connectedServices: bindings,
+        environmentVariables: {},
+      },
+    } as TrackedSession;
+    const api = {
+      getAccountEncryptionMode: vi.fn(async () => 'plain' as const),
+      getConnectedServiceCredentialPlain: vi.fn(async () => ({
+        credentialRevision,
+        content: { t: 'plain' as const, v: record },
+      })),
+      getConnectedServiceCredentialSealed: vi.fn(async () => null),
+    };
+
+    await expect(materializeSessionConnectedServiceRuntimeAuthSelection({
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+      },
+      api: api as unknown as ApiClient,
+      input: {
+        mode: 'apply',
+        tracked,
+        sessionId: 'sess_revision',
+        agentId: 'codex',
+        serviceId: 'openai-codex',
+        previous: { source: 'connected', selection: 'profile', serviceId: 'openai-codex', profileId: 'work', groupId: null },
+        next: { source: 'connected', selection: 'profile', serviceId: 'openai-codex', profileId: 'work', groupId: null },
+        previousBindings: bindings,
+        normalizedBindings: bindings,
+      },
+    })).resolves.toMatchObject({ record, credentialRevision });
+  });
+
   it('preserves group fallback profile and generation from the current session selection env', async () => {
     const record = buildConnectedServiceCredentialRecord({
       now: 1_000,
@@ -527,7 +590,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
 
     const credential = JSON.parse(await readFile(join(targetMaterializedEnv!.CLAUDE_CONFIG_DIR, '.credentials.json'), 'utf8'));
     expect(credential.claudeAiOauth.accessToken).toBe('selected-access-placeholder');
-    expect(credential.claudeAiOauth.refreshToken).toBe('selected-refresh-placeholder');
+    expect(credential.claudeAiOauth).not.toHaveProperty('refreshToken');
     expect(credential.claudeAiOauth.scopes).toContain('user:sessions:claude_code');
     await expect(readFile(join(targetMaterializedEnv!.CLAUDE_CONFIG_DIR, 'settings.json'), 'utf8')).resolves.toBe('{"theme":"source"}\n');
   });

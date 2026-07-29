@@ -10,8 +10,10 @@ import {
 
 import { deriveUsageLimitRecoveryTiming } from './deriveUsageLimitRecoveryTiming';
 import type {
+  SessionUsageLimitRecoveryBackoffPolicy,
   SessionUsageLimitRecoveryControlAdapter,
   SessionUsageLimitRecoveryControlAdapterParams,
+  SessionUsageLimitRecoveryReadinessProbeResult,
 } from './sessionUsageLimitRecoveryControlTypes';
 
 type MetadataRecord = Record<string, unknown>;
@@ -76,7 +78,7 @@ function readLatestUsageLimitIssue(input: Readonly<{
   if (!parsed.success || parsed.data.source !== 'usage_limit' || !parsed.data.usageLimit) {
     return null;
   }
-  if (input.issueProviderFilter && parsed.data.provider !== input.issueProviderFilter) {
+  if (input.issueProviderFilter && parsed.data.agentId !== input.issueProviderFilter) {
     return null;
   }
   return parsed.data;
@@ -88,8 +90,8 @@ function buildUsageLimitIssueFingerprint(input: Readonly<{
 }>): string {
   return [
     'usage-limit',
-    input.issue.provider ?? input.providerId,
-    input.issue.providerTurnId ?? 'unknown-turn',
+    input.issue.agentId ?? input.providerId,
+    input.issue.agentTurnId ?? 'unknown-turn',
     String(input.issue.occurredAt),
     input.issue.usageLimit?.resetAtMs === null || input.issue.usageLimit?.resetAtMs === undefined
       ? 'no-reset'
@@ -259,16 +261,12 @@ function buildNextIntent(params: Readonly<{
   };
 }
 
-export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Readonly<{
-  providerId: string;
-  fallbackBackoffEnvKey: string;
-  maxAttemptsEnvKey: string;
-  defaultFallbackBackoffMs: number;
-  defaultMaxAttempts: number;
-  defaultNativeServiceId?: ConnectedServiceId | null;
-  issueProviderFilter?: string | null;
+export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: SessionUsageLimitRecoveryBackoffPolicy & Readonly<{
   nowMs?: () => number;
   processEnv?: NodeJS.ProcessEnv;
+  readinessProbe?: (
+    params: SessionUsageLimitRecoveryControlAdapterParams,
+  ) => Promise<SessionUsageLimitRecoveryReadinessProbeResult>;
 }>): SessionUsageLimitRecoveryControlAdapter {
   const nowMs = options.nowMs ?? (() => Date.now());
   const processEnv = options.processEnv ?? process.env;
@@ -323,12 +321,44 @@ export function createBackoffSessionUsageLimitRecoveryControlAdapter(options: Re
         return stableError('session_usage_limit_recovery_control_inactive');
       }
 
-      const next = buildNextIntent({
+      let next = buildNextIntent({
         intent,
         issue: latestIssue,
         fallbackBackoffMs,
         nowMs: now,
       });
+      if (next.adapterStatus === 'ready' && options.readinessProbe) {
+        let probe: SessionUsageLimitRecoveryReadinessProbeResult;
+        try {
+          probe = await options.readinessProbe(params);
+        } catch {
+          probe = {
+            status: 'unavailable',
+            errorCode: 'usage_limit_recovery_readiness_probe_failed',
+          };
+        }
+        if (probe.status !== 'ready') {
+          const requestedRetryAfterMs = probe.status === 'waiting'
+            ? probe.retryAfterMs
+            : undefined;
+          const retryAfterMs = typeof requestedRetryAfterMs === 'number'
+            && Number.isFinite(requestedRetryAfterMs)
+            && requestedRetryAfterMs >= 0
+            ? Math.trunc(requestedRetryAfterMs)
+            : fallbackBackoffMs;
+          next = {
+            adapterStatus: 'waiting',
+            intent: {
+              ...next.intent,
+              status: 'waiting',
+              nextCheckAtMs: now + retryAfterMs,
+              lastProbeError: probe.status === 'unavailable'
+                ? probe.errorCode
+                : null,
+            },
+          };
+        }
+      }
 
       return {
         ok: true,

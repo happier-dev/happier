@@ -1,6 +1,7 @@
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { createSessionLifecycleRpcActionExecutor } from '@/rpc/handlers/sessionLifecycle';
 import { logger } from '@/ui/logger';
+import { StopSessionResultSchema, type StopSessionResult } from '@/daemon/sessions/stopSessionContract';
 
 import type { SessionLifecycleMachineHandlers } from './sessionLifecycleTypes';
 
@@ -16,13 +17,13 @@ export function createMachineSessionStopLifecycleActionExecutor(params: Readonly
             }
 
             const normalizedSessionId = sessionId.trim();
-            const success = await params.stopSession(normalizedSessionId);
-            if (!success) {
-                throw new Error('Session not found or failed to stop');
-            }
+            const rawResult = await params.stopSession(normalizedSessionId);
+            const result: StopSessionResult = typeof rawResult === 'boolean'
+                ? (rawResult ? { status: 'requested' } : { status: 'not_found' })
+                : StopSessionResultSchema.parse(rawResult);
 
-            logger.debug(`[API MACHINE] Stopped session ${normalizedSessionId}`);
-            return { message: 'Session stopped' };
+            logger.debug(`[API MACHINE] Stop session ${normalizedSessionId}: ${result.status}`);
+            return result;
         },
     });
 }

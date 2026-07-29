@@ -10,6 +10,19 @@ import {
 } from '@happier-dev/protocol';
 import type { ManagedConnectionState, ManagedConnectionPhase } from '@happier-dev/connection-supervisor';
 
+const usageLimitRecoveryMutationCustodyMocks = vi.hoisted(() => ({
+    bindRecoveredJournals: vi.fn(async () => ({
+        boundSessionIds: [],
+        retainedSessionIds: [],
+    })),
+    close: vi.fn(async () => undefined),
+    stage: vi.fn(async () => undefined),
+}));
+
+vi.mock('../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody', () => ({
+    createDaemonUsageLimitRecoveryMutationCustody: vi.fn(() => usageLimitRecoveryMutationCustodyMocks),
+}));
+
 import type { DaemonState, Machine } from '@/api/types';
 import { createPromptAssetAdapterRegistry } from '@/prompts/assets/createPromptAssetAdapterRegistry';
 import { createPromptRegistryAdapterRegistry } from '@/prompts/registries/createPromptRegistryAdapterRegistry';
@@ -26,6 +39,8 @@ import type {
     BootstrapMachineSyncRuntimeResult,
 } from './bootstrapMachineSyncRuntime';
 import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { createDeferred } from '@/testkit/async/deferred';
 
 type ConnectedApiMachineForBootstrap = NonNullable<ReturnType<BootstrapMachineSyncRuntimeParams['createConnectedApiMachine']>>;
 
@@ -46,6 +61,67 @@ function requireManagedConnectionStateListener(
 ): (state: ManagedConnectionState) => void {
     if (!listener) throw new Error('expected machine connection state listener');
     return listener;
+}
+
+function createVoiceInferenceWorkerHandle(): VoiceInferenceWorkerHandle {
+    return {
+        stop: vi.fn(async () => {}),
+        getStatus: vi.fn(async () => ({
+            serviceState: 'ready' as const,
+            normalization: {
+                inputTransport: 'upload_transfer' as const,
+                strategy: 'daemon_decode' as const,
+                systemFfmpegAllowed: false as const,
+            },
+            models: [],
+        })),
+        listModels: vi.fn(async () => []),
+        getModelsStatus: vi.fn(async () => []),
+        warmModelPack: vi.fn(async () => {}),
+        installModel: vi.fn(async () => ({
+            packId: 'stt-pack',
+            pluginIdentity: null,
+            kind: 'stt_sherpa' as const,
+            model: 'sherpa',
+            version: '1',
+            executionSupport: ['daemon' as const],
+            installState: 'installed' as const,
+            progress: null,
+            lastError: null,
+            updatedAtMs: 0,
+        })),
+        acceptModelPackLicense: vi.fn(async () => ({
+            packId: 'stt-pack',
+            pluginIdentity: null,
+            kind: 'stt_sherpa' as const,
+            model: 'sherpa',
+            version: '1',
+            executionSupport: ['daemon' as const],
+            installState: 'installed' as const,
+            progress: null,
+            lastError: null,
+            updatedAtMs: 0,
+        })),
+        removeModel: vi.fn(async () => {}),
+        synthesizeTts: vi.fn(async () => ({
+            requestId: 'tts-1',
+            output: { codec: 'wav', mimeType: 'audio/wav' } as const,
+            filePath: '/tmp/fake.wav',
+            sizeBytes: 4,
+            name: 'fake.wav',
+        })),
+        cancelTts: vi.fn(async () => {}),
+        transcribeAudio: vi.fn(async () => ({
+            requestId: 'stt-1',
+            text: 'hello',
+            language: 'en',
+            modelPackId: 'stt-pack',
+        })),
+        createStreamingTranscriptionSession: vi.fn(async () => {
+            throw Object.assign(new Error('streaming runtime unavailable'), { code: 'runtime_unavailable' });
+        }),
+        cancelStt: vi.fn(async () => {}),
+    };
 }
 
 function createPeerMediationServerFeatures(options: Readonly<{
@@ -84,6 +160,19 @@ function createPeerMediationServerFeatures(options: Readonly<{
                 },
             },
         },
+    });
+}
+
+function createProviderServerFeatures(enabled: boolean): FeaturesResponse {
+    return FeaturesResponseSchema.parse({
+        features: {
+            providers: {
+                enabled,
+                localDiscovery: { enabled },
+                localModelManagement: { enabled },
+            },
+        },
+        capabilities: {},
     });
 }
 
@@ -169,16 +258,31 @@ describe('bootstrapMachineSyncRuntime', () => {
             memoryWorker: null,
             voiceInferenceWorker: null,
             daemonConnectivityCoordinator: null,
+            daemonUsageLimitRecoveryMutationCustody: null,
             machineConnectionStateCleanup: null,
             stopPeerMediationLoopbackServer: expect.any(Function),
+            resumeMachineConnectionPublications: expect.any(Function),
         });
     });
 
-    it('updates server-work connectivity and wakes quota persistence on machine connection changes', async () => {
+    it('updates server-work connectivity and rebinds retained usage custody on every online transition', async () => {
+        usageLimitRecoveryMutationCustodyMocks.bindRecoveredJournals.mockClear();
+        let quiescing = false;
         let connectionStateListener: ((state: ManagedConnectionState) => void) | null = null;
+        const pauseExternalSessionPassiveFollow = vi.fn(async () => {});
+        const resumeExternalSessionPassiveFollow = vi.fn(async () => {});
         const fakeConnectedApiMachine = {
-            setRPCHandlers: vi.fn(),
+            setRPCHandlers: vi.fn(() => ({
+                connectivityResources: [{
+                    name: 'externalSessionPassiveFollow',
+                    pause: pauseExternalSessionPassiveFollow,
+                    resume: resumeExternalSessionPassiveFollow,
+                }],
+            })),
+            registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
+            onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onPendingSessionActivationHint: vi.fn(() => () => {}),
             onConnectionStateChange: vi.fn((listener: (state: ManagedConnectionState) => void) => {
                 connectionStateListener = listener;
                 return () => {};
@@ -215,12 +319,16 @@ describe('bootstrapMachineSyncRuntime', () => {
             cliVersion: '0.0.0-test',
             machineId: 'machine-1',
             machine,
+            credentials: {
+                token: 'token',
+                encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+            },
             preferredHost: 'host.local',
             happyHomeDir: '/tmp/happy-home',
             happyLibDir: '/tmp/happy-lib',
             filesystemAccessPolicy: { kind: 'osUser' as const },
             takeoverRequested: false,
-            isShuttingDown: () => false,
+            isShuttingDown: () => quiescing,
             createConnectedApiMachine: vi.fn(() => connectedApiMachine),
             attachTransferRuntimeStatePublisher: vi.fn(async () => {}),
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
@@ -257,10 +365,37 @@ describe('bootstrapMachineSyncRuntime', () => {
         applyConnectionState(createManagedConnectionState('offline'));
         expect(setDaemonServerWorkOnline).toHaveBeenLastCalledWith(false);
         expect(onMachineConnectionOnline).not.toHaveBeenCalled();
+        await vi.waitFor(() => {
+            expect(pauseExternalSessionPassiveFollow).toHaveBeenCalledTimes(1);
+        });
+        expect(resumeExternalSessionPassiveFollow).not.toHaveBeenCalled();
 
         applyConnectionState(createManagedConnectionState('online'));
         expect(setDaemonServerWorkOnline).toHaveBeenLastCalledWith(true);
-        expect(onMachineConnectionOnline).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => {
+            expect(usageLimitRecoveryMutationCustodyMocks.bindRecoveredJournals).toHaveBeenCalledTimes(1);
+            expect(onMachineConnectionOnline).toHaveBeenCalledTimes(1);
+        });
+        expect(usageLimitRecoveryMutationCustodyMocks.bindRecoveredJournals).toHaveBeenLastCalledWith([]);
+
+        applyConnectionState(createManagedConnectionState('online'));
+        await vi.waitFor(() => {
+            expect(usageLimitRecoveryMutationCustodyMocks.bindRecoveredJournals).toHaveBeenCalledTimes(2);
+        });
+        expect(onMachineConnectionOnline).toHaveBeenCalledTimes(2);
+        expect(pauseExternalSessionPassiveFollow).toHaveBeenCalledTimes(1);
+        expect(resumeExternalSessionPassiveFollow).toHaveBeenCalledTimes(1);
+
+        quiescing = true;
+        applyConnectionState(createManagedConnectionState('offline'));
+        applyConnectionState(createManagedConnectionState('online'));
+        await Promise.resolve();
+
+        expect(setDaemonServerWorkOnline).toHaveBeenCalledTimes(3);
+        expect(usageLimitRecoveryMutationCustodyMocks.bindRecoveredJournals).toHaveBeenCalledTimes(2);
+        expect(onMachineConnectionOnline).toHaveBeenCalledTimes(2);
+        expect(pauseExternalSessionPassiveFollow).toHaveBeenCalledTimes(1);
+        expect(resumeExternalSessionPassiveFollow).toHaveBeenCalledTimes(1);
     });
 
     it('starts the peer mediation machine RPC loopback route and publishes its endpoint on connect', async () => {
@@ -287,7 +422,6 @@ describe('bootstrapMachineSyncRuntime', () => {
             supported: { import: true, export: true },
             listenerClasses: {
                 loopback_http: { enabled: true, configured: true, active: true },
-                lan_http: { enabled: false, configured: false, active: false },
                 tailscale_serve_https: { enabled: false, configured: false, active: false },
             },
             lifecycle: { mode: 'lazy_idle_shutdown', version: 1 },
@@ -296,18 +430,34 @@ describe('bootstrapMachineSyncRuntime', () => {
             status: 'running',
             transfer: existingTransferState,
         };
+        let quiescing = false;
         const updateDaemonState = vi.fn(async (handler: (state: DaemonState | null) => DaemonState) => {
+            if (updateDaemonState.mock.calls.length === 1) {
+                quiescing = true;
+                return 'suppressed' as const;
+            }
             daemonState = handler(daemonState);
+            return 'published' as const;
+        });
+        const refreshAssignments = vi.fn(async () => {});
+        const firstMetadataPublication = createDeferred<'suppressed'>();
+        const updateMachineMetadata = vi.fn(async () => {
+            if (updateMachineMetadata.mock.calls.length === 1) {
+                return await firstMetadataPublication.promise;
+            }
+            return 'published' as const;
         });
         const fakeConnectedApiMachine = {
             setRPCHandlers: vi.fn(),
+            registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
             onConnectionStateChange: vi.fn(() => () => {}),
+            onAccountSettingsVersionHint: vi.fn(() => () => {}),
             connect: vi.fn((options: { onConnect?: () => Promise<void> | void }) => {
                 connectOptionsRef.current = options;
             }),
             updateDaemonState,
-            updateMachineMetadata: vi.fn(async () => {}),
+            updateMachineMetadata,
             emitExternalSessionTranscriptUpdate: vi.fn(),
             onMachineTransferEnvelope: vi.fn(() => () => {}),
             sendMachineTransferEnvelope: vi.fn(),
@@ -323,6 +473,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         const connectedApiMachine = fakeConnectedApiMachine as unknown as ConnectedApiMachineForBootstrap;
         const createConnectedApiMachine = vi.fn(() => connectedApiMachine);
         const attachTransferRuntimeStatePublisher = vi.fn(async () => {});
+        const startVoiceInferenceWorkerForMachine = vi.fn(async (): Promise<VoiceInferenceWorkerHandle | null> => null);
         const machine: Machine = {
             id: 'machine-1',
             encryptionKey: new Uint8Array(32).fill(7),
@@ -342,12 +493,12 @@ describe('bootstrapMachineSyncRuntime', () => {
             happyLibDir: '/tmp/happy-lib',
             filesystemAccessPolicy: { kind: 'osUser' as const },
             takeoverRequested: false,
-            isShuttingDown: () => false,
+            isShuttingDown: () => quiescing,
             createConnectedApiMachine,
             attachTransferRuntimeStatePublisher,
             startAutomationWorkerForMachine: vi.fn((): AutomationWorkerHandle => ({
                 stop: vi.fn(),
-                refreshAssignments: vi.fn(async () => {}),
+                refreshAssignments,
                 pause: vi.fn(),
                 resume: vi.fn(),
                 handleServerUpdate: vi.fn(),
@@ -366,7 +517,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             connectedServiceRefreshLoopHandle: null,
             connectedServiceQuotasLoopHandle: null,
             daemonServerWorkScheduler: {} as never,
-            startVoiceInferenceWorkerForMachine: vi.fn(async (): Promise<VoiceInferenceWorkerHandle | null> => null),
+            startVoiceInferenceWorkerForMachine,
         }, {
             peerMediationMachineRpc: {
                 accountId: 'account_1',
@@ -382,6 +533,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         });
 
         const result: BootstrapMachineSyncRuntimeResult = await bootstrapMachineSyncRuntime(params);
+        expect(startVoiceInferenceWorkerForMachine).toHaveBeenCalledWith('machine-1', 'account_1');
         const connectOptions = connectOptionsRef.current;
         if (!connectOptions?.onConnect) throw new Error('expected machine connect options');
         await connectOptions.onConnect();
@@ -409,6 +561,19 @@ describe('bootstrapMachineSyncRuntime', () => {
             }),
         }));
         expect(updateDaemonState).toHaveBeenCalled();
+        expect(refreshAssignments).not.toHaveBeenCalled();
+        expect(updateMachineMetadata).not.toHaveBeenCalled();
+        expect(daemonState).not.toHaveProperty('peerMediation');
+        expect(updateDaemonState).toHaveBeenCalledTimes(1);
+
+        quiescing = false;
+        const firstConnectionPublicationsResume = result.resumeMachineConnectionPublications();
+        await vi.waitFor(() => expect(updateMachineMetadata).toHaveBeenCalledTimes(1));
+        const joiningConnectionPublicationsResume = result.resumeMachineConnectionPublications();
+        firstMetadataPublication.resolve('suppressed');
+        await Promise.all([firstConnectionPublicationsResume, joiningConnectionPublicationsResume]);
+        expect(updateDaemonState).toHaveBeenCalledTimes(3);
+        expect(updateMachineMetadata).toHaveBeenCalledTimes(2);
         expect(daemonState).toMatchObject({
             status: 'running',
             transfer: existingTransferState,
@@ -431,6 +596,10 @@ describe('bootstrapMachineSyncRuntime', () => {
     });
 
     it('passes usage-limit recovery callbacks to machine RPC handlers and resumes inactive sessions through spawnSession', async () => {
+        let providerServerFeaturesSnapshot: CliServerFeaturesSnapshot | undefined = {
+            status: 'error',
+            reason: 'timeout',
+        };
         const storedRecoveryIntents = new Map<string, unknown>([
             ['sess-hydrated', {
                 v: 1,
@@ -453,10 +622,19 @@ describe('bootstrapMachineSyncRuntime', () => {
                 storedRecoveryIntents.set(sessionId, intent);
             }),
         };
+        let machineConnectionStateListener: ((state: ManagedConnectionState) => void) | null = null;
         const fakeConnectedApiMachine = {
             setRPCHandlers: vi.fn(),
+            registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
-            onConnectionStateChange: vi.fn(() => () => {}),
+            onConnectionStateChange: vi.fn((listener: (state: ManagedConnectionState) => void) => {
+                machineConnectionStateListener = listener;
+                return () => {
+                    machineConnectionStateListener = null;
+                };
+            }),
+            onAccountSettingsVersionHint: vi.fn(() => () => {}),
+            onPendingSessionActivationHint: vi.fn(() => () => {}),
             connect: vi.fn(),
             updateDaemonState: vi.fn(async () => {}),
             updateMachineMetadata: vi.fn(async () => {}),
@@ -471,6 +649,16 @@ describe('bootstrapMachineSyncRuntime', () => {
         };
         const connectedApiMachine = fakeConnectedApiMachine as unknown as ConnectedApiMachineForBootstrap;
         const spawnSession = vi.fn(async (): Promise<SpawnSessionResult> => ({ type: 'success', sessionId: 'sess-ready' }));
+        const triggerLegacyProfileMigration = vi.fn(async () => ({ status: 'complete' as const, version: 1, outcomes: [] }));
+        const cancelConnectedServiceRuntimeAuthRecovery = vi.fn(async () => ({ ok: true }));
+        const awaitAgentSessionOpen = vi.fn();
+        const onMachineConnectionOnline = vi.fn(async () => {
+            providerServerFeaturesSnapshot = {
+                status: 'ready',
+                features: createProviderServerFeatures(true),
+            };
+            throw new Error('browser route refresh failed after feature recovery');
+        });
         const machine: Machine = {
             id: 'machine-1',
             encryptionKey: new Uint8Array(32).fill(7),
@@ -485,6 +673,8 @@ describe('bootstrapMachineSyncRuntime', () => {
             cliVersion: '0.0.0-test',
             machineId: 'machine-1',
             machine,
+            credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+            triggerLegacyProfileMigration,
             preferredHost: 'host.local',
             happyHomeDir: '/tmp/happy-home',
             happyLibDir: '/tmp/happy-lib',
@@ -503,6 +693,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             startMemoryWorkerForMachine: vi.fn(async (): Promise<MemoryWorkerHandle | null> => null),
             spawnSession,
             stopSession: vi.fn(async () => true),
+            awaitAgentSessionOpen,
             isSessionAlreadyRunning: vi.fn(async () => false),
             loadLocalSessionMetadataForHandoff: vi.fn(async () => null),
             savePreparedTargetLocalMetadata: vi.fn(async () => {}),
@@ -516,6 +707,10 @@ describe('bootstrapMachineSyncRuntime', () => {
             daemonServerWorkScheduler: {} as never,
             startVoiceInferenceWorkerForMachine: vi.fn(async (): Promise<VoiceInferenceWorkerHandle | null> => null),
             inactiveUsageLimitRecoveryStore,
+            cancelConnectedServiceRuntimeAuthRecovery,
+            getServerFeaturesSnapshot: () => providerServerFeaturesSnapshot,
+            peerMediationMachineRpc: { serverFeatures: null },
+            onMachineConnectionOnline,
         });
 
         const rpcDeps = fakeConnectedApiMachine.setRPCHandlers.mock.calls[0]?.[1] as {
@@ -528,14 +723,71 @@ describe('bootstrapMachineSyncRuntime', () => {
                 sessionId: string;
                 recovery: Record<string, unknown>;
                 runCheckNow: () => Promise<unknown>;
-            }) => void;
+            }) => Promise<void> | void;
             cancelInactiveSessionUsageLimitRecoveryCheck?: unknown;
+            cancelConnectedServiceRuntimeAuthRecovery?: unknown;
+            awaitAgentSessionOpen?: unknown;
+            providerRpc?: Readonly<{
+                machineId: string;
+                services: Readonly<{
+                    probe: unknown;
+                    models: unknown;
+                    loadModel: unknown;
+                    cancelModelLoad: unknown;
+                    previewProfileMigration: unknown;
+                    confirmProfileMigration: unknown;
+                    confirmProfileMigrationConflict: unknown;
+                }>;
+                featureGate: Readonly<{
+                    isEnabled: (featureId: 'providers') => boolean;
+                }>;
+            }>;
         };
+        expect(rpcDeps.awaitAgentSessionOpen).toBe(awaitAgentSessionOpen);
 
         expect(inactiveUsageLimitRecoveryStore.readAll).toHaveBeenCalledOnce();
         expect(rpcDeps.scheduleInactiveSessionUsageLimitRecoveryCheck).toEqual(expect.any(Function));
         expect(rpcDeps.cancelInactiveSessionUsageLimitRecoveryCheck).toEqual(expect.any(Function));
-        rpcDeps.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
+        expect(rpcDeps.cancelConnectedServiceRuntimeAuthRecovery).toBe(cancelConnectedServiceRuntimeAuthRecovery);
+        expect(rpcDeps.providerRpc).toMatchObject({
+            machineId: 'machine-1',
+            services: {
+                probe: expect.any(Function),
+                models: expect.any(Function),
+                loadModel: expect.any(Function),
+                cancelModelLoad: expect.any(Function),
+                previewProfileMigration: expect.any(Function),
+                confirmProfileMigration: expect.any(Function),
+                confirmProfileMigrationConflict: expect.any(Function),
+            },
+            featureGate: { isEnabled: expect.any(Function) },
+        });
+        expect(triggerLegacyProfileMigration).toHaveBeenCalledWith(expect.objectContaining({
+            providersEnabled: false,
+            machineId: 'machine-1',
+        }));
+        expect(rpcDeps.providerRpc?.featureGate.isEnabled('providers')).toBe(false);
+
+        requireManagedConnectionStateListener(machineConnectionStateListener)(createManagedConnectionState('online'));
+        await vi.waitFor(() => expect(triggerLegacyProfileMigration).toHaveBeenLastCalledWith(expect.objectContaining({
+            providersEnabled: true,
+            machineId: 'machine-1',
+        })));
+        expect(onMachineConnectionOnline).toHaveBeenCalledOnce();
+        expect(rpcDeps.providerRpc?.featureGate.isEnabled('providers')).toBe(true);
+
+        providerServerFeaturesSnapshot = {
+            status: 'ready',
+            features: createProviderServerFeatures(false),
+        };
+        expect(rpcDeps.providerRpc?.featureGate.isEnabled('providers')).toBe(false);
+
+        providerServerFeaturesSnapshot = {
+            status: 'ready',
+            features: createPeerMediationServerFeatures(),
+        };
+        expect(rpcDeps.providerRpc?.featureGate.isEnabled('providers')).toBe(false);
+        await rpcDeps.scheduleInactiveSessionUsageLimitRecoveryCheck?.({
             sessionId: 'sess-scheduled',
             recovery: {
                 v: 1,
@@ -557,10 +809,10 @@ describe('bootstrapMachineSyncRuntime', () => {
         });
         await expect(rpcDeps.resumeInactiveSessionWhenUsageLimitReady?.({
             sessionId: 'sess-ready',
-            rawSession: { id: 'sess-ready', path: '/repo/from-raw', machineId: 'machine-from-raw' },
+            rawSession: { id: 'sess-ready', path: '/repo/from-raw', machineId: 'machine-1' },
             metadata: {
                 machineId: 'machine-1',
-                path: '/repo',
+                path: '/repo/from-raw',
                 flavor: 'claude',
                 permissionMode: 'yolo',
                 permissionModeUpdatedAt: 1000,
@@ -582,7 +834,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         })).resolves.toBe(true);
         expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
             existingSessionId: 'sess-ready',
-            machineId: 'machine-from-raw',
+            machineId: 'machine-1',
             directory: '/repo/from-raw',
             backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
             connectedServices: {
@@ -601,16 +853,29 @@ describe('bootstrapMachineSyncRuntime', () => {
             permissionModeUpdatedAt: 1000,
             agentModeId: 'plan',
             agentModeUpdatedAt: 1010,
-            modelId: 'claude-opus-4-7',
-            modelUpdatedAt: 1020,
+            modelSelection: {
+                v: 1,
+                updatedAt: 1020,
+                ref: {
+                    agentTargetKey: 'backend:claude',
+                    providerConnectionId: null,
+                    modelId: 'claude-opus-4-7',
+                },
+            },
             approvedNewDirectoryCreation: true,
         }));
     });
 
     it('binds server-relayed live-stream starts to the daemon capture source', async () => {
         let liveStreamRelayListener: ((payload: MachineLiveStreamRelayEnvelopeV1) => void) | null = null;
+        let liveStreamRelayRoutes: {
+            start: (startRequest: unknown) => Promise<{ ok: true; streamId: string } | { ok: false; reasonCode: string }>;
+        } | null = null;
         const sentLiveStreamEnvelopes: MachineLiveStreamRelayEnvelopeV1[] = [];
         const fakeConnectedApiMachine = {
+            registerLiveStreamRelayRoutes: vi.fn((routes: NonNullable<typeof liveStreamRelayRoutes>) => {
+                liveStreamRelayRoutes = routes;
+            }),
             setRPCHandlers: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
             onConnectionStateChange: vi.fn(() => () => {}),
@@ -691,6 +956,16 @@ describe('bootstrapMachineSyncRuntime', () => {
             peerMediationMachineRpc: {
                 nowMs: () => 2_000,
                 stream: {
+                    readActiveControlLease: ({ streamId, sourceId }) => ({
+                        v: 1,
+                        leaseId: 'lease_1',
+                        streamId,
+                        sourceId,
+                        holderId: 'viewer_1',
+                        mode: 'exclusive',
+                        acquiredAtMs: 1_000,
+                        expiresAtMs: 3_000,
+                    }),
                     captureAdapter: {
                         start: async (input) => {
                             input.offerFrame({
@@ -720,48 +995,47 @@ describe('bootstrapMachineSyncRuntime', () => {
         });
 
         expect(fakeConnectedApiMachine.onMachineLiveStreamRelayEnvelope).toHaveBeenCalledOnce();
+        // SIM-P0-1: the start now arrives over machine RPC (the server never forwards `start`
+        // envelopes into machine rooms), so the bootstrap must expose the relay start route.
+        expect(fakeConnectedApiMachine.registerLiveStreamRelayRoutes).toHaveBeenCalledOnce();
+        const relayRoutes = liveStreamRelayRoutes as {
+            start: (startRequest: unknown) => Promise<{ ok: true; streamId: string } | { ok: false; reasonCode: string }>;
+        } | null;
+        if (!relayRoutes) throw new Error('expected live-stream relay start route');
         const relayListener = liveStreamRelayListener as ((payload: MachineLiveStreamRelayEnvelopeV1) => void) | null;
         if (!relayListener) throw new Error('expected live-stream relay listener');
-        relayListener({
+        const startResult = await relayRoutes.start({
             v: 1,
+            streamId: 'stream_1',
+            streamFamily: 'screen',
+            routeKind: 'server_relay',
             sourceMachineId: 'machine-1',
             targetMachineId: 'viewer-machine',
-            message: {
-                kind: 'start',
-                startRequest: {
+            ...caps,
+            authorization: {
+                payload: {
                     v: 1,
-                    streamId: 'stream_1',
-                    streamFamily: 'screen',
-                    routeKind: 'server_relay',
+                    grantId: 'grant_1',
+                    accountId: 'account_1',
                     sourceMachineId: 'machine-1',
                     targetMachineId: 'viewer-machine',
+                    flowKind: 'live_stream',
+                    routeKind: 'server_relay',
+                    streamId: 'stream_1',
+                    streamFamily: 'screen',
                     ...caps,
-                    authorization: {
-                        payload: {
-                            v: 1,
-                            grantId: 'grant_1',
-                            accountId: 'account_1',
-                            sourceMachineId: 'machine-1',
-                            targetMachineId: 'viewer-machine',
-                            flowKind: 'live_stream',
-                            routeKind: 'server_relay',
-                            streamId: 'stream_1',
-                            streamFamily: 'screen',
-                            ...caps,
-                            iat: 1_000,
-                            exp: 62_000,
-                            aud: 'happier-live-stream-relay-authorization',
-                        },
-                        signature: {
-                            keyId: 'relay-key-1',
-                            alg: 'Ed25519',
-                            valueBase64Url: 'signature',
-                        },
-                    },
+                    iat: 1_000,
+                    exp: 62_000,
+                    aud: 'happier-live-stream-relay-authorization',
+                },
+                signature: {
+                    keyId: 'relay-key-1',
+                    alg: 'Ed25519',
+                    valueBase64Url: 'signature',
                 },
             },
         });
-	        await Promise.resolve();
+        expect(startResult).toEqual({ ok: true, streamId: 'stream_1' });
 
 	        expect(sentLiveStreamEnvelopes.map((envelope) => envelope.message.kind)).toEqual(['start', 'frame']);
 	        relayListener({
@@ -795,6 +1069,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         const sentTcpTunnelEnvelopes: PeerTcpTunnelRelayEnvelope[] = [];
         const fakeConnectedApiMachine = {
             setRPCHandlers: vi.fn(),
+            registerLiveStreamRelayRoutes: vi.fn(),
             onUpdate: vi.fn(() => () => {}),
             onConnectionStateChange: vi.fn(() => () => {}),
             connect: vi.fn(),
@@ -942,6 +1217,26 @@ describe('bootstrapMachineSyncRuntime', () => {
     it('starts the peer mediation TCP tunnel loopback route through the daemon lifecycle when RPC is disabled', async () => {
         const loopbackApp = fastify();
         const stopPeerMediationLoopbackServer = vi.fn(async () => {});
+        const appendSttStreamBinaryFrame = vi.fn(async () => ({
+            ok: true,
+            streamId: 'stream-1',
+            generation: 0,
+            ackSeq: 0,
+            events: [],
+        }));
+        const cancelSttStreamForTransportLoss = vi.fn(async () => ({
+            ok: true,
+            streamId: 'stream-1',
+            generation: 0,
+        }));
+        const machineRpcLifecycleRegistration = {
+            voiceInference: {
+                voiceInferenceStreaming: {
+                    appendSttStreamBinaryFrame,
+                    cancelSttStreamForTransportLoss,
+                },
+            },
+        } as unknown as ReturnType<ConnectedApiMachineForBootstrap['setRPCHandlers']>;
         const endpoint: PeerLoopbackEndpointCandidateV1 = {
             v: 1,
             routeKind: 'loopback_direct',
@@ -961,7 +1256,7 @@ describe('bootstrapMachineSyncRuntime', () => {
             daemonState = handler(daemonState);
         });
         const fakeConnectedApiMachine = {
-            setRPCHandlers: vi.fn(),
+            setRPCHandlers: vi.fn(() => machineRpcLifecycleRegistration),
             onUpdate: vi.fn(() => () => {}),
             onConnectionStateChange: vi.fn(() => () => {}),
             connect: vi.fn((options: { onConnect?: () => Promise<void> | void }) => {
@@ -1023,7 +1318,8 @@ describe('bootstrapMachineSyncRuntime', () => {
             connectedServiceRefreshLoopHandle: null,
             connectedServiceQuotasLoopHandle: null,
             daemonServerWorkScheduler: {} as never,
-            startVoiceInferenceWorkerForMachine: vi.fn(async (): Promise<VoiceInferenceWorkerHandle | null> => null),
+            startVoiceInferenceWorkerForMachine: vi.fn(async (): Promise<VoiceInferenceWorkerHandle | null> =>
+                createVoiceInferenceWorkerHandle()),
             peerMediationMachineRpc: {
                 accountId: 'account_1',
                 serverFeatures: createPeerMediationServerFeatures({
@@ -1047,7 +1343,10 @@ describe('bootstrapMachineSyncRuntime', () => {
                 routeKind: 'loopback_direct',
                 endpointFingerprint: 'endpoint_tunnel_1',
             }),
-            tunnel: expect.any(Object),
+            tunnel: expect.objectContaining({
+                voiceBinaryAppendConsumer: appendSttStreamBinaryFrame,
+                voiceBinaryTerminalConsumer: cancelSttStreamForTransportLoss,
+            }),
         }));
         expect(startPeerMediationLoopbackServer).toHaveBeenCalledWith(expect.not.objectContaining({
             rpc: expect.any(Object),

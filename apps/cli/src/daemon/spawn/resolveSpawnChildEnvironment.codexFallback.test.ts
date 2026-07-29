@@ -1,7 +1,29 @@
-import { describe, expect, it, vi } from 'vitest';
+import { tmpdir } from 'node:os';
+import { basename, dirname } from 'node:path';
 
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveAgentCliManagedCommandPath } from '@/packagedRuntime/managedTools/agentCliResolution';
+import { writeExecutableShim } from '@/testkit/fs/executableShim';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { resolveSpawnChildEnvironment } from './resolveSpawnChildEnvironment';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+
+const tempDirs = new Set<string>();
+
+async function writeManagedExecutable(filePath: string, contents: string): Promise<void> {
+  await writeExecutableShim({
+    dir: dirname(filePath),
+    fileName: basename(filePath),
+    contents,
+  });
+}
+
+afterEach(async () => {
+  for (const dir of tempDirs) {
+    await removeTempDir(dir);
+  }
+  tempDirs.clear();
+});
 
 describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
   it('passes explicit Codex backend mode through generic provider runtime selection', async () => {
@@ -39,6 +61,44 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
     expect(result.extraEnvForChild.HAPPIER_CODEX_BACKEND_MODE_CONFIRMED).toBe('acp');
   });
 
+  it('passes effective cwd and connected-service environment to daemon spawn prerequisites', async () => {
+    const resolveRuntimePrerequisites = vi.fn(async ({ cwd, directory, env }) => {
+      expect(cwd).toBe('/repo');
+      expect(directory).toBe('/repo');
+      expect(env).toMatchObject({
+        PROFILE_ONLY: 'profile-value',
+        GEMINI_API_KEY: 'connected-key',
+      });
+      return { ok: true as const };
+    });
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '/repo',
+        backendTarget: { kind: 'backend', backendId: 'antigravity', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {
+        PROFILE_ONLY: 'profile-value',
+        GEMINI_API_KEY: 'profile-key',
+      },
+      daemonSpawnHooks: {
+        resolveRuntimePrerequisites,
+      },
+      processEnv: {},
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: {
+        env: { GEMINI_API_KEY: 'connected-key' },
+        cleanupOnFailure: null,
+        cleanupOnExit: null,
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(resolveRuntimePrerequisites).toHaveBeenCalledTimes(1);
+  });
+
   it('fails closed when provider runtime selection validation fails', async () => {
     const resolveRuntimePrerequisites = vi.fn(async ({ providerRuntimeSelection }) => {
       expect(providerRuntimeSelection).toEqual({ codexBackendMode: 'acp' });
@@ -72,6 +132,211 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       errorMessage: 'codex-acp is missing',
     }));
     expect(resolveRuntimePrerequisites).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed before spawn when a built-in provider CLI is unavailable', async () => {
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: null,
+      processEnv: {
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      errorMessage: expect.stringContaining('Qwen CLI (qwen) is not available'),
+    }));
+  });
+
+  it('allows hookless built-in providers when their managed CLI is available', async () => {
+    const happyHomeDir = await createTempDir('happier-spawn-managed-provider-', tmpdir());
+    tempDirs.add(happyHomeDir);
+    const managedQwenPath = resolveAgentCliManagedCommandPath('qwen', { happyHomeDir });
+    await writeManagedExecutable(managedQwenPath, '#!/bin/sh\necho ok\n');
+
+    const result = await resolveSpawnChildEnvironment({
+      happyHomeDir,
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: null,
+      processEnv: {
+        HAPPIER_HOME_DIR: happyHomeDir,
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('uses the configured happy home when validating hookless managed provider CLIs', async () => {
+    const happyHomeDir = await createTempDir('happier-spawn-managed-provider-home-', tmpdir());
+    tempDirs.add(happyHomeDir);
+    const managedQwenPath = resolveAgentCliManagedCommandPath('qwen', { happyHomeDir });
+    await writeManagedExecutable(managedQwenPath, '#!/bin/sh\necho ok\n');
+
+    const result = await resolveSpawnChildEnvironment({
+      happyHomeDir,
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: null,
+      processEnv: {
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('uses profile-provided provider CLI overrides when validating hookless built-in providers', async () => {
+    const root = await createTempDir('happier-spawn-profile-provider-', tmpdir());
+    tempDirs.add(root);
+    const qwenPath = await writeExecutableShim({
+      dir: root,
+      fileName: 'qwen',
+      contents: '#!/bin/sh\necho ok\n',
+    });
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {
+        HAPPIER_QWEN_PATH: qwenPath,
+      },
+      daemonSpawnHooks: null,
+      processEnv: {
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result.ok).toBe(true);
+  });
+
+  it('fails closed for invalid profile provider CLI overrides even when the daemon can resolve another CLI', async () => {
+    const root = await createTempDir('happier-spawn-invalid-profile-provider-', tmpdir());
+    tempDirs.add(root);
+    await writeExecutableShim({
+      dir: root,
+      fileName: 'qwen',
+      contents: '#!/bin/sh\necho ok\n',
+    });
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {
+        HAPPIER_QWEN_PATH: `${root}/missing-qwen`,
+      },
+      daemonSpawnHooks: null,
+      processEnv: {
+        PATH: root,
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      errorMessage: expect.stringContaining('HAPPIER_QWEN_PATH is set but does not point'),
+    }));
+  });
+
+  it('preserves connected-service cleanup and diagnostics when hookless provider CLI validation fails', async () => {
+    const cleanupOnFailure = vi.fn();
+    const cleanupOnExit = vi.fn();
+    const diagnostics = [{
+      code: 'connected_service_materialized',
+      severity: 'info',
+      message: 'connected service prepared',
+    }] as const;
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: null,
+      processEnv: {
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: {
+        env: { SOME_CONNECTED_SERVICE_TOKEN: 'secret' },
+        cleanupOnFailure,
+        cleanupOnExit,
+        diagnostics,
+      },
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      cleanupOnFailure,
+      cleanupOnExit,
+      materializationDiagnostics: diagnostics,
+    }));
+  });
+
+  it('still applies generic provider CLI validation when only spawn env augmentation is configured', async () => {
+    const augmentEnv = vi.fn(() => ({ HAPPIER_QWEN_AUGMENTED: '1' }));
+
+    const result = await resolveSpawnChildEnvironment({
+      options: {
+        directory: '.',
+        backendTarget: { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' },
+      },
+      profileEnvironmentVariables: {},
+      daemonSpawnHooks: {
+        augmentEnv,
+      },
+      processEnv: {
+        PATH: '',
+      },
+      logDebug: () => {},
+      logInfo: () => {},
+      logWarn: () => {},
+      connectedServiceAuth: null,
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      errorMessage: expect.stringContaining('Qwen CLI (qwen) is not available'),
+    }));
+    expect(augmentEnv).not.toHaveBeenCalled();
   });
 
   it('prefers explicit provider backend mode over the legacy ACP experiment flag', async () => {
@@ -121,8 +386,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'codex-session-1',
           },
@@ -154,8 +419,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
         providerRuntimeSelection: { codexBackendMode: 'appServer' },
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'legacy-thread',
           },
@@ -169,8 +434,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
         providerRuntimeSelection: { codexBackendMode: 'appServer' },
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'legacy-thread',
           },
@@ -186,8 +451,8 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
         backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'codex',
-          provider: {
+          agentId: 'codex',
+          agent: {
             backendMode: 'appServer',
             providerSessionId: 'legacy-thread',
           },
@@ -226,6 +491,7 @@ describe('resolveSpawnChildEnvironment (codex backend mode)', () => {
       options: options as SpawnSessionOptions,
       profileEnvironmentVariables: {},
       daemonSpawnHooks: {
+        resolveRuntimePrerequisites: async () => ({ ok: true }),
         augmentEnv: ({ providerRuntimeSelection }) => ({
           ...(providerRuntimeSelection?.codexBackendMode === 'appServer' ? { HAPPIER_CODEX_BACKEND_MODE: 'appServer' } : {}),
         }),

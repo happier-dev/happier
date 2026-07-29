@@ -1,11 +1,16 @@
-import type { ScmHostingProviderContribution } from '@happier-dev/protocol';
+import {
+    ScmHostingProviderKindSchema,
+    type ScmHostingProviderContribution,
+} from '@happier-dev/protocol';
 import type {
     ScmHostingProviderRuntimeAdapter,
     ScmHostingProviderRuntimeRegistration,
-} from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { runWithHostingProviderExecutionAuthority } from './executionAuthority';
 
-export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContribution, 'urlSafety'> & {
+export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContribution, 'title'> & {
     pluginId?: string;
+    displayName: string;
     urlSafety?: Readonly<{
         allowedSchemes: readonly string[];
         allowedBaseUrls: readonly string[];
@@ -15,6 +20,7 @@ export type ScmHostingProviderDescriptor = Readonly<Omit<ScmHostingProviderContr
 
 export type ScmHostingProviderRuntimeBinding = Readonly<{
     pluginId: string;
+    generation: string;
     registration: ScmHostingProviderRuntimeRegistration;
 }>;
 
@@ -57,8 +63,11 @@ type ScmHostingProviderResolvedRemote = Readonly<{
     }>;
 }>;
 
-type ScmHostingProviderRoutingAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
+type ScmHostingProviderDetectionAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
     detectRemote: (input: ScmHostingProviderRemoteDetectionInput) => ScmHostingProviderResolvedRemote | null;
+}>;
+
+type ScmHostingProviderCompareAdapter = ScmHostingProviderRuntimeAdapter & Readonly<{
     buildCompareUrl: (input: Readonly<{
         provider: ScmHostingProviderResolvedRemote;
         base: string;
@@ -154,13 +163,41 @@ function readScmHostingProviderUrlSafety(
     });
 }
 
-function isScmHostingProviderRoutingAdapter(
+function isScmHostingProviderDetectionAdapter(
     adapter: unknown,
-): adapter is ScmHostingProviderRoutingAdapter {
-    const candidate = adapter as Partial<Record<'detectRemote' | 'buildCompareUrl', unknown>>;
+): adapter is ScmHostingProviderDetectionAdapter {
     return Boolean(adapter)
-        && typeof candidate.detectRemote === 'function'
-        && typeof candidate.buildCompareUrl === 'function';
+        && typeof (adapter as Readonly<{ detectRemote?: unknown }>).detectRemote === 'function';
+}
+
+function isScmHostingProviderCompareAdapter(
+    adapter: unknown,
+): adapter is ScmHostingProviderCompareAdapter {
+    return Boolean(adapter)
+        && typeof (adapter as Readonly<{ buildCompareUrl?: unknown }>).buildCompareUrl === 'function';
+}
+
+function bindRuntimeAdapter(
+    binding: ScmHostingProviderRuntimeBinding,
+): ScmHostingProviderRuntimeAdapter {
+    const target = binding.registration.adapter;
+    const bound = Object.create(Object.getPrototypeOf(target)) as Record<PropertyKey, unknown>;
+    for (const property of Reflect.ownKeys(target)) {
+        const descriptor = Object.getOwnPropertyDescriptor(target, property);
+        if (!descriptor) continue;
+        const value = 'value' in descriptor ? descriptor.value : undefined;
+        Object.defineProperty(bound, property, {
+            ...descriptor,
+            ...(typeof value === 'function' ? {
+                value: (...args: readonly unknown[]) => runWithHostingProviderExecutionAuthority({
+                    pluginId: binding.pluginId,
+                    generation: binding.generation,
+                    contributionId: binding.registration.id,
+                }, () => Reflect.apply(value, target, args)),
+            } : {}),
+        });
+    }
+    return Object.freeze(bound) as ScmHostingProviderRuntimeAdapter;
 }
 
 function createUnknownProvider(remoteName: string | null): UnresolvedScmHostingProvider {
@@ -214,6 +251,44 @@ function parseUrlWithAllowedScheme(value: string, allowedSchemes: readonly strin
     }
 }
 
+function isProviderBaseAllowedByDescriptor(
+    providerBaseUrl: URL,
+    descriptor: ResolvedScmHostingProvider,
+): boolean {
+    const allowedSchemes = readDetectedProviderAllowedSchemes(descriptor);
+    const allowedBaseUrls = descriptor.urlSafety?.allowedBaseUrls ?? [];
+    if (allowedBaseUrls.length > 0 && !allowedBaseUrls.some((value) => {
+        const allowedBaseUrl = parseUrlWithAllowedScheme(value, allowedSchemes);
+        return Boolean(
+            allowedBaseUrl
+            && !allowedBaseUrl.username
+            && !allowedBaseUrl.password
+            && !allowedBaseUrl.search
+            && !allowedBaseUrl.hash
+            && isUrlWithinBaseUrl(providerBaseUrl, allowedBaseUrl)
+        );
+    })) {
+        return false;
+    }
+
+    const allowedOrigins = descriptor.urlSafety?.allowedOrigins ?? [];
+    if (allowedOrigins.length > 0 && !allowedOrigins.some((value) => {
+        const allowedOrigin = parseUrlWithAllowedScheme(value, allowedSchemes);
+        return Boolean(
+            allowedOrigin
+            && !allowedOrigin.username
+            && !allowedOrigin.password
+            && !allowedOrigin.search
+            && !allowedOrigin.hash
+            && allowedOrigin.origin === providerBaseUrl.origin
+        );
+    })) {
+        return false;
+    }
+
+    return true;
+}
+
 function resolveDetectedRepositoryWebUrl(
     detectedProvider: ScmHostingProviderResolvedRemote,
     descriptor: ResolvedScmHostingProvider,
@@ -246,18 +321,65 @@ function resolveDetectedRepositoryWebUrl(
 function normalizeDetectedProvider(
     provider: ScmHostingProviderResolvedRemote,
     descriptor: ResolvedScmHostingProvider,
-): ScmHostingProviderResolvedRemote {
+): ScmHostingProviderResolvedRemote | null {
+    const allowedSchemes = readDetectedProviderAllowedSchemes(descriptor);
+    const providerBaseUrl = parseUrlWithAllowedScheme(provider.baseUrl, allowedSchemes);
+    if (
+        !providerBaseUrl
+        || providerBaseUrl.username
+        || providerBaseUrl.password
+        || providerBaseUrl.search
+        || providerBaseUrl.hash
+        || !isProviderBaseAllowedByDescriptor(providerBaseUrl, descriptor)
+    ) {
+        return null;
+    }
     const repositoryWebUrl = resolveDetectedRepositoryWebUrl(provider, descriptor);
+    const declaredKind = ScmHostingProviderKindSchema.safeParse(descriptor.kind);
+    const canonicalKind = declaredKind.success ? declaredKind.data : 'custom';
+    const normalizedBaseUrl = providerBaseUrl.toString().replace(/\/+$/, '');
     return Object.freeze({
-        id: provider.id,
-        kind: provider.kind,
-        displayName: provider.displayName,
-        baseUrl: provider.baseUrl,
+        id: descriptor.id,
+        kind: canonicalKind === 'custom' ? 'unknown' : canonicalKind,
+        ...(canonicalKind === 'custom' ? { providerKind: 'custom' } : {}),
+        displayName: descriptor.displayName,
+        name: descriptor.displayName,
+        baseUrl: normalizedBaseUrl,
         ...(repositoryWebUrl ? { repositoryWebUrl } : {}),
         ...(provider.nameWithOwner ? { nameWithOwner: provider.nameWithOwner } : {}),
         ...(provider.remoteName !== undefined ? { remoteName: provider.remoteName } : {}),
-        ...(provider.urlSafety ? { urlSafety: provider.urlSafety } : {}),
+        urlSafety: Object.freeze({
+            allowedSchemes: Object.freeze([...allowedSchemes]),
+            allowedBaseUrls: Object.freeze([normalizedBaseUrl]),
+            allowedOrigins: Object.freeze([providerBaseUrl.origin]),
+        }),
     });
+}
+
+function resolveSafeCompareUrl(
+    value: string,
+    provider: ScmHostingProviderResolvedRemote,
+    descriptor: ResolvedScmHostingProvider,
+): string | null {
+    const allowedSchemes = readDetectedProviderAllowedSchemes(descriptor);
+    const compareUrl = parseUrlWithAllowedScheme(value, allowedSchemes);
+    const providerBaseUrl = parseUrlWithAllowedScheme(provider.baseUrl, allowedSchemes);
+    if (!compareUrl || !providerBaseUrl) return null;
+    if (
+        compareUrl.username
+        || compareUrl.password
+        || compareUrl.search
+        || compareUrl.hash
+        || providerBaseUrl.username
+        || providerBaseUrl.password
+        || providerBaseUrl.search
+        || providerBaseUrl.hash
+        || !isProviderBaseAllowedByDescriptor(providerBaseUrl, descriptor)
+        || !isUrlWithinBaseUrl(compareUrl, providerBaseUrl)
+    ) {
+        return null;
+    }
+    return compareUrl.toString().replace(/\/+$/, '');
 }
 
 export function createScmHostingProviderRegistry(params: Readonly<{
@@ -268,8 +390,13 @@ export function createScmHostingProviderRegistry(params: Readonly<{
     const providersById = new Map<string, ResolvedScmHostingProvider>();
     const runtimeByProviderId = new Map<string, ScmHostingProviderRuntimeBinding>();
 
+    const qualify = (pluginId: string | undefined, localId: string): string => (
+        pluginId ? `${pluginId}/${localId}` : localId
+    );
+
     for (const binding of params.runtimeRegistrations ?? []) {
-        const existing = runtimeByProviderId.get(binding.registration.id);
+        const qualifiedId = qualify(binding.pluginId, binding.registration.id);
+        const existing = runtimeByProviderId.get(qualifiedId);
         if (existing) {
             diagnostics.push(createDuplicateScmHostingProviderDiagnostic({
                 existingPluginId: existing.pluginId,
@@ -278,11 +405,12 @@ export function createScmHostingProviderRegistry(params: Readonly<{
             }));
             continue;
         }
-        runtimeByProviderId.set(binding.registration.id, binding);
+        runtimeByProviderId.set(qualifiedId, binding);
     }
 
     for (const provider of params.providers) {
-        const existing = providersById.get(provider.id);
+        const qualifiedId = qualify(provider.pluginId, provider.id);
+        const existing = providersById.get(qualifiedId);
         if (existing) {
             diagnostics.push(createDuplicateScmHostingProviderDiagnostic({
                 existingPluginId: existing.pluginId,
@@ -291,29 +419,31 @@ export function createScmHostingProviderRegistry(params: Readonly<{
             }));
             continue;
         }
-        const runtime = runtimeByProviderId.get(provider.id);
+        const runtime = runtimeByProviderId.get(qualifiedId);
         if (runtime && provider.pluginId && provider.pluginId !== runtime.pluginId) {
             diagnostics.push(createScmHostingProviderPluginMismatchDiagnostic({
                 descriptorPluginId: provider.pluginId,
                 registrationPluginId: runtime.pluginId,
                 providerId: provider.id,
             }));
-            providersById.set(provider.id, Object.freeze({
+            providersById.set(qualifiedId, Object.freeze({
                 ...provider,
+                id: qualifiedId,
                 urlSafety: readScmHostingProviderUrlSafety(provider),
             }));
             continue;
         }
 
-        providersById.set(provider.id, Object.freeze({
+        providersById.set(qualifiedId, Object.freeze({
             ...provider,
+            id: qualifiedId,
             urlSafety: readScmHostingProviderUrlSafety(provider),
             ...(runtime ? { runtime } : {}),
         }));
     }
 
     for (const binding of params.runtimeRegistrations ?? []) {
-        if (!providersById.has(binding.registration.id)) {
+        if (!providersById.has(qualify(binding.pluginId, binding.registration.id))) {
             diagnostics.push(createMissingScmHostingProviderDescriptorDiagnostic({
                 pluginId: binding.pluginId,
                 providerId: binding.registration.id,
@@ -331,23 +461,33 @@ export function createScmHostingProviderRegistry(params: Readonly<{
             return providersById.get(id);
         },
         getAdapter(id) {
-            return providersById.get(id)?.runtime?.registration.adapter;
+            const runtime = providersById.get(id)?.runtime;
+            return runtime ? bindRuntimeAdapter(runtime) : undefined;
         },
         detectRemote(input) {
             for (const provider of providers) {
-                const adapter = provider.runtime?.registration.adapter;
-                if (!isScmHostingProviderRoutingAdapter(adapter)) {
+                try {
+                    const adapter = provider.runtime?.registration.adapter;
+                    if (!isScmHostingProviderDetectionAdapter(adapter)) {
+                        continue;
+                    }
+                    const detected = adapter.detectRemote(input);
+                    if (!detected) {
+                        continue;
+                    }
+                    const normalized = normalizeDetectedProvider(detected, provider);
+                    if (!normalized) {
+                        continue;
+                    }
+                    return Object.freeze({
+                        kind: 'resolved' as const,
+                        providerId: provider.id,
+                        provider: normalized,
+                    });
+                } catch {
+                    // A single plugin-owned detector must not block unrelated providers.
                     continue;
                 }
-                const detected = adapter.detectRemote(input);
-                if (!detected) {
-                    continue;
-                }
-                return Object.freeze({
-                    kind: 'resolved' as const,
-                    providerId: provider.id,
-                    provider: normalizeDetectedProvider(detected, provider),
-                });
             }
             return Object.freeze({
                 kind: 'unknown' as const,
@@ -363,19 +503,31 @@ export function createScmHostingProviderRegistry(params: Readonly<{
                     provider,
                 });
             }
-            const adapter = providersById.get(provider.id)?.runtime?.registration.adapter;
-            if (!isScmHostingProviderRoutingAdapter(adapter)) {
+            const descriptor = providersById.get(provider.id);
+            let adapter: ScmHostingProviderRuntimeAdapter | undefined;
+            try {
+                adapter = descriptor?.runtime?.registration.adapter;
+            } catch {
+                adapter = undefined;
+            }
+            if (!descriptor || !isScmHostingProviderCompareAdapter(adapter)) {
                 return Object.freeze({
                     kind: 'unsupported' as const,
                     reason: 'adapter_unavailable' as const,
                     provider,
                 });
             }
-            const url = adapter.buildCompareUrl({
-                provider,
-                base: input.base,
-                head: input.head,
-            });
+            let url: string | null;
+            try {
+                const candidate = adapter.buildCompareUrl({
+                    provider,
+                    base: input.base,
+                    head: input.head,
+                });
+                url = candidate ? resolveSafeCompareUrl(candidate, provider, descriptor) : null;
+            } catch {
+                url = null;
+            }
             if (!url) {
                 return Object.freeze({
                     kind: 'unsupported' as const,

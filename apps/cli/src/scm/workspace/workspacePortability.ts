@@ -1,5 +1,5 @@
 import type { ScmBackendRegistry } from '../registry';
-import { resolveScmBackendRegistry } from '../scmBackendCatalog';
+import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import {
     createScmWorkspaceIntegrationPortableWorkspacePathRequest,
     resolveScmWorkspaceIntegrationPortableWorkspacePathRelativePath,
@@ -14,21 +14,22 @@ export async function assertPortableWorkspaceEntriesWithScmWorkspace(input: Read
     }>[];
     registry?: ScmBackendRegistry;
 }>): Promise<void> {
-    const registry = await resolveScmBackendRegistry(input.registry);
-    for (const backend of registry.listBackends()) {
-        await backend.workspaceIntegration?.assertPortableWorkspaceEntries?.({
-            entries: input.entries,
-        });
-    }
-
-    for (const entry of input.entries) {
-        if (classifyPortableWorkspacePathWithScmWorkspace({
-            relativePath: entry.relativePath,
-            registry,
-        }) === 'non_portable') {
-            throw buildNonPortableWorkspacePathError(entry.relativePath);
+    await runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        for (const backend of registry.listBackends()) {
+            await backend.workspaceIntegration?.assertPortableWorkspaceEntries?.({
+                entries: input.entries,
+            });
         }
-    }
+
+        for (const entry of input.entries) {
+            if (classifyPortableWorkspacePathWithScmWorkspace({
+                relativePath: entry.relativePath,
+                registry,
+            }) === 'non_portable') {
+                throw buildNonPortableWorkspacePathError(entry.relativePath);
+            }
+        }
+    });
 }
 
 export function isAdministrativeWorkspacePathWithScmWorkspace(input: Readonly<{
@@ -51,10 +52,11 @@ export async function resolveIsAdministrativeWorkspacePathWithScmWorkspace(input
     relativePath: string;
     registry?: ScmBackendRegistry;
 }>): Promise<boolean> {
-    return isAdministrativeWorkspacePathWithScmWorkspace({
-        relativePath: input.relativePath,
-        registry: await resolveScmBackendRegistry(input.registry),
-    });
+    return runWithScmBackendRegistryLease(input.registry, async (registry) =>
+        isAdministrativeWorkspacePathWithScmWorkspace({
+            relativePath: input.relativePath,
+            registry,
+        }));
 }
 
 export function classifyPortableWorkspacePathWithScmWorkspace(input: Readonly<{
@@ -83,8 +85,9 @@ export async function resolveClassifyPortableWorkspacePathWithScmWorkspace(input
     relativePath: string;
     registry?: ScmBackendRegistry;
 }>): Promise<ScmWorkspaceIntegrationPortableWorkspacePathClassification> {
-    return classifyPortableWorkspacePathWithScmWorkspace({
-        relativePath: input.relativePath,
-        registry: await resolveScmBackendRegistry(input.registry),
-    });
+    return runWithScmBackendRegistryLease(input.registry, async (registry) =>
+        classifyPortableWorkspacePathWithScmWorkspace({
+            relativePath: input.relativePath,
+            registry,
+        }));
 }

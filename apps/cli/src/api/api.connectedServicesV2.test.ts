@@ -1,14 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import axios from 'axios';
+import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
 
 import { ApiClient } from './api';
 import { logger } from '@/ui/logger';
+import { resetServerEndpointFailureLogSamplingForTests } from './client/serverEndpointFailureLog';
+import { readHttpStatus } from './client/httpStatusError';
+import { storeConnectedServiceCredentialForAccount } from '@/cloud/connectedServices/storeConnectedServiceCredentialForAccount';
 
-const { mockPost, mockGet, mockPatch } = vi.hoisted(() => ({
+const { mockPost, mockGet, mockPatch, mockFetchServerFeaturesSnapshot } = vi.hoisted(() => ({
   mockPost: vi.fn(),
   mockGet: vi.fn(),
   mockPatch: vi.fn(),
+  mockFetchServerFeaturesSnapshot: vi.fn(),
 }));
 
 vi.mock('axios', () => ({
@@ -22,6 +27,10 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
+vi.mock('@/features/serverFeaturesClient', () => ({
+  fetchServerFeaturesSnapshot: mockFetchServerFeaturesSnapshot,
+}));
+
 vi.mock('./configuration', () => ({
   configuration: {
     serverUrl: 'https://api.example.com',
@@ -33,22 +42,43 @@ describe('ApiClient connected services v2', () => {
     mockPost.mockReset();
     mockGet.mockReset();
     mockPatch.mockReset();
+    mockFetchServerFeaturesSnapshot.mockReset();
+    mockFetchServerFeaturesSnapshot.mockResolvedValue({
+      status: 'ready',
+      features: {
+        features: {},
+        capabilities: {
+          connectedServices: {
+            credentialDelete: { revisionGuard: true },
+          },
+        },
+      },
+    });
     vi.clearAllMocks();
+    resetServerEndpointFailureLogSamplingForTests();
   });
 
   it('posts sealed credentials to the v2 connected services endpoint', async () => {
-    mockPost.mockResolvedValue({ status: 200, data: { success: true } });
+    mockPost.mockResolvedValue({
+      status: 200,
+      data: { success: true, credentialRevision: 'csr_abcdefghijklmnopqrstuv' },
+    });
 
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
     } as any);
 
-    await api.registerConnectedServiceCredentialSealed({
+    const outcome = await api.registerConnectedServiceCredentialSealed({
       serviceId: 'openai-codex',
       profileId: 'work',
       sealed: { format: 'account_scoped_v1', ciphertext: 'c2VhbGVk' },
       metadata: { kind: 'oauth', providerEmail: 'user@example.com', expiresAt: Date.now() + 3600_000 },
+    });
+
+    expect(outcome).toEqual({
+      success: true,
+      credentialRevision: 'csr_abcdefghijklmnopqrstuv',
     });
 
     expect(axios.post).toHaveBeenCalledWith(
@@ -67,38 +97,64 @@ describe('ApiClient connected services v2', () => {
     expect(serializedLogs).not.toContain('c2VhbGVk');
   });
 
-  it('posts sealed quota snapshots to the v2 connected services quotas endpoint', async () => {
-    mockPost.mockResolvedValue({ status: 200, data: { success: true } });
+  it('preserves a sanitized deterministic 400 so bounded storage does not settle or retry', async () => {
+    const responseError = Object.assign(new Error('request rejected'), {
+      response: {
+        status: 400,
+        data: { error: 'invalid-params', echoedSecret: 'server-secret-echo' },
+      },
+      config: {
+        headers: { Authorization: 'Bearer happy-token' },
+        data: 'sealed-request-secret',
+      },
+    });
+    mockGet
+      .mockResolvedValueOnce({ status: 200, data: { mode: 'e2ee', updatedAt: 1 } })
+      .mockRejectedValueOnce(Object.assign(new Error('not found'), { response: { status: 404 } }));
+    mockPost.mockRejectedValue(responseError);
 
+    const credentials = {
+      token: 'happy-token',
+      encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
+    };
+    const api = await ApiClient.create(credentials);
+    const record = buildConnectedServiceCredentialRecord({
+      now: 1_000,
+      serviceId: 'openai-codex',
+      profileId: 'work',
+      kind: 'token',
+      token: { token: 'provider-request-secret', providerAccountId: null, providerEmail: null },
+    });
+
+    let thrown: unknown;
+    try {
+      await storeConnectedServiceCredentialForAccount({ api, credentials, record });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({ name: 'HttpStatusError', response: { status: 400 } });
+    expect(readHttpStatus(thrown)).toBe(400);
+    expect(mockPost).toHaveBeenCalledTimes(1);
+    expect(mockGet).toHaveBeenCalledTimes(2);
+    const serialized = JSON.stringify(thrown);
+    expect(serialized).not.toContain('happy-token');
+    expect(serialized).not.toContain('provider-request-secret');
+    expect(serialized).not.toContain('sealed-request-secret');
+    expect(serialized).not.toContain('server-secret-echo');
+  });
+
+  it('does not expose the retired sealed connected-service quota writer', async () => {
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
     } as any);
 
-    await api.registerConnectedServiceQuotaSnapshotSealed({
-      serviceId: 'openai-codex',
-      profileId: 'work',
-      sealed: { format: 'account_scoped_v1', ciphertext: 'cXVvdGEtY2lwaGVydGV4dA==' },
-      metadata: { fetchedAt: Date.now(), staleAfterMs: 300_000, status: 'ok' },
-    });
-
-    expect(axios.post).toHaveBeenCalledWith(
-      expect.stringContaining('/v2/connect/openai-codex/profiles/work/quotas'),
-      expect.objectContaining({
-        sealed: { format: 'account_scoped_v1', ciphertext: 'cXVvdGEtY2lwaGVydGV4dA==' },
-      }),
-      expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: 'Bearer happy-token',
-        }),
-      }),
-    );
-
-    const serializedLogs = JSON.stringify((logger as any).debug.mock.calls);
-    expect(serializedLogs).not.toContain('cXVvdGEtY2lwaGVydGV4dA==');
+    expect('registerConnectedServiceQuotaSnapshotSealed' in api).toBe(false);
+    expect(mockPost).not.toHaveBeenCalled();
   });
 
-  it('preserves status, retry-after, and cause for failed sealed quota writes', async () => {
+  it('preserves status, retry-after, and cause for failed sealed quota reads', async () => {
     const cause = {
       response: {
         status: 429,
@@ -106,22 +162,31 @@ describe('ApiClient connected services v2', () => {
         data: { error: 'rate_limited' },
       },
     };
-    mockPost.mockRejectedValue(cause);
+    mockGet.mockRejectedValue(cause);
 
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
     } as any);
 
-    await expect(api.registerConnectedServiceQuotaSnapshotSealed({
+    await expect(api.getConnectedServiceQuotaSnapshotSealed({
       serviceId: 'openai-codex',
       profileId: 'work',
-      sealed: { format: 'account_scoped_v1', ciphertext: 'cXVvdGEtY2lwaGVydGV4dA==' },
-      metadata: { fetchedAt: 1, staleAfterMs: 300_000, status: 'ok' },
     })).rejects.toMatchObject({
       status: 429,
       retryAfterMs: 2_000,
       cause,
+    });
+    expect(logger.debug).toHaveBeenCalledTimes(1);
+    expect((logger.debug as any).mock.calls[0]?.[0]).toContain('temporarily unavailable');
+    expect((logger.debug as any).mock.calls[0]?.[0]).not.toContain('[ERROR]');
+    expect((logger.debug as any).mock.calls[0]?.[1]).toMatchObject({
+      classification: {
+        kind: 'rate_limited',
+        retryable: true,
+        statusCode: 429,
+        retryAfterMs: 2_000,
+      },
     });
   });
 
@@ -167,6 +232,7 @@ describe('ApiClient connected services v2', () => {
           policy: { v: 1 },
           activeProfileId: 'work',
           generation: 3,
+          runtimeStateRevision: 0,
           state: { status: 'ready', lastSwitchAt: null },
           createdAt: 1,
           updatedAt: 2,
@@ -246,19 +312,34 @@ describe('ApiClient connected services v2', () => {
   });
 
   it('sends owner ids when acquiring connected service refresh leases', async () => {
-    mockPost.mockResolvedValue({ status: 200, data: { acquired: true, leaseUntil: 2_000 } });
+    mockPost.mockResolvedValue({
+      status: 200,
+      data: {
+        acquired: true,
+        leaseUntil: 2_000,
+        ownerId: 'machine-1:daemon-a',
+        credentialRevision: 'csr_abcdefghijklmnopqrstuv',
+      },
+    });
 
     const api = await ApiClient.create({
       token: 'happy-token',
       encryption: { type: 'legacy' as const, secret: new Uint8Array(32) },
     } as any);
 
-    await api.acquireConnectedServiceRefreshLease({
+    const lease = await api.acquireConnectedServiceRefreshLease({
       serviceId: 'openai-codex',
       profileId: 'work',
       machineId: 'machine-1',
       ownerId: 'machine-1:daemon-a',
       leaseMs: 10_000,
+    });
+
+    expect(lease).toEqual({
+      acquired: true,
+      leaseUntil: 2_000,
+      ownerId: 'machine-1:daemon-a',
+      credentialRevision: 'csr_abcdefghijklmnopqrstuv',
     });
 
     expect(axios.post).toHaveBeenCalledWith(
@@ -284,6 +365,7 @@ describe('ApiClient connected services v2', () => {
           policy: { v: 1 },
           activeProfileId: 'backup',
           generation: 4,
+          runtimeStateRevision: 0,
           state: { status: 'ready', lastSwitchAt: 10 },
           createdAt: 1,
           updatedAt: 2,
@@ -395,7 +477,10 @@ describe('ApiClient connected services v2', () => {
           profiles: [{ profileId: 'new', status: 'connected', kind: 'oauth' }],
         },
       });
-    mockPost.mockResolvedValue({ status: 200, data: { success: true } });
+    mockPost.mockResolvedValue({
+      status: 200,
+      data: { success: true, credentialRevision: 'csr_abcdefghijklmnopqrstuv' },
+    });
 
     const api = await ApiClient.create({
       token: 'happy-token',

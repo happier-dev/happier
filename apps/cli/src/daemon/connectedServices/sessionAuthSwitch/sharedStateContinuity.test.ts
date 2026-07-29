@@ -43,10 +43,18 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
       vendorResumeId: 'resume-id',
       cwd: '/tmp/project',
       warnings: ['codex_shared_state_required'],
-    } as any)).resolves.toEqual({
+    } as any)).resolves.toMatchObject({
       mode: 'unsupported',
       errorCode: 'provider_session_state_unavailable_for_resume',
       warnings: ['codex_shared_state_required', 'codex_session_file_not_found'],
+      diagnostics: {
+        materializationIdentityId: 'csm_1',
+        targetMaterializedRoot: '/tmp/materialized',
+        vendorResumeId: 'resume-id',
+        cwd: '/tmp/project',
+        candidatePersistedSessionFile: null,
+        reachabilityMissReason: 'codex_session_file_not_found',
+      },
     });
   });
 
@@ -68,7 +76,7 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
 
     const materializedRoot = await mkdtemp(join(tmpdir(), 'happier-codex-shared-state-'));
     tempDirs.push(materializedRoot);
-    const rolloutDir = join(materializedRoot, 'codex-home', 'sessions', '2026', '05', '28');
+    const rolloutDir = join(materializedRoot, 'sessions', '2026', '05', '28');
     const rolloutPath = join(rolloutDir, 'rollout-2026-05-28-resume-id.jsonl');
     await mkdir(rolloutDir, { recursive: true });
     await writeFile(rolloutPath, '{}\n');
@@ -80,7 +88,7 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
       serviceId: 'openai-codex',
       targetMaterializedRoot: materializedRoot,
       targetMaterializedEnv: {
-        CODEX_HOME: join(materializedRoot, 'codex-home'),
+        CODEX_HOME: materializedRoot,
       },
       materializationIdentity: { v: 1, id: 'csm_1' },
       vendorResumeId: 'resume-id',
@@ -119,10 +127,18 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
       materializationIdentity: { v: 1, id: 'csm_1' },
       vendorResumeId: 'pi-session-1',
       cwd: '/tmp/project',
-    } as any)).resolves.toEqual({
+    } as any)).resolves.toMatchObject({
       mode: 'unsupported',
       errorCode: 'provider_session_state_unavailable_for_resume',
       warnings: ['pi_session_state_sharing_required', 'pi_session_file_not_found'],
+      diagnostics: {
+        materializationIdentityId: 'csm_1',
+        targetMaterializedRoot: '/tmp/materialized',
+        vendorResumeId: 'pi-session-1',
+        cwd: '/tmp/project',
+        candidatePersistedSessionFile: null,
+        reachabilityMissReason: 'pi_session_file_not_found',
+      },
     });
   });
 

@@ -6,13 +6,50 @@ import { describe, expect, it } from 'vitest';
 
 import { createTempDirSync } from '../src/testkit/fs/tempDir';
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
-import { syncPackageDist } from './syncPackageDist.mjs';
+import { atomicPromoteDirectorySync, syncPackageDist } from './syncPackageDist.mjs';
 
 const workspaceBundleLockModulePath = fileURLToPath(
   new URL('../../../scripts/workspaces/workspaceBundleLock.mjs', import.meta.url),
 );
 
 describe('syncPackageDist', () => {
+  it('retries transient Windows rename locks while preserving atomic promotion', () => {
+    const packageRoot = createTempDirSync('happier-cli-atomic-promote-windows-retry-');
+    try {
+      const sourceDir = join(packageRoot, 'staging');
+      const targetDir = join(packageRoot, 'dist');
+      const backupDir = join(packageRoot, 'backup');
+      mkdirSync(sourceDir, { recursive: true });
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(sourceDir, 'index.mjs'), 'export const next = true;\n', 'utf8');
+      writeFileSync(join(targetDir, 'index.mjs'), 'export const previous = true;\n', 'utf8');
+      let transientFailures = 0;
+
+      atomicPromoteDirectorySync({
+        sourceDir,
+        targetDir,
+        backupDir,
+        platform: 'win32',
+        waitSync() {},
+        renameSync(from, to) {
+          if (from === sourceDir && to === targetDir && transientFailures === 0) {
+            transientFailures += 1;
+            const error = new Error('resource busy') as NodeJS.ErrnoException;
+            error.code = 'EBUSY';
+            throw error;
+          }
+          renameSync(from, to);
+        },
+      });
+
+      expect(transientFailures).toBe(1);
+      expect(readFileSync(join(targetDir, 'index.mjs'), 'utf8')).toBe('export const next = true;\n');
+      expect(existsSync(backupDir)).toBe(false);
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true });
+    }
+  });
+
   it('preserves the previous package-dist when replacement copy fails', () => {
     const packageRoot = createTempDirSync('happier-cli-sync-package-dist-');
     try {

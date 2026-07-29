@@ -1,5 +1,4 @@
 import type { Credentials } from '@/persistence';
-import { decodeBase64, decrypt } from '@/api/encryption';
 import { logger } from '@/ui/logger';
 import { openAccountScopedBlobCiphertext } from '@happier-dev/protocol';
 
@@ -34,40 +33,8 @@ export async function decryptAccountSettingsCiphertext(params: Readonly<{
     return opened.value as Record<string, unknown>;
   }
 
-  const key =
-    credentials.encryption.type === 'legacy'
-      ? credentials.encryption.secret
-      : credentials.encryption.machineKey;
-  const variant = credentials.encryption.type === 'legacy' ? 'legacy' : 'dataKey';
-
-  try {
-    const decoded = decodeBase64(ciphertext);
-    if (isAccountSettingsDebugEnabled()) {
-      logger.debug('[accountSettings] decrypt: start', {
-        encryptionType: credentials.encryption.type,
-        variant,
-        decodedLength: decoded.length,
-        firstByte: decoded.length ? decoded[0] : null,
-        looksLikeAesV0: decoded.length ? decoded[0] === 0 : null,
-      });
-    }
-    const decrypted = decrypt(key, variant, decoded) as unknown;
-    if (!decrypted || typeof decrypted !== 'object' || Array.isArray(decrypted)) return null;
-    if (isAccountSettingsDebugEnabled()) {
-      logger.debug('[accountSettings] decrypt: success', {
-        encryptionType: credentials.encryption.type,
-        variant,
-        keyCount: Object.keys(decrypted as Record<string, unknown>).length,
-      });
-    }
-    return decrypted as Record<string, unknown>;
-  } catch {
-    if (isAccountSettingsDebugEnabled()) {
-      logger.debug('[accountSettings] decrypt: threw', {
-        encryptionType: credentials.encryption.type,
-        variant,
-      });
-    }
-    return null;
-  }
+  // Historical untagged settings/templates shared the same raw key and carried
+  // no authenticated domain. Admitting any raw object here would allow an
+  // automation payload to be interpreted as account settings.
+  return null;
 }

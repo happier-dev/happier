@@ -80,7 +80,6 @@ describe('runPermissionModePromptLoop assistant text snapshots', () => {
         async cancelTurn() {},
         async updateSessionRuntimeConfig() {},
         async resetOrDisposeRuntime() {},
-        async startOrLoadSession() {},
         readSessionIdentity: () => ({ sessionId: 'runtime-session' }),
       },
       createOverrideSynchronizer: () => ({

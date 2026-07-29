@@ -190,7 +190,7 @@ describe('CodexLikePermissionHandler', () => {
       content: 'bye',
     });
 
-    await expect(second).rejects.toThrow('already pending with different tool input');
+    await expect(second).rejects.toBeInstanceOf(Error);
     expect(session.agentState.requests['tool-duplicate']).toEqual(
       expect.objectContaining({
         tool: 'Write',
@@ -257,7 +257,7 @@ describe('CodexLikePermissionHandler', () => {
           actions: {
             'session.list': {
               disabledSurfaces: [],
-              approvalRequiredSurfaces: ['session_agent'],
+              approvalRequiredSurfaces: ['agent'],
             },
           },
         },

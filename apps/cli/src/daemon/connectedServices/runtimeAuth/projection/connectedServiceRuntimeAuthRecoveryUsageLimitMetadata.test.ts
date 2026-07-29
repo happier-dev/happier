@@ -46,6 +46,10 @@ function buildActionRequiredReport(input: Readonly<{
     },
     statusCode: 'recovery_action_required',
     statusMessage: null,
+    recoveryReceipt: {
+      reportId: 'runtime-auth-report:action-required-1',
+      attemptId: 'runtime-auth-attempt:action-required-1',
+    },
   } as ConnectedServiceRuntimeAuthFailureDaemonReport;
 }
 
@@ -61,6 +65,7 @@ function buildWaitingReport(
         status: 'recovery_retry_scheduled',
         recovery: {
           status: 'scheduled',
+          attemptId: 'runtime-auth-attempt:exact-1',
           retryable: true,
           attemptCount: 1,
           maxAttempts: 3,
@@ -94,6 +99,7 @@ describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater non-group action-req
     expect(next[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]).toMatchObject({
       status: 'waiting',
       nextCheckAtMs: 1_700_000_060_000,
+      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:action-required-1',
     });
   });
 
@@ -127,17 +133,22 @@ describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater non-group action-req
 });
 
 describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater resume prompt mode projection', () => {
-  it('uses the explicit daemon report resume prompt mode over account settings', () => {
+  it('projects the stable runtime-auth attempt identity used by exact cancellation', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      report: buildWaitingReport('standard'),
+      classification,
+    });
+
+    const next = updater!(asMetadata({})) as Record<string, unknown>;
+    expect(next[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]).toMatchObject({
+      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
+    });
+  });
+
+  it('uses the durable daemon report resume prompt mode', () => {
     const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
       report: buildWaitingReport('custom'),
       classification,
-      readAccountSettings: () => ({
-        usageLimitRecoverySettingsV1: {
-          autoCheck: true,
-          resumePromptMode: 'off',
-          customResumePrompt: null,
-        },
-      }),
     });
     expect(updater).not.toBeNull();
 
@@ -146,19 +157,23 @@ describe('buildRuntimeAuthUsageLimitRecoveryMetadataUpdater resume prompt mode p
     expect(readWrittenResumePromptMode(next)).toBe('custom');
   });
 
-  it('falls back to account settings when the report resume prompt mode is malformed', () => {
+  it('fails malformed durable resume prompt mode closed to standard without consulting mutable settings', () => {
     const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
       report: buildWaitingReport('later'),
       classification,
-      readAccountSettings: () => ({
-        usageLimitRecoverySettingsV1: {
-          autoCheck: true,
-          resumePromptMode: 'off',
-          customResumePrompt: null,
-        },
-      }),
     });
     expect(updater).not.toBeNull();
+
+    const next = updater!(asMetadata({}));
+
+    expect(readWrittenResumePromptMode(next)).toBe('standard');
+  });
+
+  it('keeps the persisted report mode when account settings change before projection', () => {
+    const updater = buildRuntimeAuthUsageLimitRecoveryMetadataUpdater({
+      report: buildWaitingReport('off'),
+      classification,
+    });
 
     const next = updater!(asMetadata({}));
 

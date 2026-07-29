@@ -6,15 +6,29 @@ import { join } from 'node:path';
 
 import { AcpBackend } from '@/agent/acp/AcpBackend';
 import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
-import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
+import {
+  createRuntimeOverrideSynchronizers,
+  type RuntimeOverrideTarget,
+} from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
 import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
-import { configuration } from '@/configuration';
 import type { PermissionMode } from '@/api/types';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createAcpTestTransportHandler } from '@/agent/acp/testkit/subprocessHarness';
+
+function createLegacyAcpOverrideTarget(
+  runtime: ReturnType<typeof createAcpRuntime>,
+): RuntimeOverrideTarget {
+  return {
+    setSessionMode: async (modeId) => await runtime.setSessionMode(modeId),
+    setSessionModelSelection: async (selection) =>
+      await runtime.setSessionModel(selection.modelId),
+    setSessionConfigOption: async (configId, value) =>
+      await runtime.setSessionConfigOption(configId, value),
+  };
+}
 
 function writeFakeOpenCodeAcpAgentScript(params: { dir: string }): string {
   const scriptPath = join(params.dir, 'fake-opencode-acp-agent.mjs');
@@ -119,16 +133,6 @@ function createModeQueue() {
 }
 
 describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () => {
-  const originalIdleWakePollIntervalMs = configuration.pendingQueueIdleWakePollIntervalMs;
-
-  beforeEach(() => {
-    (configuration as any).pendingQueueIdleWakePollIntervalMs = 10;
-  });
-
-  afterEach(() => {
-    (configuration as any).pendingQueueIdleWakePollIntervalMs = originalIdleWakePollIntervalMs;
-  });
-
   it('applies an ACP session mode override after the first turn becomes idle', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-runtime-loop-'));
     const scriptPath = writeFakeOpenCodeAcpAgentScript({ dir });
@@ -262,7 +266,7 @@ describe('runPermissionModePromptLoop with real ACP runtime idle overrides', () 
         createRuntimeOverrideSynchronizers({
           agentTargetKey: 'backend:codex',
           session: session as any,
-          runtime,
+          runtime: createLegacyAcpOverrideTarget(runtime),
           isStarted,
         }),
       messageBuffer: new MessageBuffer(),

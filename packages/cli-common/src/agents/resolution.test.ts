@@ -1,6 +1,6 @@
 import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, win32 } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { legacyCustomAcpCompat } from '@happier-dev/agents';
@@ -64,15 +64,21 @@ describe('resolveAgentCliCommand', () => {
     Object.defineProperty(process, 'platform', { ...originalPlatformDescriptor, value: 'win32' });
 
     const root = join(tmpdir(), `happier-cli-common-agent-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    const homeBinDir = join(root, 'home', 'bin');
-    mkdirSync(homeBinDir, { recursive: true });
-    const cmdShimPath = join(homeBinDir, 'codex.cmd');
+    mkdirSync(root, { recursive: true });
+    const isWindowsHost = originalPlatformDescriptor.value === 'win32';
+    const windowsHome = isWindowsHost ? win32.join(root, 'home') : 'C:\\Users\\happier-test';
+    const cmdShimPath = win32.join(windowsHome, 'bin', 'codex.cmd');
+    if (isWindowsHost) {
+      mkdirSync(win32.dirname(cmdShimPath), { recursive: true });
+    } else {
+      process.chdir(root);
+    }
     writeFileSync(cmdShimPath, '@echo off\r\n', 'utf8');
     chmodSync(cmdShimPath, 0o755);
 
     const resolved = resolveAgentCliCommand('codex', {
       processEnv: {
-        HOME: join(root, 'home'),
+        USERPROFILE: windowsHome,
         PATH: '',
         HAPPIER_CODEX_PATH: '~/bin/codex',
       },

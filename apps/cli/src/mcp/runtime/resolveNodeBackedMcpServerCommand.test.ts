@@ -31,6 +31,9 @@ vi.mock('@/packagedRuntime/js/requireJavaScriptRuntimeExecutable', () => ({
 }));
 
 describe('resolveNodeBackedMcpServerCommand', () => {
+  const originalArgv = [...process.argv];
+  const originalExecPath = process.execPath;
+
   beforeEach(() => {
     vi.mocked(existsSync).mockReset();
     vi.mocked(existsSync).mockReturnValue(false);
@@ -39,6 +42,11 @@ describe('resolveNodeBackedMcpServerCommand', () => {
   });
 
   afterEach(() => {
+    process.argv = [...originalArgv];
+    Object.defineProperty(process, 'execPath', {
+      value: originalExecPath,
+      configurable: true,
+    });
     vi.resetModules();
   });
 
@@ -91,6 +99,39 @@ describe('resolveNodeBackedMcpServerCommand', () => {
         '/repo/package-dist/mcp/bridges/remoteMcpStdioBridge.mjs',
         '--url',
         'http://127.0.0.1:4010/',
+      ],
+    });
+  });
+
+  it('uses the launched runner snapshot entrypoint for Node-backed MCP bridges', async () => {
+    Object.defineProperty(process, 'execPath', {
+      value: '/usr/local/bin/node',
+      configurable: true,
+    });
+    requireJavaScriptRuntimeExecutableMock.mockResolvedValue('/usr/local/bin/node');
+    process.argv = [
+      '/usr/local/bin/node',
+      '/repo/apps/cli/.runner-snapshots/5fa3abbb60ff1860/index.mjs',
+    ];
+    vi.mocked(existsSync).mockImplementation((pathLike) => {
+      const path = String(pathLike);
+      return path === '/repo/apps/cli/.runner-snapshots/5fa3abbb60ff1860/backends/codex/happyMcpStdioBridge.mjs';
+    });
+
+    await expect(
+      resolveNodeBackedMcpServerCommand({
+        distEntrypointSegments: ['backends', 'codex', 'happyMcpStdioBridge.mjs'],
+        sourceEntrypointSegments: ['backends', 'codex', 'happyMcpStdioBridge.ts'],
+        args: ['--session-id', 'cmrae5m2x'],
+      }),
+    ).resolves.toEqual({
+      command: process.execPath,
+      args: [
+        '--no-warnings',
+        '--no-deprecation',
+        '/repo/apps/cli/.runner-snapshots/5fa3abbb60ff1860/backends/codex/happyMcpStdioBridge.mjs',
+        '--session-id',
+        'cmrae5m2x',
       ],
     });
   });

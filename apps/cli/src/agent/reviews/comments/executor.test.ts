@@ -5,13 +5,9 @@ import tweetnacl from 'tweetnacl';
 
 import { createCliReviewCommentActionExecutorFromCredentials } from './executor';
 import {
-    PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1,
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
-    PluginInstallationManifestPublisherHeaderV1Schema,
     ReviewCommentPrincipalHeaderV1Schema,
-    createPluginInstallationManifestPublisherSigningInputV1,
     createReviewCommentPrincipalSigningInputV1,
-    stringifyPluginInstallationManifestCanonicalJsonV1,
     stringifyReviewCommentPrincipalCanonicalJsonV1,
 } from '@happier-dev/protocol';
 
@@ -30,7 +26,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         vi.clearAllMocks();
     });
 
-    it('signs plugin review-comment principal headers with the machine installation identity', async () => {
+    it('signs host-derived agent review-comment principal headers with the machine installation identity', async () => {
         const installationKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
         const executor = createCliReviewCommentActionExecutorFromCredentials({
             credentials: {
@@ -60,7 +56,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
                     body: 'body',
                     bodyVersion: 1,
                     edits: [],
-                    author: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
+                    author: { kind: 'agent', agentId: 'claude', sessionId: 'session-1' },
                     state: 'proposed',
                     flags: {},
                     dispositions: {},
@@ -69,7 +65,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
                         transitionId: 'transition-1',
                         toState: 'proposed',
                         transitionedAt: 1,
-                        transitionedBy: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
+                        transitionedBy: { kind: 'agent', agentId: 'claude', sessionId: 'session-1' },
                         serverRevision: 1,
                     }],
                     createdAt: 1,
@@ -86,11 +82,31 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
             body: 'body',
             clientMutationId: 'mutation-1',
         };
+        const currentIntent = {
+            v: 1 as const,
+            kind: 'execution_run_host_action' as const,
+            actionId: 'reviews.comments.create' as const,
+            subjectFingerprint: 'a'.repeat(64),
+            effectBodySha256Base64Url: createHash('sha256')
+                .update(stringifyReviewCommentPrincipalCanonicalJsonV1(requestBody))
+                .digest('base64url'),
+            sessionId: 'session-1',
+            runId: 'run-1',
+            callId: 'call-1',
+            profileId: 'acme.review/review',
+            pluginId: 'acme.review',
+            agentId: 'claude',
+            projectId: 'project-1',
+            workspaceId: 'workspace-1',
+            immutableGenerationId: 'generation-1',
+            packageDigest: `sha256:${'a'.repeat(64)}`,
+            manifestDigest: `sha256:${'b'.repeat(64)}`,
+        };
 
         await executor('reviews.comments.create', requestBody, {
             principal: {
-                actor: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
-                grants: ['reviews.comments.write.direct'],
+                actor: { kind: 'agent', agentId: 'claude', sessionId: 'session-1' },
+                currentIntent,
             },
         });
 
@@ -98,7 +114,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         const encoded = headers?.[REVIEW_COMMENT_PRINCIPAL_HEADER_V1];
         expect(encoded).toEqual(expect.any(String));
         const decoded = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(encoded!, 'base64url').toString('utf8')));
-        expect(decoded.grants).toEqual([]);
+        expect(decoded.currentIntent).toEqual(currentIntent);
         expect(decoded.proof).toEqual(expect.objectContaining({
             v: 1,
             alg: 'ed25519-machine-installation-v1',
@@ -117,6 +133,7 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         expect(tweetnacl.sign.detached.verify(
             createReviewCommentPrincipalSigningInputV1({
                 actor: decoded.actor,
+                currentIntent: decoded.currentIntent,
                 proof: {
                     v: decoded.proof!.v,
                     alg: decoded.proof!.alg,
@@ -134,45 +151,79 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         )).toBe(true);
     });
 
-    it('publishes a generic pending grant request when plugin direct review-comment write is denied', async () => {
-        axiosPostMock
-            .mockResolvedValueOnce({
-                status: 400,
-                data: {
-                    error: 'review_comment_direct_write_permission_required',
-                    message: 'reviews.comments.write.direct is required',
+    it('revalidates the host-derived principal immediately before signing and sending the effect', async () => {
+        const installationKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+        const events: string[] = [];
+        const executor = createCliReviewCommentActionExecutorFromCredentials({
+            credentials: {
+                token: 'token-1',
+                encryption: { type: 'legacy', secret: new Uint8Array([1]) },
+            },
+            resolvePrincipalSigningContext: async () => {
+                events.push('signing-context');
+                return {
+                    machineId: 'machine-1',
+                    installationId: 'installation-1',
+                    privateKeyBase64Url: Buffer.from(installationKeyPair.secretKey).toString('base64url'),
+                };
+            },
+            assertPrincipalCurrent: () => {
+                events.push('currentness-check');
+                if (events.filter((event) => event === 'currentness-check').length === 2) {
+                    throw new Error('execution_run_host_action_stale');
+                }
+            },
+        });
+
+        await expect(executor('reviews.comments.create', {
+            projectId: 'project-1',
+            anchor: { kind: 'file', filePath: 'src/a.ts' },
+            snapshot: { kind: 'too_large', filePath: 'src/a.ts', sizeBytes: 2, capBytes: 1, capturedAt: 1 },
+            body: 'body',
+            clientMutationId: 'mutation-1',
+        }, {
+            principal: {
+                actor: { kind: 'agent', agentId: 'claude', sessionId: 'session-1' },
+                currentIntent: {
+                    v: 1,
+                    kind: 'execution_run_host_action',
+                    actionId: 'reviews.comments.create',
+                    subjectFingerprint: 'a'.repeat(64),
+                    effectBodySha256Base64Url: 'b'.repeat(43),
+                    sessionId: 'session-1',
+                    runId: 'run-1',
+                    callId: 'call-1',
+                    profileId: 'acme.review/review',
+                    pluginId: 'acme.review',
+                    agentId: 'claude',
+                    projectId: 'project-1',
+                    workspaceId: 'workspace-1',
+                    immutableGenerationId: 'generation-1',
+                    packageDigest: `sha256:${'c'.repeat(64)}`,
+                    manifestDigest: `sha256:${'d'.repeat(64)}`,
                 },
-            })
-            .mockResolvedValueOnce({
-                status: 200,
-                data: {
-                    pendingRequest: {
-                        v: 1,
-                        id: 'request-1',
-                        accountId: 'account-1',
-                        pluginId: 'happier.review.coderabbit',
-                        capability: 'reviews.comments.write.direct',
-                        targetScope: { kind: 'project', projectId: 'project-1' },
-                        authoritySource: {
-                            kind: 'machine_installation',
-                            machineId: 'machine-1',
-                            installationId: 'installation-1',
-                        },
-                        requester: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
-                        reason: 'Plugin requested direct review-comment write access.',
-                        status: 'pending',
-                        createdAt: 1,
-                        updatedAt: 1,
-                    },
-                },
-            });
-        const grantRequestKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+            },
+        })).rejects.toThrow('execution_run_host_action_stale');
+
+        expect(events).toEqual(['signing-context', 'currentness-check', 'currentness-check']);
+        expect(axiosPostMock).not.toHaveBeenCalled();
+    });
+
+    it('preserves direct-write denial without publishing a legacy plugin grant request', async () => {
+        axiosPostMock.mockResolvedValueOnce({
+            status: 400,
+            data: {
+                error: 'review_comment_direct_write_permission_required',
+                message: 'reviews.comments.write.direct is required',
+            },
+        });
+        const signingKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
         const executor = createCliReviewCommentActionExecutorFromCredentials({
             credentials: { token: 'token-1', encryption: { type: 'legacy', secret: new Uint8Array([1]) } },
             resolvePrincipalSigningContext: async () => ({
                 machineId: 'machine-1',
                 installationId: 'installation-1',
-                privateKeyBase64Url: Buffer.from(grantRequestKeyPair.secretKey).toString('base64url'),
+                privateKeyBase64Url: Buffer.from(signingKeyPair.secretKey).toString('base64url'),
             }),
         });
 
@@ -186,68 +237,9 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         }, {
             principal: {
                 actor: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
-                grants: [],
             },
         })).rejects.toMatchObject({ code: 'review_comment_direct_write_permission_required' });
 
-        expect(axiosPostMock).toHaveBeenNthCalledWith(
-            2,
-            expect.stringContaining('/v1/plugins/permissions/grants/request'),
-            {
-                pluginId: 'happier.review.coderabbit',
-                capability: 'reviews.comments.write.direct',
-                targetScope: { kind: 'project', projectId: 'project-1' },
-                requester: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
-                reason: 'Plugin requested direct review-comment write access.',
-            },
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    Authorization: 'Bearer token-1',
-                }),
-            }),
-        );
-        const grantHeaders = axiosPostMock.mock.calls[1]?.[2]?.headers as Record<string, string> | undefined;
-        const publisherHeader = grantHeaders?.[PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1];
-        expect(publisherHeader).toEqual(expect.any(String));
-        const decoded = PluginInstallationManifestPublisherHeaderV1Schema.parse(
-            JSON.parse(Buffer.from(publisherHeader!, 'base64url').toString('utf8')),
-        );
-        expect(decoded.proof).toEqual(expect.objectContaining({
-            v: 1,
-            alg: 'ed25519-machine-installation-v1',
-            machineId: 'machine-1',
-            installationId: 'installation-1',
-            method: 'POST',
-            path: '/v1/plugins/permissions/grants/request',
-            nonce: expect.any(String),
-            signatureBase64Url: expect.any(String),
-        }));
-        const requestBody = {
-            pluginId: 'happier.review.coderabbit',
-            capability: 'reviews.comments.write.direct',
-            targetScope: { kind: 'project', projectId: 'project-1' },
-            requester: { kind: 'plugin', pluginId: 'happier.review.coderabbit' },
-            reason: 'Plugin requested direct review-comment write access.',
-        };
-        expect(decoded.proof.bodySha256Base64Url).toBe(createHash('sha256')
-            .update(stringifyPluginInstallationManifestCanonicalJsonV1(requestBody))
-            .digest('base64url'));
-        expect(tweetnacl.sign.detached.verify(
-            createPluginInstallationManifestPublisherSigningInputV1({
-                proof: {
-                    v: decoded.proof.v,
-                    alg: decoded.proof.alg,
-                    machineId: decoded.proof.machineId,
-                    installationId: decoded.proof.installationId,
-                    issuedAt: decoded.proof.issuedAt,
-                    nonce: decoded.proof.nonce,
-                    method: decoded.proof.method,
-                    path: decoded.proof.path,
-                    bodySha256Base64Url: decoded.proof.bodySha256Base64Url,
-                },
-            }),
-            Buffer.from(decoded.proof.signatureBase64Url, 'base64url'),
-            grantRequestKeyPair.publicKey,
-        )).toBe(true);
+        expect(axiosPostMock).toHaveBeenCalledTimes(1);
     });
 });

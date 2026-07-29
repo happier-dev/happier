@@ -21,6 +21,46 @@ describe('isDaemonProcessForCurrentRuntimeRoot', () => {
         expect(isDaemonProcessForCurrentRuntimeRoot(launcher, runtimeRoot)).toBe(false);
     });
 
+    it('does not treat the packed CLI re-exec bootstrap parent as a running daemon owner', () => {
+        const bootstrapParent: HappyProcessInfo = {
+            pid: otherPid,
+            command: `/runtime/node ${runtimeRoot}/bin/happier.mjs daemon start-sync`,
+            type: 'daemon',
+        };
+        expect(isDaemonProcessForCurrentRuntimeRoot(bootstrapParent, runtimeRoot)).toBe(false);
+    });
+
+    it('recognizes the dev wrapper bootstrap parent on Windows command lines', () => {
+        const windowsRuntimeRoot = 'c:/users/test/dev/happier/apps/cli';
+        const bootstrapParent: HappyProcessInfo = {
+            pid: otherPid,
+            command: String.raw`C:\runtime\node.exe "C:\Users\Test\Dev\Happier\apps\cli\bin\happier-dev.mjs" daemon start-sync --takeover`,
+            type: 'daemon',
+        };
+        expect(
+            isDaemonProcessForCurrentRuntimeRoot(bootstrapParent, windowsRuntimeRoot),
+        ).toBe(false);
+    });
+
+    it('still treats the packed CLI runtime imported by the bootstrap child as an owner', () => {
+        const importedRuntime: HappyProcessInfo = {
+            pid: otherPid,
+            command: [
+                '/runtime/node',
+                '--no-warnings',
+                '--no-deprecation',
+                `${runtimeRoot}/bin/_importRuntimeEntrypoint.mjs`,
+                `${runtimeRoot}/bin/happier.mjs`,
+                runtimeRoot,
+                'index.mjs',
+                'daemon',
+                'start-sync',
+            ].join(' '),
+            type: 'daemon',
+        };
+        expect(isDaemonProcessForCurrentRuntimeRoot(importedRuntime, runtimeRoot)).toBe(true);
+    });
+
     it('treats a real `daemon start-sync` process for the runtime root as an owner', () => {
         const daemon: HappyProcessInfo = {
             pid: otherPid,
@@ -28,6 +68,25 @@ describe('isDaemonProcessForCurrentRuntimeRoot', () => {
             type: 'dev-daemon',
         };
         expect(isDaemonProcessForCurrentRuntimeRoot(daemon, runtimeRoot)).toBe(true);
+    });
+
+    it('preserves POSIX path case when deciding daemon ownership', () => {
+        const caseDistinctRoot: HappyProcessInfo = {
+            pid: otherPid,
+            command: '/runtime/node /Users/Test/dev/happier/apps/cli/src/index.ts daemon start-sync',
+            type: 'dev-daemon',
+        };
+        expect(isDaemonProcessForCurrentRuntimeRoot(caseDistinctRoot, runtimeRoot)).toBe(false);
+    });
+
+    it('matches Windows runtime roots case-insensitively', () => {
+        const windowsRuntimeRoot = 'c:/users/test/dev/happier/apps/cli';
+        const daemon: HappyProcessInfo = {
+            pid: otherPid,
+            command: String.raw`C:\runtime\node.exe C:\Users\Test\Dev\Happier\apps\cli\src\index.ts daemon start-sync`,
+            type: 'dev-daemon',
+        };
+        expect(isDaemonProcessForCurrentRuntimeRoot(daemon, windowsRuntimeRoot)).toBe(true);
     });
 
     it('ignores the current process and non-daemon process types', () => {
@@ -53,12 +112,24 @@ describe('isDaemonProcessForCurrentRuntimeRoot', () => {
         };
         expect(isDaemonProcessForCurrentRuntimeRoot(otherRoot, runtimeRoot)).toBe(false);
     });
+
+    it('ignores a start-sync daemon rooted at a sibling path with the same prefix', () => {
+        const siblingRoot: HappyProcessInfo = {
+            pid: otherPid,
+            command: `/runtime/node ${runtimeRoot}-old/src/index.ts daemon start-sync`,
+            type: 'dev-daemon',
+        };
+        expect(isDaemonProcessForCurrentRuntimeRoot(siblingRoot, runtimeRoot)).toBe(false);
+    });
 });
 
 describe('evaluateCurrentDaemonOwner', () => {
     const envScope = createEnvKeyScope([
         'HAPPIER_HOME_DIR',
         'HAPPIER_ACTIVE_SERVER_ID',
+        'HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID',
+        'HAPPIER_SERVER_URL',
+        'HAPPIER_WEBAPP_URL',
         'HAPPIER_PUBLIC_RELEASE_CHANNEL',
         'HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK',
     ]);
@@ -91,6 +162,108 @@ describe('evaluateCurrentDaemonOwner', () => {
                         daemonOwnershipEnvironmentVariables: Record<string, string>;
                     },
                 ],
+            }));
+
+            try {
+                const { evaluateCurrentDaemonOwner } = await import('./evaluateCurrentDaemonOwner');
+                await expect(evaluateCurrentDaemonOwner()).resolves.toEqual({ kind: 'none' });
+            } finally {
+                vi.doUnmock('@/daemon/doctor');
+            }
+        });
+    });
+
+    it('finds a state-less daemon with the same lifecycle scope across endpoint profile and URL changes', async () => {
+        await withTempDir('happier-daemon-owner-lifecycle-match-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'current-endpoint-profile',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
+                HAPPIER_SERVER_URL: 'http://127.0.0.1:43127',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK: '1',
+            });
+            vi.resetModules();
+            vi.doMock('@/daemon/doctor', () => ({
+                findAllHappyProcesses: async () => [{
+                    pid: process.pid + 1000,
+                    command: `${process.execPath} ${process.cwd()}/apps/cli/src/index.ts daemon start-sync`,
+                    type: 'dev-daemon',
+                    daemonOwnershipEnvironmentVariables: {
+                        HAPPIER_HOME_DIR: homeDir,
+                        HAPPIER_ACTIVE_SERVER_ID: 'older-endpoint-profile',
+                        HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
+                        HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
+                    },
+                } satisfies HappyProcessInfo],
+            }));
+
+            try {
+                const { evaluateCurrentDaemonOwner } = await import('./evaluateCurrentDaemonOwner');
+                const evaluation = await evaluateCurrentDaemonOwner();
+                expect(evaluation.kind).toBe('conflict');
+                if (evaluation.kind === 'conflict') {
+                    expect(evaluation.owner.source).toBe('process');
+                }
+            } finally {
+                vi.doUnmock('@/daemon/doctor');
+            }
+        });
+    });
+
+    it('rejects a state-less daemon with a different explicit lifecycle scope despite the same endpoint profile', async () => {
+        await withTempDir('happier-daemon-owner-lifecycle-mismatch-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'shared-endpoint-profile',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK: '1',
+            });
+            vi.resetModules();
+            vi.doMock('@/daemon/doctor', () => ({
+                findAllHappyProcesses: async () => [{
+                    pid: process.pid + 1000,
+                    command: `${process.execPath} ${process.cwd()}/apps/cli/src/index.ts daemon start-sync`,
+                    type: 'dev-daemon',
+                    daemonOwnershipEnvironmentVariables: {
+                        HAPPIER_HOME_DIR: homeDir,
+                        HAPPIER_ACTIVE_SERVER_ID: 'shared-endpoint-profile',
+                        HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-other__id_default',
+                    },
+                } satisfies HappyProcessInfo],
+            }));
+
+            try {
+                const { evaluateCurrentDaemonOwner } = await import('./evaluateCurrentDaemonOwner');
+                await expect(evaluateCurrentDaemonOwner()).resolves.toEqual({ kind: 'none' });
+            } finally {
+                vi.doUnmock('@/daemon/doctor');
+            }
+        });
+    });
+
+    it('does not treat a scoped daemon as a released fallback when the caller has no lifecycle scope', async () => {
+        await withTempDir('happier-daemon-owner-lifecycle-missing-', async (homeDir) => {
+            envScope.patch({
+                HAPPIER_HOME_DIR: homeDir,
+                HAPPIER_ACTIVE_SERVER_ID: 'shared-endpoint-profile',
+                HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: undefined,
+                HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
+                HAPPIER_DAEMON_PROCESS_INVENTORY_FALLBACK: '1',
+            });
+            vi.resetModules();
+            vi.doMock('@/daemon/doctor', () => ({
+                findAllHappyProcesses: async () => [{
+                    pid: process.pid + 1000,
+                    command: `${process.execPath} ${process.cwd()}/apps/cli/src/index.ts daemon start-sync`,
+                    type: 'dev-daemon',
+                    daemonOwnershipEnvironmentVariables: {
+                        HAPPIER_HOME_DIR: homeDir,
+                        HAPPIER_ACTIVE_SERVER_ID: 'shared-endpoint-profile',
+                        HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_repo-current__id_default',
+                    },
+                } satisfies HappyProcessInfo],
             }));
 
             try {

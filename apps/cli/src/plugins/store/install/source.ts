@@ -1,24 +1,28 @@
-import { cp, mkdir, mkdtemp, readdir, stat, rm } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
+import { copyFile, mkdir, mkdtemp, stat, rm } from 'node:fs/promises';
+import { basename, join, resolve } from 'node:path';
 
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
-import { extractReleasePayloadRootFromArchive } from '@happier-dev/cli-common/firstPartyRuntime';
 
-import { createPluginStateStore, type PluginStateRecord } from '@/plugins/store/state';
-import { resolveInstalledPluginCurrentPath } from '@/plugins/store/installPaths';
+import {
+  cleanupStagedNpmCompatiblePluginArchive,
+  stageNpmCompatiblePluginArchive,
+  type StagedNpmCompatiblePluginArchive,
+} from '@/plugins/distribution/archive';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { resolveLocalPathPluginSource } from '@/plugins/discovery/sources/localPath';
-import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { downloadRemoteArchiveToTempFile } from './archive/download';
 import { resolveLocalPluginInstallTrust } from './trustPolicy';
 
-export type PluginInstallKind = 'path' | 'archive';
+export type PluginSourceInspectionKind = 'path' | 'archive';
 
-export type InstallPluginFromSourceResult =
+export type InspectPluginSourceResult =
   | Readonly<{
       ok: true;
       alreadyInstalled: boolean;
       pluginId: string;
-      sourceKind: PluginInstallKind;
+      sourceKind: PluginSourceInspectionKind;
       source: PluginSourceSpecV1;
       manifestVersion: string;
       manifestPath: string;
@@ -27,11 +31,11 @@ export type InstallPluginFromSourceResult =
     }>
   | Readonly<{
       ok: false;
-      errorCode: 'plugin_source_invalid' | 'plugin_install_failed' | 'plugin_already_installed';
+      errorCode: 'plugin_source_invalid' | 'plugin_install_failed' | 'plugin_install_conflict' | 'plugin_already_installed' | 'plugin_install_trust_required';
       errorMessage: string;
     }>;
 
-function inferPluginInstallKind(locator: string): PluginInstallKind {
+function inferPluginSourceInspectionKind(locator: string): PluginSourceInspectionKind {
   const normalizedLocator = locator.trim();
   if (!normalizedLocator) {
     return 'path';
@@ -60,34 +64,6 @@ function isRemoteArchiveLocator(locator: string): boolean {
   }
 }
 
-function createEnabledPluginState(
-  pluginSource: PluginSourceSpecV1,
-  installMode: PluginStateRecord['install']['mode'],
-  manifestVersion: string,
-  manifestDigest: string,
-  installedPath: string | null,
-  diagnostics: readonly PluginCompatibilityDiagnostic[] = [],
-): PluginStateRecord {
-  return {
-    source: pluginSource as PluginStateRecord['source'],
-    compatibility: {
-      status: 'compatible',
-      diagnostics: [...diagnostics],
-    },
-    install: {
-      mode: installMode,
-      manifestVersion,
-      manifestDigest,
-      installedPath,
-    },
-    state: {
-      enabled: true,
-      lastLoadedAtMs: Date.now(),
-      lastError: null,
-    },
-  };
-}
-
 function verifyExpectedManifestDigest(actualDigest: string, expectedDigest?: string | null): void {
   const normalizedExpected = typeof expectedDigest === 'string' ? expectedDigest.trim() : '';
   if (!normalizedExpected) {
@@ -98,69 +74,57 @@ function verifyExpectedManifestDigest(actualDigest: string, expectedDigest?: str
   }
 }
 
-async function assertDirectoryTreeContainsNoSymbolicLinks(rootPath: string): Promise<void> {
-  const pending = [rootPath];
-
-  while (pending.length > 0) {
-    const currentPath = pending.pop();
-    if (!currentPath) {
-      continue;
-    }
-
-    const entries = await readdir(currentPath, { withFileTypes: true });
-    for (const entry of entries) {
-      const entryPath = join(currentPath, entry.name);
-      if (entry.isSymbolicLink()) {
-        const relativePath = relative(rootPath, entryPath) || entry.name;
-        throw new Error(`Plugin archive payload contains unsupported symbolic link '${relativePath}'`);
-      }
-      if (entry.isDirectory()) {
-        pending.push(entryPath);
-      }
-    }
-  }
+function normalizeInspectedTrustPolicy(
+  trustPolicy: PluginSourceSpecV1['trustPolicy'],
+): PluginSourceSpecV1['trustPolicy'] {
+  return trustPolicy === 'untrusted' ? 'untrusted' : 'prompt';
 }
 
-async function materializeArchivePluginRoot(params: Readonly<{
+async function hashArchive(path: string): Promise<Readonly<{ byteLength: number; integrity: string }>> {
+  const hash = createHash('sha256');
+  let byteLength = 0;
+  for await (const chunk of createReadStream(path)) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    byteLength += bytes.byteLength;
+    hash.update(bytes);
+  }
+  return Object.freeze({
+    byteLength,
+    integrity: `sha256-${hash.digest('base64')}`,
+  });
+}
+
+async function stageArchivePluginSource(params: Readonly<{
   happyHomeDir: string;
   archivePath: string;
-  archiveName?: string;
-}>): Promise<Readonly<{ pluginRootPath: string; stagingDir: string }>> {
-  const store = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  await mkdir(store.paths.cacheDir, { recursive: true });
-  const stagingDir = await mkdtemp(join(store.paths.cacheDir, 'plugin-install-'));
-  try {
-    const archiveName = params.archiveName ?? basename(params.archivePath);
-    const pluginRootPath = await extractReleasePayloadRootFromArchive({
-      archivePath: params.archivePath,
-      archiveName,
-      extractDir: stagingDir,
-    });
-    return {
-      pluginRootPath,
-      stagingDir,
-    };
-  } catch (error) {
-    await rm(stagingDir, { recursive: true, force: true }).catch(() => undefined);
-    throw error;
+}>): Promise<StagedNpmCompatiblePluginArchive> {
+  const store = createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir });
+  const facts = await hashArchive(params.archivePath);
+  const staged = await stageNpmCompatiblePluginArchive({
+    archivePath: params.archivePath,
+    byteLength: facts.byteLength,
+    integrity: facts.integrity,
+    stagingParentPath: store.paths.cacheDir,
+  });
+  if (!staged.ok) {
+    throw new Error(`Archive plugin candidate rejected (${staged.rejection.code}): ${staged.rejection.message}`);
   }
+  return staged.candidate;
 }
 
-export async function installPluginFromSource(params: Readonly<{
+export async function inspectPluginSource(params: Readonly<{
   happyHomeDir: string;
   locator: string;
-  sourceKind?: PluginInstallKind;
+  sourceKind?: PluginSourceInspectionKind;
   sourceSpecOverride?: PluginSourceSpecV1;
   skipIfInstalled?: boolean;
-  dryRun?: boolean;
   dev?: boolean;
   workspaceRoot?: string;
   expectedManifestDigest?: string | null;
-}>): Promise<InstallPluginFromSourceResult> {
-  const sourceKind = params.sourceKind ?? inferPluginInstallKind(params.locator);
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
+}>): Promise<InspectPluginSourceResult> {
+  const sourceKind = params.sourceKind ?? inferPluginSourceInspectionKind(params.locator);
+  const stateStore = createPluginRegistryStateStore({ happyHomeDir: params.happyHomeDir });
   const initialState = await stateStore.read();
-  const dryRun = params.dryRun ?? false;
 
   try {
     if (sourceKind === 'path') {
@@ -206,7 +170,7 @@ export async function installPluginFromSource(params: Readonly<{
         locator: params.sourceSpecOverride?.kind === 'path' && params.sourceSpecOverride.locator.trim().length > 0
           ? params.sourceSpecOverride.locator.trim()
           : resolvedSource.sourceSpec.locator,
-        trustPolicy: trust.trustPolicy,
+        trustPolicy: normalizeInspectedTrustPolicy(trust.trustPolicy),
         installPolicy: trust.installPolicy,
         resolvedPath: resolvedSource.pluginRootPath,
         manifestPath: resolvedSource.manifestPath,
@@ -217,22 +181,6 @@ export async function installPluginFromSource(params: Readonly<{
       };
       verifyExpectedManifestDigest(resolvedSource.manifestDigest, params.expectedManifestDigest);
 
-      if (!dryRun) {
-        await stateStore.update(async (state) => ({
-          ...state,
-          plugins: {
-            ...state.plugins,
-            [pluginId]: createEnabledPluginState(
-              source,
-              'link',
-              resolvedSource.manifest.version,
-              resolvedSource.manifestDigest,
-              null,
-              trust.diagnostics,
-            ),
-          },
-        }));
-      }
       return {
         ok: true,
         alreadyInstalled: false,
@@ -280,17 +228,22 @@ export async function installPluginFromSource(params: Readonly<{
       };
     }
 
-    const archiveName = isRemoteArchiveLocator(params.locator)
-      ? basename(new URL(params.locator).pathname) || basename(archivePath)
-      : basename(archivePath);
-
-    const { pluginRootPath, stagingDir } = await materializeArchivePluginRoot({
-      happyHomeDir: params.happyHomeDir,
-      archivePath,
-      archiveName,
-    });
+    let localArchiveTempDir: string | null = null;
+    let stagedCandidate: StagedNpmCompatiblePluginArchive | undefined;
     try {
-      const resolvedSource = await resolveLocalPathPluginSource({ locator: pluginRootPath });
+      let candidateArchivePath = archivePath;
+      if (!isRemoteArchiveLocator(params.locator)) {
+        await mkdir(stateStore.paths.cacheDir, { recursive: true });
+        localArchiveTempDir = await mkdtemp(join(stateStore.paths.cacheDir, 'plugin-archive-preview-'));
+        candidateArchivePath = join(localArchiveTempDir, 'candidate.tgz');
+        await copyFile(archivePath, candidateArchivePath);
+      }
+      const staged = await stageArchivePluginSource({
+        happyHomeDir: params.happyHomeDir,
+        archivePath: candidateArchivePath,
+      });
+      stagedCandidate = staged;
+      const resolvedSource = await resolveLocalPathPluginSource({ locator: staged.rootPath });
       if (!resolvedSource.ok) {
         return {
           ok: false,
@@ -318,57 +271,33 @@ export async function installPluginFromSource(params: Readonly<{
         };
       }
 
-      const installedPath = resolveInstalledPluginCurrentPath(stateStore.paths.installedDir, pluginId);
-      const installedManifestPath = join(installedPath, '.happier-plugin', 'plugin.json');
       const sourceLocator = isRemoteArchiveLocator(params.locator)
         ? params.locator.trim()
         : archivePath;
       const archiveSourceOverride = params.sourceSpecOverride?.kind === 'archive'
         ? params.sourceSpecOverride
         : null;
-      const trustPolicy = archiveSourceOverride?.trustPolicy
-        ?? (isRemoteArchiveLocator(params.locator) ? 'prompt' : 'local_trusted');
-      await assertDirectoryTreeContainsNoSymbolicLinks(resolvedSource.pluginRootPath);
-      if (!dryRun) {
-        await rm(dirname(installedPath), { recursive: true, force: true });
-        await mkdir(dirname(installedPath), { recursive: true });
-        await cp(resolvedSource.pluginRootPath, installedPath, {
-          recursive: true,
-          force: true,
-        });
-      }
+      const remoteArchive = isRemoteArchiveLocator(params.locator);
+      const trustPolicy = normalizeInspectedTrustPolicy(
+        remoteArchive ? 'prompt' : archiveSourceOverride?.trustPolicy ?? 'prompt',
+      );
       verifyExpectedManifestDigest(resolvedSource.manifestDigest, params.expectedManifestDigest);
 
       const source: PluginSourceSpecV1 = {
         ...resolvedSource.sourceSpec,
         kind: 'archive',
-        locator: archiveSourceOverride?.locator?.trim()
-          ? archiveSourceOverride.locator.trim()
-          : sourceLocator,
+        locator: remoteArchive
+          ? sourceLocator
+          : archiveSourceOverride?.locator?.trim() || sourceLocator,
         trustPolicy,
         installPolicy: archiveSourceOverride?.installPolicy ?? 'managed_install',
-        resolvedPath: installedPath,
-        manifestPath: installedManifestPath,
+        resolvedPath: resolvedSource.pluginRootPath,
+        manifestPath: resolvedSource.manifestPath,
         resolvedVersion: resolvedSource.manifest.version,
         resolvedDigest: resolvedSource.manifestDigest,
         installedAt: Date.now(),
       };
 
-      if (!dryRun) {
-        await stateStore.update(async (state) => ({
-          ...state,
-          plugins: {
-            ...state.plugins,
-            [pluginId]: createEnabledPluginState(
-              source,
-              'managed_install',
-              resolvedSource.manifest.version,
-              resolvedSource.manifestDigest,
-              installedPath,
-            ),
-          },
-        }));
-      }
       return {
         ok: true,
         alreadyInstalled: false,
@@ -376,12 +305,17 @@ export async function installPluginFromSource(params: Readonly<{
         sourceKind,
         source,
         manifestVersion: resolvedSource.manifest.version,
-        manifestPath: installedManifestPath,
+        manifestPath: resolvedSource.manifestPath,
         manifestDigest: resolvedSource.manifestDigest,
-        installedPath,
+        installedPath: null,
       };
     } finally {
-      await rm(stagingDir, { recursive: true, force: true });
+      if (stagedCandidate) {
+        await cleanupStagedNpmCompatiblePluginArchive(stagedCandidate);
+      }
+      if (localArchiveTempDir) {
+        await rm(localArchiveTempDir, { recursive: true, force: true }).catch(() => undefined);
+      }
       if (downloadedArchiveTempDir) {
         await rm(downloadedArchiveTempDir, { recursive: true, force: true }).catch(() => undefined);
       }

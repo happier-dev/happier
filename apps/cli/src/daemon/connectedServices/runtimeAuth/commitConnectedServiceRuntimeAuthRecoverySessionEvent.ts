@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import {
   TranscriptRawAgentEventV1Schema,
   agentEventAttentionImpact,
@@ -56,10 +58,21 @@ function buildRuntimeAuthRecoveryTranscriptEventId(
   ]);
 }
 
+export function buildRuntimeAuthRecoveryAttemptTransitionLocalId(input: Readonly<{
+  attemptId: string;
+  transition: string;
+}>): string {
+  const attemptDigest = createHash('sha256').update(input.attemptId).digest('base64url');
+  return buildAgentEventLocalId('connected-service-runtime-auth-recovery', [attemptDigest, input.transition]);
+}
+
 export async function commitConnectedServiceRuntimeAuthRecoverySessionEvent(params: Readonly<{
   credentials: Credentials;
   sessionId: string;
   event: unknown;
+  attemptId?: string;
+  transition?: string;
+  requireSession?: boolean;
 }>): Promise<void> {
   const event = parseRuntimeAuthRecoveryEvent(params.event);
   if (!event) return;
@@ -68,9 +81,14 @@ export async function commitConnectedServiceRuntimeAuthRecoverySessionEvent(para
     token: params.credentials.token,
     sessionId: params.sessionId,
   });
-  if (!rawSession) return;
+  if (!rawSession) {
+    if (params.requireSession === true) throw new Error('runtime_auth_recovery_session_unavailable');
+    return;
+  }
 
-  const eventId = buildRuntimeAuthRecoveryTranscriptEventId(event);
+  const eventId = params.attemptId && params.transition
+    ? buildRuntimeAuthRecoveryAttemptTransitionLocalId({ attemptId: params.attemptId, transition: params.transition })
+    : buildRuntimeAuthRecoveryTranscriptEventId(event);
 
   await commitSessionStoredMessage({
     token: params.credentials.token,
@@ -90,5 +108,24 @@ export async function commitConnectedServiceRuntimeAuthRecoverySessionEvent(para
         },
       },
     }),
+  });
+}
+
+export async function commitRuntimeAuthRecoveryVisibleEventDelivery(params: Readonly<{
+  credentials: Credentials;
+  delivery: Readonly<{
+    sessionId: string;
+    attemptId: string;
+    transition: string;
+    transcriptEvent: unknown;
+  }>;
+}>): Promise<void> {
+  await commitConnectedServiceRuntimeAuthRecoverySessionEvent({
+    credentials: params.credentials,
+    sessionId: params.delivery.sessionId,
+    event: params.delivery.transcriptEvent,
+    attemptId: params.delivery.attemptId,
+    transition: params.delivery.transition,
+    requireSession: true,
   });
 }

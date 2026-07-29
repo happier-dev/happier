@@ -155,6 +155,7 @@ describe('createHappierMcpBridge', () => {
     expect(startHappyServerMock).toHaveBeenCalledWith(session, {
       credentials: null,
       accountSettings,
+      getAccountSettings: null,
     })
     expect(mcpServers.happier.env).toEqual({
       HAPPIER_ACTIONS_SETTINGS_V1: JSON.stringify(accountSettings.actionsSettingsV1),
@@ -272,6 +273,10 @@ describe('createHappierMcpBridge', () => {
 
     await createHappierMcpBridge(session, { credentials })
 
-    expect(startHappyServerMock).toHaveBeenCalledWith(session, { credentials, accountSettings: null })
+    expect(startHappyServerMock).toHaveBeenCalledWith(session, {
+      credentials,
+      accountSettings: null,
+      getAccountSettings: null,
+    })
   })
 })

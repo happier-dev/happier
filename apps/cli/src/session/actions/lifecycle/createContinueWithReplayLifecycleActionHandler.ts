@@ -1,7 +1,7 @@
 import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import {
     SPAWN_SESSION_ERROR_CODES,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
 import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
 import { normalizeSpawnNonce } from '@/session/shared/spawnNonce';

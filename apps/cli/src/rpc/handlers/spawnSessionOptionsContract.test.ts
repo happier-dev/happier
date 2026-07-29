@@ -1,11 +1,169 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  mergeSpawnSessionOptions,
   SpawnDaemonSessionRequestSchema,
   pickDefinedSpawnSessionOptions,
 } from './spawnSessionOptionsContract';
 
 describe('SpawnDaemonSessionRequestSchema', () => {
+  it('preserves the strict V1 startup-instructions carrier and rejects it for forks', () => {
+    const agentSessionStartupInstructionsV1 = {
+      v: 1 as const,
+      id: 'happier.global_voice_agent',
+      revision: 1,
+      instructions: 'Global Voice startup instructions.',
+    };
+
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp/voice',
+      agentSessionStartupInstructionsV1,
+    }).agentSessionStartupInstructionsV1).toEqual(
+      agentSessionStartupInstructionsV1,
+    );
+    expect(pickDefinedSpawnSessionOptions({
+      directory: '/tmp/voice',
+      agentSessionStartupInstructionsV1,
+    })).toEqual({
+      directory: '/tmp/voice',
+      agentSessionStartupInstructionsV1,
+    });
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp/voice',
+      nativeForkSource: {
+        sessionId: 'host-parent',
+        providerSessionId: 'provider-parent',
+        cwd: '/source',
+      },
+      agentSessionStartupInstructionsV1,
+    })).toThrow();
+  });
+
+  it('keeps old-UI requests without startup instructions valid and absent', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp/ordinary',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+    });
+
+    expect(parsed).not.toHaveProperty('agentSessionStartupInstructionsV1');
+  });
+
+  it('preserves one strict secret-free native fork-open source', () => {
+    const nativeForkSource = {
+      sessionId: 'host-parent',
+      providerSessionId: 'provider-parent',
+      cwd: '/source',
+      target: {
+        turnId: 'host-turn-42',
+        providerCheckpoint: { kind: 'grok_prompt_index', promptIndex: 42 },
+      },
+    };
+
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/fork',
+      nativeForkSource,
+    }).nativeForkSource).toEqual(nativeForkSource);
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/fork',
+      nativeForkSource: {
+        sessionId: 'host-parent',
+        providerSessionId: 'provider-parent',
+        cwd: '/source',
+        target: { turnId: 'host-turn-42' },
+      },
+    })).toThrow();
+  });
+
+  it('rejects a native fork checkpoint larger than the canonical turn checkpoint limit', () => {
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/fork',
+      nativeForkSource: {
+        sessionId: 'host-parent',
+        providerSessionId: 'provider-parent',
+        cwd: '/source',
+        target: {
+          turnId: 'host-turn-42',
+          providerCheckpoint: 'x'.repeat(4097),
+        },
+      },
+    })).toThrow();
+  });
+
+  it('accepts exact pending first-input custody and rejects blank handoffs', () => {
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp/repo',
+      pendingFirstInput: {
+        text: '  exact prompt bytes  ',
+        localId: '  opaque local id  ',
+      },
+    }).pendingFirstInput).toEqual({
+      text: '  exact prompt bytes  ',
+      localId: '  opaque local id  ',
+    });
+
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp/repo',
+      pendingFirstInput: { text: '   ', localId: 'spawn-first-turn:launch-1' },
+    })).toThrow();
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp/repo',
+      pendingFirstInput: { text: 'hello', localId: '   ' },
+    })).toThrow();
+  });
+
+  it('preserves pending first-input custody through the canonical options merge', () => {
+    const pendingFirstInput = {
+      text: '  exact prompt bytes  ',
+      localId: '  opaque local id  ',
+    };
+
+    expect(mergeSpawnSessionOptions({
+      directory: '/tmp/repo',
+      pendingFirstInput,
+    })).toEqual({
+      directory: '/tmp/repo',
+      pendingFirstInput,
+    });
+  });
+
+  it('normalizes deployed bare model input to a target-bound native selection', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      modelId: 'gpt-legacy',
+      modelUpdatedAt: 42,
+    });
+    expect(parsed.modelSelection).toEqual({
+      v: 1,
+      updatedAt: 42,
+      ref: { agentTargetKey: 'backend:codex', providerConnectionId: null, modelId: 'gpt-legacy' },
+    });
+    expect(parsed).not.toHaveProperty('modelId');
+    expect(parsed).not.toHaveProperty('modelUpdatedAt');
+  });
+
+  it('preserves matching provider-bound identity and rejects a target mismatch', () => {
+    const modelSelection = {
+      v: 1 as const,
+      updatedAt: 42,
+      ref: { agentTargetKey: 'backend:codex', providerConnectionId: 'pc_work', modelId: 'provider-model' },
+    };
+    expect(SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      modelSelection,
+    }).modelSelection).toEqual(modelSelection);
+    expect(() => SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      modelSelection: { ...modelSelection, ref: { ...modelSelection.ref, agentTargetKey: 'backend:claude' } },
+    })).toThrow(/target/i);
+  });
+
   it('canonicalizes legacy built-in agent field into backendTarget when backendTarget is missing', () => {
     const parsed = SpawnDaemonSessionRequestSchema.parse({
       directory: '/tmp',
@@ -45,12 +203,32 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       directory: '/tmp',
       existingSessionId: 'session-1',
       initialTranscriptAfterSeq: 36,
+      executionAuthorization: {
+        provenance: 'user_request',
+        requestId: ' pending-local-36 ',
+      },
     });
 
     expect(parsed.initialTranscriptAfterSeq).toBe(36);
     expect(pickDefinedSpawnSessionOptions(parsed)).toEqual(expect.objectContaining({
       initialTranscriptAfterSeq: 36,
+      executionAuthorization: {
+        provenance: 'user_request',
+        requestId: ' pending-local-36 ',
+      },
     }));
+  });
+
+  it('does not accept first-turn content on the daemon spawn contract', () => {
+    const parsed = SpawnDaemonSessionRequestSchema.parse({
+      directory: '/tmp',
+      spawnNonce: 'nonce-first-turn',
+      backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      initialPrompt: 'send this first turn',
+    });
+
+    expect(parsed.spawnNonce).toBe('nonce-first-turn');
+    expect(parsed).not.toHaveProperty('initialPrompt');
   });
 
   it('rejects unknown legacy built-in agent field when backendTarget is missing', () => {
@@ -207,8 +385,8 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       directory: '/tmp',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'runtime-thread',
         },
@@ -217,8 +395,8 @@ describe('SpawnDaemonSessionRequestSchema', () => {
 
     expect(parsed.runtimeDescriptorV1).toEqual({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'runtime-thread',
       },
@@ -231,16 +409,16 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       directory: '/tmp',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'canonical-thread',
         },
       },
       agentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'acp',
           providerSessionId: 'legacy-thread',
         },
@@ -249,8 +427,8 @@ describe('SpawnDaemonSessionRequestSchema', () => {
 
     expect(parsed.runtimeDescriptorV1).toEqual({
       v: 1,
-      providerId: 'codex',
-      provider: {
+      agentId: 'codex',
+      agent: {
         backendMode: 'appServer',
         providerSessionId: 'canonical-thread',
       },
@@ -263,8 +441,8 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       directory: '/tmp',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'runtime-thread',
         },
@@ -273,8 +451,8 @@ describe('SpawnDaemonSessionRequestSchema', () => {
       directory: '/tmp',
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'appServer',
           providerSessionId: 'runtime-thread',
         },

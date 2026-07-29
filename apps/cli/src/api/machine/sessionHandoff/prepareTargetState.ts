@@ -9,7 +9,7 @@ import {
 import type {
   SessionHandoffMetadataV2,
   SessionHandoffPrepareTargetRequest,
-  SessionHandoffPrepareTargetResultGetResponse,
+  SessionHandoffPrepareTargetResultGetSuccessResponse,
   SessionHandoffStartRequest,
   SessionHandoffStatus,
   WorkspaceManifest,
@@ -128,7 +128,9 @@ export function isTerminalHandoffStatus(status: SessionHandoffStatus): boolean {
     || status.status === 'completed'
     || status.status === 'aborted'
     || status.status === 'failed'
-    || status.status === 'awaiting_recovery';
+    || status.status === 'awaiting_recovery'
+    || status.status === 'awaiting_user_resume'
+    || status.status === 'reconciliation_required';
 }
 
 export function buildPreparePendingStatus(input: Readonly<{
@@ -221,7 +223,7 @@ export function buildPrepareJobRecord(input: Readonly<{
   handoffId: string;
   status: SessionHandoffStatus;
   prepareTargetRequest?: SessionHandoffPrepareTargetRequest;
-  prepareTargetResult?: SessionHandoffPrepareTargetResultGetResponse;
+  prepareTargetResult?: SessionHandoffPrepareTargetResultGetSuccessResponse;
   createdAtMs: number;
   updatedAtMs?: number;
   cancelRequestedAtMs?: number;
@@ -229,6 +231,7 @@ export function buildPrepareJobRecord(input: Readonly<{
   completedAtMs?: number;
   failedAtMs?: number;
   lastErrorMessage?: string;
+  lastErrorCode?: string;
   workspaceReplicationJobId?: string;
 }>): SessionHandoffPrepareTargetJobRecordInput {
   return {
@@ -241,6 +244,7 @@ export function buildPrepareJobRecord(input: Readonly<{
     ...(input.completedAtMs ? { completedAtMs: input.completedAtMs } : {}),
     ...(input.failedAtMs ? { failedAtMs: input.failedAtMs } : {}),
     ...(input.lastErrorMessage ? { lastErrorMessage: input.lastErrorMessage } : {}),
+    ...(input.lastErrorCode ? { lastErrorCode: input.lastErrorCode } : {}),
     ...(input.workspaceReplicationJobId ? { workspaceReplicationJobId: input.workspaceReplicationJobId } : {}),
     status: input.status,
     ...(input.prepareTargetRequest ? { prepareTargetRequest: input.prepareTargetRequest } : {}),

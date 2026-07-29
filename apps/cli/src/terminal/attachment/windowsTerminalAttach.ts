@@ -1,10 +1,15 @@
 import { spawn } from 'node:child_process';
 
+import { normalizeWindowsTerminalWindowName } from '@happier-dev/protocol';
+
 export async function focusWindowsTerminalWindow(params: {
   windowId: string;
 }): Promise<number> {
+  const windowId = normalizeWindowsTerminalWindowName(params.windowId);
+  if (windowId === 'new') return 1;
+
   return await new Promise((resolve) => {
-    const child = spawn('wt.exe', ['-w', params.windowId, 'focus-tab', '-t', '0'], {
+    const child = spawn('wt.exe', ['-w', windowId, 'focus-tab', '-t', '0'], {
       stdio: 'inherit',
       shell: false,
     });

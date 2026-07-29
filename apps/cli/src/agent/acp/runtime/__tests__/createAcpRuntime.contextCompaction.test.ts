@@ -39,7 +39,7 @@ describe('createAcpRuntime (context compaction)', () => {
     runtime.subscribeRuntimeEvents((message) => {
       runtimeEvents.push(RuntimeEventV1Schema.parse(message));
     });
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'event',
@@ -50,7 +50,7 @@ describe('createAcpRuntime (context compaction)', () => {
         lifecycleId: 'pi:context-compaction',
         provider: 'pi',
         trigger: 'overflow',
-        source: 'provider-event',
+        source: 'agent-event',
         tokensBefore: 1200,
         tokenCountAfter: 700,
         retryAttempt: 1.8,
@@ -65,7 +65,7 @@ describe('createAcpRuntime (context compaction)', () => {
       lifecycleId: 'pi:context-compaction',
       backendId: 'pi',
       trigger: 'overflow',
-      source: 'provider-event',
+      source: 'agent-event',
       tokenCountBefore: 1200,
       tokenCountAfter: 700,
       retryAttempt: 1,
@@ -79,7 +79,7 @@ describe('createAcpRuntime (context compaction)', () => {
       lifecycleId: 'pi:context-compaction',
       backendId: 'pi',
       trigger: 'overflow',
-      source: 'provider-event',
+      source: 'agent-event',
       tokenCountBefore: 1200,
       tokenCountAfter: 700,
       retryAttempt: 1,
@@ -114,7 +114,7 @@ describe('createAcpRuntime (context compaction)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'event',
@@ -123,7 +123,7 @@ describe('createAcpRuntime (context compaction)', () => {
         type: 'context-compaction',
         phase: 'failed',
         provider: 'pi',
-        source: 'provider-event',
+        source: 'agent-event',
         errorCode: 'context_limit',
         errorMessage: 'raw provider failure details',
       },
@@ -133,7 +133,7 @@ describe('createAcpRuntime (context compaction)', () => {
       type: 'context-compaction',
       phase: 'failed',
       backendId: 'pi',
-      source: 'provider-event',
+      source: 'agent-event',
       errorCode: 'context_limit',
     });
     expect(sent).not.toContainEqual(expect.objectContaining({
@@ -167,7 +167,7 @@ describe('createAcpRuntime (context compaction)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'event',
@@ -178,9 +178,9 @@ describe('createAcpRuntime (context compaction)', () => {
         lifecycleId: 'pi:context-compaction',
         provider: 'pi',
         trigger: 'threshold',
-        source: 'provider-event',
+        source: 'agent-event',
         continuation: 'paused',
-        pauseReason: 'provider-idle-after-compaction',
+        pauseReason: 'agent-idle-after-compaction',
       },
     });
 
@@ -190,9 +190,9 @@ describe('createAcpRuntime (context compaction)', () => {
       lifecycleId: 'pi:context-compaction',
       backendId: 'pi',
       trigger: 'threshold',
-      source: 'provider-event',
+      source: 'agent-event',
       continuation: 'paused',
-      pauseReason: 'provider-idle-after-compaction',
+      pauseReason: 'agent-idle-after-compaction',
     });
   });
 });

@@ -1,36 +1,11 @@
-import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { Credentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
+import { SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY } from '@happier-dev/protocol';
+import { buildCodexAgentRuntimeDescriptorV1 as buildCodexAgentRuntimeDescriptor } from '@happier-dev/protocol/agents/runtimeDescriptorContributionsV1';
 
-const mocks = vi.hoisted(() => ({
-  updateSessionMetadataWithRetry: vi.fn(async (params: {
-    updater: (metadata: Record<string, unknown>) => Record<string, unknown>;
-  }) => ({
-    version: 2,
-    metadata: params.updater({ concurrent: 'preserved' }),
-  })),
-  createSessionClientDurableMutationOutbox: vi.fn((params: {
-    deliverRegisteredSessionStateFieldMutation?: (mutation: unknown) => Promise<boolean>;
-  }) => ({
-    enqueueSessionTurnMutation: vi.fn(),
-    enqueueSessionEnd: vi.fn(),
-    enqueueTranscriptMessage: vi.fn(),
-    enqueueRegisteredSessionStateFieldMutation: vi.fn(async (mutation: unknown) => {
-      await params.deliverRegisteredSessionStateFieldMutation?.(mutation);
-    }),
-    flush: vi.fn(async () => undefined),
-    close: vi.fn(async () => undefined),
-  })),
-}));
-
-vi.mock('@/session/metadata/updateSessionMetadataWithRetry', () => ({
-  updateSessionMetadataWithRetry: mocks.updateSessionMetadataWithRetry,
-}));
-vi.mock('@/api/session/client/transport/mutations/createSessionClientDurableMutationOutbox', () => ({
-  createSessionClientDurableMutationOutbox: mocks.createSessionClientDurableMutationOutbox,
-}));
+const stageUsageLimitRecoveryMutation = vi.fn(async () => undefined);
 
 import {
   routeSessionUsageLimitRecoveryCheckNow,
@@ -83,7 +58,7 @@ function createUsageLimitIssue(overrides: Partial<{
     code: 'usage_limit',
     source: 'usage_limit',
     provider: 'codex',
-    providerTurnId: 'turn-1',
+    agentTurnId: 'turn-1',
     occurredAt: 1_700_000_000_000,
     usageLimit: {
       v: 1,
@@ -101,9 +76,9 @@ function createTemporaryThrottleIssue() {
     scope: 'primary_session',
     status: 'failed',
     code: 'provider_temporary_throttle',
-    source: 'provider_status_error',
+    source: 'agent_status_error',
     provider: 'codex',
-    providerTurnId: 'turn-throttle',
+    agentTurnId: 'turn-throttle',
     occurredAt: 1_700_000_000_000,
     sanitizedPreview: 'Provider is temporarily limiting requests',
     temporaryThrottle: {
@@ -121,8 +96,7 @@ const ctx = {
 
 describe('sessionUsageLimitRecoveryControlRouter', () => {
   beforeEach(() => {
-    mocks.updateSessionMetadataWithRetry.mockClear();
-    mocks.createSessionClientDurableMutationOutbox.mockClear();
+    stageUsageLimitRecoveryMutation.mockClear();
   });
 
   it('arms inactive local wait-resume from the latest usage-limit issue without live session RPC', async () => {
@@ -140,6 +114,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
+      stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true, resumePromptMode: 'off' },
       callLiveSessionRpc,
       resolveAdapter: vi.fn(),
@@ -164,8 +139,49 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     });
 
     expect(callLiveSessionRpc).not.toHaveBeenCalled();
-    expect(mocks.updateSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
-    expect(mocks.createSessionClientDurableMutationOutbox).toHaveBeenCalledTimes(1);
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a fresh epoch when explicitly re-arming a terminal intent for the same issue', async () => {
+    const cancelled = {
+      v: 1,
+      status: 'cancelled',
+      issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:1700000060000',
+      armedAtMs: 1_700_000_000_000,
+      resetAtMs: 1_700_000_060_000,
+      nextCheckAtMs: 1_700_000_060_000,
+      attemptCount: 2,
+      maxAttempts: 3,
+      lastProbeError: 'cancelled',
+      resumePromptMode: 'standard',
+      selectedAuth: { kind: 'native' },
+    };
+    const result = await routeSessionUsageLimitRecoveryWaitResumeEnable({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession({
+        latestTurnStatus: 'failed',
+        lastRuntimeIssue: createUsageLimitIssue(),
+      }),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: cancelled }),
+      currentMachineId: 'machine-local',
+      ctx,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_1', remember: true },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(),
+    });
+
+    const persisted = (result as Record<string, unknown>).metadata as Record<string, unknown>;
+    expect(persisted.sessionUsageLimitRecoveryV1).toMatchObject({
+      status: 'waiting',
+      issueFingerprint: cancelled.issueFingerprint,
+      attemptCount: 0,
+    });
+    expect((persisted.sessionUsageLimitRecoveryV1 as { armedAtMs: number }).armedAtMs)
+      .toBeGreaterThan(cancelled.armedAtMs);
   });
 
   it('routes temporary-throttle retry-now to the daemon-lifetime throttle scheduler', async () => {
@@ -186,7 +202,8 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
-      request: { sessionId: 'sess_1', provider: 'codex' },
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_1', agentId: 'codex' },
       callLiveSessionRpc,
       resolveAdapter,
       retryTemporaryThrottleNow,
@@ -200,6 +217,49 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     expect(retryTemporaryThrottleNow).toHaveBeenCalledWith({ sessionId: 'sess_1' });
     expect(callLiveSessionRpc).not.toHaveBeenCalled();
     expect(resolveAdapter).not.toHaveBeenCalled();
+  });
+
+  it('routes reset-credit consumption through the inactive provider adapter without live session RPC', async () => {
+    const callLiveSessionRpc = vi.fn(async () => ({ ok: false, errorCode: 'unexpected_live_rpc' }));
+    const consumeResetCredit = vi.fn(async () => ({ ok: true, status: 'waiting' }));
+
+    const result = await routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession({
+        active: true,
+        latestTurnStatus: 'failed',
+        lastRuntimeIssue: createUsageLimitIssue(),
+      }),
+      metadata: createMetadata({ agentRuntimeDescriptorV1: { v: 1, providerId: 'codex' } }),
+      currentMachineId: 'machine-local',
+      ctx,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: {
+        sessionId: 'sess_1',
+        provider: 'codex',
+        operation: 'consume_reset_credit',
+        issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:no-reset',
+      } as any,
+      callLiveSessionRpc,
+      resolveAdapter: vi.fn(async () => ({ consumeResetCredit } as any)),
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: 'waiting',
+      sessionId: 'sess_1',
+    });
+    expect(callLiveSessionRpc).not.toHaveBeenCalled();
+    expect(consumeResetCredit).toHaveBeenCalledTimes(1);
+    const consumeCall = consumeResetCredit.mock.calls[0] as unknown as [
+      { metadata: Record<string, unknown> },
+    ];
+    expect(consumeCall[0].metadata[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]).toMatchObject({
+      issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:no-reset',
+    });
   });
 
   it('arms inactive local wait-resume from retry-after timing when no reset timestamp exists', async () => {
@@ -220,6 +280,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
+      stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true },
       callLiveSessionRpc,
       resolveAdapter: vi.fn(),
@@ -242,8 +303,33 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     });
 
     expect(callLiveSessionRpc).not.toHaveBeenCalled();
-    expect(mocks.updateSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
-    expect(mocks.createSessionClientDurableMutationOutbox).toHaveBeenCalledTimes(1);
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes inactive manual prompt policy through group-over-account precedence', async () => {
+    const loadGroupPolicy = vi.fn(async () => ({ resumePromptMode: 'off' }));
+    const result = await routeSessionUsageLimitRecoveryWaitResumeEnable({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession({ latestTurnStatus: 'failed', lastRuntimeIssue: createUsageLimitIssue() }),
+      metadata: createMetadata(),
+      currentMachineId: 'machine-local',
+      ctx,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_1', remember: true },
+      callLiveSessionRpc: vi.fn(),
+      resumePromptTierSources: {
+        accountSettings: { usageLimitRecoverySettingsV1: { resumePromptMode: 'custom' } },
+        loadGroupPolicy,
+      },
+    });
+
+    expect(result).toMatchObject({
+      metadata: { sessionUsageLimitRecoveryV1: { resumePromptMode: 'off' } },
+    });
+    expect(loadGroupPolicy).toHaveBeenCalledTimes(1);
   });
 
   it('preserves group-scoped recovery identity even when the latest issue omits profileId', async () => {
@@ -269,6 +355,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
+      stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1', remember: true },
       callLiveSessionRpc: vi.fn(),
       resolveAdapter: vi.fn(),
@@ -291,7 +378,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     });
   });
 
-  it('clears inactive local wait-resume metadata without live session RPC', async () => {
+  it('terminally cancels inactive local wait-resume metadata with the exact attempt identity', async () => {
     const recovery = {
       v: 1,
       status: 'waiting',
@@ -305,7 +392,6 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       selectedAuth: { kind: 'native', serviceId: 'openai-codex' },
     };
     const callLiveSessionRpc = vi.fn();
-
     const result = await routeSessionUsageLimitRecoveryWaitResumeCancel({
       token: 'token',
       credentials: createCredentials(),
@@ -315,7 +401,12 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
-      request: { sessionId: 'sess_1', issueFingerprint: null },
+      stageUsageLimitRecoveryMutation,
+      request: {
+        sessionId: 'sess_1',
+        issueFingerprint: recovery.issueFingerprint,
+        armedAtMs: recovery.armedAtMs,
+      },
       callLiveSessionRpc,
       resolveAdapter: vi.fn(),
     });
@@ -328,12 +419,139 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
     expect(Object.keys(result as Record<string, unknown>)).not.toContain('metadata');
     expect((result as Record<string, unknown>).metadata).toMatchObject({
       machineId: 'machine-local',
+      sessionUsageLimitRecoveryV1: {
+        status: 'cancelled',
+        issueFingerprint: recovery.issueFingerprint,
+        armedAtMs: recovery.armedAtMs,
+      },
     });
-    expect((result as Record<string, unknown>).metadata).not.toHaveProperty('sessionUsageLimitRecoveryV1');
 
     expect(callLiveSessionRpc).not.toHaveBeenCalled();
-    expect(mocks.updateSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
-    expect(mocks.createSessionClientDurableMutationOutbox).toHaveBeenCalledTimes(1);
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed for an old inactive cancel request without the exact attempt identity', async () => {
+    const recovery = {
+      v: 1 as const,
+      status: 'waiting' as const,
+      issueFingerprint: 'usage-limit:sess_1:reset',
+      armedAtMs: 1,
+      resetAtMs: 2,
+      nextCheckAtMs: 2,
+      attemptCount: 0,
+      maxAttempts: 3,
+      lastProbeError: null,
+      resumePromptMode: 'standard' as const,
+      selectedAuth: { kind: 'native' as const },
+    };
+
+    const result = await routeSessionUsageLimitRecoveryWaitResumeCancel({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession(),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: recovery }),
+      currentMachineId: 'machine-local',
+      ctx,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_1', issueFingerprint: recovery.issueFingerprint },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(),
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 'unsupported',
+      sessionId: 'sess_1',
+      errorCode: 'session_usage_limit_recovery_control_attempt_identity_required',
+    });
+    expect(stageUsageLimitRecoveryMutation).not.toHaveBeenCalled();
+  });
+
+  it('stages cancellation with the exact attempt identity for durable CAS delivery', async () => {
+    const attemptA = {
+      v: 1 as const,
+      status: 'waiting' as const,
+      issueFingerprint: 'usage-limit:sess_1:reset',
+      armedAtMs: 1,
+      resetAtMs: 2,
+      nextCheckAtMs: 2,
+      attemptCount: 0,
+      maxAttempts: 3,
+      lastProbeError: null,
+      resumePromptMode: 'standard' as const,
+      selectedAuth: { kind: 'native' as const },
+    };
+    const result = await routeSessionUsageLimitRecoveryWaitResumeCancel({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession(),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: attemptA }),
+      currentMachineId: 'machine-local',
+      ctx,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: {
+        sessionId: 'sess_1',
+        issueFingerprint: attemptA.issueFingerprint,
+        armedAtMs: attemptA.armedAtMs,
+      },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true, status: 'cancelled', sessionId: 'sess_1' });
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledWith(expect.objectContaining({
+      fieldId: 'runtime.usageLimitRecovery',
+      source: 'daemon',
+      op: expect.objectContaining({ kind: 'set' }),
+    }));
+  });
+
+  it('keeps runtime attempt identity in the staged cancellation mutation', async () => {
+    const attemptA = {
+      v: 1 as const,
+      status: 'waiting' as const,
+      issueFingerprint: 'usage-limit:sess_1:reset',
+      armedAtMs: 1,
+      runtimeAuthRecoveryAttemptId: 'runtime-a',
+      resetAtMs: 2,
+      nextCheckAtMs: 2,
+      attemptCount: 0,
+      maxAttempts: 3,
+      lastProbeError: null,
+      resumePromptMode: 'standard' as const,
+      selectedAuth: { kind: 'native' as const },
+    };
+    const result = await routeSessionUsageLimitRecoveryWaitResumeCancel({
+      token: 'token',
+      credentials: createCredentials(),
+      sessionId: 'sess_1',
+      rawSession: createRawSession(),
+      metadata: createMetadata({ sessionUsageLimitRecoveryV1: attemptA }),
+      currentMachineId: 'machine-local',
+      ctx,
+      mode: 'plain',
+      stageUsageLimitRecoveryMutation,
+      request: {
+        sessionId: 'sess_1',
+        issueFingerprint: attemptA.issueFingerprint,
+        armedAtMs: attemptA.armedAtMs,
+        runtimeAuthRecoveryAttemptId: attemptA.runtimeAuthRecoveryAttemptId,
+      },
+      callLiveSessionRpc: vi.fn(),
+      resolveAdapter: vi.fn(),
+    });
+
+    expect(result).toEqual({ ok: true, status: 'cancelled', sessionId: 'sess_1' });
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledWith(expect.objectContaining({
+      op: {
+        kind: 'set',
+        value: expect.objectContaining({ runtimeAuthRecoveryAttemptId: 'runtime-a' }),
+      },
+    }));
   });
 
   it('returns a stable provider-unsupported result for inactive check-now without a provider adapter', async () => {
@@ -346,6 +564,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
+      stageUsageLimitRecoveryMutation,
       callLiveSessionRpc: vi.fn(),
       resolveAdapter: vi.fn(async () => null),
     })).resolves.toEqual({
@@ -372,7 +591,8 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
-      request: { sessionId: 'sess_1', provider: 'codex', resumePromptMode: 'off' },
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_1', agentId: 'codex', resumePromptMode: 'off' },
       callLiveSessionRpc: vi.fn(),
       resolveAdapter,
       resumeInactiveSessionWhenReady,
@@ -410,7 +630,8 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineHomeDir: '/Users/leeroy/',
       ctx,
       mode: 'plain',
-      request: { sessionId: 'sess_stale_same_machine', provider: 'codex' },
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_stale_same_machine', agentId: 'codex' },
       callLiveSessionRpc: vi.fn(),
       resolveAdapter: vi.fn(async () => ({ checkNow })),
     })).resolves.toEqual({ ok: true, status: 'ready', sessionId: 'sess_stale_same_machine' });
@@ -436,7 +657,8 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineHomeDir: '/Users/other',
       ctx,
       mode: 'plain',
-      request: { sessionId: 'sess_stale_home_mismatch', provider: 'codex' },
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_stale_home_mismatch', agentId: 'codex' },
       callLiveSessionRpc: vi.fn(),
       resolveAdapter: vi.fn(async () => ({ checkNow })),
     })).resolves.toEqual({
@@ -467,7 +689,8 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineHomeDir: '/Users/leeroy',
       ctx,
       mode: 'plain',
-      request: { sessionId: 'sess_stale_host_mismatch', provider: 'codex' },
+      stageUsageLimitRecoveryMutation,
+      request: { sessionId: 'sess_stale_host_mismatch', agentId: 'codex' },
       callLiveSessionRpc: vi.fn(),
       resolveAdapter: vi.fn(async () => ({ checkNow })),
     })).resolves.toEqual({
@@ -506,6 +729,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
+      stageUsageLimitRecoveryMutation,
       callLiveSessionRpc: vi.fn(),
       resolveAdapter: vi.fn(async () => ({ checkNow })),
       resumeInactiveSessionWhenReady,
@@ -547,6 +771,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
+      stageUsageLimitRecoveryMutation,
       callLiveSessionRpc: vi.fn(),
       resolveAdapter: vi.fn(async () => ({ checkNow })),
       resumeInactiveSessionWhenReady,
@@ -556,7 +781,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       sessionId: 'sess_1',
     });
 
-    expect(mocks.updateSessionMetadataWithRetry).toHaveBeenCalledTimes(1);
+    expect(stageUsageLimitRecoveryMutation).toHaveBeenCalledTimes(1);
     expect(resumeInactiveSessionWhenReady).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess_1',
       metadata: expect.objectContaining({
@@ -577,6 +802,7 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain' as const,
+      stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_rate_limited', provider: 'codex' },
       callLiveSessionRpc: vi.fn(),
       resolveAdapter,
@@ -610,12 +836,13 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       currentMachineId: 'machine-local',
       ctx,
       mode: 'plain',
+      stageUsageLimitRecoveryMutation,
       request: { sessionId: 'sess_1' },
       callLiveSessionRpc,
       resolveAdapter: vi.fn(),
     })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'sess_1' });
 
     expect(callLiveSessionRpc).toHaveBeenCalledTimes(1);
-    expect(mocks.updateSessionMetadataWithRetry).not.toHaveBeenCalled();
+    expect(stageUsageLimitRecoveryMutation).not.toHaveBeenCalled();
   });
 });

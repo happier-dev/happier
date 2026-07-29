@@ -3,7 +3,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { resolveWindowsCommandInvocationMock, spawnSyncMock } = vi.hoisted(() => ({
+const { resolveWindowsCommandInvocationMock, spawnSyncMock, writeSyncMock } = vi.hoisted(() => ({
   resolveWindowsCommandInvocationMock: vi.fn((
     { command, args }: { command: string; args: readonly string[] },
   ): { command: string; args: string[]; windowsVerbatimArguments?: boolean } => ({
@@ -11,6 +11,7 @@ const { resolveWindowsCommandInvocationMock, spawnSyncMock } = vi.hoisted(() => 
     args: [...args],
   })),
   spawnSyncMock: vi.fn(),
+  writeSyncMock: vi.fn(),
 }));
 
 vi.mock('@happier-dev/cli-common/process', () => ({
@@ -25,15 +26,23 @@ vi.mock('node:child_process', async (importOriginal) => {
   };
 });
 
+vi.mock('node:fs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...original,
+    writeSync: writeSyncMock,
+  };
+});
+
 const { requireProviderCliLaunchSpecMock } = vi.hoisted(() => ({
   requireProviderCliLaunchSpecMock: vi.fn(),
 }));
 
-vi.mock('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec')>();
+vi.mock('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec')>();
   return {
     ...original,
-    requireProviderCliLaunchSpec: requireProviderCliLaunchSpecMock,
+    requireAgentCliLaunchSpec: requireProviderCliLaunchSpecMock,
   };
 });
 
@@ -54,9 +63,9 @@ const tempDirs = new Set<string>();
 let envScope = createEnvKeyScope(envKeys);
 
 beforeEach(async () => {
-  const actualLaunch = await vi.importActual<typeof import('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec')>('@/packagedRuntime/managedTools/requireProviderCliLaunchSpec');
+  const actualLaunch = await vi.importActual<typeof import('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec')>('@/packagedRuntime/managedTools/requireAgentCliLaunchSpec');
   requireProviderCliLaunchSpecMock.mockReset();
-  requireProviderCliLaunchSpecMock.mockImplementation(actualLaunch.requireProviderCliLaunchSpec);
+  requireProviderCliLaunchSpecMock.mockImplementation(actualLaunch.requireAgentCliLaunchSpec);
 
   const actualChildProcess = await vi.importActual<typeof import('node:child_process')>('node:child_process');
   spawnSyncMock.mockReset();
@@ -81,6 +90,7 @@ afterEach(async () => {
     args: [...args],
   }));
   spawnSyncMock.mockReset();
+  writeSyncMock.mockReset();
   envScope.restore();
   envScope = createEnvKeyScope(envKeys);
   for (const dir of tempDirs) {
@@ -161,16 +171,20 @@ describe('maybePassthroughProviderCliInfoRequest', () => {
     expect(spawnSyncMock).toHaveBeenCalledWith(
       'C:\\Windows\\System32\\cmd.exe',
       ['/d', '/s', '/c', '"C:\\Users\\natan\\AppData\\Roaming\\npm\\opencode.CMD --help"'],
-      expect.objectContaining({ windowsHide: true, windowsVerbatimArguments: true }),
+      expect.objectContaining({
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+        windowsVerbatimArguments: true,
+      }),
     );
   });
 
-  it('preserves exact provider-native info arguments when spawning the provider CLI', () => {
+  it('preserves exact provider-native info arguments and replays captured output', () => {
     spawnSyncMock.mockReturnValue({
       pid: 1,
       output: [],
-      stdout: null,
-      stderr: null,
+      stdout: Buffer.from('provider stdout\n'),
+      stderr: Buffer.from('provider stderr\n'),
       status: 0,
       signal: null,
     } as any);
@@ -189,7 +203,12 @@ describe('maybePassthroughProviderCliInfoRequest', () => {
     expect(spawnSyncMock).toHaveBeenCalledWith(
       '/usr/local/bin/codex',
       ['--wrapped', 'exec', '--help'],
-      expect.objectContaining({ stdio: 'inherit', windowsHide: true }),
+      expect.objectContaining({
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      }),
     );
+    expect(writeSyncMock).toHaveBeenNthCalledWith(1, 1, Buffer.from('provider stdout\n'));
+    expect(writeSyncMock).toHaveBeenNthCalledWith(2, 2, Buffer.from('provider stderr\n'));
   });
 });

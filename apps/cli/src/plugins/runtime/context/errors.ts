@@ -1,4 +1,24 @@
-import type { ClassifiedRuntimeErrorV1, ErrorRuntimeServiceV1 } from '@happier-dev/plugin-sdk';
+type PluginRuntimeErrorKind =
+    | 'abort'
+    | 'timeout'
+    | 'permission'
+    | 'network'
+    | 'unsupported'
+    | 'transient'
+    | 'unknown';
+
+export type ClassifiedPluginRuntimeError = Readonly<{
+    kind: PluginRuntimeErrorKind;
+    code: string | null;
+    message: string;
+    retryable: boolean;
+}>;
+
+type PluginErrorsService = Readonly<{
+    classify(error: unknown): ClassifiedPluginRuntimeError;
+    wrap(error: unknown, fallbackCode?: string): Error;
+    report(error: unknown, fields?: Readonly<Record<string, unknown>>): void;
+}>;
 
 export class PluginContextServiceError extends Error {
     readonly code: string;
@@ -18,7 +38,7 @@ function readErrorCode(error: unknown): string | null {
     return typeof code === 'string' && code.trim().length > 0 ? code : null;
 }
 
-export function classifyRuntimeError(error: unknown): ClassifiedRuntimeErrorV1 {
+export function classifyRuntimeError(error: unknown): ClassifiedPluginRuntimeError {
     const code = readErrorCode(error);
     const name = error instanceof Error ? error.name : '';
     const message = error instanceof Error ? error.message : String(error);
@@ -44,9 +64,9 @@ export function classifyRuntimeError(error: unknown): ClassifiedRuntimeErrorV1 {
 }
 
 export function createPluginErrorsService(params?: Readonly<{
-    report?: (classification: ClassifiedRuntimeErrorV1, fields?: Readonly<Record<string, unknown>>) => void;
-}>): ErrorRuntimeServiceV1 {
-    const service: ErrorRuntimeServiceV1 = Object.freeze({
+    report?: (classification: ClassifiedPluginRuntimeError, fields?: Readonly<Record<string, unknown>>) => void;
+}>): PluginErrorsService {
+    const service: PluginErrorsService = Object.freeze({
         classify: classifyRuntimeError,
         wrap(error: unknown, fallbackCode?: string): Error {
             if (error instanceof Error) {

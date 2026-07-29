@@ -56,6 +56,44 @@ describe('JsonlFollower', () => {
         }
     });
 
+    it('redrives a rejected line and its suffix on the same live follower', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'jsonl-follower-rejected-line-'));
+        const filePath = join(root, 'rollout.jsonl');
+        await writeFile(
+            filePath,
+            ['{"seq":1}', '{"seq":2}', '{"seq":3}'].join('\n') + '\n',
+            'utf8',
+        );
+
+        const attempts: number[] = [];
+        const acknowledged: number[] = [];
+        let rejectSecond = true;
+        const follower = new JsonlFollower({
+            filePath,
+            pollIntervalMs: 25,
+            onLine: async (line) => {
+                const seq = (JSON.parse(line) as { seq: number }).seq;
+                attempts.push(seq);
+                if (seq === 2 && rejectSecond) {
+                    rejectSecond = false;
+                    throw new Error('transient delivery rejection');
+                }
+                acknowledged.push(seq);
+            },
+        });
+
+        try {
+            await follower.start();
+            await waitFor(() => {
+                expect(acknowledged).toEqual([1, 2, 3]);
+            });
+            expect(attempts).toEqual([1, 2, 2, 3]);
+        } finally {
+            await follower.stop().catch(() => {});
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('waits for the initial drain when start is called concurrently', async () => {
         const root = await mkdtemp(join(tmpdir(), 'jsonl-follower-concurrent-start-'));
         const filePath = join(root, 'rollout.jsonl');
@@ -329,6 +367,46 @@ describe('JsonlFollower', () => {
         }
     });
 
+    it('preserves exact continuity across a transient pathname absence', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'jsonl-follower-transient-missing-'));
+        const filePath = join(root, 'rollout.jsonl');
+        const temporarilyMovedPath = join(root, 'rollout.moved.jsonl');
+        await writeFile(filePath, '{"seq":1}\n');
+
+        const received: unknown[] = [];
+        const metrics: JsonlFollowerMetricEvent[] = [];
+        const follower = new JsonlFollower({
+            filePath,
+            pollIntervalMs: 60_000,
+            metrics: {
+                onEvent: (event) => {
+                    metrics.push(event);
+                },
+            },
+            onLine: (line) => {
+                received.push(JSON.parse(line) as unknown);
+            },
+        });
+
+        try {
+            await follower.drainNow();
+            await rename(filePath, temporarilyMovedPath);
+            await follower.drainNow();
+            await appendFile(temporarilyMovedPath, '{"seq":2}\n');
+            await rename(temporarilyMovedPath, filePath);
+            await follower.drainNow();
+
+            expect(received).toEqual([{ seq: 1 }, { seq: 2 }]);
+            expect(metrics).not.toContainEqual(expect.objectContaining({
+                type: 'file_reset',
+                reason: 'missing',
+            }));
+        } finally {
+            await follower.stop().catch(() => {});
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('resets buffered partial content after truncation', async () => {
         const root = await mkdtemp(join(tmpdir(), 'jsonl-follower-truncated-'));
         const filePath = join(root, 'rollout.jsonl');
@@ -348,6 +426,35 @@ describe('JsonlFollower', () => {
             await follower.drainNow();
             await writeFile(filePath, '{"fresh":1}\n');
             await follower.drainNow();
+            expect(received).toEqual([{ fresh: 1 }]);
+        } finally {
+            await follower.stop().catch(() => {});
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('drops buffered partial content when a deleted file is recreated', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'jsonl-follower-recreated-'));
+        const filePath = join(root, 'rollout.jsonl');
+
+        await writeFile(filePath, '{"stale":"partial"');
+
+        const received: unknown[] = [];
+        const follower = new JsonlFollower({
+            filePath,
+            pollIntervalMs: 60_000,
+            onLine: (line) => {
+                received.push(JSON.parse(line) as unknown);
+            },
+        });
+
+        try {
+            await follower.drainNow();
+            await rm(filePath);
+            await follower.drainNow();
+            await writeFile(filePath, '{"fresh":1}\n');
+            await follower.drainNow();
+
             expect(received).toEqual([{ fresh: 1 }]);
         } finally {
             await follower.stop().catch(() => {});

@@ -1,9 +1,13 @@
 import { resolveModelSelectionIntentFromSessionMetadata } from '@happier-dev/agents';
 import {
   buildBackendTargetKeyV2,
+  type ModelSelectionApplyPolicy,
+  ProviderBoundModelRefSchema,
   ProviderConnectionIdSchema,
-  resolveSessionModelSelectionInputRefV1,
+  readSessionProviderBindingMetadataV1,
   SessionModelSelectionResolutionError,
+  SessionModelSelectionV1Schema,
+  type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
 
 import {
@@ -25,27 +29,33 @@ function hasPersistedModelIntent(metadata: unknown): boolean {
   ));
 }
 
-/** Resolve structured session identity, then expose only the final engine model selector. */
+/** Resolve structured session identity before projecting any providerless compatibility field. */
 export type SessionMessageModelSelectionInput = Readonly<{
   providerConnectionId?: string | null;
   modelId: string | null;
 }>;
 
-export class SessionMessageProviderSwitchUnsupportedError extends Error {
-  readonly code = 'provider_switch_unsupported' as const;
+export type SessionMessageModelResolution = Readonly<{
+  modelId: string;
+  selection: SessionModelSelectionV1 | null;
+}>;
 
-  constructor() {
-    super('Changing provider connections requires restarting the session');
-    this.name = 'SessionMessageProviderSwitchUnsupportedError';
-  }
-}
-
-export function resolveSessionMessageModelId(params: Readonly<{
+export function resolveSessionMessageModel(params: Readonly<{
   metadata: unknown;
+  sessionActive?: boolean;
   modelSelectionInput?: SessionMessageModelSelectionInput;
   legacyModelOverride?: string | null;
-}>): string {
+  agentPolicy?: ModelSelectionApplyPolicy;
+  nowMs?: number;
+}>): SessionMessageModelResolution {
   const metadata = asRecord(params.metadata);
+  if (
+    params.sessionActive === true
+    && params.modelSelectionInput === undefined
+    && params.legacyModelOverride === undefined
+  ) {
+    return { modelId: '', selection: null };
+  }
   const backendTarget = params.modelSelectionInput !== undefined
     ? resolveExplicitBackendTargetFromSessionMetadata(metadata)
     : resolveBackendTargetFromSessionMetadata(metadata);
@@ -67,35 +77,53 @@ export function resolveSessionMessageModelId(params: Readonly<{
       throw new Error('Provider model selection requires a concrete model id');
     }
     const currentIntent = resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey);
-    const currentProviderConnectionId = currentIntent?.selection?.providerConnectionId ?? null;
-    if (hasExplicitProviderConnectionId && requestedProviderConnectionId !== currentProviderConnectionId) {
-      throw new SessionMessageProviderSwitchUnsupportedError();
-    }
+    const currentProviderConnectionId = params.sessionActive === true
+      ? readSessionProviderBindingMetadataV1(metadata)?.connectionId ?? null
+      : currentIntent?.selection?.providerConnectionId ?? null;
     const providerConnectionId = hasExplicitProviderConnectionId
       ? requestedProviderConnectionId
       : currentProviderConnectionId;
-    if (requestedModelId === null || (providerConnectionId === null && requestedModelId.trim() === 'default')) {
-      return '';
-    }
-    const selection = resolveSessionModelSelectionInputRefV1({
+    const selection = ProviderBoundModelRefSchema.parse({
       agentTargetKey,
       providerConnectionId,
-      modelId: requestedModelId,
+      modelId: requestedModelId ?? 'default',
     });
-    return selection?.modelId ?? '';
+    return {
+      modelId: selection.modelId,
+      selection: SessionModelSelectionV1Schema.parse({
+        v: 1,
+        updatedAt: params.nowMs ?? Date.now(),
+        ref: selection,
+      }),
+    };
   }
 
   if (params.legacyModelOverride !== undefined) {
     const modelId = params.legacyModelOverride?.trim() ?? '';
-    return modelId === 'default' ? '' : modelId;
+    return { modelId: modelId === 'default' ? '' : modelId, selection: null };
   }
 
   if (!agentTargetKey) {
     if (hasPersistedModelIntent(metadata)) {
       throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
     }
-    return '';
+    return { modelId: '', selection: null };
   }
   const intent = resolveModelSelectionIntentFromSessionMetadata(metadata, agentTargetKey);
-  return intent?.selection?.modelId ?? '';
+  return {
+    modelId: intent?.selection?.modelId ?? '',
+    selection: intent?.selection
+      ? SessionModelSelectionV1Schema.parse({
+          v: 1,
+          updatedAt: intent.updatedAt,
+          ref: intent.selection,
+        })
+      : null,
+  };
+}
+
+export function resolveSessionMessageModelId(
+  params: Parameters<typeof resolveSessionMessageModel>[0],
+): string {
+  return resolveSessionMessageModel(params).modelId;
 }

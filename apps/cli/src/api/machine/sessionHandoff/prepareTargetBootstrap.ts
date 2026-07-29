@@ -1,6 +1,5 @@
 import os from 'node:os';
 
-import { configuration } from '@/configuration';
 import {
   type SessionHandoffPrepareTargetRequest,
   type SessionHandoffStatus,
@@ -26,6 +25,7 @@ import {
   resolvePrepareTargetResponseAfterFastPath,
   type SessionHandoffPrepareTargetResponse,
 } from './prepareTargetResponse';
+import type { SessionHandoffRuntimeConfig } from './runtimeConfig';
 
 type SessionHandoffPrepareTargetJobStore = ReturnType<typeof createSessionHandoffPrepareTargetJobStore>;
 type SessionHandoffSourceExportStore = ReturnType<typeof createSessionHandoffSourceExportStore>;
@@ -51,11 +51,13 @@ export type SessionHandoffPrepareTargetBootstrapResult =
 
 export type ResolvePrepareTargetBootstrapInput = Readonly<{
   request: SessionHandoffPrepareTargetRequest;
+  acceptedResumeJobId?: string;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   activePrepareJobs: Map<string, Promise<void>>;
   prepareTargetJobLeaseOwnerId: string;
   prepareTargetJobLeaseTtlMs: number;
+  runtimeConfig: SessionHandoffRuntimeConfig;
   machineTransferChannel: SessionHandoffPrepareTargetJobInput['machineTransferChannel'];
   directPeerTransfer: SessionHandoffPrepareTargetJobInput['directPeerTransfer'];
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
@@ -119,6 +121,23 @@ export async function resolvePrepareTargetBootstrap(
         },
       };
     }
+    const isAcceptedExplicitResume =
+      input.acceptedResumeJobId === persistedJob.jobId
+      && persistedJob.schemaVersion === 2
+      && persistedJob.prepareRecovery.status === 'attempted';
+    if (!isAcceptedExplicitResume && persistedJob.jobId.startsWith('prepare_')) {
+      const interrupted = await input.prepareJobStore.hydrateInterrupted(
+        persistedJob.jobId,
+        Date.now(),
+      );
+      return {
+        kind: 'response',
+        response: {
+          handoffId: input.request.handoffId,
+          status: interrupted?.status ?? persistedJob.status,
+        },
+      };
+    }
   }
 
   const jobId = persistedJob?.jobId ?? buildPrepareJobId(input.request.handoffId);
@@ -149,8 +168,9 @@ export async function resolvePrepareTargetBootstrap(
   let runJob = existingActiveJob;
   if (!runJob) {
     runJob = runSessionHandoffPrepareTargetJob({
-      activeServerDir: configuration.activeServerDir,
+      activeServerDir: input.runtimeConfig.activeServerDir,
       homeDir: os.homedir(),
+      runtimeConfig: input.runtimeConfig,
       jobId,
       handoffId: input.request.handoffId,
       createdAtMs,

@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/index.ts",
+    "src/lib.ts",
+    "src/mcp/bridges/happierMcpStdioBridge.ts",
+    "src/mcp/bridges/remoteMcpStdioBridge.ts",
+    "src/mcp/launchers/stdioMcpServerLauncher.ts",
+    "src/daemon/voiceInference/runtime/packagedVoiceInferenceRuntime.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "src/**/*.test.ts",
+    "src/**/*.test.tsx",
+    "src/**/*.spec.ts",
+    "src/**/*.spec.tsx",
+    "src/**/__tests__/**",
+    "src/**/__fixtures__/**",
+    "src/**/testkit/**",
+    "src/**/*.testkit.ts",
+    "src/test-setup*.ts"
+  ]
+}

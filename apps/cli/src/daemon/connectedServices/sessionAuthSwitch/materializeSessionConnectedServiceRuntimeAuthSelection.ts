@@ -1,6 +1,6 @@
 import type { ApiClient } from '@/api/api';
 import { materializeConnectedServiceRuntimeAuthSelectionThroughCatalog } from '@/daemon/connectedServices/catalogHooks';
-import { resolveConnectedServiceCredentials } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import { resolveConnectedServiceCredentialResolutions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
 import type { Credentials } from '@/persistence';
 import {
   readConnectedServiceChildSelectionsFromEnv,
@@ -58,13 +58,14 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
     : readNonEmptyString(binding.profileId);
   if (!profileId) return null;
 
-  const records = await resolveConnectedServiceCredentials({
+  const resolutions = await resolveConnectedServiceCredentialResolutions({
     credentials: params.credentials,
     api: params.api,
     bindings: [{ serviceId: params.input.serviceId, profileId }],
   });
-  const record = records.get(params.input.serviceId);
-  if (!record) return null;
+  const resolution = resolutions.get(params.input.serviceId);
+  if (resolution?.revisionSemantics !== 'revisioned') return null;
+  const { record, credentialRevision } = resolution;
 
   const baseSelection = {
     serviceId: params.input.serviceId,
@@ -91,6 +92,7 @@ export async function materializeSessionConnectedServiceRuntimeAuthSelection(par
         }
       : {}),
     record,
+    credentialRevision,
   };
 
   return await materializeConnectedServiceRuntimeAuthSelectionThroughCatalog(params.input.agentId, {

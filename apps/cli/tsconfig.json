@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -10,6 +9,7 @@
     ],
     "jsx": "react",
     "rootDir": "src",
+    "outDir": "dist/.tsc",
     "declaration": true,
     "strict": true,
     "noImplicitAny": true,
@@ -27,8 +27,8 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "noEmit": true,
-    "typeRoots": [
-      "./node_modules/@types"
+    "types": [
+      "node"
     ],
     "paths": {
       "@/*": [

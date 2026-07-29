@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const SAMPLE_PLUGIN_ID = 'acme.sample';
-export const SAMPLE_PLUGIN_PROVIDER_ID = 'acme.sample.provider';
+export const SAMPLE_PLUGIN_PROVIDER_ID = 'sample-provider';
 export const SAMPLE_PLUGIN_BACKEND_ID = SAMPLE_PLUGIN_PROVIDER_ID;
 export const SAMPLE_PLUGIN_PROVIDER_TITLE = 'Acme Sample CLI';
 

@@ -1,4 +1,9 @@
-import { AGENTS_CORE, AGENT_IDS, type AgentId } from '@happier-dev/agents';
+import {
+  AGENTS_CORE,
+  AGENT_IDS,
+  resolveConnectedServiceSessionSelection,
+  type AgentId,
+} from '@happier-dev/agents';
 import {
   ConnectedServicesDefaultAuthByAgentIdV1Schema,
   ConnectedServiceBindingsV1Schema,
@@ -11,6 +16,22 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 
 export function agentSupportsSpawnConnectedServicesDefaults(agentId: AgentId): boolean {
   return (AGENTS_CORE[agentId].connectedServices?.supportedServiceIds.length ?? 0) > 0;
+}
+
+export type SpawnConnectedServicesDefaultDisposition =
+  | Readonly<{ kind: 'connected'; bindings: ConnectedServiceBindingsV1 }>
+  | Readonly<{ kind: 'native' }>
+  | Readonly<{
+      kind: 'unavailable';
+      reason: 'connected_services_default_settings_invalid';
+    }>;
+
+export class ConnectedServicesDefaultUnavailableError extends Error {
+  readonly code = 'connected_services_default_unavailable';
+
+  constructor(readonly reason: 'connected_services_default_settings_invalid') {
+    super(reason);
+  }
 }
 
 /**
@@ -41,35 +62,80 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
       mode: 'blocking',
       deps: { applySideEffects: () => undefined },
     });
-    const connectedServices = resolveSpawnConnectedServicesDefaults({
+    const disposition = resolveSpawnConnectedServicesDefaultDisposition({
       accountSettings: accountSettingsContext.settings,
       agentId: agentId as AgentId,
     });
-    if (!connectedServices) return null;
+    if (disposition.kind === 'unavailable') {
+      throw new ConnectedServicesDefaultUnavailableError(disposition.reason);
+    }
+    if (disposition.kind === 'native') return null;
     return {
-      connectedServices,
+      connectedServices: disposition.bindings,
       connectedServicesUpdatedAt: Date.now(),
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof ConnectedServicesDefaultUnavailableError) throw error;
     return null;
   }
 }
 
 function normalizeBindingForSpawn(
+  serviceId: string,
   binding: ConnectedServiceBindingSelectionV1 | undefined,
 ): ConnectedServiceBindingSelectionV1 {
-  if (binding?.source !== 'connected') return { source: 'native' };
-  if (binding.selection === 'group') {
+  const resolution = resolveConnectedServiceSessionSelection({
+    serviceId,
+    binding,
+    availability: { kind: 'deferred' },
+  });
+  return resolution.status === 'no_selection'
+    ? { source: 'native' }
+    : { source: 'connected', ...resolution.selection };
+}
+
+export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly<{
+  accountSettings: unknown;
+  agentId: AgentId;
+}>): SpawnConnectedServicesDefaultDisposition {
+  const supportedServiceIds = AGENTS_CORE[params.agentId].connectedServices?.supportedServiceIds ?? [];
+  if (supportedServiceIds.length === 0) return { kind: 'native' };
+
+  const settingsRecord = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
+    ? params.accountSettings as { connectedServicesDefaultAuthByAgentIdV1?: unknown }
+    : {};
+  if (!Object.prototype.hasOwnProperty.call(settingsRecord, 'connectedServicesDefaultAuthByAgentIdV1')) {
+    return { kind: 'native' };
+  }
+  const parsedDefaults = ConnectedServicesDefaultAuthByAgentIdV1Schema.safeParse(
+    settingsRecord.connectedServicesDefaultAuthByAgentIdV1,
+  );
+  if (!parsedDefaults.success) {
     return {
-      source: 'connected',
-      selection: 'group',
-      groupId: binding.groupId,
+      kind: 'unavailable',
+      reason: 'connected_services_default_settings_invalid',
     };
   }
+
+  const configuredBindings = parsedDefaults.data.bindingsByAgentId[params.agentId]?.bindingsByServiceId ?? {};
+  const bindingsByServiceId: Record<string, ConnectedServiceBindingSelectionV1> = {};
+  let hasConnectedBinding = false;
+
+  for (const serviceId of supportedServiceIds) {
+    const binding = normalizeBindingForSpawn(serviceId, configuredBindings[serviceId]);
+    bindingsByServiceId[serviceId] = binding;
+    if (binding.source === 'connected') {
+      hasConnectedBinding = true;
+    }
+  }
+
+  if (!hasConnectedBinding) return { kind: 'native' };
   return {
-    source: 'connected',
-    selection: 'profile',
-    profileId: binding.profileId,
+    kind: 'connected',
+    bindings: ConnectedServiceBindingsV1Schema.parse({
+      v: 1,
+      bindingsByServiceId,
+    }),
   };
 }
 
@@ -77,32 +143,6 @@ export function resolveSpawnConnectedServicesDefaults(params: Readonly<{
   accountSettings: unknown;
   agentId: AgentId;
 }>): ConnectedServiceBindingsV1 | null {
-  const supportedServiceIds = AGENTS_CORE[params.agentId].connectedServices?.supportedServiceIds ?? [];
-  if (supportedServiceIds.length === 0) return null;
-
-  const settingsRecord = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
-    ? params.accountSettings as { connectedServicesDefaultAuthByAgentIdV1?: unknown }
-    : {};
-  const parsedDefaults = ConnectedServicesDefaultAuthByAgentIdV1Schema.safeParse(
-    settingsRecord.connectedServicesDefaultAuthByAgentIdV1,
-  );
-  if (!parsedDefaults.success) return null;
-
-  const configuredBindings = parsedDefaults.data.bindingsByAgentId[params.agentId]?.bindingsByServiceId ?? {};
-  const bindingsByServiceId: Record<string, ConnectedServiceBindingSelectionV1> = {};
-  let hasConnectedBinding = false;
-
-  for (const serviceId of supportedServiceIds) {
-    const binding = normalizeBindingForSpawn(configuredBindings[serviceId]);
-    bindingsByServiceId[serviceId] = binding;
-    if (binding.source === 'connected') {
-      hasConnectedBinding = true;
-    }
-  }
-
-  if (!hasConnectedBinding) return null;
-  return ConnectedServiceBindingsV1Schema.parse({
-    v: 1,
-    bindingsByServiceId,
-  });
+  const disposition = resolveSpawnConnectedServicesDefaultDisposition(params);
+  return disposition.kind === 'connected' ? disposition.bindings : null;
 }

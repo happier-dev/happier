@@ -1,6 +1,6 @@
 import type { ProviderMessageMetaEnricher } from '@happier-dev/agents';
 
-import type { AcpRuntimeDefinitionV1 } from './_types';
+import type { AcpRuntimeDefinition } from './_types';
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -12,7 +12,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 
 export function createProviderMessageMetaEnricher(params: Readonly<{
   backendId: string;
-  messageMeta: AcpRuntimeDefinitionV1['messageMeta'];
+  messageMeta: AcpRuntimeDefinition['messageMeta'];
 }>): ProviderMessageMetaEnricher | undefined {
   const { backendId, messageMeta } = params;
   const enrich = messageMeta?.enrichOutgoing;

@@ -4,6 +4,7 @@
  * Handles settings and private key storage in ~/.happier/ or local .happier/
  */
 
+import { randomUUID } from 'node:crypto'
 import { FileHandle } from 'node:fs/promises'
 import { readFile, writeFile, mkdir, open, unlink, rename, stat, chmod, readdir } from 'node:fs/promises'
 import { chmodSync, existsSync, mkdirSync, readFileSync, unlinkSync } from 'node:fs'
@@ -16,7 +17,7 @@ import {
   DaemonStartupSourceSchema,
   type DaemonStartupSource,
 } from './daemon/ownership/daemonOwnershipMetadata';
-import { sanitizeServerIdForFilesystem } from './server/serverId';
+import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId';
 import { isLocalishServerUrl } from './server/serverUrlClassification';
 import type { PublicReleaseRingLabel } from '@happier-dev/release-runtime/releaseRings';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
@@ -26,6 +27,8 @@ import { logger } from './ui/logger';
 import { resolveMachineIdForServerFromSettings } from './daemon/resolveMachineIdForServerFromSettings';
 import { cleanupAtomicWriteTempFiles, cleanupAtomicWriteTempFilesSync, writeJsonAtomicSync } from './utils/fs/writeJsonAtomicSync';
 import type { MachineReplacementReason } from '@happier-dev/protocol';
+import { reclaimJsonOwnerFileLockSnapshot } from './utils/fs/jsonOwnerFileLock';
+import { readProcessRunState } from './daemon/processRunState';
 
 async function bestEffortChmod(path: string, mode: number): Promise<void> {
   if (process.platform === 'win32') return;
@@ -52,15 +55,24 @@ async function ensureHappyHomeDirExists(): Promise<void> {
   await bestEffortChmod(configuration.happyHomeDir, 0o700);
 }
 
-function resolveLegacyDaemonStatePathsForActiveServer(): string[] {
+function resolveDaemonStateCandidatePathsForCurrentLifecycle(): readonly string[] {
   return resolveDaemonStateCandidatePaths({
-    serverDir: configuration.activeServerDir,
+    serverDir: dirname(configuration.daemonStateFile),
     preferredRing: configuration.publicReleaseRing,
-  }).filter((candidatePath) => candidatePath !== configuration.daemonStateFile);
+  });
+}
+
+function resolveLegacyDaemonStatePathsForCurrentLifecycle(): string[] {
+  return resolveDaemonStateCandidatePathsForCurrentLifecycle()
+    .filter((candidatePath) => candidatePath !== configuration.daemonStateFile);
+}
+
+function hasExplicitDaemonLifecycleScope(): boolean {
+  return isServerIdFilesystemSafe(String(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID ?? '').trim());
 }
 
 function cleanupLegacyDaemonStateFilesBestEffortSync(): void {
-  for (const legacyPath of resolveLegacyDaemonStatePathsForActiveServer()) {
+  for (const legacyPath of resolveLegacyDaemonStatePathsForCurrentLifecycle()) {
     try {
       if (existsSync(legacyPath)) {
         unlinkSync(legacyPath);
@@ -73,7 +85,7 @@ function cleanupLegacyDaemonStateFilesBestEffortSync(): void {
 }
 
 async function cleanupLegacyDaemonStateFilesBestEffort(): Promise<void> {
-  for (const legacyPath of resolveLegacyDaemonStatePathsForActiveServer()) {
+  for (const legacyPath of resolveLegacyDaemonStatePathsForCurrentLifecycle()) {
     try {
       if (existsSync(legacyPath)) {
         await unlink(legacyPath);
@@ -136,6 +148,9 @@ export interface Settings {
   machineReplacementCandidatesByServerIdByAccountId?: Record<string, Record<string, MachineReplacementCandidate> | undefined>
   daemonAutoStartWhenRunningHappy?: boolean
   chromeMode?: boolean
+  plugins?: {
+    devWatch?: boolean
+  }
   /**
    * Per-server, per-account reconnect cursor for `/v2/changes`.
    * Keyed by server id, then server account id.
@@ -188,6 +203,9 @@ const defaultSettings: Settings = {
   lastTokenSubByServerId: {},
   machineIdConfirmedByServerByServerId: {},
   machineReplacementCandidatesByServerIdByAccountId: {},
+  plugins: {
+    devWatch: true,
+  },
   lastChangesCursorByServerIdByAccountId: {},
 }
 
@@ -301,6 +319,7 @@ export interface DaemonLocallyPersistedState {
   startedWithCliVersion: string;
   startedWithPublicReleaseChannel?: PublicReleaseRingLabel;
   runtimeId?: string;
+  daemonExecutionGenerationV1?: string;
   startupSource?: DaemonStartupSource;
   serviceLabel?: string;
   machineId?: string;
@@ -316,6 +335,7 @@ const DaemonLocallyPersistedStateSchemaV2 = z.object({
   startedWithCliVersion: z.string(),
   startedWithPublicReleaseChannel: DaemonPublicReleaseChannelLabelSchema.optional(),
   runtimeId: z.string().min(1).optional(),
+  daemonExecutionGenerationV1: z.string().min(1).optional(),
   startupSource: DaemonStartupSourceSchema.optional(),
   serviceLabel: z.string().min(1).optional(),
   machineId: z.string().min(1).optional(),
@@ -755,7 +775,7 @@ export async function clearMachineId(opts?: Readonly<{
   });
 }
 
-export async function readLastChangesCursor(accountId: string): Promise<number> {
+export async function readAccountChangesCursor(accountId: string): Promise<number> {
   if (!accountId) return 0;
   const settings = await readSettings();
   const activeServerId = sanitizeServerIdForFilesystem(
@@ -766,7 +786,7 @@ export async function readLastChangesCursor(accountId: string): Promise<number> 
   return typeof cursor === 'number' && Number.isFinite(cursor) && cursor >= 0 ? cursor : 0;
 }
 
-export async function writeLastChangesCursor(accountId: string, cursor: number): Promise<void> {
+export async function writeAccountChangesCursor(accountId: string, cursor: number): Promise<void> {
   if (!accountId) return;
   if (!Number.isFinite(cursor) || cursor < 0) return;
   const next = Math.floor(cursor);
@@ -879,10 +899,7 @@ async function readDaemonStateFallbackFromServersDir(): Promise<DaemonLocallyPer
 }
 
 export async function readDaemonState(): Promise<DaemonLocallyPersistedState | null> {
-  const candidatePaths = resolveDaemonStateCandidatePaths({
-    serverDir: configuration.activeServerDir,
-    preferredRing: configuration.publicReleaseRing,
-  });
+  const candidatePaths = resolveDaemonStateCandidatePathsForCurrentLifecycle();
   for (let attempt = 1; attempt <= 3; attempt++) {
     let sawEnoent = false;
     for (const candidatePath of candidatePaths) {
@@ -923,7 +940,13 @@ export async function readDaemonState(): Promise<DaemonLocallyPersistedState | n
       }
     }
     if (sawEnoent) {
-      if (attempt === 3) return await readDaemonStateFallbackFromServersDir();
+      if (attempt === 3) {
+        // Released daemons predate explicit lifecycle scope and may still be discoverable through
+        // their endpoint profile. Explicitly scoped callers fail closed to their exact owner.
+        return hasExplicitDaemonLifecycleScope()
+          ? null
+          : await readDaemonStateFallbackFromServersDir();
+      }
       await new Promise((resolve) => setTimeout(resolve, 15));
       continue;
     }
@@ -949,12 +972,14 @@ export async function clearDaemonState(options: Readonly<{ includeLockFile?: boo
   }
   await cleanupAtomicWriteTempFiles(configuration.daemonStateFile);
   await cleanupLegacyDaemonStateFilesBestEffort();
-  // Also clean up lock file if it exists (for stale cleanup)
-  if (includeLockFile && existsSync(configuration.daemonLockFile)) {
-    try {
-      await unlink(configuration.daemonLockFile);
-    } catch {
-      // Lock file might be held by running daemon, ignore error
+  // A state cleanup must not remove a live daemon's independent singleton proof.
+  if (includeLockFile) {
+    const snapshot = readDaemonLockSnapshot();
+    if (snapshot) {
+      const owner = await inspectDaemonLockSnapshotOwner(snapshot);
+      if (owner.status === 'replaceable') {
+        await reclaimJsonOwnerFileLockSnapshot(configuration.daemonLockFile, snapshot.raw);
+      }
     }
   }
 }
@@ -964,47 +989,145 @@ export async function clearDaemonState(options: Readonly<{ includeLockFile?: boo
  * The lock file proves the daemon is running and prevents multiple instances.
  * Returns the file handle to hold for the daemon's lifetime, or null if locked.
  */
+const DaemonLockRecordSchema = z.object({
+  t: z.literal('happier_daemon_lock_v1'),
+  pid: z.number().int().positive(),
+  ownerToken: z.string().uuid(),
+  processStartedAtMs: z.number().int().nonnegative(),
+  createdAtMs: z.number().int().nonnegative(),
+}).strict();
+type DaemonLockRecord = z.infer<typeof DaemonLockRecordSchema>;
+type DaemonLockSnapshot = Readonly<{
+  raw: string;
+  pid: number | null;
+  record: DaemonLockRecord | null;
+}>;
+
+const currentProcessStartedAtMs = Math.max(0, Math.trunc(Date.now() - process.uptime() * 1_000));
+const daemonLockRawByHandle = new WeakMap<FileHandle, string>();
+
+export type DaemonLockOwnerInspection =
+  | Readonly<{ status: 'missing' }>
+  | Readonly<{ status: 'starting'; pid: number; evidence: 'classified' | 'live-unclassified' }>
+  | Readonly<{ status: 'replaceable'; pid: number | null; reason: 'dead' | 'unrelated' | 'invalid' }>;
+
+function readDaemonLockSnapshot(): DaemonLockSnapshot | null {
+  let raw: string;
+  try {
+    raw = readFileSync(configuration.daemonLockFile, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') return null;
+    return { raw: '', pid: null, record: null };
+  }
+  try {
+    const parsed = DaemonLockRecordSchema.safeParse(JSON.parse(raw) as unknown);
+    if (parsed.success) return { raw, pid: parsed.data.pid, record: parsed.data };
+  } catch { }
+  const legacyPid = /^\s*[1-9]\d*\s*$/u.test(raw) ? Number(raw.trim()) : null;
+  return {
+    raw,
+    pid: legacyPid !== null && Number.isSafeInteger(legacyPid) ? legacyPid : null,
+    record: null,
+  };
+}
+
+export function readDaemonLockPid(): number | null {
+  return readDaemonLockSnapshot()?.pid ?? null;
+}
+
+async function inspectDaemonLockSnapshotOwner(snapshot: DaemonLockSnapshot): Promise<DaemonLockOwnerInspection> {
+  const pid = snapshot.pid;
+  if (!pid) return { status: 'replaceable', pid: null, reason: 'invalid' };
+
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | null)?.code === 'ESRCH') {
+      return { status: 'replaceable', pid, reason: 'dead' };
+    }
+    return { status: 'starting', pid, evidence: 'live-unclassified' };
+  }
+
+  if (
+    snapshot.record
+    && pid === process.pid
+    && Math.abs(snapshot.record.processStartedAtMs - currentProcessStartedAtMs) > 1_000
+  ) {
+    return { status: 'replaceable', pid, reason: 'unrelated' };
+  }
+
+  const { findHappyProcessByPid } = await import('@/daemon/doctor');
+  const proc = await findHappyProcessByPid(pid).catch(() => null);
+  if (proc?.type === 'daemon' || proc?.type === 'dev-daemon') {
+    return { status: 'starting', pid, evidence: 'classified' };
+  }
+  if (proc) {
+    return { status: 'replaceable', pid, reason: 'unrelated' };
+  }
+  const runState = await readProcessRunState(pid);
+  if (runState === 'dead' || runState === 'zombie') {
+    return { status: 'replaceable', pid, reason: 'dead' };
+  }
+  return { status: 'starting', pid, evidence: 'live-unclassified' };
+}
+
+export async function inspectDaemonLockOwner(): Promise<DaemonLockOwnerInspection> {
+  const snapshot = readDaemonLockSnapshot();
+  return snapshot ? await inspectDaemonLockSnapshotOwner(snapshot) : { status: 'missing' };
+}
+
 export async function acquireDaemonLock(
   maxAttempts: number = 5,
   delayIncrementMs: number = 200
 ): Promise<FileHandle | null> {
-  const { findHappyProcessByPid } = await import('@/daemon/doctor');
+  await import('@/daemon/doctor');
   await mkdir(dirname(configuration.daemonLockFile), { recursive: true });
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const raw = JSON.stringify({
+      t: 'happier_daemon_lock_v1',
+      pid: process.pid,
+      ownerToken: randomUUID(),
+      processStartedAtMs: currentProcessStartedAtMs,
+      createdAtMs: Date.now(),
+    } satisfies DaemonLockRecord);
     try {
       // Prefer the string flag form for Windows Bun-compiled binaries, which mis-handle numeric O_EXCL flags.
       const fileHandle = await open(
         configuration.daemonLockFile,
-        'wx',
+        process.platform === 'win32' ? 'wx+' : 'wx',
         0o600
       );
-      // Write PID to lock file for debugging
-      await fileHandle.writeFile(String(process.pid));
+      let writeCompleted = false;
+      try {
+        await fileHandle.writeFile(raw);
+        writeCompleted = true;
+        await fileHandle.sync();
+      } catch (error) {
+        await fileHandle.close().catch(() => undefined);
+        if (writeCompleted) {
+          await reclaimJsonOwnerFileLockSnapshot(configuration.daemonLockFile, raw).catch(() => undefined);
+        }
+        throw error;
+      }
+      daemonLockRawByHandle.set(fileHandle, raw);
       return fileHandle;
     } catch (error: any) {
       if (error.code === 'EEXIST') {
-        // Lock file exists, check if process is still running
         try {
-          const lockPid = readFileSync(configuration.daemonLockFile, 'utf-8').trim();
-          if (lockPid && !isNaN(Number(lockPid))) {
-            const pid = Number(lockPid);
-            try {
-              process.kill(pid, 0); // Check if process exists
-
-              // PID reuse safety: only treat the lock as valid if the PID looks like a happier daemon.
-              // Otherwise a recycled PID can wedge daemon startup forever.
-              const proc = await findHappyProcessByPid(pid);
-              const isDaemon = proc?.type === 'daemon' || proc?.type === 'dev-daemon';
-              if (!isDaemon) {
-                unlinkSync(configuration.daemonLockFile);
-                continue; // Retry acquisition
-              }
-            } catch {
-              // Process doesn't exist, remove stale lock
-              unlinkSync(configuration.daemonLockFile);
-              continue; // Retry acquisition
+          const snapshot = readDaemonLockSnapshot();
+          const owner = snapshot
+            ? await inspectDaemonLockSnapshotOwner(snapshot)
+            : { status: 'missing' as const };
+          if (owner.status === 'replaceable') {
+            if (snapshot) {
+              const reclaim = await reclaimJsonOwnerFileLockSnapshot(
+                configuration.daemonLockFile,
+                snapshot.raw,
+              );
+              if (reclaim === 'ownership_unknown') return null;
             }
+            continue;
           }
         } catch {
           // Can't read lock file, might be corrupted
@@ -1025,16 +1148,12 @@ export async function acquireDaemonLock(
  * Release daemon lock by closing handle and deleting lock file
  */
 export async function releaseDaemonLock(lockHandle: FileHandle): Promise<void> {
+  const ownRaw = daemonLockRawByHandle.get(lockHandle);
   try {
     await lockHandle.close();
   } catch { }
 
-  try {
-    if (existsSync(configuration.daemonLockFile)) {
-      const lockOwner = readFileSync(configuration.daemonLockFile, 'utf-8').trim();
-      if (lockOwner === String(process.pid)) {
-        unlinkSync(configuration.daemonLockFile);
-      }
-    }
-  } catch { }
+  if (!ownRaw) return;
+  daemonLockRawByHandle.delete(lockHandle);
+  await reclaimJsonOwnerFileLockSnapshot(configuration.daemonLockFile, ownRaw).catch(() => undefined);
 }

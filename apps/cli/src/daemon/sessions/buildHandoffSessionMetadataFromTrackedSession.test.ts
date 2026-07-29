@@ -1,8 +1,75 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const buildRuntimeLocalHandoffMetadataForAgentMock = vi.hoisted(() => vi.fn(
+    (
+        agentId: string,
+        params: Readonly<{
+            vendorResumeId: string;
+            metadata: Readonly<Record<string, unknown>>;
+        }>,
+    ): Readonly<Record<string, unknown>> => (
+        agentId === 'opencode'
+            ? { opencodeSessionId: params.vendorResumeId }
+            : { claudeSessionId: params.vendorResumeId }
+    ),
+));
+
+vi.mock('@/session/handoff/metadata/catalogHooks', () => ({
+    buildRuntimeLocalHandoffMetadataForAgent:
+        buildRuntimeLocalHandoffMetadataForAgentMock,
+}));
 
 import { buildHandoffSessionMetadataFromTrackedSession } from './buildHandoffSessionMetadataFromTrackedSession';
 
 describe('buildHandoffSessionMetadataFromTrackedSession', () => {
+    beforeEach(() => {
+        buildRuntimeLocalHandoffMetadataForAgentMock.mockClear();
+    });
+
+    it('excludes owner-only External Session operation progress from Agent handoff leaves', () => {
+        const inputMetadata = {
+            machineId: 'machine-session-handoff',
+            path: '/repo-source-current',
+            homeDir: '/Users/target',
+            flavor: 'claude',
+            externalSessionOperationV1: {
+                v: 1,
+                progress: { operationId: 'private-operation', revision: 6 },
+            },
+            externalSessionOperationPresentationV1: {
+                v: 1,
+                operationId: 'private-operation',
+                revision: 6,
+                kind: 'materialize',
+                status: 'running',
+                phase: 'publishing',
+            },
+        };
+
+        buildHandoffSessionMetadataFromTrackedSession({
+            trackedSession: {
+                startedBy: 'daemon',
+                pid: 122,
+                happySessionId: 'sess_handoff_private_operation',
+                vendorResumeId: 'provider-handoff-private-operation',
+                happySessionMetadataFromLocalWebhook: inputMetadata,
+            } as never,
+            machineId: 'machine-session-handoff',
+        });
+
+        expect(buildRuntimeLocalHandoffMetadataForAgentMock)
+            .toHaveBeenCalledWith('claude', expect.objectContaining({
+                metadata: expect.objectContaining({
+                    path: '/repo-source-current',
+                    externalSessionOperationPresentationV1:
+                        inputMetadata.externalSessionOperationPresentationV1,
+                }),
+            }));
+        expect(buildRuntimeLocalHandoffMetadataForAgentMock.mock.calls[0]?.[1].metadata)
+            .not.toHaveProperty('externalSessionOperationV1');
+        expect(inputMetadata).toHaveProperty('externalSessionOperationV1');
+    });
+
     it('falls back to the persisted handoff overlay when the tracked session lost its webhook metadata', () => {
         const metadata = buildHandoffSessionMetadataFromTrackedSession({
             trackedSession: {
@@ -94,7 +161,7 @@ describe('buildHandoffSessionMetadataFromTrackedSession', () => {
                     homeDir: '/Users/target',
                     externalSessionV1: {
                         v: 1,
-                        providerId: 'opencode',
+                        agentId: 'opencode',
                         machineId: 'machine-session-handoff',
                         remoteSessionId: 'sess-handoff-direct',
                         source: {

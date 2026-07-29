@@ -1,8 +1,11 @@
 import { access, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { afterEach, describe, expect, it } from 'vitest';
+
+import { withWorkspaceBundleLock } from '../../../packages/cli-common/workspaceBundleLock.mjs';
 
 describe('ensureBuildArtifactsReadyOnce', () => {
   const tempDirs: string[] = [];
@@ -45,7 +48,7 @@ describe('ensureBuildArtifactsReadyOnce', () => {
     expect(buildCount).toBe(1);
   });
 
-  it('reclaims a live but stale lock owner and runs the build', async () => {
+  it('does not reclaim a live owner solely because its timestamp is stale', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-build-lock-live-stale-'));
     tempDirs.push(tempDir);
 
@@ -58,27 +61,24 @@ describe('ensureBuildArtifactsReadyOnce', () => {
 
     await writeFile(lockPath, `${JSON.stringify(staleOwner)}\n`, 'utf8');
 
-    let buildCount = 0;
-
     const { ensureBuildArtifactsReadyOnce } = await import('./testSetupBuildCoordinator');
 
-    await ensureBuildArtifactsReadyOnce({
-      lockPath,
-      markerPaths: [markerPath],
-      lockLabel: 'CLI shared deps build',
-      pollIntervalMs: 1,
-      timeoutMs: 5_000,
-      staleAfterMs: 5_000,
-      isProcessAlive: () => true,
-      runBuild: async () => {
-        buildCount += 1;
-        await writeFile(markerPath, 'built', 'utf8');
-      },
-    });
+    await expect(
+      ensureBuildArtifactsReadyOnce({
+        lockPath,
+        markerPaths: [markerPath],
+        lockLabel: 'CLI shared deps build',
+        pollIntervalMs: 1,
+        timeoutMs: 20,
+        staleAfterMs: 5,
+        runBuild: async () => {
+          throw new Error('runBuild should not be reached while a live owner remains');
+        },
+      }),
+    ).rejects.toThrow(/Timed out waiting for CLI shared deps build lock/);
 
-    await expect(access(markerPath)).resolves.toBeUndefined();
-    await expect(access(lockPath)).rejects.toThrow();
-    expect(buildCount).toBe(1);
+    await expect(access(lockPath)).resolves.toBeUndefined();
+    await expect(access(markerPath)).rejects.toThrow();
   });
 
   it('runs the build when markers exist but the readiness predicate reports stale outputs', async () => {
@@ -114,6 +114,37 @@ describe('ensureBuildArtifactsReadyOnce', () => {
     expect(buildCount).toBe(1);
   });
 
+  it('does not delete a successor lock during cleanup', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-build-successor-'));
+    tempDirs.push(tempDir);
+
+    const lockPath = join(tempDir, 'shared-deps.lock');
+    const markerPath = join(tempDir, 'protocol.marker');
+    const successorOwner = {
+      pid: 123456,
+      createdAtMs: Date.now() + 1_000,
+    };
+
+    const { ensureBuildArtifactsReadyOnce } = await import('./testSetupBuildCoordinator');
+
+    await ensureBuildArtifactsReadyOnce({
+      lockPath,
+      markerPaths: [markerPath],
+      lockLabel: 'CLI shared deps build',
+      pollIntervalMs: 1,
+      timeoutMs: 5_000,
+      staleAfterMs: 1_000,
+      runBuild: async () => {
+        await writeFile(markerPath, 'built', 'utf8');
+        await writeFile(lockPath, `${JSON.stringify(successorOwner)}\n`, 'utf8');
+        await delay(350);
+      },
+    });
+
+    await expect(access(markerPath)).resolves.toBeUndefined();
+    await expect(access(lockPath)).resolves.toBeUndefined();
+  });
+
   it('waits for an active lock even when the expected outputs already exist', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-build-lock-live-ready-'));
     tempDirs.push(tempDir);
@@ -138,7 +169,6 @@ describe('ensureBuildArtifactsReadyOnce', () => {
         pollIntervalMs: 1,
         timeoutMs: 20,
         staleAfterMs: 5_000,
-        isProcessAlive: () => true,
         runBuild: async () => {
           throw new Error('runBuild should not be reached while an active lock remains');
         },
@@ -146,5 +176,41 @@ describe('ensureBuildArtifactsReadyOnce', () => {
     ).rejects.toThrow(/Timed out waiting for CLI shared deps build lock/);
 
     await expect(access(markerPath)).resolves.toBeUndefined();
+  });
+
+  it('passes an authenticated lease to a nested canonical build lock acquisition', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-build-nested-lock-'));
+    tempDirs.push(tempDir);
+
+    const lockPath = join(tempDir, 'cli-dist-build.lock');
+    const markerPath = join(tempDir, 'cli-dist.marker');
+    const { ensureBuildArtifactsReadyOnce } = await import('./testSetupBuildCoordinator');
+
+    await ensureBuildArtifactsReadyOnce({
+      lockPath,
+      markerPaths: [markerPath],
+      lockLabel: 'CLI dist build',
+      pollIntervalMs: 1,
+      timeoutMs: 500,
+      staleAfterMs: 500,
+      runBuild: async (context) => {
+        await withWorkspaceBundleLock(
+          async ({ inherited }) => {
+            expect(inherited).toBe(true);
+            await writeFile(markerPath, 'built', 'utf8');
+          },
+          {
+            lockPath,
+            heldLockValue: context?.heldLockValue,
+            pollIntervalMs: 1,
+            timeoutMs: 40,
+            staleAfterMs: 500,
+          },
+        );
+      },
+    });
+
+    await expect(access(markerPath)).resolves.toBeUndefined();
+    await expect(access(lockPath)).rejects.toThrow();
   });
 });

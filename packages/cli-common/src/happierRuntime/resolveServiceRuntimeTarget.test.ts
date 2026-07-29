@@ -114,4 +114,32 @@ describe('resolveHappierServiceRuntimeTarget', () => {
       installationPath: null,
     });
   });
+
+  it('matches Windows installation roots without case-sensitive path identity', () => {
+    const installations: HappierInstallation[] = [{
+      id: 'managed:stable:C:/Users/Tester/AppData/Local/happier/cli/current',
+      source: 'firstPartyManaged',
+      components: ['happier-cli', 'happier-daemon'],
+      ring: 'stable',
+      version: '1.2.3',
+      path: 'C:\\Users\\Tester\\AppData\\Local\\happier\\cli\\current',
+      realPath: 'C:\\Users\\Tester\\AppData\\Local\\happier\\cli\\versions\\1.2.3',
+      shimName: 'happier.exe',
+      onPath: true,
+      managedRoot: 'C:\\Users\\Tester\\AppData\\Local\\happier\\cli',
+    }];
+
+    expect(resolveHappierServiceRuntimeTarget({
+      service: {
+        ...baseService,
+        platform: 'win32',
+        backend: 'schtasks-user',
+        executablePath: 'c:\\users\\tester\\appdata\\local\\happier\\cli\\current\\happier.exe',
+      },
+      installations,
+    })).toMatchObject({
+      kind: 'installation',
+      installationId: installations[0]?.id,
+    });
+  });
 });

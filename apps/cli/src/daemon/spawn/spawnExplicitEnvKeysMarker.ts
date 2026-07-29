@@ -21,3 +21,31 @@ export function parseExplicitSpawnEnvKeysFromProcessEnv(env: NodeJS.ProcessEnv):
     return [];
   }
 }
+
+export function resolveExplicitSpawnScopedEnvironmentFromProcessEnv(
+  env: NodeJS.ProcessEnv,
+): Readonly<{
+  env: Readonly<Record<string, string>>;
+  unsetEnvKeys?: readonly string[];
+}> | undefined {
+  const explicitKeys = parseExplicitSpawnEnvKeysFromProcessEnv(env);
+  if (explicitKeys.length === 0) return undefined;
+
+  const scopedEnvironment: Record<string, string> = Object.create(null);
+  const unsetEnvKeys: string[] = [];
+  for (const key of explicitKeys) {
+    const value = env[key];
+    if (typeof value === 'string') {
+      scopedEnvironment[key] = value;
+    } else {
+      unsetEnvKeys.push(key);
+    }
+  }
+
+  return Object.freeze({
+    env: Object.freeze(scopedEnvironment),
+    ...(unsetEnvKeys.length > 0
+      ? { unsetEnvKeys: Object.freeze(unsetEnvKeys) }
+      : {}),
+  });
+}

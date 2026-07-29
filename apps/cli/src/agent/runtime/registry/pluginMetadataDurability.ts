@@ -8,6 +8,7 @@ import {
     type RegisteredSessionStateFieldMutationV1,
 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 import { resolveRegisteredSessionStateFieldDeliveryClass } from '@/agent/runtime/state/registeredFieldDurability';
+import { deterministicStringify } from '@/utils/deterministicJson';
 
 type DurableRegisteredMetadataSpec = Readonly<{
     metadataKey: string;
@@ -85,7 +86,10 @@ export function splitDurableRegisteredSessionStateMetadata(params: Readonly<{
                     fieldId: spec.fieldId,
                     deliveryClass,
                     source: params.source,
-                    op: { kind: 'clear' },
+                    op: {
+                        kind: 'clear',
+                        previousFingerprint: deterministicStringify(currentValue),
+                    },
                 }));
             } else {
                 const parsedCandidate = spec.parse(candidateValue);

@@ -8,13 +8,20 @@ import {
 } from '../selection/selectConnectedServiceAuthGroupCandidate';
 import { resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds } from '../selection/resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds';
 import { readConnectedServiceAuthGenerationApplyFailure } from '../../runtimeAuth/connectedServiceAuthGenerationApplyFailure';
+import type { AcceptedConnectedServiceAccountVerificationByServiceId } from '../../accountTransitions/acceptedConnectedServiceAccountVerification';
 import { evaluatePredictiveSoftSwitchSessionApplyPolicy } from './predictiveSoftSwitchPolicy';
+import type { ConnectedServiceCredentialRevisionV1 } from '@happier-dev/protocol';
 
-export type ConnectedServiceAuthGroupSwitchState = Readonly<{
-    serviceId: string;
+export type ConnectedServiceAuthGroupSwitchState<
+    TServiceIdentity = string,
+> = Readonly<{
+    serviceId: TServiceIdentity;
     groupId: string;
     activeProfileId: string | null;
     generation: number;
+    runtimeStateRevision?: number;
+    credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+    configurationRevision?: string | null;
     policy: ConnectedServiceAuthGroupPolicyV1;
     members: ReadonlyArray<ConnectedServiceAuthGroupMember>;
     memberStatesByProfileId: ReadonlyMap<string, ConnectedServiceAuthGroupMemberRuntimeState>;
@@ -25,15 +32,18 @@ export type ConnectedServiceAuthGroupMemberRuntimeStateOverride = Readonly<{
     state: ConnectedServiceAuthGroupMemberRuntimeState;
 }>;
 
-type LeaseCompletion = Readonly<{
-    serviceId: string;
+type LeaseCompletion<TServiceIdentity = string> = Readonly<{
+    serviceId: TServiceIdentity;
     groupId: string;
     activeProfileId: string | null;
     generation: number;
+    credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
     decisionTrace?: ConnectedServiceAuthGroupCandidateDecisionTrace;
 }>;
 
-type ConnectedServiceAuthGroupGenerationApplyInput = LeaseCompletion & Readonly<{
+export type ConnectedServiceAuthGroupGenerationApplyInput<
+    TServiceIdentity = string,
+> = LeaseCompletion<TServiceIdentity> & Readonly<{
     sessionId?: string;
     reason?: string;
 }>;
@@ -47,34 +57,63 @@ type LeaseResultCompletion = Readonly<{
 
 type ConnectedServiceAccountSwitchMode = 'hot_apply' | 'restart_resume' | 'spawn_next_turn';
 
+type ConnectedServiceGenerationApplyEvidence = Readonly<{
+    providerApplication?: string;
+    verificationByServiceId?: AcceptedConnectedServiceAccountVerificationByServiceId;
+}>;
+
+function generationApplyEvidenceFields(input: ConnectedServiceGenerationApplyEvidence & Readonly<{
+    mode?: ConnectedServiceAccountSwitchMode;
+}>): ConnectedServiceGenerationApplyEvidence & Readonly<{ mode?: ConnectedServiceAccountSwitchMode }> {
+    return {
+        ...(input.mode ? { mode: input.mode } : {}),
+        ...(input.providerApplication ? { providerApplication: input.providerApplication } : {}),
+        ...(input.verificationByServiceId ? { verificationByServiceId: input.verificationByServiceId } : {}),
+    };
+}
+
 type ConnectedServiceAuthGroupSwitchDecisionDiagnostics = Readonly<{
     decisionTrace: ConnectedServiceAuthGroupCandidateDecisionTrace;
 }>;
 
-type LeaseOutcome =
-    | Readonly<{ status: 'completed'; completion: LeaseCompletion }>
+type LeaseOutcome<TServiceIdentity = string> =
+    | Readonly<{
+        status: 'completed';
+        completion: LeaseCompletion<TServiceIdentity>;
+    }>
     | Readonly<{ status: 'completed_result'; completion: LeaseResultCompletion }>
     | Readonly<{ status: 'failed'; error: unknown }>;
 
-type LeaseAcquireResult =
+type LeaseAcquireResult<TServiceIdentity = string> =
     | Readonly<{
         kind: 'owner';
-        complete(completion: LeaseCompletion): void;
+        complete(completion: LeaseCompletion<TServiceIdentity>): void;
         completeResult(
             result: ConnectedServiceAuthGroupSwitchResult,
             context?: Readonly<{ activeProfileId: string | null; generation: number }>,
         ): void;
+        finish(): void;
         fail(error: unknown): void;
     }>
     | Readonly<{
         kind: 'loser';
-        waitForOwner(): Promise<LeaseCompletion | LeaseResultCompletion>;
+        waitForOwner(options?: Readonly<{ timeoutMs?: number }>): Promise<
+            LeaseCompletion<TServiceIdentity> | LeaseResultCompletion
+        >;
     }>;
 
 export const SESSION_SWITCH_LIMIT_WINDOW_MS = 60 * 60 * 1000;
 
-function switchKey(serviceId: string, groupId: string): string {
-    return `${serviceId}\0${groupId}`;
+function defaultServiceIdentityKey(serviceId: unknown): string {
+    if (typeof serviceId === 'string') return `legacy:${JSON.stringify(serviceId)}`;
+    return `qualified:${JSON.stringify(serviceId)}`;
+}
+
+function switchKey(
+    serviceIdentityKey: string,
+    groupId: string,
+): string {
+    return `${serviceIdentityKey}\0${groupId}`;
 }
 
 function normalizeProfileId(value: string | null | undefined): string | null {
@@ -96,7 +135,9 @@ function canRetryObservedProfileDuringPreTurnSelection(reason: string): boolean 
     return reason === 'soft_threshold';
 }
 
-function isLeaseResultCompletion(value: LeaseCompletion | LeaseResultCompletion): value is LeaseResultCompletion {
+function isLeaseResultCompletion<TServiceIdentity>(
+    value: LeaseCompletion<TServiceIdentity> | LeaseResultCompletion,
+): value is LeaseResultCompletion {
     return 'kind' in value && value.kind === 'result';
 }
 
@@ -118,23 +159,47 @@ export class ConnectedServiceAuthGroupSwitchLeaseExpiredError extends Error {
     }
 }
 
-export class InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry {
+export class InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
+    TServiceIdentity = string,
+> {
     private readonly pendingByKey = new Map<string, {
-        promise: Promise<LeaseOutcome>;
-        resolve: (outcome: LeaseOutcome) => void;
-        timer: ReturnType<typeof setTimeout>;
+        promise: Promise<LeaseOutcome<TServiceIdentity>>;
+        resolve: (outcome: LeaseOutcome<TServiceIdentity>) => void;
+        settled: boolean;
     }>();
 
-    constructor(private readonly options: Readonly<{ leaseTimeoutMs?: number }> = {}) {}
+    constructor(private readonly options: Readonly<{
+        leaseTimeoutMs?: number;
+        serviceIdentityKey?: (serviceId: TServiceIdentity) => string;
+    }> = {}) {}
 
-    acquire(input: Readonly<{ serviceId: string; groupId: string }>): LeaseAcquireResult {
-        const key = switchKey(input.serviceId, input.groupId);
+    acquire(input: Readonly<{
+        serviceId: TServiceIdentity;
+        groupId: string;
+    }>): LeaseAcquireResult<TServiceIdentity> {
+        const key = switchKey(
+            this.options.serviceIdentityKey?.(input.serviceId)
+                ?? defaultServiceIdentityKey(input.serviceId),
+            input.groupId,
+        );
         const pending = this.pendingByKey.get(key);
         if (pending) {
             return {
                 kind: 'loser',
-                waitForOwner: async () => {
-                    const outcome = await pending.promise;
+                waitForOwner: async (waitOptions) => {
+                    const timeoutMs = waitOptions?.timeoutMs ?? this.options.leaseTimeoutMs ?? 30_000;
+                    let timeout: ReturnType<typeof setTimeout> | null = null;
+                    const outcome = await Promise.race([
+                        pending.promise,
+                        new Promise<LeaseOutcome<TServiceIdentity>>(
+                            (_resolve, reject) => {
+                            timeout = setTimeout(() => reject(new ConnectedServiceAuthGroupSwitchLeaseExpiredError()), timeoutMs);
+                            timeout.unref?.();
+                            },
+                        ),
+                    ]).finally(() => {
+                        if (timeout) clearTimeout(timeout);
+                    });
                     if (outcome.status === 'failed') throw outcome.error;
                     if (outcome.status === 'completed_result') return outcome.completion;
                     return outcome.completion;
@@ -142,57 +207,71 @@ export class InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry {
             };
         }
 
-        let resolveCompletion: (outcome: LeaseOutcome) => void = () => {};
-        const promise = new Promise<LeaseOutcome>((resolve) => {
+        let resolveCompletion: (
+            outcome: LeaseOutcome<TServiceIdentity>,
+        ) => void = () => {};
+        const promise = new Promise<LeaseOutcome<TServiceIdentity>>((resolve) => {
             resolveCompletion = resolve;
         });
-        const timer = setTimeout(() => {
-            const current = this.pendingByKey.get(key);
-            if (!current) return;
-            this.pendingByKey.delete(key);
-            current.resolve({ status: 'failed', error: new ConnectedServiceAuthGroupSwitchLeaseExpiredError() });
-        }, this.options.leaseTimeoutMs ?? 30_000);
-        timer.unref?.();
-        this.pendingByKey.set(key, { promise, resolve: resolveCompletion, timer });
+        const entry = { promise, resolve: resolveCompletion, settled: false };
+        this.pendingByKey.set(key, entry);
         return {
             kind: 'owner',
             complete: (completion) => {
                 const current = this.pendingByKey.get(key);
-                if (!current) return;
-                this.pendingByKey.delete(key);
-                clearTimeout(current.timer);
+                if (current !== entry || entry.settled) return;
+                entry.settled = true;
                 current.resolve({ status: 'completed', completion });
             },
             completeResult: (result, context) => {
                 const current = this.pendingByKey.get(key);
-                if (!current) return;
-                this.pendingByKey.delete(key);
-                clearTimeout(current.timer);
+                if (current !== entry || entry.settled) return;
+                entry.settled = true;
                 current.resolve({ status: 'completed_result', completion: buildLeaseResultCompletion(result, context) });
+            },
+            finish: () => {
+                if (this.pendingByKey.get(key) !== entry) return;
+                this.pendingByKey.delete(key);
             },
             fail: (error) => {
                 const current = this.pendingByKey.get(key);
-                if (!current) return;
+                if (current !== entry) return;
                 this.pendingByKey.delete(key);
-                clearTimeout(current.timer);
-                current.resolve({ status: 'failed', error });
+                if (!entry.settled) {
+                    entry.settled = true;
+                    current.resolve({ status: 'failed', error });
+                }
             },
         };
     }
 }
 
 export type ConnectedServiceAuthGroupSwitchResult =
-    | Readonly<{
+    | (Readonly<{
         status: 'switched';
         activeProfileId: string;
         generation: number;
+        credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
         mode?: ConnectedServiceAccountSwitchMode;
         diagnostics?: unknown;
-    }>
-    | Readonly<{
+    }> & ConnectedServiceGenerationApplyEvidence)
+    | (Readonly<{
         status: 'observed_generation';
         activeProfileId: string | null;
         generation: number;
+        credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+        mode?: ConnectedServiceAccountSwitchMode;
+        diagnostics?: unknown;
+    }> & ConnectedServiceGenerationApplyEvidence)
+    | Readonly<{
+        status: 'superseded_after_apply';
+        activeProfileId: string | null;
+        generation: number;
+        credentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+        adoptedProfileId: string | null;
+        adoptedGeneration: number;
+        adoptedCredentialRevision: ConnectedServiceCredentialRevisionV1 | null;
+        reconciliationDisposition: 'superseded_after_apply';
         mode?: ConnectedServiceAccountSwitchMode;
         diagnostics?: unknown;
     }>
@@ -225,17 +304,24 @@ export type ConnectedServiceAuthGroupSwitchResult =
     | Readonly<{ status: 'manual_strategy'; generation: number }>
     | Readonly<{ status: 'auto_switch_disabled'; generation: number }>
     | Readonly<{ status: 'switch_reason_disabled'; generation: number }>
-    | Readonly<{ status: 'switch_limit_reached'; generation: number }>;
+    | Readonly<{ status: 'switch_limit_reached'; generation: number }>
+    | Readonly<{ status: 'stale_context'; generation: number }>;
+
+export type ConnectedServiceAuthGroupExpectedFailureSource = Readonly<{
+    profileId: string;
+    credentialRevision: ConnectedServiceCredentialRevisionV1;
+    groupGeneration: number;
+}>;
 
 export type ConnectedServiceAuthGroupGenerationApplyFailure = Readonly<{
     ok: false;
     errorCode: string;
-    serviceId?: string;
+    serviceId?: unknown;
     diagnostics?: unknown;
 }>;
 
 export type ConnectedServiceAuthGroupGenerationApplyResult =
-    | Readonly<{ ok: true; mode?: ConnectedServiceAccountSwitchMode }>
+    | (Readonly<{ ok: true; mode?: ConnectedServiceAccountSwitchMode }> & ConnectedServiceGenerationApplyEvidence)
     | ConnectedServiceAuthGroupGenerationApplyFailure;
 
 function isGenerationApplySuccess(
@@ -259,7 +345,7 @@ function isGenerationApplyFailure(
 
 function resolveGenerationApplyFailure(
     result: ConnectedServiceAuthGroupGenerationApplyResult | undefined,
-    input: LeaseCompletion,
+    input: LeaseCompletion<unknown>,
 ): ConnectedServiceAuthGroupGenerationApplyFailure | null {
     if (isGenerationApplySuccess(result)) return null;
     if (isGenerationApplyFailure(result)) return result;
@@ -349,9 +435,11 @@ function buildGenerationApplyResult(input: Readonly<{
     return buildGenerationApplyFailedResult(input);
 }
 
-export type ConnectedServiceAuthGroupSwitchEvent = Readonly<{
+export type ConnectedServiceAuthGroupSwitchEvent<
+    TServiceIdentity = string,
+> = Readonly<{
     type: 'connected_service_auth_group_switch';
-    serviceId: string;
+    serviceId: TServiceIdentity;
     groupId: string;
     groupLabel?: string;
     fromProfileId: string | null;
@@ -380,6 +468,7 @@ function isReasonEnabled(policy: ConnectedServiceAuthGroupPolicyV1, reason: stri
         case 'same_provider_account_exhausted':
             return policy.switchOn.usageLimit;
         case 'auth_expired':
+        case 'permission_denied':
         case 'account_disabled':
             return policy.switchOn.authExpired;
         case 'account_changed':
@@ -457,7 +546,7 @@ function resolvePolicyRecoveryWaitRetryAtMs(input: Readonly<{
 }
 
 function buildPolicyWaitUntilResetResult(input: Readonly<{
-    loaded: ConnectedServiceAuthGroupSwitchState;
+    loaded: ConnectedServiceAuthGroupSwitchState<unknown>;
     retryAtMs: number | null;
 }>): Extract<ConnectedServiceAuthGroupSwitchResult, Readonly<{ status: 'no_eligible_member' }>> {
     const excluded = input.loaded.members.map((member) => ({
@@ -515,10 +604,10 @@ function isProfileAdoptableForObservedDivergence(input: Readonly<{
         && !input.selected.excluded.some((excluded) => excluded.profileId === input.profileId);
 }
 
-function applyMemberStateOverrides(input: Readonly<{
-    loaded: ConnectedServiceAuthGroupSwitchState;
+function applyMemberStateOverrides<TServiceIdentity>(input: Readonly<{
+    loaded: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
     overrides?: ReadonlyArray<ConnectedServiceAuthGroupMemberRuntimeStateOverride>;
-}>): ConnectedServiceAuthGroupSwitchState {
+}>): ConnectedServiceAuthGroupSwitchState<TServiceIdentity> {
     if (!input.overrides || input.overrides.length === 0) return input.loaded;
     const memberStatesByProfileId = new Map(input.loaded.memberStatesByProfileId);
     for (const override of input.overrides) {
@@ -537,43 +626,64 @@ function applyMemberStateOverrides(input: Readonly<{
 
 type ObservedGenerationApplyResult = Extract<
     ConnectedServiceAuthGroupSwitchResult,
-    Readonly<{ status: 'observed_generation' | 'generation_apply_failed' | 'predictive_apply_unavailable' }>
+    Readonly<{ status: 'observed_generation' | 'superseded_after_apply' | 'generation_apply_failed' | 'predictive_apply_unavailable' }>
 >;
 
-type GenerationConflictResolution =
+type GenerationConflictResolution<TServiceIdentity = string> =
     | Readonly<{ kind: 'observed_generation'; result: ObservedGenerationApplyResult }>
     | Readonly<{
         kind: 'retry';
-        state: ConnectedServiceAuthGroupSwitchState;
+        state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
         selectionActiveProfileId?: string | null;
     }>;
 
-type RecordObservedFailureStateOutcome =
-    | Readonly<{ kind: 'recorded'; state: ConnectedServiceAuthGroupSwitchState }>
+type RecordObservedFailureStateOutcome<TServiceIdentity = string> =
+    | Readonly<{
+        kind: 'recorded';
+        state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
+    }>
     | Readonly<{ kind: 'observed_generation'; result: ObservedGenerationApplyResult }>;
 
-export class ConnectedServiceAuthGroupSwitchCoordinator {
+export class ConnectedServiceAuthGroupSwitchCoordinator<
+    TServiceIdentity = string,
+> {
     private readonly switchTimestampsBySessionKey = new Map<string, number[]>();
 
     constructor(private readonly deps: Readonly<{
-        leases: InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry;
+        leases: InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<
+            TServiceIdentity
+        >;
         nowMs: () => number;
         quotaFreshnessMs: number;
-        loadState(input: Readonly<{ serviceId: string; groupId: string }>): Promise<ConnectedServiceAuthGroupSwitchState>;
+        loadState(input: Readonly<{
+            serviceId: TServiceIdentity;
+            groupId: string;
+        }>): Promise<ConnectedServiceAuthGroupSwitchState<TServiceIdentity>>;
         commitSwitch(input: Readonly<{
-            serviceId: string;
+            serviceId: TServiceIdentity;
             groupId: string;
             fromProfileId: string | null;
             toProfileId: string;
             expectedGeneration: number;
+            expectedRuntimeStateRevision?: number;
+            expectedCredentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+            expectedConfigurationRevision?: string | null;
             reason: string;
-        }>): Promise<ConnectedServiceAuthGroupSwitchState>;
-        preflightApplyGeneration?(input: ConnectedServiceAuthGroupGenerationApplyInput): Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
-        applyGeneration(input: ConnectedServiceAuthGroupGenerationApplyInput): Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
+        }>): Promise<ConnectedServiceAuthGroupSwitchState<TServiceIdentity>>;
+        preflightApplyGeneration?(
+            input: ConnectedServiceAuthGroupGenerationApplyInput<
+                TServiceIdentity
+            >,
+        ): Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
+        applyGeneration(
+            input: ConnectedServiceAuthGroupGenerationApplyInput<
+                TServiceIdentity
+            >,
+        ): Promise<ConnectedServiceAuthGroupGenerationApplyResult>;
         recordObservedFailureState?(input: Readonly<{
-            serviceId: string;
+            serviceId: TServiceIdentity;
             groupId: string;
-            loaded: ConnectedServiceAuthGroupSwitchState;
+            loaded: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
             reason: string;
             observedProfileId?: string | null;
             retryAtMs?: number | null;
@@ -582,25 +692,63 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
             planType?: string | null;
         }>): Promise<void>;
         probeQuotaSnapshotsForGroup?(input: Readonly<{
-            serviceId: string;
+            serviceId: TServiceIdentity;
             groupId: string;
             profileIds: ReadonlyArray<string>;
             reason: string;
         }>): Promise<void>;
         resolveGenerationConflict?(error: unknown): number | null;
-        emitEvent?: (event: ConnectedServiceAuthGroupSwitchEvent) => void;
+        emitEvent?: (
+            event: ConnectedServiceAuthGroupSwitchEvent<TServiceIdentity>,
+        ) => void;
     }>) {}
+
+    private isExpectedFailureSourceCurrent(input: Readonly<{
+        expectedFailureSource?: ConnectedServiceAuthGroupExpectedFailureSource;
+    }>, state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>): boolean {
+        const expected = input.expectedFailureSource;
+        if (!expected) return true;
+        const expectedProfileId = normalizeProfileId(expected.profileId);
+        return expectedProfileId !== null
+            && state.generation === expected.groupGeneration
+            && normalizeProfileId(state.activeProfileId)
+                === expectedProfileId
+            && state.credentialRevision
+                === expected.credentialRevision
+            && state.members.some(
+                (member) => normalizeProfileId(member.profileId)
+                    === expectedProfileId,
+            );
+    }
+
+    private completeStaleFailureContext(
+        lease: Extract<
+            LeaseAcquireResult<TServiceIdentity>,
+            Readonly<{ kind: 'owner' }>
+        >,
+        state: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>,
+    ): Extract<
+        ConnectedServiceAuthGroupSwitchResult,
+        Readonly<{ status: 'stale_context' }>
+    > {
+        const result = {
+            status: 'stale_context',
+            generation: state.generation,
+        } as const;
+        lease.completeResult(result, state);
+        return result;
+    }
 
     private async probeQuotaSnapshotsBeforePreTurnSelection(input: Readonly<{
         request: Readonly<{
-            serviceId: string;
+            serviceId: TServiceIdentity;
             groupId: string;
             reason: string;
         }>;
-        loaded: ConnectedServiceAuthGroupSwitchState;
+        loaded: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
         activeProfileId?: string | null;
         allowCurrentProfileRetry: boolean;
-    }>): Promise<ConnectedServiceAuthGroupSwitchState> {
+    }>): Promise<ConnectedServiceAuthGroupSwitchState<TServiceIdentity>> {
         if (!this.deps.probeQuotaSnapshotsForGroup) return input.loaded;
         const profileIds = resolveConnectedServiceAuthGroupPreTurnQuotaProbeProfileIds({
             activeProfileId: input.activeProfileId ?? input.loaded.activeProfileId,
@@ -647,10 +795,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     }
 
     private buildSessionApplyInput(input: Readonly<{
-        completion: LeaseCompletion;
+        completion: LeaseCompletion<TServiceIdentity>;
         sessionId?: string;
         reason?: string;
-    }>): ConnectedServiceAuthGroupGenerationApplyInput {
+    }>): ConnectedServiceAuthGroupGenerationApplyInput<TServiceIdentity> {
         const sessionId = normalizeProfileId(input.sessionId);
         const { decisionTrace: _decisionTrace, ...completion } = input.completion;
         return {
@@ -661,7 +809,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     }
 
     private async preflightPredictiveSessionApply(
-        input: ConnectedServiceAuthGroupGenerationApplyInput,
+        input: ConnectedServiceAuthGroupGenerationApplyInput<
+            TServiceIdentity
+        >,
     ): Promise<ConnectedServiceAuthGroupGenerationApplyFailure | null> {
         if (!this.deps.preflightApplyGeneration) return null;
         if (input.reason !== 'soft_threshold' && input.reason !== 'same_provider_account_exhausted') return null;
@@ -686,9 +836,11 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     }
 
     private async applyGeneration(
-        input: ConnectedServiceAuthGroupGenerationApplyInput,
+        input: ConnectedServiceAuthGroupGenerationApplyInput<
+            TServiceIdentity
+        >,
     ): Promise<
-        | Readonly<{ failure: null; mode?: ConnectedServiceAccountSwitchMode }>
+        | (Readonly<{ failure: null; mode?: ConnectedServiceAccountSwitchMode }> & ConnectedServiceGenerationApplyEvidence)
         | Readonly<{ failure: Extract<
             ConnectedServiceAuthGroupSwitchResult,
             Readonly<{ status: 'generation_apply_failed' | 'predictive_apply_unavailable' }>
@@ -740,15 +892,59 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                 }),
             };
         }
-        const mode = isGenerationApplySuccess(applyResult) ? applyResult.mode : undefined;
         return {
             failure: null,
-            ...(mode ? { mode } : {}),
+            ...generationApplyEvidenceFields(isGenerationApplySuccess(applyResult) ? applyResult : {}),
+        };
+    }
+
+    private async resolveAuthoritativeRevisionSupersession(input: Readonly<{
+        completion: ConnectedServiceAuthGroupGenerationApplyInput<TServiceIdentity>;
+        failure: Extract<
+            ConnectedServiceAuthGroupSwitchResult,
+            Readonly<{ status: 'generation_apply_failed' | 'predictive_apply_unavailable' }>
+        >;
+        decisionTrace?: ConnectedServiceAuthGroupCandidateDecisionTrace;
+    }>): Promise<Extract<ConnectedServiceAuthGroupSwitchResult, Readonly<{ status: 'superseded_after_apply' }>> | null> {
+        if (input.failure.errorCode !== 'credential_revision_superseded') return null;
+        const observed = await this.deps.loadState({
+            serviceId: input.completion.serviceId,
+            groupId: input.completion.groupId,
+        });
+        const attemptedRevision = input.completion.credentialRevision ?? null;
+        const observedRevision = observed.credentialRevision ?? null;
+        const isAuthoritativeSupersession = observed.generation > input.completion.generation
+            || (
+                observed.generation === input.completion.generation
+                && observed.activeProfileId === input.completion.activeProfileId
+                && attemptedRevision !== null
+                && observedRevision !== null
+                && observedRevision !== attemptedRevision
+            );
+        if (!isAuthoritativeSupersession) return null;
+        const diagnostics = input.decisionTrace === undefined
+            ? input.failure.diagnostics
+            : mergeSwitchDecisionDiagnostics({
+                diagnostics: input.failure.diagnostics,
+                decisionTrace: input.decisionTrace,
+            });
+        return {
+            status: 'superseded_after_apply',
+            activeProfileId: observed.activeProfileId,
+            generation: observed.generation,
+            credentialRevision: observedRevision,
+            adoptedProfileId: input.completion.activeProfileId,
+            adoptedGeneration: input.completion.generation,
+            adoptedCredentialRevision: attemptedRevision,
+            reconciliationDisposition: 'superseded_after_apply',
+            ...(diagnostics === undefined ? {} : { diagnostics }),
         };
     }
 
     private async applyObservedGeneration(
-        input: ConnectedServiceAuthGroupGenerationApplyInput,
+        input: ConnectedServiceAuthGroupGenerationApplyInput<
+            TServiceIdentity
+        >,
         decisionTrace?: ConnectedServiceAuthGroupCandidateDecisionTrace,
     ): Promise<ObservedGenerationApplyResult> {
         const preflightFailure = await this.preflightPredictiveSessionApply(input);
@@ -763,6 +959,12 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         }
         const applyOutcome = await this.applyGeneration(input);
         if (applyOutcome.failure) {
+            const superseded = await this.resolveAuthoritativeRevisionSupersession({
+                completion: input,
+                failure: applyOutcome.failure,
+                ...(decisionTrace === undefined ? {} : { decisionTrace }),
+            });
+            if (superseded) return superseded;
             return decisionTrace === undefined
                 ? applyOutcome.failure
                 : {
@@ -773,11 +975,36 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                     }),
                 };
         }
+        const observedAfterApply = await this.deps.loadState({
+            serviceId: input.serviceId,
+            groupId: input.groupId,
+        });
+        const revisionWasSuperseded = observedAfterApply.generation === input.generation
+            && input.credentialRevision != null
+            && observedAfterApply.credentialRevision != null
+            && observedAfterApply.credentialRevision !== input.credentialRevision;
+        if (observedAfterApply.generation > input.generation || revisionWasSuperseded) {
+            return {
+                status: 'superseded_after_apply',
+                activeProfileId: observedAfterApply.activeProfileId,
+                generation: observedAfterApply.generation,
+                credentialRevision: observedAfterApply.credentialRevision ?? null,
+                adoptedProfileId: input.activeProfileId,
+                adoptedGeneration: input.generation,
+                adoptedCredentialRevision: input.credentialRevision ?? null,
+                reconciliationDisposition: 'superseded_after_apply',
+                ...generationApplyEvidenceFields(applyOutcome),
+                ...(decisionTrace === undefined
+                    ? {}
+                    : { diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace }) }),
+            };
+        }
         return {
             status: 'observed_generation',
             activeProfileId: input.activeProfileId,
             generation: input.generation,
-            ...(applyOutcome.mode ? { mode: applyOutcome.mode } : {}),
+            credentialRevision: input.credentialRevision ?? null,
+            ...generationApplyEvidenceFields(applyOutcome),
             ...(decisionTrace === undefined
                 ? {}
                 : { diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace }) }),
@@ -786,14 +1013,17 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
 
     private async resolveStateAfterGenerationConflict(input: Readonly<{
         error: unknown;
-        serviceId: string;
+        serviceId: TServiceIdentity;
         groupId: string;
-        loaded: ConnectedServiceAuthGroupSwitchState;
+        loaded: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
         sessionId?: string;
         reason?: string;
         observedProfileId?: string | null;
-        lease: Extract<LeaseAcquireResult, Readonly<{ kind: 'owner' }>>;
-    }>): Promise<GenerationConflictResolution | null> {
+        lease: Extract<
+            LeaseAcquireResult<TServiceIdentity>,
+            Readonly<{ kind: 'owner' }>
+        >;
+    }>): Promise<GenerationConflictResolution<TServiceIdentity> | null> {
         const conflictGeneration = this.deps.resolveGenerationConflict?.(input.error);
         if (typeof conflictGeneration !== 'number' || !Number.isFinite(conflictGeneration)) return null;
         const observed = await this.deps.loadState({
@@ -837,6 +1067,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
             groupId: input.groupId,
             activeProfileId: observed.activeProfileId,
             generation: observed.generation,
+            credentialRevision: observed.credentialRevision,
         };
         input.lease.complete(completion);
         return {
@@ -850,9 +1081,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
     }
 
     private async recordObservedFailureStateWithConflictRecovery(input: Readonly<{
-        serviceId: string;
+        serviceId: TServiceIdentity;
         groupId: string;
-        loaded: ConnectedServiceAuthGroupSwitchState;
+        loaded: ConnectedServiceAuthGroupSwitchState<TServiceIdentity>;
         sessionId?: string;
         reason: string;
         observedProfileId?: string | null;
@@ -860,8 +1091,11 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         retryAfterMs?: number | null;
         resetsAtMs?: number | null;
         planType?: string | null;
-        lease: Extract<LeaseAcquireResult, Readonly<{ kind: 'owner' }>>;
-    }>): Promise<RecordObservedFailureStateOutcome> {
+        lease: Extract<
+            LeaseAcquireResult<TServiceIdentity>,
+            Readonly<{ kind: 'owner' }>
+        >;
+    }>): Promise<RecordObservedFailureStateOutcome<TServiceIdentity>> {
         if (!this.deps.recordObservedFailureState) {
             return { kind: 'recorded', state: input.loaded };
         }
@@ -907,13 +1141,18 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
 
     private resolveSessionSwitchKey(input: Readonly<{
         sessionId?: string;
-        serviceId: string;
+        serviceId: TServiceIdentity;
         groupId: string;
     }>): string | null {
         const sessionId = typeof input.sessionId === 'string' && input.sessionId.trim()
             ? input.sessionId.trim()
             : null;
-        return sessionId ? `${sessionId}\0${input.serviceId}\0${input.groupId}` : null;
+        return sessionId
+            ? switchKey(
+                `${sessionId}\0${defaultServiceIdentityKey(input.serviceId)}`,
+                input.groupId,
+            )
+            : null;
     }
 
     private countRecentSessionSwitches(key: string, nowMs: number): number {
@@ -935,7 +1174,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
 
     private emitSwitchResult(input: Readonly<{
         request: Readonly<{
-            serviceId: string;
+            serviceId: TServiceIdentity;
             groupId: string;
             reason: string;
             observedProfileId?: string | null;
@@ -946,7 +1185,10 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
             providerLimitId?: string | null;
             action?: unknown | null;
         }>;
-        loaded: Pick<ConnectedServiceAuthGroupSwitchState, 'activeProfileId' | 'generation'>;
+        loaded: Pick<
+            ConnectedServiceAuthGroupSwitchState<TServiceIdentity>,
+            'activeProfileId' | 'generation'
+        >;
         resultStatus: ConnectedServiceAuthGroupSwitchResult['status'];
         toProfileId: string | null;
         toGeneration: number;
@@ -980,7 +1222,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
 
     async switchAfterClassifiedFailure(input: Readonly<{
         sessionId?: string;
-        serviceId: string;
+        serviceId: TServiceIdentity;
         groupId: string;
         reason: string;
         observedProfileId?: string | null;
@@ -994,13 +1236,62 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
         planType?: string | null;
         switchesThisTurn?: number;
         sessionSwitchesThisHour?: number;
+        expectedFailureSource?: ConnectedServiceAuthGroupExpectedFailureSource;
     }>): Promise<ConnectedServiceAuthGroupSwitchResult> {
         const startedAtMs = this.deps.nowMs();
         const lease = this.deps.leases.acquire(input);
         if (lease.kind === 'loser') {
-            const observed = await lease.waitForOwner();
+            let observed: LeaseCompletion<TServiceIdentity> | LeaseResultCompletion;
+            let observedFromAuthoritativeReread = false;
+            try {
+                observed = await lease.waitForOwner();
+            } catch (error) {
+                const failedProfileId = normalizeProfileId(input.observedProfileId);
+                if (
+                    !(error instanceof ConnectedServiceAuthGroupSwitchLeaseExpiredError)
+                    || !failedProfileId
+                ) {
+                    throw error;
+                }
+                const current = await this.deps.loadState(input);
+                const currentProfileId = normalizeProfileId(current.activeProfileId);
+                if (!currentProfileId || currentProfileId === failedProfileId) {
+                    throw error;
+                }
+                // A peer committed current group truth before its longer application work
+                // completed. Consume that authoritative generation instead of terminalizing the
+                // recovery on a coordination timeout.
+                observed = {
+                    serviceId: current.serviceId,
+                    groupId: current.groupId,
+                    activeProfileId: currentProfileId,
+                    generation: current.generation,
+                    ...(current.credentialRevision === undefined
+                        ? {}
+                        : { credentialRevision: current.credentialRevision }),
+                };
+                observedFromAuthoritativeReread = true;
+            }
+            if (input.expectedFailureSource && !observedFromAuthoritativeReread) {
+                const current = await this.deps.loadState(input);
+                if (!this.isExpectedFailureSourceCurrent(input, current)) {
+                    return {
+                        status: 'stale_context',
+                        generation: current.generation,
+                    };
+                }
+                if (
+                    isLeaseResultCompletion(observed)
+                    && observed.result.status === 'stale_context'
+                ) {
+                    return await this.switchAfterClassifiedFailure(input);
+                }
+            }
             if (isLeaseResultCompletion(observed)) {
-                if (observed.result.status !== 'predictive_apply_unavailable') {
+                if (
+                    observed.result.status !== 'predictive_apply_unavailable'
+                    && observed.result.status !== 'stale_context'
+                ) {
                     this.emitSwitchResult({
                         request: input,
                         loaded: observed,
@@ -1053,18 +1344,25 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
 
         try {
             let loaded = await this.deps.loadState(input);
-            const observedFailureOutcome = await this.recordObservedFailureStateWithConflictRecovery({
-                serviceId: input.serviceId,
-                groupId: input.groupId,
-                loaded,
-                reason: input.reason,
-                observedProfileId: input.observedProfileId,
-                retryAtMs: input.retryAtMs,
-                retryAfterMs: input.retryAfterMs,
-                resetsAtMs: input.resetsAtMs,
-                planType: input.planType,
-                lease,
-            });
+            if (!this.isExpectedFailureSourceCurrent(input, loaded)) {
+                return this.completeStaleFailureContext(lease, loaded);
+            }
+            const observedFailureOutcome: RecordObservedFailureStateOutcome<
+                TServiceIdentity
+            > = input.expectedFailureSource
+                ? { kind: 'recorded', state: loaded }
+                : await this.recordObservedFailureStateWithConflictRecovery({
+                    serviceId: input.serviceId,
+                    groupId: input.groupId,
+                    loaded,
+                    reason: input.reason,
+                    observedProfileId: input.observedProfileId,
+                    retryAtMs: input.retryAtMs,
+                    retryAfterMs: input.retryAfterMs,
+                    resetsAtMs: input.resetsAtMs,
+                    planType: input.planType,
+                    lease,
+                });
             if (observedFailureOutcome.kind === 'observed_generation') {
                 this.emitSwitchResult({
                     request: input,
@@ -1078,6 +1376,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                 return observedFailureOutcome.result;
             }
             loaded = observedFailureOutcome.state;
+            if (!this.isExpectedFailureSourceCurrent(input, loaded)) {
+                return this.completeStaleFailureContext(lease, loaded);
+            }
             const observedProfileId = normalizeProfileId(input.observedProfileId);
             const loadedActiveProfileId = normalizeProfileId(loaded.activeProfileId);
             let selectionActiveProfileId: string | null = loaded.activeProfileId;
@@ -1090,6 +1391,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                     activeProfileId: selectionActiveProfileId,
                     allowCurrentProfileRetry: false,
                 });
+                if (!this.isExpectedFailureSourceCurrent(input, loaded)) {
+                    return this.completeStaleFailureContext(lease, loaded);
+                }
                 didProbeForSelection = true;
                 const currentLoadedActiveProfileId = normalizeProfileId(loaded.activeProfileId);
                 const observedGenerationSelection = selectConnectedServiceAuthGroupCandidate({
@@ -1114,6 +1418,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                         groupId: input.groupId,
                         activeProfileId: loaded.activeProfileId,
                         generation: loaded.generation,
+                        credentialRevision: loaded.credentialRevision,
                         decisionTrace: observedGenerationSelection.decisionTrace,
                     };
                     lease.complete(completion);
@@ -1123,6 +1428,16 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                         reason: input.reason,
                     }));
                     if (applyOutcome.failure) {
+                        const superseded = await this.resolveAuthoritativeRevisionSupersession({
+                            completion: this.buildSessionApplyInput({
+                                completion,
+                                sessionId: input.sessionId,
+                                reason: input.reason,
+                            }),
+                            failure: applyOutcome.failure,
+                            decisionTrace: observedGenerationSelection.decisionTrace,
+                        });
+                        if (superseded) return superseded;
                         if (applyOutcome.failure.status === 'generation_apply_failed') {
                             this.emitSwitchResult({
                                 request: input,
@@ -1158,7 +1473,8 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                         status: 'observed_generation',
                         activeProfileId: loaded.activeProfileId,
                         generation: loaded.generation,
-                        ...(applyOutcome.mode ? { mode: applyOutcome.mode } : {}),
+                        credentialRevision: loaded.credentialRevision ?? null,
+                        ...generationApplyEvidenceFields(applyOutcome),
                         diagnostics: buildSwitchDecisionDiagnostics({
                             decisionTrace: observedGenerationSelection.decisionTrace,
                         }),
@@ -1259,6 +1575,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                     activeProfileId: selectionActiveProfileId,
                     allowCurrentProfileRetry: false,
                 });
+                if (!this.isExpectedFailureSourceCurrent(input, loaded)) {
+                    return this.completeStaleFailureContext(lease, loaded);
+                }
             }
             const selected = selectConnectedServiceAuthGroupCandidate({
                 nowMs: this.deps.nowMs(),
@@ -1309,7 +1628,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
             let selectedDecisionTrace = selected.decisionTrace;
             let commitLoaded = loaded;
             let commitSelectionActiveProfileId = selectionActiveProfileId;
-            let committed: ConnectedServiceAuthGroupSwitchState;
+            let committed: ConnectedServiceAuthGroupSwitchState<
+                TServiceIdentity
+            >;
             for (;;) {
                 try {
                     const preflightFailure = await this.preflightPredictiveSessionApply({
@@ -1346,16 +1667,58 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                         });
                         return result;
                     }
+                    if (input.expectedFailureSource) {
+                        const current = await this.deps.loadState({
+                            serviceId: input.serviceId,
+                            groupId: input.groupId,
+                        });
+                        if (!this.isExpectedFailureSourceCurrent(input, current)) {
+                            return this.completeStaleFailureContext(
+                                lease,
+                                current,
+                            );
+                        }
+                    }
                     committed = await this.deps.commitSwitch({
                         serviceId: input.serviceId,
                         groupId: input.groupId,
                         fromProfileId: commitLoaded.activeProfileId,
                         toProfileId: selectedProfileId,
                         expectedGeneration: commitLoaded.generation,
+                        ...(commitLoaded.runtimeStateRevision === undefined
+                            ? {}
+                            : {
+                                expectedRuntimeStateRevision:
+                                    commitLoaded.runtimeStateRevision,
+                            }),
+                        ...(commitLoaded.credentialRevision === undefined
+                            ? {}
+                            : {
+                                expectedCredentialRevision:
+                                    commitLoaded.credentialRevision,
+                            }),
+                        ...(commitLoaded.configurationRevision === undefined
+                            ? {}
+                            : {
+                                expectedConfigurationRevision:
+                                    commitLoaded.configurationRevision,
+                            }),
                         reason: input.reason,
                     });
                     break;
                 } catch (error) {
+                    if (input.expectedFailureSource) {
+                        const current = await this.deps.loadState({
+                            serviceId: input.serviceId,
+                            groupId: input.groupId,
+                        });
+                        if (!this.isExpectedFailureSourceCurrent(input, current)) {
+                            return this.completeStaleFailureContext(
+                                lease,
+                                current,
+                            );
+                        }
+                    }
                     const resolvedConflict = await this.resolveStateAfterGenerationConflict({
                         error,
                         serviceId: input.serviceId,
@@ -1439,6 +1802,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                 groupId: input.groupId,
                 activeProfileId: committed.activeProfileId,
                 generation: committed.generation,
+                credentialRevision: committed.credentialRevision,
                 decisionTrace: selectedDecisionTrace,
             };
             lease.complete(completion);
@@ -1448,6 +1812,16 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                 reason: input.reason,
             }));
             if (applyOutcome.failure) {
+                const superseded = await this.resolveAuthoritativeRevisionSupersession({
+                    completion: this.buildSessionApplyInput({
+                        completion,
+                        sessionId: input.sessionId,
+                        reason: input.reason,
+                    }),
+                    failure: applyOutcome.failure,
+                    decisionTrace: selectedDecisionTrace,
+                });
+                if (superseded) return superseded;
                 if (applyOutcome.failure.status === 'generation_apply_failed') {
                     this.emitSwitchResult({
                         request: input,
@@ -1470,6 +1844,25 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                     }
                     : applyOutcome.failure;
             }
+            const observedAfterApply = await this.deps.loadState({ serviceId: input.serviceId, groupId: input.groupId });
+            const revisionWasSuperseded = observedAfterApply.generation === committed.generation
+                && committed.credentialRevision != null
+                && observedAfterApply.credentialRevision != null
+                && observedAfterApply.credentialRevision !== committed.credentialRevision;
+            if (observedAfterApply.generation > committed.generation || revisionWasSuperseded) {
+                return {
+                    status: 'superseded_after_apply',
+                    activeProfileId: observedAfterApply.activeProfileId,
+                    generation: observedAfterApply.generation,
+                    credentialRevision: observedAfterApply.credentialRevision ?? null,
+                    adoptedProfileId: committed.activeProfileId ?? selectedProfileId,
+                    adoptedGeneration: committed.generation,
+                    adoptedCredentialRevision: committed.credentialRevision ?? null,
+                    reconciliationDisposition: 'superseded_after_apply',
+                    ...generationApplyEvidenceFields(applyOutcome),
+                    diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selectedDecisionTrace }),
+                };
+            }
             this.recordSessionSwitch(sessionSwitchKey, this.deps.nowMs());
             this.emitSwitchResult({
                 request: input,
@@ -1486,18 +1879,41 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                 status: 'switched',
                 activeProfileId: committed.activeProfileId ?? selectedProfileId,
                 generation: committed.generation,
-                ...(applyOutcome.mode ? { mode: applyOutcome.mode } : {}),
+                credentialRevision: committed.credentialRevision ?? null,
+                ...generationApplyEvidenceFields(applyOutcome),
                 diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selectedDecisionTrace }),
             };
         } catch (error) {
             lease.fail(error);
             throw error;
+        } finally {
+            lease.finish();
         }
+    }
+
+    async applyCommittedGeneration(input: Readonly<{
+        sessionId: string;
+        serviceId: TServiceIdentity;
+        groupId: string;
+        activeProfileId: string;
+        generation: number;
+        credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+        reason: string;
+    }>): Promise<ObservedGenerationApplyResult> {
+        return await this.applyObservedGeneration({
+            sessionId: input.sessionId,
+            serviceId: input.serviceId,
+            groupId: input.groupId,
+            activeProfileId: input.activeProfileId,
+            generation: input.generation,
+            ...(input.credentialRevision === undefined ? {} : { credentialRevision: input.credentialRevision }),
+            reason: input.reason,
+        });
     }
 
     async switchBeforeTurn(input: Readonly<{
         sessionId?: string;
-        serviceId: string;
+        serviceId: TServiceIdentity;
         groupId: string;
         reason: 'usage_limit' | 'soft_threshold' | 'same_provider_account_exhausted' | 'auth_expired' | 'account_changed' | 'refresh_failed';
         observedProfileId?: string | null;
@@ -1606,6 +2022,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                         groupId: input.groupId,
                         activeProfileId: loaded.activeProfileId,
                         generation: loaded.generation,
+                        credentialRevision: loaded.credentialRevision,
                     };
                     lease.complete(completion);
                     return await this.applyObservedGeneration(this.buildSessionApplyInput({
@@ -1651,6 +2068,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                     status: 'observed_generation',
                     activeProfileId: loaded.activeProfileId,
                     generation: loaded.generation,
+                    credentialRevision: loaded.credentialRevision ?? null,
                 } as const;
                 lease.completeResult(result);
                 return result;
@@ -1658,7 +2076,9 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
 
             let selectedProfileId = selected.selected.profileId;
             let commitLoaded = loaded;
-            let committed: ConnectedServiceAuthGroupSwitchState;
+            let committed: ConnectedServiceAuthGroupSwitchState<
+                TServiceIdentity
+            >;
             for (;;) {
                 try {
                     const preflightFailure = await this.preflightPredictiveSessionApply({
@@ -1701,6 +2121,24 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                         fromProfileId: commitLoaded.activeProfileId,
                         toProfileId: selectedProfileId,
                         expectedGeneration: commitLoaded.generation,
+                        ...(commitLoaded.runtimeStateRevision === undefined
+                            ? {}
+                            : {
+                                expectedRuntimeStateRevision:
+                                    commitLoaded.runtimeStateRevision,
+                            }),
+                        ...(commitLoaded.credentialRevision === undefined
+                            ? {}
+                            : {
+                                expectedCredentialRevision:
+                                    commitLoaded.credentialRevision,
+                            }),
+                        ...(commitLoaded.configurationRevision === undefined
+                            ? {}
+                            : {
+                                expectedConfigurationRevision:
+                                    commitLoaded.configurationRevision,
+                            }),
                         reason: input.reason,
                     });
                     break;
@@ -1762,6 +2200,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                                 status: 'observed_generation',
                                 activeProfileId: commitLoaded.activeProfileId,
                                 generation: commitLoaded.generation,
+                                credentialRevision: commitLoaded.credentialRevision ?? null,
                             } as const;
                             lease.completeResult(result);
                             return result;
@@ -1777,6 +2216,7 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                 groupId: input.groupId,
                 activeProfileId: committed.activeProfileId,
                 generation: committed.generation,
+                credentialRevision: committed.credentialRevision,
                 decisionTrace: selected.decisionTrace,
             };
             lease.complete(completion);
@@ -1806,6 +2246,25 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                     }),
                 };
             }
+            const observedAfterApply = await this.deps.loadState({ serviceId: input.serviceId, groupId: input.groupId });
+            const revisionWasSuperseded = observedAfterApply.generation === committed.generation
+                && committed.credentialRevision != null
+                && observedAfterApply.credentialRevision != null
+                && observedAfterApply.credentialRevision !== committed.credentialRevision;
+            if (observedAfterApply.generation > committed.generation || revisionWasSuperseded) {
+                return {
+                    status: 'superseded_after_apply',
+                    activeProfileId: observedAfterApply.activeProfileId,
+                    generation: observedAfterApply.generation,
+                    credentialRevision: observedAfterApply.credentialRevision ?? null,
+                    adoptedProfileId: committed.activeProfileId ?? selectedProfileId,
+                    adoptedGeneration: committed.generation,
+                    adoptedCredentialRevision: committed.credentialRevision ?? null,
+                    reconciliationDisposition: 'superseded_after_apply',
+                    ...generationApplyEvidenceFields(applyOutcome),
+                    diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selected.decisionTrace }),
+                };
+            }
             this.recordSessionSwitch(sessionSwitchKey, this.deps.nowMs());
             this.emitSwitchResult({
                 request: input,
@@ -1822,12 +2281,15 @@ export class ConnectedServiceAuthGroupSwitchCoordinator {
                 status: 'switched',
                 activeProfileId: committed.activeProfileId ?? selectedProfileId,
                 generation: committed.generation,
-                ...(applyOutcome.mode ? { mode: applyOutcome.mode } : {}),
+                credentialRevision: committed.credentialRevision ?? null,
+                ...generationApplyEvidenceFields(applyOutcome),
                 diagnostics: buildSwitchDecisionDiagnostics({ decisionTrace: selected.decisionTrace }),
             };
         } catch (error) {
             lease.fail(error);
             throw error;
+        } finally {
+            lease.finish();
         }
     }
 }

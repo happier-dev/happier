@@ -27,7 +27,7 @@ vi.mock('@/session/actions/createCliActionExecutorFromCredentials', () => ({
 }));
 
 describe('handleSessionCommand account settings bootstrap', () => {
-  it('forces a fresh account settings refresh before running session commands', async () => {
+  it('does not force a global account settings refresh before running session action commands', async () => {
     const { handleSessionCommand } = await import('./handleSessionCommand');
 
     const output = captureConsoleText();
@@ -39,11 +39,7 @@ describe('handleSessionCommand account settings bootstrap', () => {
         }),
       });
 
-      expect(bootstrapAccountSettingsContext).toHaveBeenCalledWith(expect.objectContaining({
-        credentials: expect.objectContaining({ token: 'token_test' }),
-        mode: 'blocking',
-        refresh: 'force',
-      }));
+      expect(bootstrapAccountSettingsContext).not.toHaveBeenCalled();
       expect(createCliActionExecutorFromCredentials).toHaveBeenCalledTimes(1);
       expect(execute).toHaveBeenCalledTimes(1);
     } finally {

@@ -1,24 +1,39 @@
 import chalk from 'chalk';
+import { errorFrame } from '@happier-dev/cli-common/output';
 
 import { readCredentials, type Credentials } from '@/persistence';
 import { createSessionAttachFile } from '@/daemon/sessionAttachFile';
-import { requireCatalogEntry } from '@/backends/catalog';
-import type { CatalogAgentId } from '@/backends/types';
+import { requireCatalogEntry } from '@/agent/catalog/registry';
+import type { CatalogAgentId } from '@/agent/catalog/ids';
 import { configuration } from '@/configuration';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
-import { resolveSessionEncryptionContextFromCredentials, tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+  resolveSessionEncryptionContextFromCredentials,
+  tryDecryptSessionOwnerMetadataView,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import { encodeBase64 } from '@/api/encryption';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings, ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol';
-import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol';
+import {
+  ConnectedServiceBindingsV1Schema,
+  readAcpConfiguredBackendV1FromMetadata,
+  serializeSessionModelSelectionV1,
+} from '@happier-dev/protocol';
+import {
+  PersistedProviderResumeBindingError,
+  readPersistedProviderResumeState,
+} from '@/providers/lifecycle/readPersistedResumeSelection';
+import { presentProviderCliRefusal } from '@/providers/lifecycle/presentProviderCliRefusal';
 import { canUseInkSelector, runSessionActionSelector } from '@/ui/ink/runSessionActionSelector';
 import { buildCliSessionRowModel } from '@/cli/output/session/buildCliSessionRowModel';
 import { handleConfiguredAcpCatalogCliCommand } from '@/agent/acp/catalog/configured/handleCatalogCliCommand';
 import { buildResumeSelectionModel, formatResumeSelectionFooter } from './resumeInteractiveSelection';
+import { promptConfirmYesNo } from '@/terminal/prompts/promptConfirmYesNo';
+import { resolveDirectConnectedServiceEnvironment } from '@/cli/connectedServices/resolveDirectConnectedServiceEnvironment';
 
 import type { CommandContext, CommandHandler } from '@/cli/commandRegistry';
 
@@ -30,8 +45,24 @@ type FetchSessionsPageFn = (params: { token: string; cursor?: string; limit?: nu
 }>;
 
 type ReadAccountSettingsFn = (params: { credentials: Credentials }) => Promise<AccountSettings>;
-type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'providerDefinitionsById' | 'backendDefinitionsById'>;
+type ResumeContributionRegistry = Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>;
 type ResolveResumeContributionRegistryFn = () => Promise<ResumeContributionRegistry | null>;
+
+export type ResumeCommandDeps = Readonly<{
+  terminalRuntime?: CommandContext['terminalRuntime'];
+  rawArgv?: CommandContext['rawArgv'];
+  readCredentialsFn?: () => Promise<Credentials | null>;
+  readAccountSettingsFn?: ReadAccountSettingsFn;
+  fetchSessionByIdFn?: FetchSessionByIdFn;
+  fetchSessionsPageFn?: FetchSessionsPageFn;
+  resolveAgentHandlerFn?: (agentId: CatalogAgentId) => Promise<CommandHandler>;
+  resolveConfiguredAcpCatalogHandlerFn?: () => Promise<CommandHandler>;
+  resolveContributionRegistryFn?: ResolveResumeContributionRegistryFn;
+  chdirFn?: (nextDir: string) => void;
+  canUseInkSelectorFn?: () => boolean;
+  selectResumableSessionIdFn?: typeof selectResumableSessionId;
+  promptConfirmYesNoFn?: typeof promptConfirmYesNo;
+}>;
 
 type ResumableSessionSelection =
   | { type: 'selected'; sessionId: string }
@@ -73,6 +104,12 @@ function resolveConfiguredAcpBackendIdFromMetadata(metadata: Record<string, unkn
   return backendId.length > 0 ? backendId : null;
 }
 
+function readConnectedServicesFromMetadata(metadata: Record<string, unknown> | null): ConnectedServiceBindingsV1 | null {
+  if (!metadata) return null;
+  const parsed = ConnectedServiceBindingsV1Schema.safeParse(metadata.connectedServices);
+  return parsed.success ? parsed.data : null;
+}
+
 async function selectResumableSessionId(params: Readonly<{
   credentials: Credentials;
   accountSettings: AccountSettings;
@@ -94,20 +131,7 @@ async function selectResumableSessionId(params: Readonly<{
 
 export async function handleResumeCommand(
   argv: string[],
-  deps?: Readonly<{
-    terminalRuntime?: CommandContext['terminalRuntime'];
-    rawArgv?: CommandContext['rawArgv'];
-    readCredentialsFn?: () => Promise<Credentials | null>;
-    readAccountSettingsFn?: ReadAccountSettingsFn;
-    fetchSessionByIdFn?: FetchSessionByIdFn;
-    fetchSessionsPageFn?: FetchSessionsPageFn;
-    resolveAgentHandlerFn?: (agentId: CatalogAgentId) => Promise<CommandHandler>;
-    resolveConfiguredAcpCatalogHandlerFn?: () => Promise<CommandHandler>;
-    resolveContributionRegistryFn?: ResolveResumeContributionRegistryFn;
-    chdirFn?: (nextDir: string) => void;
-    canUseInkSelectorFn?: () => boolean;
-    selectResumableSessionIdFn?: typeof selectResumableSessionId;
-  }>,
+  deps?: ResumeCommandDeps,
 ): Promise<void> {
   const hasHelpFlag = argv.some((arg) => {
     const trimmed = typeof arg === 'string' ? arg.trim() : '';
@@ -131,6 +155,7 @@ export async function handleResumeCommand(
   const chdirFn = deps?.chdirFn ?? ((nextDir: string) => process.chdir(nextDir));
   const canUseInkSelectorFn = deps?.canUseInkSelectorFn ?? canUseInkSelector;
   const selectResumableSessionIdFn = deps?.selectResumableSessionIdFn ?? selectResumableSessionId;
+  const promptConfirmYesNoFn = deps?.promptConfirmYesNoFn ?? promptConfirmYesNo;
 
   const credentials = await readCredentialsFn();
   if (!credentials) {
@@ -210,17 +235,27 @@ export async function handleResumeCommand(
 
   const directory = rowModel.path;
   if (!directory) {
-    const metadata = tryDecryptSessionMetadata({ credentials, rawSession });
+    const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession });
     if (!metadata) {
       throw new Error('Failed to decrypt session metadata. Reconnect your terminal and try again.');
     }
     throw new Error('Session metadata is missing a working directory path.');
   }
 
-  const metadata = tryDecryptSessionMetadata({ credentials, rawSession });
+  const metadata = tryDecryptSessionOwnerMetadataView({ credentials, rawSession });
   const metadataRecord = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
     ? (metadata as Record<string, unknown>)
     : null;
+  const {
+    selection: providerResumeSelection,
+    binding: persistedProviderBinding,
+  } = readPersistedProviderResumeState(metadataRecord);
+  const confirmProviderSecurityChange = persistedProviderBinding
+    ? async () => await promptConfirmYesNoFn(
+        `Provider settings for ${persistedProviderBinding.displaySnapshot.providerName} · ${persistedProviderBinding.displaySnapshot.connectionName} changed. Resume using the current settings?`,
+        { default: 'no' },
+      )
+    : undefined;
   const configuredAcpBackendId = resolveConfiguredAcpBackendIdFromMetadata(metadataRecord);
 
   const inferredAgentId = rowModel.agentId;
@@ -248,9 +283,6 @@ export async function handleResumeCommand(
       })(),
   });
 
-  const prevAttachEnv = process.env.HAPPIER_SESSION_ATTACH_FILE;
-  process.env.HAPPIER_SESSION_ATTACH_FILE = attach.filePath;
-
   try {
     chdirFn(directory);
 
@@ -267,9 +299,18 @@ export async function handleResumeCommand(
           vendorResume.vendorResumeId,
           '--started-by',
           'terminal',
+          ...(providerResumeSelection
+            ? ['--model-selection-v1', serializeSessionModelSelectionV1(providerResumeSelection)]
+            : []),
         ],
         rawArgv: deps?.rawArgv ?? ['happier', 'resume', rawSession.id],
         terminalRuntime: deps?.terminalRuntime ?? null,
+        directSessionLaunch: {
+          providerBinding: persistedProviderBinding,
+          confirmProviderSecurityChange,
+          connectedServices: readConnectedServicesFromMetadata(metadataRecord),
+          sessionAttachFilePath: attach.filePath,
+        },
       };
       await handler(context);
     } else {
@@ -283,32 +324,59 @@ export async function handleResumeCommand(
 
       const handler = await resolveAgentHandlerFn(agentId);
       const context: CommandContext = {
-        args: [agentId, '--existing-session', rawSession.id, '--resume', vendorResume.vendorResumeId, '--started-by', 'terminal'],
+        args: [
+          agentId,
+          '--existing-session', rawSession.id,
+          '--resume', vendorResume.vendorResumeId,
+          '--started-by', 'terminal',
+          ...(providerResumeSelection
+            ? ['--model-selection-v1', serializeSessionModelSelectionV1(providerResumeSelection)]
+            : []),
+        ],
         rawArgv: deps?.rawArgv ?? ['happier', 'resume', rawSession.id],
         terminalRuntime: deps?.terminalRuntime ?? null,
+        directSessionLaunch: {
+          providerBinding: persistedProviderBinding,
+          confirmProviderSecurityChange,
+          connectedServices: readConnectedServicesFromMetadata(metadataRecord),
+          sessionAttachFilePath: attach.filePath,
+          resolveConnectedServiceEnvironment: (connectedServices) => connectedServices
+            ? resolveDirectConnectedServiceEnvironment({
+                agentId,
+                credentials,
+                accountSettings,
+                directory,
+                sessionId: rawSession.id,
+                vendorResumeId: vendorResume.vendorResumeId,
+                sessionMetadata: metadataRecord,
+                connectedServices,
+              })
+            : Promise.resolve(null),
+        },
       };
       await handler(context);
     }
-  } catch (error) {
-    await attach.cleanup().catch(() => {});
-    throw error;
   } finally {
-    if (prevAttachEnv === undefined) {
-      delete process.env.HAPPIER_SESSION_ATTACH_FILE;
-    } else {
-      process.env.HAPPIER_SESSION_ATTACH_FILE = prevAttachEnv;
-    }
+    await attach.cleanup().catch(() => {});
   }
 }
 
-export async function handleResumeCliCommand(context: CommandContext): Promise<void> {
+export async function handleResumeCliCommand(
+  context: CommandContext,
+  deps?: ResumeCommandDeps,
+): Promise<void> {
   try {
     await handleResumeCommand(context.args.slice(1), {
+      ...deps,
       terminalRuntime: context.terminalRuntime,
       rawArgv: context.rawArgv,
     });
   } catch (error) {
-    console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    if (error instanceof PersistedProviderResumeBindingError) {
+      console.error(errorFrame('Error:', presentProviderCliRefusal(error.providerError)));
+    } else {
+      console.error(chalk.red('Error:'), error instanceof Error ? error.message : 'Unknown error');
+    }
     if (process.env.DEBUG) {
       console.error(error);
     }

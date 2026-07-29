@@ -11,6 +11,15 @@ export function readFlagValue(argv: readonly string[], flag: string): string | n
   return trimmed.length > 0 ? trimmed : null;
 }
 
+export function readFlagValueUnlessFlagToken(argv: readonly string[], flag: string): string | null {
+  const idx = argv.findIndex((value) => value === flag);
+  if (idx < 0) return null;
+  const raw = argv[idx + 1];
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 && !trimmed.startsWith('-') ? trimmed : null;
+}
+
 export function readIntFlagValue(argv: readonly string[], flag: string): number | null {
   const raw = readFlagValue(argv, flag);
   if (!raw) return null;
@@ -28,4 +37,3 @@ export function readJsonFlagValue(argv: readonly string[], flag: string): unknow
     return null;
   }
 }
-

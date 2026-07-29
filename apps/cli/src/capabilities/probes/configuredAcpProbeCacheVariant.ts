@@ -47,6 +47,7 @@ export async function resolveConfiguredAcpProbeCacheVariant(params: Readonly<{
   }
 
   const materialProbeSettings = sortJsonValue({
+    source: backend.source,
     command: backend.command,
     args: backend.args,
     env: backend.env,

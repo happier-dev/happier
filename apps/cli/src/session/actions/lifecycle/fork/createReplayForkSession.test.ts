@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { ForkBackendResolution, ForkSpawnSession } from './forkLifecycleTypes';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import type { ForkSurfaceV1 } from '@happier-dev/agents';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
 
 const createReplaySeededSessionMock = vi.fn();
 const resolveReplaySeedDraftMock = vi.fn();
@@ -82,7 +83,21 @@ describe('createReplayForkSession', () => {
     const input = {
       credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
       parentSessionId: 'parent-session',
-      parentMetadata: {},
+      parentMetadata: {
+        model: 'fast',
+        externalSessionOperationV1: {
+          v: 1,
+          progress: { operationId: 'private-operation', revision: 4 },
+        },
+        externalSessionOperationPresentationV1: {
+          v: 1,
+          operationId: 'private-operation',
+          revision: 4,
+          kind: 'materialize',
+          status: 'running',
+          phase: 'publishing',
+        },
+      },
       directory: '/tmp/parent-worktree',
       effectiveCutoffSeqInclusive: 3,
       spawnNonce: 'nonce-1',
@@ -103,7 +118,17 @@ describe('createReplayForkSession', () => {
     expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
     expect(resolveReplayChildLaunch).toHaveBeenCalledWith({
       parentSessionId: 'parent-session',
-      parentMetadata: {},
+      parentMetadata: {
+        model: 'fast',
+        externalSessionOperationPresentationV1: {
+          v: 1,
+          operationId: 'private-operation',
+          revision: 4,
+          kind: 'materialize',
+          status: 'running',
+          phase: 'publishing',
+        },
+      },
       directory: '/tmp/parent-worktree',
       forkPoint: { kind: 'latest' },
     });
@@ -147,6 +172,43 @@ describe('createReplayForkSession', () => {
     expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({
       spawnNonce: 'fork:stable-nonce',
     }));
+  });
+
+  it('targets the parent session machine when replaying a provider-bound fork', async () => {
+    const spawnSession = vi.fn<ForkSpawnSession>()
+      .mockResolvedValue({ type: 'success', sessionId: 'child-session' });
+
+    await createReplayForkSession({
+      credentials: { token: 'token', encryption: { type: 'legacy' as const, secret: new Uint8Array([1]) } },
+      parentSessionId: 'parent-session',
+      parentMetadata: { machineId: 'machine-a' },
+      directory: '/tmp/parent-worktree',
+      effectiveCutoffSeqInclusive: 3,
+      spawnNonce: 'fork:provider-replay',
+      forkPointType: 'latest',
+      replaySummaryRunner: null,
+      replayMaxSeedChars: undefined,
+      maxTextChars: undefined,
+      forkBackendResolution: createBuiltInForkResolution(),
+      inheritedForkOverrides: {
+        metadata: {},
+        spawn: {
+          modelSelection: {
+            v: 1,
+            updatedAt: 1,
+            ref: {
+              agentTargetKey: 'backend:codex',
+              providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+              modelId: 'provider-model',
+            },
+          },
+        },
+      },
+      forkSurface: null,
+      spawnSession,
+    });
+
+    expect(spawnSession).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'machine-a' }));
   });
 
   it('does not archive the replay child when spawn times out waiting for webhook', async () => {

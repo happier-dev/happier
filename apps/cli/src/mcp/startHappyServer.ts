@@ -6,11 +6,17 @@ import { createHappierMcpServer } from "@/mcp/createHappierMcpServer";
 import { listBuiltInHappierTools } from "@/agent/tools/happierTools/listBuiltInHappierTools";
 import type { RpcHandlerManagerLike } from "@/api/rpc/types";
 import type { Metadata } from "@/api/types";
+import type { PermissionMode } from "@/api/types";
+import type { ProviderTranscriptDispatchRequest } from "@/api/session/client/transcript/providerDispatch";
 import { configuration } from "@/configuration";
 import type { Credentials } from '@/persistence';
 import type { ExecutionRunServiceResult, WaitForExecutionRunResult } from "@/session/services/executionRuns";
-import type { AccountSettings } from '@happier-dev/protocol';
-import { createMcpActionEnablement } from '@/mcp/server/createMcpActionEnablement';
+import type { AccountSettings, BackendTargetRefV2 } from '@happier-dev/protocol';
+import {
+    createMcpActionEnablement,
+    createMcpActionSettingsProvider,
+} from '@/mcp/server/createMcpActionEnablement';
+import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 
 export type HappyMcpExecutionRunService = Readonly<{
     start: (request: unknown) => Promise<ExecutionRunServiceResult<unknown>>;
@@ -25,28 +31,54 @@ export type HappyMcpExecutionRunService = Readonly<{
 export type HappyMcpSessionClient = {
     sessionId: string;
     rpcHandlerManager: RpcHandlerManagerLike;
-    sendClaudeSessionMessage(message: any, meta?: Record<string, unknown>): void;
+    sendProviderMessage(request: ProviderTranscriptDispatchRequest): void;
     updateMetadata(updater: (metadata: Metadata) => Metadata): void | Promise<void>;
     getMetadataSnapshot?(): Metadata | null;
+    getPermissionMode?(): PermissionMode | null | undefined;
+    getBackendTarget?(): BackendTargetRefV2 | null | undefined;
+    getCurrentSessionLocation?(): Readonly<{
+        path?: string | null;
+        host?: string | null;
+        machineId?: string | null;
+    }> | null | undefined;
     executionRuns?: HappyMcpExecutionRunService;
 };
 
 export async function startHappyServer(
     client: HappyMcpSessionClient,
-    opts?: Readonly<{ credentials?: Credentials | null; accountSettings?: AccountSettings | null }>,
+    opts?: Readonly<{
+        credentials?: Credentials | null;
+        accountSettings?: AccountSettings | null;
+        getAccountSettings?: (() => AccountSettings | null) | null;
+    }>,
 ) {
     // Do not eagerly construct an MCP server on startup; only snapshot the names.
     // Full server creation is done per request inside the handler.
-    const isActionEnabled = createMcpActionEnablement({
+    const actionSettingsProvider = createMcpActionSettingsProvider({
         accountSettings: opts?.accountSettings ?? null,
-        surface: 'session_agent',
+        getAccountSettings: opts?.getAccountSettings ?? null,
     });
-    const toolNamesSnapshot = listBuiltInHappierTools({
-        surface: 'session_agent',
-        isActionEnabled,
-        actionsSettings: opts?.accountSettings?.actionsSettingsV1 ?? null,
-    }).map((tool) => tool.name);
-    const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
+  const isActionEnabled = createMcpActionEnablement({
+        actionSettingsProvider,
+        surface: 'agent',
+  });
+  const readCurrentPluginToolCatalog = async () => {
+    const daemonCatalog = await readDaemonPluginCatalog().catch(() => ({
+      kind: 'unavailable' as const,
+      code: 'daemon_unavailable',
+    }));
+    return daemonCatalog.kind === 'available'
+      ? daemonCatalog.tools
+      : Object.freeze([]);
+  };
+  const initialPluginToolCatalog = await readCurrentPluginToolCatalog();
+  const toolNamesSnapshot = listBuiltInHappierTools({
+    surface: 'agent',
+    isActionEnabled,
+    actionsSettings: actionSettingsProvider.getActionsSettings(),
+    pluginToolCatalog: initialPluginToolCatalog,
+  }).map((tool) => tool.name);
+  const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
 
     //
     // Create the HTTP server
@@ -67,6 +99,8 @@ export async function startHappyServer(
         const { mcp } = createHappierMcpServer(client, {
             credentials: opts?.credentials ?? null,
             accountSettings: opts?.accountSettings ?? null,
+            getAccountSettings: opts?.getAccountSettings ?? null,
+            pluginToolCatalog: await readCurrentPluginToolCatalog(),
         });
 
         const transport = new StreamableHTTPServerTransport({

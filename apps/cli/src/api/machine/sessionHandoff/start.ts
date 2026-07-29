@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import os from 'node:os';
 
 import {
@@ -11,14 +10,22 @@ import {
 
 import type { SessionHandoffPrepareTargetJobRecordInput } from '../../../session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 import type { SessionHandoffSourceExportRecord } from '../../../session/handoff/state/sessionHandoffSourceExportStore';
-import type { SessionHandoffProviderBundle } from '../../../session/handoff/types';
+import type { SessionHandoffAgentBundle } from '../../../session/handoff/types';
 import { validateSessionHandoffWorkspaceTransferSourcePath } from '../../../session/handoff/workspaceReplication/validateSessionHandoffWorkspaceTransferSourcePath';
 import { validateSessionHandoffWorkspaceTransferStrategy } from '../../../session/handoff/workspaceReplication/validateSessionHandoffWorkspaceTransferStrategy';
 import { buildSessionHandoffWorkspaceManifestTransferId } from '../../../session/handoff/workspaceReplication/workspaceReplicationAdapter/serverRouted';
 import type { SessionHandoffDirectPeerTransferHandle } from './prepareTransport';
+import type {
+  ExternalSessionOperationClaimMaintenance,
+  ExternalSessionOperationExclusion,
+} from '@/session/external/operationExclusion';
+import {
+  ExternalSessionOperationClaimLostError,
+  maintainExternalSessionOperationClaim,
+} from '@/session/external/operationExclusion';
 import {
   prepareDeferredDirectPeerStart,
-  type DeferredDirectPeerPreExportedProviderBundle,
+  type DeferredDirectPeerPreExportedAgentBundle,
 } from './startDeferredDirectPeer';
 import { startDeferredWork } from './startDeferredWork';
 
@@ -46,9 +53,9 @@ type SessionHandoffPrepareJobStoreLike = Readonly<{
 
 type SessionHandoffSourceExportStoreLike = Readonly<{
   save: (record: Readonly<Omit<SessionHandoffSourceExportRecord, 't' | 'schemaVersion'>>) => Promise<void>;
-  writeProviderBundleFile: (params: Readonly<{
+  writeAgentBundleFile: (params: Readonly<{
     handoffId: string;
-    providerBundle: SessionHandoffProviderBundle;
+    agentBundle: SessionHandoffAgentBundle;
   }>) => Promise<Readonly<{
     transferId: string;
     filePath: string;
@@ -68,6 +75,8 @@ type PrepareStartedStateResult = Readonly<{
 }>;
 
 export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
+  activeServerDir: string;
+  createUuid: () => string;
   loadSessionMetadata: (
     sessionId: string,
     sourceMachineId?: string,
@@ -82,12 +91,12 @@ export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
     request: SessionHandoffStartRequest;
     metadata: Record<string, unknown>;
     sourceStopState: Exclude<SessionHandoffSourceStopState, 'failed'>;
-    preExportedProviderBundle?: DeferredDirectPeerPreExportedProviderBundle;
+    preExportedAgentBundle?: DeferredDirectPeerPreExportedAgentBundle;
   }>) => Promise<PrepareStartedStateResult>;
   exportSessionBundle: (
     metadata: Record<string, unknown>,
   ) => Promise<Readonly<{
-    providerBundle: SessionHandoffProviderBundle;
+    agentBundle: SessionHandoffAgentBundle;
     targetPath: string;
   }>>;
   waitForPersistedSourceExport: (
@@ -116,16 +125,37 @@ export type RegisterSessionHandoffStartRpcHandlerInput = Readonly<{
     updatedAtMs?: number;
     failedAtMs?: number;
     lastErrorMessage?: string;
+    lastErrorCode?: string;
   }>) => SessionHandoffPrepareTargetJobRecordInput;
   invalidRequest: () => Readonly<{
     ok: false;
     errorCode: 'invalid_request';
   }>;
+  sessionOperationExclusion: ExternalSessionOperationExclusion;
+  retainSessionOperationClaim: (
+    handoffId: string,
+    maintenance: ExternalSessionOperationClaimMaintenance,
+  ) => void;
+  releaseSessionOperationClaim: (handoffId: string) => Promise<void>;
 }>;
 
 function resolveSessionHandoffTargetPathFromMetadata(metadata: Record<string, unknown>): string | null {
   const targetPath = typeof metadata.path === 'string' ? metadata.path.trim() : '';
   return targetPath.length > 0 ? targetPath : null;
+}
+
+function serializeSessionHandoffSemanticRequest(request: SessionHandoffStartRequest): string {
+  const normalize = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(normalize);
+    if (!value || typeof value !== 'object') return value;
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entryValue]) => [key, normalize(entryValue)]),
+    );
+  };
+  return JSON.stringify(normalize(request));
 }
 
 function shouldDeferSourcePreparation(
@@ -162,6 +192,8 @@ export function createSessionHandoffStartActionHandler(
   params: RegisterSessionHandoffStartRpcHandlerInput,
 ): (raw: unknown) => Promise<unknown> {
   const {
+    activeServerDir,
+    createUuid,
     loadSessionMetadata,
     machineTransferChannelPresent,
     directPeerTransfer,
@@ -177,6 +209,9 @@ export function createSessionHandoffStartActionHandler(
     buildStartRecoveryStatus,
     buildPrepareJobRecord,
     invalidRequest,
+    sessionOperationExclusion,
+    retainSessionOperationClaim,
+    releaseSessionOperationClaim,
   } = params;
 
   return async (raw: unknown) => {
@@ -214,7 +249,28 @@ export function createSessionHandoffStartActionHandler(
         requestedTargetMachineId: parsed.data.targetMachineId,
       }) ?? undefined;
 
-    const handoffId = `handoff_${randomUUID()}`;
+    const handoffId = `handoff_${createUuid()}`;
+    const operationRequestId = `handoff:${parsed.data.sessionId}:${parsed.data.sourceMachineId}:${parsed.data.targetMachineId}:${parsed.data.sessionStorageMode}:${parsed.data.negotiatedTransportStrategy ?? 'unselected'}`;
+    const exclusion = await sessionOperationExclusion.acquire({
+      kind: 'handoff',
+      sessionId: parsed.data.sessionId,
+      requestId: operationRequestId,
+      sourceMachineId: parsed.data.sourceMachineId,
+      targetMachineId: parsed.data.targetMachineId,
+      semanticRequest: serializeSessionHandoffSemanticRequest(parsed.data),
+    });
+    if (exclusion.status !== 'acquired') {
+      return {
+        ok: false,
+        errorCode: 'session_operation_in_progress',
+        error: 'Another session operation is already in progress',
+      } as const;
+    }
+    const claimMaintenance = maintainExternalSessionOperationClaim({
+      claim: exclusion.claim,
+    });
+    retainSessionOperationClaim(handoffId, claimMaintenance);
+    let claimLossPersistence: Promise<void> | null = null;
     const hasServerRoutedFallback =
       machineTransferChannelPresent
       && parsed.data.preferredTransportStrategies.includes('server_routed_stream');
@@ -222,24 +278,78 @@ export function createSessionHandoffStartActionHandler(
     let deferredStartWorkPromise: Promise<void> | null = null;
     let deferredMarkerWritten = false;
 
-    const recordDeferredStartFailure = (error: unknown): void => {
+    const recordDeferredStartFailure = async (error: unknown): Promise<void> => {
       const nowMs = Date.now();
       const jobId = `start_${handoffId}`;
-      const errorMessage = error instanceof Error ? error.message : 'Failed to export session handoff state';
-      void prepareJobStore.write(
-        buildPrepareJobRecord({
-          jobId,
-          handoffId,
-          createdAtMs: nowMs,
-          updatedAtMs: nowMs,
-          failedAtMs: nowMs,
-          lastErrorMessage: errorMessage,
-          status: {
-            ...buildStartRecoveryStatus(handoffId),
+      const structuredError = error && typeof error === 'object'
+        ? error as { errorCode?: unknown; error?: unknown; message?: unknown }
+        : null;
+      const errorMessage =
+        error instanceof Error
+          ? error.message
+          : typeof structuredError?.error === 'string'
+            ? structuredError.error
+            : 'Failed to export session handoff state';
+      const lastErrorCode =
+        typeof structuredError?.errorCode === 'string' && structuredError.errorCode.trim()
+          ? structuredError.errorCode.trim()
+          : errorMessage.includes('stop the active source session')
+            ? 'source_stop_failed'
+            : error instanceof ExternalSessionOperationClaimLostError
+              ? 'session_operation_claim_lost'
+              : 'source_export_failed';
+      const recoveryStatus = buildStartRecoveryStatus(handoffId);
+      try {
+        await prepareJobStore.write(
+          buildPrepareJobRecord({
             jobId,
+            handoffId,
+            createdAtMs: nowMs,
+            updatedAtMs: nowMs,
+            failedAtMs: nowMs,
+            lastErrorMessage: errorMessage,
+            lastErrorCode,
+            status: {
+              ...recoveryStatus,
+              ...(error instanceof ExternalSessionOperationClaimLostError
+                ? { status: 'awaiting_user_resume' as const }
+                : {}),
+              jobId,
+            },
+          }),
+        );
+      } catch (persistenceError) {
+        process.emitWarning(
+          persistenceError instanceof Error ? persistenceError : String(persistenceError),
+          {
+            code: 'HAPPIER_SESSION_HANDOFF_DEFERRED_FAILURE_PERSISTENCE',
+            detail: `handoffId=${handoffId} errorCode=${lastErrorCode}`,
           },
-        }),
-      ).catch(() => undefined);
+        );
+      }
+    };
+    const persistClaimLoss = (
+      error: ExternalSessionOperationClaimLostError,
+    ): Promise<void> => {
+      claimLossPersistence ??= recordDeferredStartFailure(error).catch(() => undefined);
+      return claimLossPersistence;
+    };
+    void claimMaintenance.lost.then(persistClaimLoss);
+    const claimLostResponse = async (
+      error: ExternalSessionOperationClaimLostError,
+    ) => {
+      await persistClaimLoss(error);
+      await releaseSessionOperationClaim(handoffId);
+      return {
+        ok: false,
+        errorCode: 'session_operation_claim_lost',
+        error: error.code,
+        handoffId,
+        status: {
+          ...buildStartRecoveryStatus(handoffId),
+          status: 'awaiting_user_resume' as const,
+        },
+      } as const;
     };
 
     const buildDeferredResponseTargetPath = (): string | null => {
@@ -249,17 +359,18 @@ export function createSessionHandoffStartActionHandler(
 
     const ensureDeferredMarker = async (targetPath: string): Promise<void> => {
       if (deferredMarkerWritten) return;
+      claimMaintenance.throwIfLost();
       deferredMarkerWritten = true;
       // Persist a minimal durable marker so `status.get` can immediately report "pending"
       // for deferred handoffs (instead of racing to `not_found` before export writes).
-      await sourceExportStore.save({
+      await claimMaintenance.race(() => sourceExportStore.save({
         handoffId,
         sessionId: parsed.data.sessionId,
         sourceMachineId: parsed.data.sourceMachineId,
         targetMachineId: parsed.data.targetMachineId,
         exportedAtMs: Date.now(),
         workspaceSourceRootPath: targetPath,
-      });
+      }));
     };
 
     const attemptDeferredStartFastPath = async (
@@ -268,9 +379,10 @@ export function createSessionHandoffStartActionHandler(
       await ensureDeferredMarker(targetPath);
 
       const fastPathPromise = (async (): Promise<SessionHandoffStartFastPathResult> => {
+        claimMaintenance.throwIfLost();
         const sourceStopState =
           stopSessionForHandoff
-            ? await stopSessionForHandoff(parsed.data.sessionId)
+            ? await claimMaintenance.race(() => stopSessionForHandoff(parsed.data.sessionId))
             : 'already_inactive';
         if (sourceStopState === 'failed') {
           return {
@@ -279,12 +391,13 @@ export function createSessionHandoffStartActionHandler(
             error: 'Failed to stop the active source session before handoff cutover',
           } as const;
         }
-        const prepared = await prepareStartedState({
+        claimMaintenance.throwIfLost();
+        const prepared = await claimMaintenance.race(() => prepareStartedState({
           handoffId,
           request: parsed.data,
           metadata,
           sourceStopState,
-        });
+        }));
 
         return {
           handoffId,
@@ -306,12 +419,20 @@ export function createSessionHandoffStartActionHandler(
         return fastPathOutcome;
       }
 
-      deferredStartWorkPromise = fastPathPromise.then(() => undefined);
+      deferredStartWorkPromise = fastPathPromise.then((outcome) => {
+        if ('ok' in outcome && outcome.ok === false) {
+          throw Object.assign(new Error(outcome.error), {
+            errorCode: outcome.errorCode,
+            error: outcome.error,
+          });
+        }
+      });
       void fastPathPromise.catch(recordDeferredStartFailure);
       shouldDefer = true;
       return null;
     };
 
+    try {
     const shouldAttemptServerRoutedFastPath =
       !shouldDefer
       && parsed.data.negotiatedTransportStrategy === 'server_routed_stream'
@@ -321,6 +442,7 @@ export function createSessionHandoffStartActionHandler(
     if (shouldAttemptServerRoutedFastPath) {
       const targetPath = buildDeferredResponseTargetPath();
       if (!targetPath) {
+        await releaseSessionOperationClaim(handoffId);
         return {
           ok: false,
           errorCode: 'source_export_failed',
@@ -330,6 +452,7 @@ export function createSessionHandoffStartActionHandler(
       const fastPathOutcome = await attemptDeferredStartFastPath(targetPath);
       if (fastPathOutcome !== null) {
         if ('ok' in fastPathOutcome && fastPathOutcome.ok === false) {
+          await releaseSessionOperationClaim(handoffId);
           return fastPathOutcome;
         }
         return fastPathOutcome;
@@ -343,6 +466,7 @@ export function createSessionHandoffStartActionHandler(
     if (shouldDefer) {
       const targetPath = resolveSessionHandoffTargetPathFromMetadata(metadata);
       if (!targetPath) {
+        await releaseSessionOperationClaim(handoffId);
         return {
           ok: false,
           errorCode: 'source_export_failed',
@@ -361,7 +485,7 @@ export function createSessionHandoffStartActionHandler(
         && directPeerTransfer !== undefined;
 
       let deferredStartEndpointCandidates: readonly TransferEndpointCandidate[] = [];
-      let preExportedProviderBundle: DeferredDirectPeerPreExportedProviderBundle | undefined;
+      let preExportedAgentBundle: DeferredDirectPeerPreExportedAgentBundle | undefined;
 
       const deferredHandoffMetadataV2: SessionHandoffMetadataV2 | undefined =
         isDirectPeerDeferredStart || parsed.data.workspaceTransfer?.enabled === true
@@ -381,7 +505,8 @@ export function createSessionHandoffStartActionHandler(
           : undefined;
 
       if (isDirectPeerDeferredStart && directPeerTransfer) {
-        const deferredDirectPeerStart = await prepareDeferredDirectPeerStart({
+        const deferredDirectPeerStart = await claimMaintenance.race(() => prepareDeferredDirectPeerStart({
+          activeServerDir,
           handoffId,
           request: parsed.data,
           metadata,
@@ -397,10 +522,11 @@ export function createSessionHandoffStartActionHandler(
               ? await stopSessionForHandoff(parsed.data.sessionId)
               : 'already_inactive',
           recordDeferredStartFailure,
-        });
+          claimMaintenance,
+        }));
         deferredStartEndpointCandidates = deferredDirectPeerStart.deferredStartEndpointCandidates;
         deferredStartWorkPromise = deferredDirectPeerStart.deferredStartWorkPromise;
-        preExportedProviderBundle = deferredDirectPeerStart.preExportedProviderBundle;
+        preExportedAgentBundle = deferredDirectPeerStart.preExportedAgentBundle;
       }
 
       startDeferredWork({
@@ -409,10 +535,11 @@ export function createSessionHandoffStartActionHandler(
         handoffId,
         request: parsed.data,
         metadata,
-        ...(preExportedProviderBundle ? { preExportedProviderBundle } : {}),
+        ...(preExportedAgentBundle ? { preExportedAgentBundle } : {}),
         stopSessionForHandoff,
         prepareStartedState,
         recordDeferredStartFailure,
+        claimMaintenance,
       });
 
       return {
@@ -428,9 +555,10 @@ export function createSessionHandoffStartActionHandler(
     try {
       const stopState =
         stopSessionForHandoff
-          ? await stopSessionForHandoff(parsed.data.sessionId)
+          ? await claimMaintenance.race(() => stopSessionForHandoff(parsed.data.sessionId))
           : 'already_inactive';
       if (stopState === 'failed') {
+        await releaseSessionOperationClaim(handoffId);
         return {
           ok: false,
           errorCode: 'source_stop_failed',
@@ -438,12 +566,13 @@ export function createSessionHandoffStartActionHandler(
         } as const;
       }
       exportAfterStop = stopState === 'stopped';
-      const prepared = await prepareStartedState({
+      claimMaintenance.throwIfLost();
+      const prepared = await claimMaintenance.race(() => prepareStartedState({
         handoffId,
         request: parsed.data,
         metadata,
         sourceStopState: stopState,
-      });
+      }));
 
       return {
         handoffId,
@@ -453,8 +582,10 @@ export function createSessionHandoffStartActionHandler(
         ...(prepared.nextState.handoffMetadataV2 ? { handoffMetadataV2: prepared.nextState.handoffMetadataV2 } : {}),
       };
     } catch (error) {
+      if (error instanceof ExternalSessionOperationClaimLostError) throw error;
       const errorMessage = error instanceof Error ? error.message : 'Failed to export session handoff state';
       if (!exportAfterStop) {
+        await releaseSessionOperationClaim(handoffId);
         return {
           ok: false,
           errorCode: 'source_export_failed',
@@ -469,6 +600,12 @@ export function createSessionHandoffStartActionHandler(
         handoffId,
         status,
       } as const;
+    }
+    } catch (error) {
+      if (error instanceof ExternalSessionOperationClaimLostError) {
+        return await claimLostResponse(error);
+      }
+      throw error;
     }
   };
 }

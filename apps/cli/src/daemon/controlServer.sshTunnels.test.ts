@@ -29,7 +29,7 @@ describe('daemon control server: SSH tunnel endpoints', () => {
     const app = createDaemonControlApp({
       getChildren: () => [],
       machineId: 'machine_local',
-      stopSession: async () => false,
+      stopSession: async () => ({ status: 'not_found' as const }),
       spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
       requestShutdown: () => {},
       onHappySessionWebhook: () => {},
@@ -90,7 +90,7 @@ describe('daemon control server: SSH tunnel endpoints', () => {
     const app = createDaemonControlApp({
       getChildren: () => [],
       machineId: 'machine_local',
-      stopSession: async () => false,
+      stopSession: async () => ({ status: 'not_found' as const }),
       spawnSession: async () => ({ type: 'success', sessionId: 'happy-test-123' }),
       requestShutdown: () => {},
       onHappySessionWebhook: () => {},

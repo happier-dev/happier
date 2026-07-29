@@ -40,8 +40,7 @@ function readExternalSessionRemoteSessionId(externalSessionRecord: Record<string
 
 function readExternalSessionAgentId(externalSessionRecord: Record<string, unknown> | null): string | null {
   if (!externalSessionRecord) return null;
-  // legacy `providerId` external-link read-compat (pre-rename persisted metadata)
-  return normalizeString(externalSessionRecord.agentId) ?? normalizeString(externalSessionRecord.providerId);
+  return normalizeString(externalSessionRecord.agentId);
 }
 
 export type SessionRuntimeIdentitySourceTier =

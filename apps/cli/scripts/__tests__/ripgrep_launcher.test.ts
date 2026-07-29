@@ -1,6 +1,14 @@
 import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
+import { createRequire } from 'node:module'
+
+const require = createRequire(import.meta.url)
+const {
+  resolvePackagedRipgrepBinaryPath,
+} = require('../ripgrep_runtime_paths.cjs') as {
+  resolvePackagedRipgrepBinaryPath(toolsDir: string, platform?: NodeJS.Platform): string
+}
 
 type LauncherRun = SpawnSyncReturns<string>
 
@@ -12,6 +20,11 @@ function runLauncher(argv: string[]): LauncherRun {
 }
 
 describe('ripgrep launcher behavior', () => {
+  it('selects the packaged Windows executable when the native addon is unavailable', () => {
+    expect(resolvePackagedRipgrepBinaryPath('C:\\happier\\tools\\unpacked', 'win32'))
+      .toBe(join('C:\\happier\\tools\\unpacked', 'rg.exe'))
+  })
+
   it('exits with an error when JSON argv is missing', () => {
     const result = runLauncher([])
 

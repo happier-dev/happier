@@ -2,6 +2,14 @@ import * as fs from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join, win32 as win32Path } from 'node:path';
 
+import {
+  parseLaunchdPlist,
+  parseSystemdUnit,
+  parseWindowsScheduledTaskWrapperPs1,
+  type ParsedLaunchdPlist,
+  type ParsedSystemdUnit,
+  type ParsedWindowsScheduledTaskWrapperPs1,
+} from '@happier-dev/cli-common/service';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { readPositiveIntEnv } from '@/utils/readPositiveIntEnv';
 
@@ -9,6 +17,7 @@ import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 
 export type InstalledDaemonServiceEntry = Readonly<{
   serverId: string;
+  activeServerId?: string | null;
   name: string;
   relayUrl?: string | null;
   installed: true;
@@ -85,6 +94,24 @@ function normalizeParsedReleaseChannel(value: string | null): PublicReleaseRingI
   return null;
 }
 
+function isLegacyEnvHashServiceId(serverId: string): boolean {
+  return /^env_[0-9a-f]+$/iu.test(String(serverId ?? '').trim());
+}
+
+function resolveDiscoveredServiceIdentity(params: Readonly<{
+  parsed: InstalledServicePathMatch;
+  activeServerId: string | null;
+}>): string {
+  if (
+    params.parsed.targetMode === 'pinned'
+    && params.activeServerId
+    && isLegacyEnvHashServiceId(params.parsed.serverId)
+  ) {
+    return params.activeServerId;
+  }
+  return params.parsed.serverId;
+}
+
 function readInstalledServiceFile(path: string): string | null {
   try {
     return fs.readFileSync(path, 'utf8');
@@ -93,56 +120,43 @@ function readInstalledServiceFile(path: string): string | null {
   }
 }
 
-function unescapeSystemdValue(value: string): string {
-  return String(value ?? '')
-    .replaceAll('%%', '%')
-    .replaceAll('\\n', '\n')
-    .replaceAll('\\"', '"')
-    .replaceAll('\\\\', '\\');
-}
+type ParsedInstalledDaemonServiceDefinition =
+  | ParsedLaunchdPlist
+  | ParsedSystemdUnit
+  | ParsedWindowsScheduledTaskWrapperPs1;
 
-function stripSystemdQuotes(value: string): string {
-  const s = String(value ?? '').trim();
-  if (s.length >= 2 && s.startsWith('"') && s.endsWith('"')) {
-    return unescapeSystemdValue(s.slice(1, -1));
+function parseInstalledDaemonServiceDefinition(params: Readonly<{
+  platform: 'darwin' | 'linux' | 'win32';
+  path: string;
+  contents: string;
+}>): ParsedInstalledDaemonServiceDefinition | null {
+  if (params.platform === 'darwin') {
+    return parseLaunchdPlist({ contents: params.contents, sourcePath: params.path });
   }
-  return unescapeSystemdValue(s);
+  if (params.platform === 'linux') {
+    return parseSystemdUnit({ contents: params.contents, sourcePath: params.path });
+  }
+  return parseWindowsScheduledTaskWrapperPs1({ contents: params.contents, sourcePath: params.path });
 }
 
-function parseLinuxUnitValue(contents: string, key: string): string | null {
+function readInstalledDaemonServiceDefinition(params: Readonly<{
+  platform: 'darwin' | 'linux' | 'win32';
+  path: string;
+}>): ParsedInstalledDaemonServiceDefinition | null {
+  const contents = readInstalledServiceFile(params.path);
+  return contents === null
+    ? null
+    : parseInstalledDaemonServiceDefinition({ ...params, contents });
+}
+
+function readParsedServiceEnvValue(
+  definition: ParsedInstalledDaemonServiceDefinition | null,
+  key: string,
+): string | null {
   const normalizedKey = String(key ?? '').trim();
   if (!normalizedKey) return null;
-
-  const lines = String(contents ?? '').split(/\r?\n/u);
-  for (const lineRaw of lines) {
-    const line = String(lineRaw ?? '').trim();
-    if (!line || !/^Environment=/i.test(line)) continue;
-
-    let assignment = line.slice('Environment='.length).trim();
-    assignment = stripSystemdQuotes(assignment);
-
-    const eqIdx = assignment.indexOf('=');
-    if (eqIdx <= 0) continue;
-
-    const foundKey = assignment.slice(0, eqIdx).trim();
-    if (foundKey !== normalizedKey) continue;
-
-    const rawValue = assignment.slice(eqIdx + 1);
-    const value = stripSystemdQuotes(rawValue).trim();
-    return value || null;
-  }
-
-  return null;
-}
-
-function parseDarwinPlistValue(contents: string, key: string): string | null {
-  const match = new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`, 'i').exec(contents);
-  return String(match?.[1] ?? '').trim() || null;
-}
-
-function parseWindowsWrapperValue(contents: string, key: string): string | null {
-  const match = new RegExp(`\\$env:${key}\\s*=\\s*['"]([^'"]+)['"]`, 'i').exec(contents);
-  return String(match?.[1] ?? '').trim() || null;
+  const value = String(definition?.env[normalizedKey] ?? '').trim();
+  return value || null;
 }
 
 function parseCsvFirstField(line: string): string | null {
@@ -272,27 +286,29 @@ function listWindowsScheduledTaskWrapperPaths(servicesDir: string): readonly str
   }
 }
 
-function hasDaemonStartSyncCommand(contents: string): boolean {
-  return /\bdaemon\b[\s"']+\bstart-sync\b/i.test(contents);
+function hasDaemonStartSyncCommand(definition: ParsedInstalledDaemonServiceDefinition | null): boolean {
+  return /\bdaemon\b\s+\bstart-sync\b/iu.test(definition?.programArgs.join(' ') ?? '');
 }
 
-function hasDarwinDaemonStartSyncCommand(contents: string): boolean {
-  return /<string>\s*daemon\s*<\/string>\s*<string>\s*start-sync\s*<\/string>/i.test(contents);
+function hasLegacyManagedServiceEnv(definition: ParsedInstalledDaemonServiceDefinition | null): boolean {
+  return readParsedServiceEnvValue(definition, 'HAPPIER_HOME_DIR') !== null
+    || readParsedServiceEnvValue(definition, 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR') !== null;
 }
 
-function hasLegacyManagedLinuxServiceEnv(path: string): boolean {
-  return readInstalledDaemonServiceEnvValue({ platform: 'linux', path, key: 'HAPPIER_HOME_DIR' }) !== null
-    || readInstalledDaemonServiceEnvValue({ platform: 'linux', path, key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR' }) !== null;
-}
-
-function hasLegacyManagedDarwinServiceEnv(path: string): boolean {
-  return readInstalledDaemonServiceEnvValue({ platform: 'darwin', path, key: 'HAPPIER_HOME_DIR' }) !== null
-    || readInstalledDaemonServiceEnvValue({ platform: 'darwin', path, key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR' }) !== null;
-}
-
-function hasLegacyManagedWindowsServiceEnv(path: string): boolean {
-  return readInstalledDaemonServiceEnvValue({ platform: 'win32', path, key: 'HAPPIER_HOME_DIR' }) !== null
-    || readInstalledDaemonServiceEnvValue({ platform: 'win32', path, key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR' }) !== null;
+function isValidInstalledDaemonServiceDefinition(params: Readonly<{
+  platform: 'darwin' | 'linux' | 'win32';
+  expectedLabel: string;
+  definition: ParsedInstalledDaemonServiceDefinition | null;
+}>): boolean {
+  const { definition } = params;
+  if (!definition || !hasDaemonStartSyncCommand(definition)) {
+    return false;
+  }
+  if (params.platform === 'darwin' && definition.label !== params.expectedLabel) {
+    return false;
+  }
+  return readParsedServiceEnvValue(definition, 'HAPPIER_DAEMON_STARTUP_SOURCE') === 'background-service'
+    || hasLegacyManagedServiceEnv(definition);
 }
 
 export function readInstalledDaemonServiceEnvValue(params: Readonly<{
@@ -300,18 +316,7 @@ export function readInstalledDaemonServiceEnvValue(params: Readonly<{
   path: string;
   key: string;
 }>): string | null {
-  const contents = readInstalledServiceFile(params.path);
-  if (!contents) {
-    return null;
-  }
-
-  if (params.platform === 'linux') {
-    return parseLinuxUnitValue(contents, params.key);
-  }
-  if (params.platform === 'darwin') {
-    return parseDarwinPlistValue(contents, params.key);
-  }
-  return parseWindowsWrapperValue(contents, params.key);
+  return readParsedServiceEnvValue(readInstalledDaemonServiceDefinition(params), params.key);
 }
 
 export function isValidInstalledDaemonServiceFile(params: Readonly<{
@@ -319,52 +324,27 @@ export function isValidInstalledDaemonServiceFile(params: Readonly<{
   path: string;
   expectedLabel: string;
 }>): boolean {
-  const contents = readInstalledServiceFile(params.path);
-  if (!contents) {
-    return false;
-  }
-
-  if (params.platform === 'darwin') {
-    return parseDarwinPlistValue(contents, 'Label') === params.expectedLabel
-      && hasDarwinDaemonStartSyncCommand(contents)
-      && (
-        parseDarwinPlistValue(contents, 'HAPPIER_DAEMON_STARTUP_SOURCE') === 'background-service'
-        || hasLegacyManagedDarwinServiceEnv(params.path)
-      );
-  }
-
-  if (params.platform === 'linux') {
-    return /(^|\n)ExecStart=/.test(contents)
-      && hasDaemonStartSyncCommand(contents)
-      && (
-        parseLinuxUnitValue(contents, 'HAPPIER_DAEMON_STARTUP_SOURCE') === 'background-service'
-        || hasLegacyManagedLinuxServiceEnv(params.path)
-      );
-  }
-
-  return hasDaemonStartSyncCommand(contents)
-    && (
-      parseWindowsWrapperValue(contents, 'HAPPIER_DAEMON_STARTUP_SOURCE') === 'background-service'
-      || hasLegacyManagedWindowsServiceEnv(params.path)
-    );
+  return isValidInstalledDaemonServiceDefinition({
+    platform: params.platform,
+    expectedLabel: params.expectedLabel,
+    definition: readInstalledDaemonServiceDefinition(params),
+  });
 }
 
 function parseInstalledServiceMetadata(params: Readonly<{
-  platform: 'darwin' | 'linux' | 'win32';
-  path: string;
+  definition: ParsedInstalledDaemonServiceDefinition | null;
   initialReleaseChannel: PublicReleaseRingId;
   initialTargetMode: DaemonServiceTargetMode;
 }>): Readonly<{
-  serverId: string | null;
+  activeServerId: string | null;
   happierHomeDir: string | null;
   relayUrl: string | null;
   releaseChannel: PublicReleaseRingId;
   targetMode: DaemonServiceTargetMode;
 }> {
-  const contents = readInstalledServiceFile(params.path);
-  if (!contents) {
+  if (!params.definition) {
     return {
-      serverId: null,
+      activeServerId: null,
       happierHomeDir: null,
       relayUrl: null,
       releaseChannel: params.initialReleaseChannel,
@@ -372,11 +352,7 @@ function parseInstalledServiceMetadata(params: Readonly<{
     };
   }
 
-  const readValue = (key: string) => readInstalledDaemonServiceEnvValue({
-    platform: params.platform,
-    path: params.path,
-    key,
-  });
+  const readValue = (key: string) => readParsedServiceEnvValue(params.definition, key);
 
   const parsedTargetMode = readValue('HAPPIER_DAEMON_SERVICE_TARGET_MODE');
   const parsedServerId = readValue('HAPPIER_ACTIVE_SERVER_ID');
@@ -384,7 +360,7 @@ function parseInstalledServiceMetadata(params: Readonly<{
   const parsedRelayUrl = readValue('HAPPIER_PUBLIC_SERVER_URL') ?? readValue('HAPPIER_SERVER_URL');
   const parsedReleaseChannel = normalizeParsedReleaseChannel(readValue('HAPPIER_PUBLIC_RELEASE_CHANNEL'));
   return {
-    serverId: parsedServerId,
+    activeServerId: parsedServerId,
     happierHomeDir: parsedHappierHomeDir,
     relayUrl: parsedRelayUrl,
     releaseChannel: parsedReleaseChannel ?? params.initialReleaseChannel,
@@ -430,22 +406,27 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
       if (!parsed) {
         return [];
       }
-      const definitionExists = isValidInstalledDaemonServiceFile({
+      const definition = readInstalledDaemonServiceDefinition({
         platform: params.platform,
         path,
+      });
+      const definitionExists = isValidInstalledDaemonServiceDefinition({
+        platform: params.platform,
         expectedLabel: parsed.label,
+        definition,
       });
       if (!definitionExists && source !== 'task') {
         return [];
       }
       const metadata = parseInstalledServiceMetadata({
-        platform: params.platform,
-        path,
+        definition,
         initialReleaseChannel: parsed.releaseChannel,
         initialTargetMode: parsed.targetMode,
       });
-      const resolvedServerId = String(metadata.serverId ?? '').trim() || parsed.serverId;
-      const profile = params.serversById[resolvedServerId];
+      const activeServerId = String(metadata.activeServerId ?? '').trim() || null;
+      const serviceServerId = resolveDiscoveredServiceIdentity({ parsed, activeServerId });
+      const profileServerId = activeServerId ?? serviceServerId;
+      const profile = params.serversById[profileServerId];
       const profileRelayUrl = typeof profile === 'object'
         && profile
         && !Array.isArray(profile)
@@ -455,10 +436,11 @@ export async function discoverInstalledDaemonServiceEntries(params: Readonly<{
       const name = metadata.targetMode === 'default-following'
         ? 'Default automatic startup'
         : typeof profile === 'object' && profile && !Array.isArray(profile) && typeof (profile as { name?: unknown }).name === 'string'
-          ? String((profile as { name: string }).name).trim() || resolvedServerId
-          : resolvedServerId;
+          ? String((profile as { name: string }).name).trim() || profileServerId
+          : profileServerId;
       return [{
-        serverId: resolvedServerId,
+        serverId: serviceServerId,
+        ...(activeServerId ? { activeServerId } : {}),
         name,
         relayUrl: metadata.relayUrl ?? profileRelayUrl,
         installed: true as const,

@@ -77,6 +77,7 @@ export function createAcpAgentMessageForwarder(params: {
           toolName: msg.toolName,
           input: msg.args,
           id: params.makeId(),
+          ...(msg.localId ? { localId: msg.localId } : {}),
           ...(sidechainId ? { sidechainId } : {}),
         });
         return;
@@ -92,6 +93,7 @@ export function createAcpAgentMessageForwarder(params: {
           callId: ns(msg.callId),
           output: msg.result,
           id: params.makeId(),
+          ...(msg.localId ? { localId: msg.localId } : {}),
           ...(typeof (msg as any).isError === 'boolean' ? { isError: (msg as any).isError } : {}),
           ...(sidechainId ? { sidechainId } : {}),
         });

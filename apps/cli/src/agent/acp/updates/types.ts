@@ -1,5 +1,6 @@
 import type { AgentMessage } from '../../core';
 import type { TransportHandler } from '../../transport';
+import type { LegacyAcpToolRuntime } from '../toolCalls/legacy/runtime';
 
 /**
  * Default timeout for idle detection after message chunks (ms).
@@ -11,13 +12,6 @@ export const DEFAULT_IDLE_TIMEOUT_MS = 500;
  * Default timeout for tool calls if transport doesn't specify (ms).
  */
 export const DEFAULT_TOOL_CALL_TIMEOUT_MS = 120_000;
-
-export type ToolCallLifecycleState =
-  | 'waiting_for_permission'
-  | 'running'
-  | 'completed'
-  | 'failed'
-  | 'cancelled';
 
 /**
  * Extended session update structure with all possible fields.
@@ -61,20 +55,8 @@ export interface SessionUpdate {
 export interface HandlerContext {
   /** Transport handler for agent-specific behavior */
   transport: TransportHandler;
-  /** Set of active tool call IDs */
-  activeToolCalls: Set<string>;
-  /** Set of tool call IDs that have already emitted a terminal tool-result (prevents duplicate terminalization) */
-  finalizedToolCalls: Set<string>;
-  /** Map of tool call ID to the current lifecycle state */
-  toolCallLifecycleStates: Map<string, ToolCallLifecycleState>;
-  /** Map of tool call ID to start time */
-  toolCallStartTimes: Map<string, number>;
-  /** Map of tool call ID to timeout handle */
-  toolCallTimeouts: Map<string, NodeJS.Timeout>;
-  /** Map of tool call ID to tool name */
-  toolCallIdToNameMap: Map<string, string>;
-  /** Map of tool call ID to the most-recent raw input (for permission prompts that omit args) */
-  toolCallIdToInputMap: Map<string, Record<string, unknown>>;
+  /** Sole legacy lifecycle owner; callers consume immutable snapshots. */
+  toolCalls: LegacyAcpToolRuntime;
   /** Current idle timeout handle */
   idleTimeout: NodeJS.Timeout | null;
   /** Whether the most recent prompt included change-title instructions */

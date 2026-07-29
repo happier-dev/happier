@@ -161,7 +161,7 @@ export const ScmDiffSummaryProfile: ExecutionRunIntentProfile = {
         metadata: context.metadata,
         files: context.files,
         truncation: context.truncation,
-        instructions: request.instructions,
+        instructions: typeof request.instructions === 'string' ? request.instructions : undefined,
       }),
       intentInput: {
         ...input,

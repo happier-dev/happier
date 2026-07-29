@@ -4,10 +4,14 @@ import tweetnacl from 'tweetnacl';
 import {
     createPeerRouteNonceSigningInputV1,
     createDirectRouteGrantSigningInputV1,
+    createDirectRouteGrantSigningInputV2,
+    createEphemeralPeerRouteProofHandleV2,
     PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
     type DirectRouteGrantPayloadV1,
+    type DirectRouteGrantPayloadV2,
     type PeerTcpTunnelOpenV1,
 } from '@happier-dev/protocol';
+import { createAtomicRouteGrantConsumption } from './grantConsumption';
 
 type OpenModule = typeof import('./open');
 
@@ -93,6 +97,46 @@ function createOpen(overrides: Partial<PeerTcpTunnelOpenV1> = {}): PeerTcpTunnel
 }
 
 describe('openPeerTcpTunnel', () => {
+    it('admits a V2 tunnel with the canonical ephemeral proof and no account signing key', async () => {
+        const mod = await loadOpenModule();
+        const handle = createEphemeralPeerRouteProofHandleV2({
+            randomBytes: (length) => new Uint8Array(length).fill(length === 32 ? 4 : 5),
+        });
+        const payload: DirectRouteGrantPayloadV2 = {
+            v: 2, grantId: 'grant_v2', accountId: 'account_1', machineId: 'machine_1',
+            flowKind: 'tcp_tunnel', routeKind: 'loopback_direct',
+            scope: { kind: 'tcp_tunnel', tunnelId: 'tun_v2', allowedPorts: [3000], maxIdleMs: 30_000, maxDurationMs: 300_000 },
+            iat: 1_000, exp: 601_000, aud: 'happier-daemon-route-grant', endpointFingerprint: 'endpoint_1',
+            proofKind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: handle.publicKeyBase64Url,
+        };
+        const grant = {
+            payload,
+            signature: {
+                keyId: 'key_1', alg: 'Ed25519' as const,
+                valueBase64Url: toBase64Url(tweetnacl.sign.detached(
+                    Buffer.from(createDirectRouteGrantSigningInputV2(payload), 'utf8'), signingKeyPair.secretKey,
+                )),
+            },
+        };
+        const proof = handle.sign(grant);
+        const consumption = createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' });
+        const open = {
+            v: 2 as const, kind: 'open' as const, tunnelId: 'tun_v2', targetMachineId: 'machine_1',
+            routeKind: 'loopback_direct' as const, destination: { host: '127.0.0.1', port: 3000 }, grant, proof,
+        };
+        const input = {
+            open,
+            nowMs: 2_000,
+            expected: { accountId: 'account_1', machineId: 'machine_1', endpointFingerprint: 'endpoint_1' },
+            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            grantConsumption: consumption,
+            connectTcp: vi.fn(async () => ({ close: vi.fn() })),
+        };
+
+        await expect(mod?.openPeerTcpTunnel(input)).resolves.toMatchObject({ ok: true, receipt: 'peer.tunnel.opened' });
+        await expect(mod?.openPeerTcpTunnel(input)).resolves.toMatchObject({ ok: false, reasonCode: 'grant_already_consumed' });
+    });
+
     it('validates grant, scope, loopback destination, and returns the shared loopback stream path', async () => {
         const mod = await loadOpenModule();
         const connectTcp = vi.fn(async () => ({ close: vi.fn() }));
@@ -108,6 +152,7 @@ describe('openPeerTcpTunnel', () => {
                 accountPublicKey: toBase64Url(accountKeyPair.publicKey),
             },
             trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            grantConsumption: createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' }),
             connectTcp,
         })).resolves.toMatchObject({
             ok: true,
@@ -139,6 +184,7 @@ describe('openPeerTcpTunnel', () => {
                 accountPublicKey: toBase64Url(accountKeyPair.publicKey),
             },
             trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            grantConsumption: createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' }),
             connectTcp,
         })).resolves.toMatchObject({
             ok: true,
@@ -148,6 +194,34 @@ describe('openPeerTcpTunnel', () => {
             },
             receipt: 'peer.tunnel.opened',
         });
+    });
+
+    it('rejects a selected loopback encoding that the opener did not advertise', async () => {
+        const mod = await loadOpenModule();
+        const connectTcp = vi.fn(async () => ({ close: vi.fn() }));
+        expect(mod?.openPeerTcpTunnel).toBeTypeOf('function');
+
+        await expect(mod?.openPeerTcpTunnel({
+            open: createOpen({
+                selectedEncoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+                supportedEncodings: ['json_base64_v1'],
+            }),
+            nowMs: 2_000,
+            expected: {
+                accountId: 'account_1',
+                machineId: 'machine_1',
+                endpointFingerprint: 'endpoint_1',
+                accountPublicKey: toBase64Url(accountKeyPair.publicKey),
+            },
+            trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            grantConsumption: createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' }),
+            connectTcp,
+        })).resolves.toMatchObject({
+            ok: false,
+            reasonCode: 'encoding_unsupported',
+            receipt: 'peer.route.fallback',
+        });
+        expect(connectTcp).not.toHaveBeenCalled();
     });
 
     it('rejects disallowed destinations before opening a TCP connection', async () => {
@@ -165,6 +239,7 @@ describe('openPeerTcpTunnel', () => {
                 accountPublicKey: toBase64Url(accountKeyPair.publicKey),
             },
             trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            grantConsumption: createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' }),
             connectTcp,
         })).resolves.toMatchObject({
             ok: false,
@@ -190,6 +265,7 @@ describe('openPeerTcpTunnel', () => {
                 accountPublicKey: toBase64Url(accountKeyPair.publicKey),
             },
             trustRoots: [{ keyId: 'key_1', publicKey: toBase64Url(signingKeyPair.publicKey) }],
+            grantConsumption: createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' }),
             connectTcp,
         })).resolves.toMatchObject({
             ok: true,

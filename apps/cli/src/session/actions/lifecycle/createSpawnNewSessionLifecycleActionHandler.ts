@@ -2,12 +2,9 @@ import { isPermissionMode } from '@/api/types';
 import {
     SPAWN_SESSION_ERROR_CODES,
     type SpawnSessionOptions,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 import { readCanonicalSpawnRuntimeSelectionFromCompatIngress } from '@/rpc/handlers/spawnRuntimeSelection';
-import {
-    canonicalizeSpawnBackendTargetFromTransportInput,
-    isPromptBearingSpawnWithoutNonce,
-} from '@/rpc/handlers/spawnSessionOptionsContract';
+import { canonicalizeSpawnBackendTargetFromTransportInput } from '@/rpc/handlers/spawnSessionOptionsContract';
 import {
     createRandomSpawnNonce,
     createStableSpawnNonce,
@@ -16,9 +13,11 @@ import {
 import { logger } from '@/ui/logger';
 import {
     AcpConfigOptionOverridesV1Schema,
+    AgentSessionStartupInstructionsV1Schema,
     SessionModelSelectionV1Schema,
     buildBackendTargetKeyV2,
     SessionMcpSelectionV1Schema,
+    SpawnSessionExecutionAuthorizationSchema,
     findSpawnConfigOptionAliasConflicts,
     mergeSpawnConfigOptionAliases,
     type SpawnConfigOptionValue,
@@ -36,7 +35,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
         const {
             directory,
             spawnNonce,
-            initialPrompt,
             sessionId,
             machineId,
             approvedNewDirectoryCreation,
@@ -59,6 +57,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             modelSelection,
             accountSettingsVersionHint,
             initialTranscriptAfterSeq,
+            executionAuthorization,
             sessionConfigOptionOverrides,
             configOptions,
             windowsRemoteSessionLaunchMode,
@@ -70,8 +69,29 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             runtimeDescriptorV1,
             agentRuntimeDescriptorV1: legacyAgentRuntimeDescriptorV1,
             mcpSelection,
+            agentSessionStartupInstructionsV1,
         } = (rawParams && typeof rawParams === 'object' ? rawParams : {}) as Record<string, unknown>;
 
+        const parsedAgentSessionStartupInstructionsV1 =
+            agentSessionStartupInstructionsV1 === undefined
+                ? null
+                : AgentSessionStartupInstructionsV1Schema.safeParse(
+                    agentSessionStartupInstructionsV1,
+                );
+        if (
+            parsedAgentSessionStartupInstructionsV1
+            && !parsedAgentSessionStartupInstructionsV1.success
+        ) {
+            return {
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
+                errorMessage: 'Invalid agent session startup instructions',
+            };
+        }
+        const normalizedAgentSessionStartupInstructionsV1 =
+            parsedAgentSessionStartupInstructionsV1?.success
+                ? parsedAgentSessionStartupInstructionsV1.data
+                : undefined;
         const normalizedModelId = typeof modelId === 'string' && modelId.trim().length > 0 ? modelId.trim() : undefined;
         const normalizedPermissionMode =
             typeof permissionMode === 'string' && isPermissionMode(permissionMode) ? permissionMode : undefined;
@@ -93,6 +113,10 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             && initialTranscriptAfterSeq >= 0
                 ? initialTranscriptAfterSeq
                 : undefined;
+        const parsedExecutionAuthorization = SpawnSessionExecutionAuthorizationSchema.safeParse(executionAuthorization);
+        const normalizedExecutionAuthorization = parsedExecutionAuthorization.success
+            ? parsedExecutionAuthorization.data
+            : undefined;
         const normalizedEnvironmentVariables = environmentVariables && typeof environmentVariables === 'object'
             ? environmentVariables as Record<string, string>
             : undefined;
@@ -110,20 +134,9 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             return Object.fromEntries(entries) as Record<string, SpawnConfigOptionValue>;
         })();
         const normalizedResume = typeof resume === 'string' ? resume : undefined;
-        const normalizedInitialPrompt = typeof initialPrompt === 'string' ? initialPrompt : undefined;
         const normalizedSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : undefined;
         const isResumeSessionRequest = (rawParams as { type?: unknown } | null)?.type === 'resume-session';
         const normalizedExplicitSpawnNonce = normalizeSpawnNonce(spawnNonce);
-        if (!isResumeSessionRequest && isPromptBearingSpawnWithoutNonce({
-            initialPrompt: normalizedInitialPrompt,
-            spawnNonce: normalizedExplicitSpawnNonce,
-        })) {
-            return {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.INVALID_REQUEST,
-                errorMessage: 'spawnNonce is required when initialPrompt is provided',
-            };
-        }
         const normalizedSpawnNonce = normalizedExplicitSpawnNonce
             ?? (
                 isResumeSessionRequest
@@ -264,7 +277,6 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
         const buildBaseSpawnOptions = (resolvedDirectory: string): SpawnSessionOptions => ({
             directory: resolvedDirectory,
             spawnNonce: normalizedSpawnNonce,
-            initialPrompt: normalizedInitialPrompt,
             machineId: typeof machineId === 'string' ? machineId : undefined,
             backendTarget: normalizedBackendTarget,
             environmentVariables: normalizedEnvironmentVariables,
@@ -279,6 +291,7 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             permissionModeUpdatedAt: normalizedPermissionModeUpdatedAt,
             accountSettingsVersionHint: normalizedAccountSettingsVersionHint,
             initialTranscriptAfterSeq: normalizedInitialTranscriptAfterSeq,
+            executionAuthorization: normalizedExecutionAuthorization,
             agentModeId: normalizedAgentModeId,
             agentModeUpdatedAt: normalizedAgentModeUpdatedAt,
             modelSelection: normalizedModelSelection,
@@ -287,6 +300,12 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
             windowsRemoteSessionConsole: windowsRemoteSessionConsole as SpawnSessionOptions['windowsRemoteSessionConsole'],
             windowsTerminalWindowName: typeof windowsTerminalWindowName === 'string' ? windowsTerminalWindowName : undefined,
             mcpSelection: normalizedMcpSelection,
+            ...(normalizedAgentSessionStartupInstructionsV1
+                ? {
+                    agentSessionStartupInstructionsV1:
+                        normalizedAgentSessionStartupInstructionsV1,
+                }
+                : {}),
             ...(normalizedRuntimeDescriptorV1 ? { runtimeDescriptorV1: normalizedRuntimeDescriptorV1 } : {}),
             ...(normalizedBackendMode ? { backendMode: normalizedBackendMode } : {}),
             ...(normalizedCodexBackendMode ? { codexBackendMode: normalizedCodexBackendMode } : {}),

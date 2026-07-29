@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "contributionId": "voice-runtime-web",
+      "tier": "reactNative",
+      "platform": "web",
+      "entry": "react-native/voice-runtime-web/index.js",
+      "files": [
+        {
+          "relativePath": "react-native/voice-runtime-web/index.js",
+          "digest": "sha256:ef52415c7ea192779f56194debc9a6ef7dc77eb7360fcf1ce96ea5273392ba1e",
+          "byteSize": 9339
+        }
+      ],
+      "digest": "sha256:dcfa3d5681fe7a2c49a28c4a5de46be19d6cdb37fb9ea3dd45be3932bb8db251",
+      "builtWith": {
+        "bundler": "vite",
+        "version": "7.0.0"
+      },
+      "hostUiApiVersion": "1.0.0",
+      "compat": {
+        "react": "19.2.0",
+        "reactNative": "0.83.4"
+      }
+    }
+  ]
+}

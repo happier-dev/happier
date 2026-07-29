@@ -10,9 +10,9 @@ import type {
     ExecLoopbackWebSocketEndpointV1,
     ExecLoopbackWebSocketJsonClientSpecV1,
     ExecProcessHandleV1,
-} from '@happier-dev/plugin-sdk';
+} from './privateContract';
 
-import { createPluginExecService } from '../context/exec';
+import { createPluginExecService } from './hostService';
 import { encodeLoopbackHandshakeFrame } from './loopbackHandshake';
 import {
     createLoopbackWebSocketJsonClient,
@@ -59,9 +59,12 @@ function writeHandshakeResponse(port) {
 }
 
 function encodeWsFrame(text) {
-  const payload = Buffer.from(text);
+  return encodeWsFramePart(Buffer.from(text), 0x1, true);
+}
+
+function encodeWsFramePart(payload, opcode, final) {
   if (payload.length >= 126) throw new Error('fixture supports small frames only');
-  return Buffer.concat([Buffer.from([0x81, payload.length]), payload]);
+  return Buffer.concat([Buffer.from([(final ? 0x80 : 0) | opcode, payload.length]), payload]);
 }
 
 function decodeWsFrame(buffer) {
@@ -119,13 +122,33 @@ function startServer() {
           continue;
         }
         const message = JSON.parse(decoded.text);
+        if (message.kind === 'closeMidFragment') {
+          const partial = Buffer.from('{"incomplete":true}');
+          socket.write(encodeWsFramePart(partial.subarray(0, 5), 0x1, false));
+          socket.end();
+          continue;
+        }
+        if (message.kind === 'exactFlood') {
+          const exactJson = JSON.stringify('x'.repeat(message.bytes - 2));
+          socket.write(Buffer.concat(Array.from({ length: 3 }, () => encodeWsFrame(exactJson))));
+          continue;
+        }
         if (message.kind === 'flood') {
           for (let index = 0; index < message.count; index += 1) {
             socket.write(encodeWsFrame(JSON.stringify({ index, payload: 'x'.repeat(message.payloadBytes || 1) })));
           }
           continue;
         }
-        socket.write(encodeWsFrame(JSON.stringify({ echo: message, sawHeader: request.headers['x-loopback-api-key'] })));
+        const response = Buffer.from(JSON.stringify({ echo: message, sawHeader: request.headers['x-loopback-api-key'] }));
+        if (config.fragmentResponse) {
+          const splitAt = Math.max(1, Math.floor(response.length / 2));
+          socket.write(Buffer.concat([
+            encodeWsFramePart(response.subarray(0, splitAt), 0x1, false),
+            encodeWsFramePart(response.subarray(splitAt), 0x0, true),
+          ]));
+          continue;
+        }
+        socket.write(encodeWsFrame(response));
       }
     });
   });
@@ -480,6 +503,68 @@ describe('A.13p.10 spawned loopback WebSocket client transport', () => {
             ]);
         } finally {
             unsubscribe();
+            await handle.dispose();
+        }
+    });
+
+    it('reassembles fragmented WebSocket text messages before JSON delivery', async () => {
+        const handle = await createHandle({ fragmentResponse: true });
+        const received: unknown[] = [];
+        handle.client.subscribe((message) => {
+            received.push(message);
+        });
+        try {
+            await handle.client.sendJson({ kind: 'fragmented-ping' });
+            await expect.poll(() => received).toEqual([
+                expect.objectContaining({ echo: { kind: 'fragmented-ping' } }),
+            ]);
+        } finally {
+            await handle.dispose();
+        }
+    });
+
+    it('accepts coalesced WebSocket messages at the exact per-message byte bound', async () => {
+        const fixture = await createFixtureBinary();
+        const exec = createPluginExecService({
+            allowedExecutablePaths: [process.execPath],
+            allowPathRuntimeNames: ['node'],
+        });
+        const spec = createSpec(fixture, {});
+        const handle = await exec.spawnClient({
+            ...spec,
+            transport: {
+                ...spec.transport,
+                limits: {
+                    maxMessageBytes: 64,
+                    maxPendingMessages: 8,
+                    maxBufferedBytes: 4096,
+                },
+            },
+        });
+        const received: unknown[] = [];
+        handle.client.subscribe((message) => {
+            received.push(message);
+        });
+        try {
+            await handle.client.sendJson({ kind: 'exactFlood', bytes: 64 });
+            await expect.poll(() => received).toEqual([
+                'x'.repeat(62),
+                'x'.repeat(62),
+                'x'.repeat(62),
+            ]);
+        } finally {
+            await handle.dispose();
+        }
+    });
+
+    it('fails the client when the WebSocket closes before a fragmented message completes', async () => {
+        const handle = await createHandle();
+        try {
+            await handle.client.sendJson({ kind: 'closeMidFragment' });
+            await expect(handle.client.closed).rejects.toMatchObject({
+                code: 'PLUGIN_EXEC_CLIENT_PROTOCOL_ERROR',
+            });
+        } finally {
             await handle.dispose();
         }
     });

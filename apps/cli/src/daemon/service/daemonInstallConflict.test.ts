@@ -110,6 +110,52 @@ describe('resolveDaemonServiceInstallConflictPlan', () => {
     expect(plan.foreignHomeConflicts).toEqual([]);
   });
 
+  it('uses the service platform when comparing POSIX-looking drive paths', () => {
+    const baseService = {
+      serverId: 'default',
+      name: 'Default background service',
+      installed: true as const,
+      path: '/service-definition',
+      mode: 'user' as const,
+      happierHomeDir: '/c/Work/.happier',
+      releaseChannel: 'preview' as const,
+      label: 'happier-daemon.default',
+      targetMode: 'default-following' as const,
+    };
+
+    const linuxPlan = resolveDaemonServiceInstallConflictPlan({
+      target: {
+        platform: 'linux',
+        mode: 'user',
+        targetMode: 'default-following',
+        ring: 'preview',
+        instanceId: null,
+        happierHomeDir: '/C/Work/.happier',
+      },
+      strategy: 'require-explicit',
+      services: [{ ...baseService, platform: 'linux' as const }],
+    });
+    const windowsPlan = resolveDaemonServiceInstallConflictPlan({
+      target: {
+        platform: 'win32',
+        mode: 'user',
+        targetMode: 'default-following',
+        ring: 'preview',
+        instanceId: null,
+        happierHomeDir: 'C:\\WORK\\.happier',
+      },
+      strategy: 'require-explicit',
+      services: [{ ...baseService, platform: 'win32' as const }],
+    });
+
+    expect(linuxPlan.exactTargetExists).toBe(false);
+    expect(linuxPlan.foreignHomeConflicts).toEqual([
+      expect.objectContaining({ platform: 'linux' }),
+    ]);
+    expect(windowsPlan.exactTargetExists).toBe(true);
+    expect(windowsPlan.foreignHomeConflicts).toEqual([]);
+  });
+
   it('keeps replace-ring scoped to the target ring for default-following installs', () => {
     const previewService = {
       serverId: 'default',

@@ -60,7 +60,7 @@ function buildSetupHelpPage(): HelpPageOptions {
             },
         ],
         notes: [
-            'Sets up this computer for a server (server selection → auth → background service → providers).',
+            'Sets up this computer for a server (server selection → auth → background service → agents).',
             'In non-interactive environments, pass --yes.',
         ],
     };
@@ -110,7 +110,7 @@ function normalizeRelayUrl(raw: string): string {
 }
 
 type SetupStep = Readonly<{
-    id: 'auth_login' | 'daemon_install' | 'daemon_start' | 'providers_setup';
+    id: 'auth_login' | 'daemon_install' | 'daemon_start' | 'agents_setup';
     argv: readonly string[];
     display: string;
 }>;
@@ -153,11 +153,11 @@ function buildSetupPlan(params: Readonly<{
         const yesArgv = params.assumeYes ? ['--yes'] : [];
         const providerArgv = params.providers.flatMap((id) => ['--provider', id]);
         steps.push({
-            id: 'providers_setup',
-            argv: ['providers', 'setup', ...providerArgv, ...yesArgv],
+            id: 'agents_setup',
+            argv: ['agents', 'setup', ...providerArgv, ...yesArgv],
             display: providerArgv.length > 0
-                ? `happier providers setup ${params.providers.map((id) => `--provider ${id}`).join(' ')}${params.assumeYes ? ' --yes' : ''}`
-                : `happier providers setup${params.assumeYes ? ' --yes' : ''}`,
+                ? `happier agents setup ${params.providers.map((id) => `--provider ${id}`).join(' ')}${params.assumeYes ? ' --yes' : ''}`
+                : `happier agents setup${params.assumeYes ? ' --yes' : ''}`,
         });
     }
     return { relayUrl, steps };

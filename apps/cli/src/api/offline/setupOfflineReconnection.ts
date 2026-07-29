@@ -28,6 +28,7 @@ export interface SetupOfflineReconnectionOptions {
     state: AgentState;
     /** Initial API response (null if server unreachable) */
     response: Session | null;
+    configureSessionClient?: (session: ApiSessionClient) => void;
     /**
      * Optional: receive reconnection status messages (reconnected/auth failed).
      * Defaults to `console.log` when omitted.
@@ -99,6 +100,7 @@ export function setupOfflineReconnection(opts: SetupOfflineReconnectionOptions):
                 const resp = await api.getOrCreateSession({ tag: sessionTag, metadata, state });
                 if (!resp) throw new Error('Server unavailable');
                 const realSession = api.sessionSyncClient(resp);
+                opts.configureSessionClient?.(realSession);
                 connectionState.recover();
                 // Notify caller to swap the session reference
                 try {
@@ -114,6 +116,7 @@ export function setupOfflineReconnection(opts: SetupOfflineReconnectionOptions):
         return { session, reconnectionHandle, isOffline: true };
     } else {
         session = api.sessionSyncClient(response);
+        opts.configureSessionClient?.(session);
         return { session, reconnectionHandle: null, isOffline: false };
     }
 }

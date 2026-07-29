@@ -385,17 +385,25 @@ function resolveAgentCliSystemCommand(
   processEnv: NodeJS.ProcessEnv,
   runtimeOptions: RuntimeResolutionOptions,
 ): string | null {
-  const knownUserCommand = resolveCommandInKnownUserDirs(runtimeSpec, runtimeSpec.binaryName, processEnv);
-  const pathCommand = resolveCommandOnPath(runtimeSpec.binaryName, processEnv);
+  const binaryNames = [runtimeSpec.binaryName, ...(runtimeSpec.alternativeBinaryNames ?? [])];
+  const candidates = binaryNames.map((binaryName) => ({
+    knownUserCommand: resolveCommandInKnownUserDirs(runtimeSpec, binaryName, processEnv),
+    pathCommand: resolveCommandOnPath(binaryName, processEnv),
+  }));
   if (runtimeSpec.systemCommandResolutionStrategy !== 'known-user-first-runnable') {
-    return pathCommand ?? knownUserCommand;
+    for (const candidate of candidates) {
+      const command = candidate.pathCommand ?? candidate.knownUserCommand;
+      if (command) return command;
+    }
+    return null;
   }
 
-  const candidates = [knownUserCommand, pathCommand];
   for (const candidate of candidates) {
-    if (!candidate) continue;
-    if (isAgentCliPathRunnable(candidate, processEnv, runtimeOptions)) {
-      return candidate;
+    for (const command of [candidate.knownUserCommand, candidate.pathCommand]) {
+      if (!command) continue;
+      if (isAgentCliPathRunnable(command, processEnv, runtimeOptions)) {
+        return command;
+      }
     }
   }
   return null;

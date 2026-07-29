@@ -52,6 +52,8 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
   };
 }
 
+const attachmentTransferStores: TransferSessionStore[] = [];
+
 function registerAttachmentTransferHandlers(params: Readonly<{
   mgr: RpcHandlerManager;
   workingDirectory: string;
@@ -63,6 +65,7 @@ function registerAttachmentTransferHandlers(params: Readonly<{
   }>;
 }>): void {
   const store = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
+  attachmentTransferStores.push(store);
 
   registerTransferUploadRpcHandlers(params.mgr as unknown as RpcHandlerManager, {
     workingDirectory: params.workingDirectory,
@@ -82,7 +85,11 @@ function registerAttachmentTransferHandlers(params: Readonly<{
 describe('attachments upload (chunked)', () => {
   const envBackup = snapshotProcessEnv();
 
-  afterEach(() => {
+  afterEach(async () => {
+    const stores = attachmentTransferStores.splice(0);
+    await Promise.all(stores.map(async (store) => {
+      await store.dispose();
+    }));
     restoreProcessEnv(envBackup);
     vi.unstubAllEnvs();
     reloadConfiguration();

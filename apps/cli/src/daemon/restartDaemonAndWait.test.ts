@@ -17,6 +17,15 @@ const inspectDaemonRunningStateMock = vi.fn<() => Promise<DaemonRunningInspectio
 }));
 const spawnDetachedDaemonStartSyncMock = vi.fn<(params?: Record<string, unknown>) => Promise<{ unref: () => void }>>(async () => ({ unref: vi.fn() }));
 const waitForDaemonRunningWithinBudgetMock = vi.fn(async () => true);
+const restartAllDaemonSessionRunnersMock = vi.fn(async () => ({
+    ok: true,
+    mode: 'force_current_cli' as const,
+    requestedCount: 1,
+    restartedCount: 1,
+    skippedCount: 0,
+    failedCount: 0,
+    results: [],
+}));
 
 describe('restartDaemonAndWait', () => {
     afterEach(() => {
@@ -25,6 +34,7 @@ describe('restartDaemonAndWait', () => {
         inspectDaemonRunningStateMock.mockReset();
         spawnDetachedDaemonStartSyncMock.mockReset();
         waitForDaemonRunningWithinBudgetMock.mockReset();
+        restartAllDaemonSessionRunnersMock.mockReset();
         vi.restoreAllMocks();
         vi.resetModules();
         delete process.env.HAPPIER_DAEMON_RESTART_STABILITY_TIMEOUT_MS;
@@ -36,6 +46,7 @@ describe('restartDaemonAndWait', () => {
             return {
                 ...actual,
                 stopDaemon: stopDaemonMock,
+                restartAllDaemonSessionRunners: restartAllDaemonSessionRunnersMock,
                 checkIfDaemonRunningAndCleanupStaleState: checkIfDaemonRunningMock,
                 inspectDaemonRunningStateAndCleanupStaleState: inspectDaemonRunningStateMock,
             };
@@ -75,6 +86,15 @@ describe('restartDaemonAndWait', () => {
         }));
         spawnDetachedDaemonStartSyncMock.mockImplementation(async () => ({ unref: vi.fn() }));
         waitForDaemonRunningWithinBudgetMock.mockImplementation(async () => true);
+        restartAllDaemonSessionRunnersMock.mockImplementation(async () => ({
+            ok: true,
+            mode: 'force_current_cli',
+            requestedCount: 1,
+            restartedCount: 1,
+            skippedCount: 0,
+            failedCount: 0,
+            results: [],
+        }));
         process.env.HAPPIER_DAEMON_RESTART_STABILITY_TIMEOUT_MS = '1';
 
         return await import('./restartDaemonAndWait');
@@ -83,9 +103,14 @@ describe('restartDaemonAndWait', () => {
     it('restarts through the self-restart takeover path by default', async () => {
         const { restartDaemonAndWait } = await importSubject();
 
-        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(true);
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: true,
+        });
 
-        expect(stopDaemonMock).toHaveBeenCalledWith({ stopSessions: true });
+        expect(stopDaemonMock).toHaveBeenCalledWith({
+            stopSessions: true,
+            transferManagedLocalServices: true,
+        });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
             startupSource: 'self-restart',
             env: expect.objectContaining({
@@ -98,8 +123,14 @@ describe('restartDaemonAndWait', () => {
     it('omits takeover only when explicitly disabled', async () => {
         const { restartDaemonAndWait } = await importSubject();
 
-        await expect(restartDaemonAndWait({ stopSessions: false, takeover: false })).resolves.toBe(true);
+        await expect(restartDaemonAndWait({ stopSessions: false, takeover: false })).resolves.toEqual({
+            ok: true,
+        });
 
+        expect(stopDaemonMock).toHaveBeenCalledWith({
+            stopSessions: false,
+            transferManagedLocalServices: false,
+        });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
             startupSource: 'self-restart',
         }));
@@ -112,9 +143,14 @@ describe('restartDaemonAndWait', () => {
         const { restartDaemonAndWait } = await importSubject();
         stopDaemonMock.mockRejectedValueOnce(new Error('stop failed'));
 
-        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: false,
+        });
 
-        expect(stopDaemonMock).toHaveBeenCalledWith({ stopSessions: true });
+        expect(stopDaemonMock).toHaveBeenCalledWith({
+            stopSessions: true,
+            transferManagedLocalServices: true,
+        });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledWith(expect.objectContaining({
             startupSource: 'self-restart',
             env: expect.objectContaining({
@@ -128,11 +164,29 @@ describe('restartDaemonAndWait', () => {
         const { restartDaemonAndWait } = await importSubject();
         waitForDaemonRunningWithinBudgetMock.mockResolvedValueOnce(false);
 
-        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: false,
+        });
 
-        expect(stopDaemonMock).toHaveBeenCalledWith({ stopSessions: true });
+        expect(stopDaemonMock).toHaveBeenCalledWith({
+            stopSessions: true,
+            transferManagedLocalServices: true,
+        });
         expect(spawnDetachedDaemonStartSyncMock).toHaveBeenCalledTimes(1);
         expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('uses the shared daemon startup wait budget by default', async () => {
+        const { restartDaemonAndWait } = await importSubject();
+
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: true,
+        });
+
+        expect(waitForDaemonRunningWithinBudgetMock).toHaveBeenCalledWith(expect.objectContaining({
+            timeoutMs: 60_000,
+            pollMs: 100,
+        }));
     });
 
     it('does not report success when restart keeps the same daemon identity', async () => {
@@ -164,7 +218,9 @@ describe('restartDaemonAndWait', () => {
                 },
             });
 
-        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: false,
+        });
     });
 
     it('does not report success when daemon is not stable after restart wait', async () => {
@@ -178,6 +234,74 @@ describe('restartDaemonAndWait', () => {
                 status: 'not-running',
             });
 
-        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toBe(false);
+        await expect(restartDaemonAndWait({ stopSessions: true })).resolves.toEqual({
+            ok: false,
+        });
+    });
+
+    it('does not restart session runners by default', async () => {
+        const { restartDaemonAndWait } = await importSubject();
+
+        await expect(restartDaemonAndWait({ stopSessions: false })).resolves.toEqual({
+            ok: true,
+        });
+
+        expect(restartAllDaemonSessionRunnersMock).not.toHaveBeenCalled();
+    });
+
+    it('restarts session runners only after the new daemon is stable when explicitly requested', async () => {
+        const events: string[] = [];
+        const { restartDaemonAndWait } = await importSubject();
+        waitForDaemonRunningWithinBudgetMock.mockImplementation(async () => {
+            events.push('wait-new-daemon');
+            return true;
+        });
+        restartAllDaemonSessionRunnersMock.mockImplementation(async () => {
+            events.push('restart-runners');
+            return {
+                ok: true,
+                mode: 'force_current_cli',
+                requestedCount: 1,
+                restartedCount: 1,
+                skippedCount: 0,
+                failedCount: 0,
+                results: [],
+            };
+        });
+
+        await expect(restartDaemonAndWait({
+            stopSessions: false,
+            restartSessionRunners: true,
+            restartSessionRunnersMode: 'force_current_cli',
+        })).resolves.toEqual({
+            ok: true,
+            sessionRunnerRestart: {
+                ok: true,
+                mode: 'force_current_cli',
+                requestedCount: 1,
+                restartedCount: 1,
+                skippedCount: 0,
+                failedCount: 0,
+                results: [],
+            },
+        });
+
+        expect(restartAllDaemonSessionRunnersMock).toHaveBeenCalledWith({
+            mode: 'force_current_cli',
+            dryRun: false,
+            reason: 'daemon_restart_session_runners',
+        });
+        expect(events).toEqual(['wait-new-daemon', 'restart-runners']);
+    });
+
+    it('does not restart runners when the daemon restart did not stabilize', async () => {
+        const { restartDaemonAndWait } = await importSubject();
+        waitForDaemonRunningWithinBudgetMock.mockResolvedValueOnce(false);
+
+        await expect(restartDaemonAndWait({ stopSessions: false, restartSessionRunners: true })).resolves.toEqual({
+            ok: false,
+        });
+
+        expect(restartAllDaemonSessionRunnersMock).not.toHaveBeenCalled();
     });
 });

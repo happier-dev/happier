@@ -5,9 +5,12 @@ import {
   type InstallAgentCliResult,
 } from '@happier-dev/cli-common/agents';
 
+type AgentCliInstallIntent = 'install' | 'update';
+
 export type AgentCliInstallInvocationParams = Readonly<{
   dryRun?: boolean;
   skipIfInstalled?: boolean;
+  intent?: AgentCliInstallIntent;
   platform?: string;
   allowVendorRecipeExecution?: boolean;
 }>;
@@ -58,7 +61,12 @@ export async function invokeAgentCliInstall(params: Readonly<{
 
   const installAgentCli = params.installAgentCli ?? installAgentCliDefault;
   const dryRun = Boolean(params.params?.dryRun);
-  const skipIfInstalled = typeof params.params?.skipIfInstalled === 'boolean' ? params.params.skipIfInstalled : true;
+  const intent = params.params?.intent === 'update' ? 'update' : 'install';
+  const skipIfInstalled = intent === 'update'
+    ? false
+    : typeof params.params?.skipIfInstalled === 'boolean'
+      ? params.params.skipIfInstalled
+      : true;
   const allowVendorRecipeExecution =
     typeof params.params?.allowVendorRecipeExecution === 'boolean'
       ? params.params.allowVendorRecipeExecution
@@ -68,17 +76,21 @@ export async function invokeAgentCliInstall(params: Readonly<{
     platform,
     dryRun,
     skipIfInstalled,
+    ...(params.params?.intent === 'update' ? { intent } : {}),
     allowVendorRecipeExecution,
     env: params.env ?? process.env,
   });
 
   if (!result.ok) {
+    const errorCode = String(result.errorCode);
     return {
       ok: false,
       errorCode:
-        result.errorCode === 'no-recipe'
+        errorCode === 'no-recipe'
           ? 'install-not-available'
-          : result.errorCode === 'vendor-recipe-disallowed'
+          : errorCode === 'update-not-available'
+            ? 'install-not-available'
+          : errorCode === 'vendor-recipe-disallowed'
             ? 'install-confirmation-required'
             : 'install-failed',
       errorMessage: result.errorMessage,

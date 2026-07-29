@@ -3,8 +3,12 @@ import tweetnacl from 'tweetnacl';
 
 import {
   createDirectRouteGrantSigningInputV1,
+  createDirectRouteGrantSigningInputV2,
+  createEphemeralPeerRouteProofHandleV2,
+  createPeerMachineRpcRequestHashV1,
   PEER_MEDIATION_RECEIPTS,
   type DirectRouteGrantPayloadV1,
+  type DirectRouteGrantPayloadV2,
   type MachineLiveStreamFrameV1,
   type SignedDirectRouteGrantV1,
 } from '@happier-dev/protocol';
@@ -14,6 +18,7 @@ import { createPeerRouteNonceProofV1 } from '../verifyDirectRouteGrantV1';
 import {
   assertPeerMediationLoopbackBindHost,
   createPeerMediationLoopbackApp,
+  PEER_MEDIATION_LOOPBACK_BODY_LIMIT_BYTES,
 } from './server';
 
 function toBase64Url(bytes: Uint8Array): string {
@@ -135,6 +140,31 @@ function createSignedLiveStreamGrant(input: Readonly<{
   };
 }
 
+function createSignedLiveStreamGrantV2(input: Readonly<{
+  signingSecretKey: Uint8Array;
+  keyId: string;
+  endpointFingerprint: string;
+  ephemeralPublicKeyBase64Url: string;
+}>) {
+  const payload: DirectRouteGrantPayloadV2 = {
+    v: 2, grantId: 'grant_stream_v2', accountId: 'account_1', machineId: 'machine_1',
+    flowKind: 'live_stream', routeKind: 'loopback_direct',
+    scope: { kind: 'live_stream', streamId: 'stream_v2', streamFamily: 'screen', maxBitrateBps: 64_000, maxDurationMs: 60_000 },
+    iat: 1_000, exp: 601_000, aud: 'happier-daemon-route-grant', endpointFingerprint: input.endpointFingerprint,
+    proofKind: 'ephemeral_ed25519', ephemeralPublicKeyBase64Url: input.ephemeralPublicKeyBase64Url,
+  };
+  return {
+    payload,
+    signature: {
+      keyId: input.keyId,
+      alg: 'Ed25519' as const,
+      valueBase64Url: toBase64Url(tweetnacl.sign.detached(
+        Buffer.from(createDirectRouteGrantSigningInputV2(payload), 'utf8'), input.signingSecretKey,
+      )),
+    },
+  };
+}
+
 function createLiveStreamFrame(sequence = 1): MachineLiveStreamFrameV1 {
   return {
     v: 1,
@@ -155,6 +185,45 @@ type TestLiveStreamCaptureStartInput = Readonly<{
 }>;
 
 describe('peer mediation loopback server', () => {
+  it('answers browser CORS and private-network preflight for signed loopback requests', async () => {
+    const grantKeyPair = tweetnacl.sign.keyPair();
+    const accountKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+    const app = createPeerMediationLoopbackApp({
+      nowMs: () => 2_000,
+      expected: {
+        accountId: 'account_1',
+        machineId: 'machine_1',
+        flowKind: 'bounded_transfer',
+        routeKind: 'loopback_direct',
+        endpointFingerprint: 'loopback_endpoint_1',
+        accountPublicKey: toBase64Url(accountKeyPair.publicKey),
+      },
+      trustRoots: [{
+        keyId: 'grant-key-1',
+        publicKey: toBase64Url(grantKeyPair.publicKey),
+      }],
+    });
+
+    const preflight = await app.inject({
+      method: 'OPTIONS',
+      url: '/peer-mediation/v1/probe',
+      headers: {
+        origin: 'http://localhost:8081',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'content-type',
+        'access-control-request-private-network': 'true',
+      },
+    });
+
+    expect(preflight.statusCode).toBe(204);
+    expect(preflight.headers['access-control-allow-origin']).toBe('*');
+    expect(preflight.headers['access-control-allow-methods']).toContain('POST');
+    expect(preflight.headers['access-control-allow-headers']).toContain('content-type');
+    expect(preflight.headers['access-control-allow-private-network']).toBe('true');
+
+    await app.close();
+  });
+
   it('accepts a probe only after grant, nonce, and endpoint binding verify', async () => {
     const grantKeyPair = tweetnacl.sign.keyPair();
     const accountKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
@@ -190,6 +259,7 @@ describe('peer mediation loopback server', () => {
     const response = await app.inject({
       method: 'POST',
       url: '/peer-mediation/v1/probe',
+      headers: { origin: 'http://localhost:8081' },
       payload: {
         v: 1,
         grant,
@@ -198,6 +268,7 @@ describe('peer mediation loopback server', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(response.headers['access-control-allow-origin']).toBe('*');
     expect(response.json()).toEqual({
       v: 1,
       ok: true,
@@ -349,6 +420,57 @@ describe('peer mediation loopback server', () => {
     await app.close();
   });
 
+  it('admits a V2 live stream once with the canonical ephemeral proof', async () => {
+    const grantKeyPair = tweetnacl.sign.keyPair();
+    const handle = createEphemeralPeerRouteProofHandleV2({
+      randomBytes: (length) => new Uint8Array(length).fill(length === 32 ? 5 : 6),
+    });
+    const grant = createSignedLiveStreamGrantV2({
+      signingSecretKey: grantKeyPair.secretKey,
+      keyId: 'grant-key-1',
+      endpointFingerprint: 'loopback_endpoint_1',
+      ephemeralPublicKeyBase64Url: handle.publicKeyBase64Url,
+    });
+    const proof = handle.sign(grant);
+    let captureAttempts = 0;
+    const app = createPeerMediationLoopbackApp({
+      nowMs: () => 2_000,
+      expected: {
+        accountId: 'account_1', machineId: 'machine_1', flowKind: 'live_stream',
+        routeKind: 'loopback_direct', endpointFingerprint: 'loopback_endpoint_1',
+      },
+      trustRoots: [{ keyId: 'grant-key-1', publicKey: toBase64Url(grantKeyPair.publicKey) }],
+      stream: { captureAdapter: { start: async () => {
+        captureAttempts += 1;
+        if (captureAttempts === 1) throw new Error('capture boundary unavailable');
+        return { ok: true, session: { stop: async () => undefined } };
+      } } },
+    });
+    const payload = {
+      v: 2,
+      streamId: 'stream_v2',
+      streamFamily: 'screen',
+      routeKind: 'loopback_direct',
+      flowKind: 'live_stream',
+      endpointFingerprint: 'loopback_endpoint_1',
+      grant,
+      proof,
+      startRequest: {
+        v: 1, streamId: 'stream_v2', streamFamily: 'screen', routeKind: 'loopback_direct',
+        sourceMachineId: 'machine_1', targetMachineId: 'machine_target', maxBitrateBps: 64_000,
+        maxFramesPerSecond: 12, maxFrameBytes: 32_000, maxDurationMs: 60_000,
+      },
+    };
+
+    const activationFailed = await app.inject({ method: 'POST', url: '/peer-mediation/v2/live-stream/start', payload });
+    expect(activationFailed.json()).toMatchObject({ v: 2, ok: false, reasonCode: 'capture_start_failed' });
+    const accepted = await app.inject({ method: 'POST', url: '/peer-mediation/v2/live-stream/start', payload });
+    expect(accepted.json()).toMatchObject({ v: 2, ok: true, receipt: PEER_MEDIATION_RECEIPTS.streamStarted });
+    const replay = await app.inject({ method: 'POST', url: '/peer-mediation/v2/live-stream/start', payload });
+    expect(replay.json()).toMatchObject({ v: 2, ok: false, reasonCode: 'grant_already_consumed' });
+    await app.close();
+  });
+
   it('fails closed when direct live-stream capture is unavailable', async () => {
     const grantKeyPair = tweetnacl.sign.keyPair();
     const accountKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
@@ -433,6 +555,7 @@ describe('peer mediation loopback server', () => {
         maxFrameBytes: 64 * 1024,
       },
       receipt: PEER_MEDIATION_RECEIPTS.tunnelOpened,
+      flowKind: 'tcp_tunnel' as const,
       connection: { close: async () => undefined },
       limits: {
         maxIdleMs: 30_000,
@@ -558,6 +681,126 @@ describe('peer mediation loopback server', () => {
       },
     });
 
+    await app.close();
+  });
+
+  it('accepts a signed direct voice upload chunk larger than the legacy 64 KiB body limit', async () => {
+    const grantKeyPair = tweetnacl.sign.keyPair();
+    const accountKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
+    const method = RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK;
+    const grant = createSignedMachineRpcGrant({
+      signingSecretKey: grantKeyPair.secretKey,
+      keyId: 'grant-key-1',
+      endpointFingerprint: 'loopback_endpoint_1',
+      allowedMethods: [method],
+    });
+    const nonceProof = createPeerRouteNonceProofV1({
+      grantId: grant.payload.grantId,
+      routeKind: 'loopback_direct',
+      flowKind: 'machine_rpc',
+      endpointFingerprint: 'loopback_endpoint_1',
+      nonceBase64Url: 'nonce_voice_upload_1',
+      accountSigningSeed: new Uint8Array(32).fill(7),
+    });
+    const params = {
+      uploadId: 'voice_upload_1',
+      index: 0,
+      payloadBase64: 'A'.repeat(68_948),
+      encryptedDataKeyEnvelopeBase64: 'AQID',
+    };
+    let invokedParams: unknown;
+    const app = createPeerMediationLoopbackApp({
+      nowMs: () => 2_000,
+      expected: {
+        accountId: 'account_1',
+        machineId: 'machine_1',
+        flowKind: 'machine_rpc',
+        routeKind: 'loopback_direct',
+        endpointFingerprint: 'loopback_endpoint_1',
+        accountPublicKey: toBase64Url(accountKeyPair.publicKey),
+      },
+      trustRoots: [{
+        keyId: 'grant-key-1',
+        publicKey: toBase64Url(grantKeyPair.publicKey),
+      }],
+      rpc: {
+        rpcHandlerManager: {
+          invokeLocal: async (_method: string, nextParams: unknown) => {
+            invokedParams = nextParams;
+            return { success: true };
+          },
+        },
+      },
+    });
+    const requestId = 'request_voice_upload_1';
+    const replayKey = requestId;
+    const payload = {
+      v: 1 as const,
+      requestId,
+      method,
+      params,
+      grant,
+      nonceProof,
+      routeKind: 'loopback_direct' as const,
+      flowKind: 'machine_rpc' as const,
+      endpointFingerprint: 'loopback_endpoint_1',
+      commandReceipt: {
+        v: 1 as const,
+        issuer: 'ui' as const,
+        issuedAtMs: 2_000,
+        requestHash: createPeerMachineRpcRequestHashV1({
+          method,
+          params,
+          grantId: grant.payload.grantId,
+          endpointFingerprint: 'loopback_endpoint_1',
+          replayKey,
+        }),
+        replayKey,
+      },
+    };
+    expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeGreaterThan(64 * 1024);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/peer-mediation/v1/rpc',
+      payload,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      v: 1,
+      ok: true,
+      receipt: PEER_MEDIATION_RECEIPTS.rpcDirectCallSucceeded,
+      requestId,
+      method,
+      result: { success: true },
+    });
+    expect(invokedParams).toEqual(params);
+
+    await app.close();
+  });
+
+  it('keeps loopback request bodies bounded above the supported signed transfer envelope', async () => {
+    const app = createPeerMediationLoopbackApp({
+      nowMs: () => 2_000,
+      expected: {
+        accountId: 'account_1',
+        machineId: 'machine_1',
+        flowKind: 'machine_rpc',
+        routeKind: 'loopback_direct',
+        endpointFingerprint: 'loopback_endpoint_1',
+      },
+      trustRoots: [],
+      bodyLimitBytes: Number.MAX_SAFE_INTEGER,
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/peer-mediation/v1/rpc',
+      payload: { padding: 'A'.repeat(PEER_MEDIATION_LOOPBACK_BODY_LIMIT_BYTES) },
+    });
+
+    expect(response.statusCode).toBe(413);
     await app.close();
   });
 

@@ -2,8 +2,10 @@ import type { QueuedSessionClientDurableMutation } from './sessionClientDurableM
 
 export function isAuthoritativeSessionClientDurableMutationKind(
     kind: string,
-): kind is 'session_turn_mutation' | 'session_end' {
-    return kind === 'session_turn_mutation' || kind === 'session_end';
+): kind is 'session_turn_mutation' | 'session_end' | 'voice_agent_transcript_turn' {
+    return kind === 'session_turn_mutation'
+        || kind === 'session_end'
+        || kind === 'voice_agent_transcript_turn';
 }
 
 export function isAuthoritativeSessionClientDurableMutation(
@@ -15,5 +17,13 @@ export function isAuthoritativeSessionClientDurableMutation(
 export function shouldDeadLetterSessionClientDurableMutation(
     mutation: QueuedSessionClientDurableMutation,
 ): boolean {
+    if (
+        mutation.kind === 'registered_session_state_field'
+        && mutation.payload.fieldId === 'runtime.usageLimitRecovery'
+        && mutation.payload.source === 'daemon'
+        && mutation.payload.deliveryClass === 'durable_required'
+    ) {
+        return false;
+    }
     return !isAuthoritativeSessionClientDurableMutation(mutation);
 }

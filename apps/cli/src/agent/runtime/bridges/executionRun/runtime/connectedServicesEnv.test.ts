@@ -34,6 +34,18 @@ const NATIVE_BINDINGS = {
 const CREDENTIALS = { token: 'token_1' } as never;
 
 const MATERIALIZED_ENV_VALUE = '/materialized/run_1/codex-home';
+const ACTIVATION_ID = '11111111-1111-4111-8111-111111111111';
+const REGISTRATION = {
+    v: 1 as const,
+    activationId: ACTIVATION_ID,
+    runKey: 'run_1',
+    agentId: 'codex',
+    materializationKey: 'run_1',
+    connectedServicesBindings: CONNECTED_BINDINGS,
+    connectedServiceSelectionsEnv: { HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON: '{"v":1}' },
+    sessionDirectory: '/tmp/project',
+    materializedRoot: '/materialized/run_1',
+};
 
 function createDeps(overrides: Partial<{
     requestMaterialization: ReturnType<typeof vi.fn>;
@@ -44,11 +56,13 @@ function createDeps(overrides: Partial<{
     const requestMaterialization = overrides.requestMaterialization ?? vi.fn(async () => ({
         ok: true as const,
         result: {
+            activationId: ACTIVATION_ID,
             env: { CODEX_HOME: MATERIALIZED_ENV_VALUE },
             connectedServicesBindings: CONNECTED_BINDINGS,
+            registration: REGISTRATION,
         },
     }));
-    const release = overrides.release ?? vi.fn(async () => ({ ok: true as const }));
+    const release = overrides.release ?? vi.fn(async () => ({ ok: true as const, released: true }));
     const readCredentials = overrides.readCredentials ?? vi.fn(async () => CREDENTIALS);
     const resolveSessionSpawnDefaults = overrides.resolveSessionSpawnDefaults ?? vi.fn(async () => null);
     return { requestMaterialization, release, readCredentials, resolveSessionSpawnDefaults, runnerPid: 777 };
@@ -74,6 +88,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         });
 
         expect(resolved?.env).toEqual({ CODEX_HOME: MATERIALIZED_ENV_VALUE });
+        expect(resolved?.registration).toEqual(REGISTRATION);
         expect(deps.requestMaterialization).toHaveBeenCalledWith({
             runId: 'run_1',
             runnerPid: 777,
@@ -301,7 +316,59 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         await resolved?.cleanup();
         await resolved?.cleanup();
         expect(deps.release).toHaveBeenCalledTimes(1);
-        expect(deps.release).toHaveBeenCalledWith({ runId: 'run_1', runnerPid: 777 });
+        expect(deps.release).toHaveBeenCalledWith({
+            runId: 'run_1',
+            runnerPid: 777,
+            activationId: ACTIVATION_ID,
+        });
+    });
+
+    it('shares concurrent cleanup and retries after a failed release', async () => {
+        let unblockFirst!: () => void;
+        const firstAttempt = new Promise<void>((resolve) => { unblockFirst = resolve; });
+        const release = vi.fn()
+            .mockImplementationOnce(async () => {
+                await firstAttempt;
+                throw new Error('daemon unavailable');
+            })
+            .mockResolvedValueOnce({ ok: true as const, released: true });
+        const deps = createDeps({ release });
+        const resolved = await resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1',
+            backendId: 'codex',
+            backendSourceKind: 'built_in',
+            connectedServices: CONNECTED_BINDINGS,
+            cwd: '/tmp/project',
+            deps,
+        });
+
+        const first = resolved!.cleanup();
+        const concurrent = resolved!.cleanup();
+        expect(release).toHaveBeenCalledTimes(1);
+        unblockFirst();
+        await expect(first).rejects.toThrow('daemon unavailable');
+        await expect(concurrent).rejects.toThrow('daemon unavailable');
+
+        await resolved!.cleanup();
+        expect(release).toHaveBeenCalledTimes(2);
+    });
+
+    it('retains cleanup for retry when the daemon reports cleanup did not complete', async () => {
+        const release = vi.fn()
+            .mockResolvedValueOnce({ ok: true as const, released: false })
+            .mockResolvedValueOnce({ ok: true as const, released: true });
+        const resolved = await resolveExecutionRunConnectedServicesEnv({
+            runId: 'run_1',
+            backendId: 'codex',
+            backendSourceKind: 'built_in',
+            connectedServices: CONNECTED_BINDINGS,
+            cwd: '/tmp/project',
+            deps: createDeps({ release }),
+        });
+
+        await expect(resolved!.cleanup()).rejects.toThrow('cleanup did not complete');
+        await resolved!.cleanup();
+        expect(release).toHaveBeenCalledTimes(2);
     });
 
     describe('QA2-F03 decision logging (one line per run start; values never logged)', () => {

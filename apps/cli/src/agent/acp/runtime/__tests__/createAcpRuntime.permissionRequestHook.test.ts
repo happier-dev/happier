@@ -23,7 +23,7 @@ describe('createAcpRuntime (permission-request hook)', () => {
       hooks: { onPermissionRequest },
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'permission-request',

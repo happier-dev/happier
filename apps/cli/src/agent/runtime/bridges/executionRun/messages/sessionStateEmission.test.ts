@@ -256,4 +256,70 @@ describe('createExecutionRunControllerMessageHandler', () => {
       capability: 'responds',
     });
   });
+
+  it('routes prompt-capable requests from canonical agent runtime descriptors to the parent store', () => {
+    const respondToPermission = vi.fn(async () => ({ delivered: true as const }));
+    const ctrl = createController({
+      backend: {
+        permissionCapability: 'responds',
+        respondToPermission,
+      },
+    });
+    const run: ExecutionRunState = {
+      ...createRunningRun(),
+      intent: 'delegate',
+      permissionMode: 'safe-yolo',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+    };
+    const runs = new Map([['run_1', run]]);
+    const publishRequest = vi.fn();
+    const handler = createExecutionRunControllerMessageHandler({
+      ctrl,
+      runId: 'run_1',
+      sidechainId: 'sidechain_1',
+      ioMode: 'streaming',
+      computeSidechainStreamText: () => null,
+      sendAcp: () => {},
+      parentProvider: 'codex',
+      runs,
+      backendSupportsResume: true,
+      writeActivityMarker: async () => {},
+      getNowMs: () => 123,
+      getPermissionRequestStore: () => ({
+        publishRequest,
+        registerResponseTargetHandler: vi.fn(() => vi.fn()),
+      }),
+    });
+
+    handler({
+      type: 'event',
+      name: 'runtime.descriptor',
+      payload: {
+        v: 1,
+        agentId: 'codex',
+        agent: { backendMode: 'native' },
+      },
+    });
+    handler({
+      type: 'event',
+      name: 'runtime.capabilities',
+      payload: { permissions: { capability: 'responds' } },
+    });
+    handler({
+      type: 'permission-request',
+      id: 'provider-request-parent',
+      reason: 'write',
+      payload: { toolName: 'write', input: { path: '/tmp/parent-prompt.txt' } },
+    });
+
+    expect(publishRequest).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'provider-request-parent',
+      responseTarget: expect.objectContaining({
+        runtimeKind: 'native',
+        providerRequestId: 'provider-request-parent',
+      }),
+    }));
+    expect(respondToPermission).not.toHaveBeenCalled();
+  });
 });

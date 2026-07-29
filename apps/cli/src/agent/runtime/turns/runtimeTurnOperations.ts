@@ -1,11 +1,15 @@
 import type { RuntimeEventV1 } from '@happier-dev/protocol';
+import type { HappierStructuredInputV1 } from '@happier-dev/protocol/runtime';
 import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+import type {
+  AgentSessionProviderBinding,
+  AgentSessionRuntime,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 export type { RuntimeConfigUpdateOutcomeV1 };
 
 export const RUNTIME_TURN_OPERATION_SET = [
   'beginTurnLifecycle',
-  'startOrLoadSession',
   'sendTurnPrompt',
   'steerInFlightTurn',
   'waitForTurnCompletion',
@@ -25,6 +29,8 @@ export type RuntimeTurnSessionIdentity = Readonly<{
 export type RuntimeTurnConfigUpdate = Readonly<{
   modeId?: string | null;
   modelId?: string | null;
+  /** Host-private exact Provider binding; public callers must use session.model.set. */
+  providerBinding?: AgentSessionProviderBinding;
   permissionMode?: string | null;
   configOption?: Readonly<{
     id: string;
@@ -32,21 +38,25 @@ export type RuntimeTurnConfigUpdate = Readonly<{
   }> | null;
 }>;
 
-export type RuntimeTurnStartOrLoadOptions = Readonly<{
-  resumeId?: string | null;
-  importHistory?: boolean;
-  currentPromptText?: string | null;
-}>;
+export type RuntimeTurnSessionOpenIntent =
+  | Readonly<{ kind: 'create' }>
+  | Readonly<{
+    kind: 'resume';
+    providerSessionId: string;
+    importHistory: boolean;
+  }>;
 
 export type RuntimeTurnCompletionOptions = Readonly<{
   timeoutMs?: number | null;
 }>;
 
 export type RuntimeTurnPromptMeta = Readonly<{
+  /** Host-owned turn correlation; native Agent runtimes must preserve it when supplied. */
+  turnId?: string | null;
   localId?: string | null;
   localIds?: readonly string[];
+  structuredInput?: HappierStructuredInputV1;
   modelId?: string | null;
-  providerClaimedPendingLocalIds?: readonly string[];
   userMessageSeq?: number | null;
   userMessageSeqs?: readonly number[];
 }>;
@@ -108,14 +118,16 @@ export type RuntimePermissionResponseOutcome = Readonly<{ delivered: true }>
 
 export type RuntimePermissionCapability = 'responds' | 'inline' | 'static';
 
+export type RuntimeTurnDisposeReason = NonNullable<
+  Parameters<AgentSessionRuntime['dispose']>[0]
+>;
+
 export type RuntimeTurnOperations = Readonly<{
   permissionCapability?: RuntimePermissionCapability;
   beginTurnLifecycle: () => void;
-  startOrLoadSession: (opts?: RuntimeTurnStartOrLoadOptions) => Promise<unknown>;
   /**
-   * Dispatch a prompt batch. `meta.userMessageSeq` is the batch's max committed user-row seq
-   * and `meta.localId`/`localIds` carry the UI input ids for provider-acceptance custody;
-   * runtimes with a provider-acceptance seam confirm them at acceptance, others may ignore them.
+   * Dispatch a prompt batch. Committed user-row seqs place runtime output against exact transcript
+   * anchors; local ids correlate provider-input outcomes without granting transcript replay authority.
    */
   sendTurnPrompt: (prompt: string, meta?: RuntimeTurnPromptMeta) => Promise<void>;
   compactContext?: (command: string) => Promise<void>;
@@ -126,7 +138,10 @@ export type RuntimeTurnOperations = Readonly<{
   cancelTurn: () => Promise<void>;
   readSessionIdentity: () => RuntimeTurnSessionIdentity;
   updateSessionRuntimeConfig: (update: RuntimeTurnConfigUpdate) => Promise<RuntimeConfigUpdateOutcomeV1 | void>;
-  resetOrDisposeRuntime: () => Promise<void>;
+  resetOrDisposeRuntime: (
+    reason?: RuntimeTurnDisposeReason,
+    nextSessionOpenIntent?: RuntimeTurnSessionOpenIntent,
+  ) => Promise<void>;
 }>;
 
 export function isRuntimeTurnOperations(value: unknown): value is RuntimeTurnOperations {

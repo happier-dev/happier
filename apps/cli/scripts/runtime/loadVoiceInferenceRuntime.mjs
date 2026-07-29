@@ -1,11 +1,14 @@
-import { createReadStream, existsSync } from 'node:fs';
-import { mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { lstat, mkdir, mkdtemp, rename, rm, rmdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createGunzip } from 'node:zlib';
 
-import * as tar from 'tar';
+import {
+  CLI_DEFERRED_VOICE_RUNTIME_ARCHIVE_ROOTS,
+  CLI_DEFERRED_VOICE_RUNTIME_PACKAGES,
+} from '@happier-dev/cli-common/componentArtifacts/deferredVoiceRuntimePackages';
+import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
 const require = createRequire(import.meta.url);
 const DEFERRED_VOICE_RUNTIME_ARCHIVE_PREFIX = 'voice-inference-runtime';
@@ -58,94 +61,101 @@ function canResolveSherpaRuntime() {
   }
 }
 
-function isSafeDeferredRuntimeArchiveEntry(rawPath, entry, runtimeRoot) {
-  if (typeof rawPath !== 'string' || rawPath.length === 0) {
-    return { ok: false, reason: 'missing_path' };
-  }
-
-  if (rawPath.includes('\0')) {
-    return { ok: false, reason: 'nul_path' };
-  }
-
-  // Guard against absolute paths / Windows drive paths / path traversal.
-  if (rawPath.startsWith('/') || rawPath.startsWith('\\')) {
-    return { ok: false, reason: 'absolute_path' };
-  }
-  if (/^[A-Za-z]:[\\/]/.test(rawPath)) {
-    return { ok: false, reason: 'drive_path' };
-  }
-
-  // We only expect to unpack into node_modules/** (see buildCliBinaryArtifactPayload.ts).
-  const normalized = rawPath.replace(/\\/g, '/');
-  if (normalized !== 'node_modules' && !normalized.startsWith('node_modules/')) {
-    return { ok: false, reason: 'unexpected_root' };
-  }
-
-  const destPath = resolve(runtimeRoot, normalized);
-  const runtimeRootResolved = resolve(runtimeRoot);
-  const runtimeRootPrefix = runtimeRootResolved.endsWith(sep)
-    ? runtimeRootResolved
-    : `${runtimeRootResolved}${sep}`;
-  if (destPath !== runtimeRootResolved && !destPath.startsWith(runtimeRootPrefix)) {
-    return { ok: false, reason: 'path_escape' };
-  }
-
-  const type = entry && typeof entry === 'object' ? entry.type : null;
-  if (type && type !== 'File' && type !== 'Directory') {
-    return { ok: false, reason: `unsupported_type:${type}` };
-  }
-
-  return { ok: true };
+async function pathStatsOrNull(path) {
+  return await lstat(path).catch((error) => {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  });
 }
 
-async function validateDeferredVoiceInferenceRuntimeArchive(archivePath, runtimeRoot) {
-  await new Promise((resolvePromise, rejectPromise) => {
-    const parser = new tar.Parser({ strict: true });
-    const source = createReadStream(archivePath);
-    const gunzip = createGunzip();
-
-    let finished = false;
-    const finishOnce = (fn, value) => {
-      if (finished) {
-        return;
-      }
-      finished = true;
-      try {
-        source.destroy();
-      } catch {
-        // ignore
-      }
-      try {
-        gunzip.destroy();
-      } catch {
-        // ignore
-      }
-      try {
-        parser.destroy();
-      } catch {
-        // ignore
-      }
-      fn(value);
-    };
-
-    const fail = (error) => finishOnce(rejectPromise, error);
-
-    parser.on('entry', (entry) => {
-      const verdict = isSafeDeferredRuntimeArchiveEntry(entry.path, entry, runtimeRoot);
-      if (!verdict.ok) {
-        fail(new Error(
-          `voice_inference_runtime_archive_unsafe_entry:${verdict.reason}:${String(entry.path ?? '')}`,
-        ));
-      }
-      entry.resume();
+async function installDeferredRuntimePackagesFromArchive({
+  archivePath,
+  runtimeRoot,
+}) {
+  const extractedRuntimeRoot = await mkdtemp(join(runtimeRoot, '.voice-runtime-payload-'));
+  const promotedPackagePaths = [];
+  const createdParentPaths = [];
+  try {
+    await extractArchivePayloadToDirectory({
+      allowedEntryRoots: CLI_DEFERRED_VOICE_RUNTIME_ARCHIVE_ROOTS,
+      archiveName: archivePath,
+      archivePath,
+      extractDir: extractedRuntimeRoot,
     });
-    parser.once('error', fail);
-    parser.once('end', () => finishOnce(resolvePromise));
-    source.once('error', fail);
-    gunzip.once('error', fail);
 
-    source.pipe(gunzip).pipe(parser);
-  });
+    const stagedPackages = [];
+    for (const packageName of CLI_DEFERRED_VOICE_RUNTIME_PACKAGES) {
+      const packageSegments = packageName.split('/');
+      const stagedPackagePath = join(extractedRuntimeRoot, 'node_modules', ...packageSegments);
+      const stagedPackageStats = await pathStatsOrNull(stagedPackagePath);
+      if (!stagedPackageStats) continue;
+      if (!stagedPackageStats.isDirectory() || stagedPackageStats.isSymbolicLink()) {
+        throw new Error(`voice_inference_runtime_archive_invalid_package:${packageName}`);
+      }
+      const installedPackagePath = join(runtimeRoot, 'node_modules', ...packageSegments);
+      if (await pathStatsOrNull(installedPackagePath)) {
+        throw new Error(`voice_inference_runtime_package_already_exists:${packageName}`);
+      }
+      stagedPackages.push({
+        installedPackagePath,
+        packageName,
+        stagedPackagePath,
+      });
+    }
+    if (!stagedPackages.some(({ packageName }) => packageName === 'sherpa-onnx-node')) {
+      throw new Error('voice_inference_runtime_archive_missing_sherpa');
+    }
+
+    const installedNodeModulesPath = join(runtimeRoot, 'node_modules');
+    const installedNodeModulesStats = await pathStatsOrNull(installedNodeModulesPath);
+    if (
+      installedNodeModulesStats
+      && (!installedNodeModulesStats.isDirectory() || installedNodeModulesStats.isSymbolicLink())
+    ) {
+      throw new Error('voice_inference_runtime_node_modules_invalid');
+    }
+    if (!installedNodeModulesStats) {
+      await mkdir(installedNodeModulesPath);
+      createdParentPaths.push(installedNodeModulesPath);
+    }
+
+    for (const { installedPackagePath, stagedPackagePath } of stagedPackages) {
+      const parentPath = dirname(installedPackagePath);
+      const parentStats = await pathStatsOrNull(parentPath);
+      if (parentStats && (!parentStats.isDirectory() || parentStats.isSymbolicLink())) {
+        throw new Error('voice_inference_runtime_package_parent_invalid');
+      }
+      if (!parentStats) {
+        await mkdir(parentPath);
+        createdParentPaths.push(parentPath);
+      }
+      await rename(stagedPackagePath, installedPackagePath);
+      promotedPackagePaths.push(installedPackagePath);
+    }
+
+    if (!canResolveSherpaRuntime()) {
+      throw new Error('voice_inference_runtime_archive_extract_failed');
+    }
+  } catch (error) {
+    await Promise.all(promotedPackagePaths.map(async (path) => {
+      await rm(path, { recursive: true, force: true });
+    }));
+    for (const path of [...createdParentPaths].reverse()) {
+      await rmdir(path).catch((cleanupError) => {
+        if (cleanupError?.code !== 'ENOENT' && cleanupError?.code !== 'ENOTEMPTY') {
+          throw cleanupError;
+        }
+      });
+    }
+    throw error;
+  } finally {
+    await rm(extractedRuntimeRoot, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 10,
+    });
+  }
 }
 
 async function ensureDeferredVoiceInferenceRuntimeInstalled() {
@@ -161,20 +171,7 @@ async function ensureDeferredVoiceInferenceRuntimeInstalled() {
         throw new Error('Cannot find module sherpa-onnx-node');
       }
 
-      // Validate the full archive before extracting so a malicious archive cannot partially write.
-      await validateDeferredVoiceInferenceRuntimeArchive(archivePath, runtimeRoot);
-
-      await mkdir(join(runtimeRoot, 'node_modules'), { recursive: true });
-      await tar.x({
-        file: archivePath,
-        cwd: runtimeRoot,
-        strict: true,
-        preserveOwner: false,
-      });
-
-      if (!canResolveSherpaRuntime()) {
-        throw new Error('voice_inference_runtime_archive_extract_failed');
-      }
+      await installDeferredRuntimePackagesFromArchive({ archivePath, runtimeRoot });
     })();
   }
 

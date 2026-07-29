@@ -1,4 +1,3 @@
-import { configuration } from '@/configuration';
 import { SessionHandoffStatusGetRequestSchema, type SessionHandoffStatus } from '@happier-dev/protocol';
 
 import {
@@ -136,6 +135,7 @@ function mergeWorkspaceReplicationProgressIntoHandoffStatus(params: Readonly<{
 }
 
 export type RegisterSessionHandoffStatusGetRpcHandlerInput = Readonly<{
+  activeServerDir: string;
   prepareJobStore: SessionHandoffPrepareTargetJobStore;
   sourceExportStore: SessionHandoffSourceExportStore;
   workspaceReplicationAdapter: SessionHandoffWorkspaceReplicationAdapter;
@@ -143,9 +143,6 @@ export type RegisterSessionHandoffStatusGetRpcHandlerInput = Readonly<{
     handoffId: string;
     jobStore: SessionHandoffPrepareTargetJobStore;
   }>) => Promise<SessionHandoffPrepareTargetJobRecord | null>;
-  maybeRecoverPrepareTargetJobMissingRunner: (
-    job: SessionHandoffPrepareTargetJobRecord,
-  ) => Promise<SessionHandoffPrepareTargetJobRecord>;
   buildStartPendingStatus: (input: Readonly<{
     handoffId: string;
     sourceStopState: 'stopped' | 'already_inactive';
@@ -160,11 +157,11 @@ export function createSessionHandoffStatusGetActionHandler(
   params: RegisterSessionHandoffStatusGetRpcHandlerInput,
 ): (raw: unknown) => Promise<unknown> {
   const {
+    activeServerDir,
     prepareJobStore,
     sourceExportStore,
     workspaceReplicationAdapter,
     readPersistedPrepareJob,
-    maybeRecoverPrepareTargetJobMissingRunner,
     buildStartPendingStatus,
     invalidRequest,
   } = params;
@@ -173,13 +170,10 @@ export function createSessionHandoffStatusGetActionHandler(
     const parsed = SessionHandoffStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return invalidRequest();
 
-    let persistedJob = await readPersistedPrepareJob({
+    const persistedJob = await readPersistedPrepareJob({
       handoffId: parsed.data.handoffId,
       jobStore: prepareJobStore,
     });
-    if (persistedJob) {
-      persistedJob = await maybeRecoverPrepareTargetJobMissingRunner(persistedJob);
-    }
     if (persistedJob) {
       const baseStatus = persistedJob.status;
       if (
@@ -188,12 +182,15 @@ export function createSessionHandoffStatusGetActionHandler(
         && baseStatus.phase === 'staging_target'
       ) {
         const job = await workspaceReplicationAdapter.readWorkspaceReplicationJobStatus({
-          activeServerDir: configuration.activeServerDir,
+          activeServerDir,
           jobId: persistedJob.workspaceReplicationJobId,
         });
         if (job) {
           return {
             handoffId: parsed.data.handoffId,
+            ...(persistedJob.schemaVersion === 2
+              ? { transitionRevision: persistedJob.transitionRevision }
+              : {}),
             status: mergeWorkspaceReplicationProgressIntoHandoffStatus({
               baseStatus,
               job,
@@ -203,6 +200,9 @@ export function createSessionHandoffStatusGetActionHandler(
       }
       return {
         handoffId: parsed.data.handoffId,
+        ...(persistedJob.schemaVersion === 2
+          ? { transitionRevision: persistedJob.transitionRevision }
+          : {}),
         status: {
           ...baseStatus,
           ...(baseStatus.progress ? { progress: normalizeHandoffProgress(baseStatus.progress) } : {}),

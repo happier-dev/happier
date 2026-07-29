@@ -281,6 +281,7 @@ export {
 } from './permissions/index.js';
 
 export {
+  clearSessionStateFieldFromMetadata,
   computeMonotonicUpdatedAt,
   createFingerprintPublicationState,
   createSessionStateFacetFromHandlers,

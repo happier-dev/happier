@@ -54,6 +54,24 @@ type GitHubReleasePayload = Readonly<{
   assets?: unknown;
 }>;
 
+const CODEX_GITHUB_RELEASE_MAX_FILE_BYTES = 320 * 1024 * 1024;
+
+function resolveGitHubReleaseExtractionLimits(
+  managedInstall: Extract<AgentCliManagedInstallSpec, { kind: 'github_release_binary' }>,
+): Readonly<{ maxFileBytes: number }> | undefined {
+  if (
+    managedInstall.githubRepo.trim().toLowerCase() !== 'openai/codex'
+    || managedInstall.binaryName.trim().toLowerCase() !== 'codex'
+  ) {
+    return undefined;
+  }
+
+  // rust-v0.145.0's checksum-verified arm64 macOS archive contains one
+  // 271,134,288-byte executable. Keep other release archives on the shared
+  // 256 MiB default; a Codex binary beyond 320 MiB fails closed for remeasurement.
+  return { maxFileBytes: CODEX_GITHUB_RELEASE_MAX_FILE_BYTES };
+}
+
 function resolveManagedAgentInstallDir(agentId: string, env: NodeJS.ProcessEnv): string {
   // On-disk layout contract: existing installs live under tools/providers/<agentId>. Kept during the agent-vocabulary rename (R.16) to avoid a data migration.
   return join(resolveHappyHomeDirFromEnvironment(env), 'tools', 'providers', agentId);
@@ -583,11 +601,13 @@ export async function installManagedBinaryAgentCli(params: Readonly<{
 
     await rm(nextDir, { recursive: true, force: true });
     await mkdir(dirname(nextBinPath), { recursive: true });
+    const extractionLimits = resolveGitHubReleaseExtractionLimits(params.managedInstall);
     await (params.deps.extractGitHubReleaseAsset ?? extractGitHubReleaseAsset)({
       archivePath,
       archiveName: asset.name,
       extractDir,
       outputPath: nextBinPath,
+      ...(extractionLimits ? { maxFileBytes: extractionLimits.maxFileBytes } : {}),
     });
 
     params.appendLogLine(params.logPath, `# asset: ${asset.name}`);

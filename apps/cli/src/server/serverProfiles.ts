@@ -1,34 +1,14 @@
 import { readSettings, updateSettings } from '@/persistence';
-import { deriveServerIdFromName, sanitizeServerIdForFilesystem } from '@/server/serverId';
+import { deriveServerIdFromName, deriveServerIdFromUrl, sanitizeServerIdForFilesystem } from '@/server/serverId';
 import { isLocalishServerUrl } from '@/server/serverUrlClassification';
 import { createServerUrlComparableKey } from '@happier-dev/protocol';
 import { existsSync } from 'node:fs';
 import { chmod, copyFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/providers';
+import { resolveHappyHomeDirFromEnvironment } from '@happier-dev/cli-common/agents';
 
 function normalizeServerUrlForEnvId(url: string): string {
   return String(url ?? '').trim().replace(/\/+$/, '');
-}
-
-function deriveEnvServerIdFromUrl(url: string): string {
-  // Mirror `deriveServerIdFromUrl` in `apps/cli/src/configuration.ts` (for env-overridden servers).
-  const raw = normalizeServerUrlForEnvId(url);
-  if (!raw) return 'env_0';
-  const value = (() => {
-    try {
-      const comparableKey = createServerUrlComparableKey(raw);
-      return comparableKey || raw;
-    } catch {
-      return raw;
-    }
-  })();
-  let h = 2166136261;
-  for (let i = 0; i < value.length; i += 1) {
-    h ^= value.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return `env_${(h >>> 0).toString(16)}`;
 }
 
 function deriveLegacyEnvServerIdFromUrl(url: string): string {
@@ -59,7 +39,7 @@ async function maybeCopyAccessKeyFromDerivedUrlId(params: Readonly<{
   ]
     .map((value) => normalizeServerUrlForEnvId(value))
     .filter(Boolean)
-    .flatMap((value) => [deriveEnvServerIdFromUrl(value), deriveLegacyEnvServerIdFromUrl(value)])
+    .flatMap((value) => [deriveServerIdFromUrl(value), deriveLegacyEnvServerIdFromUrl(value)])
     .filter((value) => value !== params.targetServerId);
 
   for (const candidateId of candidates) {

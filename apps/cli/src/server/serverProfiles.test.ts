@@ -1,34 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createServerUrlComparableKey, deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readCredentials, writeCredentialsDataKey } from '@/persistence';
+import { deriveServerIdFromUrl } from '@/server/serverId';
 import { existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 
 describe('server profiles', () => {
-  const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL'] as const;
+  const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL'] as const;
   let envScope = createEnvKeyScope(envKeys);
-
-  function deriveEnvServerIdFromUrl(url: string): string {
-    const raw = String(url ?? '').trim();
-    if (!raw) return 'env_0';
-    const value = (() => {
-      try {
-        const comparableKey = createServerUrlComparableKey(raw);
-        return comparableKey || raw;
-      } catch {
-        return raw;
-      }
-    })();
-    let h = 2166136261;
-    for (let i = 0; i < value.length; i += 1) {
-      h ^= value.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return `env_${(h >>> 0).toString(16)}`;
-  }
 
   function deriveLegacyEnvServerIdFromUrl(url: string): string {
     const raw = String(url ?? '').trim().replace(/\/+$/, '');
@@ -248,6 +230,7 @@ describe('server profiles', () => {
     await withTempDir('happier-cli-servers-migrate-access-key-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
         HAPPIER_WEBAPP_URL: 'http://localhost:33005',
       });
@@ -263,11 +246,12 @@ describe('server profiles', () => {
       });
       expect(await readCredentials()).not.toBeNull();
       const envDerivedServerId = configuration.activeServerId;
-      expect(envDerivedServerId).toBe(deriveEnvServerIdFromUrl('http://127.0.0.1:3005'));
+      expect(envDerivedServerId).toBe(deriveServerIdFromUrl('http://127.0.0.1:3005'));
       expect(existsSync(join(homeDir, 'servers', envDerivedServerId, 'access.key'))).toBe(true);
 
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_WEBAPP_URL: undefined,
       });
@@ -296,6 +280,7 @@ describe('server profiles', () => {
     await withTempDir('happier-cli-servers-migrate-access-key-legacy-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
         HAPPIER_WEBAPP_URL: 'http://localhost:33005',
       });
@@ -325,6 +310,7 @@ describe('server profiles', () => {
 
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_WEBAPP_URL: undefined,
       });
@@ -351,6 +337,7 @@ describe('server profiles', () => {
     await withTempDir('happier-cli-servers-migrate-access-key-upsert-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_WEBAPP_URL: undefined,
       });
@@ -371,6 +358,7 @@ describe('server profiles', () => {
 
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
         HAPPIER_WEBAPP_URL: 'http://localhost:33005',
       });
@@ -390,6 +378,7 @@ describe('server profiles', () => {
 
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_WEBAPP_URL: undefined,
       });
@@ -415,6 +404,7 @@ describe('server profiles', () => {
     await withTempDir('happier-cli-servers-migrate-access-key-select-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
         HAPPIER_WEBAPP_URL: 'http://localhost:33005',
       });
@@ -433,6 +423,7 @@ describe('server profiles', () => {
 
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_WEBAPP_URL: undefined,
       });
@@ -469,6 +460,7 @@ describe('server profiles', () => {
     await withTempDir('happier-cli-servers-migrate-access-key-use-', async (homeDir) => {
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: 'http://127.0.0.1:3005',
         HAPPIER_WEBAPP_URL: 'http://localhost:33005',
       });
@@ -487,6 +479,7 @@ describe('server profiles', () => {
 
       envScope.patch({
         HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_ACTIVE_SERVER_ID: undefined,
         HAPPIER_SERVER_URL: undefined,
         HAPPIER_WEBAPP_URL: undefined,
       });

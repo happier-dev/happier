@@ -1,4 +1,5 @@
 import { createTransferRecipientKeyPair } from './transferChunkEncryption';
+import { clampTransferChunkBytes } from './transferChunkSizeLimit';
 import {
   abortUploadTransferSession,
   createTransferSessionLifecycle,
@@ -14,6 +15,7 @@ import {
   type TransferUploadInitPromptAssetDeps,
   type TransferUploadInitRequest,
 } from '@/transfers/targets/resolveTransferUploadInitTarget';
+import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
 import { configuration } from '@/configuration';
 import { randomBytes } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
@@ -61,11 +63,17 @@ export type DirectTransferImportSessionManager = Readonly<{
   finalizeImportTransferSession: (input: Readonly<{ uploadId: string }>) => Promise<
     Readonly<
       | { success: true; finalized: FinalizedImportTransferResult; sha256: string }
-      | { success: false; error: string; keepSession?: boolean }
+      | (Extract<
+          Awaited<ReturnType<TransferSessionLifecycle['finalizeUploadTransferSession']>>,
+          { success: false }
+        > & Readonly<{ expiresAt?: number }>)
     >
   >;
-  abortImportTransferSession: (input: Readonly<{ uploadId: string }>) => Promise<void>;
+  abortImportTransferSession: (
+    input: Readonly<{ uploadId: string }>,
+  ) => Promise<void | Readonly<{ aborted: boolean }>>;
   cleanupExpiredImportSessions: (now?: number) => void;
+  getNextImportSessionExpiryAt: () => number | null;
   countActiveImportSessions: () => number;
   close: () => Promise<void>;
 }>;
@@ -120,6 +128,7 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     pathAllowanceRegistry: TransferPathAllowanceRegistry;
   }>;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
+  finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): DirectTransferImportSessionManager {
   const store = new TransferSessionStore({
     ttlMs: params?.ttlMs ?? configuration.filesTransferSessionTtlMs,
@@ -127,11 +136,14 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
   const attachmentTempUploadRoot = join(tmpdir(), 'happier', 'uploads', randomUUID());
   const lifecycle = createTransferSessionLifecycle({
     store,
-    chunkSizeBytes: params?.chunkSizeBytes ?? configuration.filesTransferChunkBytes,
+    chunkSizeBytes: clampTransferChunkBytes(
+      params?.chunkSizeBytes ?? configuration.filesTransferChunkBytes,
+    ),
   });
   const authorizationTtlMs = params?.ttlMs ?? configuration.filesTransferSessionTtlMs;
   const importOpenAuthorizations = new Map<string, ImportOpenAuthorizationRecord>();
   const activeImportSessionIds = new Set<string>();
+  let closePromise: Promise<void> | null = null;
 
   const publishActiveSessionCount = (): void => {
     if (!params?.onActiveSessionCountChanged) {
@@ -220,6 +232,9 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       sessionRpcTransferMaxBytes: input.sessionRpcTransferMaxBytes,
       ...(params?.attachmentUpload ? { attachmentUpload: params.attachmentUpload } : {}),
       ...(params?.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
+      ...(params?.finalizeFileOperations
+        ? { finalizeFileOperations: params.finalizeFileOperations }
+        : {}),
     });
 
     if (!resolvedTarget.success) {
@@ -271,39 +286,55 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
     },
 
     async writeImportTransferChunk(input) {
-      const result = await writeUploadTransferChunk({
-        lifecycle,
-        uploadId: input.uploadId,
-        index: input.index,
-        contentBase64: input.contentBase64,
-        payloadBase64: input.payloadBase64,
-        encryptedDataKeyEnvelopeBase64: input.encryptedDataKeyEnvelopeBase64,
-      });
-      if (result.success) {
+      try {
+        return await writeUploadTransferChunk({
+          lifecycle,
+          uploadId: input.uploadId,
+          index: input.index,
+          contentBase64: input.contentBase64,
+          payloadBase64: input.payloadBase64,
+          encryptedDataKeyEnvelopeBase64: input.encryptedDataKeyEnvelopeBase64,
+        });
+      } finally {
         emitActivity();
       }
-      return result;
     },
 
     async finalizeImportTransferSession(input) {
-      const result = await finalizeUploadTransferSession({
-        lifecycle,
-        uploadId: input.uploadId,
-      });
-      if (result.success || result.keepSession !== true) {
-        untrackActiveImportSession(input.uploadId);
+      try {
+        const result = await finalizeUploadTransferSession({
+          lifecycle,
+          uploadId: input.uploadId,
+        });
+        if (result.success || result.keepSession !== true) {
+          untrackActiveImportSession(input.uploadId);
+        }
+        if (!result.success && result.keepSession === true) {
+          const retainedSession = store.getUploadSession(input.uploadId);
+          if (retainedSession) {
+            return {
+              ...result,
+              expiresAt: retainedSession.expiresAt,
+            };
+          }
+        }
+        return result;
+      } finally {
+        emitActivity();
       }
-      emitActivity();
-      return result;
     },
 
     async abortImportTransferSession(input) {
-      await abortUploadTransferSession({
-        lifecycle,
-        uploadId: input.uploadId,
-      });
-      untrackActiveImportSession(input.uploadId);
-      emitActivity();
+      try {
+        const result = await abortUploadTransferSession({
+          lifecycle,
+          uploadId: input.uploadId,
+        });
+        untrackActiveImportSession(input.uploadId);
+        return result;
+      } finally {
+        emitActivity();
+      }
     },
 
     cleanupExpiredImportSessions(now = Date.now()) {
@@ -317,15 +348,27 @@ export function createDirectTransferImportSessionManager(params?: Readonly<{
       publishActiveSessionCount();
     },
 
+    getNextImportSessionExpiryAt() {
+      return store.getNextExpiryAt();
+    },
+
     countActiveImportSessions() {
       return activeImportSessionIds.size;
     },
 
     async close() {
-      store.cleanupExpiredBestEffort(Number.POSITIVE_INFINITY);
-      importOpenAuthorizations.clear();
-      activeImportSessionIds.clear();
-      publishActiveSessionCount();
+      if (closePromise) {
+        return await closePromise;
+      }
+
+      closePromise = (async () => {
+        importOpenAuthorizations.clear();
+        activeImportSessionIds.clear();
+        publishActiveSessionCount();
+        await store.dispose();
+      })();
+
+      return await closePromise;
     },
   };
 }

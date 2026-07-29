@@ -152,10 +152,48 @@ describe('installDaemonService runtime resolution', () => {
     expect(ensureJavaScriptRuntimeExecutableMock).not.toHaveBeenCalled();
   });
 
+  it('uses the selected managed release-channel shim for pinned installs', async () => {
+    resolveDesiredShimTargetsMock.mockResolvedValueOnce([{ shimPath: process.execPath, binaryPath: '/managed/hprev' }]);
+
+    const { previewDaemonServiceInstall } = await import('./installer');
+
+    await previewDaemonServiceInstall({
+      platform: 'linux',
+      uid: 123,
+      userHomeDir: '/home/test',
+      happierHomeDir: '/home/test/.happier',
+      channel: 'preview',
+      targetMode: 'pinned',
+      instanceId: 'qa_win_retry_profile',
+      activeServerId: 'qa_win_retry_profile',
+    });
+
+    expect(resolveDesiredShimTargetsMock).toHaveBeenCalledWith({
+      componentId: 'happier-daemon',
+      channel: 'preview',
+      processEnv: process.env,
+    });
+    expect(resolveDaemonServiceRuntimeTargetMock).toHaveBeenCalledWith({
+      currentExecPath: process.execPath,
+      explicitNodePath: process.execPath,
+    });
+    expect(ensureJavaScriptRuntimeExecutableMock).not.toHaveBeenCalled();
+  });
+
   it('uses the persisted default release channel when daemon service install has no explicit channel', async () => {
     const previousHomeDir = process.env.HAPPIER_HOME_DIR;
+    const previousReleaseEnv = {
+      HAPPIER_DAEMON_SERVICE_CHANNEL: process.env.HAPPIER_DAEMON_SERVICE_CHANNEL,
+      HAPPIER_PUBLIC_RELEASE_CHANNEL: process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL,
+      HAPPIER_RELEASE_CHANNEL: process.env.HAPPIER_RELEASE_CHANNEL,
+      HAPPIER_RELEASE_RING: process.env.HAPPIER_RELEASE_RING,
+    };
     const homeDir = mkdtempSync(join(tmpdir(), 'happier-service-default-channel-'));
     process.env.HAPPIER_HOME_DIR = homeDir;
+    delete process.env.HAPPIER_DAEMON_SERVICE_CHANNEL;
+    delete process.env.HAPPIER_PUBLIC_RELEASE_CHANNEL;
+    delete process.env.HAPPIER_RELEASE_CHANNEL;
+    delete process.env.HAPPIER_RELEASE_RING;
     writeFileSync(
       join(homeDir, 'default-cli-release-channel.json'),
       `${JSON.stringify({ releaseChannel: 'publicdev' })}\n`,
@@ -182,6 +220,13 @@ describe('installDaemonService runtime resolution', () => {
         delete process.env.HAPPIER_HOME_DIR;
       } else {
         process.env.HAPPIER_HOME_DIR = previousHomeDir;
+      }
+      for (const [key, value] of Object.entries(previousReleaseEnv)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
       }
       rmSync(homeDir, { recursive: true, force: true });
     }

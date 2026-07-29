@@ -1,7 +1,6 @@
-import { AxiosError, AxiosHeaders } from 'axios';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { logger } from '@/ui/logger';
+import { HttpStatusError } from '@/api/client/httpStatusError';
 import { createSessionClientRecoveryRuntime } from './createSessionClientRecoveryRuntime';
 
 const axiosGetMock = vi.hoisted(() => vi.fn());
@@ -20,138 +19,116 @@ vi.mock('axios', async (importOriginal) => {
   };
 });
 
-function createSecretAxiosError(): AxiosError {
-  return new AxiosError('Recovery lookup failed Authorization: Bearer MESSAGE_SECRET', 'ERR_NETWORK', {
-    method: 'get',
-    url: 'https://api.example.test/v2/sessions/s1/messages/by-local-id/local-1?token=QUERY_SECRET',
-    headers: new AxiosHeaders({ Authorization: 'Bearer HEADER_SECRET' }),
-    data: { access_token: 'BODY_SECRET' },
-  });
-}
+vi.mock('@/persistence', () => ({
+  readAccountChangesCursor: vi.fn(async () => 0),
+}));
 
-describe('createSessionClientRecoveryRuntime diagnostics', () => {
+describe('createSessionClientRecoveryRuntime startup catch-up ownership', () => {
+  let retryIndex: number;
+
   beforeEach(() => {
+    vi.useFakeTimers();
     axiosGetMock.mockReset();
-    vi.restoreAllMocks();
+    retryIndex = 0;
   });
 
-  it('redacts transcript recovery fetch failures before logging', async () => {
-    axiosGetMock.mockRejectedValue(createSecretAxiosError());
-    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
-    const runtime = createSessionClientRecoveryRuntime({
-      startupMessageCatchUpRetryDelaysMs: [],
-      token: 'token-1',
+  function createRuntime(params: Readonly<{
+    initialAfterSeq?: number;
+    lastObservedSeq?: number;
+    delays?: readonly number[];
+  }> = {}) {
+    return createSessionClientRecoveryRuntime({
+      startupMessageCatchUpRetryDelaysMs: params.delays ?? [300, 1_200],
+      token: 'token',
       sessionId: 's1',
       getClosed: () => false,
       getSessionConnectionSupervisor: () => null,
-      getCurrentConnectionState: () => ({ phase: 'connected' }) as never,
-      getStartedByDaemonProcess: () => false,
-      getMetadataStartedBy: () => null,
-      getMetadataStartedFromDaemon: () => null,
-      getStartupMessageCatchUpRetryIndex: () => 0,
-      setStartupMessageCatchUpRetryIndex: vi.fn(),
-      getStartupMessageCatchUpInitialAfterSeq: () => 0,
-      getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => false,
-      getLastObservedMessageSeq: () => 0,
-      getHasMaterializedLocalId: () => true,
-      deleteMaterializedLocalId: vi.fn(),
-      handleUpdate: vi.fn(),
-      syncSessionSnapshotFromServer: vi.fn(),
-      applyPendingQueueState: vi.fn(),
-    });
-
-    await expect(runtime.recoverMaterializedLocalId('local-1', {
-      maxWaitMs: 1,
-    })).resolves.toBe(false);
-
-    const calls = JSON.stringify(debugSpy.mock.calls);
-    expect(calls).toContain('[API] Failed to fetch transcript messages for pending-queue recovery');
-    expect(calls).toContain('https://api.example.test/v2/sessions/s1/messages/by-local-id/local-1');
-    expect(calls).not.toContain('MESSAGE_SECRET');
-    expect(calls).not.toContain('QUERY_SECRET');
-    expect(calls).not.toContain('HEADER_SECRET');
-    expect(calls).not.toContain('BODY_SECRET');
-    expect(calls).not.toContain('"headers"');
-    expect(calls).not.toContain('"data"');
-  });
-
-  it('redacts startup transcript catch-up retry failures before logging', async () => {
-    axiosGetMock.mockRejectedValue(createSecretAxiosError());
-    const debugSpy = vi.spyOn(logger, 'debug').mockImplementation(() => {});
-    let retryIndex = 0;
-
-    const runtime = createSessionClientRecoveryRuntime({
-      startupMessageCatchUpRetryDelaysMs: [0],
-      token: 'token-1',
-      sessionId: 's1',
-      getClosed: () => false,
-      getSessionConnectionSupervisor: () => null,
-      getCurrentConnectionState: () => ({ phase: 'connected' }) as never,
+      getCurrentConnectionState: () => ({
+        phase: 'online',
+        reason: null,
+        attempt: 0,
+        nextRetryAt: null,
+        lastConnectedAt: Date.now(),
+        lastDisconnectedAt: null,
+        lastErrorMessage: null,
+      }),
       getStartedByDaemonProcess: () => true,
       getMetadataStartedBy: () => null,
-      getMetadataStartedFromDaemon: () => null,
+      getMetadataStartedFromDaemon: () => false,
       getStartupMessageCatchUpRetryIndex: () => retryIndex,
       setStartupMessageCatchUpRetryIndex: (value) => {
         retryIndex = value;
       },
-      getStartupMessageCatchUpInitialAfterSeq: () => 0,
-      getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => false,
-      getLastObservedMessageSeq: () => 0,
-      getHasMaterializedLocalId: () => false,
-      deleteMaterializedLocalId: vi.fn(),
-      handleUpdate: vi.fn(),
-      syncSessionSnapshotFromServer: vi.fn(),
-      applyPendingQueueState: vi.fn(),
+      getStartupMessageCatchUpInitialAfterSeq: () => params.initialAfterSeq ?? 0,
+      getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => true,
+      getLastObservedMessageSeq: () => params.lastObservedSeq ?? 0,
+      handleUpdate: () => {},
+      syncSessionSnapshotFromServer: async () => true,
+      applyPendingQueueState: () => {},
     });
+  }
 
-    runtime.scheduleNextStartupMessageCatchUpRetry();
-
-    await expect.poll(() => JSON.stringify(debugSpy.mock.calls)).toContain('[API] Startup transcript catch-up retry failed');
-
-    const calls = JSON.stringify(debugSpy.mock.calls);
-    expect(calls).not.toContain('MESSAGE_SECRET');
-    expect(calls).not.toContain('QUERY_SECRET');
-    expect(calls).not.toContain('HEADER_SECRET');
-    expect(calls).not.toContain('BODY_SECRET');
-    expect(calls).not.toContain('"headers"');
-    expect(calls).not.toContain('"data"');
-  });
-
-  it('does not schedule another startup transcript retry after catch-up succeeds', async () => {
+  it('uses the initial catch-up cursor and stops after success', async () => {
     axiosGetMock.mockResolvedValue({ data: { messages: [] } });
-    let retryIndex = 0;
-
-    const runtime = createSessionClientRecoveryRuntime({
-      startupMessageCatchUpRetryDelaysMs: [0, 0],
-      token: 'token-1',
-      sessionId: 's1',
-      getClosed: () => false,
-      getSessionConnectionSupervisor: () => null,
-      getCurrentConnectionState: () => ({ phase: 'connected' }) as never,
-      getStartedByDaemonProcess: () => true,
-      getMetadataStartedBy: () => null,
-      getMetadataStartedFromDaemon: () => null,
-      getStartupMessageCatchUpRetryIndex: () => retryIndex,
-      setStartupMessageCatchUpRetryIndex: (value) => {
-        retryIndex = value;
-      },
-      getStartupMessageCatchUpInitialAfterSeq: () => 0,
-      getStartupMessageCatchUpInitialAfterSeqIsExplicit: () => false,
-      getLastObservedMessageSeq: () => 0,
-      getHasMaterializedLocalId: () => false,
-      deleteMaterializedLocalId: vi.fn(),
-      handleUpdate: vi.fn(),
-      syncSessionSnapshotFromServer: vi.fn(),
-      applyPendingQueueState: vi.fn(),
-    });
+    const runtime = createRuntime({ initialAfterSeq: 3, lastObservedSeq: 99 });
 
     runtime.scheduleNextStartupMessageCatchUpRetry();
-
-    await expect.poll(() => axiosGetMock.mock.calls.length).toBe(1);
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(1_200);
 
     expect(axiosGetMock).toHaveBeenCalledTimes(1);
-    expect(retryIndex).toBe(1);
+    expect(axiosGetMock.mock.calls[0]?.[1]).toMatchObject({ params: { afterSeq: 3 } });
+  });
+
+  it('stops retrying after terminal authentication failure', async () => {
+    axiosGetMock.mockRejectedValue(new HttpStatusError(401, 'expired token'));
+    const runtime = createRuntime();
+
+    runtime.scheduleNextStartupMessageCatchUpRetry();
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(axiosGetMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries non-authentication failures from the same initial cursor', async () => {
+    axiosGetMock
+      .mockRejectedValueOnce(new Error('temporary server failure'))
+      .mockResolvedValueOnce({ data: { messages: [] } });
+    const runtime = createRuntime({ initialAfterSeq: 4, lastObservedSeq: 101 });
+
+    runtime.scheduleNextStartupMessageCatchUpRetry();
+    await vi.advanceTimersByTimeAsync(300);
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(axiosGetMock).toHaveBeenCalledTimes(2);
+    expect(axiosGetMock.mock.calls.map((call) => call[1])).toEqual([
+      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
+      expect.objectContaining({ params: expect.objectContaining({ afterSeq: 4 }) }),
+    ]);
+  });
+
+  it('reconciles changes once per connect or reconnect and never from elapsed time', async () => {
+    axiosGetMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) {
+        return { status: 200, data: { id: 'account-1' } };
+      }
+      if (url.endsWith('/v2/changes')) {
+        return { status: 200, data: { changes: [], nextCursor: 0 } };
+      }
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const runtime = createRuntime();
+
+    await runtime.syncChangesOnConnect({ reason: 'connect' });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    await runtime.syncChangesOnConnect({ reason: 'reconnect' });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+
+    expect(axiosGetMock.mock.calls.filter(([url]) => String(url).endsWith('/v2/changes'))).toHaveLength(2);
   });
 });

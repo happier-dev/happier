@@ -1,7 +1,7 @@
 import type {
   SpawnSessionOptions,
   SpawnSessionResult,
-} from '@/rpc/handlers/registerSessionHandlers';
+} from '@/session/shared/spawnSessionContract';
 
 import { createAutomationAssignmentCache } from './automationAssignmentCache';
 import { classifyAutomationWorkerError, nextAutomationRetryDelayMs } from './automationBackoffPolicy';

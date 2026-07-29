@@ -1,6 +1,5 @@
 import { spawn } from 'child_process';
 import { isAbsolute, relative, sep } from 'path';
-import os from 'node:os';
 import path, { delimiter as PATH_DELIMITER } from 'node:path';
 import { accessSync, constants as fsConstants, realpathSync } from 'node:fs';
 
@@ -12,6 +11,7 @@ import {
     OS_USER_FILESYSTEM_ACCESS_POLICY,
     type FilesystemAccessPolicy,
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 
 export type ScmExecResult = {
     success: boolean;
@@ -365,10 +365,10 @@ export function createNonRepositorySnapshot(input: {
     };
 }
 
-export function resolveTildePath(inputPath: string): string {
-    const trimmed = inputPath.trim();
-    const home = os.homedir();
-    if (trimmed === '~') return home;
-    if (trimmed.startsWith('~/')) return path.join(home, trimmed.slice(2));
-    return inputPath;
+export function resolveTildePath(
+    inputPath: string,
+    env: NodeJS.ProcessEnv = process.env,
+    platform: NodeJS.Platform = process.platform,
+): string {
+    return expandHomeDirPath(inputPath.trim(), env, platform);
 }

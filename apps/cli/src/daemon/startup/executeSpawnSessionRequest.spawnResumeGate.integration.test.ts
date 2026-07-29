@@ -1,13 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 
-import type { VendorResumeSupportParams } from '@/backends/types';
+import type { VendorResumeSupportParams } from '@/agent/catalog/types';
 import {
   SPAWN_SESSION_ERROR_CODES,
   SPAWN_SESSION_ERROR_DETAIL_KINDS,
   isConnectedServiceResumeUnreachableSpawnErrorDetail,
 } from '@happier-dev/protocol';
-import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 
 /**
  * §2 (Rule A) gate — end-to-end at dev's spawn seam (`executeSpawnSessionRequest`).
@@ -55,10 +55,17 @@ const hoisted = vi.hoisted(() => {
   };
 });
 
-vi.mock('@/backends/catalog', () => ({
+vi.mock('@/session/runtime/catalogHooks', () => ({
   getVendorResumeSupport: hoisted.getVendorResumeSupport,
-  requireCatalogEntry: hoisted.requireCatalogEntry,
 }));
+
+vi.mock('@/agent/catalog/registry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/agent/catalog/registry')>();
+  return {
+    ...actual,
+    requireCatalogEntry: hoisted.requireCatalogEntry,
+  };
+});
 
 vi.mock('@/configuration', () => ({
   configuration: {
@@ -69,11 +76,6 @@ vi.mock('@/configuration', () => ({
 
 vi.mock('@/settings/accountSettings/refreshAccountSettingsForMinimumVersion', () => ({
   refreshAccountSettingsForMinimumVersion: hoisted.refreshAccountSettingsForMinimumVersion,
-}));
-
-vi.mock('@/agent/runtime/daemonInitialPrompt', () => ({
-  HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY: 'HAPPIER_DAEMON_INITIAL_PROMPT',
-  normalizeDaemonInitialPrompt: (value: unknown) => (typeof value === 'string' ? value : null),
 }));
 
 vi.mock('@/terminal/runtime/terminalConfig', () => ({
@@ -93,9 +95,15 @@ vi.mock('@/ui/logger', () => ({
   },
 }));
 
-vi.mock('@/session/backendTargets/resolveConcreteBackendTargetRefs', () => ({
-  resolveConcreteBackendTargetRefV2: vi.fn(),
-}));
+vi.mock('@/session/backendTargets/resolveConcreteBackendTargetRefs', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('@/session/backendTargets/resolveConcreteBackendTargetRefs')
+  >();
+  return {
+    ...actual,
+    resolveConcreteBackendTargetRefV2: vi.fn(),
+  };
+});
 
 vi.mock('../spawn/resolveSpawnBackendIdentity', () => ({
   resolveSpawnBackendIdentity: hoisted.resolveSpawnBackendIdentity,
@@ -176,7 +184,7 @@ function createParams() {
     connectedServicesMaterializationBaseDir: '/tmp/connected-services',
     connectedServiceRefreshCoordinator: null,
     connectedServiceQuotasCoordinator: null,
-    connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+    connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
     pidToTrackedSession: new Map(),
     pidToAwaiter: new Map(),
     pidToSpawnResultResolver: new Map(),

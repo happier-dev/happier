@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DaemonStateSchema } from './types';
 
 describe('DaemonStateSchema', () => {
-  it('preserves transfer runtime capability metadata', () => {
+  it('preserves supported transfer runtime capability metadata and strips undeclared listener classes', () => {
     const result = DaemonStateSchema.safeParse({
       status: 'running',
       pid: 12345,
@@ -59,11 +59,6 @@ describe('DaemonStateSchema', () => {
         loopback_http: {
           enabled: true,
           configured: true,
-          active: false,
-        },
-        lan_http: {
-          enabled: false,
-          configured: false,
           active: false,
         },
         tailscale_serve_https: {

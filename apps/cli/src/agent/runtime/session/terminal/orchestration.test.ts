@@ -15,29 +15,31 @@ describe('createTerminalRuntimeHostOrchestration', () => {
             },
         };
         const process = Object.freeze({ launch: vi.fn() });
-        const transcripts = Object.freeze({ openDirectMirror: vi.fn() });
         const projection = Object.freeze({
-            openDirectTranscriptMirror: vi.fn(),
             publishControlState: vi.fn(),
             publishProviderSessionId: vi.fn(),
             publishSubagentStarted: vi.fn(),
             publishSubagentCompleted: vi.fn(),
+        });
+        const transcriptFollow = Object.freeze({
+            bindProviderSession: vi.fn(),
+            releaseActiveBindings: vi.fn(),
         });
 
         const host = createTerminalRuntimeHostOrchestration({
             messageQueue,
             session,
             process,
-            transcripts,
             projection,
+            transcriptFollow,
         });
 
         expect(host).toEqual({
             input: expect.objectContaining({ subscribe: expect.any(Function) }),
             switching: expect.objectContaining({ register: expect.any(Function) }),
             process,
-            transcripts,
             projection,
+            transcriptFollow,
         });
     });
 
@@ -51,13 +53,10 @@ describe('createTerminalRuntimeHostOrchestration', () => {
             },
         };
         const process = Object.freeze({ launch: vi.fn() });
-        const transcripts = Object.freeze({ openDirectMirror: vi.fn() });
-
         expect(createTerminalRuntimeHostOrchestration({
             messageQueue,
             session,
             process,
-            transcripts,
         })).toBeNull();
     });
 
@@ -68,12 +67,9 @@ describe('createTerminalRuntimeHostOrchestration', () => {
             },
         };
         const process = Object.freeze({ launch: vi.fn() });
-        const transcripts = Object.freeze({ openDirectMirror: vi.fn() });
-
         expect(createTerminalRuntimeHostOrchestration({
             session,
             process,
-            transcripts,
         })).toBeNull();
     });
 
@@ -103,7 +99,6 @@ describe('createTerminalRuntimeHostOrchestration', () => {
             },
         };
         const projection = Object.freeze({
-            openDirectTranscriptMirror: vi.fn(),
             publishControlState: vi.fn(),
             publishProviderSessionId: vi.fn(),
             publishSubagentStarted: vi.fn(),

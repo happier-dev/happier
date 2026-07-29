@@ -1,12 +1,17 @@
 import { createServer } from 'node:http'
 
-export async function findAvailableLoopbackPort(): Promise<number> {
-  return new Promise((resolve) => {
+export async function findAvailableLoopbackPort(
+  host: '127.0.0.1' | '::1' = '127.0.0.1',
+): Promise<number> {
+  return new Promise((resolve, reject) => {
     const server = createServer()
-    server.listen({ port: 0, host: '127.0.0.1', exclusive: true }, () => {
+    const handleBindError = (error: Error) => reject(error)
+    server.once('error', handleBindError)
+    server.listen({ port: 0, host, exclusive: true }, () => {
+      server.removeListener('error', handleBindError)
       const address = server.address() as { port: number } | null
       const port = address?.port ?? 0
-      server.close(() => resolve(port))
+      server.close((error) => (error ? reject(error) : resolve(port)))
     })
   })
 }

@@ -249,13 +249,12 @@ export function extractPermissionInput(params: PermissionRequestLike): Record<st
 
 export function extractPermissionInputWithFallback(
   params: PermissionRequestLike,
-  toolCallId: string,
-  toolCallIdToInputMap?: Map<string, Record<string, unknown>>
+  fallbackInput?: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> {
   const extracted = extractPermissionInput(params);
   if (Object.keys(extracted).length > 0) return extracted;
 
-  const fallback = toolCallIdToInputMap?.get(toolCallId);
+  const fallback = fallbackInput;
   if (fallback && typeof fallback === 'object' && !Array.isArray(fallback) && Object.keys(fallback).length > 0) {
     return fallback;
   }
@@ -365,10 +364,9 @@ export function shouldReplaceCachedPermissionToolName(currentToolName: string, n
 
 export function resolvePermissionToolName(opts: {
   toolNameHint: string;
-  toolCallId: string;
-  toolCallIdToNameMap?: Map<string, string>;
+  mappedToolName?: string;
 }): string {
-  const mapped = opts.toolCallIdToNameMap?.get(opts.toolCallId);
+  const mapped = opts.mappedToolName;
   if (typeof mapped === 'string' && mapped.trim().length > 0) {
     if (shouldReplaceCachedPermissionToolName(mapped, opts.toolNameHint)) {
       return opts.toolNameHint;

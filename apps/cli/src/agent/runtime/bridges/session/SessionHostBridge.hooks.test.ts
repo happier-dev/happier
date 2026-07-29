@@ -28,6 +28,8 @@ describe('SessionHostBridge lifecycle hook emission', () => {
       backendTarget: 'agent:claude',
       payload: {
         sessionId: 'sess_1',
+        agentId: 'claude',
+        runtimeTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
       },
     });
 
@@ -42,6 +44,8 @@ describe('SessionHostBridge lifecycle hook emission', () => {
         backendTarget: 'agent:claude',
         payload: {
           sessionId: 'sess_1',
+          agentId: 'claude',
+          runtimeTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
         },
       }),
     });
@@ -57,7 +61,8 @@ describe('SessionHostBridge lifecycle hook emission', () => {
       happySessionId: 'sess_1',
       payload: {
         sessionId: 'sess_1',
-        messageLength: 4,
+        text: 'test',
+        source: 'user',
       },
     })).resolves.toBeUndefined();
   });

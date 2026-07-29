@@ -3,9 +3,9 @@ import { constants } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
-import type { ExecOutputStreamV1 } from '@happier-dev/plugin-sdk';
+import type { ExecOutputStreamV1 } from '../exec/privateContract';
 
-import { createPluginExecService } from './exec';
+import { createPluginExecService } from '../exec/hostService';
 
 async function firstExecutablePath(candidates: readonly string[]): Promise<string> {
     for (const candidate of candidates) {

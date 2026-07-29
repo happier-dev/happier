@@ -1,4 +1,4 @@
-import type { ApiClient } from '@/api/api';
+import type { ConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import { createConnectedServiceAccountModeCache } from './createConnectedServiceAccountModeCache';
 import type { ConnectedServiceAccountMode } from './createConnectedServiceAccountModeCache';
 
@@ -11,7 +11,7 @@ const accountModeCache = createConnectedServiceAccountModeCache({
 });
 
 export async function resolveConnectedServiceAccountMode(
-  api: Partial<Pick<ApiClient, 'getAccountEncryptionMode'>>,
+  api: Partial<Pick<ConnectedServiceCredentialApi, 'getAccountEncryptionMode'>>,
   options?: Readonly<{ refresh?: boolean }>,
 ): Promise<ConnectedServiceAccountMode> {
   if (options?.refresh) return await accountModeCache.refresh(api);
@@ -19,7 +19,7 @@ export async function resolveConnectedServiceAccountMode(
 }
 
 export function invalidateConnectedServiceAccountMode(
-  api?: Partial<Pick<ApiClient, 'getAccountEncryptionMode'>>,
+  api?: Partial<Pick<ConnectedServiceCredentialApi, 'getAccountEncryptionMode'>>,
 ): void {
   if (api) {
     accountModeCache.invalidate(api);

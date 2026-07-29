@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import type {
-    TranscriptFileFollowHandleV1,
-    TranscriptFileFollowInputV1,
-    TranscriptFileFollowPolicyInputV1,
-    TranscriptFileFollowRuntimeServiceV1,
-} from '@happier-dev/plugin-sdk';
+    AgentTranscriptFileFollowHandle,
+    AgentTranscriptFileFollowInput,
+    AgentTranscriptFileFollowService,
+} from '@happier-dev/plugin-sdk/agent-runtime';
 
 import { createJsonlFollowController } from '@/api/session/fileBackedTranscripts/jsonl';
 import type {
@@ -53,7 +52,7 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
     policy?: JsonlFollowPolicyInputV1;
     watchFile?: WatchFile;
     addDisposable?: (disposable: Readonly<{ dispose: () => void | Promise<void> }>) => unknown;
-}>): TranscriptFileFollowRuntimeServiceV1 {
+}>): AgentTranscriptFileFollowService {
     const allowedPaths = new Set((params?.allowedPaths ?? []).flatMap((path) => {
         const normalized = normalizeTranscriptFileFollowAbsolutePath(path);
         return normalized ? [normalized] : [];
@@ -63,8 +62,8 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
         return normalized ? [normalized] : [];
     });
 
-    const service: TranscriptFileFollowRuntimeServiceV1 = Object.freeze({
-        async follow(input: TranscriptFileFollowInputV1): Promise<TranscriptFileFollowHandleV1> {
+    const service: AgentTranscriptFileFollowService = Object.freeze({
+        async follow(input: AgentTranscriptFileFollowInput): Promise<AgentTranscriptFileFollowHandle> {
             const filePath = normalizeTranscriptFileFollowAbsolutePath(input.path);
             if (!filePath) {
                 throw new PluginContextServiceError(
@@ -160,7 +159,7 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
                 },
             });
 
-            const close = async (options?: Parameters<TranscriptFileFollowHandleV1['close']>[0]): Promise<void> => {
+            const close = async (options?: Parameters<AgentTranscriptFileFollowHandle['close']>[0]): Promise<void> => {
                 if (closed) {
                     return closePromise ?? Promise.resolve();
                 }
@@ -194,7 +193,7 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
                 expiryTimer.unref?.();
             };
 
-            const handle: TranscriptFileFollowHandleV1 = Object.freeze({
+            const handle: AgentTranscriptFileFollowHandle = Object.freeze({
                 id,
                 async drainNow(options) {
                     if (closed) {
@@ -228,14 +227,14 @@ export function createPluginTranscriptFileFollowService(params?: Readonly<{
     return service;
 }
 
-function notifyPluginErrorHandler(input: TranscriptFileFollowInputV1, error: unknown): void {
+function notifyPluginErrorHandler(input: AgentTranscriptFileFollowInput, error: unknown): void {
     if (!input.onError) {
         return;
     }
     Promise.resolve(input.onError(error)).catch(() => undefined);
 }
 
-function notifyPluginResetHandler(input: TranscriptFileFollowInputV1, event: JsonlFollowerMetricEvent): void {
+function notifyPluginResetHandler(input: AgentTranscriptFileFollowInput, event: JsonlFollowerMetricEvent): void {
     if (event.type !== 'file_reset' || !input.onReset) {
         return;
     }
@@ -243,7 +242,7 @@ function notifyPluginResetHandler(input: TranscriptFileFollowInputV1, event: Jso
 }
 
 function normalizePluginFileFollowPolicy(
-    input: TranscriptFileFollowPolicyInputV1 | undefined,
+    input: AgentTranscriptFileFollowInput['policy'],
     base: JsonlFollowPolicyInputV1 | undefined,
 ): JsonlFollowPolicyInputV1 {
     const normalized = { ...(base ?? {}) };

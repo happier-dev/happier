@@ -961,12 +961,29 @@ describe('scm workspace integration', () => {
         });
     });
 
-    it('rejects git and sapling admin transfer entries through the plugin-backed default registry', async () => {
+    it('rejects git and sapling admin transfer entries through the authoritative SCM registry', async () => {
+        const registry = createScmBackendRegistry([
+            createTestBackend({
+                id: 'git',
+                detectionRootPath: '/repo',
+                workspaceIntegration: {
+                    inspectWorkspaceLocation: async () => null,
+                    classifyPortableWorkspacePath: ({ relativePath }) => (
+                        relativePath === '.git'
+                        || relativePath.startsWith('.git/')
+                        || relativePath === '.sl'
+                        || relativePath.startsWith('.sl/')
+                    ) ? 'non_portable' : 'unknown',
+                },
+            }),
+        ]);
+
         await expect(assertPortableWorkspaceTransferEntriesWithScmWorkspace({
             entries: [{
                 relativePath: '.git/worktrees/feature/HEAD',
                 sourcePath: '/repo/.git/worktrees/feature/HEAD',
             }],
+            registry,
         })).rejects.toThrow('non-portable workspace path: .git/worktrees/feature/HEAD');
 
         await expect(assertPortableWorkspaceTransferEntriesWithScmWorkspace({
@@ -974,6 +991,7 @@ describe('scm workspace integration', () => {
                 relativePath: '.sl/store',
                 sourcePath: '/repo/.sl/store',
             }],
+            registry,
         })).rejects.toThrow('non-portable workspace path: .sl/store');
     });
 

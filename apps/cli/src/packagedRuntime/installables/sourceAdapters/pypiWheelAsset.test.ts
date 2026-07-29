@@ -1,6 +1,7 @@
-import { chmod, mkdir, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { PassThrough } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -12,8 +13,14 @@ import {
 
 import { getRuntimeInstallableAdapter } from '../registry';
 
+type InstallPypiWheelAssetParams =
+  Parameters<typeof import('@happier-dev/cli-common/agents').installPypiWheelAsset>[0];
+
 const { installPypiWheelAssetMock } = vi.hoisted(() => ({
   installPypiWheelAssetMock: vi.fn(),
+}));
+const { spawnSupervisedPluginProcessMock } = vi.hoisted(() => ({
+  spawnSupervisedPluginProcessMock: vi.fn(),
 }));
 const { configurationState } = vi.hoisted(() => ({
   configurationState: {
@@ -40,6 +47,10 @@ vi.mock('@happier-dev/cli-common/agents', async (importOriginal) => {
     installPypiWheelAsset: installPypiWheelAssetMock,
   };
 });
+
+vi.mock('@/plugins/runtime/exec/processSupervisor', () => ({
+  spawnSupervisedPluginProcess: spawnSupervisedPluginProcessMock,
+}));
 
 const tempDirs = new Set<string>();
 
@@ -165,9 +176,10 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
     );
 
     await expect(adapter.installOrUpgrade()).resolves.toEqual(expect.objectContaining({ ok: true }));
+    const canonicalManagedPath = await realpath(managedPath);
     await expect(adapter.resolveLaunchCommand?.({ sourcePreference: 'managed-first' })).resolves.toEqual({
       ok: true,
-      command: managedPath,
+      command: canonicalManagedPath,
       args: [],
       source: 'managed',
     });
@@ -176,6 +188,204 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
       versionSpecifier: '>=0.1.3,<0.2.0',
       executable: true,
     }));
+  });
+
+  it('probes localharness with its framed startup handshake under supervised process ownership', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.spyOn(process, 'arch', 'get').mockReturnValue('arm64');
+
+    const descriptor = createDescriptor();
+    const homeDir = join(tmpdir(), `happier-pypi-probe-${Date.now()}-${Math.random()}`);
+    tempDirs.add(homeDir);
+    configurationState.happyHomeDir = homeDir;
+    const expectedRequest = Buffer.from(
+      '200000000a00221c0a07686170706965721205302e302e301a0a74797065736372697074',
+      'hex',
+    );
+    const response = Buffer.from(
+      '1200000008f3d002120c6c6f6f706261636b2d6b6579',
+      'hex',
+    );
+    const stdout = new PassThrough();
+    const dispose = vi.fn(async () => undefined);
+    const write = vi.fn(async (data: Uint8Array) => {
+      expect(Buffer.from(data)).toEqual(expectedRequest);
+      stdout.write(response.subarray(0, 5));
+      stdout.write(response.subarray(5));
+    });
+    spawnSupervisedPluginProcessMock.mockReturnValueOnce({
+      child: { stdout },
+      handle: {
+        pid: 123,
+        write,
+        closeStdin: vi.fn(),
+        wait: vi.fn(),
+        onOutput: vi.fn(),
+        dispose,
+      },
+      readBufferedStderr: () => new Uint8Array(),
+      requestTermination: vi.fn(),
+      dispose,
+    });
+    installPypiWheelAssetMock.mockImplementationOnce(async (params: InstallPypiWheelAssetParams) => {
+      if (!params.probeExecutable) throw new Error('expected compatibility probe');
+      const probeResult = await params.probeExecutable({
+        executablePath: '/managed/localharness',
+        probeId: 'antigravity-localharness-v1',
+        distribution: 'google-antigravity',
+        version: '0.1.8',
+      });
+      expect(probeResult).toEqual({ ok: true });
+      return {
+        executablePath: '/managed/localharness',
+        version: '0.1.8',
+        metadataPath: join(homeDir, 'tools', descriptor.key, 'current.json'),
+      };
+    });
+    const installablesRegistry = resolveInstallablesRegistry({
+      bundledFirstPartyPlugins: [{
+        owner: {
+          provenance: 'bundled_first_party_plugin',
+          ownerId: 'happier.antigravity',
+          pluginId: 'happier.antigravity',
+        },
+        descriptor,
+      }],
+    });
+    const adapter = await getRuntimeInstallableAdapter(
+      'google-antigravity-localharness' as InstallableKey,
+      { installablesRegistry },
+    );
+
+    await expect(adapter.installOrUpgrade()).resolves.toEqual(expect.objectContaining({ ok: true }));
+    expect(spawnSupervisedPluginProcessMock).toHaveBeenCalledWith(expect.objectContaining({
+      command: '/managed/localharness',
+      args: [],
+      spawnOptions: { detached: true },
+    }));
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a framed startup response that is not a valid localharness endpoint', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.spyOn(process, 'arch', 'get').mockReturnValue('arm64');
+
+    const descriptor = createDescriptor();
+    const homeDir = join(tmpdir(), `happier-pypi-probe-invalid-${Date.now()}-${Math.random()}`);
+    tempDirs.add(homeDir);
+    configurationState.happyHomeDir = homeDir;
+    const stdout = new PassThrough();
+    const dispose = vi.fn(async () => undefined);
+    spawnSupervisedPluginProcessMock.mockReturnValueOnce({
+      child: { stdout },
+      handle: {
+        pid: 123,
+        async write() {
+          stdout.end(Buffer.from('03000000010203', 'hex'));
+        },
+        closeStdin: vi.fn(),
+        wait: vi.fn(),
+        onOutput: vi.fn(),
+        dispose,
+      },
+      readBufferedStderr: () => new Uint8Array(),
+      requestTermination: vi.fn(),
+      dispose,
+    });
+    installPypiWheelAssetMock.mockImplementationOnce(async (params: InstallPypiWheelAssetParams) => {
+      if (!params.probeExecutable) throw new Error('expected compatibility probe');
+      const probeResult = await params.probeExecutable({
+        executablePath: '/managed/localharness',
+        probeId: 'antigravity-localharness-v1',
+        distribution: 'google-antigravity',
+        version: '0.1.8',
+      });
+      expect(probeResult).toMatchObject({ ok: false });
+      return {
+        executablePath: '/managed/localharness',
+        version: '0.1.8',
+        metadataPath: join(homeDir, 'tools', descriptor.key, 'current.json'),
+      };
+    });
+    const installablesRegistry = resolveInstallablesRegistry({
+      bundledFirstPartyPlugins: [{
+        owner: {
+          provenance: 'bundled_first_party_plugin',
+          ownerId: 'happier.antigravity',
+          pluginId: 'happier.antigravity',
+        },
+        descriptor,
+      }],
+    });
+    const adapter = await getRuntimeInstallableAdapter(
+      'google-antigravity-localharness' as InstallableKey,
+      { installablesRegistry },
+    );
+
+    await expect(adapter.installOrUpgrade()).resolves.toMatchObject({ ok: true });
+    expect(dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails a truncated startup frame without leaking child stderr and still disposes supervision', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.spyOn(process, 'arch', 'get').mockReturnValue('arm64');
+
+    const descriptor = createDescriptor();
+    const homeDir = join(tmpdir(), `happier-pypi-probe-failure-${Date.now()}-${Math.random()}`);
+    tempDirs.add(homeDir);
+    configurationState.happyHomeDir = homeDir;
+    const stdout = new PassThrough();
+    const dispose = vi.fn(async () => undefined);
+    spawnSupervisedPluginProcessMock.mockReturnValueOnce({
+      child: { stdout },
+      handle: {
+        pid: 123,
+        async write() {
+          stdout.end(Buffer.from('0500000001', 'hex'));
+        },
+        closeStdin: vi.fn(),
+        wait: vi.fn(),
+        onOutput: vi.fn(),
+        dispose,
+      },
+      readBufferedStderr: () => new Uint8Array(Buffer.from('credential=super-secret')),
+      requestTermination: vi.fn(),
+      dispose,
+    });
+    installPypiWheelAssetMock.mockImplementationOnce(async (params: InstallPypiWheelAssetParams) => {
+      if (!params.probeExecutable) throw new Error('expected compatibility probe');
+      const probeResult = await params.probeExecutable({
+        executablePath: '/managed/localharness',
+        probeId: 'antigravity-localharness-v1',
+        distribution: 'google-antigravity',
+        version: '0.1.8',
+      });
+      expect(probeResult).toMatchObject({ ok: false });
+      if (probeResult.ok) throw new Error('expected compatibility probe failure');
+      expect(probeResult.errorMessage).not.toContain('super-secret');
+      throw new Error(`compatibility probe failed: ${probeResult.errorMessage}`);
+    });
+    const installablesRegistry = resolveInstallablesRegistry({
+      bundledFirstPartyPlugins: [{
+        owner: {
+          provenance: 'bundled_first_party_plugin',
+          ownerId: 'happier.antigravity',
+          pluginId: 'happier.antigravity',
+        },
+        descriptor,
+      }],
+    });
+    const adapter = await getRuntimeInstallableAdapter(
+      'google-antigravity-localharness' as InstallableKey,
+      { installablesRegistry },
+    );
+
+    await expect(adapter.installOrUpgrade()).resolves.toMatchObject({
+      ok: false,
+      errorMessage: expect.not.stringContaining('super-secret'),
+    });
+    expect(dispose).toHaveBeenCalledTimes(1);
   });
 
   it('does not auto-install on Linux when libc compatibility cannot be proven', async () => {
@@ -218,6 +428,43 @@ describe('managed_pypi_wheel_asset runtime adapter', () => {
       errorMessage: expect.stringContaining('not supported'),
     }));
     expect(installPypiWheelAssetMock).not.toHaveBeenCalled();
+  });
+
+  it('removes only the managed install root when the dependency is uninstalled', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('darwin');
+    vi.spyOn(process, 'arch', 'get').mockReturnValue('arm64');
+
+    const descriptor = createDescriptor();
+    const homeDir = join(tmpdir(), `happier-pypi-remove-${Date.now()}-${Math.random()}`);
+    tempDirs.add(homeDir);
+    configurationState.happyHomeDir = homeDir;
+    const installRoot = join(homeDir, 'tools', descriptor.key);
+    const unrelated = join(homeDir, 'tools', 'unrelated-tool', 'keep.txt');
+    await mkdir(installRoot, { recursive: true });
+    await writeFile(join(installRoot, 'current.json'), '{}');
+    await mkdir(join(unrelated, '..'), { recursive: true });
+    await writeFile(unrelated, 'keep');
+    const installablesRegistry = resolveInstallablesRegistry({
+      bundledFirstPartyPlugins: [{
+        owner: {
+          provenance: 'bundled_first_party_plugin',
+          ownerId: 'happier.antigravity',
+          pluginId: 'happier.antigravity',
+        },
+        descriptor,
+      }],
+    });
+    const adapter = await getRuntimeInstallableAdapter(
+      'google-antigravity-localharness' as InstallableKey,
+      { installablesRegistry },
+    );
+
+    expect(adapter.removeManagedInstall).toBeTypeOf('function');
+    await adapter.removeManagedInstall?.();
+    await expect(adapter.removeManagedInstall?.()).resolves.toBeUndefined();
+
+    await expect(access(join(installRoot, 'current.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(access(unrelated)).resolves.toBeUndefined();
   });
 
   it('does not run direct background updates when descriptor update consent is required', async () => {

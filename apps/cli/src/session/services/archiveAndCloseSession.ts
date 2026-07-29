@@ -7,7 +7,7 @@ import { archiveSessionOnceInactive } from './archiveSessionOnceInactive';
 
 type RuntimeArchivableSession = Pick<
   ApiSessionClient,
-  'sessionId' | 'updateMetadata' | 'sendSessionDeath' | 'flush' | 'close'
+  'sessionId' | 'updateMetadata' | 'flush' | 'close'
 >;
 
 async function waitForMetadataWriteOrTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
@@ -52,7 +52,6 @@ export async function archiveAndCloseRuntimeSession(
     logger.debug('[archiveAndCloseRuntimeSession] Failed to update session metadata (archive) (non-fatal)', error);
   });
 
-  session.sendSessionDeath();
   await session.flush();
   await session.close();
 

@@ -2,6 +2,52 @@ import { describe, expect, it, vi } from 'vitest';
 import { handleSessionStateUpdate } from './sessionStateUpdateHandling';
 
 describe('handleSessionStateUpdate', () => {
+  it('invalidates instead of applying a shared-only layout-1 socket update to the owner view', () => {
+    const onMetadataEnvelopeTupleInvalidated = vi.fn();
+    const previousMetadata = {
+      path: '/private-owner-path',
+      host: 'h1',
+      flavor: 'claude',
+    } as any;
+
+    const result = handleSessionStateUpdate({
+      update: {
+        id: 'u-layout-one',
+        seq: 2,
+        createdAt: Date.now(),
+        body: {
+          t: 'update-session',
+          sid: 's1',
+          metadata: {
+            version: 2,
+            value: JSON.stringify({ path: '', host: '', flavor: 'claude' }),
+          },
+        },
+      } as any,
+      updateSource: 'session-scoped',
+      sessionId: 's1',
+      metadataLayoutVersion: 1,
+      sessionEncryptionMode: 'plain',
+      metadata: previousMetadata,
+      metadataVersion: 1,
+      agentState: { controlledByUser: true },
+      agentStateVersion: 1,
+      pendingWakeSeq: 0,
+      encryptionKey: new Uint8Array(32),
+      encryptionVariant: 'legacy',
+      onMetadataUpdated: vi.fn(),
+      onMetadataEnvelopeTupleInvalidated,
+      onWarning: vi.fn(),
+    });
+
+    expect(result.handled).toBe(true);
+    expect(result.metadata).toBe(previousMetadata);
+    expect(result.metadataVersion).toBe(1);
+    expect(result.agentState).toEqual({ controlledByUser: true });
+    expect(result.agentStateVersion).toBe(1);
+    expect(onMetadataEnvelopeTupleInvalidated).toHaveBeenCalledTimes(1);
+  });
+
   it('parses plaintext metadata updates when sessionEncryptionMode=plain', () => {
     const onWarning = vi.fn();
     const onMetadataUpdated = vi.fn();

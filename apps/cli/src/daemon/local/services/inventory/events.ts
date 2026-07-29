@@ -17,6 +17,13 @@ export type LocalServiceInventoryRegistryEvent =
         machineId: string;
         generatedAt: number;
         entry: NormalizedLocalServiceInventoryEntry;
+    }>
+    | Readonly<{
+        v: 1;
+        kind: 'entry_removed';
+        machineId: string;
+        generatedAt: number;
+        id: string;
     }>;
 
 export function createLocalServiceInventorySnapshotEvent(
@@ -41,5 +48,18 @@ export function createLocalServiceInventoryEntryUpsertedEvent(
         machineId: snapshot.machineId,
         generatedAt: snapshot.generatedAt,
         entry,
+    };
+}
+
+export function createLocalServiceInventoryEntryRemovedEvent(
+    snapshot: NormalizedLocalServiceInventorySnapshot,
+    id: string,
+): LocalServiceInventoryRegistryEvent {
+    return {
+        v: 1,
+        kind: 'entry_removed',
+        machineId: snapshot.machineId,
+        generatedAt: snapshot.generatedAt,
+        id,
     };
 }

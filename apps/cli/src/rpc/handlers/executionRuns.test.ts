@@ -2,14 +2,19 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, AgentMessage, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
-import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
+import type {
+  ExecutionRunHostRuntime,
+  ExecutionRunHostRuntimeMessageHandler,
+} from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
+import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import {
+  createScmCapabilities,
   FeaturesResponseSchema,
+  SCM_OPERATION_ERROR_CODES,
   type ActionId,
   type ActionExecutorDeps,
   type ApprovalRequestV1,
@@ -26,9 +31,12 @@ import type { Credentials } from '@/persistence';
 import { createEncryptedRpcTestClient } from './encryptedRpc.testkit';
 import { registerExecutionRunHandlers as registerExecutionRunHandlersBase } from './executionRuns';
 import type { RpcActionExecutor } from './_actionDispatchAdapter';
+import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { reloadConfiguration } from '@/configuration';
 import { runGit } from '@/scm/rpc/__tests__/testRpcHarness';
+import { createScmBackendRegistry, type ScmBackendRegistry } from '@/scm/registry';
+import type { ScmBackend, ScmRepoDetection } from '@/scm/types';
 
 type TestExecutionRunRuntimeFactory = (opts: Readonly<{
   runId?: string;
@@ -44,8 +52,18 @@ const runtimeFactoryState = vi.hoisted(() => ({
   current: null as TestExecutionRunRuntimeFactory | null,
 }));
 
-vi.mock('@/agent/runtime/bridges/executionRun/runtime/create', () => ({
-  createExecutionRunRuntime: vi.fn((opts: Parameters<TestExecutionRunRuntimeFactory>[0]) => {
+const bridgeLifecycleHookMockState = vi.hoisted(() => ({
+  dispatchBridgeLifecycleHookEvent: vi.fn().mockResolvedValue(undefined),
+}));
+
+const scmBackendRegistryMockState = vi.hoisted(() => ({
+  current: null as ScmBackendRegistry | null,
+}));
+
+let defaultExecutionRunTestCwd = '';
+
+vi.mock('@/agent/runtime/bridges/executionRun/createExecutionRunBridgeRuntime', () => ({
+  createExecutionRunBridgeRuntime: vi.fn((opts: Parameters<TestExecutionRunRuntimeFactory>[0]) => {
     const factory = runtimeFactoryState.current;
     if (!factory) {
       throw new Error('Missing test execution-run runtime factory');
@@ -53,6 +71,27 @@ vi.mock('@/agent/runtime/bridges/executionRun/runtime/create', () => ({
     return factory(opts);
   }),
 }));
+
+vi.mock('@/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent', () => ({
+  dispatchBridgeLifecycleHookEvent: bridgeLifecycleHookMockState.dispatchBridgeLifecycleHookEvent,
+}));
+
+vi.mock('@/scm/scmBackendCatalog', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/scm/scmBackendCatalog')>();
+  return {
+    ...actual,
+    runWithScmBackendRegistryLease: async <T>(
+      registry: ScmBackendRegistry | undefined,
+      run: (registry: ScmBackendRegistry) => Promise<T>,
+    ) => {
+      const resolvedRegistry = registry ?? scmBackendRegistryMockState.current;
+      if (!resolvedRegistry) {
+        throw new Error('Missing test SCM backend registry');
+      }
+      return await run(resolvedRegistry);
+    },
+  };
+});
 
 vi.mock('@/persistence', () => ({
   readCredentials: vi.fn(),
@@ -108,17 +147,35 @@ const registerExecutionRunHandlers = (
   ctx: TestExecutionRunHandlerContext,
 ) => {
   const { createBackend, ...baseCtx } = ctx;
+  const cwd = baseCtx.cwd === process.cwd() ? defaultExecutionRunTestCwd : baseCtx.cwd;
   runtimeFactoryState.current = createBackend ?? (() => {
     throw new Error('Missing test execution-run runtime factory');
   });
   registerExecutionRunHandlersBase(rpc, {
     ...baseCtx,
+    cwd,
     getServerFeaturesSnapshot: baseCtx.getServerFeaturesSnapshot ?? (() => voiceEnabledServerSnapshot),
+    executionRunProfileCatalog: baseCtx.executionRunProfileCatalog ?? buildExecutionRunProfileCatalog(),
   });
 };
 
+beforeAll(() => {
+  defaultExecutionRunTestCwd = mkdtempSync(join(tmpdir(), 'happier-execution-runs-default-workspace-'));
+  runGit(defaultExecutionRunTestCwd, ['init', '--initial-branch=main']);
+});
+
+afterAll(() => {
+  if (defaultExecutionRunTestCwd) {
+    rmSync(defaultExecutionRunTestCwd, { recursive: true, force: true });
+    defaultExecutionRunTestCwd = '';
+  }
+});
+
 beforeEach(async () => {
   runtimeFactoryState.current = null;
+  scmBackendRegistryMockState.current = createScmBackendRegistry([createTestGitScmBackend()]);
+  bridgeLifecycleHookMockState.dispatchBridgeLifecycleHookEvent.mockReset();
+  bridgeLifecycleHookMockState.dispatchBridgeLifecycleHookEvent.mockResolvedValue(undefined);
   approvalStoreMockState.approvalsUpdate.mockReset();
   approvalStoreMockState.approvalsGet.mockReset();
   approvalStoreMockState.approvalsUpdate.mockResolvedValue({ ok: true });
@@ -132,6 +189,185 @@ beforeEach(async () => {
   vi.mocked(fetchEncryptedTranscriptMessages).mockReset();
   vi.mocked(runReplaySummaryForDialog).mockReset();
 });
+
+function tryRunGit(cwd: string, args: string[]): string | null {
+  try {
+    return runGit(cwd, args);
+  } catch {
+    return null;
+  }
+}
+
+function detectTestGitRepo(cwd: string): ScmRepoDetection {
+  const rootPath = tryRunGit(cwd, ['rev-parse', '--show-toplevel']);
+  if (!rootPath) {
+    return { isRepo: false, rootPath: null, mode: null };
+  }
+  return { isRepo: true, rootPath, mode: '.git' };
+}
+
+function parseGitNumstatByPath(
+  raw: string,
+): ReadonlyMap<string, Readonly<{ pendingAdded: number; pendingRemoved: number }>> {
+  const statsByPath = new Map<string, Readonly<{ pendingAdded: number; pendingRemoved: number }>>();
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue;
+    const [addedRaw, removedRaw, path] = line.split('\t');
+    if (!path) continue;
+    const added = Number.parseInt(addedRaw ?? '', 10);
+    const removed = Number.parseInt(removedRaw ?? '', 10);
+    statsByPath.set(path, {
+      pendingAdded: Number.isFinite(added) && added >= 0 ? added : 0,
+      pendingRemoved: Number.isFinite(removed) && removed >= 0 ? removed : 0,
+    });
+  }
+  return statsByPath;
+}
+
+type ScmBackendPromiseResult<TKey extends keyof ScmBackend> =
+  ScmBackend[TKey] extends (...args: any[]) => Promise<infer TResult> ? TResult : never;
+
+function unsupportedTestScmOperation<TKey extends keyof ScmBackend>(): Promise<ScmBackendPromiseResult<TKey>> {
+  return Promise.resolve({
+    success: false,
+    errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+    error: 'Unsupported in test SCM backend',
+  } as ScmBackendPromiseResult<TKey>);
+}
+
+function createTestGitScmBackend(): ScmBackend {
+  const backend: ScmBackend = {
+    id: 'git',
+    selection: {
+      modeSelectionScores: { '.git': 200 },
+      preferenceAllowedModes: ['.git'],
+    },
+    async detectRepo({ cwd }) {
+      return detectTestGitRepo(cwd);
+    },
+    getCapabilities() {
+      return createScmCapabilities();
+    },
+    async describeBackend({ context }) {
+      return {
+        success: true,
+        backendId: 'git',
+        repoMode: context.detection.mode ?? undefined,
+        isRepo: context.detection.isRepo,
+        capabilities: createScmCapabilities(),
+      };
+    },
+    async statusSnapshot({ context }) {
+      const rootPath = context.detection.rootPath ?? context.cwd;
+      const branch = tryRunGit(context.cwd, ['branch', '--show-current']) || null;
+      const statusRaw = tryRunGit(context.cwd, ['status', '--porcelain=v1']) ?? '';
+      const pendingStatsByPath = parseGitNumstatByPath(
+        tryRunGit(context.cwd, ['diff', '--no-renames', '--numstat']) ?? '',
+      );
+      const entries = statusRaw
+        .split('\n')
+        .map((line) => line.trimEnd())
+        .filter(Boolean)
+        .map((line) => {
+          const indexStatus = line[0] ?? ' ';
+          const workingStatus = line[1] ?? ' ';
+          const path = line.slice(3).trim();
+          const stats = pendingStatsByPath.get(path) ?? { pendingAdded: 0, pendingRemoved: 0 };
+          const kind: 'added' | 'untracked' | 'modified' = indexStatus === 'A'
+            ? 'added'
+            : workingStatus === '?'
+              ? 'untracked'
+              : 'modified';
+          return {
+            path,
+            previousPath: null,
+            kind,
+            includeStatus: indexStatus.trim() || ' ',
+            pendingStatus: workingStatus.trim() || ' ',
+            hasIncludedDelta: indexStatus.trim().length > 0 && indexStatus !== '?',
+            hasPendingDelta: workingStatus.trim().length > 0 || workingStatus === '?',
+            stats: {
+              includedAdded: 0,
+              includedRemoved: 0,
+              pendingAdded: stats.pendingAdded,
+              pendingRemoved: stats.pendingRemoved,
+              isBinary: false,
+            },
+          };
+        });
+
+      return {
+        success: true,
+        snapshot: {
+          projectKey: `test-git:${rootPath}`,
+          fetchedAt: Date.now(),
+          repo: {
+            isRepo: true,
+            rootPath,
+            backendId: 'git',
+            mode: '.git',
+            worktrees: [],
+            remotes: [],
+          },
+          capabilities: createScmCapabilities(),
+          branch: {
+            head: branch,
+            upstream: null,
+            ahead: 0,
+            behind: 0,
+            detached: false,
+          },
+          stashCount: 0,
+          hasConflicts: false,
+          entries,
+          totals: {
+            includedFiles: entries.filter((entry) => entry.hasIncludedDelta).length,
+            pendingFiles: entries.filter((entry) => entry.hasPendingDelta).length,
+            untrackedFiles: entries.filter((entry) => entry.kind === 'added' && entry.pendingStatus === '?').length,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: entries.reduce((sum, entry) => sum + entry.stats.pendingAdded, 0),
+            pendingRemoved: entries.reduce((sum, entry) => sum + entry.stats.pendingRemoved, 0),
+          },
+        },
+      };
+    },
+    async diffFile({ context, request }) {
+      const diff = tryRunGit(context.cwd, ['diff', '--', request.path]) ?? '';
+      return { success: true, diff };
+    },
+    diffCommit: () => unsupportedTestScmOperation<'diffCommit'>(),
+    changeInclude: () => unsupportedTestScmOperation<'changeInclude'>(),
+    changeExclude: () => unsupportedTestScmOperation<'changeExclude'>(),
+    changeDiscard: () => unsupportedTestScmOperation<'changeDiscard'>(),
+    commitCreate: () => unsupportedTestScmOperation<'commitCreate'>(),
+    commitBackout: () => unsupportedTestScmOperation<'commitBackout'>(),
+    logList: () => unsupportedTestScmOperation<'logList'>(),
+    branchList: () => unsupportedTestScmOperation<'branchList'>(),
+    branchCreate: () => unsupportedTestScmOperation<'branchCreate'>(),
+    branchCheckout: () => unsupportedTestScmOperation<'branchCheckout'>(),
+    branchMerge: () => unsupportedTestScmOperation<'branchMerge'>(),
+    branchRebase: () => unsupportedTestScmOperation<'branchRebase'>(),
+    branchOperationContinue: () => unsupportedTestScmOperation<'branchOperationContinue'>(),
+    branchOperationAbort: () => unsupportedTestScmOperation<'branchOperationAbort'>(),
+    worktreeCreate: () => unsupportedTestScmOperation<'worktreeCreate'>(),
+    worktreeRemove: () => unsupportedTestScmOperation<'worktreeRemove'>(),
+    worktreePrune: () => unsupportedTestScmOperation<'worktreePrune'>(),
+    remoteAdd: () => unsupportedTestScmOperation<'remoteAdd'>(),
+    remoteSetUrl: () => unsupportedTestScmOperation<'remoteSetUrl'>(),
+    remoteRemove: () => unsupportedTestScmOperation<'remoteRemove'>(),
+    remoteFetch: () => unsupportedTestScmOperation<'remoteFetch'>(),
+    remotePull: () => unsupportedTestScmOperation<'remotePull'>(),
+    remotePush: () => unsupportedTestScmOperation<'remotePush'>(),
+    remotePublish: () => unsupportedTestScmOperation<'remotePublish'>(),
+    stashList: () => unsupportedTestScmOperation<'stashList'>(),
+    stashDrop: () => unsupportedTestScmOperation<'stashDrop'>(),
+    stashPop: () => unsupportedTestScmOperation<'stashPop'>(),
+    stashApply: () => unsupportedTestScmOperation<'stashApply'>(),
+    stashShow: () => unsupportedTestScmOperation<'stashShow'>(),
+  };
+  return backend;
+}
 
 function createApprovalRequest(
   overrides: Partial<ApprovalRequestV1> = {},
@@ -170,50 +406,30 @@ async function expectPromisePending(promise: Promise<unknown>): Promise<void> {
   expect(settled).toBe(false);
 }
 
-function asExecutionRunHostRuntime<T extends AgentBackend>(backend: T): T & ExecutionRunHostRuntime {
-  return Object.assign({}, backend, createExecutionRunHostRuntimeFromAgentBackend(backend));
-}
-
-function createStaticBackend(responseText: string): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
-  return asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
+function createStaticBackend(responseText: string): ExecutionRunHostRuntime {
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    onSendPrompt() {
+      runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
     },
-    async sendPrompt(_sessionId: SessionId, _prompt: string) {
-      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
-    },
-    async cancel(_sessionId: SessionId) {},
-    onMessage(next) {
-      handler = next;
-    },
-    async dispose() {},
-    async waitForResponseComplete() {},
+    onWaitForTurnCompletion() {},
   });
+  return runtime;
 }
 
 function createCapturingStaticBackend(
   responseText: string,
   capture: { lastPrompt: string },
-): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
-  return asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, prompt: string) {
+): ExecutionRunHostRuntime {
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    onSendPrompt(_sessionId, prompt) {
       capture.lastPrompt = prompt;
-      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
+      runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
     },
-    async cancel(_sessionId: SessionId) {},
-    onMessage(next) {
-      handler = next;
-    },
-    async dispose() {},
-    async waitForResponseComplete() {},
+    onWaitForTurnCompletion() {},
   });
+  return runtime;
 }
 
 async function waitForExecutionRunTerminalState(
@@ -233,50 +449,66 @@ async function waitForExecutionRunTerminalState(
   throw new Error('Execution run did not reach a terminal state');
 }
 
-function createDelayedBackend(responseText: string, delayMs: number): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
+function createDelayedBackend(responseText: string, delayMs: number): ExecutionRunHostRuntime {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let done: Promise<void> | null = null;
   let resolveDone: (() => void) | null = null;
-  return asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string) {
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    onSendPrompt() {
       done = new Promise((resolve) => {
         resolveDone = resolve;
         timer = setTimeout(() => {
-          handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
+          runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
           resolve();
         }, delayMs);
       });
     },
-    async cancel(_sessionId: SessionId) {
+    onCancel() {
       if (timer) clearTimeout(timer);
       resolveDone?.();
     },
-    onMessage(next) {
-      handler = next;
+    onDispose() {
+      if (timer) clearTimeout(timer);
+      resolveDone?.();
     },
-    async dispose() {},
-    async waitForResponseComplete() {
+    async onWaitForTurnCompletion() {
+      await (done ?? Promise.resolve());
+    },
+  });
+  return runtime;
+}
+
+function createPendingBackend(): ExecutionRunHostRuntime {
+  let done: Promise<void> | null = null;
+  let resolveDone: (() => void) | null = null;
+
+  return createTestExecutionRunHostRuntime({
+    onSendPrompt() {
+      done = new Promise((resolve) => {
+        resolveDone = resolve;
+      });
+    },
+    onCancel() {
+      resolveDone?.();
+    },
+    onDispose() {
+      resolveDone?.();
+    },
+    async onWaitForTurnCompletion() {
       await (done ?? Promise.resolve());
     },
   });
 }
 
-function createNeverResolvingBackend(): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_stuck' as SessionId;
+function createNeverResolvingBackend(): ExecutionRunHostRuntime {
   let done: Promise<void> | null = null;
   let sendCount = 0;
 
-  return asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string) {
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId: 'child_session_stuck',
+    async onSendPrompt() {
       sendCount += 1;
       // First prompt returns immediately but never completes, simulating a stuck in-flight turn.
       // The second prompt never resolves, simulating a backend that cannot acknowledge a cancel+send.
@@ -289,64 +521,44 @@ function createNeverResolvingBackend(): AgentBackend & ExecutionRunHostRuntime {
       done = new Promise<void>(() => {
         // intentionally never resolve/reject
       });
-      handler?.({ type: 'model-output', fullText: '' } as AgentMessage);
+      runtime.emitMessage({ type: 'model-output', fullText: '' } as AgentMessage);
     },
-    async cancel(_sessionId: SessionId) {},
-    onMessage(next) {
-      handler = next;
-    },
-    async dispose() {},
-    async waitForResponseComplete() {
+    onCancel() {},
+    async onWaitForTurnCompletion() {
       await (done ?? Promise.resolve());
     },
   });
+  return runtime;
 }
 
-function createThrowingBackend(params: { throwAtSendCount: number; message: string }): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
+function createThrowingBackend(params: { throwAtSendCount: number; message: string }): ExecutionRunHostRuntime {
   let sendCount = 0;
-  return asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string) {
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    onSendPrompt() {
       sendCount += 1;
       if (sendCount >= params.throwAtSendCount) {
         throw new Error(params.message);
       }
-      handler?.({ type: 'model-output', fullText: 'ok' } as AgentMessage);
+      runtime.emitMessage({ type: 'model-output', fullText: 'ok' } as AgentMessage);
     },
-    async cancel(_sessionId: SessionId) {},
-    onMessage(next) {
-      handler = next;
-    },
-    async dispose() {},
-    async waitForResponseComplete() {},
+    onWaitForTurnCompletion() {},
   });
+  return runtime;
 }
 
-function createResumableBackendFactory(responseText: string): () => AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_resumable' as SessionId;
-
-  return () => asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
-    },
-    async loadSession(_sessionId: SessionId) {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, _prompt: string) {
-      handler?.({ type: 'model-output', fullText: responseText } as AgentMessage);
-    },
-    async cancel(_sessionId: SessionId) {},
-    onMessage(next) {
-      handler = next;
-    },
-    async dispose() {},
-    async waitForResponseComplete() {},
-  });
+function createResumableBackendFactory(responseText: string): () => ExecutionRunHostRuntime {
+  return () => {
+    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    runtime = createTestExecutionRunHostRuntime({
+      sessionId: 'child_session_resumable',
+      resumeSupported: true,
+      onSendPrompt() {
+        runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
+      },
+    });
+    return runtime;
+  };
 }
 
 function createSequencedBackend(params: {
@@ -354,9 +566,7 @@ function createSequencedBackend(params: {
   supportsSteer?: boolean;
   cancelRejects?: boolean;
   completionRejectMessage?: string;
-}): { backend: AgentBackend & ExecutionRunHostRuntime; events: { sendPrompts: string[]; steerPrompts: string[]; cancelCount: number } } {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
+}): { backend: ExecutionRunHostRuntime; events: { sendPrompts: string[]; steerPrompts: string[]; cancelCount: number } } {
   const events = { sendPrompts: [] as string[], steerPrompts: [] as string[], cancelCount: 0 };
 
   let turnIndex = 0;
@@ -365,11 +575,9 @@ function createSequencedBackend(params: {
   let resolveDone: (() => void) | null = null;
   let rejectDone: ((e: Error) => void) | null = null;
 
-  const backend = asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, prompt: string) {
+  let backend: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  backend = createTestExecutionRunHostRuntime({
+    onSendPrompt(_sessionId, prompt) {
       events.sendPrompts.push(prompt);
       const response = params.responses[Math.min(turnIndex, params.responses.length - 1)];
       turnIndex += 1;
@@ -382,12 +590,12 @@ function createSequencedBackend(params: {
             reject(new Error(params.completionRejectMessage));
             return;
           }
-          handler?.({ type: 'model-output', fullText: response.text } as AgentMessage);
+          backend.emitMessage({ type: 'model-output', fullText: response.text } as AgentMessage);
           resolve();
         }, response.delayMs);
       });
     },
-    async cancel(_sessionId: SessionId) {
+    onCancel() {
       events.cancelCount += 1;
       if (timer) clearTimeout(timer);
       if (params.cancelRejects) {
@@ -398,16 +606,12 @@ function createSequencedBackend(params: {
     },
     ...(params.supportsSteer
       ? {
-          async sendSteerPrompt(_sessionId: SessionId, prompt: string) {
+          onSendSteerPrompt(_sessionId: string, prompt: string) {
             events.steerPrompts.push(prompt);
           },
         }
       : {}),
-    onMessage(next) {
-      handler = next;
-    },
-    async dispose() {},
-    async waitForResponseComplete() {
+    async onWaitForTurnCompletion() {
       await (done ?? Promise.resolve());
     },
   });
@@ -417,9 +621,7 @@ function createSequencedBackend(params: {
 
 function createCancelRaceBackend(params: Readonly<{
   longDelayMs: number;
-}>): { backend: AgentBackend & ExecutionRunHostRuntime; events: { sendPrompts: string[]; cancelCount: number } } {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 'child_session_1' as SessionId;
+}>): { backend: ExecutionRunHostRuntime; events: { sendPrompts: string[]; cancelCount: number } } {
   const events = { sendPrompts: [] as string[], cancelCount: 0 };
 
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -428,11 +630,9 @@ function createCancelRaceBackend(params: Readonly<{
   let rejectDone: ((e: Error) => void) | null = null;
   let rejectNextSendPrompts = 0;
 
-  const backend = asExecutionRunHostRuntime({
-    async startSession() {
-      return { sessionId };
-    },
-    async sendPrompt(_sessionId: SessionId, prompt: string) {
+  let backend: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  backend = createTestExecutionRunHostRuntime({
+    onSendPrompt(_sessionId, prompt) {
       events.sendPrompts.push(prompt);
       if (rejectNextSendPrompts > 0) {
         rejectNextSendPrompts -= 1;
@@ -443,22 +643,18 @@ function createCancelRaceBackend(params: Readonly<{
         resolveDone = resolve;
         rejectDone = reject;
         timer = setTimeout(() => {
-          handler?.({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
+          backend.emitMessage({ type: 'model-output', fullText: `reply:${prompt}` } as AgentMessage);
           resolve();
         }, params.longDelayMs);
       });
     },
-    async cancel(_sessionId: SessionId) {
+    onCancel() {
       events.cancelCount += 1;
       rejectNextSendPrompts = 1;
       if (timer) clearTimeout(timer);
       rejectDone?.(new Error('Turn cancelled'));
     },
-    onMessage(next) {
-      handler = next;
-    },
-    async dispose() {},
-    async waitForResponseComplete() {
+    async onWaitForTurnCompletion() {
       await (done ?? Promise.resolve());
     },
   });
@@ -895,7 +1091,7 @@ describe('executionRuns session RPC handlers', () => {
           parentProvider: 'claude',
           createBackend: (opts) =>
             opts.backendId === 'claude'
-              ? createDelayedBackend('running later', 50_000)
+              ? createPendingBackend()
               : createStaticBackend(JSON.stringify({ findings: [], summary: 'done' })),
           sendAcp: () => {},
         });
@@ -942,6 +1138,10 @@ describe('executionRuns session RPC handlers', () => {
         }),
       ]),
     );
+
+    await expect(
+      client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: running.runId }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('runs scm_commit_message.v1 through execution.run.start and projects the commit message result', async () => {
@@ -1001,7 +1201,7 @@ describe('executionRuns session RPC handlers', () => {
         },
       });
 
-      expect(started.runId).toMatch(/^run_/);
+      expect(started).toMatchObject({ runId: expect.stringMatching(/^run_/) });
 
       const got = await waitForExecutionRunTerminalState(client, started.runId);
       expect(got.run?.status).toBe('succeeded');
@@ -1177,7 +1377,7 @@ describe('executionRuns session RPC handlers', () => {
           createBackend: (opts) =>
             opts.backendId === 'codex'
               ? createStaticBackend(JSON.stringify({ findings: [], summary: 'done' }))
-              : createDelayedBackend('running later', 50_000),
+              : createPendingBackend(),
           sendAcp: () => {},
         });
       },
@@ -1221,6 +1421,10 @@ describe('executionRuns session RPC handlers', () => {
         }),
       ]),
     );
+
+    await expect(
+      client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: running.runId }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('applies execution.run.list legacy customAcp filtering to configured ACP runs on the canonical handler path', async () => {
@@ -1236,7 +1440,7 @@ describe('executionRuns session RPC handlers', () => {
               if (backendTarget?.kind !== 'configuredAcpBackend' || backendTarget.backendId !== 'review-bot') {
                 throw new Error('Missing configured ACP backend target');
               }
-              return createDelayedBackend('running later', 50_000);
+              return createPendingBackend();
             }
             return createStaticBackend(JSON.stringify({ findings: [], summary: 'done' }));
           },
@@ -1286,6 +1490,10 @@ describe('executionRuns session RPC handlers', () => {
         }),
       ]),
     );
+
+    await expect(
+      client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_STOP, { runId: running.runId }),
+    ).resolves.toMatchObject({ ok: true });
   });
 
   it('returns structured review meta when includeStructured is true and supports review actions', async () => {
@@ -1519,21 +1727,13 @@ describe('executionRuns session RPC handlers', () => {
   });
 
   it('does not terminalize long-lived runs when sendPrompt fails with an abort-like error', async () => {
-    let handler: AgentMessageHandler | null = null;
-    const backend = asExecutionRunHostRuntime({
-      async startSession() {
-        return { sessionId: 'child_session_1' as SessionId };
-      },
-      async sendPrompt() {
+    let backend: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    backend = createTestExecutionRunHostRuntime({
+      onSendPrompt() {
         throw new Error('Turn cancelled');
       },
-      async cancel() {},
-      onMessage(next) {
-        handler = next;
-      },
-      async dispose() {},
-      async waitForResponseComplete() {
-        handler?.({ type: 'status', status: 'idle' } as any);
+      onWaitForTurnCompletion() {
+        backend.emitMessage({ type: 'status', status: 'idle' } as AgentMessage);
       },
     });
 
@@ -1986,9 +2186,14 @@ describe('executionRuns session RPC handlers', () => {
       maxEvents: 128,
     });
     expect(read.done).toBe(true);
-    const done = (read.events as any[]).find((e) => e.t === 'done') ?? null;
-    expect(done?.assistantText).toBe('I sent that to the coding assistant and am waiting for its update.');
-    expect(done?.actions?.[0]?.t).toBe('sendSessionMessage');
+    const turnFinal = (read.events as any[]).find(
+      (event) => event.t === 'voice_output' && event.output?.kind === 'turn_final',
+    ) ?? null;
+    const sideEffect = (read.events as any[]).find(
+      (event) => event.t === 'voice_output' && event.output?.kind === 'side_effect',
+    ) ?? null;
+    expect(turnFinal?.output?.text).toBe('I sent that to the coding assistant and am waiting for its update.');
+    expect(sideEffect?.output?.action?.t).toBe('sendSessionMessage');
   });
 
   it('hydrates cached voice replay summaries on the daemon before the first streamed turn', async () => {
@@ -2321,13 +2526,16 @@ describe('executionRuns session RPC handlers', () => {
             appendAssistantText: (text: string) => {
               bestEffortAssistantTurns.push(text);
             },
-            appendUserTextCommitted: async (text: string, meta: Record<string, unknown>) => {
-              committedUserTurns.push({ text, meta });
+            commitVoiceAgentTranscriptTurn: async (turn: Readonly<{
+              turnId: string;
+              user: Readonly<{ text: string; meta: Record<string, unknown> }>;
+              assistant: Readonly<{ text: string; meta: Record<string, unknown> }>;
+            }>) => {
+              committedUserTurns.push(turn.user);
+              committedAssistantTurns.push(turn.assistant);
+              return { persisted: true, delivered: true };
             },
-            appendAssistantTextCommitted: async (text: string, meta: Record<string, unknown>) => {
-              committedAssistantTurns.push({ text, meta });
-            },
-          } as any,
+          },
         });
       },
     });
@@ -2374,6 +2582,66 @@ describe('executionRuns session RPC handlers', () => {
     expect(bestEffortAssistantTurns).toHaveLength(0);
   });
 
+  it('normalizes predecessor and bounded current-dev transcript commit vectors once at the RPC seam', async () => {
+    const committedUserTurns: Array<Readonly<{ text: string; localId: string }>> = [];
+    const client = createEncryptedRpcTestClient({
+      scopePrefix: 'sess_1',
+      registerHandlers: (rpc) => {
+        registerExecutionRunHandlers(rpc, {
+          sessionId: 'sess_1',
+          cwd: process.cwd(),
+          parentProvider: 'claude',
+          createBackend: () => createStaticBackend('Unused reply'),
+          sendAcp: () => {},
+          transcriptWriter: {
+            appendUserText: () => {},
+            appendAssistantText: () => {},
+            appendUserTextCommitted: async (text, options) => {
+              committedUserTurns.push({ text, localId: options.localId });
+              return { persisted: true, delivered: true };
+            },
+            commitVoiceAgentTranscriptTurn: async () => ({ persisted: true, delivered: true }),
+          },
+        });
+      },
+    });
+
+    const started = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      permissionMode: 'read_only',
+      retentionPolicy: 'resumable',
+      runClass: 'long_lived',
+      ioMode: 'streaming',
+      chatModelId: 'chat',
+      commitModelId: 'commit',
+      idleTtlSeconds: 60,
+      initialContext: 'ctx',
+      verbosity: 'short',
+      transcript: { persistenceMode: 'persistent', epoch: 4 },
+    });
+
+    // New reader consuming ../remote-dev@0649e4de's prospective writer shape.
+    await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
+      runId: started.runId,
+      message: 'Predecessor provider text',
+      displayMessage: 'Predecessor display text',
+      localId: 'predecessor-local-id',
+    });
+    // Bounded support for the already-current undeployed dev writer shape.
+    await client.call(SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1, {
+      runId: started.runId,
+      text: 'Current-dev provider text',
+      displayText: 'Current-dev display text',
+      localId: 'current-dev-local-id',
+    });
+
+    expect(committedUserTurns).toEqual([
+      { text: 'Predecessor display text', localId: 'predecessor-local-id' },
+      { text: 'Current-dev display text', localId: 'current-dev-local-id' },
+    ]);
+  });
+
   it('supports voice_agent stream resume via execution.run.stream.start(resume=true) after stop when backend supports loadSession', async () => {
     const createBackend = createResumableBackendFactory(
       `Hello.\n\n<voice_actions>${JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'hi' } }] })}</voice_actions>`,
@@ -2418,7 +2686,9 @@ describe('executionRuns session RPC handlers', () => {
       maxEvents: 128,
     });
     expect(read1.done).toBe(true);
-    expect((read1.events as any[]).find((e) => e.t === 'done')?.assistantText).toBe(
+    expect((read1.events as any[]).find(
+      (event) => event.t === 'voice_output' && event.output?.kind === 'turn_final',
+    )?.output?.text).toBe(
       'I sent that to the coding assistant and am waiting for its update.',
     );
 
@@ -2438,14 +2708,15 @@ describe('executionRuns session RPC handlers', () => {
       maxEvents: 128,
     });
     expect(read2.done).toBe(true);
-    expect((read2.events as any[]).find((e) => e.t === 'done')?.assistantText).toBe(
+    expect((read2.events as any[]).find(
+      (event) => event.t === 'voice_output' && event.output?.kind === 'turn_final',
+    )?.output?.text).toBe(
       'I sent that to the coding assistant and am waiting for its update.',
     );
   });
 
   it('resumes voice_agent streams after commit when the run stores a voice_agent_sessions resume handle', async () => {
     const loadCalls = { chat: [] as string[], commit: [] as string[] };
-    const handlers: Record<string, AgentMessageHandler | null> = { chat: null, commit: null };
 
     const client = createEncryptedRpcTestClient({
       scopePrefix: 'sess_1',
@@ -2454,29 +2725,28 @@ describe('executionRuns session RPC handlers', () => {
           sessionId: 'sess_1',
           cwd: process.cwd(),
           parentProvider: 'claude',
-          createBackend: ({ modelId }) => asExecutionRunHostRuntime({
-            async startSession() {
-              return { sessionId: (modelId === 'commit' ? 'commit_session_1' : 'chat_session_1') as SessionId };
-            },
-            async loadSession(sessionId: SessionId) {
-              if (modelId === 'commit') loadCalls.commit.push(String(sessionId));
-              else loadCalls.chat.push(String(sessionId));
-              return { sessionId };
-            },
-            async sendPrompt(_sessionId: SessionId, _prompt: string) {
-              const responseText =
-                modelId === 'commit'
-                  ? 'COMMIT_TEXT'
-                  : `Hello.\n\n<voice_actions>${JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'hi' } }] })}</voice_actions>`;
-              handlers[modelId === 'commit' ? 'commit' : 'chat']?.({ type: 'model-output', fullText: responseText } as AgentMessage);
-            },
-            async cancel(_sessionId: SessionId) {},
-            onMessage(next: AgentMessageHandler) {
-              handlers[modelId === 'commit' ? 'commit' : 'chat'] = next;
-            },
-            async dispose() {},
-            async waitForResponseComplete() {},
-          }),
+          createBackend: ({ modelId }) => {
+            const modelKey = modelId === 'commit' ? 'commit' : 'chat';
+            let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+            runtime = createTestExecutionRunHostRuntime({
+              sessionId: modelKey === 'commit' ? 'commit_session_1' : 'chat_session_1',
+              resumeSupported: true,
+              onProvisionSession(opts) {
+                if (opts?.resumeSessionId) {
+                  loadCalls[modelKey].push(String(opts.resumeSessionId));
+                }
+              },
+              onSendPrompt() {
+                const responseText =
+                  modelKey === 'commit'
+                    ? 'COMMIT_TEXT'
+                    : `Hello.\n\n<voice_actions>${JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'hi' } }] })}</voice_actions>`;
+                runtime.emitMessage({ type: 'model-output', fullText: responseText } as AgentMessage);
+              },
+              onWaitForTurnCompletion() {},
+            });
+            return runtime;
+          },
           sendAcp: () => {},
         });
       },
@@ -2540,7 +2810,9 @@ describe('executionRuns session RPC handlers', () => {
       maxEvents: 128,
     });
     expect(read2.done).toBe(true);
-    expect((read2.events as any[]).find((e) => e.t === 'done')?.assistantText).toBe(
+    expect((read2.events as any[]).find(
+      (event) => event.t === 'voice_output' && event.output?.kind === 'turn_final',
+    )?.output?.text).toBe(
       'I sent that to the coding assistant and am waiting for its update.',
     );
     expect(loadCalls.chat).toEqual(['chat_session_1']);
@@ -3414,11 +3686,18 @@ describe('executionRuns session RPC handlers', () => {
       ioMode: 'request_response',
     });
 
-    await new Promise((r) => setTimeout(r, 50));
-
-    const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
-    expect(got.run?.status).toBe('timeout');
-    expect(got.latestToolResult?.status).toBe('timeout');
+    await expect
+      .poll(async () => {
+        const got = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
+        return {
+          runStatus: got.run?.status,
+          toolResultStatus: got.latestToolResult?.status,
+        };
+      }, { timeout: 1_000 })
+      .toEqual({
+        runStatus: 'timeout',
+        toolResultStatus: 'timeout',
+      });
   });
 
   it('uses the review-specific bounded timeout for review runs when provided by policy', async () => {
@@ -3532,7 +3811,9 @@ describe('executionRuns session RPC handlers', () => {
       resume: true,
     });
     expect(resumed.ok).toBe(true);
-    expect(sent.filter((m: any) => (m.body as any)?.type === 'message').length).toBeGreaterThanOrEqual(2);
+    await expect
+      .poll(() => sent.filter((m: any) => (m.body as any)?.type === 'message').length, { timeout: 3_000 })
+      .toBeGreaterThanOrEqual(2);
   });
 
   it('supports execution.run.ensure(resume=true) for resumable runs', async () => {
@@ -3634,19 +3915,17 @@ describe('executionRuns session RPC handlers', () => {
           sessionId: 'sess_1',
           cwd: process.cwd(),
           parentProvider: 'claude',
-          createBackend: () => asExecutionRunHostRuntime({
-            onMessage() {},
-            async startSession() {
+          createBackend: () => createTestExecutionRunHostRuntime({
+            sessionId: 'child_session_new',
+            resumeSupported: true,
+            onProvisionSession(opts) {
+              if (opts?.resumeSessionId) {
+                calls.loadSession.push(String(opts.resumeSessionId));
+                return;
+              }
               calls.startSession += 1;
-              return { sessionId: 'child_session_new' as SessionId };
             },
-            async loadSession(providerSessionId: SessionId) {
-              calls.loadSession.push(String(providerSessionId));
-              return { sessionId: providerSessionId };
-            },
-            async sendPrompt() {},
-            async cancel() {},
-            async dispose() {},
+            onSendPrompt() {},
           }),
           sendAcp: () => {},
           policy: { maxConcurrentRuns: 5, boundedTimeoutMs: 60_000 },

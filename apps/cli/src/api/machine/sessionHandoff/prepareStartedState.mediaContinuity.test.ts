@@ -4,15 +4,35 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { SessionHandoffStartRequest, SessionHandoffStatus, SessionHandoffWorkspaceTransfer } from '@happier-dev/protocol';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { ScmBackendRegistry } from '@/scm/registry';
+import { resolveDefaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
 import { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
 import { createSessionHandoffWorkspaceReplicationAdapter } from '@/session/handoff/workspaceReplication/workspaceReplicationAdapter/adapter';
 
 import { prepareStartedState } from './prepareStartedState';
 
 const execFile = promisify(execFileCallback);
+let runtimeRegistry: Awaited<
+  ReturnType<typeof resolveExecutablePluginRuntimeRegistry>
+> | null = null;
+let scmRegistry: ScmBackendRegistry;
+
+beforeAll(async () => {
+  runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+    pluginIds: ['happier.scm.backend.git'],
+  });
+  scmRegistry = await resolveDefaultScmBackendRegistry({
+    pluginRuntimeRegistry: runtimeRegistry,
+  });
+});
+
+afterAll(async () => {
+  await runtimeRegistry?.dispose();
+});
 
 async function runGit(cwd: string, args: readonly string[]): Promise<void> {
   await execFile('git', [...args], { cwd });
@@ -61,6 +81,8 @@ describe('prepareStartedState media continuity', () => {
         negotiatedTransportStrategy: 'server_routed_stream',
         workspaceTransfer,
       };
+      const workspaceReplicationAdapter =
+        createSessionHandoffWorkspaceReplicationAdapter();
 
       const result = await prepareStartedState({
         callInput: {
@@ -80,14 +102,21 @@ describe('prepareStartedState media continuity', () => {
         activeServerDir,
         exportSessionBundle: async () => ({
           targetPath: sourceRootPath,
-          providerBundle: {
-            providerId: 'codex',
+          agentBundle: {
+            agentId: 'codex',
             remoteSessionId: 'codex_child',
             files: [],
           },
         }),
         sourceExportStore: createSessionHandoffSourceExportStore({ activeServerDir }),
-        workspaceReplicationAdapter: createSessionHandoffWorkspaceReplicationAdapter(),
+        workspaceReplicationAdapter: {
+          ...workspaceReplicationAdapter,
+          prepareSourceWorkspaceTransfer: (input) =>
+            workspaceReplicationAdapter.prepareSourceWorkspaceTransfer({
+              ...input,
+              scmRegistry,
+            }),
+        },
         resolveWorkspaceReplicationHandoffBackTargetRootPath: () => null,
         buildStartPendingStatus: ({ handoffId }): SessionHandoffStatus => ({
           status: 'pending',

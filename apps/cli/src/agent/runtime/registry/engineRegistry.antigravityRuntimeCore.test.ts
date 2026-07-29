@@ -6,26 +6,31 @@ import { resolveBuiltInContributions } from '../../../plugins/projection/registr
 import type { ResolvedContributionRegistry } from '../../../plugins/projection/registry/types';
 import { resolveExecutablePluginRuntimeRegistry } from '../../../plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveBackendEngineAdapterResolution } from './engineRegistry';
+import { resolveEngineRuntimeContribution } from './engineRegistry/contributions';
 
 const ANTIGRAVITY_BACKEND_ID = 'antigravity';
 const ANTIGRAVITY_PLUGIN_ID = 'happier.agent.antigravity';
 
 function createAntigravityOnlyContributionRegistry(): ResolvedContributionRegistry {
   const builtInContributions = resolveBuiltInContributions();
-  const provider = builtInContributions.agents.find((entry) => entry.id === ANTIGRAVITY_BACKEND_ID);
-  const backend = builtInContributions.agentRuntimes.find((entry) => entry.id === ANTIGRAVITY_BACKEND_ID);
+  const builtInRegistry = {
+    agentDefinitionsById: new Map(builtInContributions.agents.map((agent) => [agent.id, agent])),
+  };
+  const agentContribution = builtInContributions.agents.find((entry) => entry.id === ANTIGRAVITY_BACKEND_ID);
+  const backend = resolveEngineRuntimeContribution(builtInRegistry, ANTIGRAVITY_BACKEND_ID);
   const activationTargets = builtInContributions.activationTargets?.filter((target) => target.pluginId === ANTIGRAVITY_PLUGIN_ID) ?? [];
 
-  if (!provider || !backend || activationTargets.length !== 1) {
-    throw new Error('Expected generated Antigravity provider, backend, and activation target contributions');
+  if (!agentContribution || !backend || activationTargets.length !== 1) {
+    throw new Error('Expected generated Antigravity Agent, runtime, and activation target contributions');
   }
 
   return {
-    agents: Object.freeze([provider]),
-    agentRuntimes: Object.freeze([backend]),
-    actions: Object.freeze([]),
+    agents: Object.freeze([agentContribution]),
+        actions: Object.freeze([]),
     resources: Object.freeze([]),
-    uiDescriptors: Object.freeze([]),
+    uiViewsV2: Object.freeze([]),
+    uiRenderersV2: Object.freeze([]),
+    uiTranslationsV2: Object.freeze([]),
     notifications: Object.freeze([]),
     notificationChannels: Object.freeze([]),
     events: Object.freeze([]),
@@ -36,12 +41,9 @@ function createAntigravityOnlyContributionRegistry(): ResolvedContributionRegist
     scmBackends: Object.freeze([]),
     connectedAccountDescriptors: Object.freeze([]),
     activationTargets: Object.freeze(activationTargets),
-    hookRegistrations: Object.freeze([]),
-    surfaceHandlersByBackendId: new Map(),
-    catalogEntriesById: Object.freeze(provider.catalogEntry ? { [provider.catalogEntry.id]: provider.catalogEntry } : {}),
-    agentDefinitionsById: new Map([[provider.id, provider]]),
-    agentRuntimeDefinitionsById: new Map([[backend.id, backend]]),
-    pluginDiagnosticsByPluginId: Object.freeze({}),
+        catalogEntriesById: Object.freeze(agentContribution.catalogEntry ? { [agentContribution.catalogEntry.id]: agentContribution.catalogEntry } : {}),
+    agentDefinitionsById: new Map([[agentContribution.id, agentContribution]]),
+        pluginDiagnosticsByPluginId: Object.freeze({}),
   };
 }
 

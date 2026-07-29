@@ -12,6 +12,10 @@ import {
   finalizeUploadTransferSession,
   abortUploadTransferSession,
 } from '../core/transferSessionLifecycle';
+import {
+  buildTransferLifecycleDiagnosticFields,
+  type TransferLifecycleDiagnosticContext,
+} from './transferLifecycleDiagnostics';
 
 type UploadSessionHandle = NonNullable<ReturnType<TransferSessionStore['getUploadSession']>>;
 
@@ -38,7 +42,7 @@ type ResolvedUploadInit<TInitResponse, TFinalizeResult> =
       kind: 'accepted';
       target: UploadTransferSessionTarget<TFinalizeResult>;
       sha256Expected?: string;
-      logContext?: Record<string, unknown>;
+      diagnosticContext: TransferLifecycleDiagnosticContext;
     }>;
 
 export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalizeResponse, TFinalizeResult = undefined>(params: Readonly<{
@@ -94,14 +98,12 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
         : {}),
     });
 
-    if (resolved.logContext) {
-      logger.debug('Transfer upload init:', {
-        uploadId: session.uploadId,
-        sizeBytes: resolved.target.expectedSizeBytes,
-        chunkSizeBytes: session.chunkSizeBytes,
-        ...resolved.logContext,
-      });
-    }
+    logger.debug('[TRANSFER] upload lifecycle', {
+      code: 'transfer_upload_initialized',
+      sizeBytes: resolved.target.expectedSizeBytes,
+      chunkSizeBytes: session.chunkSizeBytes,
+      ...buildTransferLifecycleDiagnosticFields(resolved.diagnosticContext),
+    });
 
     return params.buildInitSuccessResponse({ session });
   });

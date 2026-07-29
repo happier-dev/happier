@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -381,12 +382,18 @@ test('ensureManagedPnpmCommand fails closed for an invalid explicit override ins
 });
 
 test('ensureManagedJavaScriptRuntimeCommand installs a managed Node runtime and creates a wrapper that delegates to it', async () => {
-  const dir = await mkdtemp(join(tmpdir(), 'happier-managed-js-runtime-'));
+  const dir = await mkdtemp(join(
+    tmpdir(),
+    process.platform === 'win32'
+      ? "happier managed js-runtime quote'-"
+      : "happier managed js-runtime quote' double\"-",
+  ));
   try {
     const homeDir = join(dir, 'home');
     await mkdir(homeDir, { recursive: true });
     const expectedScratchRoot = join(homeDir, 'tools', 'js-runtime', '.tmp');
     let downloadedArchivePath = null;
+    let skippedTarLinks = null;
 
     const env = {
       ...process.env,
@@ -407,11 +414,18 @@ test('ensureManagedJavaScriptRuntimeCommand installs a managed Node runtime and 
         downloadedArchivePath = destinationPath;
         await writeFile(destinationPath, 'fake archive payload', 'utf8');
       },
-      extractGitHubReleaseAsset: async ({ outputPath }) => {
+      extractGitHubReleaseAsset: async ({ outputPath, skipTarLinks }) => {
+        skippedTarLinks = skipTarLinks;
         const nodeBinaryPath =
           process.platform === 'win32' ? join(outputPath, 'node.exe') : join(outputPath, 'bin', 'node');
         await mkdir(dirname(nodeBinaryPath), { recursive: true });
-        await writeFile(nodeBinaryPath, process.platform === 'win32' ? '@echo off\r\nexit /b 0\r\n' : '#!/bin/sh\nexit 0\n', 'utf8');
+        await writeFile(
+          nodeBinaryPath,
+          process.platform === 'win32'
+            ? '@echo off\r\nexit /b 23\r\n'
+            : "#!/bin/sh\nprintf '%s\\n' \"$@\"\nexit 23\n",
+          'utf8',
+        );
         if (process.platform !== 'win32') {
           await chmod(nodeBinaryPath, 0o755);
         }
@@ -419,11 +433,43 @@ test('ensureManagedJavaScriptRuntimeCommand installs a managed Node runtime and 
     });
     assert.equal(command, managedJavaScriptRuntimeBinPath(env));
     assert.equal(downloadedArchivePath?.startsWith(expectedScratchRoot), true);
+    assert.equal(skippedTarLinks, true);
 
     const wrapper = await readFile(command, 'utf8');
     assert.doesNotMatch(wrapper, /pnpm|fake-pnpm/);
     assert.match(wrapper, /runtime/);
     assert.match(wrapper, /node(?:\.exe)?/);
+
+    if (process.platform === 'win32') {
+      assert.equal(wrapper, '@echo off\r\n"%~dp0..\\runtime\\node.exe" %*\r\n');
+    } else {
+      assert.doesNotMatch(wrapper, /\bdirname\b/u);
+      const args = ['alpha beta', "single'quote", 'double"quote', '$dollar;semi', ''];
+      const result = await new Promise((resolve, reject) => {
+        const child = spawn(command, args, {
+          env: { PATH: '' },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        const stdout = [];
+        const stderr = [];
+        child.stdout.on('data', (chunk) => stdout.push(Buffer.from(chunk)));
+        child.stderr.on('data', (chunk) => stderr.push(Buffer.from(chunk)));
+        child.once('error', reject);
+        child.once('close', (exitCode, signal) => resolve({
+          exitCode,
+          signal,
+          stdout: Buffer.concat(stdout).toString('utf8'),
+          stderr: Buffer.concat(stderr).toString('utf8'),
+        }));
+      });
+
+      assert.deepEqual(result, {
+        exitCode: 23,
+        signal: null,
+        stdout: `${args.join('\n')}\n`,
+        stderr: '',
+      });
+    }
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1500,7 +1546,7 @@ test('resolveExistingManagedJavaScriptRuntimeCommand ignores a managed wrapper w
       managedPath,
       process.platform === 'win32'
         ? '@echo off\r\n"%~dp0..\\runtime\\node.exe" %*\r\n'
-        : '#!/bin/sh\nexec "$(dirname "$0")/../runtime/bin/node" "$@"\n',
+        : '#!/bin/sh\nexec "${0%/*}/../runtime/bin/node" "$@"\n',
       'utf8',
     );
     if (process.platform !== 'win32') {

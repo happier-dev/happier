@@ -9,12 +9,22 @@ import {
     isServerRoutedTransferOverSizeLimit,
     SERVER_ROUTED_FILE_TRANSFER_SIZE_LIMIT_ERROR,
 } from '../policy/serverRoutedTransferPolicy';
-import { finalizeWorkspaceFileUpload } from './finalizeWorkspaceFileUpload';
+import {
+    finalizeWorkspaceFileUpload,
+    type WorkspaceFileFinalizeOperations,
+} from './finalizeWorkspaceFileUpload';
 import type { UploadTransferTarget } from './uploadTransferTarget';
 
 export type WorkspaceFileUploadTarget = UploadTransferTarget & Readonly<{
     destPath: string;
 }>;
+
+export type WorkspaceFinalizeFileOperationsFactory = (input: Readonly<{
+    uploadId: string;
+    tempPath: string;
+    destPath: string;
+    overwrite: boolean;
+}>) => WorkspaceFileFinalizeOperations | null;
 
 type WorkspaceFileUploadTargetResult =
     | Readonly<{ success: true; target: WorkspaceFileUploadTarget }>
@@ -36,6 +46,7 @@ export function resolveWorkspaceFileUploadTarget(input: Readonly<{
     accessPolicy?: FilesystemAccessPolicy;
     additionalAllowedWriteDirs?: readonly string[];
     sessionRpcTransferMaxBytes?: number | null;
+    finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): WorkspaceFileUploadTargetResult {
     const path = typeof input.path === 'string' ? input.path : '';
     const sizeBytes = normalizeSizeBytes(input.sizeBytes);
@@ -72,13 +83,19 @@ export function resolveWorkspaceFileUploadTarget(input: Readonly<{
             destDisplayPath: path,
             expectedSizeBytes: sizeBytes,
             overwrite,
-            finalizeUpload: async ({ tempPath, sizeBytes: finalizedSizeBytes }) =>
+            finalizeUpload: async ({ uploadId, tempPath, sizeBytes: finalizedSizeBytes }) =>
                 await finalizeWorkspaceFileUpload({
                     tempPath,
                     destPath,
                     destDisplayPath: path,
                     overwrite,
                     sizeBytes: finalizedSizeBytes,
+                    fileOperations: input.finalizeFileOperations?.({
+                        uploadId,
+                        tempPath,
+                        destPath,
+                        overwrite,
+                    }) ?? null,
                 }),
         },
     };

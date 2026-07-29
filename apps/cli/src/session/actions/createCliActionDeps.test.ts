@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   ProviderConnectionIdSchema,
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
 } from '@happier-dev/protocol';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 const {
   createSpawnedSession,
@@ -13,6 +13,7 @@ const {
   listExecutionRuns,
   executeExecutionRunAction,
   callSessionRpc,
+  callMachineRpc,
   hostSubagentStore,
   routeSessionGoalControl,
   routeSessionCatalogControl,
@@ -21,6 +22,7 @@ const {
   routeSessionUsageLimitRecoveryWaitResumeCancel,
   routeSessionUsageLimitRecoveryWaitResumeEnable,
   readSettings,
+  getPreferredHostName,
   setSessionModel,
 } = vi.hoisted(() => ({
   createSpawnedSession: vi.fn(),
@@ -31,6 +33,7 @@ const {
   listExecutionRuns: vi.fn(),
   executeExecutionRunAction: vi.fn(),
   callSessionRpc: vi.fn(),
+  callMachineRpc: vi.fn(),
   routeSessionGoalControl: vi.fn(),
   routeSessionCatalogControl: vi.fn(),
   routeSessionUsageLimitRecoveryCheckNow: vi.fn(),
@@ -38,6 +41,7 @@ const {
   routeSessionUsageLimitRecoveryWaitResumeCancel: vi.fn(),
   routeSessionUsageLimitRecoveryWaitResumeEnable: vi.fn(),
   readSettings: vi.fn(),
+  getPreferredHostName: vi.fn(),
   setSessionModel: vi.fn(),
   hostSubagentStore: {
     list: vi.fn(),
@@ -82,6 +86,10 @@ vi.mock('@/session/transport/rpc/sessionRpc', () => ({
   callSessionRpc,
 }));
 
+vi.mock('@/session/transport/rpc/machineRpc', () => ({
+  callMachineRpc,
+}));
+
 vi.mock('@/session/goalControls/sessionGoalControlRouter', () => ({
   routeSessionGoalControl,
 }));
@@ -107,6 +115,10 @@ vi.mock('@/persistence', async () => {
     readSettings,
   };
 });
+
+vi.mock('@/daemon/machine/metadata', () => ({
+  getPreferredHostName,
+}));
 
 vi.mock('@/session/subagents/hostSubagentStore', async () => {
   const actual = await vi.importActual<any>('@/session/subagents/hostSubagentStore');
@@ -134,6 +146,7 @@ describe('createCliActionDeps hook dispatch', () => {
     listExecutionRuns.mockReset();
     executeExecutionRunAction.mockReset();
     callSessionRpc.mockReset();
+    callMachineRpc.mockReset();
     routeSessionGoalControl.mockReset();
     routeSessionCatalogControl.mockReset();
     routeSessionUsageLimitRecoveryCheckNow.mockReset();
@@ -141,8 +154,10 @@ describe('createCliActionDeps hook dispatch', () => {
     routeSessionUsageLimitRecoveryWaitResumeCancel.mockReset();
     routeSessionUsageLimitRecoveryWaitResumeEnable.mockReset();
     readSettings.mockReset();
+    getPreferredHostName.mockReset();
     setSessionModel.mockReset();
     readSettings.mockResolvedValue({ machineId: 'local-machine' });
+    getPreferredHostName.mockResolvedValue('local-machine.local');
     hostSubagentStore.list.mockReset();
     hostSubagentStore.get.mockReset();
     hostSubagentStore.watch.mockReset();
@@ -151,8 +166,18 @@ describe('createCliActionDeps hook dispatch', () => {
     hostSubagentStore.complete.mockReset();
   });
 
-  it('preserves provider connection identity when setting a session model', async () => {
-    setSessionModel.mockResolvedValue({ ok: true, sessionId: 'sess-1' });
+  it('preserves the active transition owner result when setting a session model', async () => {
+    setSessionModel.mockResolvedValue({
+      ok: true,
+      status: 'applied',
+      sessionId: 'sess-1',
+      modelId: 'model-a',
+      activeSelection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        modelId: 'model-a',
+      },
+    });
     const deps = createCliActionDeps({
       token: 'token',
       credentials: {
@@ -171,7 +196,17 @@ describe('createCliActionDeps hook dispatch', () => {
       sessionId: 'sess-1',
       modelId: 'model-a',
       providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
-    })).resolves.toMatchObject({ ok: true, sessionId: 'sess-1', modelId: 'model-a' });
+    })).resolves.toEqual({
+      ok: true,
+      status: 'applied',
+      sessionId: 'sess-1',
+      modelId: 'model-a',
+      activeSelection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'model-a',
+      },
+    });
 
     expect(setSessionModel).toHaveBeenCalledWith(expect.objectContaining({
       idOrPrefix: 'sess-1',
@@ -180,16 +215,66 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
-  it('surfaces the structured restart action when a session model change would switch providers', async () => {
+  it('preserves the inactive intent owner timestamp and structured selection', async () => {
+    const selection = {
+      agentTargetKey: 'backend:codex',
+      providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+      modelId: 'model-a',
+    };
+    setSessionModel.mockResolvedValue({
+      ok: true,
+      status: 'intent_updated',
+      sessionId: 'sess-1',
+      modelId: 'model-a',
+      selection,
+      updatedAt: 123,
+      metadata: { ignored: true },
+      version: 7,
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+    });
+
+    await expect(deps.sessionModelSet?.({
+      sessionId: 'sess-1',
+      modelId: 'model-a',
+      providerConnectionId: selection.providerConnectionId,
+    })).resolves.toEqual({
+      ok: true,
+      status: 'intent_updated',
+      sessionId: 'sess-1',
+      modelId: 'model-a',
+      selection,
+      updatedAt: 123,
+    });
+  });
+
+  it('preserves exact active and requested facts when a session model transition requires restart', async () => {
     setSessionModel.mockResolvedValue({
       ok: false,
-      code: 'provider_switch_unsupported',
-      providerError: {
-        v: 1,
-        code: 'provider_switch_unsupported',
-        retryable: false,
-        action: 'review_and_restart',
+      status: 'restart_required',
+      sessionId: 'sess-1',
+      activeSelection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        modelId: 'model-old',
       },
+      requestedSelection: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_other'),
+        modelId: 'model-a',
+      },
+      reason: 'provider_source_change_requires_restart',
     });
     const deps = createCliActionDeps({
       token: 'token',
@@ -211,13 +296,21 @@ describe('createCliActionDeps hook dispatch', () => {
       providerConnectionId: 'pc_other',
     })).resolves.toEqual({
       ok: false,
-      errorCode: 'provider_switch_unsupported',
-      error: 'provider_switch_unsupported',
+      errorCode: 'restart_required',
+      error: 'restart_required',
       details: {
-        v: 1,
-        code: 'provider_switch_unsupported',
-        retryable: false,
-        action: 'review_and_restart',
+        status: 'restart_required',
+        activeSelection: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_work',
+          modelId: 'model-old',
+        },
+        requestedSelection: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: 'pc_other',
+          modelId: 'model-a',
+        },
+        reason: 'provider_source_change_requires_restart',
       },
     });
   });
@@ -297,19 +390,30 @@ describe('createCliActionDeps hook dispatch', () => {
       happySessionId: 'sess-new',
       machineId: 'machine-1',
       cwd: '/repo',
-      workspaceId: 'workspace-1',
-      backendTarget: 'agent:claude',
-      payload: expect.objectContaining({
+      backendTarget: 'backend:claude',
+      payload: {
         sessionId: 'sess-new',
-        backendTargetKey: 'agent:claude',
-        path: '/repo',
-        title: 'My title',
+        agentId: 'claude',
+        runtimeTarget: {
+          kind: 'backend',
+          backendId: 'claude',
+          sourceKind: 'built_in',
+        },
+        cwd: '/repo',
         tag: 'tag-1',
         modelId: 'gpt-4o',
-        initialMessageLength: 16,
-      }),
+        initialMessage: 'Hello from spawn',
+        machineId: 'machine-1',
+      },
     }));
+    expect(emitSessionLifecycleHookEvent.mock.calls[0]?.[0]).not.toHaveProperty('workspaceId');
 
+    sendSessionMessage.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-1',
+      localId: 'local-current-connection',
+      waited: false,
+    });
     emitSessionLifecycleHookEvent.mockClear();
     await deps.sessionSendMessage({
       sessionId: 'sess-1',
@@ -322,6 +426,147 @@ describe('createCliActionDeps hook dispatch', () => {
     const hookPayload = emitSessionLifecycleHookEvent.mock.calls[0]?.[0]?.payload as Readonly<Record<string, unknown>>;
     expect(hookPayload).not.toHaveProperty('modelOverride');
     expect(hookPayload).not.toHaveProperty('providerConnectionId');
+  });
+
+  it('uses the exact local machine when machineId is explicit and its normalized host assertion matches', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-explicit',
+      session: { id: 'sess-explicit' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'parent-machine',
+        path: '/repo/parent',
+        host: 'parent-machine',
+        metadata: {
+          workspaceId: 'parent-workspace',
+        },
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      machineId: 'local-machine',
+      host: 'LOCAL-MACHINE',
+      path: '/repo/explicit',
+      backendTargetKey: 'agent:claude',
+    })).resolves.toMatchObject({ type: 'success', sessionId: 'sess-explicit' });
+
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'local-machine',
+      directory: '/repo/explicit',
+    }));
+    const emitted = emitSessionLifecycleHookEvent.mock.calls.at(-1)?.[0];
+    expect(emitted).toEqual(expect.objectContaining({
+      happySessionId: 'sess-explicit',
+      machineId: 'local-machine',
+      cwd: '/repo/explicit',
+      payload: expect.objectContaining({
+        sessionId: 'sess-explicit',
+        machineId: 'local-machine',
+        cwd: '/repo/explicit',
+      }),
+    }));
+    expect(emitted).not.toHaveProperty('workspaceId');
+  });
+
+  it.each([
+    {
+      name: 'unknown machine identity',
+      input: { machineId: 'unknown-machine', path: '/repo/explicit' },
+    },
+    {
+      name: 'conflicting host assertion',
+      input: { machineId: 'local-machine', host: 'another-machine', path: '/repo/explicit' },
+    },
+    {
+      name: 'different server scope',
+      input: { machineId: 'local-machine', serverId: 'definitely-not-the-active-server', path: '/repo/explicit' },
+    },
+  ])('fails an explicit $name with invalid_parameters before spawn', async ({ input }) => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-unexpected',
+      session: { id: 'sess-unexpected' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'parent-machine',
+        path: '/repo/parent',
+        host: 'parent-machine',
+        metadata: {},
+      },
+    });
+
+    await expect(deps.sessionSpawnNew({
+      ...input,
+      backendTargetKey: 'agent:claude',
+    })).resolves.toEqual({
+      type: 'error',
+      errorCode: 'invalid_parameters',
+      errorMessage: 'invalid_parameters',
+    });
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+  });
+
+  it('does not borrow the current session directory for a different explicit machine', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-unexpected',
+      session: { id: 'sess-unexpected' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'parent-machine',
+        path: '/repo/parent',
+        host: 'parent-machine',
+        metadata: {},
+      },
+    });
+
+    await expect(deps.sessionSpawnNew({
+      machineId: 'local-machine',
+      backendTargetKey: 'agent:claude',
+    })).resolves.toEqual({
+      type: 'error',
+      errorCode: 'spawn_target_missing',
+      errorMessage: 'spawn_target_missing',
+    });
+    expect(createSpawnedSession).not.toHaveBeenCalled();
   });
 
   it('rejects a provider connection without an explicit model selection', async () => {
@@ -553,6 +798,7 @@ describe('createCliActionDeps hook dispatch', () => {
         sourceKind: 'configured',
         configuredBackendId: 'review-bot',
       }),
+      happyHomeDir: '/tmp/happier-home',
     });
 
     await expect(deps.sessionSpawnNew({
@@ -581,6 +827,19 @@ describe('createCliActionDeps hook dispatch', () => {
         agent: {},
       },
       title: 'Inherited configured backend child',
+    }));
+    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
+      happySessionId: 'sess-child-configured',
+      payload: expect.objectContaining({
+        sessionId: 'sess-child-configured',
+        agentId: 'claude',
+        runtimeTarget: {
+          kind: 'backend',
+          backendId: 'review-bot',
+          sourceKind: 'configured',
+          configuredBackendId: 'review-bot',
+        },
+      }),
     }));
   });
 
@@ -648,6 +907,127 @@ describe('createCliActionDeps hook dispatch', () => {
       runtimeDescriptorV1: inheritedRuntimeDescriptor,
       title: 'Inherited runtime child',
     }));
+  });
+
+  it('does not inherit a parent runtime descriptor when an explicit built-in Agent target is requested', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-explicit-agent-child',
+      session: { id: 'sess-explicit-agent-child' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+        metadata: {
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'claude',
+            agent: {},
+          },
+        },
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      path: '/repo',
+      backendTargetKey: 'agent:codex',
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-explicit-agent-child',
+    });
+
+    const spawnInput = vi.mocked(createSpawnedSession).mock.calls.at(-1)?.[0];
+    expect(spawnInput).toEqual(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+    }));
+    expect(spawnInput).not.toHaveProperty('runtimeDescriptorV1');
+    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
+      happySessionId: 'sess-explicit-agent-child',
+      payload: expect.objectContaining({
+        sessionId: 'sess-explicit-agent-child',
+        agentId: 'codex',
+      }),
+    }));
+  });
+
+  it('does not publish a configured backend id as an Agent id when no carrier Agent is known', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-configured-without-carrier',
+      session: { id: 'sess-configured-without-carrier' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+        metadata: {
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'claude',
+            agent: {},
+          },
+        },
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      path: '/repo',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        sourceKind: 'configured',
+        configuredBackendId: 'review-bot',
+      },
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-configured-without-carrier',
+    });
+
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        sourceKind: 'configured',
+        configuredBackendId: 'review-bot',
+      },
+    }));
+    expect(vi.mocked(createSpawnedSession).mock.calls.at(-1)?.[0]).not.toHaveProperty('runtimeDescriptorV1');
+    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
   });
 
   it('inherits configured ACP backend metadata before runtime descriptor metadata', async () => {
@@ -719,6 +1099,67 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       title: 'Inherited configured metadata child',
     }));
+  });
+
+  it('consumes inherited legacy ACP runtime descriptors without copying their carrier into a child or hook', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-child-configured-legacy-runtime',
+      session: { id: 'sess-child-configured-legacy-runtime' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+        metadata: {
+          acpConfiguredBackendV1: {
+            v: 1,
+            backendId: 'review-bot',
+            title: 'Review Bot',
+            updatedAt: 120,
+          },
+          runtimeDescriptorV1: {
+            v: 1,
+            agentId: 'customAcp',
+            agent: {},
+          },
+        },
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      title: 'Inherited configured metadata child',
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-child-configured-legacy-runtime',
+    });
+
+    const spawnInput = vi.mocked(createSpawnedSession).mock.calls.at(-1)?.[0];
+    expect(spawnInput).toEqual(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'review-bot',
+        sourceKind: 'configured',
+        configuredBackendId: 'review-bot',
+      },
+    }));
+    expect(spawnInput).not.toHaveProperty('runtimeDescriptorV1');
+    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
   });
 
   it('rejects session-agent spawn permission escalation before creating a child session', async () => {
@@ -963,6 +1404,313 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
+  it('routes structured plugin lifecycle hooks by the reconciled backend target, not the runtime Agent', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-structured-plugin',
+      session: { id: 'sess-structured-plugin' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      agentId: 'claude',
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'plugin-review-bot',
+        sourceKind: 'built_in',
+      },
+      path: '/repo',
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-structured-plugin',
+    });
+
+    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
+      eventId: 'session.spawned',
+      backendTarget: 'backend:plugin-review-bot',
+      payload: expect.objectContaining({
+        agentId: 'claude',
+        runtimeTarget: {
+          kind: 'backend',
+          backendId: 'plugin-review-bot',
+          sourceKind: 'built_in',
+        },
+      }),
+    }));
+  });
+
+  it('spawns a V1 plugin target key with a distinct runtime descriptor Agent carrier', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-v1-plugin',
+      session: { id: 'sess-v1-plugin' },
+    });
+    const runtimeDescriptorV1 = {
+      v: 1 as const,
+      agentId: 'claude',
+      agent: {},
+    };
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      backendTargetKey: 'agent:plugin-review-bot',
+      runtimeDescriptorV1,
+      path: '/repo',
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-v1-plugin',
+    });
+
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'plugin-review-bot',
+        sourceKind: 'built_in',
+      },
+      runtimeDescriptorV1,
+    }));
+    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: 'backend:plugin-review-bot',
+      payload: expect.objectContaining({
+        agentId: 'claude',
+      }),
+    }));
+  });
+
+  it('rejects a V1 plugin target key without an explicit runtime Agent carrier', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-v1-plugin-without-carrier',
+      session: { id: 'sess-v1-plugin-without-carrier' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      backendTargetKey: 'agent:plugin-review-bot',
+      path: '/repo',
+    })).resolves.toMatchObject({
+      type: 'error',
+      errorCode: 'invalid_parameters',
+    });
+
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
+  });
+
+  it('spawns equivalent lossy V1 configured and lossless V2 structured targets', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-v1-v2-configured',
+      session: { id: 'sess-v1-v2-configured' },
+    });
+    const backendTarget = {
+      kind: 'backend' as const,
+      backendId: 'customAcpRuntimeCarrier',
+      configuredBackendId: 'kiro',
+      sourceKind: 'configured' as const,
+    };
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      backendTargetKey: 'acpBackend:kiro',
+      backendTarget,
+      path: '/repo',
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-v1-v2-configured',
+    });
+
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget,
+    }));
+    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
+  });
+
+  it('does not publish a structured non-Agent backend id without an explicit Agent carrier', async () => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-structured-plugin',
+      session: { id: 'sess-structured-plugin' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'plugin-review-bot',
+        sourceKind: 'built_in',
+      },
+      path: '/repo',
+    })).resolves.toMatchObject({
+      type: 'success',
+      sessionId: 'sess-structured-plugin',
+    });
+
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'plugin-review-bot',
+        sourceKind: 'built_in',
+      },
+    }));
+    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['Agent id', { agentId: 'claude' }],
+    ['runtime descriptor Agent', {
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'claude',
+        agent: {},
+      },
+    }],
+    ['backend target key', { backendTargetKey: 'agent:claude' }],
+  ] as const)('rejects a structured built-in target that conflicts with an explicit %s', async (_label, conflictingInput) => {
+    createSpawnedSession.mockResolvedValue({
+      created: true,
+      sessionId: 'sess-conflicting-target',
+      session: { id: 'sess-conflicting-target' },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-1',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'machine-1',
+        path: '/repo',
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSpawnNew({
+      backendTarget: {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      },
+      path: '/repo',
+      ...conflictingInput,
+    })).resolves.toMatchObject({
+      type: 'error',
+      errorCode: 'invalid_parameters',
+    });
+
+    expect(createSpawnedSession).not.toHaveBeenCalled();
+    expect(emitSessionLifecycleHookEvent).not.toHaveBeenCalled();
+  });
+
   it('fails closed when legacy customAcp is used without an explicit concrete backend target', async () => {
     const deps = createCliActionDeps({
       token: 'token',
@@ -1063,15 +1811,11 @@ describe('createCliActionDeps hook dispatch', () => {
       machineId: 'machine-1',
       cwd: '/repo',
       workspaceId: 'workspace-1',
-      payload: expect.objectContaining({
+      payload: {
         sessionId: 'sess-1',
-        messageLength: 11,
-        wait: true,
-        timeoutSeconds: 30,
-        permissionModeOverride: 'read_only',
-        modelOverride: 'gpt-4o',
-        providerConnectionId: 'pc_work',
-      }),
+        text: 'Hello world',
+        source: 'user',
+      },
     }));
   });
 
@@ -1172,12 +1916,85 @@ describe('createCliActionDeps hook dispatch', () => {
       happyHomeDir: '/tmp/happier-home',
       eventId: 'session.message.send',
       happySessionId: 'sess-1',
-      payload: expect.objectContaining({
+      payload: {
         sessionId: 'sess-1',
-        messageLength: 11,
-        wait: false,
-        timeoutSeconds: 15,
-      }),
+        text: 'Hello world',
+        source: 'user',
+      },
+    }));
+  });
+
+  it('dispatches session.message.send hooks with the resolved target session context', async () => {
+    sendSessionMessage.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-target',
+      localId: 'local-target',
+      waited: false,
+    });
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-target',
+      rawSession: {
+        machineId: 'target-machine',
+        path: '/repo/target',
+        metadata: {
+          workspaceId: 'target-workspace',
+        },
+      },
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([5, 6, 7, 8]),
+        encryptionVariant: 'legacy',
+      },
+    });
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: {
+          type: 'legacy',
+          secret: new Uint8Array([1, 2, 3, 4]),
+        },
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: {
+        encryptionKey: new Uint8Array([1, 2, 3, 4]),
+        encryptionVariant: 'legacy',
+      },
+      rawSession: {
+        machineId: 'parent-machine',
+        path: '/repo/parent',
+        metadata: {
+          workspaceId: 'parent-workspace',
+        },
+      },
+      happyHomeDir: '/tmp/happier-home',
+    });
+
+    await expect(deps.sessionSendMessage({
+      sessionId: 'sess-target',
+      message: 'Hello target',
+    })).resolves.toEqual({
+      ok: true,
+      sessionId: 'sess-target',
+      localId: 'local-target',
+      waited: false,
+    });
+
+    expect(resolveSessionTransportContext).toHaveBeenCalledWith(expect.objectContaining({
+      idOrPrefix: 'sess-target',
+    }));
+    expect(emitSessionLifecycleHookEvent).toHaveBeenCalledWith(expect.objectContaining({
+      happySessionId: 'sess-target',
+      machineId: 'target-machine',
+      cwd: '/repo/target',
+      workspaceId: 'target-workspace',
+      payload: {
+        sessionId: 'sess-target',
+        text: 'Hello target',
+        source: 'user',
+      },
     }));
   });
 
@@ -1362,7 +2179,7 @@ describe('createCliActionDeps hook dispatch', () => {
     await expect(deps.sessionUserActionAnswer?.({
       sessionId: 'sess-1',
       requestId: 'question-done',
-      answers: [{ question: 'Continue?', answer: 'Yes' }],
+      answers: [{ question: 'Continue?', values: ['Yes'] }],
     })).resolves.toEqual({
       ok: false,
       errorCode: 'permission_request_not_found',
@@ -1471,31 +2288,10 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
-  it('routes usage-limit wait-resume controls through the recovery control router when enabled', async () => {
-    const recovery = {
-      v: 1,
-      status: 'waiting',
-      issueFingerprint: 'usage-limit:sess-remote:reset',
-      armedAtMs: 1,
-      resetAtMs: 2,
-      nextCheckAtMs: 2,
-      attemptCount: 0,
-      maxAttempts: 3,
-      lastProbeError: null,
-      selectedAuth: { kind: 'native' },
-      resumePromptMode: 'off',
-    } as const;
-    const scheduleInactiveSessionUsageLimitRecoveryCheck = vi.fn();
-    const cancelInactiveSessionUsageLimitRecoveryCheck = vi.fn();
-    const cancelConnectedServiceRuntimeAuthRecovery = vi.fn(async () => ({ ok: true }));
-    routeSessionUsageLimitRecoveryWaitResumeEnable.mockResolvedValueOnce({
-      ok: true,
-      recovery: { status: 'waiting' },
-      metadata: {
-        [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: recovery,
-      },
-    });
-    routeSessionUsageLimitRecoveryWaitResumeCancel.mockResolvedValueOnce({ ok: true, recovery: { status: 'cancelled' } });
+  it('delegates inactive usage-limit wait-resume controls to the exact target daemon', async () => {
+    callMachineRpc
+      .mockResolvedValueOnce({ ok: true, status: 'waiting', sessionId: 'sess-remote' })
+      .mockResolvedValueOnce({ ok: true, status: 'cancelled', sessionId: 'sess-remote' });
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'sess-remote',
@@ -1533,9 +2329,6 @@ describe('createCliActionDeps hook dispatch', () => {
         metadata: {},
       },
       isUsageLimitRecoveryEnabled: async () => true,
-      scheduleInactiveSessionUsageLimitRecoveryCheck,
-      cancelInactiveSessionUsageLimitRecoveryCheck,
-      cancelConnectedServiceRuntimeAuthRecovery,
     });
 
     await expect(deps.sessionUsageLimitWaitResumeEnable?.({
@@ -1546,50 +2339,138 @@ describe('createCliActionDeps hook dispatch', () => {
     })).resolves.toMatchObject({ ok: true, status: 'waiting', sessionId: 'sess-remote' });
     await expect(deps.sessionUsageLimitWaitResumeCancel?.({
       sessionId: 'sess-remote',
-      issueFingerprint: null,
+      issueFingerprint: 'usage-limit:sess-remote:reset',
+      armedAtMs: 1,
+      runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
     })).resolves.toEqual({ ok: true, status: 'cancelled', sessionId: 'sess-remote' });
     expect(callSessionRpc).not.toHaveBeenCalled();
-    expect(routeSessionUsageLimitRecoveryWaitResumeEnable).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sess-remote',
-      currentMachineId: 'local-machine',
+    expect(callMachineRpc).toHaveBeenNthCalledWith(1, {
+      credentials: expect.objectContaining({ token: 'token' }),
+      machineId: 'target-machine',
+      method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE,
       request: {
         sessionId: 'sess-remote',
         issueFingerprint: 'usage-limit:sess-remote:reset',
         rememberPreference: true,
         resumePromptMode: 'off',
       },
-    }));
-    expect(routeSessionUsageLimitRecoveryWaitResumeCancel).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sess-remote',
-      currentMachineId: 'local-machine',
+    });
+    expect(callMachineRpc).toHaveBeenNthCalledWith(2, {
+      credentials: expect.objectContaining({ token: 'token' }),
+      machineId: 'target-machine',
+      method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL,
       request: {
         sessionId: 'sess-remote',
-        issueFingerprint: null,
+        issueFingerprint: 'usage-limit:sess-remote:reset',
+        armedAtMs: 1,
+        runtimeAuthRecoveryAttemptId: 'runtime-auth-attempt:exact-1',
       },
-    }));
-    expect(scheduleInactiveSessionUsageLimitRecoveryCheck).toHaveBeenCalledWith({
-      sessionId: 'sess-remote',
-      recovery,
-      runCheckNow: expect.any(Function),
     });
-    routeSessionUsageLimitRecoveryCheckNow.mockResolvedValueOnce({ ok: true, status: 'ready' });
-    await expect(scheduleInactiveSessionUsageLimitRecoveryCheck.mock.calls[0]?.[0].runCheckNow()).resolves.toEqual({
+    expect(routeSessionUsageLimitRecoveryWaitResumeEnable).not.toHaveBeenCalled();
+    expect(routeSessionUsageLimitRecoveryWaitResumeCancel).not.toHaveBeenCalled();
+  });
+
+  it('fails closed on inactive target-machine mismatch without opening a local owner', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
       ok: true,
-      status: 'ready',
       sessionId: 'sess-remote',
-    });
-    expect(routeSessionUsageLimitRecoveryCheckNow).toHaveBeenCalledWith(expect.objectContaining({
-      request: {
-        sessionId: 'sess-remote',
-        resumePromptMode: 'off',
+      rawSession: {
+        id: 'sess-remote',
+        active: false,
+        machineId: 'machine-raw',
+        metadata: { machineId: 'machine-metadata' },
       },
-    }));
-    expect(cancelInactiveSessionUsageLimitRecoveryCheck).toHaveBeenCalledWith({
-      sessionId: 'sess-remote',
+      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+      mode: 'plain',
     });
-    expect(cancelConnectedServiceRuntimeAuthRecovery).toHaveBeenCalledWith({
-      sessionId: 'sess-remote',
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+      isUsageLimitRecoveryEnabled: async () => true,
     });
+
+    await expect(deps.sessionUsageLimitCheckNow?.({ sessionId: 'sess-remote' })).resolves.toEqual({
+      ok: false,
+      status: 'unsupported',
+      sessionId: 'sess-remote',
+      errorCode: 'session_usage_limit_recovery_control_target_machine_mismatch',
+    });
+    expect(callMachineRpc).not.toHaveBeenCalled();
+    expect(routeSessionUsageLimitRecoveryCheckNow).not.toHaveBeenCalled();
+  });
+
+  it('reports an unavailable target daemon without falling back to local persistence', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-remote',
+      rawSession: {
+        id: 'sess-remote',
+        active: false,
+        machineId: 'target-machine',
+        metadata: { machineId: 'target-machine' },
+      },
+      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+      mode: 'plain',
+    });
+    callMachineRpc.mockRejectedValueOnce(new Error('daemon offline'));
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy', secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain',
+      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+      isUsageLimitRecoveryEnabled: async () => true,
+    });
+
+    await expect(deps.sessionUsageLimitCheckNow?.({ sessionId: 'sess-remote' })).resolves.toEqual({
+      ok: false,
+      status: 'session_unreachable',
+      sessionId: 'sess-remote',
+      errorCode: 'session_usage_limit_recovery_control_target_machine_unavailable',
+    });
+    expect(routeSessionUsageLimitRecoveryCheckNow).not.toHaveBeenCalled();
+  });
+
+  it('keeps independent non-daemon action compositions as daemon-RPC delegates', async () => {
+    resolveSessionTransportContext.mockResolvedValue({
+      ok: true,
+      sessionId: 'sess-remote',
+      rawSession: {
+        id: 'sess-remote',
+        active: false,
+        machineId: 'target-machine',
+        metadata: { machineId: 'target-machine' },
+      },
+      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' },
+      mode: 'plain',
+    });
+    callMachineRpc.mockResolvedValue({ ok: true, status: 'waiting', sessionId: 'sess-remote' });
+    const createDeps = () => createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: { type: 'legacy' as const, secret: new Uint8Array([1, 2, 3, 4]) },
+      },
+      sessionId: 'sess-current',
+      mode: 'plain' as const,
+      ctx: { encryptionKey: new Uint8Array([1, 2, 3, 4]), encryptionVariant: 'legacy' as const },
+      isUsageLimitRecoveryEnabled: async () => true,
+    });
+
+    await createDeps().sessionUsageLimitCheckNow?.({ sessionId: 'sess-remote' });
+    await createDeps().sessionUsageLimitCheckNow?.({ sessionId: 'sess-remote' });
+
+    expect(callMachineRpc).toHaveBeenCalledTimes(2);
+    expect(routeSessionUsageLimitRecoveryCheckNow).not.toHaveBeenCalled();
   });
 
   it('skips live execution-run list rpc for inactive resolved sessions', async () => {
@@ -1641,8 +2522,8 @@ describe('createCliActionDeps hook dispatch', () => {
     }));
   });
 
-  it('routes usage-limit check-now through the recovery control router when enabled', async () => {
-    routeSessionUsageLimitRecoveryCheckNow.mockResolvedValueOnce({ ok: true, status: 'ready' });
+  it('delegates inactive usage-limit check-now through daemon RPC when enabled', async () => {
+    callMachineRpc.mockResolvedValueOnce({ ok: true, status: 'ready', sessionId: 'sess-remote' });
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'sess-remote',
@@ -1659,9 +2540,6 @@ describe('createCliActionDeps hook dispatch', () => {
       },
       mode: 'plain',
     });
-    readSettings.mockResolvedValue({ machineId: 'target-machine' });
-    const resumeInactiveSessionWhenUsageLimitReady = vi.fn(async () => true);
-    const retryTemporaryThrottleNow = vi.fn(async () => ({ status: 'resumed' }));
 
     const deps = createCliActionDeps({
       token: 'token',
@@ -1682,8 +2560,6 @@ describe('createCliActionDeps hook dispatch', () => {
         metadata: {},
       },
       isUsageLimitRecoveryEnabled: async () => true,
-      resumeInactiveSessionWhenUsageLimitReady,
-      retryTemporaryThrottleNow,
     });
 
     await expect(deps.sessionUsageLimitCheckNow?.({
@@ -1692,28 +2568,17 @@ describe('createCliActionDeps hook dispatch', () => {
     })).resolves.toEqual({ ok: true, status: 'ready', sessionId: 'sess-remote' });
 
     expect(callSessionRpc).not.toHaveBeenCalled();
-    expect(routeSessionUsageLimitRecoveryCheckNow).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'sess-remote',
-      currentMachineId: 'target-machine',
-      rawSession: expect.objectContaining({ active: false }),
+    expect(callMachineRpc).toHaveBeenCalledWith({
+      credentials: expect.objectContaining({ token: 'token' }),
+      machineId: 'target-machine',
+      method: RPC_METHODS.DAEMON_SESSION_USAGE_LIMIT_CHECK_NOW,
       request: { sessionId: 'sess-remote', agentId: 'codex' },
-      resumeInactiveSessionWhenReady: expect.any(Function),
-      retryTemporaryThrottleNow,
-    }));
-    await expect(routeSessionUsageLimitRecoveryCheckNow.mock.calls[0]?.[0].resumeInactiveSessionWhenReady({
-      sessionId: 'sess-remote',
-      rawSession: { id: 'sess-remote' },
-      metadata: { machineId: 'target-machine' },
-    })).resolves.toBe(true);
-    expect(resumeInactiveSessionWhenUsageLimitReady).toHaveBeenCalledWith({
-      sessionId: 'sess-remote',
-      rawSession: { id: 'sess-remote' },
-      metadata: { machineId: 'target-machine' },
     });
+    expect(routeSessionUsageLimitRecoveryCheckNow).not.toHaveBeenCalled();
   });
 
-  it('routes usage-limit reset-credit consumption through the recovery control router', async () => {
-    routeSessionUsageLimitRecoveryCheckNow.mockResolvedValueOnce({ ok: true, status: 'waiting' });
+  it('keeps active usage-limit reset-credit consumption in runner SESSION RPC custody', async () => {
+    callSessionRpc.mockResolvedValueOnce({ ok: true, status: 'waiting', sessionId: 'sess-remote' });
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'sess-remote',
@@ -1759,11 +2624,9 @@ describe('createCliActionDeps hook dispatch', () => {
       resumePromptMode: 'custom',
     })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'sess-remote' });
 
-    expect(callSessionRpc).not.toHaveBeenCalled();
-    expect(routeSessionUsageLimitRecoveryCheckNow).toHaveBeenCalledWith(expect.objectContaining({
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess-remote',
-      currentMachineId: 'target-machine',
-      rawSession: expect.objectContaining({ active: true }),
+      method: `sess-remote:${SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT}`,
       request: {
         sessionId: 'sess-remote',
         agentId: 'codex',
@@ -1771,10 +2634,12 @@ describe('createCliActionDeps hook dispatch', () => {
         resumePromptMode: 'custom',
       },
     }));
+    expect(callMachineRpc).not.toHaveBeenCalled();
+    expect(routeSessionUsageLimitRecoveryCheckNow).not.toHaveBeenCalled();
   });
 
-  it('routes usage-limit switch-account controls through daemon runtime-auth recovery', async () => {
-    routeSessionUsageLimitRecoverySwitchAccountNow.mockResolvedValueOnce({ ok: true, status: 'waiting' });
+  it('keeps active usage-limit switch-account controls in runner SESSION RPC custody', async () => {
+    callSessionRpc.mockResolvedValueOnce({ ok: true, status: 'waiting', sessionId: 'sess-group' });
     resolveSessionTransportContext.mockResolvedValue({
       ok: true,
       sessionId: 'sess-group',
@@ -1842,12 +2707,18 @@ describe('createCliActionDeps hook dispatch', () => {
       resumePromptMode: 'custom',
     })).resolves.toEqual({ ok: true, status: 'waiting', sessionId: 'sess-group' });
 
-    expect(callSessionRpc).not.toHaveBeenCalled();
-    expect(routeSessionUsageLimitRecoverySwitchAccountNow).toHaveBeenCalledWith(expect.objectContaining({
+    expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'sess-group',
-      rawSession: expect.objectContaining({ active: true }),
-      request: { sessionId: 'sess-group', agentId: 'codex', resumePromptMode: 'custom' },
+      method: `sess-group:${SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW}`,
+      request: {
+        sessionId: 'sess-group',
+        agentId: 'codex',
+        operation: 'switch_account_now',
+        resumePromptMode: 'custom',
+      },
     }));
+    expect(callMachineRpc).not.toHaveBeenCalled();
+    expect(routeSessionUsageLimitRecoverySwitchAccountNow).not.toHaveBeenCalled();
   });
 
   it('normalizes usage-limit recovery action-deps authentication failures', async () => {

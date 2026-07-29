@@ -62,4 +62,13 @@ describe('promptConfirmYesNo', () => {
     queueAnswers(['?', '?', '?']);
     expect(await promptConfirmYesNo('q?', { default: 'yes', maxAttempts: 3 })).toBe(true);
   });
+
+  it('forwards cancellation to the terminal input owner', async () => {
+    const controller = new AbortController();
+    const spy = queueAnswers(['']);
+
+    await promptConfirmYesNo('q?', { default: 'no', signal: controller.signal });
+
+    expect(spy).toHaveBeenCalledWith(expect.any(String), { signal: controller.signal });
+  });
 });

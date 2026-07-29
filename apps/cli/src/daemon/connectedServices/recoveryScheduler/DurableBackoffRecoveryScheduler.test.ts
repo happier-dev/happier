@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+
+import { createRecoveryIntentFileStore } from './recoveryIntentFileStore';
 
 type TestStatus = 'waiting' | 'checking' | 'cancelled' | 'exhausted';
 
@@ -55,18 +60,27 @@ type SchedulerModule = Readonly<{
     honorTimerNotBefore?: boolean;
   }) => {
     upsert: (input: { sessionId: string; intent: TIntent }) => Promise<TIntent>;
-    upsertMerged: (input: {
+	    upsertMerged: (input: {
       sessionId: string;
       intent: TIntent;
       merge: (previous: TIntent | null, next: TIntent) => TIntent;
-    }) => Promise<TIntent>;
-    read: (sessionId: string) => TIntent | null;
-    hydrate: () => ReadonlyArray<TIntent>;
+	    }) => Promise<TIntent>;
+    transact: <TResult>(input: {
+      sessionId: string;
+      transaction: (current: TIntent | null) => { intent: TIntent | null; result: TResult };
+      schedule?: boolean;
+    }) => Promise<TResult>;
+    read: (sessionId: string, options?: Readonly<{ schedule?: boolean }>) => TIntent | null;
+    hydrate: (options?: Readonly<{ schedule?: boolean }>) => ReadonlyArray<TIntent>;
 	    wake: (input: { sessionId: string; reason: string }) => Promise<{ status: string }>;
 	    cancel: (input: { sessionId: string }) => Promise<TIntent | null>;
 	    clear: (input: { sessionId: string }) => Promise<TIntent | null>;
+    rearmAfterConfirmedEffectOwnerLoss: (input: {
+      sessionId: string;
+      authorization: 'fresh_user_action_after_owner_loss';
+    }) => Promise<TIntent | null>;
 	    dispose: () => void;
-	  };
+		  };
 }>;
 
 async function loadModule(): Promise<SchedulerModule> {
@@ -355,6 +369,121 @@ describe('DurableBackoffRecoveryScheduler', () => {
     await expect(scheduler.wake({ sessionId: 'sess_2', reason: 'timer' })).resolves.toEqual({ status: 'succeeded' });
   });
 
+  it('can hydrate persisted work passively without treating startup state as execution authority', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000));
+    try {
+      const { DurableBackoffRecoveryScheduler } = await loadModule();
+      const stored = new Map<string, unknown>([
+        ['sess_1', intent({ nextRetryAtMs: 2_000 })],
+      ]);
+      const recover = vi.fn(async () => ({ status: 'success' as const }));
+      const scheduler = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({
+        nowMs: () => Date.now(),
+        recover,
+        store: {
+          read: (sessionId) => stored.get(sessionId) ?? null,
+          readAll: () => Array.from(stored.entries()),
+          write: (sessionId, next) => {
+            stored.set(sessionId, next);
+          },
+        },
+      }));
+
+      expect(scheduler.hydrate({ schedule: false })).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(recover).not.toHaveBeenCalled();
+
+      await expect(scheduler.wake({ sessionId: 'sess_1', reason: 'manual' }))
+        .resolves.toEqual({ status: 'succeeded' });
+      expect(recover).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('supports side-effect-free observation while ordinary reads keep their scheduling contract', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(1_000));
+    try {
+      const { DurableBackoffRecoveryScheduler } = await loadModule();
+      const recover = vi.fn(async () => ({ status: 'success' as const }));
+      const stored = new Map<string, unknown>([
+        ['sess_observed', intent({ nextRetryAtMs: 2_000 })],
+      ]);
+      const scheduler = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({
+        nowMs: () => Date.now(),
+        recover,
+        store: {
+          read: (sessionId) => stored.get(sessionId) ?? null,
+          write: (sessionId, next) => {
+            stored.set(sessionId, next);
+          },
+        },
+      }));
+
+      expect(scheduler.read('sess_observed', { schedule: false })).toMatchObject({ status: 'waiting' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(recover).not.toHaveBeenCalled();
+
+      await scheduler.transact({
+        sessionId: 'sess_observed',
+        schedule: false,
+        transaction: (current) => ({
+          intent: current ? { ...current, lastError: 'observed' } : null,
+          result: undefined,
+        }),
+      });
+      await vi.advanceTimersByTimeAsync(1);
+      expect(recover).not.toHaveBeenCalled();
+
+      expect(scheduler.read('sess_observed')).toMatchObject({ status: 'waiting' });
+      await vi.runOnlyPendingTimersAsync();
+      expect(recover).toHaveBeenCalledTimes(1);
+      scheduler.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('retains a crashed recovery effect claim until fresh user action rearms it', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-recovery-claim-'));
+    try {
+      const { DurableBackoffRecoveryScheduler } = await loadModule();
+      const store = createRecoveryIntentFileStore<TestIntent>(join(dir, 'intents.json'));
+      const firstRecover = vi.fn(async () => await new Promise<never>(() => {}));
+      const first = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({
+        recover: firstRecover,
+        store,
+      }));
+      await first.upsert({ sessionId: 'sess_claimed', intent: intent() });
+      void first.wake({ sessionId: 'sess_claimed', reason: 'manual' });
+      await expect.poll(() => firstRecover).toHaveBeenCalledOnce();
+      first.dispose();
+
+      const replacementRecover = vi.fn(async () => ({ status: 'success' as const }));
+      const replacement = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({
+        recover: replacementRecover,
+        store: createRecoveryIntentFileStore<TestIntent>(join(dir, 'intents.json')),
+      }));
+      replacement.hydrate({ schedule: false });
+
+      await expect(replacement.wake({ sessionId: 'sess_claimed', reason: 'manual' }))
+        .resolves.toEqual({ status: 'checking' });
+      expect(replacementRecover).not.toHaveBeenCalled();
+
+      await replacement.rearmAfterConfirmedEffectOwnerLoss({
+        sessionId: 'sess_claimed',
+        authorization: 'fresh_user_action_after_owner_loss',
+      });
+      await expect(replacement.wake({ sessionId: 'sess_claimed', reason: 'manual' }))
+        .resolves.toEqual({ status: 'succeeded' });
+      expect(replacementRecover).toHaveBeenCalledOnce();
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('does not overwrite a cancellation when in-flight recovery later succeeds', async () => {
     const { DurableBackoffRecoveryScheduler } = await loadModule();
     let releaseRecovery!: () => void;
@@ -384,6 +513,61 @@ describe('DurableBackoffRecoveryScheduler', () => {
 
     await expect(wake).resolves.toEqual({ status: 'inactive' });
     expect(stored.get('sess_1')).toMatchObject({ status: 'cancelled' });
+  });
+
+  it('does not fence an in-flight recovery for a transaction that returns the exact current intent', async () => {
+    const { DurableBackoffRecoveryScheduler } = await loadModule();
+    let releaseRecovery!: () => void;
+    const recover = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseRecovery = resolve;
+      });
+      return { status: 'wait' as const, nextRetryAtMs: 9_000 };
+    });
+    const scheduler = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({ recover }));
+
+    await scheduler.upsert({ sessionId: 'sess_noop', intent: intent() });
+    const wake = scheduler.wake({ sessionId: 'sess_noop', reason: 'manual' });
+    await expect.poll(() => recover).toHaveBeenCalledOnce();
+    await scheduler.transact({
+      sessionId: 'sess_noop',
+      transaction: (current) => ({ intent: current, result: undefined }),
+    });
+    releaseRecovery();
+
+    await expect(wake).resolves.toEqual({ status: 'waiting' });
+    expect(scheduler.read('sess_noop')).toMatchObject({
+      status: 'waiting',
+      attemptCount: 1,
+      nextRetryAtMs: 9_000,
+    });
+  });
+
+  it('still fences an in-flight recovery when a transaction materially replaces the intent', async () => {
+    const { DurableBackoffRecoveryScheduler } = await loadModule();
+    let releaseRecovery!: () => void;
+    const recover = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseRecovery = resolve;
+      });
+      return { status: 'wait' as const, nextRetryAtMs: 9_000 };
+    });
+    const scheduler = new DurableBackoffRecoveryScheduler<TestIntent>(strategy({ recover }));
+
+    await scheduler.upsert({ sessionId: 'sess_replaced', intent: intent() });
+    const wake = scheduler.wake({ sessionId: 'sess_replaced', reason: 'manual' });
+    await expect.poll(() => recover).toHaveBeenCalledOnce();
+    await scheduler.transact({
+      sessionId: 'sess_replaced',
+      transaction: (current) => ({
+        intent: current ? { ...current, status: 'cancelled', nextRetryAtMs: null } : null,
+        result: undefined,
+      }),
+    });
+    releaseRecovery();
+
+    await expect(wake).resolves.toEqual({ status: 'inactive' });
+    expect(scheduler.read('sess_replaced')).toMatchObject({ status: 'cancelled' });
   });
 
   it('merges replacement intent with the normalized stored intent', async () => {

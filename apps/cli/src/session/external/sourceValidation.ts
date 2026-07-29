@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 export type DirectSourceValidationResult =
   | Readonly<{ ok: true; source: import('@happier-dev/protocol').ExternalSessionsSource }>
-  | Readonly<{ ok: false; error: string }>;
+  | Readonly<{ ok: false; error: string; errorCode?: 'invalid_request' | 'agent_unavailable' }>;
 
 export function directSourceValidationError(error: string): DirectSourceValidationResult {
   return { ok: false, error };

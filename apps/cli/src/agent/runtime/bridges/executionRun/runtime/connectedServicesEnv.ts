@@ -9,6 +9,7 @@ import {
 import { readCredentials, type Credentials } from '@/persistence';
 import { resolveSessionSpawnConnectedServicesDefaultsPayload } from '@/session/services/spawnConnectedServicesDefaults';
 import { logger } from '@/ui/logger';
+import type { ExecutionRunConnectedServicesRegistrationV1 } from '@/daemon/connectedServices/runs/materializeContract';
 
 /**
  * Generic (provider-agnostic) connected-services env resolution for execution-run backends.
@@ -63,6 +64,7 @@ type MaterializationDeps = Readonly<{
 export type ResolvedExecutionRunConnectedServicesEnv = Readonly<{
     env: Readonly<Record<string, string>>;
     connectedServicesBindings: unknown;
+    registration: ExecutionRunConnectedServicesRegistrationV1;
     cleanup: () => Promise<void>;
 }>;
 
@@ -221,21 +223,32 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
         envKeys: Object.keys(response.result.env),
     });
 
-    let released = false;
+    let cleanupPromise: Promise<void> | null = null;
     const cleanup = async (): Promise<void> => {
-        if (released) return;
-        released = true;
+        if (cleanupPromise) return await cleanupPromise;
+        const attempt = (async () => {
+            const result = await deps.release({
+                runId: params.runId,
+                runnerPid: deps.runnerPid,
+                activationId: response.result.activationId,
+            });
+            if (result.ok !== true || result.released !== true) {
+                throw new Error(result.error ?? 'Execution-run connected-services cleanup did not complete');
+            }
+        })();
+        cleanupPromise = attempt;
         try {
-            await deps.release({ runId: params.runId, runnerPid: deps.runnerPid });
-        } catch {
-            // Best-effort: release must never mask the run's own outcome. The daemon also drops
-            // run targets when the runner pid dies.
+            await attempt;
+        } catch (error) {
+            if (cleanupPromise === attempt) cleanupPromise = null;
+            throw error;
         }
     };
 
     return {
         env: { ...response.result.env },
         connectedServicesBindings: response.result.connectedServicesBindings,
+        registration: response.result.registration,
         cleanup,
     };
 }

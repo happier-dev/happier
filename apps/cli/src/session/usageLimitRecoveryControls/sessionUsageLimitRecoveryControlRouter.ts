@@ -15,7 +15,7 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
-import { getSessionUsageLimitRecoveryControlAdapter } from '@/backends/catalog';
+import { resolveInactiveSessionUsageLimitRecoveryControls } from './catalogHooks';
 import type { Credentials } from '@/persistence';
 import type {
   SessionEncryptionContext,
@@ -35,7 +35,12 @@ import {
   buildUsageLimitRecoveryOperationSuccess,
   normalizeUsageLimitRecoveryOperationResult,
 } from './sessionUsageLimitRecoveryOperationResult';
-import { persistUsageLimitRecoveryFieldDurably } from './persistUsageLimitRecoveryFieldDurably';
+import {
+  persistUsageLimitRecoveryFieldDurably,
+  type StageUsageLimitRecoveryMutation,
+} from './persistUsageLimitRecoveryFieldDurably';
+import { resolveRoutedUsageLimitRecoveryResumePromptMode } from './resolveRoutedUsageLimitRecoveryResumePromptMode';
+import { hasSameUsageLimitRecoveryIdentity } from './mergeUsageLimitRecoveryIntent';
 
 type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
   token: string;
@@ -49,6 +54,7 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
   ctx: SessionEncryptionContext;
   mode: SessionStoredContentEncryptionMode;
   callLiveSessionRpc: () => Promise<unknown>;
+  stageUsageLimitRecoveryMutation: StageUsageLimitRecoveryMutation;
   resolveAdapter?: ResolveSessionUsageLimitRecoveryControlAdapter;
   retryTemporaryThrottleNow?: (input: Readonly<{
     sessionId: string;
@@ -58,6 +64,10 @@ type RouteSessionUsageLimitRecoveryControlParams = Readonly<{
     rawSession: RawSessionRecord;
     metadata: Record<string, unknown>;
   }>) => Promise<boolean>;
+  resumePromptTierSources?: Readonly<{
+    accountSettings?: unknown;
+    loadGroupPolicy?: (selectedAuth: SessionUsageLimitRecoveryV1['selectedAuth'] | null) => Promise<unknown> | unknown;
+  }>;
 }>;
 
 type RouteSessionUsageLimitRecoveryWaitResumeEnableParams =
@@ -76,6 +86,8 @@ type RouteSessionUsageLimitRecoveryWaitResumeCancelParams =
     request: Readonly<{
       sessionId: string;
       issueFingerprint?: string | null;
+      armedAtMs?: number;
+      runtimeAuthRecoveryAttemptId?: string;
     }>;
   }>;
 
@@ -83,7 +95,9 @@ type RouteSessionUsageLimitRecoveryCheckNowParams =
   RouteSessionUsageLimitRecoveryControlParams & Readonly<{
     request?: Readonly<{
       sessionId: string;
-      provider?: string;
+      agentId?: string;
+      issueFingerprint?: string;
+      operation?: 'check_now' | 'switch_account_now' | 'consume_reset_credit';
       resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
     }>;
   }>;
@@ -181,6 +195,7 @@ function buildAdapterParams(
   metadata: Record<string, unknown>,
   sessionMachineId: string,
   resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1,
+  issueFingerprint?: string,
 ): SessionUsageLimitRecoveryControlAdapterParams {
   return {
     token: params.token,
@@ -191,6 +206,7 @@ function buildAdapterParams(
     currentMachineId: params.currentMachineId,
     sessionMachineId,
     cwd: resolveRawSessionString(params.rawSession, 'path') ?? readString(metadata.path),
+    ...(issueFingerprint ? { issueFingerprint } : {}),
     ...(resumePromptMode ? { resumePromptMode } : {}),
     ctx: params.ctx,
     mode: params.mode,
@@ -224,16 +240,14 @@ async function persistAdapterMetadataResult(
   const usageLimitRecovery = nextMetadata ? readUsageLimitRecoveryMetadataValue(nextMetadata) : null;
   if (!usageLimitRecovery || !params.credentials) return result;
   const persisted = await persistUsageLimitRecoveryFieldDurably({
-    token: params.token,
-    credentials: params.credentials,
     sessionId: params.sessionId,
-    rawSession: params.rawSession,
     currentMetadata: params.metadata ?? {},
     nextMetadata: writeSessionStateFieldToMetadata(
       (params.metadata ?? {}) as SessionMetadata,
       'runtime.usageLimitRecovery',
       usageLimitRecovery,
     ) as Record<string, unknown>,
+    stageUsageLimitRecoveryMutation: params.stageUsageLimitRecoveryMutation,
   });
 
   return {
@@ -252,8 +266,8 @@ function buildUsageLimitIssueFingerprint(
 ): string {
   return [
     'usage-limit',
-    issue.provider ?? 'unknown-provider',
-    issue.providerTurnId ?? 'unknown-turn',
+    issue.agentId ?? 'unknown-agent',
+    issue.agentTurnId ?? 'unknown-turn',
     String(issue.occurredAt),
     issue.usageLimit?.resetAtMs === null || issue.usageLimit?.resetAtMs === undefined
       ? 'no-reset'
@@ -321,10 +335,10 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
   };
 }
 
-function buildEnabledRecoveryIntent(
+async function buildEnabledRecoveryIntent(
   params: RouteSessionUsageLimitRecoveryWaitResumeEnableParams,
   metadata: Record<string, unknown>,
-): SessionUsageLimitRecoveryV1 | null {
+): Promise<SessionUsageLimitRecoveryV1 | null> {
   const existing = parseRecoveryIntent(metadata);
   const issueFingerprint =
     typeof params.request.issueFingerprint === 'string' && params.request.issueFingerprint.trim().length > 0
@@ -335,13 +349,18 @@ function buildEnabledRecoveryIntent(
     ...(issueFingerprint ? { issueFingerprint } : {}),
   });
   if (!base) return null;
-  const resumePromptMode =
-    readResumePromptMode(params.request.resumePromptMode)
-    ?? readResumePromptMode(existing?.resumePromptMode)
-    ?? 'standard';
+  const resumePromptMode = await resolveRoutedUsageLimitRecoveryResumePromptMode({
+    explicit: params.request.resumePromptMode,
+    existingIntent: existing,
+    accountSettings: params.resumePromptTierSources?.accountSettings,
+    loadGroupPolicy: params.resumePromptTierSources?.loadGroupPolicy
+      ? () => params.resumePromptTierSources!.loadGroupPolicy!(base.selectedAuth)
+      : undefined,
+  });
   return {
     ...base,
     status: 'waiting',
+    ...(existing?.status === 'cancelled' ? { attemptCount: 0 } : {}),
     resumePromptMode,
     ...(issueFingerprint ? { issueFingerprint } : {}),
     lastProbeError: null,
@@ -351,17 +370,17 @@ function buildEnabledRecoveryIntent(
 async function persistUsageLimitRecoveryMetadata(
   params: RouteSessionUsageLimitRecoveryControlParams,
   updater: (metadata: Record<string, unknown>) => Record<string, unknown>,
+  mode: 'converge' | 'rearm' | 'explicit_rearm' | 'cancel' = 'converge',
 ): Promise<Record<string, unknown> | null> {
   if (!params.credentials) return null;
   const currentMetadata = params.metadata ?? {};
   const nextMetadata = updater(currentMetadata);
   return await persistUsageLimitRecoveryFieldDurably({
-    token: params.token,
-    credentials: params.credentials,
     sessionId: params.sessionId,
-    rawSession: params.rawSession,
     currentMetadata,
     nextMetadata,
+    mode,
+    stageUsageLimitRecoveryMutation: params.stageUsageLimitRecoveryMutation,
   });
 }
 
@@ -427,13 +446,13 @@ export async function routeSessionUsageLimitRecoveryWaitResumeEnable(
   const context = ensureLocalInactiveControlContext(params);
   if (!context.ok) return context.result;
 
-  const nextIntent = buildEnabledRecoveryIntent(params, context.metadata);
+  const nextIntent = await buildEnabledRecoveryIntent(params, context.metadata);
   if (!nextIntent) return stableError('session_usage_limit_recovery_control_inactive', params.sessionId);
 
   const persistedMetadata = await persistUsageLimitRecoveryMetadata(params, (currentMetadata) => ({
     ...currentMetadata,
     [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: nextIntent,
-  }));
+  }), 'explicit_rearm');
 
   return buildUsageLimitRecoveryOperationSuccess({
     sessionId: params.sessionId,
@@ -459,22 +478,43 @@ export async function routeSessionUsageLimitRecoveryWaitResumeCancel(
 
   const existing = parseRecoveryIntent(context.metadata);
   const requestedFingerprint = params.request.issueFingerprint;
+  const requestedArmedAtMs = params.request.armedAtMs;
   if (
-    existing
-    && typeof requestedFingerprint === 'string'
-    && requestedFingerprint.trim().length > 0
-    && existing.issueFingerprint !== requestedFingerprint.trim()
+    !existing
+    || typeof requestedFingerprint !== 'string'
+    || requestedFingerprint.trim().length === 0
+    || typeof requestedArmedAtMs !== 'number'
   ) {
+    return stableError('session_usage_limit_recovery_control_attempt_identity_required', params.sessionId);
+  }
+  const requestedIdentity = {
+    issueFingerprint: requestedFingerprint.trim(),
+    armedAtMs: Math.trunc(requestedArmedAtMs),
+    ...(typeof params.request.runtimeAuthRecoveryAttemptId === 'string'
+      && params.request.runtimeAuthRecoveryAttemptId.trim().length > 0
+      ? { runtimeAuthRecoveryAttemptId: params.request.runtimeAuthRecoveryAttemptId.trim() }
+      : {}),
+  };
+  if (!hasSameUsageLimitRecoveryIdentity(existing, requestedIdentity)) {
     return stableError('session_usage_limit_recovery_control_issue_mismatch', params.sessionId);
   }
 
-  const persistedMetadata = await persistUsageLimitRecoveryMetadata(params, (currentMetadata) => {
-    const {
-      [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: _removed,
-      ...rest
-    } = currentMetadata;
-    return rest;
-  });
+  const persistedMetadata = await persistUsageLimitRecoveryMetadata(params, (currentMetadata) => ({
+    ...currentMetadata,
+    [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
+      ...existing,
+      status: 'cancelled',
+      nextCheckAtMs: null,
+    },
+  }), 'cancel');
+  const persistedIntent = persistedMetadata ? parseRecoveryIntent(persistedMetadata) : null;
+  if (
+    persistedIntent
+    && (
+      !hasSameUsageLimitRecoveryIdentity(persistedIntent, existing)
+      || persistedIntent.status !== 'cancelled'
+    )
+  ) return stableError('session_usage_limit_recovery_control_issue_mismatch', params.sessionId);
 
   return buildUsageLimitRecoveryOperationSuccess({
     sessionId: params.sessionId,
@@ -486,14 +526,16 @@ export async function routeSessionUsageLimitRecoveryWaitResumeCancel(
 export async function routeSessionUsageLimitRecoveryCheckNow(
   params: RouteSessionUsageLimitRecoveryCheckNowParams,
 ): Promise<unknown> {
-  if (params.retryTemporaryThrottleNow && isRetryableTemporaryThrottleIssue(params.rawSession)) {
+  const operation = params.request?.operation === 'consume_reset_credit' ? 'consume_reset_credit' : 'check_now';
+
+  if (operation === 'check_now' && params.retryTemporaryThrottleNow && isRetryableTemporaryThrottleIssue(params.rawSession)) {
     return normalizeUsageLimitRecoveryOperationResult(
       await params.retryTemporaryThrottleNow({ sessionId: params.sessionId }),
       { sessionId: params.sessionId },
     );
   }
 
-  if (params.rawSession.active === true) {
+  if (operation === 'check_now' && params.rawSession.active === true) {
     const liveResult = normalizeUsageLimitRecoveryOperationResult(await params.callLiveSessionRpc(), {
       sessionId: params.sessionId,
     });
@@ -504,28 +546,62 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
 
   const context = ensureLocalInactiveControlContext(params);
   if (!context.ok) return context.result;
-  const resumePromptMode =
-    readResumePromptMode(params.request?.resumePromptMode)
-    ?? readResumePromptMode(parseRecoveryIntent(context.metadata)?.resumePromptMode)
-    ?? 'standard';
+  const existingPromptIntent = parseRecoveryIntent(context.metadata);
+  const resumePromptMode = await resolveRoutedUsageLimitRecoveryResumePromptMode({
+    explicit: params.request?.resumePromptMode,
+    existingIntent: existingPromptIntent,
+    accountSettings: params.resumePromptTierSources?.accountSettings,
+    loadGroupPolicy: params.resumePromptTierSources?.loadGroupPolicy
+      ? () => params.resumePromptTierSources!.loadGroupPolicy!(existingPromptIntent?.selectedAuth ?? null)
+      : undefined,
+  });
+  const requestIssueFingerprint = readString(params.request?.issueFingerprint);
+  const existingIntent = parseRecoveryIntent(context.metadata);
+  const requestedIntent = operation === 'consume_reset_credit' && requestIssueFingerprint
+    ? existingIntent?.issueFingerprint === requestIssueFingerprint
+      ? existingIntent
+      : buildRecoveryIntentFromLatestUsageLimitIssue({
+        rawSession: params.rawSession,
+        issueFingerprint: requestIssueFingerprint,
+      })
+    : null;
+  const adapterMetadata = requestedIntent
+    ? {
+      ...context.metadata,
+      [SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY]: {
+        ...requestedIntent,
+        issueFingerprint: requestIssueFingerprint,
+        resumePromptMode,
+      },
+    }
+    : context.metadata;
 
-  const adapterAgentId = resolveAgentIdFromFlavor(params.request?.provider)
-    ?? inferAgentIdFromSessionMetadata(context.metadata);
-  const adapter = await (params.resolveAdapter ?? getSessionUsageLimitRecoveryControlAdapter)(
+  const adapterAgentId = resolveAgentIdFromFlavor(params.request?.agentId)
+    ?? inferAgentIdFromSessionMetadata(adapterMetadata);
+  const adapter = await (params.resolveAdapter ?? resolveInactiveSessionUsageLimitRecoveryControls)(
     adapterAgentId,
   );
-  if (!adapter?.checkNow) {
+  const control = operation === 'consume_reset_credit'
+    ? adapter?.consumeResetCredit
+    : adapter?.checkNow;
+  if (!control) {
     return stableError('session_usage_limit_recovery_control_provider_unsupported', params.sessionId);
   }
 
-  const rateLimit = inactiveCheckNowRateLimiter.check(`${params.sessionId}\0${adapterAgentId ?? 'unknown'}`);
+  const rateLimit = inactiveCheckNowRateLimiter.check(`${params.sessionId}\0${adapterAgentId ?? 'unknown'}\0${operation}`);
   if (!rateLimit.allowed) {
     return stableRateLimitedError(rateLimit.retryAfterMs, params.sessionId);
   }
 
   const result = await persistAdapterMetadataResult(
     params,
-    await adapter.checkNow(buildAdapterParams(params, context.metadata, context.sessionMachineId, resumePromptMode)),
+    await control(buildAdapterParams(
+      params,
+      adapterMetadata,
+      context.sessionMachineId,
+      resumePromptMode,
+      requestIssueFingerprint ?? undefined,
+    )),
   );
   if (
     result

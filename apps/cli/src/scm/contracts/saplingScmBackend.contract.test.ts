@@ -1,6 +1,9 @@
-import { describe } from 'vitest';
+import { afterAll, beforeAll, describe } from 'vitest';
+
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import { resolveDefaultScmBackendRegistry } from '../scmBackendCatalog';
+import type { ScmBackend } from '../types';
 import { runScmBackendContractSuite } from './scmBackendContractHarness';
 
 /**
@@ -17,11 +20,28 @@ import { runScmBackendContractSuite } from './scmBackendContractHarness';
  * being silently skipped (truth-in-advertising guarantee).
  */
 describe('sapling SCM backend contract', () => {
+    let backend: ScmBackend | null = null;
+    let runtimeRegistry: Awaited<ReturnType<typeof resolveExecutablePluginRuntimeRegistry>> | null = null;
+
+    beforeAll(async () => {
+        runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({
+            pluginIds: ['happier.scm.backend.sapling'],
+        });
+        backend = (await resolveDefaultScmBackendRegistry({
+            pluginRuntimeRegistry: runtimeRegistry,
+        }))
+            .listBackends()
+            .find((candidate) => candidate.id === 'happier.scm.backend.sapling/sapling')
+            ?? null;
+        if (!backend) throw new Error('Sapling backend is not registered');
+    });
+
+    afterAll(async () => {
+        await runtimeRegistry?.dispose();
+    });
+
     runScmBackendContractSuite({
         createBackend: async () => {
-            const backend = (await resolveDefaultScmBackendRegistry())
-                .listBackends()
-                .find((candidate) => candidate.id === 'sapling');
             if (!backend) throw new Error('Sapling backend is not registered');
             return backend;
         },

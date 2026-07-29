@@ -1,4 +1,5 @@
 import type { PermissionMode } from '@/api/types';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
 import {
   getAgentSessionModesKind,
   type AgentId,
@@ -13,7 +14,9 @@ export type ParsedSessionStartArgs = {
   sessionModeId: string | undefined;
   sessionModeUpdatedAt: number | undefined;
   modelId: string | undefined;
+  providerConnectionId: string | undefined;
   modelUpdatedAt: number | undefined;
+  modelSelection: SessionModelSelectionV1 | undefined;
 };
 
 export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
@@ -30,7 +33,9 @@ export function parseSessionStartArgs(args: string[]): ParsedSessionStartArgs {
     sessionModeId: parsed.sessionModeId,
     sessionModeUpdatedAt: parsed.sessionModeUpdatedAt,
     modelId: parsed.modelId,
+    providerConnectionId: parsed.providerConnectionId,
     modelUpdatedAt: parsed.modelUpdatedAt,
+    modelSelection: parsed.modelSelection,
   };
 }
 
@@ -62,7 +67,9 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   sessionModeId: string | undefined;
   sessionModeUpdatedAt: number | undefined;
   modelId: string | undefined;
+  providerConnectionId?: string | undefined;
   modelUpdatedAt: number | undefined;
+  modelSelection: SessionModelSelectionV1 | undefined;
 }): {
   startedBy: 'daemon' | 'terminal' | undefined;
   permissionMode: PermissionMode | undefined;
@@ -70,7 +77,9 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   sessionModeId: string | undefined;
   sessionModeUpdatedAt: number | undefined;
   modelId: string | undefined;
+  providerConnectionId: string | undefined;
   modelUpdatedAt: number | undefined;
+  modelSelection: SessionModelSelectionV1 | undefined;
   warnings: string[];
 } {
   const warnings: string[] = [];
@@ -80,7 +89,9 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
   let sessionModeId = params.sessionModeId;
   let sessionModeUpdatedAt = params.sessionModeUpdatedAt;
   const modelId = params.modelId;
+  const providerConnectionId = params.providerConnectionId;
   const modelUpdatedAt = params.modelUpdatedAt;
+  const modelSelection = params.modelSelection;
 
   // Back-compat: historically "plan" was treated as a permission mode in some CLIs.
   // For agents where "plan" is an agent/session mode (e.g. OpenCode plan/build, Claude plan/build), map it to --agent-mode.
@@ -102,7 +113,9 @@ export function applyDeprecatedSessionStartAliasesForAgent(params: {
     sessionModeId,
     sessionModeUpdatedAt,
     modelId,
+    providerConnectionId,
     modelUpdatedAt,
+    modelSelection,
     warnings,
   };
 }

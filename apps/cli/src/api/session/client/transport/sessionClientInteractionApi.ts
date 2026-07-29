@@ -9,29 +9,29 @@ import type {
     Update,
     UserMessage,
 } from '../../../types';
+import { UserMessageSchema } from '../../../types';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import {
     discardPendingQueueV2Messages,
     listPendingQueueV2LocalIdsFromServer,
     materializeNextPendingQueueV2Message,
-    type PendingMaterializationDeliveryState,
     type PendingMaterializationDeliveryTiming,
     type PendingQueueMaterializedMessage,
     type PendingQueueMaterializeNextResult,
 } from '../../pendingQueueV2Transport';
+import { runPendingQueueV2ReleasedServerAdapter } from '../../pendingQueueV2ReleasedServerAdapter';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { SessionSyncPendingInputServerContractResult } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import { runSupervisedRequest } from '@/api/connection/requestSupervision/runSupervisedRequest';
-import { backoff } from '@/utils/time';
 import { addDiscardedCommittedMessageLocalIds } from '../../../queue/discardedCommittedMessageLocalIds';
-import { decodeBase64, decrypt, encodeBase64, encrypt } from '../../../encryption';
-import { buildDaemonInitialPromptLocalId } from '@/agent/runtime/daemonInitialPrompt';
-import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
+import { decodeBase64, decrypt } from '../../../encryption';
 import type { KnownPendingQueueState, PendingQueueState } from '../../pendingQueueState';
 import type { MaterializeNextPendingResult } from '../../sessionClientPort';
 import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorForLog';
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
-import type { PendingMaterializationActiveTurnPolicy } from '../../pendingMaterializationActiveTurnPolicy';
 import type { SessionCatchUpRequest } from '../../sessionChangesSyncOnConnect';
+import { coerceSessionUserPromptV1 } from '@happier-dev/protocol';
 
 function arePendingQueueStatesEqual(left: PendingQueueState, right: PendingQueueState): boolean {
     if (left.known !== right.known) return false;
@@ -72,6 +72,42 @@ function createMaterializedPendingQueueUpdate(params: {
     } as Update;
 }
 
+function readMaterializedPendingUserMessage(params: Readonly<{
+    message: PendingQueueMaterializedMessage | null | undefined;
+    encryptionKey: Uint8Array;
+    encryptionVariant: 'legacy' | 'dataKey';
+}>): UserMessage | null {
+    const message = params.message;
+    if (!message?.content) return null;
+    let body: unknown;
+    if (message.content.t === 'plain') {
+        body = message.content.v;
+    } else {
+        try {
+            body = decrypt(params.encryptionKey, params.encryptionVariant, decodeBase64(message.content.c));
+        } catch {
+            return null;
+        }
+    }
+    const bodyWithTransportFields = {
+        ...(body && typeof body === 'object' && !Array.isArray(body) ? body : {}),
+        ...(message.localId ? { localId: message.localId } : {}),
+        ...(typeof message.createdAt === 'number' ? { createdAt: message.createdAt } : {}),
+    };
+    const parsed = UserMessageSchema.safeParse(bodyWithTransportFields);
+    if (parsed.success) return parsed.data;
+    const coerced = coerceSessionUserPromptV1(bodyWithTransportFields);
+    if (!coerced) return null;
+    const candidate = UserMessageSchema.safeParse({
+        role: 'user',
+        content: { type: 'text', text: coerced.text },
+        ...(message.localId ? { localId: message.localId } : {}),
+        ...(typeof message.createdAt === 'number' ? { createdAt: message.createdAt } : {}),
+        meta: (bodyWithTransportFields as Record<string, unknown>).meta,
+    });
+    return candidate.success ? candidate.data : null;
+}
+
 function readPlannedServerRestartRetryAfterMs(payload: unknown): number | undefined {
     if (!payload || typeof payload !== 'object') return undefined;
     const raw = (payload as { retryAfterMs?: unknown }).retryAfterMs;
@@ -84,6 +120,7 @@ export type SessionClientInteractionApi = Readonly<{
     waitForMetadataUpdate: (abortSignal?: AbortSignal) => Promise<boolean>;
     ensureMetadataSnapshot: (opts?: { timeoutMs?: number; abortSignal?: AbortSignal }) => Promise<Metadata | null>;
     refreshSessionSnapshotFromServerBestEffort: (opts?: { reason?: SessionSnapshotRefreshReason }) => Promise<void>;
+    refreshSessionSnapshotFromServerRequired: (opts?: { reason?: SessionSnapshotRefreshReason }) => Promise<void>;
     close: () => Promise<void>;
     installSessionSocketEventHandlers: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
     listPendingMessageQueueV2LocalIds: () => Promise<string[]>;
@@ -93,8 +130,8 @@ export type SessionClientInteractionApi = Readonly<{
     discardCommittedMessageLocalIds: (opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }) => Promise<number>;
     materializeNextPendingMessageSafely: (opts?: {
         reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
-        activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
         deliveryTiming?: PendingMaterializationDeliveryTiming;
+        expectedRuntimeActivityRevision?: number;
     }) => Promise<MaterializeNextPendingResult>;
     popPendingMessage: () => Promise<boolean>;
 }>;
@@ -106,29 +143,32 @@ export function createSessionClientInteractionApi(
         getClosed: () => boolean;
         setClosed: (value: boolean) => void;
         getSocket: () => Socket<ServerToClientEvents, ClientToServerEvents>;
+        getSessionConnectionEpoch: () => number;
+        getSessionSyncPendingInputServerContractResult: () => SessionSyncPendingInputServerContractResult | null;
         getUserSocket: () => Socket<ServerToClientEvents, ClientToServerEvents>;
         getSessionConnectionSupervisor: () => import('@happier-dev/connection-supervisor').ManagedConnectionSupervisor | null;
         getRpcHandlerManager: () => { handleRequest: (data: { method: string; params: unknown }) => Promise<unknown> };
         getMetadata: () => Metadata | null;
+        updateMetadata: (updater: (metadata: Metadata) => Metadata) => Promise<void>;
         setMetadata: (metadata: Metadata | null) => void;
         getMetadataVersion: () => number;
         setMetadataVersion: (version: number) => void;
         onMetadataUpdated: (handler: () => void) => void;
         offMetadataUpdated: (handler: () => void) => void;
         getAgentStateVersion: () => number;
+        getRuntimeActivityRevision?: () => number | null;
         getPendingWakeSeq: () => number;
-        getPendingMessages: () => UserMessage[];
-        getPendingMessageCallback: () => ((message: UserMessage) => boolean | void) | null;
-        setPendingMessageCallback: (callback: ((message: UserMessage) => boolean | void) | null) => void;
-        getUserMessageCallbackAttachedAtMs: () => number | null;
-        setUserMessageCallbackAttachedAtMs: (value: number | null) => void;
+        getProviderInputBacklog: () => UserMessage[];
+        setProviderInputConsumer: (callback: ((message: UserMessage) => boolean | void) | null) => void;
+        getProviderInputConsumerAttachedAtMs: () => number | null;
+        setProviderInputConsumerAttachedAtMs: (value: number | null) => void;
+        wakePendingMaterialization: () => void;
         clearUserSocketDisconnectTimer: () => void;
         kickUserSocketConnect: () => void;
         catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
         scheduleNextStartupMessageCatchUpRetry: () => void;
         getLastObservedMessageSeq: () => number;
         getStartupMessageCatchUpExplicitAfterSeq: () => number | null;
-        getStartupMessageCatchUpInitialAuthorization?: () => SessionCatchUpRequest['authorization'];
         getStartedByDaemonProcess: () => boolean;
         getMetadataStartedBy: () => string | null;
         getMetadataStartedFromDaemon: () => boolean | null;
@@ -136,55 +176,33 @@ export function createSessionClientInteractionApi(
         setStartupMessageCatchUpStarted: (value: boolean) => void;
         setStartupMessageCatchUpRetryIndex: (value: number) => void;
         setStartupMessageCatchUpInitialAfterSeq: (value: number) => void;
-        getDaemonInitialPrompt: () => string | null;
-        setDaemonInitialPrompt: (value: string | null) => void;
-        getDaemonInitialPromptSeeded: () => boolean;
-        setDaemonInitialPromptSeeded: (value: boolean) => void;
         enqueueSessionUserMessage: (params: Readonly<{ text: string; localId?: string; meta?: Record<string, unknown> }>) => Promise<void> | void;
-        syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
+        syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<boolean>;
         reconcileTurnStatusBeforePendingMaterialization: () => Promise<boolean>;
         logPendingMaterializationSkip?: (stage: string) => void;
         maybeScheduleUserSocketDisconnect: () => void;
-        handleSessionScopedUpdate: (data: Update, opts?: {
-            pendingMaterializationActiveTurnPolicy?: PendingMaterializationActiveTurnPolicy;
-        }) => void;
+        handleSessionScopedUpdate: (data: Update) => void;
+        deliverMaterializedUserMessageToAgentQueue?: (
+            message: UserMessage,
+            providerAction: PendingQueueMaterializedMessage['providerAction'],
+        ) => boolean;
         clearStartupMessageCatchUpRetryTimer: () => void;
-        stopStaleSafety: () => void;
         clearCommittedLocalIdCleanupTimers: () => void;
         clearPendingMaterializedState: () => void;
-        blockProviderDeliveriesBeforeClose?: () => Promise<void>;
         getPendingQueueMaterializedLocalIdsSize: () => number;
         markPendingQueueMaterializedLocalId: (localId: string) => void;
-        shouldAttemptPendingMaterialization: (opts?: {
-            activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
-        }) => boolean;
+        shouldAttemptPendingMaterialization: () => boolean;
+        resolvePendingClaimDeliveryTiming?: (
+            requested: PendingMaterializationDeliveryTiming | undefined,
+        ) => PendingMaterializationDeliveryTiming | undefined;
+        /** @deprecated The server Pending claim is the only Activity timing owner. */
         shouldDeferPendingQueueDrainForRuntimeActivity?: (opts: Readonly<{
             deliveryTiming?: PendingMaterializationDeliveryTiming;
         }>) => boolean;
         getPendingQueueState: () => PendingQueueState;
         applyPendingQueueState: (state: KnownPendingQueueState) => boolean;
         observePendingMaterializeResult: (params: Readonly<{ didMaterialize: boolean; pendingQueueState?: KnownPendingQueueState | null }>) => boolean;
-        shouldRequestProviderDeliveryState?: () => boolean;
-        getAcceptedUserMessageDeliverySeqForPendingReconciliation?: () => number | null;
-        reconcileAcceptedPendingDeliveriesThroughSeq?: (maxAcceptedSeq: number) => Promise<Readonly<{ pendingQueueState?: KnownPendingQueueState | null; resolvedLocalIds?: readonly string[] }>>;
-        retryAcceptedCanonicalPendingDeliveryResolutions?: () => Promise<void>;
-        reconcileTerminalCanonicalPendingDeliveries?: () => Promise<boolean>;
-        getUnresolvedCanonicalPendingDeliveryCount?: () => number;
-        recoverInheritedProviderDeliveryClaimsBeforeMaterialization?: () => Promise<void>;
-        blockMalformedPendingDelivery?: (params: Readonly<{
-            localId: string;
-            reason: 'unknown';
-        }>) => Promise<Readonly<{ pendingQueueState?: KnownPendingQueueState | null }>>;
-        observeMaterializedPendingDeliveryState?: (params: Readonly<{
-            localId: string;
-            deliveryState: PendingMaterializationDeliveryState | null;
-            malformed?: boolean;
-        }>) => void;
         onPendingQueueStateChanged: () => void;
-        onPendingMaterializeFailure?: () => void;
-        scheduleMaterializationRecovery: (localId: string) => void;
-        getMetadataLock: () => { inLock: <T>(fn: () => Promise<T>) => Promise<T> };
-        getSessionEncryptionMode: () => 'e2ee' | 'plain';
         getEncryptionKey: () => Uint8Array;
         getEncryptionVariant: () => 'legacy' | 'dataKey';
     }>,
@@ -192,54 +210,65 @@ export function createSessionClientInteractionApi(
     let pendingQueueStateReconcileInFlight: Promise<boolean> | null = null;
     let lastPendingQueueStateReconcileAt = 0;
 
-    const applyDeliveryActionPendingQueueState = (state: KnownPendingQueueState | null | undefined): void => {
-        if (!state) return;
-        const changed = deps.applyPendingQueueState(state);
-        if (changed) {
-            deps.onPendingQueueStateChanged();
-        }
-    };
-
-    const reconcileAcceptedDeliveriesBeforeMaterialization = async (): Promise<void> => {
-        const maxAcceptedSeq = deps.getAcceptedUserMessageDeliverySeqForPendingReconciliation?.() ?? null;
-        if (maxAcceptedSeq === null || !Number.isInteger(maxAcceptedSeq) || maxAcceptedSeq <= 0) {
-            return;
-        }
-        const reconcile = deps.reconcileAcceptedPendingDeliveriesThroughSeq;
-        if (!reconcile) return;
-        try {
-            const result = await reconcile(maxAcceptedSeq);
-            applyDeliveryActionPendingQueueState(result.pendingQueueState ?? null);
-        } catch (error) {
-            logger.debug('[pendingQueue] accepted-through-seq reconciliation failed', {
-                sessionId: deps.sessionId,
-                maxAcceptedSeq,
-                error: serializeAxiosErrorForLog(error),
-            });
-        }
-    };
-
-    const hasUnresolvedCanonicalPendingDelivery = (stage: string): boolean => {
-        const unresolvedCount = deps.getUnresolvedCanonicalPendingDeliveryCount?.() ?? 0;
-        if (unresolvedCount <= 0) return false;
-        logger.debug('[pendingQueue] materialization skipped while canonical pending delivery is unresolved', {
-            sessionId: deps.sessionId,
-            stage,
-            unresolvedCanonicalPendingDeliveryCount: unresolvedCount,
-        });
-        return true;
-    };
-
     const runMaterializeNextPendingMessageInner = async (opts: {
-        activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
         deliveryTiming?: PendingMaterializationDeliveryTiming;
+        expectedRuntimeActivityRevision?: number;
     } = {}): Promise<{
         didMaterialize: boolean;
         result: MaterializeNextPendingResult;
     }> => {
+        const deliveryTiming = deps.resolvePendingClaimDeliveryTiming?.(opts.deliveryTiming) ?? opts.deliveryTiming;
+        const contractResult = deps.getSessionSyncPendingInputServerContractResult();
+        const socket = deps.getSocket();
+        const hasCurrentContractAuthority = (): boolean => (
+            deps.getSessionSyncPendingInputServerContractResult() === contractResult
+            && contractResult !== null
+            && contractResult.sessionConnectionEpoch === deps.getSessionConnectionEpoch()
+            && contractResult.socket === socket
+            && deps.getSocket() === socket
+            && socket.connected === true
+            && !deps.getClosed()
+        );
+        if (!contractResult || !hasCurrentContractAuthority() || contractResult.mode === 'indeterminate') {
+            return { didMaterialize: false, result: { type: 'retryable_transport' } };
+        }
+        if (contractResult.mode === 'auth_failed') {
+            return { didMaterialize: false, result: { type: 'auth_failure' } };
+        }
         const supervisor = deps.getSessionConnectionSupervisor();
         if (!supervisor) {
-            return { didMaterialize: false, result: { type: 'no_pending' } };
+            return { didMaterialize: false, result: { type: 'retryable_transport' } };
+        }
+        if (contractResult.mode === 'released_server_v0_2_1') {
+            try {
+                const result = await runSupervisedRequest({
+                    supervisor,
+                    requireAuth: true,
+                    requireOnline: false,
+                    request: () => runPendingQueueV2ReleasedServerAdapter({
+                        token: deps.token,
+                        serverUrl: resolveServerHttpBaseUrl(),
+                        sessionId: deps.sessionId,
+                        contractResult,
+                        getContractResult: deps.getSessionSyncPendingInputServerContractResult,
+                        getSessionConnectionEpoch: deps.getSessionConnectionEpoch,
+                        getSocket: deps.getSocket,
+                        isRuntimeAuthorityCurrent: () => (
+                            deps.getSessionConnectionSupervisor() === supervisor
+                            && !deps.getClosed()
+                            && supervisor.getState().phase !== 'auth_failed'
+                        ),
+                        encryptionKey: deps.getEncryptionKey(),
+                        encryptionVariant: deps.getEncryptionVariant(),
+                        deliverMaterializedUserMessageToAgentQueue: (message, providerAction) =>
+                            deps.deliverMaterializedUserMessageToAgentQueue?.(message, providerAction) ?? false,
+                    }),
+                });
+                return { didMaterialize: result.type === 'materialized', result };
+            } catch (error) {
+                if (isAuthenticationError(error)) throw error;
+                return { didMaterialize: false, result: { type: 'retryable_transport' } };
+            }
         }
         let materializeResult: PendingQueueMaterializeNextResult;
         try {
@@ -252,10 +281,14 @@ export function createSessionClientInteractionApi(
                     return await materializeNextPendingQueueV2Message({
                         token: deps.token,
                         sessionId: deps.sessionId,
-                        socket: deps.getSocket(),
+                        socket,
                         knownPendingVersion: pendingQueueState.known ? pendingQueueState.pendingVersion : undefined,
-                        deliveryStateOptIn: deps.shouldRequestProviderDeliveryState?.() === true,
-                        deliveryTiming: opts.deliveryTiming,
+                        deliveryStateOptIn: true,
+                        deliveryTiming: deliveryTiming ?? 'after_foreground_ready',
+                        foregroundState: 'ready',
+                        ...(deliveryTiming === 'after_runtime_idle' && opts.expectedRuntimeActivityRevision !== undefined
+                            ? { expectedRuntimeActivityRevision: opts.expectedRuntimeActivityRevision }
+                            : {}),
                     });
                 },
             });
@@ -267,8 +300,10 @@ export function createSessionClientInteractionApi(
                 sessionId: deps.sessionId,
                 error: serializeAxiosErrorForLog(error),
             });
-            deps.onPendingMaterializeFailure?.();
-            return { didMaterialize: false, result: { type: 'no_pending' } };
+            return { didMaterialize: false, result: { type: 'retryable_transport' } };
+        }
+        if (!hasCurrentContractAuthority()) {
+            return { didMaterialize: false, result: { type: 'retryable_transport' } };
         }
         const pendingStateChanged = deps.observePendingMaterializeResult({
             didMaterialize: materializeResult.didMaterialize,
@@ -286,35 +321,11 @@ export function createSessionClientInteractionApi(
                 pendingCount: state.known ? state.pendingCount : undefined,
                 pendingVersion: state.known ? state.pendingVersion : undefined,
             });
-            if (materializeResult.deliveryState?.mode === 'awaiting_runtime_idle') {
-                return {
-                    didMaterialize: false,
-                    result: { type: 'deferred', reason: 'runtime_activity_active' },
-                };
+            if (materializeResult.deferredReason === 'runtime_activity_unknown') {
+                return { didMaterialize: false, result: { type: 'deferred', reason: 'runtime_activity_unknown' } };
             }
-            return { didMaterialize: false, result: { type: 'no_pending' } };
-        }
-        if (materializeResult.message?.deliveryStateMalformed) {
-            const localId = materializeResult.localId ?? materializeResult.message.localId ?? null;
-            logger.debug('[pendingQueue] materialize result ignored malformed pending delivery state', {
-                sessionId: deps.sessionId,
-                localId,
-                messageSeq: materializeResult.message.seq,
-            });
-            if (localId) {
-                try {
-                    const result = await deps.blockMalformedPendingDelivery?.({
-                        localId,
-                        reason: 'unknown',
-                    });
-                    applyDeliveryActionPendingQueueState(result?.pendingQueueState ?? null);
-                } catch (error) {
-                    logger.debug('[pendingQueue] failed to block malformed provider delivery state', {
-                        sessionId: deps.sessionId,
-                        localId,
-                        error: serializeAxiosErrorForLog(error),
-                    });
-                }
+            if (materializeResult.deferredReason === 'waiting_for_runtime_activity') {
+                return { didMaterialize: false, result: { type: 'deferred', reason: 'runtime_activity_active' } };
             }
             return { didMaterialize: false, result: { type: 'no_pending' } };
         }
@@ -323,50 +334,28 @@ export function createSessionClientInteractionApi(
             materializeResult.message && !materializeResult.message.localId && materializedLocalId
                 ? { ...materializeResult.message, localId: materializedLocalId }
                 : materializeResult.message;
-        const materializedProviderClaimState =
-            materializeResult.didWrite === false
-            && materializedMessageWithLocalId
-            && materializedMessageWithLocalId.deliveryStateMalformed !== true
-            && typeof materializedMessageWithLocalId.localId === 'string'
-            && materializedMessageWithLocalId.localId.length > 0
-            && materializedMessageWithLocalId.seq === null
-                ? { mode: 'provider' as const, unresolved: true as const }
-                : null;
-        const explicitUnresolvedProviderDeliveryState =
-            materializedMessageWithLocalId?.deliveryState?.unresolved === true
-                ? materializedMessageWithLocalId.deliveryState
-                : null;
-        const inferredProviderDeliveryState =
-            materializedProviderClaimState
-            && !explicitUnresolvedProviderDeliveryState
-                ? materializedProviderClaimState
-                : null;
-        const materializedMessage: PendingQueueMaterializedMessage | null | undefined = inferredProviderDeliveryState && materializedMessageWithLocalId
-            ? { ...materializedMessageWithLocalId, deliveryState: inferredProviderDeliveryState }
-            : materializedMessageWithLocalId;
+        const materializedMessage: PendingQueueMaterializedMessage | null | undefined = materializedMessageWithLocalId;
         const materializedUpdate = createMaterializedPendingQueueUpdate({
             sessionId: deps.sessionId,
             message: materializedMessage,
         });
-        if (
-            materializedMessage
-            && typeof materializedMessage.localId === 'string'
-            && materializedMessage.localId.length > 0
-            && materializedMessage.deliveryState !== undefined
-        ) {
-            deps.observeMaterializedPendingDeliveryState?.({
-                localId: materializedMessage.localId,
-                deliveryState: materializedMessage.deliveryState ?? null,
-            });
-        }
         if (materializedLocalId) {
             deps.markPendingQueueMaterializedLocalId(materializedLocalId);
         }
         if (materializedUpdate) {
-            deps.handleSessionScopedUpdate(materializedUpdate, {
-                pendingMaterializationActiveTurnPolicy: opts.activeTurnDeliveryPolicy,
-            });
+            deps.handleSessionScopedUpdate(materializedUpdate);
         }
+        const materializedUserMessage = readMaterializedPendingUserMessage({
+            message: materializedMessage,
+            encryptionKey: deps.getEncryptionKey(),
+            encryptionVariant: deps.getEncryptionVariant(),
+        });
+        const deliveredMaterializedMessage = materializedUserMessage
+            ? (deps.deliverMaterializedUserMessageToAgentQueue?.(
+                materializedUserMessage,
+                materializedMessage?.providerAction ?? null,
+            ) ?? false)
+            : false;
         const state = deps.getPendingQueueState();
         logger.debug('[pendingQueue] materialize result', {
             sessionId: deps.sessionId,
@@ -380,17 +369,10 @@ export function createSessionClientInteractionApi(
                     : typeof materializedMessage.seq
                 : 'missing',
             messageRole: materializedMessage?.messageRole ?? null,
-            deliveredMaterializedMessage: materializedUpdate !== null,
-            providerDeliveryStateUnresolved: materializedMessageWithLocalId?.deliveryState?.unresolved ?? null,
-            providerDeliveryStateMalformed: materializedMessageWithLocalId?.deliveryStateMalformed === true,
-            providerDeliveryStateInferred: inferredProviderDeliveryState !== null,
+            deliveredMaterializedMessage,
             pendingCount: state.known ? state.pendingCount : undefined,
             pendingVersion: state.known ? state.pendingVersion : undefined,
         });
-        if (materializeResult.localId && !materializedUpdate) {
-            deps.scheduleMaterializationRecovery(materializeResult.localId);
-        }
-
         const message = materializedMessage;
         if (
             message
@@ -414,7 +396,6 @@ export function createSessionClientInteractionApi(
                     content: message.content ?? null,
                     ...(typeof message.createdAt === 'number' ? { createdAt: message.createdAt } : {}),
                     ...(typeof message.updatedAt === 'number' ? { updatedAt: message.updatedAt } : {}),
-                    ...(message.deliveryState ? { deliveryState: message.deliveryState } : {}),
                 },
             };
         }
@@ -430,9 +411,12 @@ export function createSessionClientInteractionApi(
                 metadataStartedBy: deps.getMetadataStartedBy(),
                 metadataStartedFromDaemon: deps.getMetadataStartedFromDaemon(),
             });
-            deps.setPendingMessageCallback(callback);
-            if (deps.getUserMessageCallbackAttachedAtMs() === null) {
-                deps.setUserMessageCallbackAttachedAtMs(Date.now());
+            deps.setProviderInputConsumer(callback);
+            if (deps.getProviderInputConsumerAttachedAtMs() === null) {
+                deps.setProviderInputConsumerAttachedAtMs(Date.now());
+            }
+            if (deps.shouldAttemptPendingMaterialization()) {
+                deps.wakePendingMaterialization();
             }
             deps.clearUserSocketDisconnectTimer();
             deps.kickUserSocketConnect();
@@ -441,12 +425,9 @@ export function createSessionClientInteractionApi(
                 explicitStartupAfterSeq !== null
                     ? explicitStartupAfterSeq
                     : deps.getLastObservedMessageSeq();
-            const startupCatchUpInitialAfterSeqIsExplicit = explicitStartupAfterSeq !== null;
-            const startupCatchUpInitialAuthorization = deps.getStartupMessageCatchUpInitialAuthorization?.()
-                ?? (startupCatchUpInitialAfterSeqIsExplicit ? 'explicit_cursor' : 'startup_recovery');
-            const pendingMessages = deps.getPendingMessages();
-            while (pendingMessages.length > 0) {
-                callback(pendingMessages.shift()!);
+            const providerInputBacklog = deps.getProviderInputBacklog();
+            while (providerInputBacklog.length > 0) {
+                callback(providerInputBacklog.shift()!);
             }
             const shouldStartStartupCatchUp = !deps.getStartupMessageCatchUpStarted();
             if (shouldStartStartupCatchUp) {
@@ -454,24 +435,9 @@ export function createSessionClientInteractionApi(
                 deps.setStartupMessageCatchUpRetryIndex(0);
                 deps.setStartupMessageCatchUpInitialAfterSeq(startupCatchUpInitialAfterSeq);
             }
-            if (!deps.getDaemonInitialPromptSeeded() && typeof deps.getDaemonInitialPrompt() === 'string') {
-                deps.setDaemonInitialPromptSeeded(true);
-                const initialPrompt = deps.getDaemonInitialPrompt();
-                const initialPromptLocalId = buildDaemonInitialPromptLocalId(deps.sessionId);
-                deps.setDaemonInitialPrompt(null);
-                deps.enqueueSessionUserMessage({
-                    text: initialPrompt!,
-                    ...(initialPromptLocalId ? { localId: initialPromptLocalId } : {}),
-                    meta: {
-                        source: 'daemon-initial-prompt',
-                        sentFrom: 'cli',
-                    },
-                });
-            }
             if (shouldStartStartupCatchUp) {
                 void deps.catchUpSessionMessages({
                     afterSeq: startupCatchUpInitialAfterSeq,
-                    authorization: startupCatchUpInitialAuthorization,
                 })
                     .catch((error) => {
                         if (isAuthenticationError(error)) {
@@ -620,13 +586,21 @@ export function createSessionClientInteractionApi(
             await deps.syncSessionSnapshotFromServer({ reason });
         },
 
+        async refreshSessionSnapshotFromServerRequired(opts) {
+            const reason = opts?.reason ?? 'startup-drain';
+            const refreshed = await deps.syncSessionSnapshotFromServer({ reason });
+            if (refreshed !== true) {
+                throw new Error(
+                    `Required authoritative session snapshot refresh failed for ${deps.sessionId}`,
+                );
+            }
+        },
+
         async close() {
             logger.debug('[API] socket.close() called');
             deps.clearStartupMessageCatchUpRetryTimer();
-            deps.stopStaleSafety();
             deps.clearUserSocketDisconnectTimer();
             try {
-                await deps.blockProviderDeliveriesBeforeClose?.();
             } catch (error) {
                 logger.debug('[pendingQueue] provider delivery close cleanup failed', {
                     sessionId: deps.sessionId,
@@ -795,63 +769,26 @@ export function createSessionClientInteractionApi(
             }
 
             let addedCount = 0;
-            await deps.getMetadataLock().inLock(async () => {
-                await backoff(async () => {
-                    const current = deps.getMetadata() as Record<string, unknown>;
-                    const existingRaw = (current as { discardedCommittedMessageLocalIds?: unknown }).discardedCommittedMessageLocalIds;
-                    const existing = Array.isArray(existingRaw) ? existingRaw.filter((v) => typeof v === 'string') : [];
-                    const existingSet = new Set(existing);
-                    const uniqueNew = localIds.filter((id) => !existingSet.has(id));
-                    if (uniqueNew.length === 0) {
-                        addedCount = 0;
-                        return;
-                    }
-
-                    const nextMetadata = addDiscardedCommittedMessageLocalIds(current, uniqueNew);
-                    const metadataPayload =
-                        deps.getSessionEncryptionMode() === 'plain'
-                            ? JSON.stringify(nextMetadata)
-                            : encodeBase64(encrypt(deps.getEncryptionKey(), deps.getEncryptionVariant(), nextMetadata));
-                    const answer = await emitSocketWithAck<any>({
-                        socket: socket as any,
-                        event: 'update-metadata',
-                        payload: {
-                            sid: deps.sessionId,
-                            expectedVersion: deps.getMetadataVersion(),
-                            metadata: metadataPayload,
-                        },
-                    });
-                    if (answer.result === 'success') {
-                        deps.setMetadata(
-                            deps.getSessionEncryptionMode() === 'plain'
-                                ? JSON.parse(String(answer.metadata ?? 'null'))
-                                : decrypt(deps.getEncryptionKey(), deps.getEncryptionVariant(), decodeBase64(answer.metadata)),
-                        );
-                        deps.setMetadataVersion(answer.version);
-                        addedCount = uniqueNew.length;
-                        return;
-                    }
-                    if (answer.result === 'version-mismatch') {
-                        if (answer.version > deps.getMetadataVersion()) {
-                            deps.setMetadataVersion(answer.version);
-                            deps.setMetadata(
-                                deps.getSessionEncryptionMode() === 'plain'
-                                    ? JSON.parse(String(answer.metadata ?? 'null'))
-                                    : decrypt(deps.getEncryptionKey(), deps.getEncryptionVariant(), decodeBase64(answer.metadata)),
-                            );
-                        }
-                        throw new Error('Metadata version mismatch');
-                    }
-                    addedCount = 0;
-                });
+            await deps.updateMetadata((current) => {
+                const existingRaw = (current as { discardedCommittedMessageLocalIds?: unknown })
+                    .discardedCommittedMessageLocalIds;
+                const existing = Array.isArray(existingRaw)
+                    ? existingRaw.filter((value): value is string => typeof value === 'string')
+                    : [];
+                const existingSet = new Set(existing);
+                const uniqueNew = localIds.filter((id) => !existingSet.has(id));
+                addedCount = uniqueNew.length;
+                return uniqueNew.length > 0
+                    ? addDiscardedCommittedMessageLocalIds(current, uniqueNew) as Metadata
+                    : current;
             });
             return addedCount;
         },
 
         async materializeNextPendingMessageSafely(opts: {
             reconcileWhenEmpty?: 'force' | 'throttled' | 'skip';
-            activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
             deliveryTiming?: PendingMaterializationDeliveryTiming;
+            expectedRuntimeActivityRevision?: number;
         } = {}) {
             const supervisorState = deps.getSessionConnectionSupervisor()?.getState();
             if (supervisorState?.phase === 'auth_failed') {
@@ -864,7 +801,6 @@ export function createSessionClientInteractionApi(
                 });
             }
 
-            await reconcileAcceptedDeliveriesBeforeMaterialization();
             const policy = opts.reconcileWhenEmpty ?? 'force';
             const pendingQueueState = deps.getPendingQueueState();
             if (!pendingQueueState.known) {
@@ -876,22 +812,15 @@ export function createSessionClientInteractionApi(
                     await this.reconcilePendingQueueState({ force: false });
                 }
             }
-            await deps.recoverInheritedProviderDeliveryClaimsBeforeMaterialization?.();
-            await deps.retryAcceptedCanonicalPendingDeliveryResolutions?.();
-            await deps.reconcileTerminalCanonicalPendingDeliveries?.();
-            if (hasUnresolvedCanonicalPendingDelivery('materialize_safely_provider_delivery')) {
-                return { type: 'no_pending' };
-            }
-            const attemptOpts = { activeTurnDeliveryPolicy: opts.activeTurnDeliveryPolicy };
             const materializeOpts = {
-                activeTurnDeliveryPolicy: opts.activeTurnDeliveryPolicy,
                 deliveryTiming: opts.deliveryTiming,
+                expectedRuntimeActivityRevision: opts.expectedRuntimeActivityRevision,
             };
-            if (!deps.shouldAttemptPendingMaterialization(attemptOpts)) {
+            if (!deps.shouldAttemptPendingMaterialization()) {
                 // The gate may be blocked by a stale turn-status snapshot: reconcile (which can
                 // self-heal a stale busy gate) before concluding there is nothing to drain.
                 const healedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
-                if (!healedTurnStatus || !deps.shouldAttemptPendingMaterialization(attemptOpts)) {
+                if (!healedTurnStatus || !deps.shouldAttemptPendingMaterialization()) {
                     deps.logPendingMaterializationSkip?.('materialize_safely_gate');
                     return { type: 'no_pending' };
                 }
@@ -901,15 +830,10 @@ export function createSessionClientInteractionApi(
                     deps.logPendingMaterializationSkip?.('materialize_safely_turn_status_refresh');
                     return { type: 'no_pending' };
                 }
-                if (!deps.shouldAttemptPendingMaterialization(attemptOpts)) {
+                if (!deps.shouldAttemptPendingMaterialization()) {
                     deps.logPendingMaterializationSkip?.('materialize_safely_post_refresh_gate');
                     return { type: 'no_pending' };
                 }
-            }
-
-            if (deps.shouldDeferPendingQueueDrainForRuntimeActivity?.({ deliveryTiming: opts.deliveryTiming }) === true) {
-                deps.logPendingMaterializationSkip?.('runtime_activity_active');
-                return { type: 'deferred', reason: 'runtime_activity_active' };
             }
 
             const inner = await runMaterializeNextPendingMessageInner(materializeOpts);
@@ -917,21 +841,12 @@ export function createSessionClientInteractionApi(
         },
 
         async popPendingMessage() {
-            await reconcileAcceptedDeliveriesBeforeMaterialization();
-            await deps.retryAcceptedCanonicalPendingDeliveryResolutions?.();
-            await deps.reconcileTerminalCanonicalPendingDeliveries?.();
-            if (hasUnresolvedCanonicalPendingDelivery('pop_pending_provider_delivery')) {
-                return false;
-            }
             if (!deps.shouldAttemptPendingMaterialization()) {
                 await this.reconcilePendingQueueState({ force: !deps.getPendingQueueState().known });
             }
             const refreshedTurnStatus = await deps.reconcileTurnStatusBeforePendingMaterialization();
             if (!refreshedTurnStatus) {
                 deps.logPendingMaterializationSkip?.('pop_pending_turn_status_refresh');
-                return false;
-            }
-            if (hasUnresolvedCanonicalPendingDelivery('pop_pending_post_refresh_provider_delivery')) {
                 return false;
             }
             if (!deps.shouldAttemptPendingMaterialization()) {

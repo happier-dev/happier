@@ -6,6 +6,7 @@ import { writeTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttac
 import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFallbackMessage';
 import { logger } from '@/ui/logger';
 import { updateAgentStateBestEffort } from '@/api/session/sessionWritesBestEffort';
+import { resolveDaemonStartedSessionReportRetryPolicy } from '@/daemon/spawn/sessionWebhookTimeoutPolicy';
 
 type DaemonReportDeps = {
     notifyDaemonSessionStartedFn?: typeof notifyDaemonSessionStarted;
@@ -15,6 +16,85 @@ type DaemonReportDeps = {
     retryIntervalMs?: number;
     reportAttemptTimeoutMs?: number;
 };
+
+export class PersistedTakeoverAdmissionError extends Error {
+    readonly code: string;
+
+    constructor(code: string) {
+        super(`Persisted takeover admission was not acknowledged: ${code}`);
+        this.name = 'PersistedTakeoverAdmissionError';
+        this.code = code;
+    }
+}
+
+type PersistedTakeoverPhaseReportOptions = Readonly<{
+    sessionId: string;
+    metadata: Metadata;
+    correlation: Readonly<{
+        operationId: string;
+        attemptId: string;
+    }>;
+}>;
+
+async function reportPersistedTakeoverPhase(
+    opts: PersistedTakeoverPhaseReportOptions,
+    phase: 'admit' | 'runtime_bound',
+    deps: Pick<
+    DaemonReportDeps,
+    'notifyDaemonSessionStartedFn' | 'reportAttemptTimeoutMs'
+    > = {},
+): Promise<void> {
+    const notifyFn = deps.notifyDaemonSessionStartedFn ?? notifyDaemonSessionStarted;
+    const timeoutMs = deps.reportAttemptTimeoutMs ?? 10_000;
+    const attemptLimit = phase === 'runtime_bound' ? 2 : 1;
+    for (let attempt = 0; attempt < attemptLimit; attempt += 1) {
+        let result: Awaited<ReturnType<typeof notifyDaemonSessionStarted>>;
+        try {
+            result = await notifyFn(opts.sessionId, opts.metadata, {
+                timeoutMs,
+                persistedTakeoverAdmission: {
+                    ...opts.correlation,
+                    phase,
+                },
+            });
+        } catch {
+            result = {
+                error: 'Persisted takeover admission response was ambiguous',
+            };
+        }
+        if (result?.status === 'ok' && !result.error) return;
+        const code = typeof result.errorCode === 'string'
+            ? result.errorCode
+            : 'persisted_takeover_admission_ambiguous';
+        const canRetryAmbiguousRuntimeBound =
+            phase === 'runtime_bound'
+            && code === 'persisted_takeover_admission_ambiguous'
+            && attempt + 1 < attemptLimit;
+        if (!canRetryAmbiguousRuntimeBound) {
+            throw new PersistedTakeoverAdmissionError(code);
+        }
+    }
+}
+
+export async function admitPersistedTakeoverBeforeRuntime(
+    opts: PersistedTakeoverPhaseReportOptions,
+    deps: Pick<
+        DaemonReportDeps,
+        'notifyDaemonSessionStartedFn' | 'reportAttemptTimeoutMs'
+    > = {},
+): Promise<void> {
+    await reportPersistedTakeoverPhase(opts, 'admit', deps);
+}
+
+export async function reportPersistedTakeoverRuntimeBound(
+    opts: PersistedTakeoverPhaseReportOptions,
+    deps: Pick<
+        DaemonReportDeps,
+        'notifyDaemonSessionStartedFn' | 'reportAttemptTimeoutMs'
+    > = {},
+): Promise<void> {
+    await reportPersistedTakeoverPhase(opts, 'runtime_bound', deps);
+}
 
 function isTransientDaemonReportError(error: string): boolean {
     const normalized = error.trim().toLowerCase();
@@ -85,6 +165,7 @@ export function sendTerminalFallbackMessageIfNeeded(opts: {
 export async function reportSessionToDaemonIfRunning(opts: {
     sessionId: string;
     metadata: Metadata;
+    requireDaemonAck?: boolean;
 }, deps: DaemonReportDeps = {}): Promise<void> {
     const notifyFn = deps.notifyDaemonSessionStartedFn ?? notifyDaemonSessionStarted;
     const sleepFn = deps.sleepFn ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
@@ -99,29 +180,36 @@ export async function reportSessionToDaemonIfRunning(opts: {
                 : 10_000;
     const retryTimeoutMs =
         deps.retryTimeoutMs ??
-        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS, defaultRetryTimeoutMs, {
-            min: 0,
-            max: 120_000,
-        });
+        (startedBy === 'daemon'
+            ? resolveDaemonStartedSessionReportRetryPolicy(process.env).retryTimeoutMs
+            : resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_TIMEOUT_MS, defaultRetryTimeoutMs, {
+                min: 0,
+                max: 120_000,
+            }));
     const retryIntervalMs =
         deps.retryIntervalMs ??
-        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_INTERVAL_MS, 250, {
-            min: 50,
-            max: 10_000,
-        });
+        (startedBy === 'daemon'
+            ? resolveDaemonStartedSessionReportRetryPolicy(process.env).retryIntervalMs
+            : resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_RETRY_INTERVAL_MS, 250, {
+                min: 50,
+                max: 10_000,
+            }));
     const defaultReportAttemptTimeoutMs = startedBy === 'daemon' ? 10_000 : 2_500;
     const reportAttemptTimeoutMs =
         deps.reportAttemptTimeoutMs ??
-        resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS, defaultReportAttemptTimeoutMs, {
-            min: 100,
-            max: 30_000,
-        });
+        (startedBy === 'daemon'
+            ? resolveDaemonStartedSessionReportRetryPolicy(process.env).reportAttemptTimeoutMs
+            : resolveDaemonReportRetryValue(process.env.HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS, defaultReportAttemptTimeoutMs, {
+                min: 100,
+                max: 30_000,
+            }));
     const boundedAttemptTimeoutMs = Math.min(reportAttemptTimeoutMs, Math.max(100, retryTimeoutMs));
 
     const startedAt = nowFn();
     let attempt = 0;
     while (true) {
         attempt += 1;
+        let failure: unknown = null;
         try {
             logger.debug(`[START] Reporting session ${opts.sessionId} to daemon (attempt ${attempt})`);
             const result = await notifyFn(opts.sessionId, opts.metadata, { timeoutMs: boundedAttemptTimeoutMs });
@@ -129,22 +217,19 @@ export async function reportSessionToDaemonIfRunning(opts: {
                 logger.debug(`[START] Reported session ${opts.sessionId} to daemon`);
                 return;
             }
-
-            const message = String(result.error);
-            const timedOut = nowFn() - startedAt >= retryTimeoutMs;
-            if (!isTransientDaemonReportError(message) || timedOut) {
-                logger.debug(`[START] Failed to report to daemon (may not be running):`, result.error);
-                return;
-            }
-            await sleepFn(retryIntervalMs);
+            failure = result.error;
         } catch (error) {
-            const message = error instanceof Error ? error.message : String(error ?? '');
-            const timedOut = nowFn() - startedAt >= retryTimeoutMs;
-            if (!isTransientDaemonReportError(message) || timedOut) {
-                logger.debug('[START] Failed to report to daemon (may not be running):', error);
-                return;
-            }
-            await sleepFn(retryIntervalMs);
+            failure = error;
         }
+        const message = failure instanceof Error ? failure.message : String(failure ?? '');
+        const timedOut = nowFn() - startedAt >= retryTimeoutMs;
+        if (!isTransientDaemonReportError(message) || timedOut) {
+            logger.debug('[START] Failed to report to daemon (may not be running):', failure);
+            if (opts.requireDaemonAck) {
+                throw new Error(`Daemon session readiness was not acknowledged: ${message || 'unknown daemon report failure'}`);
+            }
+            return;
+        }
+        await sleepFn(retryIntervalMs);
     }
 }

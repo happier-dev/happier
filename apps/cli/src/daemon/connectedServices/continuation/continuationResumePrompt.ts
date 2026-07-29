@@ -1,11 +1,9 @@
 import type { SessionContinuationResumePromptModeV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceRuntimeAuthFailureKind } from '../runtimeAuth/types';
 
-/**
- * Standard resume prompt sent after a recovered provider-context switch/restart.
- * Keep this short and neutral: the provider context already contains the
- * interrupted work, and recovery proof comes from provider-visible activity.
- */
-export const STANDARD_CONTINUATION_RESUME_PROMPT = 'Continue where you left off';
+export const USAGE_LIMIT_CONTINUATION_RESUME_PROMPT =
+  'Usage limits are lifted. Continue where you left off.';
+export const GENERIC_CONTINUATION_RESUME_PROMPT = 'Continue where you left off';
 
 /**
  * Resolves the prompt text for a continuation attempt. `custom` uses the
@@ -15,10 +13,13 @@ export const STANDARD_CONTINUATION_RESUME_PROMPT = 'Continue where you left off'
 export function buildContinuationResumePrompt(input: Readonly<{
   resumePromptMode: SessionContinuationResumePromptModeV1;
   customResumePrompt?: string | null;
+  recoveryKind?: ConnectedServiceRuntimeAuthFailureKind | null;
 }>): string {
   if (input.resumePromptMode === 'custom') {
     const custom = input.customResumePrompt?.trim() ?? '';
     if (custom.length > 0) return custom;
   }
-  return STANDARD_CONTINUATION_RESUME_PROMPT;
+  return input.recoveryKind === 'usage_limit' || input.recoveryKind === 'rate_limit'
+    ? USAGE_LIMIT_CONTINUATION_RESUME_PROMPT
+    : GENERIC_CONTINUATION_RESUME_PROMPT;
 }

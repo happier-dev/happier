@@ -10,6 +10,7 @@ export type StageEntry = {
 };
 
 export type ServerDbProvider = 'sqlite' | 'mysql';
+export type ServerComponent = 'happier-server' | 'happier-server-light';
 
 type PackageJson = {
   name?: string;
@@ -51,23 +52,36 @@ export function resolveRequestedServerDbProviders(buildDbProviders: string): Ser
   return [...requestedProviders];
 }
 
-async function ensureUiWebDist({
+export function resolvePrismaSchemaEngineTarget(target: BinaryTarget): { binaryTarget: string; fileName: string } {
+  const targetKey = `${target.os}-${target.arch}`;
+  switch (targetKey) {
+    case 'linux-x64':
+      return { binaryTarget: 'debian-openssl-3.0.x', fileName: 'schema-engine-debian-openssl-3.0.x' };
+    case 'linux-arm64':
+      return { binaryTarget: 'linux-arm64-openssl-3.0.x', fileName: 'schema-engine-linux-arm64-openssl-3.0.x' };
+    case 'darwin-x64':
+      return { binaryTarget: 'darwin', fileName: 'schema-engine-darwin' };
+    case 'darwin-arm64':
+      return { binaryTarget: 'darwin-arm64', fileName: 'schema-engine-darwin-arm64' };
+    case 'windows-x64':
+      return { binaryTarget: 'windows', fileName: 'schema-engine-windows.exe' };
+    default:
+      throw new Error(`[component-artifacts] unsupported Prisma schema engine target: ${targetKey}`);
+  }
+}
+
+export async function prepareUiWebDist({
   repoRoot,
-  env,
-  runCommand,
-  commandProbe,
+  env = process.env,
+  runCommand = execOrThrow,
+  commandProbe = commandExists,
 }: {
   repoRoot: string;
-  env: NodeJS.ProcessEnv;
-  runCommand: RunCommand;
-  commandProbe: (cmd: string) => boolean;
+  env?: NodeJS.ProcessEnv;
+  runCommand?: RunCommand;
+  commandProbe?: (cmd: string) => boolean;
 }): Promise<string> {
   const uiDistPath = join(repoRoot, 'apps', 'ui', 'dist');
-  const existingInfo = await stat(uiDistPath).catch(() => null);
-  if (existingInfo?.isDirectory()) {
-    precompressUiWebDist({ repoRoot, env, runCommand });
-    return uiDistPath;
-  }
 
   runCommand(process.execPath, ['apps/ui/scripts/ensureWorkspacePackagesBuilt.mjs'], {
     cwd: repoRoot,
@@ -202,21 +216,25 @@ async function collectInstalledPackageSidecars({
 
 export async function resolveServerBinarySidecarEntries({
   repoRoot,
+  uiWebDistPath,
   target,
+  serverComponent = 'happier-server-light',
   buildDbProviders = String(process.env.HAPPIER_BUILD_DB_PROVIDERS ?? process.env.HAPPY_BUILD_DB_PROVIDERS ?? 'all').trim() || 'all',
   env = process.env,
   runCommand = execOrThrow,
   commandProbe = commandExists,
 }: {
   repoRoot: string;
+  uiWebDistPath: string;
   target?: BinaryTarget;
+  serverComponent?: ServerComponent;
   buildDbProviders?: string;
   env?: NodeJS.ProcessEnv;
   runCommand?: RunCommand;
   commandProbe?: (cmd: string) => boolean;
 }): Promise<StageEntry[]> {
-  const dedupedProviders = resolveRequestedServerDbProviders(buildDbProviders);
   const yarn = resolveYarnCommand({ commandProbe });
+  const effectiveBuildDbProviders = serverComponent === 'happier-server' ? 'mysql' : buildDbProviders;
   runCommand(
     yarn.cmd,
     [...yarn.args, '--cwd', 'apps/server', '-s', 'generate:providers'],
@@ -224,11 +242,36 @@ export async function resolveServerBinarySidecarEntries({
       cwd: repoRoot,
       env: {
         ...env,
-        HAPPIER_BUILD_DB_PROVIDERS: buildDbProviders,
-        HAPPY_BUILD_DB_PROVIDERS: buildDbProviders,
+        HAPPIER_BUILD_DB_PROVIDERS: effectiveBuildDbProviders,
+        HAPPY_BUILD_DB_PROVIDERS: effectiveBuildDbProviders,
       },
     },
   );
+
+  if (serverComponent === 'happier-server') {
+    if (!target) {
+      throw new Error('[component-artifacts] a binary target is required for full-server migration artifacts');
+    }
+    const schemaEngine = resolvePrismaSchemaEngineTarget(target);
+    runCommand(
+      process.execPath,
+      [
+        'apps/server/scripts/runtime/prepareFullRuntimeMigrationEngine.mjs',
+        '--binary-target', schemaEngine.binaryTarget,
+        '--out-dir', join(
+          repoRoot,
+          'apps',
+          'server',
+          'generated',
+          'runtime-migration-engines',
+          `${target.os}-${target.arch}`,
+        ),
+      ],
+      { cwd: repoRoot, env },
+    );
+  }
+
+  const dedupedProviders = resolveRequestedServerDbProviders(effectiveBuildDbProviders);
 
   const postgresClientPath = join(repoRoot, 'node_modules', '.prisma', 'client');
   const entries: StageEntry[] = [];
@@ -256,14 +299,59 @@ export async function resolveServerBinarySidecarEntries({
     });
   }
 
-  const uiDistPath = await ensureUiWebDist({
-    repoRoot,
-    env,
-    runCommand,
-    commandProbe,
-  });
+  if (serverComponent === 'happier-server') {
+    const requiredFullServerEntries: StageEntry[] = [
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'schema.prisma'), targetPath: join('prisma', 'schema.prisma') },
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'migrations'), targetPath: join('prisma', 'migrations') },
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'schema.prisma'), targetPath: join('prisma', 'mysql', 'schema.prisma') },
+      { sourcePath: join(repoRoot, 'apps', 'server', 'prisma', 'mysql', 'migrations'), targetPath: join('prisma', 'mysql', 'migrations') },
+    ];
+    for (const entry of requiredFullServerEntries) {
+      const info = await stat(entry.sourcePath).catch(() => null);
+      if (!info) {
+        throw new Error(`[component-artifacts] missing full-server migration input: ${entry.sourcePath}`);
+      }
+      entries.push(entry);
+    }
+    if (!target) {
+      throw new Error('[component-artifacts] a binary target is required for full-server migration artifacts');
+    }
+    const targetKey = `${target.os}-${target.arch}`;
+    const schemaEngineFileName = resolvePrismaSchemaEngineTarget(target).fileName;
+    const schemaEnginePath = join(
+      repoRoot,
+      'apps',
+      'server',
+      'generated',
+      'runtime-migration-engines',
+      targetKey,
+      schemaEngineFileName,
+    );
+    const schemaEngineInfo = await stat(schemaEnginePath).catch(() => null);
+    if (!schemaEngineInfo?.isFile()) {
+      throw new Error(`[component-artifacts] missing full-server Prisma schema engine for ${targetKey}: ${schemaEnginePath}`);
+    }
+    entries.push({
+      sourcePath: schemaEnginePath,
+      targetPath: join('runtime', target.os === 'windows' ? 'schema-engine.exe' : 'schema-engine'),
+    });
+    const schemaWasmPath = join(repoRoot, 'node_modules', 'prisma', 'build', 'prisma_schema_build_bg.wasm');
+    const schemaWasmInfo = await stat(schemaWasmPath).catch(() => null);
+    if (!schemaWasmInfo?.isFile()) {
+      throw new Error(`[component-artifacts] missing full-server Prisma schema WASM: ${schemaWasmPath}`);
+    }
+    entries.push({
+      sourcePath: schemaWasmPath,
+      targetPath: join('runtime', 'prisma_schema_build_bg.wasm'),
+    });
+  }
+
+  const uiDistInfo = await stat(uiWebDistPath).catch(() => null);
+  if (!uiDistInfo?.isDirectory()) {
+    throw new Error(`[component-artifacts] missing prepared ui web dist directory: ${uiWebDistPath}`);
+  }
   entries.push({
-    sourcePath: uiDistPath,
+    sourcePath: uiWebDistPath,
     targetPath: join('ui-web', 'current'),
   });
 

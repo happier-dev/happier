@@ -3,52 +3,22 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { buildAcpConfiguredBackendV1 } from '@happier-dev/protocol';
+import {
+  buildAcpConfiguredBackendV1,
+  sealSessionOwnerMetadataV1,
+  SessionOwnerMetadataV1Schema,
+} from '@happier-dev/protocol';
 
-import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
-import type { AnyTerminalRuntimeOps, ProviderAttachOps } from '@/backends/types';
-import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
+import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
+import type { AnyTerminalRuntimeOps, ProviderAttachOps } from '@/agent/catalog/types';
 import type { Credentials } from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { evaluateCliSessionAttachEligibility } from './evaluateCliSessionAttachEligibility';
 
 const {
   resolveBackendExecutionSurfaces,
-  getProviderAttachOps,
-  getTerminalRuntimeOps,
   createMockBackendExecutionSurfaces,
 } = vi.hoisted(() => {
-  const createMockTerminalRuntimeBinding = (
-    providerId: 'claude' | 'codex' | 'ohMyPi',
-  ): LocalHostedDirectTranscriptBinding => providerId === 'claude'
-    ? {
-        providerId,
-        source: {
-          kind: 'claudeConfig',
-          configDir: '/tmp/runtime-binding',
-          projectId: null,
-        },
-        remoteSessionId: 'runtime-binding',
-      }
-    : providerId === 'codex'
-      ? {
-          providerId,
-          source: {
-            kind: 'codexHome',
-            home: 'user',
-            homePath: '/tmp/runtime-binding',
-          },
-          remoteSessionId: 'runtime-binding',
-        }
-      : {
-          providerId,
-          source: {
-            kind: 'ohMyPiAgentDir',
-            agentDir: '/tmp/runtime-binding',
-          },
-          remoteSessionId: 'runtime-binding',
-        };
-
   const createMockBackendExecutionSurfaces = (backendId: string | null | undefined): BackendExecutionSurfaces => {
     if (backendId === 'opencode') {
       const attach: ProviderAttachOps = {
@@ -75,12 +45,9 @@ const {
 
     if (backendId === 'claude' || backendId === 'codex' || backendId === 'ohMyPi') {
       const terminalRuntime: AnyTerminalRuntimeOps = backendId === 'ohMyPi'
-        ? {
-            resolveTranscriptBinding: async () => createMockTerminalRuntimeBinding('ohMyPi'),
-          }
+        ? {}
         : {
             launch: async () => 'launched',
-            resolveTranscriptBinding: async () => createMockTerminalRuntimeBinding(backendId),
           };
       return {
         terminalRuntime,
@@ -104,8 +71,6 @@ const {
   const resolveBackendExecutionSurfaces = vi.fn(createMockBackendExecutionSurfaces);
   return {
     resolveBackendExecutionSurfaces,
-    getProviderAttachOps: vi.fn(),
-    getTerminalRuntimeOps: vi.fn(),
     createMockBackendExecutionSurfaces,
   };
 });
@@ -114,22 +79,16 @@ vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendExecutionSurfaces,
 }));
 
-vi.mock('@/backends/catalog', () => ({
-  getProviderAttachOps,
-  getTerminalRuntimeOps,
-}));
-
+const credentialSecret = new Uint8Array(32).fill(1);
 const credentials: Credentials = {
   token: 'token-1',
-  encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+  encryption: { type: 'legacy', secret: credentialSecret },
 };
 
 const previousManagedServerStatePath = process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
 
 afterEach(() => {
   resolveBackendExecutionSurfaces.mockReset().mockImplementation(createMockBackendExecutionSurfaces);
-  getProviderAttachOps.mockReset();
-  getTerminalRuntimeOps.mockReset();
   if (previousManagedServerStatePath === undefined) {
     delete process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH;
     return;
@@ -137,7 +96,183 @@ afterEach(() => {
   process.env.HAPPIER_OPENCODE_SERVER_STATE_PATH = previousManagedServerStatePath;
 });
 
+type EvaluateAttachEligibilityParams = Parameters<typeof evaluateCliSessionAttachEligibility>[0];
+
+function evaluateWithMockBackendSurfaces(
+  params: Omit<EvaluateAttachEligibilityParams, 'resolveExecutionSurfaces'> & Partial<Pick<EvaluateAttachEligibilityParams, 'resolveExecutionSurfaces'>>,
+) {
+  return evaluateCliSessionAttachEligibility({
+    ...params,
+    resolveExecutionSurfaces: params.resolveExecutionSurfaces ?? (async (backendId) => resolveBackendExecutionSurfaces(backendId)),
+  });
+}
+
+function assertAttachEligibilityResolverIsRequiredForTypeSafety() {
+  // @ts-expect-error Attach eligibility must always receive bridge-owned execution surface resolution.
+  void evaluateCliSessionAttachEligibility({
+    credentials,
+    rawSession: createSessionRecordFixture({
+      id: 'sid_missing_surface_resolver_type_guard_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({ flavor: 'opencode', machineId: 'machine-1' }),
+    }),
+    currentMachineId: 'machine-1',
+    localAttachmentInfo: null,
+    insideTmux: false,
+  });
+}
+
 describe('evaluateCliSessionAttachEligibility', () => {
+  it('excludes owner-only External Session operation progress from provider attach leaves', async () => {
+    const evaluateAvailability = vi.fn<ProviderAttachOps['evaluateAvailability']>(
+      async ({ metadata }) => ({
+        eligible: true,
+        scope: 'local',
+        metadata,
+      }),
+    );
+    const attach: ProviderAttachOps = {
+      evaluateAvailability,
+      probeReachability: async () => ({ reachable: true }),
+      attach: async () => 0,
+    };
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_provider_attach_private_operation_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        machineId: 'machine-1',
+        flavor: 'opencode',
+        path: '/private/workspace',
+        externalSessionOperationV1: {
+          v: 1,
+          progress: { operationId: 'private-operation', revision: 5 },
+        },
+        externalSessionOperationPresentationV1: {
+          v: 1,
+          operationId: 'private-operation',
+          revision: 5,
+          kind: 'materialize',
+          status: 'running',
+          phase: 'publishing',
+        },
+      }),
+    });
+
+    const result = await evaluateWithMockBackendSurfaces({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-1',
+      localAttachmentInfo: null,
+      insideTmux: false,
+      resolveExecutionSurfaces: async () => ({
+        terminalRuntime: null,
+        externalSession: null,
+        attach,
+        handoff: null,
+        fork: null,
+        checkpoint: null,
+      }),
+    });
+
+    expect(evaluateAvailability).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        path: '/private/workspace',
+        externalSessionOperationPresentationV1: expect.objectContaining({
+          operationId: 'private-operation',
+          revision: 5,
+        }),
+      }),
+    }));
+    expect(evaluateAvailability.mock.calls[0]?.[0].metadata)
+      .not.toHaveProperty('externalSessionOperationV1');
+    expect(result.metadata).not.toHaveProperty('externalSessionOperationV1');
+  });
+
+  it('uses layout-v1 owner metadata for Agent, machine, path, and terminal attach facts', async () => {
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      workspace: {
+        machineId: 'machine-layout1',
+        host: 'layout1-host',
+        path: '/private/layout1-workspace',
+        flavor: 'claude',
+      },
+      runtime: {
+        terminal: {
+          mode: 'tmux',
+          requested: 'tmux',
+          tmux: { target: 'happy:layout1-owner' },
+        },
+      },
+    });
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_layout1_owner_tmux_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadataLayoutVersion: 1,
+      metadata: JSON.stringify({ v: 1 }),
+      ownerMetadata: sealSessionOwnerMetadataV1({
+        material: { type: 'legacy', secret: credentialSecret },
+        ownerMetadata,
+        randomBytes: (length) => new Uint8Array(length).fill(7),
+      }),
+    });
+
+    await expect(evaluateWithMockBackendSurfaces({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-layout1',
+      currentMachineHost: 'layout1-host',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: true,
+      attachStrategy: 'terminal_host',
+      attachScope: 'local',
+      agentId: 'claude',
+      metadata: {
+        machineId: 'machine-layout1',
+        host: 'layout1-host',
+        path: '/private/layout1-workspace',
+        flavor: 'claude',
+      },
+      plan: expect.objectContaining({
+        type: 'tmux',
+        target: 'happy:layout1-owner',
+      }),
+    });
+  });
+
+  it('fails closed when layout-v1 owner metadata is unavailable', async () => {
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_layout1_missing_owner_1',
+      active: true,
+      encryptionMode: 'plain',
+      metadataLayoutVersion: 1,
+      metadata: JSON.stringify({
+        v: 1,
+        agentPresentation: { agentId: 'claude' },
+      }),
+      ownerMetadata: null,
+    });
+
+    await expect(evaluateWithMockBackendSurfaces({
+      credentials,
+      rawSession,
+      currentMachineId: 'machine-layout1',
+      currentMachineHost: 'layout1-host',
+      localAttachmentInfo: null,
+      insideTmux: false,
+    })).resolves.toMatchObject({
+      eligible: false,
+      agentId: null,
+      reasonCode: 'metadata_unavailable',
+      metadata: null,
+    });
+  });
+
   it('rejects terminal-host sessions from a different physical host even when synced tmux metadata exists', async () => {
     const rawSession = createSessionRecordFixture({
       id: 'sid_remote_tmux_physical_host_1',
@@ -156,7 +291,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
@@ -182,7 +317,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-after-reauth',
@@ -225,7 +360,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-from-cli',
@@ -268,7 +403,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-from-cli',
@@ -306,7 +441,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-from-cli',
@@ -339,7 +474,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-remote',
@@ -371,7 +506,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
@@ -402,7 +537,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
@@ -420,6 +555,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
     const resolveBackendExecutionSurfacesSpy = resolveBackendExecutionSurfaces.mockResolvedValue(
       createMockBackendExecutionSurfaces('opencode'),
     );
+    const resolveExecutionSurfaces = vi.fn(async () => createMockBackendExecutionSurfaces('opencode'));
 
     const rawSession = createSessionRecordFixture({
       id: 'sid_generic_attach_1',
@@ -436,12 +572,13 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
       localAttachmentInfo: null,
       insideTmux: false,
+      resolveExecutionSurfaces,
     })).resolves.toMatchObject({
       eligible: true,
       attachStrategy: 'provider_attach',
@@ -449,7 +586,8 @@ describe('evaluateCliSessionAttachEligibility', () => {
       attachScope: 'local',
     });
 
-    expect(resolveBackendExecutionSurfacesSpy).toHaveBeenCalledWith('opencode');
+    expect(resolveExecutionSurfaces).toHaveBeenCalledWith('opencode');
+    expect(resolveBackendExecutionSurfacesSpy).not.toHaveBeenCalled();
   });
 
   it('resolves configured ACP attach through the concrete configured backend execution surface', async () => {
@@ -488,13 +626,13 @@ describe('evaluateCliSessionAttachEligibility', () => {
         }),
         runtimeDescriptorV1: {
           v: 1,
-          providerId: 'opencode',
+          agentId: 'opencode',
           provider: {},
         },
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
@@ -527,7 +665,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
@@ -573,7 +711,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
@@ -610,7 +748,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-after-reauth',
@@ -648,7 +786,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',
@@ -678,7 +816,7 @@ describe('evaluateCliSessionAttachEligibility', () => {
       }),
     });
 
-    await expect(evaluateCliSessionAttachEligibility({
+    await expect(evaluateWithMockBackendSurfaces({
       credentials,
       rawSession,
       currentMachineId: 'machine-local',

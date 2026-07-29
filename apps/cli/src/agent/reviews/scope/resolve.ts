@@ -13,7 +13,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
-import { defaultScmBackendRegistry } from '@/scm/scmBackendCatalog';
+import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { normalizeRepoRootRelativePath, resolveCwd } from '@/scm/runtime';
 
@@ -105,16 +105,9 @@ function uniqueSafePaths(paths: readonly string[]): readonly string[] {
 }
 
 function explicitSelectedPaths(record: ReviewInputRecord): readonly string[] {
-  const fromTopLevel = readStringArray(record.selectedPaths).concat(readStringArray(record.selectedFiles));
-  const engines = isRecord(record.engines) ? record.engines : {};
-  const coderabbit = isRecord(engines.coderabbit) ? engines.coderabbit : {};
-  const deepsec = isRecord(engines.deepsec) ? engines.deepsec : {};
   return uniqueSafePaths([
-    ...fromTopLevel,
-    ...readStringArray(coderabbit.selectedPaths),
-    ...readStringArray(coderabbit.selectedFiles),
-    ...readStringArray(deepsec.selectedPaths),
-    ...readStringArray(deepsec.selectedFiles),
+    ...readStringArray(record.selectedPaths),
+    ...readStringArray(record.selectedFiles),
   ]);
 }
 
@@ -206,62 +199,63 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
     });
   }
 
-  const registry = input.registry ?? defaultScmBackendRegistry;
-  const selected = await resolveScmSelection({
-    workingDirectory,
-    cwd: resolvedCwd.cwd,
-    registry,
-  });
-  if (!selected) {
-    return unsupportedScope({
-      code: 'not_repository',
-      message: 'Review scope requires a source-control repository in the current session directory.',
+  return runWithScmBackendRegistryLease(input.registry, async (registry) => {
+    const selected = await resolveScmSelection({
+      workingDirectory,
+      cwd: resolvedCwd.cwd,
+      registry,
     });
-  }
+    if (!selected) {
+      return unsupportedScope({
+        code: 'not_repository',
+        message: 'Review scope requires a source-control repository in the current session directory.',
+      });
+    }
 
-  const status = await selected.selection.backend.statusSnapshot({
-    context: selected.context,
-    request: { cwd: resolvedCwd.cwd, includeWorktreeStatus: true },
-  });
-  if (!status.success || !status.snapshot || !status.snapshot.repo.isRepo) {
-    return unsupportedScope({
-      code: status.errorCode === 'INVALID_PATH' ? 'invalid_path' : 'scm_status_unavailable',
-      message: status.error || 'SCM status snapshot is unavailable for the current review scope.',
+    const status = await selected.selection.backend.statusSnapshot({
+      context: selected.context,
+      request: { cwd: resolvedCwd.cwd, includeWorktreeStatus: true },
     });
-  }
+    if (!status.success || !status.snapshot || !status.snapshot.repo.isRepo) {
+      return unsupportedScope({
+        code: status.errorCode === 'INVALID_PATH' ? 'invalid_path' : 'scm_status_unavailable',
+        message: status.error || 'SCM status snapshot is unavailable for the current review scope.',
+      });
+    }
 
-  const reviewInput = parseReviewInput(input.intentInput);
-  const changedPaths = status.snapshot.entries.map((entry) => toReviewScopePath({
-    entry,
-    snapshot: status.snapshot!,
-  }));
-  const committedPaths = changedPaths.filter((entry) => entry.hasCommittedDelta);
-  const uncommittedPaths = changedPaths.filter((entry) => entry.hasUncommittedDelta);
-  const explicitPaths = explicitSelectedPaths(reviewInput.record);
-  const selectedPaths = uniqueSafePaths(selectPathsForChangeType({
-    explicitPaths,
-    changeType: reviewInput.changeType,
-    committedPaths,
-    uncommittedPaths,
-    changedPaths,
-  }));
+    const reviewInput = parseReviewInput(input.intentInput);
+    const changedPaths = status.snapshot.entries.map((entry) => toReviewScopePath({
+      entry,
+      snapshot: status.snapshot!,
+    }));
+    const committedPaths = changedPaths.filter((entry) => entry.hasCommittedDelta);
+    const uncommittedPaths = changedPaths.filter((entry) => entry.hasUncommittedDelta);
+    const explicitPaths = explicitSelectedPaths(reviewInput.record);
+    const selectedPaths = uniqueSafePaths(selectPathsForChangeType({
+      explicitPaths,
+      changeType: reviewInput.changeType,
+      committedPaths,
+      uncommittedPaths,
+      changedPaths,
+    }));
 
-  return ReviewScmScopeV1Schema.parse({
-    kind: 'review_scm_scope.v1',
-    status: 'supported',
-    scmBackendId: status.snapshot.repo.backendId ?? selected.selection.backend.id,
-    scmMode: status.snapshot.repo.mode ?? selected.selection.mode,
-    repositoryRoot: status.snapshot.repo.rootPath ?? selected.context.detection.rootPath,
-    worktreeRoot: status.snapshot.repo.rootPath ?? selected.context.detection.rootPath,
-    baseRef: resolveBaseRef({ base: reviewInput.base, snapshot: status.snapshot }),
-    selectedPaths,
-    committedPaths,
-    uncommittedPaths,
-    changedPaths,
-    diff: {
-      committedAvailable: committedPaths.some((entry) => entry.diff.committedAvailable),
-      uncommittedAvailable: uncommittedPaths.some((entry) => entry.diff.uncommittedAvailable),
-    },
-    diagnostics: [],
+    return ReviewScmScopeV1Schema.parse({
+      kind: 'review_scm_scope.v1',
+      status: 'supported',
+      scmBackendId: status.snapshot.repo.backendId ?? selected.selection.backend.id,
+      scmMode: status.snapshot.repo.mode ?? selected.selection.mode,
+      repositoryRoot: status.snapshot.repo.rootPath ?? selected.context.detection.rootPath,
+      worktreeRoot: status.snapshot.repo.rootPath ?? selected.context.detection.rootPath,
+      baseRef: resolveBaseRef({ base: reviewInput.base, snapshot: status.snapshot }),
+      selectedPaths,
+      committedPaths,
+      uncommittedPaths,
+      changedPaths,
+      diff: {
+        committedAvailable: committedPaths.some((entry) => entry.diff.committedAvailable),
+        uncommittedAvailable: uncommittedPaths.some((entry) => entry.diff.uncommittedAvailable),
+      },
+      diagnostics: [],
+    });
   });
 }

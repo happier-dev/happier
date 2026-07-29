@@ -18,14 +18,17 @@ export type YesNoDefault = 'yes' | 'no';
 
 export async function promptConfirmYesNo(
   message: string,
-  opts: Readonly<{ default: YesNoDefault; maxAttempts?: number }> = { default: 'yes' },
+  opts: Readonly<{ default: YesNoDefault; maxAttempts?: number; signal?: AbortSignal }> = { default: 'yes' },
 ): Promise<boolean> {
   const suffix = opts.default === 'yes' ? ' [Y/n] ' : ' [y/N] ';
   const maxAttempts = Math.max(1, opts.maxAttempts ?? 3);
   const fullPrompt = `${message.trimEnd()}${suffix}`;
 
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const raw = (await promptInput(fullPrompt)).trim().toLowerCase();
+    const raw = (await promptInput(
+      fullPrompt,
+      opts.signal ? { signal: opts.signal } : {},
+    )).trim().toLowerCase();
     if (raw === '') {
       return opts.default === 'yes';
     }

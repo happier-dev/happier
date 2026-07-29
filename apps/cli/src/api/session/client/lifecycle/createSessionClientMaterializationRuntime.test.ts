@@ -7,19 +7,18 @@ describe('createSessionClientMaterializationRuntime', () => {
 
   function createRuntime(overrides: Partial<RuntimeDeps> = {}) {
 	    return createSessionClientMaterializationRuntime({
-	      forgetMaterializationRecovery: vi.fn(),
 	      onKeepAliveStateMayHaveChanged: vi.fn(),
 	      initialPendingQueueState: { known: true, pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 3 },
 	      ...overrides,
 	    });
   }
 
-  it('keeps active-turn pending materialization blocked even when the host steer intake is open', () => {
+  it('leaves active-turn delivery authority with the server Pending owner', () => {
     const runtime = createRuntime({
       initialLatestTurnStatus: 'in_progress',
     });
 
-    expect(runtime.shouldAttemptPendingMaterialization()).toBe(false);
+    expect(runtime.shouldAttemptPendingMaterialization()).toBe(true);
   });
 
   it('does not attempt materialization when every queued pending row is blocked', () => {
@@ -37,14 +36,6 @@ describe('createSessionClientMaterializationRuntime', () => {
     expect(runtime.shouldForceRefreshStaleBlockedTurnStatus()).toBe(false);
   });
 
-  it('keeps active-turn pending materialization blocked by the turn boundary owner', () => {
-    const runtime = createRuntime({
-      initialLatestTurnStatus: 'in_progress',
-    });
-
-    expect(runtime.shouldAttemptPendingMaterialization()).toBe(false);
-  });
-
   it('treats daemon-observed end_session settlement as terminal pending-drain state', () => {
     const runtime = createRuntime();
 
@@ -52,7 +43,7 @@ describe('createSessionClientMaterializationRuntime', () => {
     expect(runtime.hasActiveLocalTurn()).toBe(true);
     expect(runtime.getLatestTurnStatus()).toBe('in_progress');
     expect(runtime.getLatestTurnStatusObservedAt()).toBe(100);
-    expect(runtime.shouldAttemptPendingMaterialization()).toBe(false);
+    expect(runtime.shouldAttemptPendingMaterialization()).toBe(true);
     expect(runtime.shouldForceRefreshStaleBlockedTurnStatus()).toBe(false);
 
 	    expect(runtime.observeSessionTurnMutationAction('end_session', 200)).toEqual({ isTerminal: true });
@@ -91,21 +82,40 @@ describe('createSessionClientMaterializationRuntime', () => {
     });
   });
 
-  it('keeps agent-queue echo suppression until explicitly cleared', async () => {
-    vi.useFakeTimers();
-    try {
-      const runtime = createRuntime();
+  it('rejects an older remote turn projection after a newer local terminal event', () => {
+    const runtime = createRuntime();
 
-      runtime.markAgentQueueEchoSuppressedLocalId('local-1');
-      expect(runtime.hasAgentQueueEchoSuppressedLocalId('local-1')).toBe(true);
+    runtime.observeSessionTurnMutationAction('begin', 100);
+    runtime.observeSessionTurnMutationAction('complete', 200);
+    runtime.applyLatestTurnStatus('in_progress', 150);
 
-      await vi.advanceTimersByTimeAsync(60_000);
-      expect(runtime.hasAgentQueueEchoSuppressedLocalId('local-1')).toBe(true);
+    expect(runtime.getLatestTurnSnapshot()).toEqual({
+      status: 'completed',
+      observedAt: 200,
+    });
+  });
 
-      runtime.clearAgentQueueEchoSuppressedLocalId('local-1');
-      expect(runtime.hasAgentQueueEchoSuppressedLocalId('local-1')).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
+  it('does not let a remote status without observation time overwrite timestamped local evidence', () => {
+    const runtime = createRuntime();
+
+    runtime.observeSessionTurnMutationAction('complete', 200);
+    runtime.applyLatestTurnStatus('in_progress');
+
+    expect(runtime.getLatestTurnSnapshot()).toEqual({
+      status: 'completed',
+      observedAt: 200,
+    });
+  });
+
+  it('accepts a genuinely newer remote in-progress projection', () => {
+    const runtime = createRuntime();
+
+    runtime.observeSessionTurnMutationAction('complete', 200);
+    runtime.applyLatestTurnStatus('in_progress', 300);
+
+    expect(runtime.getLatestTurnSnapshot()).toEqual({
+      status: 'in_progress',
+      observedAt: 300,
+    });
   });
 });

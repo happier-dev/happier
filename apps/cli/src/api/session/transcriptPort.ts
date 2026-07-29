@@ -1,6 +1,8 @@
 import type { ACPMessageData, ACPProvider } from './sessionMessageTypes';
 import type { TurnAssistantTextSnapshotStore } from './turns/assistantTextSnapshot';
 import type { SendAgentSessionMediaCommittedRequest } from './client/transcript/sessionMediaBridge';
+import type { EphemeralSendResult } from './client/transcript/ephemeralSendOutcome';
+import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 
 export type TranscriptSessionPort = Readonly<{
   turnAssistantTextSnapshotStore?: TurnAssistantTextSnapshotStore;
@@ -20,7 +22,7 @@ export type TranscriptSessionPort = Readonly<{
       /** Live-stream tick this full snapshot corresponds to (delta-chaining checkpoint anchor). */
       tick?: number;
     },
-  ) => void | Promise<void>;
+  ) => EphemeralSendResult;
   /**
    * Emit a live delta tick: `body` carries ONLY the text appended since the previous live emission
    * for this segment. Sessions that do not implement this receive full snapshots on every live
@@ -38,7 +40,7 @@ export type TranscriptSessionPort = Readonly<{
       updatedAt?: number;
       meta?: Record<string, unknown>;
     },
-  ) => void | Promise<void>;
+  ) => EphemeralSendResult;
   /**
    * Monotonic counter that increases whenever the underlying live transport (re)connects. The
    * streamed transcript writer emits a full snapshot after an epoch change so receivers resync
@@ -48,7 +50,7 @@ export type TranscriptSessionPort = Readonly<{
   enqueueAgentMessageCommitted?: (
     provider: ACPProvider,
     body: ACPMessageData,
-    opts: { localId: string; meta?: Record<string, unknown> },
+    opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
   ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   sendAgentMessageCommitted: (
     provider: ACPProvider,

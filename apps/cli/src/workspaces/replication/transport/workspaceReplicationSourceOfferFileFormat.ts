@@ -4,6 +4,9 @@ import { createInterface } from 'node:readline';
 
 import { z } from 'zod';
 
+import { writeFileHandleFully } from '@/utils/fs/writeFileHandleFully';
+import { writeFileAtomically } from '@/utils/fs/writeJsonAtomic';
+
 import { ReplicationManifestEntrySchema, ReplicationManifestFingerprintSchema } from '../replicationManifestSchema';
 import type { WorkspaceReplicationSourceOffer } from './createWorkspaceReplicationSourceOffer';
 
@@ -131,20 +134,47 @@ export async function writeWorkspaceReplicationSourceOfferToFile(input: Readonly
     ...(input.offer.workspaceIntegrationMetadata ? { workspaceIntegrationMetadata: input.offer.workspaceIntegrationMetadata } : {}),
   };
 
-  const file = await open(input.filePath, 'w', 0o600);
-  try {
-    await file.write(`${WORKSPACE_REPLICATION_SOURCE_OFFER_STREAM_MAGIC}\n`);
-    await file.write(`${JSON.stringify(header)}\n`);
-    for (const entry of input.offer.manifest.entries) {
-      await file.write(`${JSON.stringify(entry)}\n`);
-    }
-  } finally {
-    await file.close().catch(() => undefined);
-  }
+  let sizeBytes = 0;
+  await writeFileAtomically({
+    path: input.filePath,
+    writeTemporaryFile: async (temporaryPath) => {
+      const file = await open(temporaryPath, 'w', 0o600);
+      let position = 0;
+      let writeFailed = false;
+      const writeLine = async (line: string): Promise<void> => {
+        const buffer = Buffer.from(`${line}\n`, 'utf8');
+        await writeFileHandleFully({
+          fileHandle: file,
+          buffer,
+          position,
+        });
+        position += buffer.byteLength;
+      };
 
-  const stats = await stat(input.filePath);
+      try {
+        await writeLine(WORKSPACE_REPLICATION_SOURCE_OFFER_STREAM_MAGIC);
+        await writeLine(JSON.stringify(header));
+        for (const entry of input.offer.manifest.entries) {
+          await writeLine(JSON.stringify(entry));
+        }
+      } catch (error) {
+        writeFailed = true;
+        throw error;
+      } finally {
+        if (writeFailed) {
+          await file.close().catch(() => undefined);
+        } else {
+          await file.close();
+        }
+      }
+
+      const stats = await stat(temporaryPath);
+      sizeBytes = stats.size;
+    },
+  });
+
   return {
     filePath: input.filePath,
-    sizeBytes: stats.size,
+    sizeBytes,
   };
 }

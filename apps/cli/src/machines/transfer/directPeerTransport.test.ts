@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -189,6 +189,58 @@ describe('direct peer machine transfer', () => {
     })).not.toThrow();
   });
 
+  it('coalesces concurrent on-demand opens for one transfer id onto one payload source', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const { createDirectPeerTransferRegistry } = await import('./directPeerTransport');
+    const { createFileTransferPayloadSource } = await import('./transferPayloadSource');
+
+    let releaseResolution!: () => void;
+    const resolutionGate = new Promise<void>((resolve) => {
+      releaseResolution = resolve;
+    });
+    const dispose = vi.fn(async () => {});
+    const resolvePayloadSourceOnOpen = vi.fn(async () => {
+      await resolutionGate;
+      return createFileTransferPayloadSource({
+        filePath: '/tmp/coalesced-on-demand-payload',
+        sizeBytes: 7,
+        manifestHash: 'sha256:coalesced',
+        dispose,
+      });
+    });
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => 1_000,
+    });
+    const carrier = registry.publishTransfer({
+      transferId: 'scope_carrier_coalesced',
+      payload: Buffer.from('carrier', 'utf8'),
+      onDemandScope: {
+        allowTransferId: (transferId) => transferId === 'dynamic:coalesced',
+        resolvePayloadSourceOnOpen,
+      },
+    });
+    const openInput = {
+      transferId: 'dynamic:coalesced',
+      transferToken: carrier.transferToken,
+      requestBody: { path: 'same-resource' },
+    };
+
+    const firstOpen = registry.resolveOnDemandTransferOnOpen(openInput);
+    const secondOpen = registry.resolveOnDemandTransferOnOpen(openInput);
+    await Promise.resolve();
+
+    expect(resolvePayloadSourceOnOpen).toHaveBeenCalledTimes(1);
+
+    releaseResolution();
+    const [firstSource, secondSource] = await Promise.all([firstOpen, secondOpen]);
+    expect(firstSource).toBe(secondSource);
+
+    registry.clearPublishedTransfer('scope_carrier_coalesced');
+    await vi.waitFor(() => expect(dispose).toHaveBeenCalledTimes(1));
+  });
+
   it('hard-clamps the direct peer chunk-bytes env override to a bounded ceiling', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
     // Intentionally larger than the hard max. This must be clamped to avoid huge per-chunk allocations.
@@ -322,6 +374,68 @@ describe('direct peer machine transfer', () => {
       await app.close();
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  it('clamps local advertisement config to loopback but rejects explicit nonloopback remote candidates', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '192.168.1.20,10.0.0.8';
+
+    const {
+      buildDirectTransferImportOpenEndpointCandidates,
+      buildDirectTransferImportSessionEndpointCandidates,
+      createDirectPeerTransferRegistry,
+    } = await import('./directPeerTransport');
+
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => 1_000,
+    });
+    expect(registry.publishTransfer({
+      transferId: 'transfer_nonloopback_advertisement',
+      payload: Buffer.from('private payload', 'utf8'),
+    }).endpointCandidates).toEqual([
+      expect.objectContaining({
+        kind: 'http',
+        url: 'http://127.0.0.1:46001/machine-transfers/direct/dHJhbnNmZXJfbm9ubG9vcGJhY2tfYWR2ZXJ0aXNlbWVudA',
+        expiresAt: 601_000,
+      }),
+    ]);
+    expect(buildDirectTransferImportOpenEndpointCandidates({
+      advertisedPort: 46001,
+      authorizationToken: 'open-token',
+      expiresAt: 2_000,
+      advertisedHosts: ['192.168.1.20'],
+    })).toEqual([]);
+    expect(buildDirectTransferImportSessionEndpointCandidates({
+      advertisedPort: 46001,
+      uploadId: 'upload-1',
+      expiresAt: 2_000,
+      advertisedHosts: ['10.0.0.8'],
+    })).toEqual([]);
+  });
+
+  it('retains loopback HTTP candidates while filtering non-loopback hosts', async () => {
+    const {
+      buildDirectTransferImportOpenEndpointCandidates,
+      buildDirectTransferImportSessionEndpointCandidates,
+    } = await import('./directPeerTransport');
+
+    expect(buildDirectTransferImportOpenEndpointCandidates({
+      advertisedPort: 46001,
+      authorizationToken: 'open-token',
+      expiresAt: 2_000,
+      advertisedHosts: ['192.168.1.20', '127.0.0.1', '::1'],
+    }).map((candidate) => candidate.url)).toEqual([
+      'http://127.0.0.1:46001/machine-transfers/direct/imports/open',
+      'http://[::1]:46001/machine-transfers/direct/imports/open',
+    ]);
+    expect(buildDirectTransferImportSessionEndpointCandidates({
+      advertisedPort: 46001,
+      uploadId: 'upload-1',
+      expiresAt: 2_000,
+      advertisedHosts: ['10.0.0.8', 'localhost'],
+    }).map((candidate) => candidate.url)).toEqual([
+      'http://localhost:46001/machine-transfers/direct/imports/upload-1',
+    ]);
   });
 
   it('fails closed when a transfer token is supplied only via query params (no query-token auth)', async () => {
@@ -680,7 +794,7 @@ describe('direct peer machine transfer', () => {
         });
       }
 
-      expect(url).toBe('http://good.example/machine-transfers/direct/transfer_ssrf_skip/chunks/0');
+      expect(url).toBe('https://good.example/machine-transfers/direct/transfer_ssrf_skip/chunks/0');
       return new Response(JSON.stringify({
         transferId: 'transfer_ssrf_skip',
         kind: 'chunk',
@@ -702,14 +816,14 @@ describe('direct peer machine transfer', () => {
       transferId: 'transfer_ssrf_skip',
       endpointCandidates: [
         {
-          kind: 'http',
-          url: 'http://bad.example/not-a-direct-peer-endpoint',
+          kind: 'https',
+          url: 'https://bad.example/not-a-direct-peer-endpoint',
           authorizationToken: 'test-token',
           expiresAt: 10_000,
         },
         {
-          kind: 'http',
-          url: 'http://good.example/machine-transfers/direct/transfer_ssrf_skip',
+          kind: 'https',
+          url: 'https://good.example/machine-transfers/direct/transfer_ssrf_skip',
           authorizationToken: 'test-token',
           expiresAt: 10_000,
         },
@@ -763,8 +877,8 @@ describe('direct peer machine transfer', () => {
     await expect(requestDirectPeerTransferToFile({
       transferId: 'transfer_oversized_body',
       endpointCandidates: [{
-        kind: 'http',
-        url: 'http://example.test/machine-transfers/direct/transfer_oversized_body',
+        kind: 'https',
+        url: 'https://example.test/machine-transfers/direct/transfer_oversized_body',
         authorizationToken: 'abc',
         expiresAt: 10_000,
       }],
@@ -823,8 +937,8 @@ describe('direct peer machine transfer', () => {
     await expect(requestDirectPeerTransferToFile({
       transferId: 'transfer_streamed_oversized_body',
       endpointCandidates: [{
-        kind: 'http',
-        url: 'http://example.test/machine-transfers/direct/transfer_streamed_oversized_body',
+        kind: 'https',
+        url: 'https://example.test/machine-transfers/direct/transfer_streamed_oversized_body',
         authorizationToken: 'abc',
         expiresAt: 10_000,
       }],
@@ -1016,7 +1130,7 @@ describe('direct peer machine transfer', () => {
       });
       expect(open.statusCode).toBe(400);
       expect(resolveOnDemandTransfer).not.toHaveBeenCalled();
-      expect(readPublishedTransfer).toHaveBeenCalled();
+      expect(readPublishedTransfer).not.toHaveBeenCalled();
     } finally {
       await app.close();
     }
@@ -1419,8 +1533,8 @@ describe('direct peer machine transfer', () => {
       await expect(requestDirectPeerTransferToFile({
         transferId: 'transfer_open_body_client_guard',
         endpointCandidates: [{
-          kind: 'http',
-          url: 'http://example.test/machine-transfers/direct/transfer_open_body_client_guard',
+          kind: 'https',
+          url: 'https://example.test/machine-transfers/direct/transfer_open_body_client_guard',
           authorizationToken: 'abc',
           expiresAt: 10_000,
         }],
@@ -1461,8 +1575,8 @@ describe('direct peer machine transfer', () => {
       await expect(requestDirectPeerTransferToFile({
         transferId: 'transfer_open_body_hard_clamp',
         endpointCandidates: [{
-          kind: 'http',
-          url: 'http://example.test/machine-transfers/direct/transfer_open_body_hard_clamp',
+          kind: 'https',
+          url: 'https://example.test/machine-transfers/direct/transfer_open_body_hard_clamp',
           authorizationToken: 'abc',
           expiresAt: 10_000,
         }],
@@ -1498,8 +1612,8 @@ describe('direct peer machine transfer', () => {
       await expect(requestDirectPeerTransferToFile({
         transferId: 'transfer_open_body_hard_ceiling',
         endpointCandidates: [{
-          kind: 'http',
-          url: 'http://example.test/machine-transfers/direct/transfer_open_body_hard_ceiling',
+          kind: 'https',
+          url: 'https://example.test/machine-transfers/direct/transfer_open_body_hard_ceiling',
           authorizationToken: 'abc',
           expiresAt: 10_000,
         }],
@@ -1542,8 +1656,8 @@ describe('direct peer machine transfer', () => {
       await expect(requestDirectPeerTransferToFile({
         transferId: 'transfer_open_body_tojson_inflation',
         endpointCandidates: [{
-          kind: 'http',
-          url: 'http://example.test/machine-transfers/direct/transfer_open_body_tojson_inflation',
+          kind: 'https',
+          url: 'https://example.test/machine-transfers/direct/transfer_open_body_tojson_inflation',
           authorizationToken: 'abc',
           expiresAt: 10_000,
         }],
@@ -1686,8 +1800,8 @@ describe('direct peer machine transfer', () => {
       await requestDirectPeerTransferToFile({
         transferId: 'transfer_open_body_bytes',
         endpointCandidates: [{
-          kind: 'http',
-          url: 'http://example.test/machine-transfers/direct/transfer_open_body_bytes',
+          kind: 'https',
+          url: 'https://example.test/machine-transfers/direct/transfer_open_body_bytes',
           authorizationToken: 'abc',
           expiresAt: 10_000,
         }],
@@ -1772,6 +1886,54 @@ describe('direct peer machine transfer', () => {
 
     await server.stop();
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+  });
+
+  it('allows on-demand resources and an outer retry to use fresh recipient keys under one scoped token', async () => {
+    process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
+
+    const {
+      createDirectPeerTransferApp,
+      createDirectPeerTransferRegistry,
+    } = await import('./directPeerTransport');
+    const { deriveBoxPublicKeyFromSeed } = await import('@happier-dev/protocol');
+    const { createBufferTransferPayloadSource } = await import('./transferPayloadSource');
+
+    const registry = createDirectPeerTransferRegistry({
+      advertisedPort: 46001,
+      now: () => 1_000,
+    });
+    const published = registry.publishTransfer({
+      transferId: 'scope_carrier_fresh_keys',
+      payload: Buffer.from('token-carrier', 'utf8'),
+      onDemandScope: {
+        allowTransferId: (transferId) => transferId.startsWith('dynamic:fresh-key:'),
+        resolvePayloadSourceOnOpen: async ({ transferId }) =>
+          createBufferTransferPayloadSource(Buffer.from(transferId, 'utf8')),
+      },
+    });
+    const app = createDirectPeerTransferApp({
+      readPublishedTransfer: registry.readPublishedTransfer,
+      resolveOnDemandTransfer: registry.resolveOnDemandTransferOnOpen,
+    });
+    const openWithFreshKey = async (transferId: string, seedByte: number) => await app.inject({
+      method: 'POST',
+      url: buildDirectPeerOpenUrl(transferId),
+      headers: {
+        authorization: `Bearer ${published.transferToken}`,
+        'x-happier-transfer-recipient-public-key': Buffer.from(
+          deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(seedByte)),
+        ).toString('base64'),
+      },
+    });
+
+    try {
+      await app.ready();
+      expect((await openWithFreshKey('dynamic:fresh-key:manifest', 3)).statusCode).toBe(200);
+      expect((await openWithFreshKey('dynamic:fresh-key:pack', 5)).statusCode).toBe(200);
+      expect((await openWithFreshKey('dynamic:fresh-key:manifest', 7)).statusCode).toBe(200);
+    } finally {
+      await app.close();
+    }
   });
 
   it('retries a retryable 503 direct-peer open response before failing the transfer', async () => {
@@ -2665,6 +2827,123 @@ describe('direct peer machine transfer', () => {
     }
   });
 
+  it('rejects a direct endpoint commitment that disagrees with the caller publication before requesting chunks', async () => {
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-commitment-mismatch-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+    const publishedPayload = Buffer.from('expected', 'utf8');
+    const endpointPayload = Buffer.from('endpoint', 'utf8');
+    const publishedManifestHash = createTransferManifestHash(publishedPayload);
+    const fetchFn: typeof fetch = vi.fn(async (input) => {
+      const url = String(input);
+      if (url.endsWith('/open')) {
+        return new Response(JSON.stringify({
+          transferId: 'transfer_commitment_mismatch',
+          manifestHash: createTransferManifestHash(endpointPayload),
+          totalChunks: 1,
+          sizeBytes: endpointPayload.byteLength,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      throw new Error(`Unexpected chunk request: ${url}`);
+    });
+
+    try {
+      await writeFile(destinationPath, 'preserve-existing');
+      await expect(requestDirectPeerTransferToFile({
+        transferId: 'transfer_commitment_mismatch',
+        endpointCandidates: [{
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_commitment_mismatch',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        }],
+        destinationPath,
+        fetchFn,
+        now: () => 5_000,
+        expectedSizeBytes: publishedPayload.byteLength,
+        expectedManifestHash: publishedManifestHash,
+      })).rejects.toThrow('Direct peer transfer commitment mismatch for transfer_commitment_mismatch');
+
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('preserve-existing');
+      await expect(readdir(tempDir)).resolves.toEqual(['payload-destination.bin']);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects plaintext beyond the published expected size before writing or promoting it', async () => {
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-size-commitment-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+    const publishedPayload = Buffer.from('abc', 'utf8');
+    const oversizedPayload = Buffer.from('abcd', 'utf8');
+    const publishedManifestHash = createTransferManifestHash(publishedPayload);
+    let recipientPublicKeyBase64 = '';
+    const fetchFn: typeof fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      const headers = init?.headers as Record<string, string> | undefined;
+      if (url.endsWith('/open')) {
+        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
+        return new Response(JSON.stringify({
+          transferId: 'transfer_expected_size',
+          manifestHash: publishedManifestHash,
+          totalChunks: 1,
+          sizeBytes: publishedPayload.byteLength,
+        }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({
+        transferId: 'transfer_expected_size',
+        kind: 'chunk',
+        sequence: 0,
+        ...createEncryptedTransferChunkEnvelope({
+          transferId: 'transfer_expected_size',
+          sequence: 0,
+          payload: oversizedPayload,
+          recipientPublicKeyBase64,
+          randomBytes: (length) => new Uint8Array(length).fill(5),
+        }),
+      }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+
+    try {
+      await writeFile(destinationPath, 'preserve-existing');
+      await expect(requestDirectPeerTransferToFile({
+        transferId: 'transfer_expected_size',
+        endpointCandidates: [{
+          kind: 'http',
+          url: 'http://127.0.0.1:46001/machine-transfers/direct/transfer_expected_size',
+          authorizationToken: 'test-token',
+          expiresAt: 10_000,
+        }],
+        destinationPath,
+        fetchFn,
+        now: () => 5_000,
+        expectedSizeBytes: publishedPayload.byteLength,
+        expectedManifestHash: publishedManifestHash,
+      })).rejects.toThrow('Direct peer transfer commitment mismatch for transfer_expected_size');
+
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      await expect(readFile(destinationPath, 'utf8')).resolves.toBe('preserve-existing');
+      await expect(readdir(tempDir)).resolves.toEqual(['payload-destination.bin']);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('streams file-backed transfers when the configured chunk-bytes value is smaller than the encrypted data-key envelope', async () => {
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS = '127.0.0.1';
     process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_CHUNK_BYTES = '8';
@@ -3171,6 +3450,97 @@ describe('direct peer machine transfer', () => {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
+  it('never fetches a predecessor LAN HTTP candidate and continues with HTTPS', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-safe-candidate-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const { createEncryptedTransferChunkEnvelope, createTransferManifestHash } = await import('./transferChunkEncryption');
+    const payload = Buffer.from('payload-via-https', 'utf8');
+    let recipientPublicKeyBase64 = '';
+    const fetchFn: typeof fetch = vi.fn(async (input, init) => {
+      const url = String(input);
+      expect(url).not.toContain('192.168.1.20');
+      const headers = init?.headers as Record<string, string> | undefined;
+      if (url.endsWith('/open')) {
+        expect(url).toBe('https://machine.example.test/machine-transfers/direct/transfer_safe/open');
+        recipientPublicKeyBase64 = headers?.['x-happier-transfer-recipient-public-key'] ?? '';
+        return new Response(JSON.stringify({
+          transferId: 'transfer_safe',
+          manifestHash: createTransferManifestHash(payload),
+          totalChunks: 1,
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      expect(url).toBe('https://machine.example.test/machine-transfers/direct/transfer_safe/chunks/0');
+      return new Response(JSON.stringify({
+        transferId: 'transfer_safe',
+        kind: 'chunk',
+        sequence: 0,
+        ...createEncryptedTransferChunkEnvelope({
+          transferId: 'transfer_safe',
+          sequence: 0,
+          payload,
+          recipientPublicKeyBase64,
+          randomBytes: (length) => new Uint8Array(length).fill(7),
+        }),
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    });
+
+    try {
+      await requestDirectPeerTransferToFile({
+        transferId: 'transfer_safe',
+        endpointCandidates: [
+          {
+            kind: 'http',
+            url: 'http://192.168.1.20:46001/machine-transfers/direct/transfer_safe',
+            authorizationToken: 'remote-dev-shaped-token',
+            expiresAt: 10_000,
+          },
+          {
+            kind: 'https',
+            url: 'https://machine.example.test/machine-transfers/direct/transfer_safe',
+            authorizationToken: 'https-token',
+            expiresAt: 10_000,
+          },
+        ],
+        fetchFn,
+        now: () => 5_000,
+        destinationPath,
+      });
+
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+      await expect(readFile(destinationPath)).resolves.toEqual(payload);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it('fails direct transfer without fetching when every candidate is non-loopback HTTP', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-insecure-only-'));
+    const destinationPath = join(tempDir, 'payload-destination.bin');
+    const { requestDirectPeerTransferToFile } = await import('./directPeerTransport');
+    const fetchFn: typeof fetch = vi.fn(async () => {
+      throw new Error('insecure candidate must never be fetched');
+    });
+
+    try {
+      await expect(requestDirectPeerTransferToFile({
+        transferId: 'transfer_insecure_only',
+        endpointCandidates: [{
+          kind: 'http',
+          url: 'http://10.1.2.3:46001/machine-transfers/direct/transfer_insecure_only',
+          authorizationToken: 'remote-dev-shaped-token',
+          expiresAt: 10_000,
+        }],
+        fetchFn,
+        now: () => 5_000,
+        destinationPath,
+      })).rejects.toThrow('No reachable direct peer transfer candidate');
+      expect(fetchFn).not.toHaveBeenCalled();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
   it('skips direct-peer endpoint candidates that include extra path segments (prevents auth token leakage to attacker-controlled URLs)', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-ssrf-segments-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
@@ -3206,7 +3576,7 @@ describe('direct peer machine transfer', () => {
         });
       }
 
-      expect(url).toBe('http://good.example/machine-transfers/direct/transfer_ssrf_skip/chunks/0');
+      expect(url).toBe('https://good.example/machine-transfers/direct/transfer_ssrf_skip/chunks/0');
       return new Response(JSON.stringify({
         transferId: 'transfer_ssrf_skip',
         kind: 'chunk',
@@ -3228,15 +3598,15 @@ describe('direct peer machine transfer', () => {
       transferId: 'transfer_ssrf_skip',
       endpointCandidates: [
         {
-          kind: 'http',
+          kind: 'https',
           // Contains the direct-peer marker but is not a base transfer endpoint.
-          url: 'http://bad.example/machine-transfers/direct/transfer_ssrf_skip/open',
+          url: 'https://bad.example/machine-transfers/direct/transfer_ssrf_skip/open',
           authorizationToken: 'test-token',
           expiresAt: 10_000,
         },
         {
-          kind: 'http',
-          url: 'http://good.example/machine-transfers/direct/transfer_ssrf_skip',
+          kind: 'https',
+          url: 'https://good.example/machine-transfers/direct/transfer_ssrf_skip',
           authorizationToken: 'test-token',
           expiresAt: 10_000,
         },
@@ -3284,7 +3654,7 @@ describe('direct peer machine transfer', () => {
         });
       }
 
-      expect(url).toBe('http://good.example/machine-transfers/direct/transfer_oversized_auth_token_skip/chunks/0');
+      expect(url).toBe('https://good.example/machine-transfers/direct/transfer_oversized_auth_token_skip/chunks/0');
       return new Response(JSON.stringify({
         transferId: 'transfer_oversized_auth_token_skip',
         kind: 'chunk',
@@ -3307,14 +3677,14 @@ describe('direct peer machine transfer', () => {
         transferId: 'transfer_oversized_auth_token_skip',
         endpointCandidates: [
           {
-            kind: 'http',
-            url: 'http://bad.example/machine-transfers/direct/transfer_oversized_auth_token_skip',
+            kind: 'https',
+            url: 'https://bad.example/machine-transfers/direct/transfer_oversized_auth_token_skip',
             authorizationToken: 'x'.repeat(10_000),
             expiresAt: 10_000,
           },
           {
-            kind: 'http',
-            url: 'http://good.example/machine-transfers/direct/transfer_oversized_auth_token_skip',
+            kind: 'https',
+            url: 'https://good.example/machine-transfers/direct/transfer_oversized_auth_token_skip',
             authorizationToken: 'ok-token',
             expiresAt: 10_000,
           },
@@ -3398,7 +3768,7 @@ describe('direct peer machine transfer', () => {
     await rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  it('tolerates small endpoint expiry clock skew when selecting direct-peer candidates', async () => {
+  it('accepts a predecessor open response without sizeBytes while enforcing the published commitment', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-direct-peer-transfer-expiry-skew-'));
     const destinationPath = join(tempDir, 'payload-destination.bin');
 
@@ -3454,6 +3824,8 @@ describe('direct peer machine transfer', () => {
       fetchFn,
       now: () => 10_000,
       destinationPath,
+      expectedSizeBytes: payload.byteLength,
+      expectedManifestHash: createTransferManifestHash(payload),
     });
 
     await expect(readFile(destinationPath)).resolves.toEqual(payload);

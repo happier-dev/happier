@@ -27,9 +27,8 @@ describe('Happier built-in tool catalog convergence', () => {
     const tools = listBuiltInHappierTools({
       surface: 'cli',
       registry: createResolvedContributionRegistry({
-        providers: [],
-        backends: [],
-      }),
+        agents: [],
+              }),
     });
     const names = tools.map((tool) => tool.name);
 

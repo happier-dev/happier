@@ -1,10 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
+import { readPendingLocalId } from '@happier-dev/protocol';
 import { decodeBase64, encodeBase64, encrypt } from '@/api/encryption';
-import {
-  enqueuePendingQueueV2MessageViaHttp,
-  materializeNextPendingQueueV2MessageViaHttp,
-} from '@/api/session/pendingQueueV2Transport';
+import { enqueuePendingQueueV2MessageViaHttp } from '@/api/session/pendingQueueV2Transport';
 
 type PendingMessageCiphertextPayload = Readonly<{
   role: 'user';
@@ -44,20 +42,21 @@ function buildPendingCiphertext(params: {
   return encodeBase64(encrypted);
 }
 
-export async function enqueueAndMaterializeAutomationPrompt(params: {
+export async function enqueueAutomationPrompt(params: {
   token: string;
   sessionId: string;
   prompt: string;
   displayText?: string;
   sessionEncryptionMode: 'e2ee' | 'plain';
   sessionEncryptionKeyBase64?: string;
+  localId?: string;
 }): Promise<void> {
   const prompt = params.prompt.trim();
   if (!prompt) {
     return;
   }
 
-  const localId = randomUUID();
+  const localId = readPendingLocalId(params.localId) ?? randomUUID();
   const displayText = typeof params.displayText === 'string' ? params.displayText : undefined;
 
   const body = params.sessionEncryptionMode === 'plain'
@@ -81,6 +80,7 @@ export async function enqueueAndMaterializeAutomationPrompt(params: {
           },
         },
         messageRole: 'user' as const,
+        requestedAction: { v: 1 as const, kind: 'enqueue' as const },
       }
     : {
         localId,
@@ -90,6 +90,7 @@ export async function enqueueAndMaterializeAutomationPrompt(params: {
           ...(displayText ? { displayText } : {}),
           sessionEncryptionKeyBase64: String(params.sessionEncryptionKeyBase64 ?? ''),
         }),
+        requestedAction: { v: 1 as const, kind: 'enqueue' as const },
       };
 
   await enqueuePendingQueueV2MessageViaHttp({
@@ -97,12 +98,4 @@ export async function enqueueAndMaterializeAutomationPrompt(params: {
     sessionId: params.sessionId,
     body,
   });
-
-  const materialized = await materializeNextPendingQueueV2MessageViaHttp({
-    token: params.token,
-    sessionId: params.sessionId,
-  });
-  if (!materialized) {
-    throw new Error('Failed to materialize automation prompt');
-  }
 }

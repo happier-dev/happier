@@ -13,22 +13,19 @@ import {
 } from './apply';
 import {
   resolveDaemonServiceInstallConflictPlan,
+  daemonServiceMatchesInstallTarget,
   type DaemonServiceInstallConflictPlan,
   type DaemonServiceInstallStrategy,
   type DaemonServiceInstallTarget,
 } from './daemonInstallConflict';
 import { assertDaemonServiceModeSupported } from './assertDaemonServiceModeSupported';
-import {
-  discoverInstalledDaemonServiceEntries,
-  type InstalledDaemonServiceEntry,
-} from './discoverInstalledDaemonServiceEntries';
+import { discoverInstalledDaemonServiceEntries } from './discoverInstalledDaemonServiceEntries';
 import { planDaemonServiceInstall, planDaemonServiceUninstall } from './plan';
 import type { DaemonServiceMode, DaemonServiceTargetMode } from './plan';
 import { resolveDaemonServiceInstallRuntimeTarget } from './resolveDaemonServiceInstallRuntimeTarget';
 import { resolveDaemonServiceDiscoveryTargets } from './resolveDaemonServiceDiscoveryTargets';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { doesInstalledDaemonServiceDefinitionMatchExpected } from './doesInstalledDaemonServiceDefinitionMatchExpected';
-import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHomeDirComparableKey';
 
 type SupportedPlatform = 'darwin' | 'linux' | 'win32';
 
@@ -126,6 +123,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   targetMode?: DaemonServiceTargetMode;
   darwinInstallMode?: 'rebootstrap' | 'kickstart';
   instanceId?: string;
+  activeServerId?: string;
   strategy?: DaemonServiceInstallStrategy;
   serverUrl?: string;
   webappUrl?: string;
@@ -144,6 +142,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   const userHomeDir = options.userHomeDir ?? homedir();
   const happierHomeDir = options.happierHomeDir ?? configuration.happyHomeDir;
   const instanceId = options.instanceId ?? configuration.activeServerId;
+  const activeServerId = options.activeServerId ?? configuration.activeServerId;
   const channel = await resolveDaemonServiceReleaseChannel({
     channel: options.channel,
     processEnv: process.env,
@@ -159,6 +158,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
     explicitNodePath,
     explicitEntryPath,
     targetMode,
+    channel,
     processEnv: process.env,
   });
   const strategy: DaemonServiceInstallStrategy = options.strategy
@@ -202,6 +202,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
     targetMode,
     darwinInstallMode: options.darwinInstallMode,
     instanceId,
+    activeServerId,
     uid,
     userHomeDir,
     happierHomeDir,
@@ -217,7 +218,7 @@ export async function previewDaemonServiceInstall(options: Readonly<{
   const exactTargetMatchesExpectedDefinition = conflictPlan.exactTargetExists && (
     !expectedInstalledFile
     || discoveredServices
-      .filter((service) => matchesInstallTarget(service, target))
+      .filter((service) => daemonServiceMatchesInstallTarget(service, target))
       .some((service) => service.path === expectedInstalledFile.path && doesInstalledDaemonServiceDefinitionMatchExpected({
         installedPath: service.path,
         expectedContents: expectedInstalledFile.content,
@@ -245,28 +246,6 @@ function previewPlanFileForTarget(params: Readonly<{
     : null;
 }
 
-function matchesInstallTarget(
-  service: InstalledDaemonServiceEntry,
-  target: DaemonServiceInstallTarget,
-): boolean {
-  if (service.platform !== target.platform) {
-    return false;
-  }
-  if ((service.mode ?? 'user') !== target.mode) {
-    return false;
-  }
-  if (service.targetMode !== target.targetMode) {
-    return false;
-  }
-  if (resolveHappierHomeDirComparableKey(service.happierHomeDir) !== resolveHappierHomeDirComparableKey(target.happierHomeDir)) {
-    return false;
-  }
-  if (target.targetMode === 'default-following') {
-    return service.releaseChannel === target.ring;
-  }
-  return service.releaseChannel === target.ring && service.serverId === target.instanceId;
-}
-
 export async function installDaemonService(options: Readonly<{
   platform?: SupportedPlatform;
   uid?: number;
@@ -278,6 +257,7 @@ export async function installDaemonService(options: Readonly<{
   targetMode?: DaemonServiceTargetMode;
   darwinInstallMode?: 'rebootstrap' | 'kickstart';
   instanceId?: string;
+  activeServerId?: string;
   strategy?: DaemonServiceInstallStrategy;
   serverUrl?: string;
   webappUrl?: string;

@@ -1,8 +1,11 @@
 import type { TransferEndpointCandidate } from '@happier-dev/protocol';
 
 import {
+  buildDirectPeerTransferEndpointPath,
   buildDirectTransferImportSessionEndpointCandidates,
+  buildDirectTransferImportSessionEndpointPath,
   createDirectPeerTransferRegistry,
+  filterDirectTransferEndpointCandidatesForAdvertisement,
   requestDirectPeerTransferToFile,
   startDirectPeerTransferServer,
   type DirectPeerOnDemandTransferScope,
@@ -11,11 +14,11 @@ import {
 import type { DirectTransferImportOpenRequest } from './directTransferImportSession';
 import type { TransferPayloadFileResult } from './transferPayloadFileSink';
 import type { TransferPayloadSource } from './transferPayloadSource';
+import { resolveDirectPeerTransferBindHost } from './transferRuntimeConfig';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
 export type DirectTransferListenerClass =
   | 'loopback_http'
-  | 'lan_http'
   | 'tailscale_serve_https';
 
 type DirectTransferPublishInput = Readonly<{
@@ -44,10 +47,15 @@ export type DirectTransferServerLifecycle = Readonly<{
     expiresAt: number;
     endpointCandidates: readonly TransferEndpointCandidate[];
   }>>;
+  abortImportSession: (
+    input: Readonly<{ uploadId: string }>,
+  ) => Promise<void | Readonly<{ aborted: boolean }>>;
   requestPayloadFile: (input: Readonly<{
     transferId: string;
     endpointCandidates: readonly TransferEndpointCandidate[];
     destinationPath: string;
+    expectedSizeBytes?: number;
+    expectedManifestHash?: string;
     openBody?: unknown;
     fetchFn?: typeof fetch;
     now?: () => number;
@@ -58,8 +66,19 @@ export type DirectTransferServerLifecycle = Readonly<{
   getState: () => DirectTransferServerLifecycleState;
 }>;
 
-type StartDirectPeerTransferServer = typeof startDirectPeerTransferServer;
-type CreateDirectPeerTransferRegistry = typeof createDirectPeerTransferRegistry;
+type RunningDirectPeerTransferServer = Awaited<ReturnType<typeof startDirectPeerTransferServer>>;
+type StartDirectPeerTransferServer = (
+  params: Parameters<typeof startDirectPeerTransferServer>[0],
+) => Promise<
+  Omit<RunningDirectPeerTransferServer, 'cleanupExpiredImportSessions' | 'getNextImportSessionExpiryAt'>
+  & Partial<Pick<RunningDirectPeerTransferServer, 'cleanupExpiredImportSessions' | 'getNextImportSessionExpiryAt'>>
+>;
+type DirectPeerTransferRegistry = ReturnType<typeof createDirectPeerTransferRegistry>;
+type CreateDirectPeerTransferRegistry = (
+  params: Parameters<typeof createDirectPeerTransferRegistry>[0],
+) =>
+  Omit<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt'>
+  & Partial<Pick<DirectPeerTransferRegistry, 'cleanupExpiredPublishedTransfers' | 'getNextPublishedTransferExpiryAt'>>;
 type RequestDirectPeerTransferToFile = typeof requestDirectPeerTransferToFile;
 
 function stripTrailingSlashes(value: string): string {
@@ -91,48 +110,35 @@ function joinBaseUrlWithPathPrefix(baseUrl: string, pathname: string): string {
   return `${normalizedBase}${normalizedPath}`;
 }
 
-function appendTailscaleServeEndpointCandidates(params: Readonly<{
+function resolveAdvertisedEndpointCandidates(params: Readonly<{
   listenerClasses: readonly DirectTransferListenerClass[];
   endpointCandidates: readonly TransferEndpointCandidate[];
+  canonicalPathname: string;
+  expiresAt: number;
+  authorizationToken?: string;
   resolveTailscaleServeHttpsBaseUrl?: (() => string | null) | null;
 }>): readonly TransferEndpointCandidate[] {
-  if (!params.listenerClasses.includes('tailscale_serve_https')) {
-    return params.endpointCandidates;
-  }
-  const baseUrl = normalizeTailscaleServeHttpsBaseUrl(params.resolveTailscaleServeHttpsBaseUrl?.() ?? '');
-  if (!baseUrl) {
-    return params.endpointCandidates;
-  }
-
   const merged: TransferEndpointCandidate[] = [...params.endpointCandidates];
-  for (const candidate of params.endpointCandidates) {
-    if (candidate.kind !== 'http') {
-      continue;
-    }
-    let pathname = '';
-    try {
-      pathname = new URL(candidate.url).pathname;
-    } catch {
-      continue;
-    }
-    if (!pathname.startsWith('/machine-transfers/')) {
-      continue;
-    }
+  const baseUrl = params.listenerClasses.includes('tailscale_serve_https')
+    ? normalizeTailscaleServeHttpsBaseUrl(params.resolveTailscaleServeHttpsBaseUrl?.() ?? '')
+    : null;
+  if (baseUrl && params.canonicalPathname.startsWith('/machine-transfers/')) {
     merged.push({
-      ...candidate,
       kind: 'https',
-      url: joinBaseUrlWithPathPrefix(baseUrl, pathname),
+      url: joinBaseUrlWithPathPrefix(baseUrl, params.canonicalPathname),
+      ...(params.authorizationToken ? { authorizationToken: params.authorizationToken } : {}),
+      expiresAt: params.expiresAt,
     });
   }
 
   // Dedupe exact candidates.
   const seen = new Set<string>();
-  return merged.filter((entry) => {
+  return filterDirectTransferEndpointCandidatesForAdvertisement(merged.filter((entry) => {
     const key = `${entry.kind}:${entry.url}:${entry.authorizationToken ?? ''}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  });
+  }));
 }
 
 export function createDirectTransferServerLifecycle(params: Readonly<{
@@ -161,16 +167,32 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
   const createRegistry = params.createRegistry ?? createDirectPeerTransferRegistry;
   const startServer = params.startServer ?? startDirectPeerTransferServer;
   const requestPayloadFile = params.requestPayloadFile ?? requestDirectPeerTransferToFile;
+  const bindHost = resolveDirectPeerTransferBindHost(params.bindHost);
+  // These hosts are endpoint-candidate inputs, not listener-bind configuration. Preserve an
+  // explicit list so the candidate safety owner rejects nonloopback HTTP instead of silently
+  // rewriting a remote candidate to this process's loopback listener.
+  const advertisedHosts = params.advertisedHosts && params.advertisedHosts.length > 0
+    ? params.advertisedHosts
+    : [bindHost];
+  const listenerClasses: readonly DirectTransferListenerClass[] = [
+    'loopback_http',
+    ...(params.listenerClasses.includes('tailscale_serve_https')
+      ? ['tailscale_serve_https' as const]
+      : []),
+  ];
 
   let server: Awaited<ReturnType<StartDirectPeerTransferServer>> | null = null;
   let startPromise: Promise<Awaited<ReturnType<StartDirectPeerTransferServer>>> | null = null;
-  let registry: ReturnType<CreateDirectPeerTransferRegistry> = createRegistry({
-    advertisedPort: params.bindPort,
-    now,
-  });
-  let idleTimer: ReturnType<typeof setTimeout> | null = null;
+  let registry!: ReturnType<CreateDirectPeerTransferRegistry>;
+  let lifecycleTimer: ReturnType<typeof setTimeout> | null = null;
+  let idleDeadlineAt: number | null = null;
   let shouldStopWhenStarted = false;
   let activeImportSessionCount = 0;
+  let serverStopInProgress = false;
+  let terminalStopped = false;
+  let terminalStopPromise: Promise<void> | null = null;
+  const stoppedServers = new WeakSet<object>();
+  const pendingServerStops = new Set<Promise<void>>();
 
   const hasActivity = (): boolean =>
     registry.hasPublishedTransfers() || activeImportSessionCount > 0;
@@ -182,7 +204,7 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     try {
       params.onStateChange({
         status,
-        listenerClasses: params.listenerClasses,
+        listenerClasses,
         ...(server ? { port: server.port } : {}),
         publishedTransferCount: registry?.countPublishedTransfers?.() ?? 0,
       });
@@ -191,15 +213,30 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     }
   };
 
-  const clearIdleTimer = (): void => {
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-      idleTimer = null;
+  const clearLifecycleTimer = (): void => {
+    if (lifecycleTimer) {
+      clearTimeout(lifecycleTimer);
+      lifecycleTimer = null;
     }
   };
 
+  const stopServerOnce = (
+    target: Awaited<ReturnType<StartDirectPeerTransferServer>>,
+  ): Promise<void> => {
+    if (stoppedServers.has(target)) {
+      return Promise.resolve();
+    }
+    stoppedServers.add(target);
+    const stopping = target.stop().finally(() => {
+      pendingServerStops.delete(stopping);
+    });
+    pendingServerStops.add(stopping);
+    return stopping;
+  };
+
   const stopServerBestEffort = async (): Promise<void> => {
-    clearIdleTimer();
+    clearLifecycleTimer();
+    idleDeadlineAt = null;
     shouldStopWhenStarted = false;
     const currentServer = server;
     server = null;
@@ -207,30 +244,86 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
     if (!currentServer) {
       return;
     }
-    await currentServer.stop();
+    serverStopInProgress = true;
+    try {
+      await stopServerOnce(currentServer);
+    } finally {
+      serverStopInProgress = false;
+      if (!terminalStopped && hasActivity()) {
+        scheduleLifecycleTimer();
+      }
+    }
   };
 
-  const maybeScheduleIdleStop = (): void => {
-    if (hasActivity()) {
+  const scheduleLifecycleTimer = (): void => {
+    clearLifecycleTimer();
+    if (terminalStopped || serverStopInProgress) {
       return;
     }
-    clearIdleTimer();
-    if (!server) {
+
+    const nowMs = now();
+    const currentlyActive = hasActivity();
+    if (currentlyActive) {
+      idleDeadlineAt = null;
+      shouldStopWhenStarted = false;
+    } else if (idleDeadlineAt === null) {
+      idleDeadlineAt = nowMs + idleStopMs;
+    }
+
+    if (!currentlyActive && !server) {
       shouldStopWhenStarted = true;
       void ensureServerStarted().catch(() => undefined);
       return;
     }
-    if (idleStopMs === 0) {
-      void stopServerBestEffort();
+
+    const publicationExpiryAt = registry.getNextPublishedTransferExpiryAt?.() ?? null;
+    const importExpiryAt = server?.getNextImportSessionExpiryAt?.() ?? null;
+    let nextDeadlineAt = publicationExpiryAt;
+    if (importExpiryAt !== null) {
+      nextDeadlineAt = nextDeadlineAt === null
+        ? importExpiryAt
+        : Math.min(nextDeadlineAt, importExpiryAt);
+    }
+    if (idleDeadlineAt !== null) {
+      nextDeadlineAt = nextDeadlineAt === null
+        ? idleDeadlineAt
+        : Math.min(nextDeadlineAt, idleDeadlineAt);
+    }
+    if (nextDeadlineAt === null) {
       return;
     }
-    idleTimer = setTimeout(() => {
-      idleTimer = null;
-      void stopServerBestEffort();
-    }, idleStopMs);
+
+    const delayMs = Math.min(2_147_483_647, Math.max(0, nextDeadlineAt - nowMs));
+    // Activity inspection may synchronously publish an expiry change and re-enter this scheduler.
+    // Clear the nested timer before this scheduling pass installs the authoritative handle.
+    clearLifecycleTimer();
+    lifecycleTimer = setTimeout(() => {
+      lifecycleTimer = null;
+      const deadlineNow = now();
+      registry.cleanupExpiredPublishedTransfers?.(deadlineNow);
+      server?.cleanupExpiredImportSessions?.(deadlineNow);
+      if (!hasActivity() && idleDeadlineAt !== null && idleDeadlineAt <= deadlineNow) {
+        void stopServerBestEffort();
+        return;
+      }
+      scheduleLifecycleTimer();
+    }, delayMs);
+    lifecycleTimer.unref?.();
   };
 
+  registry = createRegistry({
+    advertisedPort: params.bindPort,
+    now,
+    onPublishedTransfersChanged: () => {
+      scheduleLifecycleTimer();
+      emitState(server ? 'running' : startPromise ? 'starting' : 'stopped');
+    },
+  });
+
   const ensureServerStarted = async (): Promise<Awaited<ReturnType<StartDirectPeerTransferServer>>> => {
+    if (terminalStopped) {
+      throw new Error('Direct transfer server lifecycle is stopped');
+    }
     if (server) {
       return server;
     }
@@ -244,22 +337,20 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         ...(typeof params.bindPort === 'number' && params.bindPort > 0
           ? { bindPort: params.bindPort }
           : {}),
-        ...(typeof params.bindHost === 'string' && params.bindHost.length > 0
-          ? { bindHost: params.bindHost }
-          : {}),
+        bindHost,
         resolveOnDemandTransfer: async (input) => registry?.resolveOnDemandTransferOnOpen(input) ?? null,
         accessPolicy: params.accessPolicy,
         ...(params.promptAssetUpload ? { promptAssetUpload: params.promptAssetUpload } : {}),
         onImportSessionCountChanged: (count) => {
           activeImportSessionCount = count;
-          if (count > 0) {
-            clearIdleTimer();
-          } else {
-            maybeScheduleIdleStop();
-          }
+          scheduleLifecycleTimer();
           emitState(server ? 'running' : 'starting');
         },
+        onImportSessionActivity: scheduleLifecycleTimer,
       });
+      if (terminalStopped) {
+        return started;
+      }
       server = started;
       if (!registry) {
         registry = createRegistry({
@@ -268,9 +359,10 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         });
       }
       emitState('running');
+      scheduleLifecycleTimer();
       if (shouldStopWhenStarted && !registry.hasPublishedTransfers()) {
         shouldStopWhenStarted = false;
-        await started.stop().catch(() => undefined);
+        await stopServerOnce(started).catch(() => undefined);
         server = null;
         emitState('stopped');
       }
@@ -285,51 +377,80 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
 
   return {
     publishTransfer(input) {
-      clearIdleTimer();
+      if (terminalStopped) {
+        throw new Error('Direct transfer server lifecycle is stopped');
+      }
+      clearLifecycleTimer();
+      idleDeadlineAt = null;
       if (!server && !startPromise) {
         void ensureServerStarted().catch(() => undefined);
       }
       const published = registry.publishTransfer(input);
+      scheduleLifecycleTimer();
       emitState('running');
       return {
         ...published,
-        endpointCandidates: appendTailscaleServeEndpointCandidates({
-          listenerClasses: params.listenerClasses,
+        endpointCandidates: resolveAdvertisedEndpointCandidates({
+          listenerClasses,
           endpointCandidates: published.endpointCandidates,
+          canonicalPathname: buildDirectPeerTransferEndpointPath(published.transferId),
+          authorizationToken: published.transferToken,
+          expiresAt: published.expiresAt,
           resolveTailscaleServeHttpsBaseUrl: params.resolveTailscaleServeHttpsBaseUrl,
         }),
       };
     },
     publishTransferWhenReady: async (input) => {
-      clearIdleTimer();
+      if (terminalStopped) {
+        throw new Error('Direct transfer server lifecycle is stopped');
+      }
+      clearLifecycleTimer();
+      idleDeadlineAt = null;
       await ensureServerStarted();
+      if (terminalStopped) {
+        throw new Error('Direct transfer server lifecycle is stopped');
+      }
       const published = registry.publishTransfer(input);
+      scheduleLifecycleTimer();
       emitState('running');
       return {
         ...published,
-        endpointCandidates: appendTailscaleServeEndpointCandidates({
-          listenerClasses: params.listenerClasses,
+        endpointCandidates: resolveAdvertisedEndpointCandidates({
+          listenerClasses,
           endpointCandidates: published.endpointCandidates,
+          canonicalPathname: buildDirectPeerTransferEndpointPath(published.transferId),
+          authorizationToken: published.transferToken,
+          expiresAt: published.expiresAt,
           resolveTailscaleServeHttpsBaseUrl: params.resolveTailscaleServeHttpsBaseUrl,
         }),
       };
     },
     prepareImportSession: async (input) => {
-      clearIdleTimer();
+      if (terminalStopped) {
+        throw new Error('Direct transfer server lifecycle is stopped');
+      }
+      clearLifecycleTimer();
+      idleDeadlineAt = null;
       const started = await ensureServerStarted();
+      if (terminalStopped) {
+        throw new Error('Direct transfer server lifecycle is stopped');
+      }
       const prepared = await started.openTrustedImportSession(input);
       if (!prepared.success) {
         throw new Error(prepared.error);
       }
       emitState('running');
-      const endpointCandidates = appendTailscaleServeEndpointCandidates({
-        listenerClasses: params.listenerClasses,
+      scheduleLifecycleTimer();
+      const endpointCandidates = resolveAdvertisedEndpointCandidates({
+        listenerClasses,
         endpointCandidates: buildDirectTransferImportSessionEndpointCandidates({
           advertisedPort: started.port,
           uploadId: prepared.response.uploadId,
           expiresAt: prepared.response.expiresAt,
-          advertisedHosts: params.advertisedHosts,
+          advertisedHosts,
         }),
+        canonicalPathname: buildDirectTransferImportSessionEndpointPath(prepared.response.uploadId),
+        expiresAt: prepared.response.expiresAt,
         resolveTailscaleServeHttpsBaseUrl: params.resolveTailscaleServeHttpsBaseUrl,
       });
       return {
@@ -337,16 +458,77 @@ export function createDirectTransferServerLifecycle(params: Readonly<{
         endpointCandidates,
       };
     },
+    abortImportSession: async (input) => {
+      if (terminalStopped) {
+        return { aborted: false };
+      }
+      const started = server ?? (startPromise ? await startPromise : null);
+      if (!started) {
+        return { aborted: false };
+      }
+      const result = await started.abortImportTransferSession(input);
+      scheduleLifecycleTimer();
+      emitState(server ? 'running' : 'stopped');
+      return result;
+    },
     requestPayloadFile: async (input) => await requestPayloadFile(input),
     clearPublishedTransfer: (transferId) => {
       registry?.clearPublishedTransfer(transferId);
-      maybeScheduleIdleStop();
+      scheduleLifecycleTimer();
       emitState(server ? 'running' : 'stopped');
     },
-    stop: stopServerBestEffort,
+    stop: () => {
+      if (terminalStopPromise) {
+        return terminalStopPromise;
+      }
+
+      terminalStopped = true;
+      clearLifecycleTimer();
+      idleDeadlineAt = null;
+      shouldStopWhenStarted = false;
+      const pendingStart = startPromise;
+      const currentServer = server;
+      server = null;
+      emitState('stopped');
+
+      terminalStopPromise = (async () => {
+        const registryDisposal = registry.dispose();
+        const serversToStop = new Set<Awaited<ReturnType<StartDirectPeerTransferServer>>>();
+        if (currentServer) {
+          serversToStop.add(currentServer);
+        }
+        if (pendingStart) {
+          try {
+            serversToStop.add(await pendingStart);
+          } catch {
+            // A failed listener start owns no live server resource.
+          }
+        }
+        let listenerStopError: unknown = null;
+        for (const started of serversToStop) {
+          try {
+            await stopServerOnce(started);
+          } catch (error) {
+            listenerStopError ??= error;
+          }
+        }
+        const settledServerStops = await Promise.allSettled([...pendingServerStops]);
+        for (const result of settledServerStops) {
+          if (result.status === 'rejected') {
+            listenerStopError ??= result.reason;
+          }
+        }
+        await registryDisposal;
+        emitState('stopped');
+        if (listenerStopError) {
+          throw listenerStopError;
+        }
+      })();
+      return terminalStopPromise;
+    },
     getState: () => ({
-      status: startPromise ? 'starting' : server ? 'running' : 'stopped',
-      listenerClasses: params.listenerClasses,
+      status: terminalStopped ? 'stopped' : startPromise ? 'starting' : server ? 'running' : 'stopped',
+      listenerClasses,
       ...(server ? { port: server.port } : {}),
       publishedTransferCount: registry?.countPublishedTransfers?.() ?? 0,
     }),

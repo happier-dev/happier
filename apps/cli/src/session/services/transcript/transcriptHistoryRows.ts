@@ -2,6 +2,7 @@ import {
   hasCanonicalTurnDiffEvidence,
   isCanonicalTurnDiffPayload,
   readEmptyCanonicalTurnDiffToolCallId,
+  type ConversationTurnOriginV1,
 } from '@happier-dev/protocol';
 
 import { decodeBase64, decrypt } from '@/api/encryption';
@@ -16,6 +17,7 @@ export type CompactHistoryRow = Readonly<{
   role: string;
   kind: string;
   text: string;
+  origin?: ConversationTurnOriginV1;
   structuredKind?: string;
 }>;
 
@@ -245,14 +247,13 @@ function applySemanticCompactFallback(
 ): ReturnType<typeof extractCompactRow> {
   if (!compactRow || compactRow.text.trim().length > 0) return compactRow;
 
-  const semanticText = readNonEmptyString(row.text) ?? readNonEmptyString(row.summary) ?? readNonEmptyString(row.kind);
-  if (!semanticText) return compactRow;
+  const semanticText = readNonEmptyString(row.text) ?? readNonEmptyString(row.summary);
 
   return {
     ...compactRow,
     role: readNonEmptyString(row.role) ?? readNonEmptyString(row.semanticRole) ?? compactRow.role,
     kind: readNonEmptyString(row.kind) ?? compactRow.kind,
-    text: semanticText,
+    ...(semanticText ? { text: semanticText } : {}),
   };
 }
 
@@ -310,7 +311,7 @@ function normalizeHistoryItem(
     createdAt: row.createdAt,
     role,
     kind: row.kind,
-    text: row.text ?? row.summary ?? row.kind,
+    text: row.text ?? row.summary ?? '',
   };
 }
 

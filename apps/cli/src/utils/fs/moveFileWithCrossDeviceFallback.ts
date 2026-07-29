@@ -6,26 +6,45 @@ const CROSS_DEVICE_STAGING_PREFIX = '.happier-upload-stage-';
 const CROSS_DEVICE_BACKUP_PREFIX = '.happier-upload-backup-';
 const FALLBACK_MOVE_ERROR_CODES = new Set(['EXDEV', 'EEXIST', 'EPERM']);
 
+export type MoveFileOperations = Readonly<{
+    copyFile: (
+        sourcePath: string,
+        destPath: string,
+        mode?: Parameters<typeof copyFile>[2],
+    ) => Promise<void>;
+    rename: (sourcePath: string, destPath: string) => Promise<void>;
+    rm: (path: string, options?: Parameters<typeof rm>[1]) => Promise<void>;
+}>;
+
+const DEFAULT_MOVE_FILE_OPERATIONS: MoveFileOperations = {
+    copyFile,
+    rename,
+    rm,
+};
+
 export class CrossDeviceMoveSourceCleanupError extends Error {
     readonly sourcePath: string;
     readonly destPath: string;
+    readonly backupPath: string | null;
     readonly destinationRolledBack: boolean;
 
     constructor(input: Readonly<{
         sourcePath: string;
         destPath: string;
+        backupPath: string | null;
         destinationRolledBack: boolean;
         cause: unknown;
     }>) {
         super(
             input.destinationRolledBack
                 ? 'Failed to clean up the staged upload source after cross-device copy; destination was rolled back'
-                : 'Failed to clean up the staged upload source after cross-device copy and destination rollback failed',
+                : 'Cross-device file move recovery was incomplete; recovery files were preserved',
             { cause: input.cause },
         );
         this.name = 'CrossDeviceMoveSourceCleanupError';
         this.sourcePath = input.sourcePath;
         this.destPath = input.destPath;
+        this.backupPath = input.backupPath;
         this.destinationRolledBack = input.destinationRolledBack;
     }
 }
@@ -39,18 +58,21 @@ function readErrorCode(error: unknown): string | null {
         : null;
 }
 
-async function removeFile(path: string): Promise<void> {
-    await rm(path, { force: true });
+async function removeFile(path: string, operations: MoveFileOperations): Promise<void> {
+    await operations.rm(path, { force: true });
 }
 
-async function moveExistingDestinationAside(destPath: string): Promise<string | null> {
+async function moveExistingDestinationAside(
+    destPath: string,
+    operations: MoveFileOperations,
+): Promise<string | null> {
     const backupPath = join(
         dirname(destPath),
         `${CROSS_DEVICE_BACKUP_PREFIX}${basename(destPath)}.${randomUUID()}.tmp`,
     );
 
     try {
-        await rename(destPath, backupPath);
+        await operations.rename(destPath, backupPath);
         return backupPath;
     } catch (error) {
         if (readErrorCode(error) === 'ENOENT') {
@@ -60,14 +82,22 @@ async function moveExistingDestinationAside(destPath: string): Promise<string | 
     }
 }
 
-async function restoreExistingDestination(backupPath: string, destPath: string): Promise<void> {
-    await removeFile(destPath).catch(() => undefined);
-    await rename(backupPath, destPath);
+async function restoreExistingDestination(
+    backupPath: string,
+    destPath: string,
+    operations: MoveFileOperations,
+): Promise<void> {
+    await removeFile(destPath, operations).catch(() => undefined);
+    await operations.rename(backupPath, destPath);
 }
 
-export async function moveFileWithCrossDeviceFallback(sourcePath: string, destPath: string): Promise<void> {
+export async function moveFileWithCrossDeviceFallback(
+    sourcePath: string,
+    destPath: string,
+    operations: MoveFileOperations = DEFAULT_MOVE_FILE_OPERATIONS,
+): Promise<void> {
     try {
-        await rename(sourcePath, destPath);
+        await operations.rename(sourcePath, destPath);
         return;
     } catch (error) {
         if (!FALLBACK_MOVE_ERROR_CODES.has(readErrorCode(error) ?? '')) {
@@ -82,30 +112,44 @@ export async function moveFileWithCrossDeviceFallback(sourcePath: string, destPa
     let backupDestPath: string | null = null;
 
     try {
-        backupDestPath = await moveExistingDestinationAside(destPath);
-        await copyFile(sourcePath, stagedDestPath);
-        await rename(stagedDestPath, destPath);
+        backupDestPath = await moveExistingDestinationAside(destPath, operations);
+        await operations.copyFile(sourcePath, stagedDestPath);
+        await operations.rename(stagedDestPath, destPath);
     } catch (error) {
-        await removeFile(stagedDestPath).catch(() => undefined);
+        await removeFile(stagedDestPath, operations).catch(() => undefined);
         if (backupDestPath !== null) {
-            await rename(backupDestPath, destPath).catch(() => undefined);
+            try {
+                await operations.rename(backupDestPath, destPath);
+            } catch (restorationError) {
+                throw new CrossDeviceMoveSourceCleanupError({
+                    sourcePath,
+                    destPath,
+                    backupPath: backupDestPath,
+                    destinationRolledBack: false,
+                    cause: new AggregateError(
+                        [error, restorationError],
+                        'Failed to publish the staged upload destination and restore its prior contents',
+                    ),
+                });
+            }
         }
         throw error;
     }
 
     try {
-        await removeFile(sourcePath);
+        await removeFile(sourcePath, operations);
     } catch (error) {
         try {
             if (backupDestPath !== null) {
-                await restoreExistingDestination(backupDestPath, destPath);
+                await restoreExistingDestination(backupDestPath, destPath, operations);
             } else {
-                await removeFile(destPath);
+                await removeFile(destPath, operations);
             }
         } catch (rollbackError) {
             throw new CrossDeviceMoveSourceCleanupError({
                 sourcePath,
                 destPath,
+                backupPath: backupDestPath,
                 destinationRolledBack: false,
                 cause: new AggregateError(
                     [error, rollbackError],
@@ -117,12 +161,13 @@ export async function moveFileWithCrossDeviceFallback(sourcePath: string, destPa
         throw new CrossDeviceMoveSourceCleanupError({
             sourcePath,
             destPath,
+            backupPath: null,
             destinationRolledBack: true,
             cause: error,
         });
     }
 
     if (backupDestPath !== null) {
-        await removeFile(backupDestPath).catch(() => undefined);
+        await removeFile(backupDestPath, operations).catch(() => undefined);
     }
 }

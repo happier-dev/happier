@@ -1,19 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
-  createCatalogAcpBackendMock,
   createConfiguredAcpBackendMock,
   resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock,
   materializeConfiguredAcpEnvironmentMock,
 } = vi.hoisted(() => ({
-  createCatalogAcpBackendMock: vi.fn(),
   createConfiguredAcpBackendMock: vi.fn(),
   resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock: vi.fn(),
   materializeConfiguredAcpEnvironmentMock: vi.fn(),
-}));
-
-vi.mock('@/agent/acp/createCatalogAcpBackend', () => ({
-  createCatalogAcpBackend: createCatalogAcpBackendMock,
 }));
 
 vi.mock('@/agent/acp/catalog/configured/createConfiguredAcpBackend', () => ({
@@ -32,7 +26,6 @@ import { probeAgentModelsBestEffort } from './agentModelsProbe';
 
 describe('probeAgentModelsBestEffort (configured ACP backend)', () => {
   beforeEach(() => {
-    createCatalogAcpBackendMock.mockReset();
     createConfiguredAcpBackendMock.mockReset();
     resolveConfiguredAcpBackendFromAccountSettingsOrPluginsMock.mockReset();
     materializeConfiguredAcpEnvironmentMock.mockReset();
@@ -96,7 +89,6 @@ describe('probeAgentModelsBestEffort (configured ACP backend)', () => {
       launchEnv: {},
       backend: expect.objectContaining({ backendId: 'custom-backend' }),
     }));
-    expect(createCatalogAcpBackendMock).not.toHaveBeenCalled();
     expect(dispose).toHaveBeenCalled();
   });
 

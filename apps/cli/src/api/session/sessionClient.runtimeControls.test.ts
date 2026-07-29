@@ -64,6 +64,7 @@ vi.mock('@happier-dev/connection-supervisor', () => ({
       params.createTransport();
     },
     stop: async () => {},
+    getState: () => ({ phase: 'online' }),
   }),
 }));
 
@@ -94,42 +95,19 @@ describe('ApiSessionClient runtime controls', () => {
     runtimeHandlerRegistrations.length = 0;
   });
 
-  it('routes pending queue materialize-next RPCs through the session client guard', async () => {
+  it('publishes the V1 pending wake through the session client', async () => {
     sessionSocketStub = createApiSessionSocketStub({ connected: true });
     userSocketStub = createApiSessionSocketStub({ connected: true });
     const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 's1' }));
     installSessionControlHandlersFromLatestClient();
-    const materializeNextPendingMessageSafely = vi
-      .spyOn(client, 'materializeNextPendingMessageSafely')
-      .mockResolvedValue({ type: 'no_pending' });
+    const wakePendingMaterialization = vi.spyOn(client, 'wakePendingMaterialization');
 
     await expect(client.rpcHandlerManager.invokeLocal(
-      SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_MATERIALIZE_NEXT,
-      { reconcileWhenEmpty: 'force' },
-    )).resolves.toEqual({ type: 'no_pending' });
+      SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1,
+      { protocolVersion: 1 },
+    )).resolves.toEqual({ ok: true, result: 'wake_published' });
 
-    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
-      reconcileWhenEmpty: 'force',
-    });
-  });
-
-  it('does not treat a live steer callback as permission to materialize durable pending rows mid-turn', () => {
-    sessionSocketStub = createApiSessionSocketStub({ connected: true });
-    userSocketStub = createApiSessionSocketStub({ connected: true });
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({
-      id: 's1',
-      pendingCount: 1,
-      pendingVersion: 7,
-      latestTurnStatus: 'in_progress',
-      agentState: {
-        capabilities: {
-          inFlightSteerAvailable: true,
-        },
-      },
-    }));
-    client.onUserMessage(() => undefined);
-
-    expect(client.shouldAttemptPendingMaterialization()).toBe(false);
+    expect(wakePendingMaterialization).toHaveBeenCalledTimes(1);
   });
 
   it('routes connected-service auth invalidation RPCs through installed runtime controls', async () => {

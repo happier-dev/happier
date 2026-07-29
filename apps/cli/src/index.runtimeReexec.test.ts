@@ -87,9 +87,15 @@ function createDeferred() {
 describe('CLI startup runtime reexec', () => {
   const originalArgv = process.argv;
   const originalExitCode = process.exitCode;
+  const originalDistIntegrityProbe = process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE;
   afterEach(() => {
     process.argv = originalArgv;
     process.exitCode = originalExitCode;
+    if (originalDistIntegrityProbe === undefined) {
+      delete process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE;
+    } else {
+      process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE = originalDistIntegrityProbe;
+    }
     dispatchCliMock.mockReset();
     dispatchCliMock.mockResolvedValue(undefined);
     ensureWindowsUtf8CodePageMock.mockReset();
@@ -128,6 +134,18 @@ describe('CLI startup runtime reexec', () => {
       expect(maybeAutoUpdateNoticeMock).toHaveBeenCalledOnce();
       expect(dispatchCliMock).toHaveBeenCalledOnce();
     });
+  });
+
+  it('does not dispatch the CLI when imported by the dist integrity probe', async () => {
+    process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE = '1';
+    process.argv = ['node', '/repo/apps/cli/dist/index.mjs'];
+
+    await import('./index');
+    await Promise.resolve();
+
+    expect(maybeReexecToRuntimeMock).not.toHaveBeenCalled();
+    expect(maybeAutoUpdateNoticeMock).not.toHaveBeenCalled();
+    expect(dispatchCliMock).not.toHaveBeenCalled();
   });
 
   it('reports startup failures instead of rejecting silently', async () => {

@@ -78,6 +78,7 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   writeActivityMarker: (runId: string, nowMs: number, opts?: Readonly<{ force?: boolean }>) => Promise<void>;
   onPublicStateUpdated?: (runId: string) => void;
   profileCatalog?: ExecutionRunProfileContributionCatalog;
+  authorizeProviderEffect?: () => Promise<{ ok: boolean; errorCode?: string; error?: string }>;
   }>): Promise<{ ok: boolean; errorCode?: string; error?: string }> {
   const run = args.runs.get(args.runId);
   if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found' };
@@ -131,6 +132,11 @@ export async function sendBackendLongLivedRun(args: Readonly<{
   }
   if (ctrl2.cancelled) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running' };
 
+  if (args.authorizeProviderEffect) {
+    const admission = await args.authorizeProviderEffect();
+    if (!admission.ok) return admission;
+  }
+
   const abortRetry = readAbortRetryConfig();
   let shouldRetryAbortSend = false;
 
@@ -179,7 +185,9 @@ export async function sendBackendLongLivedRun(args: Readonly<{
     args.runs.set(args.runId, { ...runAfterTurn, turnCount: ctrl2.turnCount });
   }
   const sendPromise = Promise.resolve().then(() => sendPromptWithAbortRetry({
-    send: () => ctrl2.backend.sendPrompt(ctrl2.childSessionId!, args.params.message),
+    send: async () => {
+      await ctrl2.backend.sendPrompt(ctrl2.childSessionId!, args.params.message);
+    },
     maxAttempts: shouldRetryAbortSend ? abortRetry.maxAttempts : 1,
     delayMs: abortRetry.delayMs,
   }));
@@ -262,7 +270,9 @@ export async function sendBackendLongLivedRun(args: Readonly<{
         // ignore
       }
       ctrl2.resolveTerminal();
-      args.controllers.delete(args.runId);
+      if (args.controllers.get(args.runId) === ctrl2) {
+        args.controllers.delete(args.runId);
+      }
     } finally {
       await args.writeActivityMarker(args.runId, args.getNowMs(), { force: true }).catch(() => {});
     }
@@ -322,7 +332,9 @@ export async function sendBackendLongLivedRun(args: Readonly<{
       // ignore
     }
     ctrl2.resolveTerminal();
-    args.controllers.delete(args.runId);
+    if (args.controllers.get(args.runId) === ctrl2) {
+      args.controllers.delete(args.runId);
+    }
     return { ok: false, errorCode: 'execution_run_failed', error: message };
   }
 

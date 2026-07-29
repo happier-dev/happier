@@ -7,9 +7,10 @@ import {
   normalizeCodexBackendMode,
   openAccountScopedBlobCiphertext,
   SessionMcpSelectionV1Schema,
+  SessionModelSelectionV1Schema,
 } from '@happier-dev/protocol';
 
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import {
   SpawnSessionPermissionModeSchema,
   SpawnSessionTerminalSchema,
@@ -42,6 +43,7 @@ const TemplateSchema = z.object({
   resume: z.string().optional(),
   permissionMode: SpawnSessionPermissionModeSchema.optional(),
   permissionModeUpdatedAt: z.number().int().optional(),
+  modelSelection: SessionModelSelectionV1Schema.nullable().optional(),
   modelId: z.string().optional(),
   modelUpdatedAt: z.number().int().optional(),
   sessionConfigOptionOverrides: AcpConfigOptionOverridesV1Schema.optional(),
@@ -112,6 +114,7 @@ export type ParsedAutomationExecution = Readonly<{
   resume?: string;
   permissionMode?: SpawnSessionOptions['permissionMode'];
   permissionModeUpdatedAt?: number;
+  modelSelection?: SpawnSessionOptions['modelSelection'];
   modelId?: string;
   modelUpdatedAt?: number;
   sessionConfigOptionOverrides?: SpawnSessionOptions['sessionConfigOptionOverrides'];
@@ -265,8 +268,11 @@ export function parseAutomationTemplateExecution(
       ...(template.resume ? { resume: template.resume } : {}),
       ...(template.permissionMode ? { permissionMode: template.permissionMode as SpawnSessionOptions['permissionMode'] } : {}),
       ...(typeof template.permissionModeUpdatedAt === 'number' ? { permissionModeUpdatedAt: template.permissionModeUpdatedAt } : {}),
-      ...(template.modelId ? { modelId: template.modelId } : {}),
-      ...(typeof template.modelUpdatedAt === 'number' ? { modelUpdatedAt: template.modelUpdatedAt } : {}),
+      ...(template.modelSelection ? { modelSelection: template.modelSelection } : {}),
+      ...(template.modelSelection === undefined && template.modelId ? { modelId: template.modelId } : {}),
+      ...(template.modelSelection === undefined && typeof template.modelUpdatedAt === 'number'
+        ? { modelUpdatedAt: template.modelUpdatedAt }
+        : {}),
       ...(template.sessionConfigOptionOverrides ? { sessionConfigOptionOverrides: template.sessionConfigOptionOverrides } : {}),
       ...(template.mcpSelection ? { mcpSelection: template.mcpSelection } : {}),
       ...(template.connectedServices !== undefined ? { connectedServices: template.connectedServices } : {}),

@@ -1,12 +1,39 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-
-import type { RunCommand } from './commands.js';
+import { pathToFileURL } from 'node:url';
 
 export type BundledWorkspacePackage = Readonly<{
     packageName: string;
     srcDir: string;
 }>;
+
+export type EnsureWorkspacePackagesBuiltByName = (
+    repoRoot: string,
+    packageNames: string[],
+    options?: Readonly<{
+        quiet?: boolean;
+        env?: NodeJS.ProcessEnv;
+        includeDevDependencies?: boolean;
+    }>,
+) => Promise<Readonly<{
+    ok: boolean;
+    built: string[];
+    skipped: string[];
+}>>;
+
+async function loadWorkspaceBuildOwner(repoRoot: string): Promise<EnsureWorkspacePackagesBuiltByName> {
+    const modulePath = join(repoRoot, 'scripts', 'workspaces', 'ensureWorkspacePackagesBuilt.mjs');
+    if (!existsSync(modulePath)) {
+        throw new Error(`[component-artifacts] missing canonical workspace build owner: ${modulePath}`);
+    }
+    const module = await import(pathToFileURL(modulePath).href) as {
+        ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
+    };
+    if (typeof module.ensureWorkspacePackagesBuiltByName !== 'function') {
+        throw new Error(`[component-artifacts] canonical workspace build owner has no by-name entrypoint: ${modulePath}`);
+    }
+    return module.ensureWorkspacePackagesBuiltByName;
+}
 
 function directoryHasAtLeastOneFile(dirPath: string): boolean {
     if (!existsSync(dirPath)) return false;
@@ -76,23 +103,18 @@ function isWorkspacePackageBuilt(srcDir: string): boolean {
 export async function ensureBundledWorkspacePackagesBuilt(_params: Readonly<{
     repoRoot: string;
     bundles: ReadonlyArray<BundledWorkspacePackage>;
-    yarn: Readonly<{ cmd: string; args: string[] }>;
-    runCommand: RunCommand;
+    ensureWorkspacePackagesBuiltByName?: EnsureWorkspacePackagesBuiltByName;
 }>): Promise<void> {
     const params = _params;
-    const missing = new Map<string, BundledWorkspacePackage>();
-    for (const bundle of params.bundles) {
-        if (!isWorkspacePackageBuilt(bundle.srcDir)) {
-            missing.set(bundle.packageName, bundle);
-        }
-    }
+    const ensureWorkspacePackagesBuiltByName = params.ensureWorkspacePackagesBuiltByName
+        ?? await loadWorkspaceBuildOwner(params.repoRoot);
+    await ensureWorkspacePackagesBuiltByName(
+        params.repoRoot,
+        [...new Set(params.bundles.map((bundle) => bundle.packageName))],
+        { quiet: false, env: process.env, includeDevDependencies: false },
+    );
 
-    for (const bundle of missing.values()) {
-        await params.runCommand(
-            params.yarn.cmd,
-            [...params.yarn.args, 'workspace', bundle.packageName, 'build'],
-            { cwd: params.repoRoot },
-        );
+    for (const bundle of params.bundles) {
         if (!isWorkspacePackageBuilt(bundle.srcDir)) {
             throw new Error(
                 `[component-artifacts] bundled workspace package build did not produce dist output: ${bundle.packageName} (${join(bundle.srcDir, 'dist')})`,

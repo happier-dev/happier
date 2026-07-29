@@ -13,6 +13,11 @@ export type LocalServicePortReservationResult =
 
 export type LocalServicePortAllocator = Readonly<{
     reserve(input: Readonly<{ serviceId: string; policy: LocalServicePortPolicy }>): LocalServicePortReservationResult;
+    /**
+     * Claims a port whose exact surviving listener was already verified by the managed
+     * runtime. This intentionally does not probe availability: the proved survivor owns it.
+     */
+    adoptVerified(input: Readonly<{ serviceId: string; port: number }>): LocalServicePortReservationResult;
     release(serviceId: string): void;
 }>;
 
@@ -75,6 +80,33 @@ export function createLocalServicePortAllocator(input: Readonly<{
                 return fallback(serviceId, [{ code: 'preferred_port_unavailable', severity: 'warning' }]);
             }
             return fallback(serviceId, []);
+        },
+        adoptVerified({ serviceId, port }) {
+            if (!isValidPort(port)) {
+                return {
+                    ok: false,
+                    reason: 'port_unavailable',
+                    diagnostics: [{ code: 'port_unavailable', severity: 'error' }],
+                };
+            }
+            const existing = reservations.get(serviceId);
+            if (existing !== undefined) {
+                return existing === port
+                    ? { ok: true, port, diagnostics: [] }
+                    : {
+                        ok: false,
+                        reason: 'port_unavailable',
+                        diagnostics: [{ code: 'port_unavailable', severity: 'error' }],
+                    };
+            }
+            if (reservedPorts.has(port)) {
+                return {
+                    ok: false,
+                    reason: 'port_unavailable',
+                    diagnostics: [{ code: 'port_unavailable', severity: 'error' }],
+                };
+            }
+            return claim(serviceId, port, []);
         },
         release(serviceId) {
             const port = reservations.get(serviceId);

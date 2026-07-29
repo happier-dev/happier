@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { Metadata, PermissionMode, UserMessage } from '@/api/types';
 import { registerPermissionModeMessageQueueBinding } from './bindModeQueue';
-import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
+import type {
+  PermissionModeQueuedPrompt,
+  PermissionModeQueuedPromptMode,
+} from '@/agent/runtime/permissions/queuedPrompt';
+import {
+  ProviderConnectionIdSchema,
+  type ProviderBoundModelRef,
+} from '@happier-dev/protocol';
 
 describe('registerPermissionModeMessageQueueBinding', () => {
   function createSessionHarness(initialMetadata?: Metadata) {
@@ -27,26 +34,39 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     };
   }
 
-  function createHarness() {
+  function createHarness(activeSelection: ProviderBoundModelRef = {
+    agentTargetKey: 'backend:opencode',
+    providerConnectionId: null,
+    modelId: 'default',
+  }) {
     const queueCalls: Array<{
       type: 'push' | 'clear';
       message: PermissionModeQueuedPrompt;
-      mode: { permissionMode: PermissionMode; appendSystemPrompt?: string | null; model?: string };
+      mode: PermissionModeQueuedPromptMode;
     }> = [];
     let currentPermissionMode: PermissionMode | undefined;
     const sessionHarness = createSessionHarness();
+    const rejectPromptBeforeProvider = vi.fn();
 
     const binding = registerPermissionModeMessageQueueBinding({
       session: sessionHarness.session,
+      agentTargetKey: 'backend:opencode',
       queue: {
-        push: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode; model?: string }) =>
+        push: (message: PermissionModeQueuedPrompt, mode: PermissionModeQueuedPromptMode) =>
           queueCalls.push({ type: 'push', message, mode }),
-        pushIsolateAndClear: (message: PermissionModeQueuedPrompt, mode: { permissionMode: PermissionMode; model?: string }) =>
+        pushIsolateAndClear: (message: PermissionModeQueuedPrompt, mode: PermissionModeQueuedPromptMode) =>
           queueCalls.push({ type: 'clear', message, mode }),
       },
       getCurrentPermissionMode: () => currentPermissionMode,
       setCurrentPermissionMode: (mode: PermissionMode | undefined) => {
         currentPermissionMode = mode;
+      },
+      inFlightSteer: {
+        readActiveModelSelection: () => activeSelection,
+        supportsInFlightSteer: () => false,
+        isTurnInFlight: () => false,
+        steerText: async () => undefined,
+        rejectPromptBeforeProvider,
       },
     });
 
@@ -56,6 +76,7 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       getCurrentPermissionMode: () => currentPermissionMode,
       getMetadata: sessionHarness.getMetadata,
       queueCalls,
+      rejectPromptBeforeProvider,
     };
   }
 
@@ -78,9 +99,65 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     ]);
   });
 
-  it('threads the committed user-message seq into the queued prompt (HF-1 watermark custody chain)', () => {
-    // The provider-acceptance watermark needs the row seq to travel WITH the prompt through the
-    // queue so acceptance can confirm exactly the accepted rows (never a later unaccepted one).
+  it('preserves canonical structured input and never steers it through the text-only path', async () => {
+    const sessionHarness = createSessionHarness();
+    const queueCalls: Array<{ type: 'push' | 'clear'; message: PermissionModeQueuedPrompt }> = [];
+    const steerText = vi.fn(async () => undefined);
+    const structuredInput = {
+      v: 1 as const,
+      imageInputs: [{
+        id: 'image-1',
+        kind: 'localImage' as const,
+        path: '.happier/uploads/messages/message-1/image.png',
+        mimeType: 'image/png',
+        sizeBytes: 4,
+        sha256: 'a'.repeat(64),
+        provenance: { kind: 'sessionAttachmentUpload' as const },
+      }],
+    };
+
+    registerPermissionModeMessageQueueBinding({
+      session: sessionHarness.session,
+      queue: {
+        push: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'push', message }),
+        pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => queueCalls.push({ type: 'clear', message }),
+      },
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => undefined,
+      inFlightSteer: {
+        supportsInFlightSteer: () => true,
+        isTurnInFlight: () => true,
+        steerText,
+      },
+    });
+
+    sessionHarness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'inspect this image' },
+      localId: 'local-image-1',
+      meta: {
+        happier: {
+          kind: 'attachments.v1',
+          payload: { attachments: [structuredInput.imageInputs[0]] },
+        },
+        happierStructuredInputV1: structuredInput,
+      },
+    } as UserMessage);
+    await Promise.resolve();
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(queueCalls).toEqual([{
+      type: 'clear',
+      message: {
+        text: 'inspect this image',
+        localId: 'local-image-1',
+        localIds: ['local-image-1'],
+        structuredInput,
+      },
+    }]);
+  });
+
+  it('threads the committed user-message seq into the queued prompt for exact local-command replay suppression', () => {
     const queueCalls: Array<{ message: PermissionModeQueuedPrompt }> = [];
     let userMessageHandler: ((message: UserMessage) => boolean | void) | null = null;
 
@@ -115,46 +192,6 @@ describe('registerPermissionModeMessageQueueBinding', () => {
           localIds: ['local-seq-1'],
           userMessageSeq: 42,
           userMessageSeqs: [42],
-        },
-      },
-    ]);
-  });
-
-  it('threads canonical provider-claimed pending delivery into the queued prompt', () => {
-    const queueCalls: Array<{ message: PermissionModeQueuedPrompt }> = [];
-    let userMessageHandler: ((message: UserMessage) => boolean | void) | null = null;
-
-    registerPermissionModeMessageQueueBinding({
-      session: {
-        onUserMessage: (handler: (message: UserMessage) => boolean | void) => {
-          userMessageHandler = handler;
-        },
-        updateMetadata: () => void 0,
-        getCommittedUserMessageSeq: () => null,
-        hasCanonicalPendingDeliveryLocalId: (localId: string) => localId === 'provider-claimed-local-1',
-      },
-      queue: {
-        push: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
-        pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => queueCalls.push({ message }),
-      },
-      getCurrentPermissionMode: () => 'default' as PermissionMode,
-      setCurrentPermissionMode: () => void 0,
-    });
-
-    userMessageHandler!({
-      role: 'user',
-      content: { type: 'text', text: 'owned by provider pending delivery' },
-      localId: 'provider-claimed-local-1',
-      meta: {},
-    } as UserMessage);
-
-    expect(queueCalls).toEqual([
-      {
-        message: {
-          text: 'owned by provider pending delivery',
-          localId: 'provider-claimed-local-1',
-          localIds: ['provider-claimed-local-1'],
-          providerClaimedPendingLocalIds: ['provider-claimed-local-1'],
         },
       },
     ]);
@@ -240,8 +277,101 @@ describe('registerPermissionModeMessageQueueBinding', () => {
       {
         type: 'push',
         message: { text: 'use this model', localId: 'local-model-1', localIds: ['local-model-1'] },
-        mode: { permissionMode: 'default', model: 'opencode/big-pickle' },
+        mode: {
+          permissionMode: 'default',
+          modelSelection: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: null,
+            modelId: 'opencode/big-pickle',
+          },
+        },
       },
+    ]);
+  });
+
+  it('prefers a target-matched structured model selection over the legacy projection', () => {
+    const harness = createHarness();
+
+    harness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'use this provider model' },
+      localId: 'local-structured-model-1',
+      meta: {
+        model: 'stale-native-model',
+        modelSelectionV1: {
+          v: 1,
+          updatedAt: 42,
+          ref: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: 'pc_openrouter',
+            modelId: 'default',
+          },
+        },
+      },
+    } as UserMessage);
+
+    expect(harness.queueCalls).toEqual([
+      {
+        type: 'push',
+        message: {
+          text: 'use this provider model',
+          localId: 'local-structured-model-1',
+          localIds: ['local-structured-model-1'],
+        },
+        mode: {
+          permissionMode: 'default',
+          modelSelection: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: 'pc_openrouter',
+            modelId: 'default',
+          },
+        },
+      },
+    ]);
+  });
+
+  it('fails closed for a legacy model-only message when the active selection is Provider-bound', () => {
+    const harness = createHarness({
+      agentTargetKey: 'backend:opencode',
+      providerConnectionId: ProviderConnectionIdSchema.parse('pc_openrouter'),
+      modelId: 'provider-active',
+    });
+
+    harness.emit({
+      role: 'user',
+      content: { type: 'text', text: 'must not bypass the Provider owner' },
+      localId: 'local-provider-legacy-model',
+      meta: { model: 'legacy-bypass' },
+    } as UserMessage);
+
+    expect(harness.queueCalls).toEqual([]);
+  });
+
+  it('rejects before provider effect when structured model metadata is invalid or targets another agent', () => {
+    const harness = createHarness();
+
+    for (const [localId, modelSelectionV1] of [
+      ['local-invalid-model', { v: 1, updatedAt: 42, ref: { agentTargetKey: 'backend:opencode', providerConnectionId: 'pc_1', modelId: 'invalid model' } }],
+      ['local-wrong-target', { v: 1, updatedAt: 43, ref: { agentTargetKey: 'backend:codex', providerConnectionId: 'pc_1', modelId: 'provider-model' } }],
+    ] as const) {
+      harness.emit({
+        role: 'user',
+        content: { type: 'text', text: localId },
+        localId,
+        meta: { model: 'must-not-apply', modelSelectionV1 },
+      } as UserMessage);
+    }
+
+    expect(harness.queueCalls).toEqual([]);
+    expect(harness.rejectPromptBeforeProvider.mock.calls).toEqual([
+      [{
+        localIds: ['local-invalid-model'],
+        userMessageSeq: null,
+      }],
+      [{
+        localIds: ['local-wrong-target'],
+        userMessageSeq: null,
+      }],
     ]);
   });
 
@@ -352,62 +482,6 @@ describe('registerPermissionModeMessageQueueBinding', () => {
     expect(queueCalls).toEqual([]);
     expect(steerCalls).toEqual([
       { text: 'nudge active turn', localId: 'local-steer-1' },
-    ]);
-  });
-
-  it('threads provider-claimed pending delivery into in-flight steering metadata', async () => {
-    const sessionHarness = createSessionHarness();
-    const queueCalls: PermissionModeQueuedPrompt[] = [];
-    const steerCalls: Array<Readonly<{
-      text: string;
-      localId: string | null | undefined;
-      providerClaimedPendingLocalIds: readonly string[] | undefined;
-    }>> = [];
-    Object.assign(sessionHarness.session, {
-      hasCanonicalPendingDeliveryLocalId: (localId: string) => localId === 'local-steer-provider-claimed',
-    });
-
-    registerPermissionModeMessageQueueBinding({
-      session: sessionHarness.session,
-      queue: {
-        push: (message: PermissionModeQueuedPrompt) => {
-          queueCalls.push(message);
-        },
-        pushIsolateAndClear: (message: PermissionModeQueuedPrompt) => {
-          queueCalls.push(message);
-        },
-      },
-      getCurrentPermissionMode: () => 'default',
-      setCurrentPermissionMode: () => undefined,
-      inFlightSteer: {
-        supportsInFlightSteer: () => true,
-        isTurnInFlight: () => true,
-        steerText: async (text, options) => {
-          steerCalls.push({
-            text,
-            localId: options?.localId,
-            providerClaimedPendingLocalIds: options?.providerClaimedPendingLocalIds,
-          });
-        },
-      },
-    });
-
-    sessionHarness.emit({
-      role: 'user',
-      content: { type: 'text', text: 'provider claimed steer' },
-      localId: 'local-steer-provider-claimed',
-      meta: {},
-    } as UserMessage);
-
-    await Promise.resolve();
-
-    expect(queueCalls).toEqual([]);
-    expect(steerCalls).toEqual([
-      {
-        text: 'provider claimed steer',
-        localId: 'local-steer-provider-claimed',
-        providerClaimedPendingLocalIds: ['local-steer-provider-claimed'],
-      },
     ]);
   });
 

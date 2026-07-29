@@ -13,8 +13,6 @@ import {
     latestTurnStatusForSessionTurnMutationAction,
     type LatestTurnStatusSnapshot,
 } from '../../sessionTurnStatusSnapshot';
-import type { PendingMaterializationActiveTurnPolicy } from '../../pendingMaterializationActiveTurnPolicy';
-import { blocksPendingMaterializationDuringActiveTurn } from '../../pendingMaterializationActiveTurnPolicy';
 
 type SessionTurnMutationActionInput = Parameters<typeof latestTurnStatusForSessionTurnMutationAction>[0];
 
@@ -23,7 +21,6 @@ export type SessionClientMaterializationRuntime = Readonly<{
     readonly committedLocalIdsAwaitingEcho: ReadonlySet<string>;
     readonly pendingQueueMaterializedLocalIds: ReadonlySet<string>;
     readonly agentQueueEchoSuppressedLocalIds: ReadonlySet<string>;
-    readonly agentQueueDeliveredLocalIds: ReadonlySet<string>;
     getPendingQueueState: () => PendingQueueState;
     getLatestTurnStatus: () => LatestTurnStatusSnapshot | undefined;
     getLatestTurnStatusObservedAt: () => number | null;
@@ -31,9 +28,7 @@ export type SessionClientMaterializationRuntime = Readonly<{
         status: Exclude<LatestTurnStatusSnapshot, null>;
         observedAt: number;
     }> | null;
-    shouldAttemptPendingMaterialization: (opts?: {
-        activeTurnDeliveryPolicy?: PendingMaterializationActiveTurnPolicy;
-    }) => boolean;
+    shouldAttemptPendingMaterialization: () => boolean;
     shouldRefreshTurnStatusBeforePendingMaterialization: () => boolean;
     markTurnStatusRefreshPendingVersion: () => void;
     applyPendingQueueState: (state: KnownPendingQueueState) => boolean;
@@ -49,18 +44,15 @@ export type SessionClientMaterializationRuntime = Readonly<{
     hasMaterializedLocalId: (localId: string) => boolean;
     hasSelfEchoSuppressedLocalId: (localId: string) => boolean;
     hasAgentQueueEchoSuppressedLocalId: (localId: string) => boolean;
-    hasAgentQueueDeliveredLocalId: (localId: string) => boolean;
     hasPendingQueueMaterializedLocalId: (localId: string) => boolean;
     shouldKeepUserSocketConnected: (params: Readonly<{
-        hasPendingMessageCallback: boolean;
+        hasProviderInputConsumer: boolean;
         hasQueuedDisconnectedSessionMessages: boolean;
     }>) => boolean;
     addPendingMaterializedLocalId: (localId: string) => void;
     markPendingQueueMaterializedLocalId: (localId: string) => void;
     markAgentQueueEchoSuppressedLocalId: (localId: string) => void;
     clearAgentQueueEchoSuppressedLocalId: (localId: string) => void;
-    markAgentQueueDeliveredLocalId: (localId: string) => void;
-    clearAgentQueueDeliveredLocalId: (localId: string) => void;
     markCommittedLocalIdAwaitingEcho: (localId: string) => void;
     deleteMaterializedLocalId: (localId: string) => void;
     clearPendingMaterializedState: () => void;
@@ -70,7 +62,6 @@ export type SessionClientMaterializationRuntime = Readonly<{
 
 export function createSessionClientMaterializationRuntime(
     deps: Readonly<{
-        forgetMaterializationRecovery: (localId: string) => void;
         onKeepAliveStateMayHaveChanged: () => void;
         initialPendingQueueState?: PendingQueueState | null;
         initialLatestTurnStatus?: LatestTurnStatusSnapshot | undefined;
@@ -82,7 +73,6 @@ export function createSessionClientMaterializationRuntime(
     const committedLocalIdsAwaitingEcho = new Set<string>();
     const pendingQueueMaterializedLocalIds = new Set<string>();
     const agentQueueEchoSuppressedLocalIds = new Set<string>();
-    const agentQueueDeliveredLocalIds = new Set<string>();
     const committedLocalIdCleanupTimers = new Map<string, ReturnType<typeof setTimeout>>();
     let pendingQueueState: PendingQueueState = deps.initialPendingQueueState ?? UNKNOWN_PENDING_QUEUE_STATE;
     let latestTurnStatus = deps.initialLatestTurnStatus;
@@ -104,11 +94,28 @@ export function createSessionClientMaterializationRuntime(
     const hasAgentQueueEchoSuppressedLocalId = (localId: string): boolean =>
         agentQueueEchoSuppressedLocalIds.has(localId);
 
-    const hasAgentQueueDeliveredLocalId = (localId: string): boolean =>
-        agentQueueDeliveredLocalIds.has(localId);
-
     const hasPendingQueueMaterializedLocalId = (localId: string): boolean =>
         pendingQueueMaterializedLocalIds.has(localId);
+
+    const applyLatestTurnStatusProjection = (
+        status: LatestTurnStatusSnapshot,
+        observedAt?: number | null,
+    ): void => {
+        const observedAtMs = typeof observedAt === 'number' && Number.isFinite(observedAt) && observedAt >= 0
+            ? Math.trunc(observedAt)
+            : null;
+        if (observedAtMs === null) {
+            if (latestTurnStatusObservedAt !== null) return;
+        } else if (
+            latestTurnStatusObservedAt !== null
+            && observedAtMs < latestTurnStatusObservedAt
+        ) {
+            return;
+        }
+
+        latestTurnStatus = status;
+        latestTurnStatusObservedAt = observedAtMs;
+    };
 
     const clearCommittedLocalIdCleanupTimers = (): void => {
         for (const timer of committedLocalIdCleanupTimers.values()) {
@@ -122,7 +129,6 @@ export function createSessionClientMaterializationRuntime(
         committedLocalIdsAwaitingEcho,
         pendingQueueMaterializedLocalIds,
         agentQueueEchoSuppressedLocalIds,
-        agentQueueDeliveredLocalIds,
 
         getPendingQueueState() {
             return pendingQueueState;
@@ -150,14 +156,8 @@ export function createSessionClientMaterializationRuntime(
             };
         },
 
-        shouldAttemptPendingMaterialization(opts = {}) {
+        shouldAttemptPendingMaterialization() {
             if (deps.isPendingQueueMaterializationBlocked?.() === true) {
-                return false;
-            }
-            if (
-                blocksPendingMaterializationDuringActiveTurn(opts.activeTurnDeliveryPolicy)
-                && isActiveLatestTurnStatus(latestTurnStatus)
-            ) {
                 return false;
             }
             return countMaterializablePendingRows(pendingQueueState) > 0;
@@ -191,22 +191,13 @@ export function createSessionClientMaterializationRuntime(
         },
 
         applyLatestTurnStatus(status, observedAt) {
-            const previousStatus = latestTurnStatus;
-            latestTurnStatus = status;
-            if (typeof observedAt === 'number' && Number.isFinite(observedAt) && observedAt >= 0) {
-                latestTurnStatusObservedAt = Math.trunc(observedAt);
-            } else if (previousStatus !== status) {
-                latestTurnStatusObservedAt = null;
-            }
+            applyLatestTurnStatusProjection(status, observedAt);
         },
 
         observeSessionTurnMutationAction(action, observedAt) {
             const mapped = latestTurnStatusForSessionTurnMutationAction(action);
             if (mapped !== undefined) {
-                latestTurnStatus = mapped;
-                if (typeof observedAt === 'number' && Number.isFinite(observedAt) && observedAt >= 0) {
-                    latestTurnStatusObservedAt = Math.trunc(observedAt);
-                }
+                applyLatestTurnStatusProjection(mapped, observedAt);
             }
             if (action === 'begin') {
                 hasActiveLocalTurn = true;
@@ -262,11 +253,10 @@ export function createSessionClientMaterializationRuntime(
         hasMaterializedLocalId,
         hasSelfEchoSuppressedLocalId,
         hasAgentQueueEchoSuppressedLocalId,
-        hasAgentQueueDeliveredLocalId,
         hasPendingQueueMaterializedLocalId,
 
-        shouldKeepUserSocketConnected({ hasPendingMessageCallback, hasQueuedDisconnectedSessionMessages }) {
-            return hasPendingMessageCallback
+        shouldKeepUserSocketConnected({ hasProviderInputConsumer, hasQueuedDisconnectedSessionMessages }) {
+            return hasProviderInputConsumer
                 || pendingMaterializedLocalIds.size > 0
                 || committedLocalIdsAwaitingEcho.size > 0
                 || pendingQueueMaterializedLocalIds.size > 0
@@ -291,16 +281,6 @@ export function createSessionClientMaterializationRuntime(
         clearAgentQueueEchoSuppressedLocalId(localId) {
             if (!localId) return;
             agentQueueEchoSuppressedLocalIds.delete(localId);
-        },
-
-        markAgentQueueDeliveredLocalId(localId) {
-            if (!localId) return;
-            agentQueueDeliveredLocalIds.add(localId);
-        },
-
-        clearAgentQueueDeliveredLocalId(localId) {
-            if (!localId) return;
-            agentQueueDeliveredLocalIds.delete(localId);
         },
 
         markCommittedLocalIdAwaitingEcho(localId) {
@@ -328,7 +308,6 @@ export function createSessionClientMaterializationRuntime(
                 clearTimeout(cleanupTimer);
                 committedLocalIdCleanupTimers.delete(localId);
             }
-            deps.forgetMaterializationRecovery(localId);
             deps.onKeepAliveStateMayHaveChanged();
         },
 
@@ -337,7 +316,6 @@ export function createSessionClientMaterializationRuntime(
             committedLocalIdsAwaitingEcho.clear();
             pendingQueueMaterializedLocalIds.clear();
             agentQueueEchoSuppressedLocalIds.clear();
-            agentQueueDeliveredLocalIds.clear();
         },
 
         clearCommittedLocalIdCleanupTimers,

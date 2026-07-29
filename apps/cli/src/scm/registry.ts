@@ -19,8 +19,12 @@ function modeRank(mode: ScmRepoMode): number {
     return 50;
 }
 
-function findBackendById(backends: readonly ScmBackend[], id: ScmBackendId): ScmBackend | null {
-    return backends.find((backend) => backend.id === id) ?? null;
+export function resolveScmBackendById(backends: readonly ScmBackend[], id: ScmBackendId): ScmBackend | null {
+    const exact = backends.find((backend) => backend.id === id);
+    if (exact) return exact;
+
+    const localMatches = backends.filter((backend) => backend.localId === id);
+    return localMatches.length === 1 ? localMatches[0] : null;
 }
 
 function resolveModeSelectionScore(input: { backend: ScmBackend; mode: ScmRepoMode }): number {
@@ -34,13 +38,24 @@ function isPreferenceAllowedForMode(input: { backend: ScmBackend; mode: ScmRepoM
 
 export function createScmBackendRegistry(backends: readonly ScmBackend[]) {
     async function detectAll(input: { cwd: string }): Promise<Array<{ backend: ScmBackend; detection: ScmRepoDetection }>> {
-        const results = await Promise.all(
+        const results = await Promise.allSettled(
             backends.map(async (backend) => ({
                 backend,
                 detection: await backend.detectRepo({ cwd: input.cwd }),
             }))
         );
-        return results.filter((entry) => entry.detection.isRepo && entry.detection.mode !== null);
+        const detectedRepositories = results.flatMap((result) => (
+            result.status === 'fulfilled'
+            && result.value.detection.isRepo
+            && result.value.detection.mode !== null
+                ? [result.value]
+                : []
+        ));
+        if (detectedRepositories.length > 0) return detectedRepositories;
+
+        const detectorFailure = results.find((result) => result.status === 'rejected');
+        if (detectorFailure?.status === 'rejected') throw detectorFailure.reason;
+        return [];
     }
 
     async function selectBackend(input: ScmBackendSelectionInput): Promise<ScmBackendSelection | null> {
@@ -49,7 +64,7 @@ export function createScmBackendRegistry(backends: readonly ScmBackend[]) {
 
         const preference = input.backendPreference;
         if (preference?.kind === 'prefer') {
-            const preferredBackend = findBackendById(backends, preference.backendId);
+            const preferredBackend = resolveScmBackendById(backends, preference.backendId);
             const preferredDetection = detections.find((entry) => entry.backend.id === preferredBackend?.id);
             if (
                 preferredDetection

@@ -71,6 +71,10 @@ export const APPROVAL_RPC_SCOPES = Object.freeze([
     { id: 'approval.requests', methodPrefixes: ['approval.request.'] },
 ] satisfies readonly ActionSpecRpcRegistrationScope[]);
 
+export const PLUGIN_PERMISSION_GRANT_RPC_SCOPES = Object.freeze([
+    { id: 'plugins.permissions.grants', methodPrefixes: ['plugins.permissions.grants.'] },
+] satisfies readonly ActionSpecRpcRegistrationScope[]);
+
 export const MACHINE_SESSION_LIFECYCLE_RPC_SCOPES = Object.freeze([
     {
         id: 'machine.session.lifecycle',
@@ -125,6 +129,13 @@ export const SESSION_TRANSCRIPT_RPC_SCOPES = Object.freeze([
 export const EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES = Object.freeze([
     {
         id: 'sessions.external',
+        methods: [
+            RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_STATUS_GET,
+            RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_INSTALL,
+            RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_DISABLE,
+            RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_ENABLE,
+            RPC_METHODS.DAEMON_PLUGIN_SESSION_HOOKS_UNINSTALL,
+        ],
         methodPrefixes: ['daemon.externalSessions.'],
     },
 ] satisfies readonly ActionSpecRpcRegistrationScope[]);
@@ -190,6 +201,7 @@ export const REQUIRED_GENERIC_ACTION_SPEC_RPC_SCOPES = Object.freeze([
     ...SUBAGENT_RPC_SCOPES,
     ...SESSION_PERMISSION_RPC_SCOPES,
     ...APPROVAL_RPC_SCOPES,
+    ...PLUGIN_PERMISSION_GRANT_RPC_SCOPES,
     ...SESSION_LIFECYCLE_RPC_SCOPES,
     ...EXECUTION_RUN_RPC_SCOPES,
     ...REVIEW_COMMENT_RPC_SCOPES,

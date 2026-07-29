@@ -112,6 +112,7 @@ describe('happier daemon service list', () => {
           HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32',
           HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: '',
           HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+          HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
         },
       },
       async ({ homeDir }) => {
@@ -125,6 +126,7 @@ describe('happier daemon service list', () => {
             ...process.env,
             HAPPIER_DAEMON_SERVICE_PLATFORM: 'win32',
             HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+            HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
             HAPPIER_DAEMON_SERVICE_INSTANCE_ID: 'company',
             HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
             HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: join(homeDir, '.happier'),
@@ -142,6 +144,7 @@ describe('happier daemon service list', () => {
             env: {
               HAPPIER_ACTIVE_SERVER_ID: 'company',
               HAPPIER_DAEMON_STARTUP_SOURCE: 'background-service',
+              HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'pinned',
               HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable',
             },
             stdoutPath: join(homeDir, '.happier', 'logs', 'daemon-service.company.out.log'),

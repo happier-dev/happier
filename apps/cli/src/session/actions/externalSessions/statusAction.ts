@@ -1,20 +1,68 @@
 import {
     ExternalSessionStatusGetRequestSchema,
+    type ExternalAgentObservationSnapshotV1,
     type ExternalSessionStatusGetResponse,
 } from '@happier-dev/protocol';
 
-import { listSessionMarkers } from '@/daemon/sessionRegistry';
-import { findTrustedExternalSessionOwner } from '@/api/session/external/takeover/findTrustedExternalSessionOwner';
-import { loadLinkedExternalSession } from '@/api/session/external/takeover/loadLinkedExternalSession';
-import { resolveDirectTakeoverSpawnOptions } from '@/api/session/external/takeover/resolveDirectTakeoverSpawnOptions';
-import { validateDirectMachineSource } from '@/api/session/external/security/validateDirectMachineSource';
+import {
+    resolveExternalSessionObservationLinkInput,
+} from '@/api/session/external/leases/resolveExternalSessionObservationLinkInput';
+import { inspectExternalSessionDestructiveQuiescence } from '@/api/session/external/takeover/inspectExternalSessionDestructiveQuiescence';
+import {
+    loadLinkedExternalSession,
+    type LoadedLinkedExternalSession,
+} from '@/api/session/external/takeover/loadLinkedExternalSession';
+import { isExternalTakeoverLaunchAvailable } from '@/api/session/external/takeover/resolveExternalTakeoverSpawnOptions';
+import {
+    resolveExternalLinkedTakeoverWriterSafety,
+} from '@/api/session/external/takeover/resolveExternalLinkedTakeoverWriterSafety';
+import { validateExternalMachineSource } from '@/api/session/external/security/validateExternalMachineSource';
 import { readCredentials } from '@/persistence';
 
-import { resolveRecentActivityWindowMs } from './actionConfiguration';
 import type { ExternalSessionActionContext } from './externalSessionActionContext';
-import { resolveExternalSessionSurfaceOps } from './providerOpsResolution';
-import { isPidAlive } from './processLiveness';
+import {
+    isExternalSessionHostedAdmissionAvailable,
+} from './importActivationFence';
 import { externalSessionsError, internalErrorResponse } from './responseErrors';
+
+function mapExternalAgentSnapshotToLegacyActivity(
+    snapshot: ExternalAgentObservationSnapshotV1 | null,
+): 'running' | 'active_recently' | 'idle' | 'unknown' {
+    switch (snapshot?.status) {
+        case 'working':
+            return 'running';
+        case 'recentlyActive':
+            return 'active_recently';
+        case 'idle':
+            return 'idle';
+        case 'waiting':
+        case 'retrying':
+        case 'unknown':
+        case undefined:
+            return 'unknown';
+    }
+}
+
+async function reconcileExternalAgentStatus(params: Readonly<{
+    context: ExternalSessionActionContext;
+    linked: LoadedLinkedExternalSession;
+    sessionId: string;
+}>): Promise<ExternalAgentObservationSnapshotV1 | null> {
+    const statusLinkInput = await resolveExternalSessionObservationLinkInput({
+        linked: params.linked,
+        sessionId: params.sessionId,
+    });
+
+    if (!statusLinkInput) return null;
+    try {
+        const result = await params.context.observationProjection.reconcileStatusLink(
+            statusLinkInput,
+        );
+        return result.snapshot;
+    } catch {
+        return null;
+    }
+}
 
 export async function executeExternalSessionStatusGetAction(
     raw: unknown,
@@ -22,9 +70,9 @@ export async function executeExternalSessionStatusGetAction(
 ): Promise<ExternalSessionStatusGetResponse> {
     const parsed = ExternalSessionStatusGetRequestSchema.safeParse(raw);
     if (!parsed.success) return externalSessionsError('invalid_request') satisfies ExternalSessionStatusGetResponse;
-    let validatedSource: Awaited<ReturnType<typeof validateDirectMachineSource>>;
+    let validatedSource: Awaited<ReturnType<typeof validateExternalMachineSource>>;
     try {
-        validatedSource = await validateDirectMachineSource({
+        validatedSource = await validateExternalMachineSource({
             agentId: parsed.data.agentId,
             source: parsed.data.source,
             env: process.env,
@@ -37,88 +85,100 @@ export async function executeExternalSessionStatusGetAction(
         ) satisfies ExternalSessionStatusGetResponse;
     }
     if (!validatedSource.ok) {
-        return externalSessionsError('invalid_request', validatedSource.error) satisfies ExternalSessionStatusGetResponse;
+        return externalSessionsError(validatedSource.errorCode ?? 'invalid_request', validatedSource.error) satisfies ExternalSessionStatusGetResponse;
     }
-    const nowMs = Date.now();
-    const recentWindowMs = resolveRecentActivityWindowMs();
-    let activityValue: 'running' | 'active_recently' | 'idle' | 'unknown' = 'unknown';
-    let lastKnownActivityAtMs: number | undefined = undefined;
-    let runnerActive = false;
-    let trustedPid: number | null = null;
-    let canForceStop = false;
-
-    const markers = await listSessionMarkers().catch(() => []);
-    const liveMarkers = markers.filter((m) => Number.isFinite(m.pid) && m.pid > 0 && isPidAlive(m.pid));
-
-    runnerActive = liveMarkers.some((m) => m.happySessionId === parsed.data.sessionId);
-
-    if (!runnerActive) {
-        const owner = findTrustedExternalSessionOwner({
-            markers: liveMarkers,
-            agentId: parsed.data.agentId,
-            remoteSessionId: parsed.data.remoteSessionId,
-            isPidAlive,
-        });
-        if (owner) {
-            trustedPid = owner.pid;
-            canForceStop = true;
-        }
+    const requiresFreshTakeoverReadiness = parsed.data.takeoverReadiness === 'fresh';
+    if (requiresFreshTakeoverReadiness) {
+        context.takeoverReadiness.invalidate(parsed.data.sessionId);
     }
-
+    let linked: LoadedLinkedExternalSession | null = null;
+    let cachedTakeoverReadiness: boolean | null = null;
+    let canTakeOverPersist = true;
     try {
-        const providerOps = await resolveExternalSessionSurfaceOps(parsed.data.agentId);
-        const res = providerOps.getActivity
-            ? await providerOps.getActivity({
-            source: validatedSource.source,
-            remoteSessionId: parsed.data.remoteSessionId,
-        })
-            : null;
-        if (!res) {
-            throw new Error('external_session_activity_not_supported');
+        const credentials = await readCredentials().catch(() => null);
+        if (credentials) {
+            const loaded = await loadLinkedExternalSession({
+                credentials,
+                sessionId: parsed.data.sessionId,
+                machineId: parsed.data.machineId,
+            });
+            if (
+                loaded.ok
+                && loaded.session.agentId === parsed.data.agentId
+                && loaded.session.remoteSessionId === parsed.data.remoteSessionId
+                && loaded.session.source.kind === validatedSource.source.kind
+            ) {
+                linked = loaded.session;
+            }
         }
-        if (typeof res.lastActivityAtMs === 'number' && Number.isFinite(res.lastActivityAtMs) && res.lastActivityAtMs >= 0) {
-            lastKnownActivityAtMs = res.lastActivityAtMs;
-            const ageMs = nowMs - res.lastActivityAtMs;
-            activityValue = Number.isFinite(ageMs) && ageMs >= 0 && ageMs <= recentWindowMs ? 'active_recently' : 'idle';
-        }
-        if (res.isRunning) {
-            activityValue = 'running';
-        }
-    } catch {
-        activityValue = 'unknown';
-    }
 
-    if (runnerActive) {
-        activityValue = 'running';
-    }
-
-    const cachedTakeoverReadiness = context.takeoverReadiness.read(parsed.data.sessionId);
-    let canTakeOverPersist = cachedTakeoverReadiness ?? true;
-    if (cachedTakeoverReadiness === null) {
-        try {
-            const credentials = await readCredentials().catch(() => null);
-            if (!credentials) {
+        cachedTakeoverReadiness =
+            !requiresFreshTakeoverReadiness && linked
+                ? context.takeoverReadiness.read(
+                    parsed.data.sessionId,
+                    linked.linkGeneration,
+                )
+                : null;
+        canTakeOverPersist = cachedTakeoverReadiness ?? true;
+        if (cachedTakeoverReadiness === null) {
+            if (!linked) {
                 canTakeOverPersist = false;
             } else {
-                const linked = await loadLinkedExternalSession({
-                    credentials,
-                    sessionId: parsed.data.sessionId,
-                    machineId: parsed.data.machineId,
-                });
-                if (!linked.ok) {
-                    canTakeOverPersist = false;
-                } else {
-                    const takeoverOptions = await resolveDirectTakeoverSpawnOptions({
-                        linked: linked.session,
-                        sessionId: parsed.data.sessionId,
-                    });
-                    canTakeOverPersist = takeoverOptions !== null;
-                }
+                canTakeOverPersist = await isExternalTakeoverLaunchAvailable(
+                    linked.agentId,
+                );
             }
-        } catch {
-            canTakeOverPersist = false;
+            if (linked) {
+                context.takeoverReadiness.write(
+                    parsed.data.sessionId,
+                    linked.linkGeneration,
+                    canTakeOverPersist,
+                );
+            }
         }
-        context.takeoverReadiness.write(parsed.data.sessionId, canTakeOverPersist);
+    } catch {
+        if (cachedTakeoverReadiness === null) canTakeOverPersist = false;
+    }
+
+    const externalAgent = linked
+        ? await reconcileExternalAgentStatus({
+            context,
+            linked,
+            sessionId: parsed.data.sessionId,
+        })
+        : null;
+    const activityValue = mapExternalAgentSnapshotToLegacyActivity(externalAgent);
+    const quiescence = linked
+        ? await inspectExternalSessionDestructiveQuiescence({
+            linked,
+            linkedSessionId: parsed.data.sessionId,
+            machineId: parsed.data.machineId,
+        })
+        : null;
+    const runnerActive = quiescence?.status === 'verified_running';
+    const trustedPid = runnerActive
+        ? quiescence.ownerMarker?.pid ?? null
+        : null;
+    let externalLinkedTakeoverWriterSafe = false;
+    if (linked && quiescence?.permitsAdmission === true) {
+        try {
+            externalLinkedTakeoverWriterSafe =
+                await resolveExternalLinkedTakeoverWriterSafety(linked.agentId)
+                === 'native_prevention';
+        } catch {
+            externalLinkedTakeoverWriterSafe = false;
+        }
+    }
+    let persistedTakeoverActivationAdmitted = false;
+    if (canTakeOverPersist && quiescence?.permitsAdmission === true) {
+        try {
+            persistedTakeoverActivationAdmitted =
+                isExternalSessionHostedAdmissionAvailable(
+                    context.getServerFeaturesSnapshot?.(),
+                );
+        } catch {
+            persistedTakeoverActivationAdmitted = false;
+        }
     }
 
     return {
@@ -126,10 +186,15 @@ export async function executeExternalSessionStatusGetAction(
         machineOnline: true,
         runnerActive,
         activity: activityValue,
-        canTakeOverDirect: !runnerActive,
-        canTakeOverPersist,
-        canForceStop,
+        canTakeOverDirect:
+            quiescence?.permitsAdmission === true
+            && externalLinkedTakeoverWriterSafe,
+        canTakeOverPersist: persistedTakeoverActivationAdmitted,
+        canForceStop: false,
         trustedPid,
-        ...(lastKnownActivityAtMs !== undefined ? { lastKnownActivityAtMs } : {}),
+        externalAgent,
+        ...(externalAgent?.status === 'recentlyActive'
+            ? { lastKnownActivityAtMs: externalAgent.observedAtMs }
+            : {}),
     } satisfies ExternalSessionStatusGetResponse;
 }

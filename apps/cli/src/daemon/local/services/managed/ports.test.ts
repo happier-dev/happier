@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createLocalServicePortAllocator } from './ports';
 
@@ -36,6 +36,42 @@ describe('createLocalServicePortAllocator', () => {
             ok: false,
             reason: 'port_unavailable',
             diagnostics: [{ code: 'port_unavailable', severity: 'error' }],
+        });
+    });
+
+    it('adopts an already-verified surviving listener without treating it as a free port', () => {
+        const isPortAvailable = vi.fn(() => false);
+        const allocator = createLocalServicePortAllocator({
+            range: { start: 5100, end: 5102 },
+            isPortAvailable,
+        });
+
+        expect(allocator.adoptVerified({
+            serviceId: 'plugin-a:web',
+            port: 5173,
+        })).toEqual({
+            ok: true,
+            port: 5173,
+            diagnostics: [],
+        });
+        expect(isPortAvailable).not.toHaveBeenCalled();
+        expect(allocator.adoptVerified({
+            serviceId: 'plugin-b:web',
+            port: 5173,
+        })).toEqual({
+            ok: false,
+            reason: 'port_unavailable',
+            diagnostics: [{ code: 'port_unavailable', severity: 'error' }],
+        });
+
+        allocator.release('plugin-a:web');
+        expect(allocator.adoptVerified({
+            serviceId: 'plugin-b:web',
+            port: 5173,
+        })).toEqual({
+            ok: true,
+            port: 5173,
+            diagnostics: [],
         });
     });
 });

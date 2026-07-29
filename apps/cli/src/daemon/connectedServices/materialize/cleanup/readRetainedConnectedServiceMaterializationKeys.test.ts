@@ -1,14 +1,54 @@
 import { describe, expect, it, vi } from 'vitest';
+import {
+  sealSessionOwnerMetadataV1,
+  SessionOwnerMetadataV1Schema,
+} from '@happier-dev/protocol';
 
 import type { Credentials } from '@/persistence';
 import { readRetainedConnectedServiceMaterializationKeys } from './readRetainedConnectedServiceMaterializationKeys';
 
+const legacySecret = new Uint8Array(32).fill(1);
 const credentials: Credentials = {
   token: 'token',
-  encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+  encryption: { type: 'legacy', secret: legacySecret },
 };
 
 describe('readRetainedConnectedServiceMaterializationKeys', () => {
+  it('retains an inactive layout-v1 materialization identity from its sealed owner envelope', async () => {
+    const ownerMetadata = SessionOwnerMetadataV1Schema.parse({
+      v: 1,
+      connectedServices: {
+        connectedServiceMaterializationIdentityV1: {
+          v: 1,
+          id: 'layout-v1-retained',
+          createdAt: 1_000,
+        },
+      },
+    });
+    const fetchSessionsPage = vi.fn().mockResolvedValue({
+      sessions: [{
+        id: 'inactive-layout-v1',
+        active: false,
+        archivedAt: null,
+        encryptionMode: 'plain',
+        metadataLayoutVersion: 1,
+        metadata: JSON.stringify({ v: 1 }),
+        ownerMetadata: sealSessionOwnerMetadataV1({
+          material: { type: 'legacy', secret: legacySecret },
+          ownerMetadata,
+          randomBytes: (length) => new Uint8Array(length).fill(7),
+        }),
+      }],
+      nextCursor: null,
+      hasNext: false,
+    });
+
+    await expect(readRetainedConnectedServiceMaterializationKeys({
+      credentials,
+      fetchSessionsPage,
+    })).resolves.toEqual(['layout-v1-retained']);
+  });
+
   it('returns materialization identity ids from inactive non-archived session metadata', async () => {
     const fetchSessionsPage = vi
       .fn()

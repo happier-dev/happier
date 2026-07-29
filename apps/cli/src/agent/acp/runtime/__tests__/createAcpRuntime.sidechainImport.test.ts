@@ -40,7 +40,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       createReplayBackend: async () => replayBackend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     // Simulate Task tool-call and tool-result coming from the main ACP backend.
     const taskCall: ToolCallMessage = { type: 'tool-call', toolName: 'Task', args: { prompt: 'do work' }, callId: 'tool_task_1' };
@@ -81,7 +81,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       createReplayBackend: async () => replayBackend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     const taskCall: ToolCallMessage = { type: 'tool-call', toolName: 'Task', args: { prompt: 'do work' }, callId: 'tool_task_1' };
     mainBackend.emit(taskCall);
@@ -123,7 +123,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       createReplayBackend: async () => replayBackend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     const taskCall: ToolCallMessage = { type: 'tool-call', toolName: 'Task', args: { prompt: 'do work' }, callId: 'tool_task_1' };
     mainBackend.emit(taskCall);
@@ -170,7 +170,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       toolCallCache: { maxEntries: 1, ttlMs: 60_000 },
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     // Record a Task tool-call, then push another tool-call to evict it from the bounded cache.
     mainBackend.emit({ type: 'tool-call', toolName: 'Task', args: { prompt: 'do work' }, callId: 'tool_task_old' });
@@ -221,7 +221,7 @@ describe('createAcpRuntime (sidechain import)', () => {
       toolCallCache: { maxEntries: 100, ttlMs: 60_000 },
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     mainBackend.emit({ type: 'tool-call', toolName: 'Task', args: { prompt: 'do work' }, callId: 'tool_task_1' });
 

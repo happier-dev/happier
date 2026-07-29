@@ -4,34 +4,114 @@
  */
 
 import { logger } from '@/ui/logger';
-import { clearDaemonState, readDaemonState } from '@/persistence';
+import { clearDaemonState, inspectDaemonLockOwner, readDaemonLockPid, readDaemonState } from '@/persistence';
 import { Metadata } from '@/api/types';
 import { projectPath } from '@/projectPath';
-import { existsSync, readFileSync, statSync } from 'fs';
+import { readFileSync, statSync } from 'fs';
 import { configuration } from '@/configuration';
 import type { SpawnDaemonSessionRequest } from '@/rpc/handlers/spawnSessionOptionsContract';
-import type {
-  ConnectedServiceBindingsV1,
-  ProviderAccountUsageAdoptionV1,
-  ProviderAccountUsageSnapshotV1,
-  SshTunnelEnsureRequest,
-  SshTunnelEnsureResponse,
-  SshTunnelListResponse,
-  SshTunnelMutationResponse,
-  SshTunnelProbeResponse,
-  SessionUsageLimitRecoveryResumePromptModeV1,
+import {
+  PluginLocalServicesBridgeControlResponseV1Schema,
+  type PluginLocalServicesBridgeControlRequestV1,
+  type PluginLocalServicesBridgeControlResponseV1,
+} from './local/services/pluginBridgeProtocol';
+import {
+  AGENT_RUNTIME_DAEMON_BRIDGE_PATH,
+  AgentRuntimeDaemonBridgeResponseV1Schema,
+  type AgentRuntimeDaemonBridgeRequestV1,
+  type AgentRuntimeDaemonBridgeResponseV1,
+} from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeProtocol';
+import {
+  FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
+  FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
+  ForegroundAgentRuntimeAdmissionRequestV1Schema,
+  ForegroundAgentRuntimeAdmissionResponseV1Schema,
+  ForegroundAgentRuntimeReleaseRequestV1Schema,
+  ForegroundAgentRuntimeReleaseResponseV1Schema,
+  type ForegroundAgentRuntimeAdmissionRequestV1,
+  type ForegroundAgentRuntimeAdmissionResponseV1,
+  type ForegroundAgentRuntimeReleaseRequestV1,
+} from './agentRuntime/foregroundAdmissionContract';
+import {
+  createProviderErrorV1,
+  RestartAllSessionRunnersRequestV1Schema,
+  RestartAllSessionRunnersResultV1Schema,
+  RestartSessionRunnerRequestV1Schema,
+  RestartSessionRunnerResultV1Schema,
+  SessionRunnerStatusGetRequestV1Schema,
+  SessionRunnerRuntimeStateV1Schema,
+  type ConnectedServiceBindingsV1,
+  type ConnectedServiceId,
+  type ConnectedServiceUsageSourceV1,
+  type ProviderAccountUsageSnapshotV1,
+  type RestartAllSessionRunnersRequestV1,
+  type RestartAllSessionRunnersResultV1,
+  type RestartSessionRunnerRequestV1,
+  type RestartSessionRunnerResultV1,
+  type SessionRunnerStatusGetRequestV1,
+  type SessionRunnerRuntimeStateV1,
+  type SessionRunnerRestartModeV1,
+  type SshTunnelEnsureRequest,
+  type SshTunnelEnsureResponse,
+  type SshTunnelListResponse,
+  type SshTunnelMutationResponse,
+  type SshTunnelProbeResponse,
+  type SessionUsageLimitRecoveryResumePromptModeV1,
 } from '@happier-dev/protocol';
 import {
-  CODEX_CHATGPT_AUTH_TOKENS_REFRESH_PATH,
-  CodexChatGptAuthTokensRefreshResponseSchema,
-  type CodexChatGptAuthTokensRefreshResponse,
-  type CodexChatGptAuthTokensRefreshSelection,
-} from '@happier-dev/plugins-codex/agent/auth/services/openai/cloud/refreshBridge';
+  StopSessionResultSchema,
+  type StopSessionResult,
+} from './sessions/stopSessionContract';
+import type {
+  ProviderAccountUsageAdoptionV1,
+} from './connectedServices/accountUsage/adoption';
+import type {
+  ConnectedServiceDaemonAuthBridgeRefreshResult,
+} from './connectedServices/daemonAuthBridgeTypes';
+import { deriveConnectedServiceRunMaterializeToken } from './connectedServices/runs/capabilityToken';
+import {
+  CONNECTED_SERVICE_RUN_MATERIALIZE_PATH,
+  CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH,
+  CONNECTED_SERVICE_RUN_RELEASE_PATH,
+  type ConnectedServiceRunMaterializeRequest,
+  type ConnectedServiceRunReleaseRequest,
+  type ConnectedServiceRunGenerationCurrentRequest,
+  type ExecutionRunConnectedServicesRegistrationV1,
+} from './connectedServices/runs/materializeContract';
 import { resolveComparableCliVersion } from './resolveComparableCliVersion';
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from './spawn/sessionWebhookTimeoutPolicy';
+import { buildDaemonControlHttpHeaders } from './controlHttp';
+import {
+  PluginInstallationReviewSchema,
+  type PluginChangeDecision,
+  type PluginChangeDecisionResult,
+  type PluginChangeRequest,
+  type PluginChangeRequestResult,
+} from '@/plugins/daemon/changeContract';
+import {
+  PLUGIN_ACTION_EXECUTE_PATH,
+  PLUGIN_CATALOG_READ_PATH,
+  PLUGIN_CHANGE_DECISION_PATH,
+  PLUGIN_CHANGE_REQUEST_PATH,
+} from '@/plugins/daemon/controlRoutes';
+import type { PluginActionExecutionAttempt } from '@/plugins/projection/actions/execute';
+import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
+import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 
 export type DaemonControlRequestOptions = {
-  timeoutMs?: number;
+  timeoutMs?: number | null;
+  signal?: AbortSignal;
+  target?: Readonly<{
+    pid: number;
+    httpPort: number;
+    controlToken?: string;
+  }>;
+};
+
+type DaemonPostAuthScope = 'daemon-control' | 'connected-service-run-materialize';
+
+type DaemonPostOptions = DaemonControlRequestOptions & {
+  authScope?: DaemonPostAuthScope;
 };
 
 const DEFAULT_DAEMON_HTTP_TIMEOUT_MS = 10_000;
@@ -39,15 +119,42 @@ const DEFAULT_DAEMON_SPAWN_HTTP_TIMEOUT_MS = DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS;
 const DEFAULT_DAEMON_PING_TIMEOUT_MS = 3_000;
 const DEFAULT_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS = 12_000;
 const DEFAULT_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS = 10_000;
-const DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS = 60_000;
+const DAEMON_STATE_FRESHNESS_GRACE_MS = 60_000;
 const DAEMON_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_HTTP_TIMEOUT';
 const DAEMON_SPAWN_HTTP_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SPAWN_HTTP_TIMEOUT';
 const DAEMON_PING_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_PING_TIMEOUT_MS';
 const DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_STOP_WAIT_FOR_DEATH_TIMEOUT_MS';
 const DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_ENV_KEY = 'HAPPIER_DAEMON_SHUTDOWN_SPAWN_DRAIN_GRACE_MS';
+const EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_ENV_KEY = 'HAPPIER_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS';
+const DEFAULT_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS = 120_000;
 
-function resolveDaemonStateAgeMs(state: unknown): number | null {
+function serializeSpawnDaemonSessionRequestForLocalControl(
+  request: SpawnDaemonSessionRequest,
+): Record<string, unknown> {
+  const backendTarget = request.backendTarget;
+  if (
+    backendTarget?.kind === 'backend'
+    && backendTarget.sourceKind === 'built_in'
+    && !backendTarget.configuredBackendId
+  ) {
+    return {
+      ...request,
+      backendTarget: {
+        kind: 'builtInAgent',
+        agentId: backendTarget.backendId,
+      },
+    };
+  }
+  return request as unknown as Record<string, unknown>;
+}
+
+function resolveDaemonStateFreshnessAgeMs(state: unknown): number | null {
   if (state && typeof state === 'object') {
+    const lastHeartbeatAt = (state as any).lastHeartbeatAt;
+    if (typeof lastHeartbeatAt === 'number' && Number.isFinite(lastHeartbeatAt)) {
+      return Math.max(0, Date.now() - lastHeartbeatAt);
+    }
+
     const startedAt = (state as any).startedAt;
     if (typeof startedAt === 'number' && Number.isFinite(startedAt)) {
       return Math.max(0, Date.now() - startedAt);
@@ -83,9 +190,18 @@ function resolvePositiveIntValue(
   return Math.min(bounds.max, Math.max(bounds.min, Math.trunc(parsed)));
 }
 
-function resolveDaemonControlTimeoutMs(path: string, options: DaemonControlRequestOptions): number {
+function resolveDaemonControlTimeoutMs(
+  path: string,
+  options: DaemonControlRequestOptions,
+): number | null {
+  if (options.timeoutMs === null) {
+    return null;
+  }
   if (options.timeoutMs !== undefined) {
-    return resolvePositiveIntValue(options.timeoutMs, DEFAULT_DAEMON_HTTP_TIMEOUT_MS, { min: 100, max: 300_000 });
+    return resolvePositiveIntValue(options.timeoutMs, DEFAULT_DAEMON_HTTP_TIMEOUT_MS, {
+      min: 100,
+      max: path === CONNECTED_SERVICE_RUN_MATERIALIZE_PATH ? 600_000 : 300_000,
+    });
   }
 
   if (path === '/spawn-session') {
@@ -106,6 +222,16 @@ function resolveDaemonControlTimeoutMs(path: string, options: DaemonControlReque
     min: 100,
     max: 300_000,
   });
+}
+
+export function resolveExecutionRunConnectedServiceMaterializeTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return resolvePositiveIntValue(
+    env[EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_ENV_KEY],
+    DEFAULT_EXECUTION_RUN_CS_MATERIALIZE_TIMEOUT_MS,
+    { min: 1_000, max: 600_000 },
+  );
 }
 
 function resolveDaemonPingTimeoutMs(): number {
@@ -135,12 +261,28 @@ function resolveDaemonStopWaitForDeathTimeoutMs(): number {
 
 export type DaemonRunningInspection =
   | { status: 'not-running' }
+  | { status: 'starting'; pid: number }
   | { status: 'starting'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> }
   | { status: 'running'; state: NonNullable<Awaited<ReturnType<typeof readDaemonState>>> };
+
+async function inspectDaemonLockStartupProgress(): Promise<{ status: 'starting'; pid: number } | null> {
+  const owner = await inspectDaemonLockOwner();
+  if (owner.status === 'starting') {
+    if (owner.evidence === 'live-unclassified') {
+      logger.debug('[DAEMON RUN] Daemon lock is held by a live process whose incarnation cannot be classified safely, treating startup as in progress');
+    } else {
+      logger.debug('[DAEMON RUN] Daemon lock is held by a live daemon before state was written, treating startup as in progress');
+    }
+    return { status: 'starting', pid: owner.pid };
+  }
+  return null;
+}
 
 export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<DaemonRunningInspection> {
   const state = await readDaemonState();
   if (!state) {
+    const lockStartup = await inspectDaemonLockStartupProgress();
+    if (lockStartup) return lockStartup;
     return { status: 'not-running' };
   }
 
@@ -152,6 +294,17 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
 
   try {
     process.kill(state.pid, 0);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === 'ESRCH') {
+      logger.debug('[DAEMON RUN] Daemon PID is definitively not running, treating daemon as replaceable without client cleanup');
+      return { status: 'not-running' };
+    }
+
+    logger.debug('[DAEMON RUN] Daemon PID liveness is inconclusive, keeping state fail-closed');
+    return { status: 'starting', state };
+  }
+
+  try {
     if (state.controlToken) {
       const ping = await daemonPost('/ping', undefined, { timeoutMs: resolveDaemonPingTimeoutMs() });
 
@@ -162,28 +315,26 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
       }
 
       if (ping?.error) {
-        const ageMs = resolveDaemonStateAgeMs(state);
-        if (ageMs !== null && ageMs < DAEMON_PING_UNREACHABLE_STARTUP_GRACE_MS) {
-          logger.debug('[DAEMON RUN] Daemon /ping unreachable during startup grace window, keeping state');
-          return { status: 'starting', state };
-        }
-
-        logger.debug('[DAEMON RUN] Daemon control server did not respond to /ping, cleaning up state');
-        await cleanupDaemonState();
-        return { status: 'not-running' };
+        logger.debug('[DAEMON RUN] Daemon /ping unreachable while PID is alive, treating daemon as busy/unknown and keeping state');
+        return { status: 'starting', state };
       }
     }
 
     return { status: 'running', state };
   } catch {
-    logger.debug('[DAEMON RUN] Daemon PID not running, cleaning up state');
-    await cleanupDaemonState();
+    const ageMs = resolveDaemonStateFreshnessAgeMs(state);
+    if (ageMs !== null && ageMs <= DAEMON_STATE_FRESHNESS_GRACE_MS) {
+      logger.debug('[DAEMON RUN] Daemon PID is not running but state is still fresh, keeping state while startup arbitration settles');
+      return { status: 'starting', state };
+    }
+
+    logger.debug('[DAEMON RUN] Daemon PID is not running and state is stale, treating daemon as replaceable without client cleanup');
     return { status: 'not-running' };
   }
 }
 
-async function daemonPost(path: string, body?: any, options: DaemonControlRequestOptions = {}): Promise<{ error?: string } | any> {
-  const state = await readDaemonState();
+async function daemonPost(path: string, body?: any, options: DaemonPostOptions = {}): Promise<{ error?: string } | any> {
+  const state = options.target ?? await readDaemonState();
   if (!state?.httpPort) {
     const errorMessage = 'No daemon running, no state file found';
     logger.debug(`[CONTROL CLIENT] ${errorMessage}`);
@@ -204,16 +355,19 @@ async function daemonPost(path: string, body?: any, options: DaemonControlReques
 
   try {
     const timeout = resolveDaemonControlTimeoutMs(path, options);
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    if (state.controlToken) {
-      headers['x-happier-daemon-token'] = state.controlToken;
-    }
+    const authToken = options.authScope === 'connected-service-run-materialize'
+        ? deriveConnectedServiceRunMaterializeToken(state.controlToken)
+        : state.controlToken;
+    const headers = buildDaemonControlHttpHeaders(authToken);
+    const timeoutSignal = timeout === null ? null : AbortSignal.timeout(timeout);
+    const requestSignal = options.signal && timeoutSignal
+      ? AbortSignal.any([options.signal, timeoutSignal])
+      : options.signal ?? timeoutSignal ?? undefined;
     const response = await fetch(`http://127.0.0.1:${state.httpPort}${path}`, {
       method: 'POST',
       headers,
       body: JSON.stringify(body || {}),
-      // Mostly increased for stress test
-      signal: AbortSignal.timeout(timeout)
+      ...(requestSignal ? { signal: requestSignal } : {}),
     });
     
     const rawBody = await response.text();
@@ -268,12 +422,119 @@ async function daemonPost(path: string, body?: any, options: DaemonControlReques
 export async function notifyDaemonSessionStarted(
   sessionId: string,
   metadata: Metadata,
-  options: DaemonControlRequestOptions = {},
-): Promise<{ error?: string } | any> {
+  options: DaemonControlRequestOptions & Readonly<{
+    persistedTakeoverAdmission?: Readonly<{
+      operationId: string;
+      attemptId: string;
+      phase: 'admit' | 'runtime_bound';
+    }>;
+  }> = {},
+): Promise<Readonly<{
+  status?: 'ok';
+  error?: string;
+  errorCode?: string;
+  response?: unknown;
+}>> {
+  const { persistedTakeoverAdmission, ...requestOptions } = options;
   return await daemonPost('/session-started', {
     sessionId,
-    metadata
-  }, options);
+    metadata,
+    ...(persistedTakeoverAdmission ? { persistedTakeoverAdmission } : {}),
+  }, requestOptions);
+}
+
+export async function requestDaemonPluginChange(
+  request: PluginChangeRequest,
+  options: DaemonControlRequestOptions = {},
+): Promise<PluginChangeRequestResult | Readonly<{ kind: 'unavailable'; code: string }>> {
+  const result = await daemonPost(PLUGIN_CHANGE_REQUEST_PATH, request, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? 300_000,
+  });
+  if (result && typeof result === 'object' && typeof result.error === 'string') {
+    return { kind: 'unavailable', code: result.errorCode ?? 'daemon_unavailable' };
+  }
+  if (result && typeof result === 'object' && result.kind === 'reviewRequired') {
+    const pendingChangeId = typeof result.pendingChangeId === 'string'
+      ? result.pendingChangeId.trim()
+      : '';
+    const review = PluginInstallationReviewSchema.safeParse(result.review);
+    if (!pendingChangeId || !review.success) {
+      return { kind: 'unavailable', code: 'daemon_invalid_response' };
+    }
+    return {
+      kind: 'reviewRequired',
+      pendingChangeId,
+      review: review.data,
+    };
+  }
+  return result as PluginChangeRequestResult;
+}
+
+export async function decideDaemonPluginChange(
+  decision: PluginChangeDecision,
+  options: DaemonControlRequestOptions = {},
+): Promise<PluginChangeDecisionResult | Readonly<{ kind: 'unavailable'; code: string }>> {
+  const result = await daemonPost(PLUGIN_CHANGE_DECISION_PATH, decision, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? 300_000,
+  });
+  if (result && typeof result === 'object' && typeof result.error === 'string') {
+    return { kind: 'unavailable', code: result.errorCode ?? 'daemon_unavailable' };
+  }
+  return result as PluginChangeDecisionResult;
+}
+
+export async function requestDaemonPluginActionExecution(request: Readonly<{
+  actionId: string;
+  input: unknown;
+  surface: 'cli' | 'mcp' | 'agent';
+  defaultSessionId?: string;
+}>, options: DaemonControlRequestOptions = {}): Promise<PluginActionExecutionAttempt> {
+  const result = await daemonPost(PLUGIN_ACTION_EXECUTE_PATH, request, {
+    ...options,
+    timeoutMs: options.timeoutMs ?? 300_000,
+  });
+  if (result && typeof result === 'object' && typeof result.error === 'string') {
+    return {
+      matched: true,
+      result: {
+        ok: false,
+        errorCode: result.errorCode ?? 'daemon_unavailable',
+        error: result.error,
+      },
+    };
+  }
+  return result as PluginActionExecutionAttempt;
+}
+
+export async function readDaemonPluginCatalog(
+  options: DaemonControlRequestOptions = {},
+): Promise<
+  | Readonly<{
+      kind: 'available';
+      plugins: readonly PluginCatalogEntry[];
+      tools: readonly ProjectedPluginToolCatalogEntry[];
+    }>
+  | Readonly<{ kind: 'unavailable'; code: string }>
+> {
+  const result = await daemonPost(PLUGIN_CATALOG_READ_PATH, {}, options);
+  if (result && typeof result === 'object' && typeof result.error === 'string') {
+    return { kind: 'unavailable', code: result.errorCode ?? 'daemon_unavailable' };
+  }
+  const parsed = result as
+    | Readonly<{
+        kind: 'available';
+        plugins: readonly PluginCatalogEntry[];
+        tools?: readonly ProjectedPluginToolCatalogEntry[];
+      }>
+    | Readonly<{ kind: 'unavailable'; code: string }>;
+  return parsed.kind === 'available'
+    ? {
+        ...parsed,
+        tools: Array.isArray(parsed.tools) ? parsed.tools : Object.freeze([]),
+      }
+    : parsed;
 }
 
 export async function requestDaemonSessionConnectedServiceAuthSwitch(
@@ -303,8 +564,46 @@ export async function requestDaemonSessionConnectedServiceAuthSwitch(
   return (result as { result?: unknown } | null)?.result;
 }
 
+export async function requestDaemonSessionConnectedServiceRuntimeAuthRefresh(
+  body: Readonly<{
+    sessionId: string;
+    serviceId: string;
+    refreshAttemptId: string;
+    selection: unknown;
+    planType?: string | null;
+    failingAccessTokenFingerprint?: string | null;
+    expectedCredentialRevision: string;
+    reason?: string | null;
+  }>,
+  options: DaemonControlRequestOptions = {},
+): Promise<ConnectedServiceDaemonAuthBridgeRefreshResult> {
+  const result = await daemonPost('/connected-service-auth/session/refresh-runtime-auth', {
+    sessionId: body.sessionId,
+    serviceId: body.serviceId,
+    refreshAttemptId: body.refreshAttemptId,
+    selection: body.selection,
+    ...(body.planType === undefined ? {} : { planType: body.planType }),
+    ...(body.failingAccessTokenFingerprint === undefined
+      ? {}
+      : { failingAccessTokenFingerprint: body.failingAccessTokenFingerprint }),
+    expectedCredentialRevision: body.expectedCredentialRevision,
+    ...(body.reason === undefined ? {} : { reason: body.reason }),
+  }, options);
+  if (result?.error || result?.errorCode) {
+    if (!result?.errorCode && typeof result?.error === 'string' && /abort|timed?\s*out|timeout/iu.test(result.error)) {
+      return {
+        status: 'pending',
+        refreshAttemptId: body.refreshAttemptId,
+      };
+    }
+    throw new Error(String(result.errorCode ?? result.error));
+  }
+  return (result as { result: ConnectedServiceDaemonAuthBridgeRefreshResult }).result;
+}
+
 export async function notifyDaemonConnectedServiceRuntimeAuthFailure(
   body: Readonly<{
+    reportId: string;
     sessionId: string;
     switchesThisTurn?: number;
     resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
@@ -313,6 +612,7 @@ export async function notifyDaemonConnectedServiceRuntimeAuthFailure(
   options: DaemonControlRequestOptions = {},
 ): Promise<{ error?: string } | any> {
   return await daemonPost('/connected-service-runtime-auth/failure', {
+    reportId: body.reportId,
     sessionId: body.sessionId,
     switchesThisTurn: body.switchesThisTurn ?? 0,
     ...(body.resumePromptMode ? { resumePromptMode: body.resumePromptMode } : {}),
@@ -323,28 +623,54 @@ export async function notifyDaemonConnectedServiceRuntimeAuthFailure(
 export async function notifyDaemonConnectedServiceTurnLifecycle(
   body: Readonly<{
     sessionId: string;
+    turnId?: string;
     event: 'prompt_or_steer' | 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+    terminalStatus?: 'completed' | 'failed';
+    connectedServiceSelectionsEnvRaw?: string;
   }>,
   options: DaemonControlRequestOptions = {},
 ): Promise<{ error?: string } | any> {
-  return await daemonPost('/connected-service-turn-lifecycle', {
+  const response = await daemonPost('/connected-service-turn-lifecycle', {
     sessionId: body.sessionId,
+    ...(body.turnId ? { turnId: body.turnId } : {}),
     event: body.event,
+    ...(body.terminalStatus ? { terminalStatus: body.terminalStatus } : {}),
+    ...(body.connectedServiceSelectionsEnvRaw
+      ? { connectedServiceSelectionsEnvRaw: body.connectedServiceSelectionsEnvRaw }
+      : {}),
   }, options);
+  if (
+    response
+    && typeof response === 'object'
+    && response.ok === true
+    && Object.prototype.hasOwnProperty.call(response, 'result')
+  ) {
+    return response.result;
+  }
+  return response;
 }
 
-export async function notifyDaemonConnectedServiceQuotaSnapshot(
+export async function notifyDaemonConnectedServiceUsageLimitWaitResumeCancel(
+  body: Readonly<{ sessionId: string; attemptId: string }>,
+  options: DaemonControlRequestOptions = {},
+): Promise<{ error?: string } | any> {
+  return await daemonPost('/connected-service-usage-limit/wait-resume-cancel', body, options);
+}
+
+export async function notifyDaemonConnectedServiceQuotaRecoveryCreditConsume(
   body: Readonly<{
-    sessionId: string;
-    serviceId: string;
-    snapshot: unknown;
+    serviceId: ConnectedServiceId;
+    profileId: string;
+    idempotencyKey: string;
+    providerCreditId?: string;
   }>,
   options: DaemonControlRequestOptions = {},
 ): Promise<{ error?: string } | any> {
-  return await daemonPost('/connected-service-quota-snapshot', {
-    sessionId: body.sessionId,
+  return await daemonPost('/connected-service-quota-recovery-credit/consume', {
     serviceId: body.serviceId,
-    snapshot: body.snapshot,
+    profileId: body.profileId,
+    idempotencyKey: body.idempotencyKey,
+    ...(body.providerCreditId ? { providerCreditId: body.providerCreditId } : {}),
   }, options);
 }
 
@@ -352,12 +678,18 @@ export async function notifyDaemonProviderAccountUsageSnapshot(
   body: Readonly<{
     sessionId: string;
     snapshot: ProviderAccountUsageSnapshotV1;
+    source?: ConnectedServiceUsageSourceV1 | null;
+    credentialFingerprint?: string | null;
+    policyDisposition?: 'evidence_only';
   }>,
   options: DaemonControlRequestOptions = {},
 ): Promise<{ error?: string } | any> {
   return await daemonPost('/provider-account-usage-snapshot', {
     sessionId: body.sessionId,
     snapshot: body.snapshot,
+    ...(body.source ? { source: body.source } : {}),
+    ...(body.credentialFingerprint !== undefined ? { credentialFingerprint: body.credentialFingerprint } : {}),
+    ...(body.policyDisposition ? { policyDisposition: body.policyDisposition } : {}),
   }, options);
 }
 
@@ -374,40 +706,14 @@ export async function notifyDaemonProviderAccountUsageAdoption(
   }, options);
 }
 
-export type OpenAiCodexDaemonRefreshSelection = CodexChatGptAuthTokensRefreshSelection;
-export type OpenAiCodexChatGptAuthTokensRefreshResult = CodexChatGptAuthTokensRefreshResponse;
-
-export async function refreshDaemonOpenAiCodexChatGptAuthTokensForBridge(
-  body: Readonly<{
-    sessionId: string;
-    selection: CodexChatGptAuthTokensRefreshSelection;
-    chatgptPlanType: string | null;
-  }>,
-  options: DaemonControlRequestOptions = {},
-): Promise<CodexChatGptAuthTokensRefreshResponse> {
-  const result = await daemonPost(CODEX_CHATGPT_AUTH_TOKENS_REFRESH_PATH, {
-    sessionId: body.sessionId,
-    selection: body.selection,
-    chatgptPlanType: body.chatgptPlanType,
-  }, options);
-  if (result?.error) {
-    throw new Error(String(result.error));
-  }
-  const parsed = CodexChatGptAuthTokensRefreshResponseSchema.safeParse((result as { result?: unknown } | null)?.result);
-  if (!parsed.success) {
-    throw new Error('Invalid daemon Codex ChatGPT refresh response');
-  }
-  return parsed.data;
-}
-
 export async function listDaemonSessions(): Promise<any[]> {
   const result = await daemonPost('/list');
   return result.children || [];
 }
 
-export async function stopDaemonSession(sessionId: string): Promise<boolean> {
+export async function stopDaemonSession(sessionId: string): Promise<StopSessionResult> {
   const result = await daemonPost('/stop-session', { sessionId });
-  return result.success || false;
+  return StopSessionResultSchema.parse(result);
 }
 
 export async function spawnDaemonSession(request: SpawnDaemonSessionRequest): Promise<any>;
@@ -419,7 +725,7 @@ export async function spawnDaemonSession(
   const request = typeof requestOrDirectory === 'string'
     ? { directory: requestOrDirectory, ...(sessionId ? { sessionId } : {}) }
     : requestOrDirectory;
-  const result = await daemonPost('/spawn-session', request);
+  const result = await daemonPost('/spawn-session', serializeSpawnDaemonSessionRequestForLocalControl(request));
   return result;
 }
 
@@ -460,6 +766,188 @@ export async function resolveDaemonSpawnSessionByNonce(spawnNonce: string): Prom
   return { status: 'not_found' };
 }
 
+export type DaemonSessionRunnerRestartMode = SessionRunnerRestartModeV1;
+export type RestartAllDaemonSessionRunnersRequest = RestartAllSessionRunnersRequestV1;
+export type RestartAllDaemonSessionRunnersResult = RestartAllSessionRunnersResultV1;
+export type GetDaemonSessionRunnerStatusRequest = SessionRunnerStatusGetRequestV1;
+
+const DAEMON_SESSION_RUNNER_RESTART_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SESSION_RUNNER_RESTART_HTTP_TIMEOUT_MS';
+const DEFAULT_DAEMON_SESSION_RUNNER_RESTART_TIMEOUT_MS = 75_000;
+
+export function resolveDaemonSessionRunnerRestartTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+): number {
+  return resolvePositiveIntValue(
+    env[DAEMON_SESSION_RUNNER_RESTART_TIMEOUT_ENV_KEY],
+    DEFAULT_DAEMON_SESSION_RUNNER_RESTART_TIMEOUT_MS,
+    { min: 1_000, max: 300_000 },
+  );
+}
+
+export async function requestDaemonSessionRunnerRestart(
+  request: RestartSessionRunnerRequestV1,
+  options: DaemonControlRequestOptions = {},
+): Promise<RestartSessionRunnerResultV1> {
+  const body = RestartSessionRunnerRequestV1Schema.parse(request);
+  const result = await daemonPost('/session-runners/restart', body, {
+    timeoutMs: resolveDaemonSessionRunnerRestartTimeoutMs(),
+    ...options,
+  });
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
+  const parsed = RestartSessionRunnerResultV1Schema.safeParse(result);
+  if (!parsed.success) {
+    throw new Error('Invalid daemon session runner restart response');
+  }
+  return parsed.data;
+}
+
+export async function restartAllDaemonSessionRunners(
+  request: RestartAllDaemonSessionRunnersRequest,
+  options: DaemonControlRequestOptions = {},
+): Promise<RestartAllDaemonSessionRunnersResult> {
+  const body = RestartAllSessionRunnersRequestV1Schema.parse(request);
+  const result = await daemonPost('/session-runners/restart-all', body, {
+    timeoutMs: resolveDaemonSessionRunnerRestartTimeoutMs(),
+    ...options,
+  });
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
+  const parsed = RestartAllSessionRunnersResultV1Schema.safeParse(result);
+  if (!parsed.success) {
+    throw new Error('Invalid daemon session runner restart-all response');
+  }
+  return parsed.data;
+}
+
+export async function getDaemonSessionRunnerStatus(
+  request: GetDaemonSessionRunnerStatusRequest,
+  options: DaemonControlRequestOptions = {},
+): Promise<SessionRunnerRuntimeStateV1> {
+  const body = SessionRunnerStatusGetRequestV1Schema.parse(request);
+  const result = await daemonPost('/session-runners/status', body, options);
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
+  const parsed = SessionRunnerRuntimeStateV1Schema.safeParse(result);
+  if (!parsed.success) {
+    throw new Error('Invalid daemon session runner status response');
+  }
+  return parsed.data;
+}
+
+export async function dispatchDaemonPluginLocalServicesBridgeRequest(
+  request: PluginLocalServicesBridgeControlRequestV1,
+  options: DaemonControlRequestOptions = {},
+): Promise<PluginLocalServicesBridgeControlResponseV1> {
+  const result = await daemonPost('/local-services/plugin/bridge', request, options);
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
+  return PluginLocalServicesBridgeControlResponseV1Schema.parse(result);
+}
+
+export async function dispatchDaemonAgentRuntimeBridgeRequest(
+  request: AgentRuntimeDaemonBridgeRequestV1,
+  options: DaemonControlRequestOptions = {},
+): Promise<AgentRuntimeDaemonBridgeResponseV1> {
+  const result = await daemonPost(AGENT_RUNTIME_DAEMON_BRIDGE_PATH, request, {
+    ...options,
+    timeoutMs: options.timeoutMs === undefined ? 300_000 : options.timeoutMs,
+  });
+  const direct = AgentRuntimeDaemonBridgeResponseV1Schema.safeParse(result);
+  if (direct.success) {
+    return direct.data;
+  }
+  if (
+    result
+    && typeof result === 'object'
+    && !Array.isArray(result)
+    && typeof (result as Readonly<{ error?: unknown }>).error === 'string'
+    && Object.hasOwn(result, 'response')
+  ) {
+    const remote = AgentRuntimeDaemonBridgeResponseV1Schema.safeParse(
+      (result as Readonly<{ response?: unknown }>).response,
+    );
+    if (remote.success && remote.data.ok === false) {
+      return remote.data;
+    }
+  }
+  if (
+    result
+    && typeof result === 'object'
+    && !Array.isArray(result)
+    && typeof (result as Readonly<{ error?: unknown }>).error === 'string'
+    && !Object.hasOwn(result, 'response')
+  ) {
+    options.signal?.throwIfAborted();
+    return {
+      ok: false,
+      error: {
+        code: 'agent_runtime_daemon_bridge_unavailable',
+        message: 'Agent runtime daemon bridge is unavailable',
+      },
+    };
+  }
+  return AgentRuntimeDaemonBridgeResponseV1Schema.parse(result);
+}
+
+export async function admitDaemonForegroundAgentRuntime(
+  request: ForegroundAgentRuntimeAdmissionRequestV1,
+  options: DaemonControlRequestOptions = {},
+): Promise<ForegroundAgentRuntimeAdmissionResponseV1> {
+  const body = ForegroundAgentRuntimeAdmissionRequestV1Schema.parse(request);
+  const result = await daemonPost(
+    FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH,
+    body,
+    options,
+  );
+  const parsed =
+    ForegroundAgentRuntimeAdmissionResponseV1Schema.safeParse(result);
+  if (parsed.success) return parsed.data;
+  return {
+    ok: false,
+    error: createProviderErrorV1(
+      'provider_agent_runtime_unsupported',
+      {
+        connectionId:
+          body.selection?.ref.providerConnectionId ?? undefined,
+      },
+    ),
+  };
+}
+
+export async function releaseDaemonForegroundAgentRuntime(
+  request: ForegroundAgentRuntimeReleaseRequestV1,
+  options: DaemonControlRequestOptions = {},
+): Promise<void> {
+  const body = ForegroundAgentRuntimeReleaseRequestV1Schema.parse(request);
+  const result = await daemonPost(
+    FOREGROUND_AGENT_RUNTIME_RELEASE_PATH,
+    body,
+    options,
+  );
+  ForegroundAgentRuntimeReleaseResponseV1Schema.parse(result);
+}
+
+export async function restartDaemonHttp(): Promise<{ status: 'restarting' | 'already_restarting' }> {
+  const result = await daemonPost('/restart', {});
+  if (result?.error) {
+    throw new Error(String(result.error));
+  }
+  if (
+    result &&
+    typeof result === 'object' &&
+    ((result as { status?: unknown }).status === 'restarting'
+      || (result as { status?: unknown }).status === 'already_restarting')
+  ) {
+    return { status: (result as { status: 'restarting' | 'already_restarting' }).status };
+  }
+  throw new Error('Invalid daemon restart response');
+}
+
 export async function ensureDaemonSshTunnel(
   request: SshTunnelEnsureRequest,
 ): Promise<SshTunnelEnsureResponse | { error: string; errorCode?: string }> {
@@ -488,8 +976,55 @@ export async function stopDaemonSshTunnel(
   return await daemonPost('/ssh-tunnels/stop', { tunnelKey });
 }
 
-export async function stopDaemonHttp(params: { stopSessions?: boolean } = {}): Promise<void> {
-  const result = await daemonPost('/stop', params.stopSessions ? { stopSessions: true } : {});
+/**
+ * Runner → daemon: resolve + materialize connected-service auth for an execution run
+ * (RUN-scoped materialization key) and register the run PID as a runtime-registry target.
+ * Uses the SCOPED run-materialize capability token (never the master control token).
+ * Fail closed: callers must treat any `{ error }` / non-ok result as "do not start the run
+ * with this connected selection".
+ */
+export async function requestExecutionRunConnectedServicesMaterialization(
+  request: ConnectedServiceRunMaterializeRequest,
+): Promise<
+  | { ok: true; result: { activationId: string; env: Record<string, string>; connectedServicesBindings: unknown; registration: ExecutionRunConnectedServicesRegistrationV1 } }
+  | { ok?: false; error?: string; errorCode?: string; errorMessage?: string }
+> {
+  return await daemonPost(CONNECTED_SERVICE_RUN_MATERIALIZE_PATH, request, {
+    authScope: 'connected-service-run-materialize',
+    timeoutMs: resolveExecutionRunConnectedServiceMaterializeTimeoutMs(),
+  });
+}
+
+/**
+ * Runner → daemon: release an execution run's connected-services materialization (unregister the
+ * run from the canonical runtime registry, run retained cleanup). Best-effort at run end.
+ */
+export async function releaseExecutionRunConnectedServices(
+  request: ConnectedServiceRunReleaseRequest,
+): Promise<{ ok?: boolean; released?: boolean; error?: string }> {
+  return await daemonPost(CONNECTED_SERVICE_RUN_RELEASE_PATH, request, {
+    authScope: 'connected-service-run-materialize',
+  });
+}
+
+export async function checkExecutionRunConnectedServicesGenerationCurrent(
+  request: ConnectedServiceRunGenerationCurrentRequest,
+): Promise<{ ok?: boolean; current?: boolean; error?: string }> {
+  return await daemonPost(CONNECTED_SERVICE_RUN_GENERATION_CURRENT_PATH, request, {
+    authScope: 'connected-service-run-materialize',
+  });
+}
+
+export async function stopDaemonHttp(params: {
+  stopSessions?: boolean;
+  transferManagedLocalServices?: boolean;
+} = {}): Promise<void> {
+  const result = await daemonPost('/stop', {
+    ...(params.stopSessions === true ? { stopSessions: true } : {}),
+    ...(params.transferManagedLocalServices === true
+      ? { transferManagedLocalServices: true }
+      : {}),
+  });
   if (result?.error) {
     throw new Error(result.error);
   }
@@ -497,7 +1032,8 @@ export async function stopDaemonHttp(params: { stopSessions?: boolean } = {}): P
 
 /**
  * Best-effort health check for a running daemon.
- * Returns false and clears stale state when the PID is dead or (when available) the control token cannot /ping.
+ * Returns false for busy/unknown daemons, rejected control tokens, or stale dead-PID state.
+ * Client health checks must not remove daemon-owned state while the recorded PID is alive.
  */
 export async function checkIfDaemonRunningAndCleanupStaleState(): Promise<boolean> {
   const inspection = await inspectDaemonRunningStateAndCleanupStaleState();
@@ -518,6 +1054,10 @@ export async function isDaemonRunningCurrentlyInstalledHappyVersion(params: Read
   const runningDaemon = await inspectDaemonRunningStateAndCleanupStaleState();
   if (runningDaemon.status === 'not-running') {
     logger.debug('[DAEMON CONTROL] No daemon running, returning false');
+    return false;
+  }
+  if (!('state' in runningDaemon)) {
+    logger.debug('[DAEMON CONTROL] Daemon startup lock has no state yet, returning false');
     return false;
   }
 
@@ -560,24 +1100,6 @@ export async function cleanupDaemonState(): Promise<void> {
   }
 }
 
-function readDaemonLockPid(): number | null {
-  try {
-    if (!existsSync(configuration.daemonLockFile)) {
-      return null;
-    }
-
-    const raw = readFileSync(configuration.daemonLockFile, 'utf-8').trim();
-    const pid = Number.parseInt(raw, 10);
-    if (!Number.isFinite(pid) || pid <= 0) {
-      return null;
-    }
-
-    return pid;
-  } catch {
-    return null;
-  }
-}
-
 async function forceKillKnownDaemonPid(pid: number): Promise<void> {
   const { findHappyProcessByPid } = await import('@/daemon/doctor');
   const proc = await findHappyProcessByPid(pid);
@@ -609,10 +1131,19 @@ export async function forceStopKnownDaemonPid(pid: number): Promise<void> {
   await forceKillKnownDaemonPid(pid);
 }
 
-export async function stopDaemon(params: { stopSessions?: boolean } = {}) {
+export async function stopDaemon(params: {
+  stopSessions?: boolean;
+  transferManagedLocalServices?: boolean;
+} = {}) {
   try {
     const state = await readDaemonState();
     if (!state) {
+      const lockStartup = await inspectDaemonLockStartupProgress();
+      if (lockStartup) {
+        logger.debug('[CONTROL CLIENT] Daemon is still starting without state; refusing to stop startup lock PID');
+        return;
+      }
+
       const lockPid = readDaemonLockPid();
       if (!lockPid) {
         logger.debug('No daemon state found');
@@ -628,7 +1159,10 @@ export async function stopDaemon(params: { stopSessions?: boolean } = {}) {
 
     // Try HTTP graceful stop
     try {
-      await stopDaemonHttp({ stopSessions: params.stopSessions === true });
+      await stopDaemonHttp({
+        stopSessions: params.stopSessions === true,
+        transferManagedLocalServices: params.transferManagedLocalServices === true,
+      });
 
       // Wait for daemon to die
       await waitForProcessDeath(state.pid, resolveDaemonStopWaitForDeathTimeoutMs());

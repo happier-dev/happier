@@ -6,8 +6,9 @@ import { executionRunsCapability } from './toolExecutionRuns';
 import type { DetectCliSnapshot } from '../snapshots/cliSnapshot';
 import { createEnvKeyScope } from '../../testkit/env/envScope';
 import { withTempDir } from '../../testkit/fs/tempDir';
-import { ExecutionRunIntentSchema, normalizePluginBackendCapabilitiesV1 } from '@happier-dev/protocol';
+import { ExecutionRunIntentSchema } from '@happier-dev/protocol';
 import * as engineRegistry from '../../agent/runtime/registry/engineRegistry';
+import type { ResolvedAgentContribution } from '../../plugins/projection/registry/types';
 
 function makeCliSnapshot(overrides: Partial<DetectCliSnapshot['clis']>, path = ''): DetectCliSnapshot {
   return {
@@ -26,18 +27,13 @@ function makeCliEngineRegistryMock(
   return {
     contributions: {
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      actions: Object.freeze([]),
+            actions: Object.freeze([]),
       resources: Object.freeze([]),
-      uiDescriptors: Object.freeze([]),
       executionRunProfiles: Object.freeze([]),
       activationTargets: Object.freeze([]),
-      hookRegistrations: Object.freeze([]),
-      surfaceHandlersByBackendId: new Map(),
-      catalogEntriesById: {},
+            catalogEntriesById: {},
       agentDefinitionsById: new Map(),
-      agentRuntimeDefinitionsById: new Map(),
-      executionRunProfilesById: new Map(),
+            executionRunProfilesById: new Map(),
       pluginDiagnosticsByPluginId: {},
       ...contributions,
     },
@@ -67,6 +63,50 @@ describe('executionRunsCapability', () => {
     envScope.patch({
       HAPPIER_CODEX_BACKEND_MODE: undefined,
     });
+    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(
+      makeCliEngineRegistryMock({}),
+    );
+  });
+
+  it('marks a canonical execution-run Agent available without a legacy runtime getter', async () => {
+    const agent: ResolvedAgentContribution = {
+      id: 'plugin.review',
+      provenance: 'external' as const,
+      source: { kind: 'path' as const },
+      pluginId: 'acme.review',
+      definition: {
+        kindVersion: 1 as const,
+        id: 'plugin.review',
+        ownedBackendIds: ['plugin.review'],
+      },
+      richDefinition: {
+        provenance: 'external' as const,
+        definition: {
+          id: 'plugin.review',
+          title: 'Plugin review',
+          runtime: { kind: 'custom' },
+          primary: 'executionRuns' as const,
+          capabilities: {
+            executionRuns: {
+              open: ['create'],
+              checkpoint: false,
+              stop: true,
+            },
+          },
+        },
+      },
+    };
+    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
+      agents: [agent],
+      agentDefinitionsById: new Map([[agent.id, agent]]),
+    }));
+
+    const result = await executionRunsCapability.detect({
+      context: { cliSnapshot: makeCliSnapshot({}) },
+      request: { id: 'tool.executionRuns' },
+    }) as { backends: Record<string, { available?: boolean }> };
+
+    expect(result.backends['plugin.review']).toMatchObject({ available: true });
   });
 
   afterEach(() => {
@@ -150,7 +190,6 @@ describe('executionRunsCapability', () => {
       expect(res?.backends?.coderabbit).toMatchObject({
         available: false,
         supportsVendorResume: false,
-        intents: ['review'],
       });
     });
   });
@@ -191,10 +230,8 @@ describe('executionRunsCapability', () => {
     expect(res.backends.codex).toBeTruthy();
     expect(res.backends.customAcp).toBeTruthy();
     expect(res.backends.ohMyPi).toBeTruthy();
-    expect(res.backends.coderabbit).toMatchObject({ intents: ['review'] });
-
     expect(res.intents).toContain('memory_hints');
-    for (const backendId of ['claude', 'codex', 'customAcp', 'ohMyPi']) {
+    for (const backendId of ['claude', 'codex', 'customAcp', 'ohMyPi', 'coderabbit']) {
       expect(res.backends[backendId]?.intents).toBe(res.intents);
     }
   });
@@ -256,22 +293,25 @@ describe('executionRunsCapability', () => {
       source: { kind: 'path' as const },
       pluginId: 'acme.execution-runs',
       definition: {
-        id: 'acme.review.profile',
-        kind: 'executionRun.profile' as const,
-        version: '1.0.0',
+        id: 'review-profile',
         intent: 'review' as const,
-        displayKey: 'plugins.acme.executionRuns.review.label',
-        capabilityGates: [],
-        permissionGates: [],
-        redaction: 'none' as const,
-        hidden: false,
-        actionIds: [],
+        title: 'Acme review',
+        promptAsset: 'review-prompt',
+        compatibleAgents: ['acme-review'],
+        generationId: null,
+        available: true,
+        defaults: {
+          retention: 'ephemeral' as const,
+          runClass: 'bounded' as const,
+          io: 'requestResponse' as const,
+        },
       },
     };
     vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
+      generationId: 'registry:generation-1',
       executionRunProfiles: [profile],
       executionRunProfilesById: new Map([
-        ['acme.review.profile', profile],
+        ['acme.execution-runs/review-profile', profile],
       ]),
     }));
 
@@ -283,295 +323,31 @@ describe('executionRunsCapability', () => {
     }) as {
       executionRunProfiles: readonly {
         id: string;
-        kind: string;
-        version: string;
         intent: string;
-        displayKey: string;
-        capabilityGates: readonly unknown[];
-        permissionGates: readonly unknown[];
-        actionIds: readonly string[];
-        hidden: boolean;
-        redaction: string;
+        title: string;
+        promptAsset: string;
+        compatibleAgents: readonly string[];
+        defaults: Readonly<{ retention: string; runClass: string; io: string }>;
+        generationId: string | null;
+        available: boolean;
       }[];
     };
 
     expect(res.executionRunProfiles).toEqual([
       {
-        id: 'acme.review.profile',
-        kind: 'executionRun.profile',
-        version: '1.0.0',
+        id: 'acme.execution-runs/review-profile',
         intent: 'review',
-        displayKey: 'plugins.acme.executionRuns.review.label',
-        capabilityGates: [],
-        permissionGates: [],
-        redaction: 'none',
-        hidden: false,
-        actionIds: [],
-      },
-    ]);
-  });
-
-  it('marks plugin backends with backend-owned runtimeCore available', async () => {
-    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      agentRuntimeDefinitionsById: new Map([
-        [
-          'plugin.review',
-          {
-            id: 'plugin.review',
-            agentId: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
-            getRuntimeCore: async () => async () => ({
-              runtimeCore: {
-                createSessionRuntime: async () => {
-                  throw new Error('not reached');
-                },
-                createExecutionRunBackend: () => {
-                  throw new Error('not reached');
-                },
-              },
-            }),
-          },
-        ],
-      ]),
-      agentDefinitionsById: new Map([
-        [
-          'plugin.provider',
-          {
-            id: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.provider', ownedBackendIds: ['plugin.review'] },
-          },
-        ],
-      ]),
-      catalogEntriesById: {},
-    }));
-
-    const res = await executionRunsCapability.detect({
-      context: {
-        cliSnapshot: makeCliSnapshot({}),
-      },
-      request: { id: 'tool.executionRuns' },
-    }) as {
-      available: boolean;
-      backends: Record<string, { available?: boolean; supportsVendorResume?: boolean }>;
-    };
-
-    expect(res.available).toBe(true);
-    expect(res.backends['plugin.review']).toMatchObject({
-      available: true,
-      supportsVendorResume: false,
-    });
-  });
-
-  it('marks catalog entries with an ACP runtime definition bridge available', async () => {
-    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      catalogEntriesById: {
-        'plugin.acp': {
-          id: 'plugin.acp',
-          cliSubcommand: 'plugin-acp',
-          vendorResumeSupport: 'unsupported',
-          getAcpRuntimeDefinitionBridge: async () => ({
-            exec: {
-              systemTools: {
-                resolve: async () => {
-                  throw new Error('not reached');
-                },
-              },
-            },
-            createDefinition: () => {
-              throw new Error('not reached');
-            },
-          }),
+        title: 'Acme review',
+        promptAsset: 'review-prompt',
+        compatibleAgents: ['acme-review'],
+        generationId: 'registry:generation-1',
+        available: true,
+        defaults: {
+          retention: 'ephemeral',
+          runClass: 'bounded',
+          io: 'requestResponse',
         },
       },
-    }));
-
-    const res = await executionRunsCapability.detect({
-      context: {
-        cliSnapshot: makeCliSnapshot({}),
-      },
-      request: { id: 'tool.executionRuns' },
-    }) as {
-      available: boolean;
-      backends: Record<string, { available?: boolean; supportsVendorResume?: boolean }>;
-    };
-
-    expect(res.available).toBe(true);
-    expect(res.backends['plugin.acp']).toMatchObject({
-      available: true,
-      supportsVendorResume: false,
-    });
-  });
-
-  it('narrows plugin backend intents to backend-declared execution-run review intents', async () => {
-    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      agentRuntimeDefinitionsById: new Map([
-        [
-          'plugin.review',
-          {
-            id: 'plugin.review',
-            agentId: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
-            capabilities: normalizePluginBackendCapabilitiesV1({
-              executionRun: {
-                supported: true,
-                review: {
-                  intents: ['review'],
-                },
-              },
-            }),
-            getRuntimeCore: async () => async () => ({
-              runtimeCore: {
-                createSessionRuntime: async () => {
-                  throw new Error('not reached');
-                },
-                createExecutionRunBackend: () => {
-                  throw new Error('not reached');
-                },
-              },
-            }),
-          },
-        ],
-      ]),
-      agentDefinitionsById: new Map([
-        [
-          'plugin.provider',
-          {
-            id: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.provider', ownedBackendIds: ['plugin.review'] },
-          },
-        ],
-      ]),
-      catalogEntriesById: {},
-    }));
-
-    const res = await executionRunsCapability.detect({
-      context: {
-        cliSnapshot: makeCliSnapshot({}),
-      },
-      request: { id: 'tool.executionRuns' },
-    }) as {
-      available: boolean;
-      intents: readonly string[];
-      backends: Record<string, { intents: readonly string[]; available?: boolean; supportsVendorResume?: boolean }>;
-    };
-
-    expect(res.available).toBe(true);
-    expect(res.intents).toContain('plan');
-    expect(res.backends['plugin.review']).toMatchObject({
-      available: true,
-      supportsVendorResume: false,
-    });
-    expect(res.backends['plugin.review']?.intents).toEqual(['review']);
-  });
-
-  it('marks plugin-contributed backends unavailable when runtimeCore proof is missing', async () => {
-    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      agentRuntimeDefinitionsById: new Map([
-        [
-          'plugin.review',
-          {
-            id: 'plugin.review',
-            agentId: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
-          },
-        ],
-      ]),
-      agentDefinitionsById: new Map([
-        [
-          'plugin.provider',
-          {
-            id: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.provider', ownedBackendIds: ['plugin.review'] },
-          },
-        ],
-      ]),
-      catalogEntriesById: {},
-    }));
-
-    const res = await executionRunsCapability.detect({
-      context: {
-        cliSnapshot: makeCliSnapshot({}),
-      },
-      request: { id: 'tool.executionRuns' },
-    }) as {
-      available: boolean;
-      backends: Record<string, { available?: boolean; supportsVendorResume?: boolean }>;
-    };
-
-    expect(res.available).toBe(true);
-    expect(res.backends['plugin.review']).toMatchObject({
-      available: false,
-      supportsVendorResume: false,
-    });
-  });
-
-  it('marks plugin-contributed backends unavailable when execution-run support is explicitly disabled', async () => {
-    vi.spyOn(engineRegistry, 'resolveCliEngineRegistry').mockResolvedValue(makeCliEngineRegistryMock({
-      agentRuntimeDefinitionsById: new Map([
-        [
-          'plugin.review',
-          {
-            id: 'plugin.review',
-            agentId: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.review', agentId: 'plugin.provider' },
-            capabilities: normalizePluginBackendCapabilitiesV1({
-              executionRun: { supported: false },
-            }),
-            getRuntimeCore: async () => async () => ({
-              runtimeCore: {
-                createSessionRuntime: async () => {
-                  throw new Error('not reached');
-                },
-                createExecutionRunBackend: () => {
-                  throw new Error('not reached');
-                },
-              },
-            }),
-          },
-        ],
-      ]),
-      agentDefinitionsById: new Map([
-        [
-          'plugin.provider',
-          {
-            id: 'plugin.provider',
-            provenance: 'external',
-            source: { kind: 'path' },
-            definition: { kindVersion: 1, id: 'plugin.provider', ownedBackendIds: ['plugin.review'] },
-          },
-        ],
-      ]),
-      catalogEntriesById: {},
-    }));
-
-    const res = await executionRunsCapability.detect({
-      context: {
-        cliSnapshot: makeCliSnapshot({}),
-      },
-      request: { id: 'tool.executionRuns' },
-    }) as {
-      available: boolean;
-      backends: Record<string, { available?: boolean; supportsVendorResume?: boolean }>;
-    };
-
-    expect(res.available).toBe(true);
-    expect(res.backends['plugin.review']).toMatchObject({
-      available: false,
-      supportsVendorResume: false,
-    });
+    ]);
   });
 });

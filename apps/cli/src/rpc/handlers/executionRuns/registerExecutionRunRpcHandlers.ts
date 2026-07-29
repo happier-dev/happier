@@ -1,40 +1,89 @@
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
-import type {
-  ExecutionRunPublicState,
+import {
+  ExecutionRunTurnStreamStartV2RequestSchema,
+  ExecutionRunUserTranscriptCommitRequestSchema,
+  type ExecutionRunPublicState,
+  type SessionTranscriptObservationProvenanceV1,
 } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import type { ExecutionRunSessionStateTarget } from '@/agent/runtime/bridges/executionRun/sessionStateDelivery';
-import { buildExecutionRunProfileCatalog } from '@/agent/executionRuns/profiles/intentRegistry';
+import {
+  buildExecutionRunProfileCatalog,
+  type ExecutionRunProfileContributionCatalogInput,
+  type ExecutionRunProfileContributionCatalog,
+} from '@/agent/executionRuns/profiles/intentRegistry';
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
+import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
+import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
+import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
+import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostics/actionRoutes';
+import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
+import type {
+  BrowserRecordingComposerAttachInput,
+  BrowserRecordingComposerAttachResult,
+} from '@/daemon/browser/recording/attachToComposer';
+import type { LocalServicesRuntimeActionRoutes } from '@/daemon/local/services/actions/runtimeActionExecutor';
+import type { DaemonPeerMediationObservabilityRuntimeActionContext } from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
+import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
 import { configuration } from '@/configuration';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
+import type { EphemeralSendResult } from '@/api/session/client/transcript/ephemeralSendOutcome';
 import { EXECUTION_RUN_RPC_SCOPES } from '../actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '../registerActionSpecRpcHandlers';
 import { createExecutionRunRpcActionExecutor, type ExecutionRunRpcApprovalDeps } from './dispatchExecutionRunRpcAction';
+import {
+  createReviewCommentHostActionMaterializer,
+  resolveReviewCommentHostPluginAuthority,
+} from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
+import { resolveWorkspaceRefForMachineRoot } from '@/settings/accountSettings/workspaceRefsV1';
+import { checkExecutionRunConnectedServicesGenerationCurrent } from '@/daemon/controlClient';
+import { resolvePluginPromptAssetBlocks } from '@/plugins/runtime/hooks/execution/dispatchAgentTurnHooks';
+import { resolveInvocationContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
 
 export type ExecutionRunRpcHandlerContext = Readonly<{
   sessionId: string;
   cwd: string;
+  machineId?: string;
   serverUrl?: string;
   parentProvider: ACPProvider;
+  browserControl?: BrowserDaemonControlRoutes | null;
+  browserContext?: BrowserContextRoutes | null;
+  browserAutomation?: BrowserAutomationRoutes | null;
+  browserDiagnostics?: BrowserDiagnosticsActionRoutes | null;
+  browserRecording?: BrowserRecordingRoutes | null;
+  attachBrowserRecordingToComposer?: (
+    input: BrowserRecordingComposerAttachInput,
+  ) => Promise<BrowserRecordingComposerAttachResult>;
+  localServices?: LocalServicesRuntimeActionRoutes | null;
+  simulatorPreview?: SimulatorPreviewRoutes | null;
+  peerMediationObservability?: DaemonPeerMediationObservabilityRuntimeActionContext | null;
   sendAcp: (provider: ACPProvider, body: ACPMessageData, opts?: { meta?: Record<string, unknown> }) => void;
   streamedTranscriptSession?: Readonly<{
     sendAgentMessageEphemeral?: (
       provider: ACPProvider,
       body: ACPMessageData,
-      opts: { localId: string; meta?: Record<string, unknown>; createdAt: number; updatedAt: number },
-    ) => void | Promise<void>;
+      opts: { localId: string; meta?: Record<string, unknown>; createdAt: number; updatedAt?: number; tick?: number },
+    ) => EphemeralSendResult;
+    sendAgentMessageEphemeralDelta?: (
+      provider: ACPProvider,
+      body: ACPMessageData,
+      opts: { localId: string; tick: number; baseLength: number; meta?: Record<string, unknown>; createdAt: number; updatedAt?: number },
+    ) => EphemeralSendResult;
+    getEphemeralStreamConnectionEpoch?: () => number;
     enqueueAgentMessageCommitted?: (
       provider: ACPProvider,
       body: ACPMessageData,
-      opts: { localId: string; meta?: Record<string, unknown> },
+      opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
     ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
     sendAgentMessageCommitted: (
       provider: ACPProvider,
@@ -45,8 +94,19 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   transcriptWriter?: Readonly<{
     appendUserText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
     appendAssistantText: (text: string, meta: Record<string, unknown>) => void | Promise<void>;
-    appendUserTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
-    appendAssistantTextCommitted?: (text: string, meta: Record<string, unknown>) => Promise<void>;
+    appendUserTextCommitted?: (
+      text: string,
+      options: Readonly<{ localId: string; meta: Record<string, unknown> }>,
+    ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+    appendAssistantTextCommitted?: (
+      text: string,
+      options: Readonly<{ localId: string; meta: Record<string, unknown> }>,
+    ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+    commitVoiceAgentTranscriptTurn: (turn: Readonly<{
+      turnId: string;
+      user: Readonly<{ text: string; localId: string; meta: Record<string, unknown> }>;
+      assistant: Readonly<{ text: string; meta: Record<string, unknown> }>;
+    }>) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
   }>;
   getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
   policy?: Readonly<{
@@ -62,6 +122,8 @@ export type ExecutionRunRpcHandlerContext = Readonly<{
   onExecutionRunPublicStateUpdated?: (run: ExecutionRunPublicState) => void;
   onExecutionRunVoiceAgentWelcomed?: (run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>;
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
+  executionRunProfileCatalog?: ExecutionRunProfileContributionCatalog;
+  resolveExecutionRunProfileCatalog?: ConstructorParameters<typeof ExecutionRunHostBridge>[0]['resolveExecutionRunProfileCatalog'];
   actionExecutor?: RpcActionExecutor;
   actionApprovalDeps?: Partial<ExecutionRunRpcApprovalDeps>;
 }>;
@@ -108,6 +170,114 @@ export function registerExecutionRunRpcHandlers(
     override: ctx.policy,
   });
 
+  const profileCatalogOptions: Pick<
+    ConstructorParameters<typeof ExecutionRunHostBridge>[0],
+    'executionRunProfileCatalog' | 'resolveExecutionRunProfileCatalog'
+  > = ctx.resolveExecutionRunProfileCatalog
+    ? { resolveExecutionRunProfileCatalog: ctx.resolveExecutionRunProfileCatalog }
+    : ctx.executionRunProfileCatalog
+      ? { executionRunProfileCatalog: ctx.executionRunProfileCatalog }
+      : {
+          resolveExecutionRunProfileCatalog: async () => {
+            const runtimeRegistryLease = await acquireAuthoritativePluginRuntimeRegistryLease();
+            try {
+              const engineRegistry = await resolveCliEngineRegistry({
+                runtimeRegistry: runtimeRegistryLease.registry,
+              });
+              const profileCatalog = buildExecutionRunProfileCatalog(
+                (engineRegistry.contributions.executionRunProfiles ?? []).map<ExecutionRunProfileContributionCatalogInput>((profile) =>
+                  profile.pluginId ? { pluginId: profile.pluginId, definition: profile.definition } : profile.definition),
+                {
+                  ...(engineRegistry.contributions.generationId
+                    ? { generationId: engineRegistry.contributions.generationId }
+                    : {}),
+                  resolveAgentIdentity: (agentId) => {
+                    const agent = engineRegistry.contributions.agents.find((candidate) => (
+                      candidate.id === agentId && candidate.pluginId
+                    ));
+                    return agent?.pluginId
+                      ? { pluginId: agent.pluginId, localId: agent.definition.id }
+                      : null;
+                  },
+                  resolvePolicyFacts: ({ agentId }) => resolveInvocationContributionPolicyFacts({
+                    sessionId: ctx.sessionId,
+                    facts: {
+                      'session.agentId': agentId,
+                      ...(ctx.machineId ? { 'machine.id': ctx.machineId } : {}),
+                    },
+                  }),
+                  resolvePromptAssetBlocks: async ({ promptAsset, agentId }) => {
+                    return await resolvePluginPromptAssetBlocks({
+                      agentId,
+                      selectedAsset: promptAsset,
+                      sessionId: ctx.sessionId,
+                      ...(ctx.machineId ? { machineId: ctx.machineId } : {}),
+                    });
+                  },
+                },
+              );
+              return {
+                profileCatalog,
+                engineRegistry,
+                release: runtimeRegistryLease.release,
+              };
+            } catch (error) {
+              await runtimeRegistryLease.release();
+              throw error;
+            }
+          },
+        };
+
+  let canonicalActionExecutor: RpcActionExecutor | null = null;
+  const requestCurrentIntent = ctx.actionApprovalDeps?.executionRunHostActionCurrentIntent;
+  const materializeReviewHostAction = requestCurrentIntent
+    ? async (readCurrentCandidate: Parameters<typeof createReviewCommentHostActionMaterializer>[0]['readCurrentCandidate']) => {
+      const materialize = createReviewCommentHostActionMaterializer({
+        cwd: ctx.cwd,
+        readCurrentCandidate,
+        readCurrentPluginAuthority: async (pluginId) => {
+          let runtimeRegistryLease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>> | null = null;
+          try {
+            runtimeRegistryLease = await acquireAuthoritativePluginRuntimeRegistryLease();
+            return resolveReviewCommentHostPluginAuthority({
+              pluginId,
+              current: runtimeRegistryLease.registry
+                .pluginFinalPolicyCurrentGenerationsById
+                ?.get(pluginId) ?? null,
+            });
+          } catch {
+            return null;
+          } finally {
+            await runtimeRegistryLease?.release();
+          }
+        },
+        resolveWorkspace: async () => {
+          const machineId = typeof ctx.machineId === 'string' ? ctx.machineId.trim() : '';
+          if (!machineId || !ctx.resolveAccountSettings) return null;
+          const settings = accountSettingsParse(await ctx.resolveAccountSettings() ?? {});
+          const workspace = resolveWorkspaceRefForMachineRoot(settings.workspaceRefsV1, {
+            machineId,
+            rootPath: ctx.cwd,
+          });
+          return workspace
+            ? { projectId: workspace.id, workspaceId: workspace.id, serverId: workspace.serverId }
+            : null;
+        },
+        requestCurrentIntent,
+        ...(ctx.actionApprovalDeps?.pluginPermissionGrantRequest
+          ? { requestDirectWriteGrant: ctx.actionApprovalDeps.pluginPermissionGrantRequest }
+          : {}),
+        executeHostAction: async (actionId, input, context) => {
+          if (!canonicalActionExecutor) {
+            return { ok: false, errorCode: 'execution_run_host_action_unavailable', error: 'Canonical action executor is unavailable' };
+          }
+          return await canonicalActionExecutor.execute(actionId, input, context);
+        },
+      });
+      return await materialize();
+    }
+    : undefined;
+
   const manager = new ExecutionRunHostBridge({
     parentProvider: ctx.parentProvider,
     cwd: ctx.cwd,
@@ -122,12 +292,12 @@ export function registerExecutionRunRpcHandlers(
     getPermissionRequestStore: ctx.getPermissionRequestStore,
     parentSessionStateTarget: ctx.parentSessionStateTarget ?? null,
     resolveAccountSettings: ctx.resolveAccountSettings,
-    resolveExecutionRunProfileCatalog: async () => {
-      const registry = await resolveCliEngineRegistry();
-      return buildExecutionRunProfileCatalog(
-        (registry.contributions.executionRunProfiles ?? []).map((profile) => profile.definition),
-      );
+    ...(materializeReviewHostAction ? { materializeReviewHostAction } : {}),
+    checkConnectedServicesGenerationCurrent: async ({ runId }) => {
+      const result = await checkExecutionRunConnectedServicesGenerationCurrent({ runId, runnerPid: process.pid });
+      return { current: result.ok === true && result.current === true };
     },
+    ...profileCatalogOptions,
   });
 
   function isExecutionRunsEnabled(): boolean {
@@ -141,6 +311,7 @@ export function registerExecutionRunRpcHandlers(
     isExecutionRunsEnabled,
     approvalDeps: ctx.actionApprovalDeps,
   });
+  canonicalActionExecutor = actionExecutor;
 
   registerActionSpecRpcHandlers({
     rpcHandlerManager: rpc,
@@ -150,4 +321,58 @@ export function registerExecutionRunRpcHandlers(
     }),
     scopes: EXECUTION_RUN_RPC_SCOPES,
   });
+
+  rpc.registerHandler(
+    SESSION_RPC_METHODS.EXECUTION_RUN_STREAM_START_V2,
+    async (request: unknown) => {
+      if (!isExecutionRunsEnabled()) {
+        return { ok: false, error: 'Execution runs disabled', errorCode: 'execution_run_not_allowed' };
+      }
+      const parsed = ExecutionRunTurnStreamStartV2RequestSchema.safeParse(request);
+      if (!parsed.success) return invalidParams();
+      const started = await manager.startTurnStream(parsed.data.runId, {
+        message: parsed.data.message,
+        ...(parsed.data.displayMessage ? { displayMessage: parsed.data.displayMessage } : {}),
+        ...(parsed.data.resume === true ? { resume: true } : {}),
+        userTranscript: parsed.data.userTranscript,
+      });
+      return started.ok
+        ? { streamId: started.streamId }
+        : { ok: false, error: started.error, errorCode: started.errorCode };
+    },
+  );
+
+  rpc.registerHandler(
+    SESSION_RPC_METHODS.EXECUTION_RUN_USER_TRANSCRIPT_COMMIT_V1,
+    async (request: unknown) => {
+      if (!isExecutionRunsEnabled()) {
+        return { ok: false, error: 'Execution runs disabled', errorCode: 'execution_run_not_allowed' };
+      }
+      const parsed = ExecutionRunUserTranscriptCommitRequestSchema.safeParse(request);
+      if (!parsed.success) return invalidParams();
+      if (!manager.commitUserTranscript) {
+        return { ok: false, error: 'Transcript commit unavailable', errorCode: 'execution_run_not_allowed' };
+      }
+      const normalized = typeof parsed.data.message === 'string'
+        ? {
+            text: parsed.data.message,
+            ...(typeof parsed.data.displayMessage === 'string'
+              ? { displayText: parsed.data.displayMessage }
+              : {}),
+          }
+        : typeof parsed.data.text === 'string'
+          ? {
+              text: parsed.data.text,
+              ...(typeof parsed.data.displayText === 'string'
+                ? { displayText: parsed.data.displayText }
+                : {}),
+            }
+          : null;
+      if (!normalized) return invalidParams();
+      return await manager.commitUserTranscript(parsed.data.runId, {
+        ...normalized,
+        localId: parsed.data.localId,
+      });
+    },
+  );
 }

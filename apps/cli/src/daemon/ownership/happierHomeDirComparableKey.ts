@@ -1,4 +1,7 @@
-export function resolveHappierHomeDirComparableKey(homeDir: string | null | undefined): string | null {
+export function resolveHappierHomeDirComparableKey(
+  homeDir: string | null | undefined,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
   let value = String(homeDir ?? '').trim();
   if (!value) {
     return null;
@@ -9,20 +12,16 @@ export function resolveHappierHomeDirComparableKey(homeDir: string | null | unde
     return null;
   }
 
-  const posixWindowsDriveMatch = /^\/([a-zA-Z])\/(.*)$/u.exec(value);
+  const posixWindowsDriveMatch = platform === 'win32'
+    ? /^\/([a-zA-Z])\/(.*)$/u.exec(value)
+    : null;
   if (posixWindowsDriveMatch) {
     const driveLetter = posixWindowsDriveMatch[1]?.toLowerCase() ?? '';
     const remainder = String(posixWindowsDriveMatch[2] ?? '').replace(/[\\]+/g, '/');
     value = `${driveLetter}:/${remainder}`;
   }
 
-  const isWindowsishPath =
-    /^[a-zA-Z]:[\\/]/.test(value)
-    || value.startsWith('\\\\')
-    || value.startsWith('//')
-    || value.includes('\\');
-
-  if (isWindowsishPath) {
+  if (platform === 'win32') {
     if (value.startsWith('\\\\')) {
       value = value.replace(/^\\\\+/, '//');
     }

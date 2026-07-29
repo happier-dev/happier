@@ -15,6 +15,7 @@ export function createPluginDisposableRegistry(): Readonly<{
 }> {
     const disposables: PluginDisposable[] = [];
     let disposed = false;
+    let disposalPromise: Promise<void> | null = null;
 
     return {
         add(disposable) {
@@ -28,16 +29,26 @@ export function createPluginDisposableRegistry(): Readonly<{
         entries() {
             return Object.freeze([...disposables]);
         },
-        async dispose() {
-            if (disposed) {
-                return;
-            }
+        dispose() {
+            if (disposalPromise) return disposalPromise;
             disposed = true;
             const pending = [...disposables].reverse();
             disposables.length = 0;
-            for (const disposable of pending) {
-                await disposeOne(disposable);
-            }
+            disposalPromise = (async () => {
+                const errors: unknown[] = [];
+                for (const disposable of pending) {
+                    try {
+                        await disposeOne(disposable);
+                    } catch (error) {
+                        errors.push(error);
+                    }
+                }
+                if (errors.length === 1) throw errors[0];
+                if (errors.length > 1) {
+                    throw new AggregateError(errors, 'Plugin generation cleanup failed');
+                }
+            })();
+            return disposalPromise;
         },
     };
 }

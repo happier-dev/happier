@@ -1,13 +1,15 @@
-import type { PermissionMode } from '@/api/types';
-import { isPermissionMode } from '@/api/types';
+import {
+  parsePermissionIntentAlias,
+  type PermissionIntent,
+} from '@happier-dev/agents';
 
 /**
  * Execution-run permission policies are intentionally restrictive and use
  * historical tokens like `read_only` / `no_tools`.
  *
- * Map them onto the canonical PermissionMode surface used by ACP backends.
+ * Map them onto the canonical PermissionIntent surface used by Agent runtimes.
  */
-export function permissionMode(raw: string): PermissionMode {
+export function permissionMode(raw: string): PermissionIntent {
   const mode = String(raw ?? '').trim().toLowerCase();
   if (!mode) return 'default';
 
@@ -17,9 +19,9 @@ export function permissionMode(raw: string): PermissionMode {
 
   if (mode === 'workspace_write') {
     // Execution runs default delegate intent policy to workspace-write. Map it to the closest
-    // canonical PermissionMode understood by ACP backends.
+    // canonical PermissionIntent understood by Agent runtimes.
     return 'safe-yolo';
   }
 
-  return isPermissionMode(mode) ? mode : 'default';
+  return parsePermissionIntentAlias(mode) ?? 'default';
 }

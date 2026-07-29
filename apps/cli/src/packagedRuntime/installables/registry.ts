@@ -59,6 +59,7 @@ export type RuntimeInstallableAdapter = Readonly<{
   detectLaunchResolution: (params?: Readonly<{ env?: NodeJS.ProcessEnv }>) => Promise<RuntimeInstallableLaunchResolution>;
   resolveLaunchCommand?: (params?: RuntimeInstallableLaunchCommandParams) => Promise<RuntimeInstallableLaunchCommandResolution>;
   installOrUpgrade: () => Promise<RuntimeInstallableInstallResult>;
+  removeManagedInstall?: () => Promise<void>;
   runBackgroundAutoUpdateCheck: () => Promise<void>;
 }>;
 

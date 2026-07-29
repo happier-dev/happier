@@ -33,7 +33,7 @@ export function registerHappierMcpResources(
   // Resource publication is derived from first-party action specs.
   // Plugin-contributed MCP resource catalogs remain intentionally deferred for this wave.
   const isActionEnabled = opts?.isActionEnabled ?? ((_id: ActionId) => true);
-  const surface = opts?.surface ?? 'session_agent';
+  const surface = opts?.surface ?? 'agent';
 
   server.registerResource(
     'happier_action_specs',

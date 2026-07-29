@@ -1,8 +1,8 @@
 import type { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import type { readCredentials } from '@/persistence';
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
-import type { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import type { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import type { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import type { ForkSurfaceV1 } from '@happier-dev/agents';
 
@@ -10,7 +10,7 @@ import type { SessionLifecycleMachineHandlers } from '../sessionLifecycleTypes';
 
 export type ForkLifecycleCredentials = NonNullable<Awaited<ReturnType<typeof readCredentials>>>;
 export type ForkLifecycleRawSession = NonNullable<Awaited<ReturnType<typeof fetchSessionByIdCompat>>>;
-export type ForkLifecycleMetadata = NonNullable<ReturnType<typeof tryDecryptSessionMetadata>>;
+export type ForkLifecycleMetadata = NonNullable<ReturnType<typeof tryDecryptSessionOwnerMetadataView>>;
 export type ForkBackendResolution = Extract<
     Awaited<ReturnType<ReturnType<typeof getSessionHostBridge>['resolveSessionForkBackendTarget']>>,
     { ok: true }

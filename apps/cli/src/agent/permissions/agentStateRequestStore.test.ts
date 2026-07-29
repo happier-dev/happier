@@ -1,7 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
+import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import { accountSettingsParse } from '@happier-dev/protocol';
 import type { AgentState } from '@/api/types';
 import { AgentStateRequestStore } from './agentStateRequestStore';
+
+const localPermissionBridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' });
+const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions.equivalentSources?.[0] ?? '';
+const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions.equivalentCompletedReasons?.[0] ?? '';
 
 class FakeSession {
     sessionId = 'session-test';
@@ -74,6 +80,128 @@ describe('AgentStateRequestStore', () => {
                 answers: { a: 'b' },
             }),
         );
+    });
+
+    it('skips publishing a generated local-bridge request covered by a recent canonical cancellation', () => {
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+        });
+        const question = { questions: [{ question: 'How should I proceed?', options: [{ label: 'Continue' }] }] };
+
+        session.agentState.completedRequests!['toolu_canonical'] = {
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            arguments: question,
+            createdAt: 1_000,
+            completedAt: 10_000,
+            status: 'canceled',
+            reason: LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+            source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+        } as any;
+
+        store.publishRequest({
+            requestId: 'perm_generated',
+            toolName: 'AskUserQuestion',
+            toolInput: question,
+            createdAt: 10_500,
+            kind: 'user_action',
+            source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+        });
+
+        expect(session.agentState.requests!['perm_generated']).toBeUndefined();
+    });
+
+    it('does not send a permission push for an async publish skipped by completed request coverage', async () => {
+        const session = new AsyncFakeSession();
+        const sendToAllDevicesAsync = vi.fn(async () => {});
+        const settings = accountSettingsParse({
+            notificationsSettingsV1: { v: 1, pushEnabled: true, ready: true, permissionRequest: true },
+        });
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+            pushSender: { sendToAllDevicesAsync },
+            getAccountSettings: () => settings,
+            getSessionTitle: () => 'Session',
+            getAgentDisplayName: () => 'Agent',
+        });
+        const question = { questions: [{ question: 'How should I proceed?', options: [{ label: 'Continue' }] }] };
+
+        session.agentState.completedRequests!['toolu_canonical'] = {
+            tool: 'AskUserQuestion',
+            kind: 'user_action',
+            arguments: question,
+            createdAt: 1_000,
+            completedAt: 10_000,
+            status: 'canceled',
+            reason: LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+            source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+        } as any;
+
+        store.publishRequest({
+            requestId: 'perm_generated',
+            toolName: 'AskUserQuestion',
+            toolInput: question,
+            createdAt: 10_500,
+            kind: 'user_action',
+            source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+        });
+        await flushMicrotasks();
+
+        expect(session.agentState.requests!['perm_generated']).toBeUndefined();
+        expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    });
+
+    it('removes an equivalent generated local-bridge request when the canonical request is canceled', () => {
+        const now = new Date('2026-06-19T18:00:00.000Z');
+        vi.useFakeTimers();
+        vi.setSystemTime(now);
+        const session = new FakeSession();
+        const store = new AgentStateRequestStore({
+            session,
+            logPrefix: '[Test]',
+        });
+        const question = { questions: [{ question: 'How should I proceed?', options: [{ label: 'Continue' }] }] };
+
+        try {
+            store.publishRequest({
+                requestId: 'perm_generated',
+                toolName: 'AskUserQuestion',
+                toolInput: question,
+                createdAt: now.getTime(),
+                kind: 'user_action',
+                source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+            });
+            store.publishRequest({
+                requestId: 'toolu_canonical',
+                toolName: 'AskUserQuestion',
+                toolInput: question,
+                createdAt: 1_000,
+                kind: 'user_action',
+                source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+            });
+
+            store.completeRequest({
+                requestId: 'toolu_canonical',
+                status: 'canceled',
+                reason: LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+            });
+
+            expect(session.agentState.requests!['perm_generated']).toBeUndefined();
+            expect(session.agentState.completedRequests!['perm_generated']).toEqual(
+                expect.objectContaining({
+                    tool: 'AskUserQuestion',
+                    kind: 'user_action',
+                    status: 'canceled',
+                    reason: LOCAL_PERMISSION_BRIDGE_STOPPED_REASON,
+                    source: LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE,
+                }),
+            );
+        } finally {
+            vi.useRealTimers();
+        }
     });
 
     it('preserves response target metadata through outstanding and completed records', () => {
@@ -406,7 +534,7 @@ describe('AgentStateRequestStore', () => {
         );
     });
 
-    it('cancels all outstanding requests', () => {
+    it('cancels all outstanding requests', async () => {
         const session = new FakeSession();
         const store = new AgentStateRequestStore({
             session,
@@ -426,17 +554,19 @@ describe('AgentStateRequestStore', () => {
             createdAt: 2,
         });
 
-        store.cancelAllRequests({
+        await store.cancelAllRequests({
             reason: 'Session ended',
+            decision: 'abort',
+            requestIds: [],
         });
 
         expect(Object.keys(session.agentState.requests ?? {})).toEqual([]);
         expect(Object.keys(session.agentState.completedRequests ?? {}).sort()).toEqual(['req-1', 'req-2']);
         expect(session.agentState.completedRequests!['req-1']).toEqual(
-            expect.objectContaining({ status: 'canceled', reason: 'Session ended' }),
+            expect.objectContaining({ status: 'canceled', decision: 'abort', reason: 'Session ended' }),
         );
         expect(session.agentState.completedRequests!['req-2']).toEqual(
-            expect.objectContaining({ status: 'canceled', reason: 'Session ended' }),
+            expect.objectContaining({ status: 'canceled', decision: 'abort', reason: 'Session ended' }),
         );
     });
 });

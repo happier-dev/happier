@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { PermissionMode } from '@/api/types';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import type { ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceBindingsV1, ProviderBoundModelRef } from '@happier-dev/protocol';
 
-type RuntimeSnapshotValue<T extends string> = Readonly<{ value: T; updatedAt: number }>;
+type RuntimeSnapshotValue<T> = Readonly<{ value: T; updatedAt: number }>;
 
 type RuntimeSnapshotModule = Readonly<{
   resolveSessionRuntimeSnapshot: (params: Readonly<{
@@ -20,7 +20,7 @@ type RuntimeSnapshotModule = Readonly<{
       connectedServicesUpdatedAt: number | null;
       permissionMode: RuntimeSnapshotValue<PermissionMode> | null;
       agentModeId: RuntimeSnapshotValue<string> | null;
-      modelId: RuntimeSnapshotValue<string> | null;
+      modelSelection: RuntimeSnapshotValue<ProviderBoundModelRef | null> | null;
       vendorResumeId: Readonly<{ value: string; updatedAt: number | null }> | null;
     }>;
     spawnOptions: SpawnSessionOptions;
@@ -47,6 +47,24 @@ const persistedMaterializationIdentity = {
   v: 1,
   id: 'csm_persisted',
   createdAt: 1,
+} as const;
+
+const persistedProviderBinding = {
+  v: 1,
+  connectionId: 'pc_work',
+  contributionKey: 'plugin.gateway/gateway',
+  connectionRevision: 2,
+  protocol: 'openai-responses',
+  materialization: 'engineConfig',
+  adapterBindingKey: 'gateway',
+  compatibilityFingerprint: 'compatibility-v1',
+  bindingSecurityFingerprint: 'security-v1',
+  displaySnapshot: {
+    providerName: 'Gateway',
+    connectionName: 'Work',
+    connectionRole: 'named',
+    connectionDisplayNameMode: 'custom',
+  },
 } as const;
 
 describe('resolveSessionRuntimeSnapshot', () => {
@@ -91,8 +109,11 @@ describe('resolveSessionRuntimeSnapshot', () => {
       permissionModeUpdatedAt: 510,
       agentModeId: 'plan',
       agentModeUpdatedAt: 520,
-      modelId: 'claude-opus-4-7',
-      modelUpdatedAt: 530,
+      modelSelection: {
+        v: 1,
+        updatedAt: 530,
+        ref: { agentTargetKey: 'backend:claude', providerConnectionId: null, modelId: 'claude-opus-4-7' },
+      },
       resume: 'incoming-vendor-resume',
     });
     expect((result.spawnOptions as unknown as Record<string, unknown>).connectedServiceMaterializationIdentityV1)
@@ -113,7 +134,6 @@ describe('resolveSessionRuntimeSnapshot', () => {
         directory: '/tmp/repo',
         existingSessionId: 'session-1',
         initialTranscriptAfterSeq: 33294,
-        initialPrompt: 'one-shot wake prompt',
         permissionMode: 'yolo',
         permissionModeUpdatedAt: 510,
       },
@@ -131,6 +151,260 @@ describe('resolveSessionRuntimeSnapshot', () => {
       permissionModeUpdatedAt: 510,
     });
     expect('initialTranscriptAfterSeq' in result.spawnOptions).toBe(false);
-    expect('initialPrompt' in result.spawnOptions).toBe(false);
+  });
+
+  it('does not let undocumented bare metadata replace a canonical provider-bound selection', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        providerBindingV1: persistedProviderBinding,
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 100,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_work',
+            modelId: 'provider-model',
+          },
+        },
+        modelId: 'stale-native-model',
+        modelUpdatedAt: 999,
+      },
+    });
+
+    expect(result.spawnOptions.modelSelection).toEqual({
+      v: 1,
+      updatedAt: 100,
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: 'pc_work',
+        modelId: 'provider-model',
+      },
+    });
+  });
+
+  it('refuses malformed persisted Provider continuity before runtime-state arbitration', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    expect(() => runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        providerBindingV1: { v: 1, connectionId: 'pc_work' },
+        modelSelectionIntentV1: {
+          v: 1,
+          updatedAt: 100,
+          selection: {
+            agentTargetKey: 'backend:codex',
+            providerConnectionId: 'pc_work',
+            modelId: 'provider-model',
+          },
+        },
+      },
+    })).toThrow(expect.objectContaining({
+      providerError: expect.objectContaining({
+        code: 'provider_binding_changed',
+        connectionId: 'pc_work',
+      }),
+    }));
+  });
+
+  it('restores observed vendor resume evidence without persisting it as explicit resume', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        flavor: 'codex',
+        codexSessionId: ' codex-thread-from-metadata ',
+      },
+    });
+
+    expect(result.snapshot.vendorResumeId).toEqual({
+      value: 'codex-thread-from-metadata',
+      updatedAt: null,
+    });
+    expect(result.spawnOptions.resume).toBeUndefined();
+  });
+
+  it('prefers the persisted provider identity over stale tracked observation', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        flavor: 'codex',
+        codexSessionId: 'codex-thread-persisted',
+      },
+      persistedVendorResumeId: 'codex-thread-persisted',
+      trackedVendorResumeId: 'codex-thread-stale',
+    });
+
+    expect(result.snapshot.vendorResumeId).toEqual({
+      value: 'codex-thread-persisted',
+      updatedAt: null,
+    });
+    expect(result.spawnOptions.resume).toBeUndefined();
+  });
+
+  it('does not turn observed Claude identity into resume without durable transcript proof', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        flavor: 'claude',
+        claudeSessionId: 'observed-claude-session',
+      },
+      trackedVendorResumeId: 'observed-claude-session',
+    });
+
+    expect(result.snapshot.vendorResumeId).toBeNull();
+    expect(result.spawnOptions.resume).toBeUndefined();
+  });
+
+  it('restores observed Claude identity with transcript proof without persisting explicit resume', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        flavor: 'claude',
+        claudeSessionId: 'observed-claude-session',
+        claudeTranscriptPath: '/tmp/observed-claude-session.jsonl',
+      },
+      trackedVendorResumeId: 'observed-claude-session',
+    });
+
+    expect(result.snapshot.vendorResumeId).toEqual({
+      value: 'observed-claude-session',
+      updatedAt: null,
+    });
+    expect(result.spawnOptions.resume).toBeUndefined();
+  });
+
+  it('does not persist transcript-proven observed Claude identity as explicit resume authority', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const observedVendorResumeId = 'observed-claude-session';
+    const first = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        flavor: 'claude',
+        claudeSessionId: observedVendorResumeId,
+        claudeTranscriptPath: `/tmp/${observedVendorResumeId}.jsonl`,
+      },
+      trackedVendorResumeId: observedVendorResumeId,
+    });
+
+    const second = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: first.spawnOptions,
+      trackedSpawnOptions: first.spawnOptions,
+      persistedMetadata: {
+        flavor: 'claude',
+        claudeSessionId: observedVendorResumeId,
+      },
+      trackedVendorResumeId: observedVendorResumeId,
+    });
+
+    expect(second.snapshot.vendorResumeId).toBeNull();
+    expect(second.spawnOptions.resume).toBeUndefined();
+  });
+
+  it('does not resume a newer observed Claude id against older durable transcript proof', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const result = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      persistedMetadata: {
+        flavor: 'claude',
+        claudeSessionId: 'durably-proven-session',
+        claudeTranscriptPath: '/tmp/durably-proven-session.jsonl',
+      },
+      trackedVendorResumeId: 'newer-observed-session',
+    });
+
+    expect(result.snapshot.vendorResumeId).toBeNull();
+    expect(result.spawnOptions.resume).toBeUndefined();
+  });
+
+  it('preserves explicit incoming and tracked spawn resume without derived proof', async () => {
+    const runtimeSnapshot = await loadRuntimeSnapshotModule();
+    expect(runtimeSnapshot).not.toBeNull();
+    if (!runtimeSnapshot) return;
+
+    const incoming = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+        resume: 'explicit-incoming-resume',
+      },
+      persistedMetadata: { flavor: 'claude', claudeSessionId: 'observed-only' },
+    });
+    const tracked = runtimeSnapshot.resolveSessionRuntimeSnapshot({
+      incomingOptions: {
+        directory: '/tmp/repo',
+        existingSessionId: 'session-1',
+        backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
+      },
+      persistedMetadata: { flavor: 'claude', claudeSessionId: 'observed-only' },
+      trackedSpawnOptions: {
+        directory: '/tmp/repo',
+        resume: 'explicit-tracked-resume',
+      },
+    });
+
+    expect(incoming.spawnOptions.resume).toBe('explicit-incoming-resume');
+    expect(tracked.spawnOptions.resume).toBe('explicit-tracked-resume');
   });
 });

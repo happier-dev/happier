@@ -165,7 +165,6 @@ export function buildConnectedServiceMaterializationSpawnErrorResult(input: Read
       failurePhase: 'materialization',
       source: 'spawn_resume',
       agentId: input.agentId,
-      ...(primary?.providerId ? { providerId: primary.providerId } : {}),
       ...(primary?.serviceId ? { serviceId: primary.serviceId } : {}),
       retryable: false,
       diagnostics: {

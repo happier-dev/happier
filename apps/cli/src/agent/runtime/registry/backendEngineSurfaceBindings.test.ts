@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BackendSurfaceOperationCatalogV1, type BackendSurfaceDeclarationV1 } from '@happier-dev/protocol';
-import type { AgentRuntimeV1, ExternalSessionRuntimeContextV1 } from '@happier-dev/plugin-sdk';
+import type { AgentRuntime } from '@happier-dev/plugin-sdk/agent-runtime';
 
 import {
   createEmptyBackendExecutionSurfaces,
@@ -9,28 +8,10 @@ import {
 import type { ResolvedAgentRuntimeContribution } from '../../../plugins/projection/registry/types';
 import {
   mergeBackendExecutionSurfaces,
-  resolveBackendExecutionSurfacesFromEngine,
+  resolveBackendExecutionSurfacesFromNativeAgentRuntime,
 } from './backendEngineSurfaceBindings';
-import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
 
-function createSurfaceHandler(
-  kind: BackendSurfaceDeclarationV1['kind'],
-  operation: BackendSurfaceDeclarationV1['operation'],
-): BackendSurfaceDeclarationV1 {
-  return {
-    surfaceApiVersion: 1,
-    id: `${kind}.${operation}`,
-    kind,
-    operation,
-    support: 'supported',
-    handler: {
-      target: 'daemon',
-      exportName: operation,
-    },
-  };
-}
-
-function createBackend(surfaceHandlers: readonly BackendSurfaceDeclarationV1[]): ResolvedAgentRuntimeContribution {
+function createBackend(): ResolvedAgentRuntimeContribution {
   return {
     id: 'acme.runtime.backend',
     agentId: 'acme.runtime.provider',
@@ -57,42 +38,11 @@ function createBackend(surfaceHandlers: readonly BackendSurfaceDeclarationV1[]):
           },
         },
       },
-    surfaceHandlers,
+    surfaceHandlers: [],
     pluginId: 'acme.runtime',
     manifestPath: '/plugins/acme.runtime/.happier-plugin/plugin.json',
     manifestDigest: 'digest-1',
     daemonEntryPath: '/plugins/acme.runtime/daemon.mjs',
-  };
-}
-
-const source = { kind: 'codexHome', home: 'user' } as const;
-const rawSession = Object.freeze({}) as Parameters<NonNullable<NonNullable<BackendExecutionSurfaces['externalSession']>['resolveTakeoverSpawnOptions']>>[0]['linked']['rawSession'];
-type EngineExternalSessionSurface = NonNullable<AgentRuntimeV1['externalSessionSurface']>;
-
-function createLinkedSession(
-  overrides: Partial<Parameters<NonNullable<NonNullable<BackendExecutionSurfaces['externalSession']>['resolveTakeoverSpawnOptions']>>[0]['linked']> = {},
-): Parameters<NonNullable<NonNullable<BackendExecutionSurfaces['externalSession']>['resolveTakeoverSpawnOptions']>>[0]['linked'] {
-  return {
-    rawSession,
-    metadata: { path: '/repo/from-metadata' },
-    sessionPath: '/repo/from-session-path',
-    agentId: 'claude',
-    machineId: 'machine-1',
-    remoteSessionId: 'provider-session-1',
-    source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: 'project-1' },
-    codexBackendMode: null,
-    ...overrides,
-  };
-}
-
-function createExternalSessionSurfaceFixture(
-  overrides: Partial<EngineExternalSessionSurface>,
-): EngineExternalSessionSurface {
-  return {
-    resolveSource: async (request) => ({ ok: true, value: { source: request.source } }),
-    listCandidates: async () => ({ ok: true, value: { candidates: [], nextCursor: null } }),
-    pageTranscript: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
-    ...overrides,
   };
 }
 
@@ -118,1024 +68,559 @@ describe('mergeBackendExecutionSurfaces', () => {
   });
 });
 
-describe('resolveBackendExecutionSurfacesFromEngine', () => {
-  it('materializes all six final surface families from declared engine surface bindings', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.evaluateAvailability),
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.launch),
-      createSurfaceHandler('externalSession', catalog.externalSession.evaluateAvailability),
-      createSurfaceHandler('externalSession', catalog.externalSession.resolveSource),
-      createSurfaceHandler('externalSession', catalog.externalSession.listCandidates),
-      createSurfaceHandler('externalSession', catalog.externalSession.pageTranscript),
-      createSurfaceHandler('attach', catalog.attach.evaluateAvailability),
-      createSurfaceHandler('attach', catalog.attach.attach),
-      createSurfaceHandler('handoff', catalog.handoff.evaluateAvailability),
-      createSurfaceHandler('handoff', catalog.handoff.exportBundle),
-      createSurfaceHandler('handoff', catalog.handoff.importBundle),
-      createSurfaceHandler('fork', catalog.fork.evaluateAvailability),
-      createSurfaceHandler('fork', catalog.fork.fork),
-      createSurfaceHandler('fork', catalog.fork.resolveReplayChildLaunch),
-      createSurfaceHandler('checkpoint', catalog.checkpoint.evaluateAvailability),
-      createSurfaceHandler('checkpoint', catalog.checkpoint.list),
-      createSurfaceHandler('checkpoint', catalog.checkpoint.resolveRestoreTarget),
-      createSurfaceHandler('checkpoint', catalog.checkpoint.checkpoint),
-      createSurfaceHandler('checkpoint', catalog.checkpoint.restore),
-    ]);
-    const engine = {
-      terminalRuntimeSurface: {
-        evaluateAvailability: async (request) => request.operation === 'launch'
-          ? { available: true }
-          : { available: false, reasonCode: 'unsupported' },
-        launch: async (request) => ({
-          type: 'control_returned',
-          reason: 'switch_requested',
-          providerSessionId: request.sessionId,
+describe('resolveBackendExecutionSurfacesFromNativeAgentRuntime', () => {
+  function createNativeRuntime(
+    resolveLaunch: NonNullable<NonNullable<AgentRuntime['surfaces']>['terminal']>['resolveLaunch'],
+  ): AgentRuntime {
+    return {
+      executionRuns: {
+        open: async () => ({
+          send: async () => ({ status: 'admitted' }),
+          stop: async () => ({ status: 'requested' }),
+          watch: () => ({ dispose: () => undefined }),
+          dispose: async () => undefined,
         }),
       },
-      externalSessionSurface: {
-        evaluateAvailability: async (request) => request.operation === 'resolveSource'
-          ? { available: true }
-          : { available: false, reasonCode: 'unsupported' },
-        resolveSource: async (request) => ({ ok: true, value: { source: request.source } }),
-        listCandidates: async () => ({ ok: true, value: { candidates: [], nextCursor: null } }),
-        pageTranscript: async () => ({
-          ok: true,
-          value: { items: [], nextCursor: null, tailCursor: null, hasMore: false },
-        }),
-      },
-      attachSurface: {
-        evaluateAvailability: async () => ({ available: true }),
-        attach: async () => ({ ok: true, value: { exitCode: 0 } }),
-      },
-      handoffSurface: {
-        evaluateAvailability: async () => ({ available: true }),
-        exportBundle: async () => ({ ok: true, value: { bundle: { token: 'bundle-1' } } }),
-        importBundle: async () => ({
-          ok: true,
-          value: {
-            providerSessionId: 'vendor-imported',
-            source,
-            launch: { directory: '/tmp/imported' },
-          },
-        }),
-      },
-      forkSurface: {
-        evaluateAvailability: async () => ({ available: true }),
-        fork: async () => ({
-          providerSessionId: 'vendor-child',
-          launch: { directory: '/tmp/fork-child' },
-        }),
-        resolveReplayChildLaunch: async () => ({ directory: '/tmp/replay-child' }),
-      },
-      checkpointSurface: {
-        evaluateAvailability: async () => ({ available: true }),
-        list: async () => [],
-        resolveRestoreTarget: async () => ({ kind: 'provider_checkpoint', checkpointId: 'checkpoint-1' }),
-        checkpoint: async () => ({
-          id: 'checkpoint-1',
-          target: { kind: 'provider_checkpoint', checkpointId: 'checkpoint-1' },
-          timing: 'idle',
-          checkpointScopes: ['conversation'],
-          restoreScopes: ['conversation'],
-        }),
-        restore: async () => ({
-          ok: true,
-          outcome: 'completed',
-          restoredScopes: ['conversation'],
-        }),
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
+      surfaces: { terminal: { resolveLaunch } },
+    };
+  }
 
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
-
-    expect(diagnostics).toEqual([]);
-    await expect(surfaces.terminalRuntime?.evaluateAvailability?.({
-      operation: 'launch',
-      sessionId: 'terminal-session',
-      metadata: {},
-      directory: '/repo',
-    })).resolves.toEqual({ available: true });
-    await expect(surfaces.terminalRuntime?.launch?.({
-      sessionId: 'terminal-session',
-      metadata: {},
-      directory: '/repo',
-    })).resolves.toEqual(expect.objectContaining({
-      type: 'control_returned',
-      providerSessionId: 'terminal-session',
+  it('keeps process, projection, cancellation, and terminal-result ownership in the existing host orchestration', async () => {
+    const resolveLaunch = vi.fn(async () => ({
+      argv: ['terminal', '--model', 'fast'],
+      environment: {
+        values: { AGENT_MODE: 'terminal' },
+        unset: ['REMOVE_ME'],
+      },
+      process: {
+        stdio: 'inherit' as const,
+        windowsHide: true,
+        windowsVerbatimArguments: false,
+      },
+      presentation: {
+        onLaunch: { target: 'local' as const, reason: 'terminal_started' },
+        onExit: { target: 'remote' as const, reason: 'terminal_finished' },
+      },
+      resultMetadata: {
+        sessionStateUpdates: [{
+          fieldId: 'identity.providerSessionId' as const,
+          value: 'provider-session-1',
+        }],
+      },
     }));
-    await expect(surfaces.externalSession?.evaluateAvailability?.({
-      operation: 'resolveSource',
-      source,
-    })).resolves.toEqual({ available: true });
-    await expect(surfaces.externalSession?.validateSource?.({ source, env: {} })).resolves.toEqual({
-      ok: true,
-      source,
-    });
-    await expect(surfaces.attach?.evaluateAvailability({
-      sessionId: 'session-1',
-      metadata: {},
-      currentMachineId: 'machine-1',
-      sessionMachineId: 'machine-1',
-      hasLocalAttachmentInfo: true,
-    })).resolves.toEqual({ eligible: true, scope: 'local', metadata: {} });
-    await expect(surfaces.handoff?.evaluateAvailability?.({
-      operation: 'exportBundle',
-      sessionId: 'session-1',
-      metadata: {},
-    })).resolves.toEqual({ available: true });
-    await expect(surfaces.fork?.evaluateAvailability?.({
-      operation: 'fork',
-      parentSessionId: 'session-1',
-      parentMetadata: {},
-      directory: '/repo',
-      forkPoint: { kind: 'latest' },
-    })).resolves.toEqual({ available: true });
-    await expect(surfaces.checkpoint?.restore?.({
-      sessionId: 'session-1',
-      target: { kind: 'provider_checkpoint', checkpointId: 'checkpoint-1' },
-      scopes: ['conversation'],
-    })).resolves.toEqual({
-      ok: true,
-      outcome: 'completed',
-      restoredScopes: ['conversation'],
-    });
-  });
-
-  it('passes explicit validation env through engine external-session source resolution', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('externalSession', catalog.externalSession.resolveSource),
-    ]);
-    const resolveSource = vi.fn(async (request) => ({
-      ok: true as const,
-      value: { source: request.source },
-    }));
-    const engine = {
-      externalSessionSurface: createExternalSessionSurfaceFixture({
-        resolveSource,
-      }),
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-    const env = { PI_CODING_AGENT_DIR: '/tmp/omp-agent' } as NodeJS.ProcessEnv;
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
-
-    await expect(surfaces.externalSession?.validateSource?.({ source, env })).resolves.toEqual({
-      ok: true,
-      source,
-    });
-    expect((resolveSource.mock.calls[0]?.[0] as { env?: NodeJS.ProcessEnv }).env).toBe(env);
-  });
-
-  it('injects resolved session services into engine terminal launch requests', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.launch),
-    ]);
-    const services = Object.freeze({ sessionId: 'terminal-session' });
-    const abortController = new AbortController();
-    const launch = vi.fn(async () => ({
-      type: 'control_returned' as const,
-      reason: 'switch_requested' as const,
-    }));
-    const engine = {
-      terminalRuntimeSurface: {
-        launch,
+    const resolveAgentCliExecutable = vi.fn(async () => ({
+      executable: {
+        path: '/opt/happier/agent',
+        hostGrant: { kind: 'agent-cli' as const, grantId: 'grant-1' },
       },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
+      args: ['host-prefix'],
+      source: 'managed',
+      resolvedPath: '/opt/happier/agent',
+    }));
+    const waitForTermination = vi.fn(async () => ({ type: 'exited' as const, code: 7 }));
+    const stop = vi.fn(async () => undefined);
+    const launch = vi.fn(async () => ({ pid: 123, waitForTermination, stop }));
+    const publishControlState = vi.fn<(
+      projection: Readonly<{ target: 'local' | 'remote'; reason?: string }>,
+    ) => Promise<void>>(async () => undefined);
+    const releaseActiveBindings = vi.fn(async () => undefined);
+    const host = {
+      input: { subscribe: vi.fn() },
+      switching: { register: vi.fn() },
+      process: { resolveAgentCliExecutable, launch },
+      projection: {
+        publishControlState,
+        publishProviderSessionId: vi.fn(),
+        publishSubagentStarted: vi.fn(),
+        publishSubagentCompleted: vi.fn(),
+      },
+      transcriptFollow: {
+        bindProviderSession: vi.fn(),
+        releaseActiveBindings,
+      },
+    };
+    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromNativeAgentRuntime>[0]['diagnostics'] = [];
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime: createNativeRuntime(resolveLaunch),
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => true,
+      declaredAgentSurfaceFamilies: new Set(['terminalRuntime']),
       diagnostics,
-      resolveTerminalRuntimeLaunchServices: async (request: { sessionId: string }) => (
-        request.sessionId === 'terminal-session' ? services : null
-      ),
-      resolveTerminalRuntimeLaunchSignal: () => abortController.signal,
-    } as never);
+    });
+    const signal = new AbortController().signal;
+    const terminalLaunchMetadata = {
+      model: 'fast',
+      externalSessionOperationV1: {
+        v: 1,
+        progress: {
+          operationId: 'operation-private',
+          revision: 3,
+          retryable: true,
+        },
+      },
+      externalSessionOperationPresentationV1: {
+        v: 1,
+        operationId: 'operation-private',
+        revision: 3,
+        kind: 'materialize',
+        status: 'running',
+        phase: 'publishing',
+      },
+    } as const;
 
     await expect(surfaces.terminalRuntime?.launch?.({
-      sessionId: 'terminal-session',
-      metadata: {},
+      sessionId: 'session-1',
+      metadata: terminalLaunchMetadata,
       directory: '/repo',
+      env: { HOST_ENV: 'one' },
+      isolation: { env: { ISOLATED_ENV: 'two' }, unsetEnvKeys: ['HOST_REMOVE'] },
+      signal,
+      host,
     })).resolves.toEqual({
-      type: 'control_returned',
-      reason: 'switch_requested',
+      type: 'process_exited',
+      exitCode: 7,
+      sessionStateUpdates: [{
+        fieldId: 'identity.providerSessionId',
+        value: 'provider-session-1',
+      }],
     });
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'terminal-session',
-      metadata: {},
-      directory: '/repo',
-      services,
-      signal: abortController.signal,
-    }));
+    expect(diagnostics).toEqual([]);
+    expect(resolveLaunch).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      cwd: '/repo',
+      metadata: {
+        model: 'fast',
+        externalSessionOperationPresentationV1: {
+          v: 1,
+          operationId: 'operation-private',
+          revision: 3,
+          kind: 'materialize',
+          status: 'running',
+          phase: 'publishing',
+        },
+      },
+    });
+    expect(terminalLaunchMetadata).toEqual({
+      model: 'fast',
+      externalSessionOperationV1: {
+        v: 1,
+        progress: {
+          operationId: 'operation-private',
+          revision: 3,
+          retryable: true,
+        },
+      },
+      externalSessionOperationPresentationV1: {
+        v: 1,
+        operationId: 'operation-private',
+        revision: 3,
+        kind: 'materialize',
+        status: 'running',
+        phase: 'publishing',
+      },
+    });
+    expect(resolveAgentCliExecutable).toHaveBeenCalledWith({
+      agentId: 'acme.runtime.provider',
+      cwd: '/repo',
+      env: { HOST_ENV: 'one', ISOLATED_ENV: 'two', AGENT_MODE: 'terminal' },
+      signal,
+    });
+    expect(launch).toHaveBeenCalledWith({
+      executable: {
+        path: '/opt/happier/agent',
+        hostGrant: { kind: 'agent-cli', grantId: 'grant-1' },
+      },
+      args: ['host-prefix', 'terminal', '--model', 'fast'],
+      cwd: '/repo',
+      env: { HOST_ENV: 'one', ISOLATED_ENV: 'two', AGENT_MODE: 'terminal' },
+      unsetEnvKeys: ['HOST_REMOVE', 'REMOVE_ME'],
+      stdio: 'inherit',
+      windowsHide: true,
+      windowsVerbatimArguments: false,
+      signal,
+    });
+    expect(publishControlState.mock.calls.map(([projection]) => projection)).toEqual([
+      { target: 'local', reason: 'terminal_started' },
+      { target: 'remote', reason: 'terminal_finished' },
+    ]);
+    expect(waitForTermination).toHaveBeenCalledOnce();
+    expect(stop).not.toHaveBeenCalled();
+    expect(releaseActiveBindings).toHaveBeenCalledOnce();
   });
 
-  it('injects terminal host orchestration into engine terminal launch requests', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.launch),
-    ]);
-    const host = Object.freeze({
-      input: Object.freeze({ subscribe: vi.fn() }),
-      switching: Object.freeze({ register: vi.fn() }),
-      process: Object.freeze({ launch: vi.fn() }),
-      transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
-      projection: Object.freeze({
-        openDirectTranscriptMirror: vi.fn(),
+  it('returns terminal control to the structured session when the existing host input owner fires', async () => {
+    let finishProcess!: () => void;
+    const processFinished = new Promise<void>((resolve) => {
+      finishProcess = resolve;
+    });
+    let finishStop!: () => void;
+    const stopFinished = new Promise<void>((resolve) => {
+      finishStop = resolve;
+    });
+    let inputHandler: ((trigger: { sequence: number }) => void | Promise<void>) | undefined;
+    const unsubscribeInput = vi.fn();
+    const unsubscribeSwitch = vi.fn();
+    const stop = vi.fn(async () => {
+      finishProcess();
+      await stopFinished;
+    });
+    const host = {
+      input: {
+        subscribe: vi.fn((handler: typeof inputHandler) => {
+          inputHandler = handler;
+          return { unsubscribe: unsubscribeInput };
+        }),
+      },
+      switching: {
+        register: vi.fn(() => ({ unsubscribe: unsubscribeSwitch })),
+      },
+      process: {
+        resolveAgentCliExecutable: vi.fn(async () => ({
+          executable: {
+            path: '/opt/happier/agent',
+            hostGrant: { kind: 'agent-cli' as const, grantId: 'grant-1' },
+          },
+          args: [],
+          source: 'managed',
+          resolvedPath: '/opt/happier/agent',
+        })),
+        launch: vi.fn(async () => ({
+          pid: 123,
+          waitForTermination: async () => {
+            await processFinished;
+            return { type: 'exited' as const, code: 0 };
+          },
+          stop,
+        })),
+      },
+      projection: {
         publishControlState: vi.fn(),
         publishProviderSessionId: vi.fn(),
         publishSubagentStarted: vi.fn(),
         publishSubagentCompleted: vi.fn(),
-      }),
-    });
-    const launch = vi.fn(async () => ({
-      type: 'control_returned' as const,
-      reason: 'switch_requested' as const,
-    }));
-    const engine = {
-      terminalRuntimeSurface: {
-        launch,
       },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveTerminalRuntimeHostOrchestration: async (request: { sessionId: string }) => (
-        request.sessionId === 'terminal-session' ? host : null
-      ),
-    } as never);
-
-    await expect(surfaces.terminalRuntime?.launch?.({
-      sessionId: 'terminal-session',
-      metadata: {},
-      directory: '/repo',
-    })).resolves.toEqual({
-      type: 'control_returned',
-      reason: 'switch_requested',
+    };
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime: createNativeRuntime(() => ({ argv: ['--terminal'] })),
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => true,
+      declaredAgentSurfaceFamilies: new Set(['terminalRuntime']),
+      diagnostics: [],
     });
-    expect(launch).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'terminal-session',
+
+    const result = surfaces.terminalRuntime!.launch!({
+      sessionId: 'session-1',
       metadata: {},
       directory: '/repo',
       host,
-    }));
-  });
-
-  it('fails closed before engine terminal launch when host projection cannot be resolved', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.launch),
-    ]);
-    const malformedHost = Object.freeze({
-      input: Object.freeze({ subscribe: vi.fn() }),
-      switching: Object.freeze({ register: vi.fn() }),
-      process: Object.freeze({ launch: vi.fn() }),
-      transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
     });
-    const launch = vi.fn(async () => ({
-      type: 'control_returned' as const,
-      reason: 'switch_requested' as const,
-    }));
-    const engine = {
-      terminalRuntimeSurface: {
-        launch,
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
+    await vi.waitFor(() => expect(host.process.launch).toHaveBeenCalledOnce());
+    if (!inputHandler) {
+      finishProcess();
+      await result;
+    }
+    expect(inputHandler).toBeTypeOf('function');
+    const inputReturn = Promise.resolve(inputHandler?.({ sequence: 1 }));
+    const outcomeBeforeStopCompletion = await Promise.race([
+      result.then((outcome) => ({ settled: true as const, outcome })),
+      new Promise<{ settled: false }>((resolve) => {
+        setTimeout(() => resolve({ settled: false }), 0);
+      }),
+    ]);
+    finishStop();
+    await inputReturn;
+    const outcome = outcomeBeforeStopCompletion.settled
+      ? outcomeBeforeStopCompletion.outcome
+      : await result;
 
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveTerminalRuntimeHostOrchestration: async () => malformedHost,
-    } as never);
-
-    await expect(surfaces.terminalRuntime?.launch?.({
-      sessionId: 'terminal-session',
-      metadata: {},
-      directory: '/repo',
-    })).rejects.toThrow(/terminal host projection/i);
-    expect(launch).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      type: 'control_returned',
+      reason: 'pending_input',
+    });
+    expect(stop).toHaveBeenCalledOnce();
+    expect(unsubscribeInput).toHaveBeenCalledOnce();
+    expect(unsubscribeSwitch).toHaveBeenCalledOnce();
   });
 
-  it('fails closed before engine terminal launch when host projection cannot open transcript mirrors', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.launch),
-    ]);
-    const malformedHost = Object.freeze({
-      input: Object.freeze({ subscribe: vi.fn() }),
-      switching: Object.freeze({ register: vi.fn() }),
-      process: Object.freeze({ launch: vi.fn() }),
-      transcripts: Object.freeze({ openDirectMirror: vi.fn() }),
-      projection: Object.freeze({
+  it('returns terminal control through the existing host switch owner', async () => {
+    let finishProcess!: () => void;
+    const processFinished = new Promise<void>((resolve) => {
+      finishProcess = resolve;
+    });
+    let switchHandler: ((request: { target: 'local' | 'remote' | 'unknown' }) => boolean | Promise<boolean>) | undefined;
+    const stop = vi.fn(async () => finishProcess());
+    const host = {
+      input: {
+        subscribe: vi.fn(() => ({ unsubscribe: vi.fn() })),
+      },
+      switching: {
+        register: vi.fn((handler: typeof switchHandler) => {
+          switchHandler = handler;
+          return { unsubscribe: vi.fn() };
+        }),
+      },
+      process: {
+        resolveAgentCliExecutable: vi.fn(async () => ({
+          executable: {
+            path: '/opt/happier/agent',
+            hostGrant: { kind: 'agent-cli' as const, grantId: 'grant-1' },
+          },
+          args: [],
+          source: 'managed',
+          resolvedPath: '/opt/happier/agent',
+        })),
+        launch: vi.fn(async () => ({
+          pid: 123,
+          waitForTermination: async () => {
+            await processFinished;
+            return { type: 'exited' as const, code: 0 };
+          },
+          stop,
+        })),
+      },
+      projection: {
         publishControlState: vi.fn(),
         publishProviderSessionId: vi.fn(),
         publishSubagentStarted: vi.fn(),
         publishSubagentCompleted: vi.fn(),
-      }),
-    });
-    const launch = vi.fn(async () => ({
-      type: 'control_returned' as const,
-      reason: 'switch_requested' as const,
-    }));
-    const engine = {
-      terminalRuntimeSurface: {
-        launch,
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveTerminalRuntimeHostOrchestration: async () => malformedHost,
-    } as never);
-
-    await expect(surfaces.terminalRuntime?.launch?.({
-      sessionId: 'terminal-session',
-      metadata: {},
-      directory: '/repo',
-    })).rejects.toThrow(/terminal host projection/i);
-    expect(launch).not.toHaveBeenCalled();
-  });
-
-  it('injects narrow runtime context into engine external-session requests', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('externalSession', catalog.externalSession.listCandidates),
-    ]);
-    const abortController = new AbortController();
-    const diagnosticsIssue = vi.fn();
-    const services = Object.freeze({ sessionId: 'session-1' });
-    const fileFollow = Object.freeze({ follow: vi.fn() });
-    const transcriptStore = Object.freeze({
-      getActivity: vi.fn(),
-      page: vi.fn(),
-      readAfter: vi.fn(),
-      acquireFollowLease: vi.fn(),
-      resolveFollowTranscriptPath: vi.fn(),
-      getWorkingDirectory: vi.fn(),
-      getProviderHome: vi.fn(),
-    });
-    const candidateHost = Object.freeze({
-      listViaChildHost: vi.fn(),
-    });
-    const runtime = Object.freeze({
-      signal: abortController.signal,
-      session: Object.freeze({
-        sessionId: 'session-1',
-        directory: '/repo/project',
-        services,
-      }),
-      directories: Object.freeze({
-        activeServerDir: '/happy/servers/current',
-        logsDir: '/happy/logs',
-      }),
-      transcripts: Object.freeze({
-        fileFollow,
-      }),
-      external: Object.freeze({
-        transcripts: transcriptStore,
-        candidates: candidateHost,
-      }),
-      diagnostics: Object.freeze({
-        issue: diagnosticsIssue,
-      }),
-    });
-    const listCandidates = vi.fn(async (_request: Parameters<NonNullable<EngineExternalSessionSurface['listCandidates']>>[0]) => ({
-      ok: true as const,
-      value: { candidates: [], nextCursor: null },
-    }));
-    const engine = {
-      externalSessionSurface: createExternalSessionSurfaceFixture({
-        listCandidates,
-      }),
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveExternalSessionRuntimeContext: async () => runtime,
-    } as never);
-
-    await expect(surfaces.externalSession?.listCandidates?.({
-      source,
-      limit: 5,
-    })).resolves.toEqual({
-      candidates: [],
-      nextCursor: null,
-    });
-    const expectedRuntime = {
-      signal: abortController.signal,
-      session: {
-        sessionId: 'session-1',
-        directory: '/repo/project',
-      },
-      directories: {
-        activeServerDir: '/happy/servers/current',
-        logsDir: '/happy/logs',
-      },
-      transcripts: {
-        fileFollow,
-      },
-      external: {
-        transcripts: transcriptStore,
-        candidates: candidateHost,
-      },
-      diagnostics: {
-        issue: diagnosticsIssue,
       },
     };
-    expect(listCandidates).toHaveBeenCalledWith({
-      source,
-      limit: 5,
-      runtime: expectedRuntime,
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime: createNativeRuntime(() => ({ argv: ['--terminal'] })),
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => true,
+      declaredAgentSurfaceFamilies: new Set(['terminalRuntime']),
+      diagnostics: [],
     });
-    expect(listCandidates.mock.calls[0]?.[0]?.runtime?.session)
-      .not.toHaveProperty('services');
-  });
 
-  it('preserves typed provider failures from engine external-session candidate surfaces', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('externalSession', catalog.externalSession.listCandidates),
-    ]);
-    const listCandidates = vi.fn(async () => ({
-      ok: false as const,
-      code: 'agent_unavailable' as const,
-      message: 'external_session_candidate_service_unavailable',
-      retryable: true,
-    }));
-    const engine = {
-      externalSessionSurface: createExternalSessionSurfaceFixture({
-        listCandidates,
-      }),
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-    } as never);
-
-    await expect(surfaces.externalSession?.listCandidates?.({
-      source,
-      limit: 5,
-    })).rejects.toMatchObject({
-      name: 'ExternalSessionProviderFailureError',
-      code: 'agent_unavailable',
-      operation: 'externalSession.listCandidates',
-      message: 'external_session_candidate_service_unavailable',
-      retryable: true,
-    } satisfies Partial<ExternalSessionProviderFailureError>);
-  });
-
-  it('grants a resolved external-session transcript path before acquiring a follow lease', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const transcriptPath = '/tmp/happier-external-follow.jsonl';
-    const backend = createBackend([
-      createSurfaceHandler('externalSession', catalog.externalSession.resolveFollowTranscriptPath),
-      createSurfaceHandler('externalSession', catalog.externalSession.acquireFollowLease),
-    ]);
-    const runtime = Object.freeze({
-      signal: new AbortController().signal,
-      session: Object.freeze({
-        sessionId: 'happy-session-1',
-        directory: '/repo/project',
-      }),
-      transcripts: Object.freeze({
-        fileFollow: Object.freeze({ follow: vi.fn() }),
-      }),
-      diagnostics: Object.freeze({
-        issue: vi.fn(),
-      }),
-    });
-    const resolveFollowTranscriptPath = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        path: transcriptPath,
-        sourceId: 'trusted-source-1',
-      },
-    }));
-    const acquireFollowLease = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        release: vi.fn(async () => undefined),
-        getTailCursor: () => 'tail-1',
-      },
-    }));
-    const grantExternalSessionTranscriptPath = vi.fn(async () => undefined);
-    const runExternalSessionFollowWithLinkedSession = vi.fn(async (
-      _sessionId: string | null,
-      operation: () => Promise<unknown>,
-    ) => await operation());
-    const engine = {
-      externalSessionSurface: {
-        ...createExternalSessionSurfaceFixture({}),
-        resolveFollowTranscriptPath,
-        acquireFollowLease,
-      } as EngineExternalSessionSurface,
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveExternalSessionRuntimeContext: async () => runtime,
-      grantExternalSessionTranscriptPath,
-      runExternalSessionFollowWithLinkedSession,
-    } as never);
-
-    await expect(surfaces.externalSession?.acquireFollowLease?.({
-      source,
-      remoteSessionId: 'remote-session-1',
-      reason: 'attached_view',
-      linkedSessionId: 'happy-session-1',
-    })).resolves.toEqual(expect.objectContaining({
-      getTailCursor: expect.any(Function),
-    }));
-    expect(resolveFollowTranscriptPath).toHaveBeenCalledWith({
-      source,
-      providerSessionId: 'remote-session-1',
-      reason: 'attached_view',
-      linkedSessionId: 'happy-session-1',
-      runtime,
-    });
-    expect(grantExternalSessionTranscriptPath).toHaveBeenCalledWith({
-      path: transcriptPath,
-      source,
-      providerSessionId: 'remote-session-1',
-      sourceId: 'trusted-source-1',
-      sessionId: 'happy-session-1',
-    });
-    expect(runExternalSessionFollowWithLinkedSession).toHaveBeenCalledWith('happy-session-1', expect.any(Function));
-    expect(acquireFollowLease).toHaveBeenCalledWith({
-      source,
-      providerSessionId: 'remote-session-1',
-      reason: 'attached_view',
-      linkedSessionId: 'happy-session-1',
-      runtime,
-    });
-  });
-
-  it('fails closed before external-session file-follow acquisition without a trusted path resolver', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('externalSession', catalog.externalSession.acquireFollowLease),
-    ]);
-    const acquireFollowLease = vi.fn(async () => ({
-      ok: true as const,
-      value: {
-        release: vi.fn(async () => undefined),
-      },
-    }));
-    const engine = {
-      externalSessionSurface: createExternalSessionSurfaceFixture({
-        acquireFollowLease,
-      }),
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      grantExternalSessionTranscriptPath: vi.fn(async () => undefined),
-    } as never);
-
-    await expect(surfaces.externalSession?.acquireFollowLease?.({
-      source,
-      remoteSessionId: 'remote-session-1',
-      reason: 'attached_view',
-    })).rejects.toThrow(/resolveFollowTranscriptPath/);
-    expect(acquireFollowLease).not.toHaveBeenCalled();
-  });
-
-  it('injects typed ACP session operations into engine fork requests', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('fork', catalog.fork.fork),
-    ]);
-    const acp = Object.freeze({
-      loadSession: vi.fn(async () => ({
-        ok: true as const,
-        value: { providerSessionId: 'parent-provider-session' },
-      })),
-      forkSession: vi.fn(async () => ({
-        ok: true as const,
-        value: { providerSessionId: 'child-provider-session' },
-      })),
-    });
-    const fork = vi.fn(async () => ({
-      providerSessionId: 'child-provider-session',
-      launch: {},
-    }));
-    const engine = {
-      forkSurface: {
-        fork,
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveAcpSessionOperations: async () => acp,
-    } as never);
-
-    await expect(surfaces.fork?.fork?.({
-      parentSessionId: 'parent-session',
-      parentMetadata: {},
-      directory: '/repo/project',
-      forkPoint: { kind: 'latest' },
-    })).resolves.toEqual({
-      providerSessionId: 'child-provider-session',
-      launch: {},
-    });
-    expect(fork).toHaveBeenCalledWith({
-      parentSessionId: 'parent-session',
-      parentMetadata: {},
-      directory: '/repo/project',
-      forkPoint: { kind: 'latest' },
-      acp,
-    });
-  });
-
-  it('fails closed before engine terminal launch when session services cannot be resolved', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.launch),
-    ]);
-    const launch = vi.fn(async () => ({
-      type: 'control_returned' as const,
-      reason: 'switch_requested' as const,
-    }));
-    const engine = {
-      terminalRuntimeSurface: {
-        launch,
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveTerminalRuntimeLaunchServices: async () => null,
-      resolveTerminalRuntimeLaunchSignal: () => new AbortController().signal,
-    } as never);
-
-    await expect(surfaces.terminalRuntime?.launch?.({
-      sessionId: 'terminal-session',
+    const result = surfaces.terminalRuntime!.launch!({
+      sessionId: 'session-1',
       metadata: {},
       directory: '/repo',
-    })).rejects.toThrow(/session-scoped services/i);
-    expect(launch).not.toHaveBeenCalled();
+      host,
+    });
+    await vi.waitFor(() => expect(switchHandler).toBeTypeOf('function'));
+    const accepted = await switchHandler?.({ target: 'remote' });
+    if (!accepted) finishProcess();
+
+    expect(accepted).toBe(true);
+    await expect(result).resolves.toEqual({
+      type: 'control_returned',
+      reason: 'switch_requested',
+    });
+    expect(stop).toHaveBeenCalledOnce();
   });
 
-  it('fails closed before engine terminal launch when host orchestration cannot be resolved', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('terminalRuntime', catalog.terminalRuntime.launch),
-    ]);
-    const launch = vi.fn(async () => ({
-      type: 'control_returned' as const,
-      reason: 'switch_requested' as const,
-    }));
-    const engine = {
-      terminalRuntimeSurface: {
-        launch,
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveTerminalRuntimeHostOrchestration: async () => null,
-    } as never);
+  it('rejects a retired generation before asking its native leaf for a launch plan', async () => {
+    const resolveLaunch = vi.fn(async () => ({ argv: [] }));
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime: createNativeRuntime(resolveLaunch),
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => false,
+      declaredAgentSurfaceFamilies: new Set(['terminalRuntime']),
+      diagnostics: [],
+    });
 
     await expect(surfaces.terminalRuntime?.launch?.({
-      sessionId: 'terminal-session',
+      sessionId: 'session-1',
       metadata: {},
       directory: '/repo',
-    })).rejects.toThrow(/terminal host orchestration/i);
-    expect(launch).not.toHaveBeenCalled();
+    })).rejects.toThrow(/retired runtime generation/i);
+    expect(resolveLaunch).not.toHaveBeenCalled();
   });
 
-  it('omits undeclared engine surface operations and records a static mismatch diagnostic', () => {
-    const backend = createBackend([]);
-    const engine = {
-      forkSurface: {
-        fork: async () => ({
-          providerSessionId: 'vendor-child',
-          launch: { directory: '/tmp/fork-child' },
-        }),
+  it('coalesces concurrent launches for one session into one serving process owner', async () => {
+    let finishProcess!: () => void;
+    const processFinished = new Promise<void>((resolve) => {
+      finishProcess = resolve;
+    });
+    const resolveLaunch = vi.fn(async () => ({ argv: ['--terminal'] }));
+    const processLaunch = vi.fn(async () => ({
+      pid: 123,
+      waitForTermination: async () => {
+        await processFinished;
+        return { type: 'exited' as const, code: 0 };
       },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
-
-    expect(surfaces.fork).toBeNull();
-    expect(diagnostics).toEqual([
-      expect.objectContaining({
-        code: 'engine_plugin_backend_surface_static_mismatch',
-        message: expect.stringContaining('fork:fork'),
-        backendId: backend.id,
-        pluginId: backend.pluginId,
-      }),
-    ]);
-  });
-
-  it('maps thrown availability evaluators to fail-closed evaluation_error results', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('attach', catalog.attach.evaluateAvailability),
-      createSurfaceHandler('attach', catalog.attach.attach),
-      createSurfaceHandler('handoff', catalog.handoff.evaluateAvailability),
-      createSurfaceHandler('handoff', catalog.handoff.exportBundle),
-      createSurfaceHandler('handoff', catalog.handoff.importBundle),
-      createSurfaceHandler('fork', catalog.fork.evaluateAvailability),
-      createSurfaceHandler('fork', catalog.fork.fork),
-      createSurfaceHandler('checkpoint', catalog.checkpoint.evaluateAvailability),
-    ]);
-    const throwAvailability = async () => {
-      throw new Error('provider exploded');
+      stop: vi.fn(async () => undefined),
+    }));
+    const host = {
+      input: { subscribe: vi.fn() },
+      switching: { register: vi.fn() },
+      process: {
+        resolveAgentCliExecutable: vi.fn(async () => ({
+          executable: {
+            path: '/opt/happier/agent',
+            hostGrant: { kind: 'agent-cli' as const, grantId: 'grant-1' },
+          },
+          args: [],
+          source: 'managed',
+          resolvedPath: '/opt/happier/agent',
+        })),
+        launch: processLaunch,
+      },
+      projection: {
+        publishControlState: vi.fn(),
+        publishProviderSessionId: vi.fn(),
+        publishSubagentStarted: vi.fn(),
+        publishSubagentCompleted: vi.fn(),
+      },
     };
-    const engine = {
-      attachSurface: {
-        evaluateAvailability: throwAvailability,
-        attach: async () => ({ ok: true, value: { exitCode: 0 } }),
-      },
-      handoffSurface: {
-        evaluateAvailability: throwAvailability,
-        exportBundle: async () => ({ ok: true, value: { bundle: {} } }),
-        importBundle: async () => ({
-          ok: true,
-          value: { providerSessionId: 'vendor-imported', launch: {} },
-        }),
-      },
-      forkSurface: {
-        evaluateAvailability: throwAvailability,
-        fork: async () => ({ providerSessionId: 'vendor-child', launch: {} }),
-      },
-      checkpointSurface: {
-        evaluateAvailability: throwAvailability,
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
-
-    await expect(surfaces.attach?.evaluateAvailability({
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime: createNativeRuntime(resolveLaunch),
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => true,
+      declaredAgentSurfaceFamilies: new Set(['terminalRuntime']),
+      diagnostics: [],
+    });
+    const launchRequest = {
       sessionId: 'session-1',
       metadata: {},
-      currentMachineId: null,
-      sessionMachineId: null,
-      hasLocalAttachmentInfo: false,
-    })).resolves.toEqual({ eligible: false, reason: 'evaluation_error' });
-    await expect(surfaces.handoff?.evaluateAvailability?.({
-      operation: 'exportBundle',
-      sessionId: 'session-1',
-      metadata: {},
-    })).resolves.toEqual({ available: false, reasonCode: 'evaluation_error' });
-    await expect(surfaces.fork?.evaluateAvailability?.({
-      operation: 'fork',
-      parentSessionId: 'session-1',
-      parentMetadata: {},
       directory: '/repo',
-      forkPoint: { kind: 'latest' },
-    })).resolves.toEqual({ available: false, reasonCode: 'evaluation_error' });
-    await expect(surfaces.checkpoint?.evaluateAvailability?.({
-      operation: 'restore',
-      sessionId: 'session-1',
-      target: { kind: 'provider_checkpoint', checkpointId: 'checkpoint-1' },
-      scopes: ['conversation'],
-      timing: 'idle',
-    })).resolves.toEqual({ available: false, reasonCode: 'evaluation_error' });
+      host,
+    };
+
+    const first = surfaces.terminalRuntime!.launch!(launchRequest);
+    const duplicate = surfaces.terminalRuntime!.launch!(launchRequest);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    finishProcess();
+
+    await expect(Promise.all([first, duplicate])).resolves.toEqual([
+      { type: 'process_exited', exitCode: 0 },
+      { type: 'process_exited', exitCode: 0 },
+    ]);
+    expect(resolveLaunch).toHaveBeenCalledOnce();
+    expect(processLaunch).toHaveBeenCalledOnce();
   });
 
-  it('preserves host direct-session takeover context around engine launch hints', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = {
-      ...createBackend([
-        createSurfaceHandler('externalSession', catalog.externalSession.resolveTakeoverLaunch),
-      ]),
-      id: 'claude',
-      agentId: 'claude',
-      provenance: 'first_party',
-      source: { kind: 'bundled' },
-    } satisfies ResolvedAgentRuntimeContribution;
-    const resolveTakeoverLaunch = vi.fn(async (_request: Parameters<NonNullable<EngineExternalSessionSurface['resolveTakeoverLaunch']>>[0]) => ({
-      ok: true as const,
-      value: {
-        providerSessionId: 'provider-session-1',
-        source: { kind: 'claudeConfig' as const, configDir: '/tmp/.claude', projectId: 'project-1' },
-        launch: {
-          directory: '/repo/from-provider',
-          environmentVariables: { CLAUDE_CONFIG_DIR: '/tmp/.claude' },
+  it('rejects a post-reload duplicate instead of joining the retired generation launch', async () => {
+    let current = true;
+    let finishProcess!: () => void;
+    const processFinished = new Promise<void>((resolve) => {
+      finishProcess = resolve;
+    });
+    const resolveLaunch = vi.fn(async () => ({ argv: ['--terminal'] }));
+    const processLaunch = vi.fn(async () => ({
+      pid: 123,
+      waitForTermination: async () => {
+        await processFinished;
+        return { type: 'exited' as const, code: 0 };
+      },
+      stop: vi.fn(async () => undefined),
+    }));
+    const host = {
+      input: { subscribe: vi.fn() },
+      switching: { register: vi.fn() },
+      process: {
+        resolveAgentCliExecutable: vi.fn(async () => ({
+          executable: {
+            path: '/opt/happier/agent',
+            hostGrant: { kind: 'agent-cli' as const, grantId: 'grant-1' },
+          },
+          args: [],
+          source: 'managed',
+          resolvedPath: '/opt/happier/agent',
+        })),
+        launch: processLaunch,
+      },
+      projection: {
+        publishControlState: vi.fn(),
+        publishProviderSessionId: vi.fn(),
+        publishSubagentStarted: vi.fn(),
+        publishSubagentCompleted: vi.fn(),
+      },
+    };
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime: createNativeRuntime(resolveLaunch),
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => current,
+      declaredAgentSurfaceFamilies: new Set(['terminalRuntime']),
+      diagnostics: [],
+    });
+    const launchRequest = {
+      sessionId: 'session-1',
+      metadata: {},
+      directory: '/repo',
+      host,
+    };
+
+    const activeLaunch = surfaces.terminalRuntime!.launch!(launchRequest);
+    await vi.waitFor(() => expect(processLaunch).toHaveBeenCalledOnce());
+    current = false;
+
+    const duplicateOutcome = surfaces.terminalRuntime!.launch!(launchRequest).then(
+      () => 'resolved' as const,
+      (error: unknown) => error instanceof Error && /retired runtime generation/i.test(error.message)
+        ? 'retired' as const
+        : 'unexpected-error' as const,
+    );
+    const outcomeBeforeProcessExit = await Promise.race([
+      duplicateOutcome,
+      new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 0)),
+    ]);
+    finishProcess();
+    await expect(activeLaunch).rejects.toThrow(/retired runtime generation/i);
+    await duplicateOutcome;
+    expect(outcomeBeforeProcessExit).toBe('retired');
+    expect(resolveLaunch).toHaveBeenCalledOnce();
+    expect(processLaunch).toHaveBeenCalledOnce();
+  });
+
+  it('restores the leaf-declared exit presentation when host process launch fails', async () => {
+    const resolveLaunch = vi.fn(async () => ({
+      argv: [],
+      presentation: {
+        onLaunch: { target: 'local' as const },
+        onExit: { target: 'remote' as const },
+      },
+    }));
+    const publishControlState = vi.fn<(
+      projection: Readonly<{ target: 'local' | 'remote'; reason?: string }>,
+    ) => Promise<void>>(async () => undefined);
+    const surfaces = resolveBackendExecutionSurfacesFromNativeAgentRuntime({
+      backend: createBackend(),
+      runtime: createNativeRuntime(resolveLaunch),
+      agentId: 'acme.runtime.provider',
+      isCurrent: () => true,
+      declaredAgentSurfaceFamilies: new Set(['terminalRuntime']),
+      diagnostics: [],
+    });
+
+    await expect(surfaces.terminalRuntime?.launch?.({
+      sessionId: 'session-1',
+      metadata: {},
+      directory: '/repo',
+      host: {
+        input: { subscribe: vi.fn() },
+        switching: { register: vi.fn() },
+        process: {
+          resolveAgentCliExecutable: vi.fn(async () => ({
+            executable: {
+              path: '/opt/happier/agent',
+              hostGrant: { kind: 'agent-cli' as const, grantId: 'grant-1' },
+            },
+            args: [],
+            source: 'managed',
+            resolvedPath: '/opt/happier/agent',
+          })),
+          launch: vi.fn(async () => { throw new Error('spawn failed'); }),
+        },
+        projection: {
+          publishControlState,
+          publishProviderSessionId: vi.fn(),
+          publishSubagentStarted: vi.fn(),
+          publishSubagentCompleted: vi.fn(),
         },
       },
-    }));
-    const engine = {
-      externalSessionSurface: createExternalSessionSurfaceFixture({
-        resolveTakeoverLaunch,
-      }),
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
-
-    await expect(surfaces.externalSession?.resolveTakeoverSpawnOptions?.({
-      linked: createLinkedSession(),
-      sessionId: 'happy-session-1',
-    })).resolves.toEqual({
-      directory: '/repo/from-provider',
-      backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
-      existingSessionId: 'happy-session-1',
-      resume: 'provider-session-1',
-      approvedNewDirectoryCreation: true,
-      transcriptStorage: 'direct',
-      environmentVariables: { CLAUDE_CONFIG_DIR: '/tmp/.claude' },
-    });
-    expect(resolveTakeoverLaunch).toHaveBeenCalledWith({
-      linkedSessionId: 'happy-session-1',
-      providerSessionId: 'provider-session-1',
-      source: { kind: 'claudeConfig', configDir: '/tmp/.claude', projectId: 'project-1' },
-      metadata: { path: '/repo/from-metadata' },
-    });
-  });
-
-  it('does not expose session-scoped services through external-session runtime context', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('externalSession', catalog.externalSession.resolveTakeoverLaunch),
+    })).rejects.toThrow('spawn failed');
+    expect(publishControlState.mock.calls.map(([projection]) => projection)).toEqual([
+      { target: 'local' },
+      { target: 'remote' },
     ]);
-    const resolveTakeoverLaunch = vi.fn(async (_request: Parameters<NonNullable<EngineExternalSessionSurface['resolveTakeoverLaunch']>>[0]) => ({
-      ok: true as const,
-      value: {
-        providerSessionId: 'provider-session-1',
-        source,
-        launch: {
-          directory: '/repo/from-provider',
-        },
-      },
-    }));
-    const engine = {
-      externalSessionSurface: createExternalSessionSurfaceFixture({
-        resolveTakeoverLaunch,
-      }),
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-    const serviceBag = Object.freeze({
-      send: vi.fn(),
-      writeMetadata: vi.fn(),
-      writeAgentState: vi.fn(),
-    });
-    const runtime = Object.freeze({
-      signal: new AbortController().signal,
-      session: Object.freeze({
-        sessionId: 'happy-session-1',
-        directory: '/repo/from-session-path',
-        services: serviceBag,
-      }),
-      directories: Object.freeze({
-        activeServerDir: '/happy/server',
-        logsDir: '/happy/logs',
-        env: process.env,
-      }),
-      transcripts: Object.freeze({
-        fileFollow: Object.freeze({ follow: vi.fn() }),
-        rawClient: Object.freeze({ request: vi.fn() }),
-      }),
-      external: Object.freeze({
-        transcripts: Object.freeze({
-          getActivity: vi.fn(),
-          page: vi.fn(),
-          readAfter: vi.fn(),
-          acquireFollowLease: vi.fn(),
-          resolveFollowTranscriptPath: vi.fn(),
-          getWorkingDirectory: vi.fn(),
-          getProviderHome: vi.fn(),
-        }),
-        candidates: Object.freeze({
-          listViaChildHost: vi.fn(),
-        }),
-        rawClient: Object.freeze({ request: vi.fn() }),
-      }),
-      diagnostics: Object.freeze({
-        issue: vi.fn(),
-        hostServices: serviceBag,
-      }),
-      hostServices: serviceBag,
-    });
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({
-      backend,
-      engine,
-      diagnostics,
-      resolveExternalSessionRuntimeContext: async () => runtime as never,
-    });
-
-    await expect(surfaces.externalSession?.resolveTakeoverSpawnOptions?.({
-      linked: createLinkedSession({ source }),
-      sessionId: 'happy-session-1',
-    })).resolves.toMatchObject({
-      directory: '/repo/from-provider',
-    });
-    const runtimeArg = resolveTakeoverLaunch.mock.calls[0]?.[0]?.runtime as ExternalSessionRuntimeContextV1 | undefined;
-    expect(runtimeArg?.session).toEqual({
-      sessionId: 'happy-session-1',
-      directory: '/repo/from-session-path',
-    });
-    expect(runtimeArg?.session).not.toHaveProperty('services');
-    expect(runtimeArg).not.toHaveProperty('hostServices');
-    expect(runtimeArg?.directories).toEqual({
-      activeServerDir: '/happy/server',
-      logsDir: '/happy/logs',
-    });
-    expect(runtimeArg?.directories).not.toHaveProperty('env');
-    expect(runtimeArg?.transcripts).toEqual({
-      fileFollow: runtime.transcripts.fileFollow,
-    });
-    expect(runtimeArg?.transcripts).not.toHaveProperty('rawClient');
-    expect(runtimeArg?.external).toEqual({
-      transcripts: runtime.external.transcripts,
-      candidates: runtime.external.candidates,
-    });
-    expect(runtimeArg?.external).not.toHaveProperty('rawClient');
-    expect(runtimeArg?.diagnostics).toEqual({
-      issue: runtime.diagnostics.issue,
-    });
-    expect(runtimeArg?.diagnostics).not.toHaveProperty('hostServices');
-  });
-
-  it('maps engine takeover_not_available results to a null takeover spawn plan', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('externalSession', catalog.externalSession.resolveTakeoverLaunch),
-    ]);
-    const engine = {
-      externalSessionSurface: createExternalSessionSurfaceFixture({
-        resolveTakeoverLaunch: async () => ({
-          ok: false as const,
-          code: 'takeover_not_available' as const,
-          message: 'provider has no resumable cwd',
-        }),
-      }),
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
-
-    await expect(surfaces.externalSession?.resolveTakeoverSpawnOptions?.({
-      linked: createLinkedSession(),
-      sessionId: 'happy-session-1',
-    })).resolves.toBeNull();
-  });
-
-  it('rejects malformed engine checkpoint creation requests before dispatch', async () => {
-    const catalog = BackendSurfaceOperationCatalogV1;
-    const backend = createBackend([
-      createSurfaceHandler('checkpoint', catalog.checkpoint.checkpoint),
-    ]);
-    const checkpoint = vi.fn(async () => ({
-      id: 'checkpoint-1',
-      target: { kind: 'provider_checkpoint' as const, checkpointId: 'checkpoint-1' },
-      timing: 'idle' as const,
-      checkpointScopes: ['conversation' as const],
-      restoreScopes: ['conversation' as const],
-    }));
-    const engine = {
-      checkpointSurface: {
-        checkpoint,
-      },
-    } satisfies AgentRuntimeV1;
-    const diagnostics: Parameters<typeof resolveBackendExecutionSurfacesFromEngine>[0]['diagnostics'] = [];
-
-    const surfaces = resolveBackendExecutionSurfacesFromEngine({ backend, engine, diagnostics });
-
-    await expect(async () => surfaces.checkpoint?.checkpoint?.({
-      sessionId: 'session-1',
-      scopes: [],
-      timing: 'idle',
-    } as never)).rejects.toThrow(/scopes/i);
-    expect(checkpoint).not.toHaveBeenCalled();
   });
 });

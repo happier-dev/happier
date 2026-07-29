@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
+import type { ScmBackendRegistry } from '@/scm/registry';
 
 import { compareWorkspaceManifests, type WorkspaceManifestComparison } from '../workspaceExportPackaging/compareWorkspaceManifests';
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
@@ -74,10 +75,15 @@ export async function verifyStagedWorkspace(params: Readonly<{
     blobsDirectory: string;
     expectedManifest: WorkspaceManifest;
     expectedBlobDigests: readonly string[];
+    scmRegistry?: ScmBackendRegistry;
 }>): Promise<VerifyStagedWorkspaceResult> {
     const scannedManifest = await scanWorkspaceManifest({
         workspaceRoot: params.workspaceDirectory,
-        safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(params.expectedManifest.entries),
+        safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(
+            params.expectedManifest.entries,
+            params.scmRegistry,
+        ),
+        scmRegistry: params.scmRegistry,
     });
     const actualManifest: WorkspaceManifest = {
         entries: [...scannedManifest.entries],

@@ -15,6 +15,10 @@ import type { ClientToServerEvents, ServerToClientEvents, Update } from '../../.
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '../../../client/serializeAxiosErrorForLog';
 import type { SessionSnapshotRefreshReason } from '../../sessionSnapshotRefreshReason';
+import {
+    createSessionSyncPendingInputServerContractController,
+    type SessionSyncPendingInputServerContractResult,
+} from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 
 function normalizeMachineId(value: unknown): string | undefined {
     if (typeof value !== 'string') {
@@ -35,7 +39,10 @@ export function initializeSessionClientConnection(
             onSocketConnect: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
             onSocketDisconnect: () => void;
         };
-        handleUserScopedUpdate: (data: Update) => void;
+        handleUserScopedUpdate: (
+            data: Update,
+            socket: Socket<ServerToClientEvents, ClientToServerEvents>,
+        ) => void;
         installSessionSocketEventHandlers: (socket: Socket<ServerToClientEvents, ClientToServerEvents>) => void;
         classifyTransportErrorToProbeResult: Parameters<typeof createManagedConnectionSupervisor>[0]['classifyTransportErrorToProbeResult'];
         onStateChange: (state: ManagedConnectionState) => void;
@@ -47,17 +54,25 @@ export function initializeSessionClientConnection(
         flushQueuedSessionMessagesOnReconnect: () => Promise<void>;
         flushDurableSessionMutationsOnReconnect: () => Promise<void>;
         replayLatestSessionPresenceOnReconnect?: () => void;
-        markConnected: () => 'connect' | 'reconnect';
+        markConnected: () => Readonly<{ reason: 'connect' | 'reconnect'; epoch: number }> | 'connect' | 'reconnect';
+        setSessionSyncPendingInputServerContractResult?: (
+            result: SessionSyncPendingInputServerContractResult | null,
+        ) => Promise<void> | void;
     }>,
 ): Readonly<{
     userSocket: Socket<ServerToClientEvents, ClientToServerEvents>;
     sessionConnectionSupervisor: ManagedConnectionSupervisor;
 }> {
     const userSocket = createUserScopedSocket({ token: params.token });
-    userSocket.on('update', (data: Update) => params.handleUserScopedUpdate(data));
+    userSocket.on('update', (data: Update) => params.handleUserScopedUpdate(data, userSocket));
     userSocket.on('session', () => {});
 
     let currentTransportSocket: Socket<ServerToClientEvents, ClientToServerEvents> | null = null;
+    let currentTransportMachineId: string | undefined;
+    const serverContractController = createSessionSyncPendingInputServerContractController({
+        serverUrl: resolveServerHttpBaseUrl(),
+        token: params.token,
+    });
     const sessionConnectionSupervisor = createManagedConnectionSupervisor({
         ...DEFAULT_MANAGED_CONNECTION_POLICY,
         createTransport: () => {
@@ -78,6 +93,7 @@ export function initializeSessionClientConnection(
                 machineId,
             });
             currentTransportSocket = socket;
+            currentTransportMachineId = machineId;
             params.setSessionSocket(socket);
             params.installSessionSocketEventHandlers(socket);
             return transport;
@@ -97,12 +113,49 @@ export function initializeSessionClientConnection(
                 return;
             }
             params.rpcHandlerManager.onSocketConnect(currentTransportSocket);
-            const connectReason = params.markConnected();
+            const markedConnected = params.markConnected();
+            const connected = typeof markedConnected === 'string'
+                ? { reason: markedConnected, epoch: 0 }
+                : markedConnected;
+            const probeScope = sessionConnectionSupervisor.captureProbeReportScope?.();
+            const contractProbe = {
+                sessionConnectionEpoch: connected.epoch,
+                socket: currentTransportSocket,
+                machineId: currentTransportMachineId,
+            };
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                const contractResult = await serverContractController.resolve(contractProbe);
+                if (
+                    contractResult.sessionConnectionEpoch !== connected.epoch
+                    || contractResult.socket !== currentTransportSocket
+                    || currentTransportSocket.connected !== true
+                ) {
+                    return;
+                }
+                await params.setSessionSyncPendingInputServerContractResult?.(contractResult);
+                if (contractResult.mode === 'auth_failed') {
+                    sessionConnectionSupervisor.reportProbeResult?.({
+                        status: 'auth_failed', statusCode: 401, errorMessage: 'Authentication failed while resolving session compatibility',
+                    }, probeScope);
+                    return;
+                }
+                if (contractResult.mode !== 'indeterminate') {
+                    break;
+                }
+                if (attempt === 1) {
+                    sessionConnectionSupervisor.reportProbeResult?.({
+                        status: 'retry_later',
+                        reason: 'probe_failed',
+                        errorMessage: 'Session compatibility remained indeterminate after bounded probes',
+                    }, probeScope);
+                    return;
+                }
+            }
             if (params.shouldKeepUserSocketConnected()) {
                 params.kickUserSocketConnect();
             }
             params.replayLatestSessionPresenceOnReconnect?.();
-            await params.syncChangesOnConnect({ reason: connectReason }).catch((error) => {
+            await params.syncChangesOnConnect({ reason: connected.reason }).catch((error) => {
                 logger.debug('[API] Session changes sync on connect failed (non-fatal)', {
                     error: serializeAxiosErrorForLog(error),
                 });
@@ -123,6 +176,10 @@ export function initializeSessionClientConnection(
         },
         onDisconnected: async ({ event }) => {
             logger.debug('[API] Socket disconnected:', event.reason ?? 'unknown');
+            const invalidated = serverContractController.invalidate({
+                socket: currentTransportSocket ?? undefined,
+            });
+            await params.setSessionSyncPendingInputServerContractResult?.(invalidated);
             params.rpcHandlerManager.onSocketDisconnect();
             try {
                 userSocket.disconnect();
@@ -131,6 +188,10 @@ export function initializeSessionClientConnection(
             }
         },
         onAuthFailed: async () => {
+            const invalidated = serverContractController.invalidate({
+                socket: currentTransportSocket ?? undefined,
+            });
+            await params.setSessionSyncPendingInputServerContractResult?.(invalidated);
             params.rpcHandlerManager.onSocketDisconnect();
             try {
                 userSocket.disconnect();

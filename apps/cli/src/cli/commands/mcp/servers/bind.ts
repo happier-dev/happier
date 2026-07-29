@@ -7,6 +7,7 @@ import { readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcp
 import { McpServersSettingsV1Schema } from '@happier-dev/protocol';
 
 import type { McpCommandDeps } from '../deps';
+import { createInvalidArgumentsError } from './errors';
 
 export async function cmdMcpServersBind(
   argv: string[],
@@ -39,7 +40,7 @@ export async function cmdMcpServersBind(
     mutate: (settings: Readonly<Record<string, unknown>>) => {
       const current = readMcpServersSettingsFromAccountSettings(settings);
       const server = current.servers.find((s) => s.id === serverRef || s.name === serverRef) ?? null;
-      if (!server) throw new Error(`MCP server not found: ${serverRef}`);
+      if (!server) throw createInvalidArgumentsError(`MCP server not found: ${serverRef}`);
       const next = McpServersSettingsV1Schema.parse({
         ...current,
         bindings: [

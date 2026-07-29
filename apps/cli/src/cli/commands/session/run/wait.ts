@@ -4,6 +4,7 @@ import type { Credentials } from '@/persistence';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { readIntFlagValue } from '@/cli/commands/shared/argvFlags';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionExecuteResult } from '@/cli/commands/session/shared/normalizeActionExecuteResult';
 
@@ -15,7 +16,7 @@ export async function cmdSessionRunWait(
   const idOrPrefix = String(argv[2] ?? '').trim();
   const runId = String(argv[3] ?? '').trim();
   if (!idOrPrefix || !runId) {
-    throw new Error('Usage: happier session run wait <session-id-or-prefix> <run-id> [--timeout <seconds>] [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runWait}`);
   }
 
   const timeoutSecondsRaw = readIntFlagValue(argv, '--timeout');

@@ -3,29 +3,41 @@ import { createHash } from 'node:crypto';
 import {
     RuntimeEventV1Schema,
     type RuntimeEventV1,
-    type SessionTurnMutationV1,
 } from '@happier-dev/protocol';
 
+import type { RuntimeSessionTurnMutationV1 } from '@/api/session/client/transport/mutations/createRuntimeSessionClientDurableMutationOutbox';
+
 const DEFAULT_ACTIVE_TURN_TOUCH_INTERVAL_MS = 60_000;
+const ACCEPTED_BEGIN_PUBLISH_RETRY_DELAY_MS = 50;
 
 export type SessionTurnLifecycleMutationPort = Readonly<{
     sessionId: string;
-    enqueueSessionTurnMutation?: (mutation: SessionTurnMutationV1) => void | Promise<void>;
+    enqueueSessionTurnMutation?: (mutation: RuntimeSessionTurnMutationV1) => void | Promise<void>;
 }>;
 
 type SessionTurnLifecycleParams = Readonly<{
     session: SessionTurnLifecycleMutationPort;
     agentId?: string;
+    onAcceptedTurnLifecycle?: (input: Readonly<{
+        event: 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+        turnId: string;
+        terminalStatus?: 'completed' | 'failed';
+    }>) => void | Promise<void>;
 }>;
 
 export type SessionTurnLifecycle = Readonly<{
     observeRuntimeEvent(event: RuntimeEventV1): void;
     hasActiveTurn(): boolean;
+    drainAcceptedLifecycle(): Promise<void>;
 }>;
+
+function delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function stableMutationId(params: Readonly<{
     sessionId: string;
-    action: SessionTurnMutationV1['action'];
+    action: RuntimeSessionTurnMutationV1['action'];
     event: RuntimeEventV1;
 }>): string {
     const digest = createHash('sha256')
@@ -45,9 +57,9 @@ function stableMutationId(params: Readonly<{
 function buildMutationBase(params: Readonly<{
     session: SessionTurnLifecycleMutationPort;
     agentId?: string;
-    action: SessionTurnMutationV1['action'];
+    action: RuntimeSessionTurnMutationV1['action'];
     event: RuntimeEventV1;
-}>): Pick<SessionTurnMutationV1, 'v' | 'sessionId' | 'mutationId' | 'observedAt' | 'agentId'> {
+}>): Pick<RuntimeSessionTurnMutationV1, 'v' | 'sessionId' | 'mutationId' | 'observedAt' | 'agentId'> {
     return {
         v: 1,
         sessionId: params.session.sessionId,
@@ -61,28 +73,115 @@ function buildMutationBase(params: Readonly<{
     };
 }
 
-function publishMutation(params: Readonly<{
-    session: SessionTurnLifecycleMutationPort;
-    mutation: SessionTurnMutationV1;
-}>): void {
-    if (!params.session.enqueueSessionTurnMutation) return;
-    try {
-        void Promise.resolve(params.session.enqueueSessionTurnMutation(params.mutation)).catch(() => undefined);
-    } catch {
-        // Mutation persistence is best-effort; runtime lifecycle observation must keep progressing.
-    }
-}
-
 export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): SessionTurnLifecycle {
     let activeTurnId: string | null = null;
     let lastActiveTurnTouchAtMs: number | null = null;
     const knownTurnIds = new Set<string>();
+    const terminalStatusByTurnId = new Map<string, 'completed' | 'ineligible'>();
+    const pendingRollbackEligibilityByTurnId = new Map<string, RuntimeSessionTurnMutationV1>();
+    let acceptedLifecycleTail = Promise.resolve();
+    const turnsWithMarkerButNoAcceptedBegin = new Set<string>();
+
+    function isFollowingMutationStillApplicable(mutation: RuntimeSessionTurnMutationV1): boolean {
+        return mutation.action !== 'mark_rollback_eligible'
+            || terminalStatusByTurnId.get(mutation.turnId) === 'completed';
+    }
+
+    async function publishAcceptedBeginMarker(
+        lifecycle: Readonly<{
+            event: 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+            turnId: string;
+            terminalStatus?: 'completed' | 'failed';
+        }>,
+    ): Promise<void> {
+        for (;;) {
+            try {
+                await params.onAcceptedTurnLifecycle?.(lifecycle);
+                return;
+            } catch {
+                // Accepted begin identity is marker custody. Retain and retry the serialized
+                // obligation instead of allowing cleanup to race a runner exit with no exact id.
+                await delay(ACCEPTED_BEGIN_PUBLISH_RETRY_DELAY_MS);
+            }
+        }
+    }
+
+    function publish(
+        mutation: RuntimeSessionTurnMutationV1,
+        acceptedLifecycle?: Readonly<{
+            event: 'task_started' | 'assistant_message_end' | 'turn_cancelled';
+            turnId: string;
+            terminalStatus?: 'completed' | 'failed';
+        }>,
+        followingMutation?: RuntimeSessionTurnMutationV1,
+    ): void {
+        const enqueue = params.session.enqueueSessionTurnMutation;
+        if (!enqueue) return;
+
+        if (!params.onAcceptedTurnLifecycle) {
+            try {
+                void Promise.resolve(enqueue(mutation))
+                    .then(async () => {
+                        if (followingMutation && isFollowingMutationStillApplicable(followingMutation)) {
+                            await enqueue(followingMutation);
+                        }
+                    })
+                    .catch(() => undefined);
+            } catch {
+                // Mutation persistence is best-effort; runtime lifecycle observation must keep progressing.
+            }
+            return;
+        }
+
+        acceptedLifecycleTail = acceptedLifecycleTail.then(async () => {
+            const mutationTurnId = 'turnId' in mutation ? mutation.turnId : null;
+            if (acceptedLifecycle?.event === 'task_started') {
+                await publishAcceptedBeginMarker(acceptedLifecycle);
+                turnsWithMarkerButNoAcceptedBegin.add(acceptedLifecycle.turnId);
+                try {
+                    await enqueue(mutation);
+                    turnsWithMarkerButNoAcceptedBegin.delete(acceptedLifecycle.turnId);
+                } catch {
+                    // The durable marker remains exact exit authority. Do not allow later rows or
+                    // terminal clear to erase that conservative evidence for this unaccepted begin.
+                }
+                return;
+            }
+
+            if (mutationTurnId && turnsWithMarkerButNoAcceptedBegin.has(mutationTurnId)) {
+                return;
+            }
+            try {
+                await enqueue(mutation);
+            } catch {
+                return;
+            }
+            if (!acceptedLifecycle) return;
+            try {
+                await params.onAcceptedTurnLifecycle?.(acceptedLifecycle);
+            } catch {
+                // A failed terminal clear safely retains the exact marker. Observed exit
+                // settlement can then close the stale turn idempotently.
+            }
+            if (followingMutation && isFollowingMutationStillApplicable(followingMutation)) {
+                try {
+                    await enqueue(followingMutation);
+                } catch {
+                    // Rollback eligibility remains optional when its durable admission fails.
+                }
+            }
+        });
+    }
 
     function hasKnownTurn(turnId: string): boolean {
         return activeTurnId === turnId || knownTurnIds.has(turnId);
     }
 
     return {
+        async drainAcceptedLifecycle() {
+            await acceptedLifecycleTail;
+        },
+
         hasActiveTurn() {
             return activeTurnId !== null;
         },
@@ -94,15 +193,17 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                 activeTurnId = event.turnId;
                 lastActiveTurnTouchAtMs = null;
                 knownTurnIds.add(event.turnId);
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                terminalStatusByTurnId.delete(event.turnId);
+                pendingRollbackEligibilityByTurnId.delete(event.turnId);
+                publish(
+                    {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'begin', event }),
                         action: 'begin',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                    { event: 'task_started', turnId: event.turnId },
+                );
                 return;
             }
 
@@ -115,37 +216,31 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     return;
                 }
                 lastActiveTurnTouchAtMs = event.emittedAtMs;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                publish({
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'touch_active', event }),
                         action: 'touch_active',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                );
                 return;
             }
 
             if (event.kind === 'turn-agent-id-observed') {
                 if (!hasKnownTurn(event.turnId)) return;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                publish({
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'attach_agent_turn_id', event }),
                         action: 'attach_agent_turn_id',
                         turnId: event.turnId,
                         agentTurnId: event.agentTurnId,
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                );
                 return;
             }
 
             if (event.kind === 'turn-input-appended') {
                 if (!hasKnownTurn(event.turnId)) return;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                publish({
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'append_transcript_anchors', event }),
                         action: 'append_transcript_anchors',
                         turnId: event.turnId,
@@ -153,22 +248,26 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         transcriptAnchors: {
                             ...(typeof event.userMessageSeq === 'number' ? { userMessageSeqs: [event.userMessageSeq] } : {}),
                         },
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                );
                 return;
             }
 
             if (event.kind === 'turn-complete') {
                 if (!hasKnownTurn(event.turnId)) return;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                terminalStatusByTurnId.set(event.turnId, 'completed');
+                const rollbackEligibility = pendingRollbackEligibilityByTurnId.get(event.turnId);
+                pendingRollbackEligibilityByTurnId.delete(event.turnId);
+                publish(
+                    {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'complete', event }),
                         action: 'complete',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                    { event: 'assistant_message_end', turnId: event.turnId, terminalStatus: 'completed' },
+                    rollbackEligibility,
+                );
                 if (activeTurnId === event.turnId) {
                     activeTurnId = null;
                     lastActiveTurnTouchAtMs = null;
@@ -178,16 +277,18 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
 
             if (event.kind === 'turn-failed') {
                 if (!hasKnownTurn(event.turnId)) return;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                terminalStatusByTurnId.set(event.turnId, 'ineligible');
+                pendingRollbackEligibilityByTurnId.delete(event.turnId);
+                publish(
+                    {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'fail', event }),
                         action: 'fail',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                         issue: event.issue,
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                    { event: 'assistant_message_end', turnId: event.turnId, terminalStatus: 'failed' },
+                );
                 if (activeTurnId === event.turnId) {
                     activeTurnId = null;
                     lastActiveTurnTouchAtMs = null;
@@ -197,16 +298,18 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
 
             if (event.kind === 'turn-cancelled') {
                 if (!hasKnownTurn(event.turnId)) return;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                terminalStatusByTurnId.set(event.turnId, 'ineligible');
+                pendingRollbackEligibilityByTurnId.delete(event.turnId);
+                publish(
+                    {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'cancel', event }),
                         action: 'cancel',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
                         ...(event.reason ? { reason: event.reason } : {}),
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                    { event: 'turn_cancelled', turnId: event.turnId },
+                );
                 if (activeTurnId === event.turnId) {
                     activeTurnId = null;
                     lastActiveTurnTouchAtMs = null;
@@ -216,9 +319,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
 
             if (event.kind === 'turn-rollback-boundary-observed') {
                 if (!hasKnownTurn(event.turnId)) return;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                const mutation = {
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'mark_rollback_eligible', event }),
                         action: 'mark_rollback_eligible',
                         turnId: event.turnId,
@@ -236,17 +337,25 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                             ...(event.endSeqInclusive !== undefined
                                 ? { endSeqInclusive: event.endSeqInclusive }
                                 : {}),
+                            ...(event.providerCheckpoint !== undefined
+                                ? { providerCheckpoint: event.providerCheckpoint }
+                                : {}),
                         },
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1;
+                const terminalStatus = terminalStatusByTurnId.get(event.turnId);
+                if (terminalStatus === 'ineligible') return;
+                if (terminalStatus === 'completed') {
+                    publish(mutation);
+                    return;
+                }
+                pendingRollbackEligibilityByTurnId.set(event.turnId, mutation);
                 return;
             }
 
             if (event.kind === 'turn-rollback-applied') {
-                if (!hasKnownTurn(event.turnId)) return;
-                publishMutation({
-                    session: params.session,
-                    mutation: {
+                terminalStatusByTurnId.set(event.turnId, 'ineligible');
+                pendingRollbackEligibilityByTurnId.delete(event.turnId);
+                publish({
                         ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'mark_rolled_back', event }),
                         action: 'mark_rolled_back',
                         turnId: event.turnId,
@@ -255,20 +364,15 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         ...(typeof event.agentRollbackOrdinal === 'number'
                             ? { agentRollbackOrdinal: event.agentRollbackOrdinal }
                             : {}),
-                    } satisfies SessionTurnMutationV1,
-                });
+                    } satisfies RuntimeSessionTurnMutationV1,
+                );
                 return;
             }
 
             if (event.kind === 'session-ended') {
-                publishMutation({
-                    session: params.session,
-                    mutation: {
-                        ...buildMutationBase({ session: params.session, agentId: params.agentId, action: 'end_session', event }),
-                        action: 'end_session',
-                        ...(activeTurnId ? { turnId: activeTurnId } : {}),
-                    } satisfies SessionTurnMutationV1,
-                });
+                if (!activeTurnId) return;
+                terminalStatusByTurnId.set(activeTurnId, 'ineligible');
+                pendingRollbackEligibilityByTurnId.delete(activeTurnId);
                 activeTurnId = null;
             }
         },

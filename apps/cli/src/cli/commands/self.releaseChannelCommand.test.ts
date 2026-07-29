@@ -6,14 +6,20 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { promoteVersionedPayload } from '@happier-dev/cli-common/firstPartyRuntime';
-import type { HappierServiceInventory } from '@happier-dev/cli-common/happierRuntime';
 import { captureConsoleLogAndMuteStdout } from '@/testkit/logger/captureOutput';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import type {
+    InstalledDaemonServiceEntry,
+    discoverInstalledDaemonServiceEntries,
+} from '@/daemon/service/discoverInstalledDaemonServiceEntries';
 
 const promptAnswers: string[] = [];
 
-const { spawnHappyCLIMock, discoverHappierServicesMock } = vi.hoisted(() => ({
+const { spawnHappyCLIMock, discoverInstalledDaemonServiceEntriesMock } = vi.hoisted(() => ({
     spawnHappyCLIMock: vi.fn(),
-    discoverHappierServicesMock: vi.fn<(...args: unknown[]) => Promise<HappierServiceInventory>>(async () => ({ services: [] })),
+    discoverInstalledDaemonServiceEntriesMock: vi.fn<typeof discoverInstalledDaemonServiceEntries>(
+        async () => [] as readonly InstalledDaemonServiceEntry[],
+    ),
 }));
 
 vi.mock('node:readline', () => ({
@@ -29,13 +35,56 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
     spawnHappyCLI: (...args: unknown[]) => spawnHappyCLIMock(...args),
 }));
 
-vi.mock('@happier-dev/cli-common/happierRuntime', async () => {
-    const actual = await vi.importActual<typeof import('@happier-dev/cli-common/happierRuntime')>('@happier-dev/cli-common/happierRuntime');
+vi.mock('@/daemon/service/discoverInstalledDaemonServiceEntries', async () => {
+    const actual = await vi.importActual<typeof import('@/daemon/service/discoverInstalledDaemonServiceEntries')>(
+        '@/daemon/service/discoverInstalledDaemonServiceEntries',
+    );
     return {
         ...actual,
-        discoverHappierServices: (...args: Parameters<typeof actual.discoverHappierServices>) => discoverHappierServicesMock(...args),
+        discoverInstalledDaemonServiceEntries: (
+            ...args: Parameters<typeof actual.discoverInstalledDaemonServiceEntries>
+        ) => discoverInstalledDaemonServiceEntriesMock(...args),
     };
 });
+
+const DAEMON_SERVICE_ENV_KEYS = [
+    'HAPPIER_HOME_DIR',
+    'HAPPIER_DAEMON_SERVICE_PLATFORM',
+    'HAPPIER_DAEMON_SERVICE_USER_HOME_DIR',
+    'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+    'HAPPIER_DAEMON_SERVICE_TARGET_MODE',
+] as const;
+
+function configureDaemonServiceDiscovery(homeDir: string) {
+    const scope = createEnvKeyScope(DAEMON_SERVICE_ENV_KEYS);
+    scope.patch({
+        HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux',
+        HAPPIER_DAEMON_SERVICE_USER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR: homeDir,
+        HAPPIER_DAEMON_SERVICE_TARGET_MODE: 'default-following',
+    });
+    return scope;
+}
+
+function createInstalledDefaultFollowingService(
+    mode: 'user' | 'system',
+): InstalledDaemonServiceEntry {
+    return {
+        serverId: 'default',
+        name: 'Default background service',
+        installed: true,
+        path: mode === 'system'
+            ? '/etc/systemd/system/happier-daemon.default.service'
+            : '/tmp/happier-daemon.default.service',
+        platform: 'linux',
+        mode,
+        happierHomeDir: '/tmp/happier',
+        releaseChannel: 'preview',
+        label: 'happier-daemon.default',
+        targetMode: 'default-following',
+    };
+}
 
 async function createStagedPayload(rootDir: string, versionId: string, contents: string): Promise<string> {
     const stagedPayloadPath = join(rootDir, `stage-${versionId}`);
@@ -61,11 +110,20 @@ function setTtyMode(stdinIsTTY: boolean, stdoutIsTTY: boolean): () => void {
     };
 }
 
+function setProcessPlatform(platform: NodeJS.Platform): () => void {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { configurable: true, value: platform });
+    return () => {
+        if (descriptor) Object.defineProperty(process, 'platform', descriptor);
+    };
+}
+
 describe('happier self release-channel command', () => {
     afterEach(() => {
         vi.restoreAllMocks();
         spawnHappyCLIMock.mockReset();
-        discoverHappierServicesMock.mockReset();
+        discoverInstalledDaemonServiceEntriesMock.mockReset();
+        discoverInstalledDaemonServiceEntriesMock.mockResolvedValue([]);
         promptAnswers.length = 0;
     });
 
@@ -197,12 +255,12 @@ describe('happier self release-channel command', () => {
 
     it('prompts to restart the default-following background service after switching the default release-channel', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-self-release-channel-restart-'));
-        const previousHome = process.env.HAPPIER_HOME_DIR;
+        const daemonServiceEnv = configureDaemonServiceDiscovery(homeDir);
         const previousArgv = [...process.argv];
         const restoreTty = setTtyMode(true, true);
+        const restorePlatform = setProcessPlatform('linux');
 
         try {
-            process.env.HAPPIER_HOME_DIR = homeDir;
             process.argv[1] = join(homeDir, 'bin', 'happier');
 
             await promoteVersionedPayload({
@@ -220,24 +278,9 @@ describe('happier self release-channel command', () => {
                 stagedPayloadPath: await createStagedPayload(homeDir, '2.0.0', 'preview-binary'),
             });
 
-            discoverHappierServicesMock.mockResolvedValue({
-                services: [{
-                    id: 'svc-default',
-                    serviceType: 'daemon',
-                    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32' ? process.platform : 'darwin',
-                    backend: process.platform === 'linux' ? 'systemd-user' : process.platform === 'win32' ? 'schtasks-user' : 'launchd',
-                    label: 'happier-default',
-                    targetMode: 'default-following',
-                    verification: 'verified',
-                    ring: null,
-                    instanceId: null,
-                    scope: 'user',
-                    definitionPath: '/tmp/happier-default',
-                    executablePath: '/tmp/happier',
-                    installed: true,
-                    running: true,
-                }],
-            });
+            discoverInstalledDaemonServiceEntriesMock.mockImplementation(async (params) =>
+                params.mode === 'user' ? [createInstalledDefaultFollowingService('user')] : [],
+            );
             spawnHappyCLIMock.mockReturnValue({
                 on: (event: string, cb: (value?: number) => void) => {
                     if (event === 'close') cb(0);
@@ -264,9 +307,9 @@ describe('happier self release-channel command', () => {
                 expect(readlinkSync(defaultShimPath)).toMatch(/cli-preview\/current\/happier|..\/cli-preview\/current\/happier/);
             }
         } finally {
+            restorePlatform();
             restoreTty();
-            if (previousHome == null) delete process.env.HAPPIER_HOME_DIR;
-            else process.env.HAPPIER_HOME_DIR = previousHome;
+            daemonServiceEnv.restore();
             process.argv = previousArgv;
             await rm(homeDir, { recursive: true, force: true });
         }
@@ -274,13 +317,13 @@ describe('happier self release-channel command', () => {
 
     it('prints manual restart guidance in non-interactive mode when a default-following background service exists', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-self-release-channel-manual-followup-'));
-        const previousHome = process.env.HAPPIER_HOME_DIR;
+        const daemonServiceEnv = configureDaemonServiceDiscovery(homeDir);
         const previousArgv = [...process.argv];
         const restoreTty = setTtyMode(false, false);
+        const restorePlatform = setProcessPlatform('linux');
         const output = captureConsoleLogAndMuteStdout();
 
         try {
-            process.env.HAPPIER_HOME_DIR = homeDir;
             process.argv[1] = join(homeDir, 'bin', 'happier');
 
             await promoteVersionedPayload({
@@ -298,24 +341,9 @@ describe('happier self release-channel command', () => {
                 stagedPayloadPath: await createStagedPayload(homeDir, '2.0.0', 'preview-binary'),
             });
 
-            discoverHappierServicesMock.mockResolvedValue({
-                services: [{
-                    id: 'svc-default',
-                    serviceType: 'daemon',
-                    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32' ? process.platform : 'darwin',
-                    backend: process.platform === 'linux' ? 'systemd-user' : process.platform === 'win32' ? 'schtasks-user' : 'launchd',
-                    label: 'happier-default',
-                    targetMode: 'default-following',
-                    verification: 'verified',
-                    ring: null,
-                    instanceId: null,
-                    scope: 'user',
-                    definitionPath: '/tmp/happier-default',
-                    executablePath: '/tmp/happier',
-                    installed: true,
-                    running: true,
-                }],
-            });
+            discoverInstalledDaemonServiceEntriesMock.mockImplementation(async (params) =>
+                params.mode === 'user' ? [createInstalledDefaultFollowingService('user')] : [],
+            );
 
             const { handleSelfCliCommand } = await import('./self');
             await handleSelfCliCommand({
@@ -331,9 +359,9 @@ describe('happier self release-channel command', () => {
             expect(out).toContain('preview release-channel');
         } finally {
             output.restore();
+            restorePlatform();
             restoreTty();
-            if (previousHome == null) delete process.env.HAPPIER_HOME_DIR;
-            else process.env.HAPPIER_HOME_DIR = previousHome;
+            daemonServiceEnv.restore();
             process.argv = previousArgv;
             await rm(homeDir, { recursive: true, force: true });
         }
@@ -341,12 +369,12 @@ describe('happier self release-channel command', () => {
 
     it('restarts the system-scoped default-following background service with --mode system', async () => {
         const homeDir = await mkdtemp(join(tmpdir(), 'happier-self-release-channel-system-restart-'));
-        const previousHome = process.env.HAPPIER_HOME_DIR;
+        const daemonServiceEnv = configureDaemonServiceDiscovery(homeDir);
         const previousArgv = [...process.argv];
         const restoreTty = setTtyMode(true, true);
+        const restorePlatform = setProcessPlatform('linux');
 
         try {
-            process.env.HAPPIER_HOME_DIR = homeDir;
             process.argv[1] = join(homeDir, 'bin', 'happier');
 
             await promoteVersionedPayload({
@@ -364,24 +392,9 @@ describe('happier self release-channel command', () => {
                 stagedPayloadPath: await createStagedPayload(homeDir, '2.0.0', 'preview-binary'),
             });
 
-            discoverHappierServicesMock.mockResolvedValue({
-                services: [{
-                    id: 'svc-default-system',
-                    serviceType: 'daemon',
-                    platform: process.platform === 'darwin' || process.platform === 'linux' || process.platform === 'win32' ? process.platform : 'darwin',
-                    backend: process.platform === 'linux' ? 'systemd-system' : process.platform === 'win32' ? 'schtasks-system' : 'launchd',
-                    label: 'happier-default-system',
-                    targetMode: 'default-following',
-                    verification: 'verified',
-                    ring: null,
-                    instanceId: null,
-                    scope: 'system',
-                    definitionPath: '/tmp/happier-default-system',
-                    executablePath: '/tmp/happier',
-                    installed: true,
-                    running: true,
-                }],
-            });
+            discoverInstalledDaemonServiceEntriesMock.mockImplementation(async (params) =>
+                params.mode === 'system' ? [createInstalledDefaultFollowingService('system')] : [],
+            );
             spawnHappyCLIMock.mockReturnValue({
                 on: (event: string, cb: (value?: number) => void) => {
                     if (event === 'close') cb(0);
@@ -397,16 +410,19 @@ describe('happier self release-channel command', () => {
                 terminalRuntime: null,
             });
 
+            expect(discoverInstalledDaemonServiceEntriesMock).toHaveBeenCalledWith(
+                expect.objectContaining({ platform: 'linux', mode: 'system' }),
+            );
             expect(spawnHappyCLIMock).toHaveBeenCalledWith(
-                process.platform === 'linux' ? ['service', 'restart', '--mode', 'system'] : ['service', 'restart'],
+                ['service', 'restart', '--mode', 'system'],
                 expect.objectContaining({
                     stdio: 'inherit',
                 }),
             );
         } finally {
+            restorePlatform();
             restoreTty();
-            if (previousHome == null) delete process.env.HAPPIER_HOME_DIR;
-            else process.env.HAPPIER_HOME_DIR = previousHome;
+            daemonServiceEnv.restore();
             process.argv = previousArgv;
             await rm(homeDir, { recursive: true, force: true });
         }

@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, rm, writeFile } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { dirname, join, delimiter as PATH_DELIMITER } from 'node:path';
 
@@ -10,9 +10,17 @@ import {
   type PypiWheelAssetHostCompatibility,
 } from '@happier-dev/cli-common/agents';
 import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
+import {
+  decodeOutputConfigFrame,
+  encodeInputConfigFrame,
+} from '@happier-dev/plugins-antigravity/agent';
 
 import { configuration } from '@/configuration';
-import { runCliCommandBestEffort } from '@/capabilities/cliAuth/shared';
+import {
+  encodeLoopbackHandshakeFrame,
+  readLoopbackHandshakeFrame,
+} from '@/plugins/runtime/exec/loopbackHandshake';
+import { spawnSupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import type { RuntimeInstallableAdapter } from '../registry';
 
 type ManagedPypiWheelAssetDescriptor = InstallableDependencyDescriptor & Readonly<{
@@ -38,6 +46,15 @@ function managedInstallDir(descriptor: InstallableDependencyDescriptor): string 
 }
 
 type SupportedHostCompatibility = Extract<PypiWheelAssetHostCompatibility, { ok: true }>;
+
+const ANTIGRAVITY_LOCALHARNESS_V1_PROBE_PAYLOAD = encodeInputConfigFrame({
+  storageDirectory: '',
+  clientInfo: {
+    language: 'happier',
+    version: '0.0.0',
+    languageVersion: 'typescript',
+  },
+});
 
 function unsupportedHostMessage(
   descriptor: ManagedPypiWheelAssetDescriptor,
@@ -93,14 +110,36 @@ async function runCompatibilityProbe(params: Readonly<{
   if (params.probeId !== 'antigravity-localharness-v1') {
     return { ok: false, errorMessage: `Unsupported compatibility probe: ${params.probeId}` };
   }
-  const result = await runCliCommandBestEffort({
-    resolvedPath: params.executablePath,
-    args: ['--version'],
-    timeoutMs: 2_000,
-  });
-  return result.ok
-    ? { ok: true }
-    : { ok: false, errorMessage: result.stderr.trim() || `probe exited with ${result.exitCode ?? 'unknown status'}` };
+  let supervised: ReturnType<typeof spawnSupervisedPluginProcess> | null = null;
+  try {
+    supervised = spawnSupervisedPluginProcess({
+      command: params.executablePath,
+      args: [],
+      timeoutMs: 5_000,
+      spawnOptions: {
+        detached: process.platform !== 'win32',
+      },
+    });
+    const response = readLoopbackHandshakeFrame({
+      stdout: supervised.child.stdout,
+      byteOrder: 'little-endian',
+      timeoutMs: 5_000,
+    });
+    await supervised.handle.write(encodeLoopbackHandshakeFrame(
+      ANTIGRAVITY_LOCALHARNESS_V1_PROBE_PAYLOAD,
+      'little-endian',
+    ));
+    const frame = await response;
+    decodeOutputConfigFrame(frame);
+    return { ok: true };
+  } catch {
+    return {
+      ok: false,
+      errorMessage: 'Compatibility probe did not complete a valid framed startup handshake',
+    };
+  } finally {
+    await supervised?.dispose('caller');
+  }
 }
 
 async function installManagedPypiWheelAsset(
@@ -210,6 +249,9 @@ export function createManagedPypiWheelAssetRuntimeInstallable(
       };
     },
     installOrUpgrade: () => installManagedPypiWheelAsset(descriptor),
+    removeManagedInstall: async () => {
+      await rm(managedInstallDir(descriptor), { recursive: true, force: true });
+    },
     runBackgroundAutoUpdateCheck: async () => {
       if (descriptor.source.autoUpdateMode !== 'auto') return;
       if (descriptor.consent.update === 'required') return;

@@ -9,11 +9,30 @@ const LOCAL_POLICY_BY_FEATURE: Readonly<Partial<Record<FeatureId, FeatureLocalPo
   voice: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_VOICE__ENABLED, true),
   'voice.agent': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_VOICE_AGENT__ENABLED, true),
   'voice.daemonInference': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_VOICE_DAEMON_INFERENCE__ENABLED, false),
-  connectedServices: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED, true),
   'connectedServices.quotas': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED, true),
-  localServices: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED, false),
+  // Local services is now server-represented + default-allow (see protocol catalog +
+  // localServicesFeature.ts): the server is the gate. CLI local policy defaults to allow so it
+  // does not pre-empt the server decision; the env key remains an opt-out escape hatch. The
+  // destructive terminate action and exposure (preview/publicPreview) are server-gated too.
+  localServices: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED, true),
   'localServices.inventory': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_LOCAL_SERVICES_INVENTORY__ENABLED, true),
   'localServices.managed': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED, true),
+  // `browser.automation` is server-represented + default-ALLOW (§13.4 — the server owns the
+  // automation gate and can disable it independently for its users), so it deliberately has NO
+  // local-policy entry: the unlisted-id fallback returns true (allow) so local policy does not
+  // pre-empt the server decision. Its finer injectedPage/eval tiers stay client-represented +
+  // fail-closed — without an entry the unlisted-id fallback would open them by default, so keep
+  // them operator-opt-in on top of the gate.
+  'browser.automation.injectedPage': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_BROWSER_AUTOMATION_INJECTED_PAGE__ENABLED, false),
+  'browser.automation.eval': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_BROWSER_AUTOMATION_EVAL__ENABLED, false),
+  // The plugin UI tiers (hostedWeb / structuredMessages / reactNativeBundles)
+  // are now server-represented + default-ALLOW kill-switches (§4.1/§13.5.3): they deliberately have
+  // NO local-policy entry so the unlisted-id fallback returns true and the server bit governs. A
+  // hardcoded force-close here would override the now-ON server bit (a server-represented decision
+  // combines `localPolicyEnabled && serverEnabled`). Per-plugin install/enable/trust/runtime
+  // derivation (5.1/5.2) still governs actual render. The finer dev-only hot-reload tier stays
+  // client-represented + fail-closed (operator opt-in on top of the gate).
+  'plugins.ui.reactNativeBundles.devHotReload': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_PLUGINS_UI_REACT_NATIVE_BUNDLES_DEV_HOT_RELOAD__ENABLED, false),
   channelBridges: (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CHANNEL_BRIDGES__ENABLED, true),
   'channelBridges.telegram': (env) => parseBooleanEnv(env.HAPPIER_FEATURE_CHANNEL_BRIDGES_TELEGRAM__ENABLED, true),
 };

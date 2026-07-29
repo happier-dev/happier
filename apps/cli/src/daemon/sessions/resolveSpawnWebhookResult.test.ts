@@ -49,11 +49,12 @@ describe('resolveSpawnWebhookResult', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it('still converts webhook-timeout errors to success for non-attach tracked sessions that already have a canonical session id', () => {
+  it('keeps webhook-timeout errors when canonical startup readiness missed its deadline', () => {
     const trackedSession = {
       startedBy: 'daemon',
       pid: 322,
       happySessionId: 'session-322',
+      sessionWebhookTimedOutAtMs: 1_717_171_717_000,
     } as TrackedSession;
     const pidToTrackedSession = new Map<number, TrackedSession>([[322, trackedSession]]);
     const warn = vi.fn();
@@ -69,7 +70,11 @@ describe('resolveSpawnWebhookResult', () => {
       warn,
     });
 
-    expect(resolved).toEqual({ type: 'success', sessionId: 'session-322' });
+    expect(resolved).toEqual({
+      type: 'error',
+      errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_WEBHOOK_TIMEOUT,
+      errorMessage: 'timed out',
+    });
     expect(warn).toHaveBeenCalledTimes(1);
   });
 

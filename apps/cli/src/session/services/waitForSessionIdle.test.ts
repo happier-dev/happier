@@ -226,10 +226,10 @@ describe('waitForSessionIdle', () => {
                     latestTurnStatus: 'completed',
                     pendingPermissionRequestCount: 0,
                     pendingUserActionRequestCount: 0,
+                    runtimeActivityState: 'active',
                     runtimeActivityActiveCount: 1,
                     runtimeActivityObservedAt: 1_000,
-                    runtimeActivityExpiresAt: Date.now() + 60_000,
-                    runtimeActivitySourceClass: 'provider_detached_task',
+                    runtimeActivityRevision: 2,
                 },
             })),
         }));

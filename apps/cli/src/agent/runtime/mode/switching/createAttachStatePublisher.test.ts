@@ -1,12 +1,111 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Credentials } from '@/persistence';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 import { createAgentAttachStatePublisher } from './createAttachStatePublisher';
 
 describe('createAgentAttachStatePublisher', () => {
-  it('publishes shared writable runtime-switch state for agent-attach sessions', async () => {
+  it('keeps an ordinary OpenCode layout 0 attach-state mutation on the legacy socket owner', async () => {
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
+    };
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_opencode_ordinary',
+      encryptionMode: 'plain',
+      metadata: JSON.stringify({
+        path: '/workspace',
+        host: 'owner-host',
+        agent: 'opencode',
+        opencode: {
+          baseUrl: 'http://127.0.0.1:4096',
+          sessionId: 'remote-session-1',
+        },
+      }),
+      metadataVersion: 3,
+      agentState: JSON.stringify({ existing: 'value' }),
+      agentStateVersion: 4,
+    });
+    const socket = createApiSessionSocketStub();
+    type CreateSessionScopedSocket = NonNullable<
+      Parameters<
+        typeof createAgentAttachStatePublisher
+      >[0]['createSessionScopedSocketFn']
+    >;
+    // Socket.IO's concrete class has runtime-only members outside this boundary.
+    const createSessionScopedSocketSpy = vi.fn(
+      () => socket as unknown as ReturnType<CreateSessionScopedSocket>,
+    );
+    const createSessionScopedSocketFn: CreateSessionScopedSocket =
+      createSessionScopedSocketSpy;
+    const waitForSocketConnectFn = vi.fn(async () => undefined);
+    const legacyWrites: unknown[] = [];
+    const updateSessionAgentStateWithAckFn = vi.fn(async (params: any) => {
+      const next = params.handler(params.getAgentState() ?? {});
+      legacyWrites.push(next);
+      const version = params.getAgentStateVersion() + 1;
+      const ciphertext = JSON.stringify(next);
+      params.setAgentState(next);
+      params.setAgentStateVersion(version);
+      return {
+        agentState: next,
+        version,
+        ciphertext,
+      };
+    });
+    const updateSessionMetadataEnvelopeTupleWithRetryFn = vi.fn(
+      async (params: any) => {
+        expect(params.initialSnapshot).toMatchObject({
+          mode: 'legacy_owner',
+          metadataLayoutVersion: 0,
+        });
+        const updatedAgentState = await params.mutation.update(
+          params.initialSnapshot.value.agentState ?? {},
+        );
+        return await params.mutateLegacy({
+          kind: 'agentState',
+          current: params.initialSnapshot,
+          updatedAgentState,
+          mutation: params.mutation,
+        });
+      },
+    );
+
+    const publisher = createAgentAttachStatePublisher({
+      agentId: 'opencode',
+      sessionId: 'sid_opencode_ordinary',
+      credentials,
+      rawSession,
+      createSessionScopedSocketFn,
+      waitForSocketConnectFn,
+      updateSessionAgentStateWithAckFn,
+      updateSessionMetadataEnvelopeTupleWithRetryFn,
+    });
+
+    await publisher?.publishAttached(true);
+    await publisher?.publishAttached(false);
+
+    expect(legacyWrites).toEqual([
+      expect.objectContaining({
+        existing: 'value',
+        localControl: expect.objectContaining({ attached: true }),
+      }),
+      expect.objectContaining({
+        existing: 'value',
+        localControl: expect.objectContaining({ attached: false }),
+      }),
+    ]);
+    expect(updateSessionAgentStateWithAckFn).toHaveBeenCalledTimes(2);
+    expect(createSessionScopedSocketSpy).toHaveBeenCalledTimes(2);
+    expect(waitForSocketConnectFn).toHaveBeenCalledTimes(2);
+    expect(socket.connect).toHaveBeenCalledTimes(2);
+    expect(socket.disconnect).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a linked layout-0 attach-state mutation on the legacy socket owner while activation is frozen', async () => {
     const credentials: Credentials = {
       token: 'token-1',
       encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) },
@@ -16,16 +115,60 @@ describe('createAgentAttachStatePublisher', () => {
       encryptionMode: 'plain',
       agentState: JSON.stringify({ existing: 'value' }),
       agentStateVersion: 4,
-      metadata: JSON.stringify({ flavor: 'opencode' }),
+      metadata: JSON.stringify({
+        externalSessionV1: {
+          v: 1,
+          agentId: 'opencode',
+          machineId: 'machine-1',
+          remoteSessionId: 'remote-session-1',
+          source: {
+            kind: 'opencodeServer',
+            endpoint: 'http://127.0.0.1:4096',
+          },
+        },
+      }),
     });
-    const socket = {
-      connect: vi.fn(),
-      disconnect: vi.fn(),
-    };
+    const socket = createApiSessionSocketStub();
+    type CreateSessionScopedSocket = NonNullable<
+      Parameters<
+        typeof createAgentAttachStatePublisher
+      >[0]['createSessionScopedSocketFn']
+    >;
+    // Socket.IO's concrete class has runtime-only members outside this boundary.
+    const createSessionScopedSocketFn: CreateSessionScopedSocket = vi.fn(
+      () => socket as unknown as ReturnType<CreateSessionScopedSocket>,
+    );
+    const waitForSocketConnectFn = vi.fn(async () => undefined);
+    const publishedStates: unknown[] = [];
     const updateSessionAgentStateWithAckFn = vi.fn(async (params: any) => {
       const next = params.handler(params.getAgentState() ?? {});
+      publishedStates.push(next);
+      const version = params.getAgentStateVersion() + 1;
+      const ciphertext = JSON.stringify(next);
       params.setAgentState(next);
-      params.setAgentStateVersion(params.getAgentStateVersion() + 1);
+      params.setAgentStateVersion(version);
+      return {
+        agentState: next,
+        version,
+        ciphertext,
+      };
+    });
+    const updateSessionMetadataEnvelopeTupleWithRetryFn = vi.fn(async (
+      params: any,
+    ) => {
+      expect(params.initialSnapshot).toMatchObject({
+        mode: 'legacy_owner',
+        metadataLayoutVersion: 0,
+      });
+      const updatedAgentState = await params.mutation.update(
+        params.initialSnapshot.value.agentState ?? {},
+      );
+      return await params.mutateLegacy({
+        kind: 'agentState',
+        current: params.initialSnapshot,
+        updatedAgentState,
+        mutation: params.mutation,
+      });
     });
 
     const publisher = createAgentAttachStatePublisher({
@@ -33,23 +176,28 @@ describe('createAgentAttachStatePublisher', () => {
       sessionId: 'sid_opencode_1',
       credentials,
       rawSession,
-      createSessionScopedSocketFn: () => socket as any,
-      waitForSocketConnectFn: async () => {},
+      createSessionScopedSocketFn,
+      waitForSocketConnectFn,
       updateSessionAgentStateWithAckFn,
+      updateSessionMetadataEnvelopeTupleWithRetryFn,
     });
 
     expect(publisher).not.toBeNull();
     await publisher?.publishAttached(true);
     await publisher?.publishAttached(false);
 
-    expect(updateSessionAgentStateWithAckFn).toHaveBeenNthCalledWith(1, expect.objectContaining({
+    expect(updateSessionMetadataEnvelopeTupleWithRetryFn).toHaveBeenNthCalledWith(1, expect.objectContaining({
       sessionId: 'sid_opencode_1',
-      getAgentStateVersion: expect.any(Function),
-      setAgentStateVersion: expect.any(Function),
+      initialSnapshot: expect.objectContaining({
+        mode: 'legacy_owner',
+        metadataLayoutVersion: 0,
+        metadataCiphertext: rawSession.metadata,
+        agentStateCiphertext: rawSession.agentState,
+      }),
+      mutation: expect.objectContaining({ kind: 'agentState' }),
     }));
 
-    const firstState = updateSessionAgentStateWithAckFn.mock.calls[0]?.[0]?.handler({ existing: 'value' });
-    expect(firstState).toEqual({
+    expect(publishedStates[0]).toEqual({
       existing: 'value',
       controlledByUser: false,
       localControl: {
@@ -61,8 +209,7 @@ describe('createAgentAttachStatePublisher', () => {
       },
     });
 
-    const secondState = updateSessionAgentStateWithAckFn.mock.calls[1]?.[0]?.handler(firstState);
-    expect(secondState).toEqual({
+    expect(publishedStates[1]).toEqual({
       existing: 'value',
       controlledByUser: false,
       localControl: {
@@ -73,8 +220,6 @@ describe('createAgentAttachStatePublisher', () => {
         canDetach: false,
       },
     });
-    expect(socket.connect).toHaveBeenCalledTimes(2);
-    expect(socket.disconnect).toHaveBeenCalledTimes(2);
   });
 
   it('returns null for agents without agent-native attach', () => {
@@ -96,5 +241,70 @@ describe('createAgentAttachStatePublisher', () => {
     });
 
     expect(publisher).toBeNull();
+  });
+
+  it('publishes layout-1 attach state through the canonical owner tuple adapter', async () => {
+    const ownerSecret = new Uint8Array(32).fill(3);
+    const credentials: Credentials = {
+      token: 'token-1',
+      encryption: { type: 'legacy', secret: ownerSecret },
+    };
+    const metadata = {
+      path: '/private/worktree',
+      host: 'private-host',
+      flavor: 'opencode',
+    };
+    const agentState = { existing: 'value' };
+    const tuple = buildSessionMetadataEnvelopeFields({
+      credentials,
+      metadata,
+      agentState,
+      storedContentMode: 'plain',
+      encryptionKey: ownerSecret,
+      encryptionVariant: 'legacy',
+    });
+    const rawSession = createSessionRecordFixture({
+      id: 'sid_opencode_layout_1',
+      encryptionMode: 'plain',
+      metadataLayoutVersion: 1,
+      metadata: tuple.sharedMetadata.ciphertext,
+      metadataVersion: 4,
+      ownerMetadata: tuple.ownerMetadata.ciphertext,
+      agentState: tuple.agentState,
+      agentStateVersion: 7,
+    });
+    const updateSessionMetadataEnvelopeTupleWithRetryFn = vi.fn(
+      async (params: any) => {
+        const next = params.mutation.update(
+          params.initialSnapshot.value.agentState ?? {},
+        );
+        return {
+          ...params.initialSnapshot,
+          agentStateVersion: params.initialSnapshot.agentStateVersion + 1,
+          value: {
+            ...params.initialSnapshot.value,
+            agentState: next,
+          },
+        };
+      },
+    );
+
+    const publisher = createAgentAttachStatePublisher({
+      agentId: 'opencode',
+      sessionId: 'sid_opencode_layout_1',
+      credentials,
+      rawSession,
+      updateSessionMetadataEnvelopeTupleWithRetryFn,
+    });
+
+    await publisher?.publishAttached(true);
+
+    expect(updateSessionMetadataEnvelopeTupleWithRetryFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        token: 'token-1',
+        sessionId: 'sid_opencode_layout_1',
+        mutation: expect.objectContaining({ kind: 'agentState' }),
+      }),
+    );
   });
 });

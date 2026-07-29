@@ -1,4 +1,4 @@
-import { resolveScmBackendRegistry } from '../scmBackendCatalog';
+import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
 import type { ScmBackendRegistry } from '../registry';
 import { resolveScmSelection } from '../resolveScmSelection';
 import {
@@ -40,62 +40,63 @@ export async function realizeWorkspaceCheckoutWithScmWorkspace(input: Readonly<{
     >;
     registry?: ScmBackendRegistry;
 }>): Promise<ScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult | null> {
-    const registry = await resolveScmBackendRegistry(input.registry);
-    const resolved = await resolveScmSelection({
-        workingDirectory: input.sourcePath,
-        cwd: input.sourcePath,
-        registry,
-    });
-    if (!resolved) {
-        return null;
-    }
-
-    const workspaceIntegration = resolved.selection.backend.workspaceIntegration;
-    if (!workspaceIntegration) {
-        return null;
-    }
-
-    const workspaceCheckoutRealization = createScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest({
-        sourcePath: input.sourcePath,
-        targetPath: input.targetPath,
-        checkoutCreation: input.checkoutCreation,
-    });
-    if (workspaceIntegration.realizeWorkspaceCheckout) {
-        return await workspaceIntegration.realizeWorkspaceCheckout({
-            context: resolved.context,
-            workspaceCheckoutRealization,
+    return runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        const resolved = await resolveScmSelection({
+            workingDirectory: input.sourcePath,
+            cwd: input.sourcePath,
+            registry,
         });
-    }
-
-    if (input.targetPath) {
-        if (!workspaceIntegration.materializeWorkspaceCheckout) {
+        if (!resolved) {
             return null;
         }
 
-        const materialized = await workspaceIntegration.materializeWorkspaceCheckout({
+        const workspaceIntegration = resolved.selection.backend.workspaceIntegration;
+        if (!workspaceIntegration) {
+            return null;
+        }
+
+        const workspaceCheckoutRealization = createScmWorkspaceIntegrationWorkspaceCheckoutRealizationRequest({
+            sourcePath: input.sourcePath,
+            targetPath: input.targetPath,
+            checkoutCreation: input.checkoutCreation,
+        });
+        if (workspaceIntegration.realizeWorkspaceCheckout) {
+            return await workspaceIntegration.realizeWorkspaceCheckout({
+                context: resolved.context,
+                workspaceCheckoutRealization,
+            });
+        }
+
+        if (input.targetPath) {
+            if (!workspaceIntegration.materializeWorkspaceCheckout) {
+                return null;
+            }
+
+            const materialized = await workspaceIntegration.materializeWorkspaceCheckout({
+                context: resolved.context,
+                workspaceCheckoutMaterialization: createScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequestFromRealization(
+                    workspaceCheckoutRealization,
+                ),
+            });
+
+            return createScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult({
+                kind: workspaceCheckoutRealization.kind,
+                targetPath: materialized
+                    ? resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResultTargetPath(materialized)
+                    : input.targetPath,
+            });
+        }
+
+        if (!workspaceIntegration.createWorkspaceCheckout) {
+            return null;
+        }
+
+        return await workspaceIntegration.createWorkspaceCheckout({
             context: resolved.context,
-            workspaceCheckoutMaterialization: createScmWorkspaceIntegrationWorkspaceCheckoutMaterializationRequestFromRealization(
+            workspaceCheckoutCreation: createScmWorkspaceIntegrationWorkspaceCheckoutCreationRequestFromRealization(
                 workspaceCheckoutRealization,
             ),
         });
-
-        return createScmWorkspaceIntegrationWorkspaceCheckoutRealizationResult({
-            kind: workspaceCheckoutRealization.kind,
-            targetPath: materialized
-                ? resolveScmWorkspaceIntegrationWorkspaceCheckoutMaterializationResultTargetPath(materialized)
-                : input.targetPath,
-        });
-    }
-
-    if (!workspaceIntegration.createWorkspaceCheckout) {
-        return null;
-    }
-
-    return await workspaceIntegration.createWorkspaceCheckout({
-        context: resolved.context,
-        workspaceCheckoutCreation: createScmWorkspaceIntegrationWorkspaceCheckoutCreationRequestFromRealization(
-            workspaceCheckoutRealization,
-        ),
     });
 }
 

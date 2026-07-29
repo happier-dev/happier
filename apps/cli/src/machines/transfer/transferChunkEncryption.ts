@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 
 import {
   BOX_BUNDLE_PUBLIC_KEY_BYTES,
@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { TRANSFER_CHUNK_HARD_MAX_BYTES } from './transferChunkSizeLimit';
+import { openAes256GcmBytes, sealAes256GcmBytes } from '@/utils/crypto/aes256GcmBytes';
 
 const TRANSFER_CHUNK_DATA_KEY_BYTES = 32;
 const TRANSFER_CHUNK_NONCE_BYTES = 12;
@@ -24,6 +25,19 @@ type RandomBytesFn = (length: number) => Uint8Array;
 const TRANSFER_ENCRYPTED_DATA_KEY_ENVELOPE_HARD_MAX_BYTES = 1024;
 const TRANSFER_ENCRYPTED_CHUNK_HARD_MAX_BYTES =
   1 + TRANSFER_CHUNK_NONCE_BYTES + TRANSFER_CHUNK_HARD_MAX_BYTES + TRANSFER_CHUNK_AUTH_TAG_BYTES;
+const TRANSFER_CHUNK_JSON_BODY_OVERHEAD_BYTES = 4 * 1024;
+
+function resolveBase64EncodedCharsUpperBound(bytes: number): number {
+  return Math.ceil(bytes / 3) * 4;
+}
+
+export function resolveEncryptedTransferChunkJsonBodyMaxBytes(): number {
+  return (
+    resolveBase64EncodedCharsUpperBound(TRANSFER_ENCRYPTED_CHUNK_HARD_MAX_BYTES)
+    + resolveBase64EncodedCharsUpperBound(TRANSFER_ENCRYPTED_DATA_KEY_ENVELOPE_HARD_MAX_BYTES)
+    + TRANSFER_CHUNK_JSON_BODY_OVERHEAD_BYTES
+  );
+}
 
 function defaultRandomBytes(length: number): Uint8Array {
   return new Uint8Array(randomBytes(length));
@@ -120,25 +134,22 @@ export function createEncryptedTransferChunkEnvelope(params: Readonly<{
     throw new Error(`Invalid transfer chunk nonce length: ${nonce.length}`);
   }
 
-  const cipher = createCipheriv('aes-256-gcm', dataKey, nonce);
-  cipher.setAAD(buildTransferChunkAad({
-    transferId: params.transferId,
-    sequence: params.sequence,
-  }));
-  const ciphertextHead = cipher.update(params.payload);
-  const ciphertextTail = cipher.final();
-  const ciphertext = Buffer.allocUnsafe(ciphertextHead.length + ciphertextTail.length);
-  ciphertextHead.copy(ciphertext, 0);
-  ciphertextTail.copy(ciphertext, ciphertextHead.length);
-  const authTag = cipher.getAuthTag();
+  const ciphertextAndTag = sealAes256GcmBytes({
+    key: dataKey,
+    nonce,
+    aad: buildTransferChunkAad({
+      transferId: params.transferId,
+      sequence: params.sequence,
+    }),
+    plaintext: params.payload,
+  });
 
   const encryptedChunk = Buffer.allocUnsafe(
-    1 + TRANSFER_CHUNK_NONCE_BYTES + ciphertext.length + TRANSFER_CHUNK_AUTH_TAG_BYTES,
+    1 + TRANSFER_CHUNK_NONCE_BYTES + ciphertextAndTag.length,
   );
   encryptedChunk[0] = TRANSFER_CHUNK_BUNDLE_VERSION;
   Buffer.from(nonce).copy(encryptedChunk, 1);
-  ciphertext.copy(encryptedChunk, 1 + TRANSFER_CHUNK_NONCE_BYTES);
-  authTag.copy(encryptedChunk, 1 + TRANSFER_CHUNK_NONCE_BYTES + ciphertext.length);
+  Buffer.from(ciphertextAndTag).copy(encryptedChunk, 1 + TRANSFER_CHUNK_NONCE_BYTES);
   const encryptedDataKeyEnvelope = sealEncryptedDataKeyEnvelopeV1({
     dataKey,
     recipientPublicKey: parseTransferRecipientPublicKeyBase64(params.recipientPublicKeyBase64),
@@ -187,24 +198,19 @@ export function decryptEncryptedTransferChunkEnvelope(params: Readonly<{
 
   const nonceStart = 1;
   const ciphertextStart = nonceStart + TRANSFER_CHUNK_NONCE_BYTES;
-  const authTagStart = encryptedChunk.length - TRANSFER_CHUNK_AUTH_TAG_BYTES;
   const nonce = encryptedChunk.subarray(nonceStart, ciphertextStart);
-  const ciphertext = encryptedChunk.subarray(ciphertextStart, authTagStart);
-  const authTag = encryptedChunk.subarray(authTagStart);
+  const ciphertext = encryptedChunk.subarray(ciphertextStart);
 
   try {
-    const decipher = createDecipheriv('aes-256-gcm', dataKey, nonce);
-    decipher.setAAD(buildTransferChunkAad({
-      transferId: params.transferId,
-      sequence: params.sequence,
+    return Buffer.from(openAes256GcmBytes({
+      key: dataKey,
+      nonce,
+      aad: buildTransferChunkAad({
+        transferId: params.transferId,
+        sequence: params.sequence,
+      }),
+      ciphertext,
     }));
-    decipher.setAuthTag(authTag);
-    const plaintextHead = decipher.update(ciphertext);
-    const plaintextTail = decipher.final();
-    const plaintext = Buffer.allocUnsafe(plaintextHead.length + plaintextTail.length);
-    plaintextHead.copy(plaintext, 0);
-    plaintextTail.copy(plaintext, plaintextHead.length);
-    return plaintext;
   } catch {
     throw new Error(`Failed to decrypt transfer chunk for ${params.transferId}`);
   }

@@ -29,6 +29,40 @@ describe('setupOfflineReconnection', () => {
     vi.restoreAllMocks()
   })
 
+  it('configures a reconnected session before publishing the swap', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200 } as any)
+
+    const metadata = { startedBy: 'terminal' } as unknown as Metadata
+    const state = { controlledByUser: false } as AgentState
+    const realSession = { sessionId: 'real-session' } as unknown as ApiSessionClient
+    const order: string[] = []
+    const api = {
+      getOrCreateSession: async () => createSessionResponse('real-session', metadata, state),
+      sessionSyncClient: () => realSession,
+    } as unknown as ApiClient
+
+    setupOfflineReconnection({
+      api,
+      sessionTag: 'tag-configure-before-swap',
+      metadata,
+      state,
+      response: null,
+      onNotify: () => {},
+      configureSessionClient: () => {
+        order.push('configure')
+      },
+      onSessionSwap: () => {
+        order.push('swap')
+      },
+    })
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await vi.runAllTimersAsync()
+
+    expect(order).toEqual(['configure', 'swap'])
+  })
+
   it('does not emit unhandledRejection when onSessionSwap returns a rejected promise', async () => {
     vi.useFakeTimers()
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200 } as any)

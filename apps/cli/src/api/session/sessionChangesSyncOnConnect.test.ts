@@ -14,9 +14,7 @@ vi.mock('@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor', 
 }));
 
 import {
-  readSessionCatchUpAuthorization,
   runSessionChangesSyncOnConnect,
-  type SessionCatchUpAuthorization,
 } from './sessionChangesSyncOnConnect';
 
 function createChangesCursorStore(initialCursor = 3): {
@@ -37,13 +35,176 @@ describe('runSessionChangesSyncOnConnect', () => {
     vi.clearAllMocks();
   });
 
-  it('reads catch-up authorization through the protocol-owned parser', () => {
-    const authorization: SessionCatchUpAuthorization = readSessionCatchUpAuthorization('explicit_cursor')!;
+  it('refreshes the highest self-account settings version before publishing Pending and advancing the cursor', async () => {
+    const events: string[] = [];
+    fetchChanges.mockResolvedValueOnce({
+      status: 'ok',
+      response: {
+        nextCursor: 8,
+        changes: [
+          { cursor: 4, kind: 'account', entityId: 'self', changedAt: 100, hint: { settingsVersion: 5 } },
+          { cursor: 5, kind: 'account', entityId: 'self', changedAt: 101, hint: { settingsVersion: 7 } },
+          { cursor: 6, kind: 'session', entityId: 's1', changedAt: 102, hint: { pendingCount: 1, pendingVersion: 3 } },
+        ],
+      },
+    });
 
-    expect(authorization).toBe('explicit_cursor');
-    expect(readSessionCatchUpAuthorization('reconnect_watermark')).toBe('reconnect_watermark');
-    expect(readSessionCatchUpAuthorization('startup_recovery')).toBe('startup_recovery');
-    expect(readSessionCatchUpAuthorization('no_explicit_authorization')).toBeNull();
+    await runSessionChangesSyncOnConnect({
+      reason: 'reconnect',
+      token: 'token-1',
+      sessionId: 's1',
+      lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1',
+      readChangesCursor: async () => 3,
+      writeChangesCursor: async (_accountId, cursor) => { events.push(`cursor:${cursor}`); },
+      catchUpSessionMessages: async () => {},
+      syncSessionSnapshotFromServer: async () => true,
+      refreshAccountSettingsForMinimumVersion: async (version) => { events.push(`settings:${version}`); },
+      applyPendingQueueState: () => { events.push('pending'); },
+      onDebug: vi.fn(),
+    });
+
+    expect(events).toEqual(['settings:7', 'pending', 'cursor:8']);
+  });
+
+  it('does not publish Pending or advance the cursor when required settings convergence fails', async () => {
+    const changesCursor = createChangesCursorStore();
+    const applyPendingQueueState = vi.fn();
+    fetchChanges.mockResolvedValueOnce({
+      status: 'ok',
+      response: {
+        nextCursor: 8,
+        changes: [
+          { cursor: 4, kind: 'account', entityId: 'self', changedAt: 100, hint: { settingsVersion: 5 } },
+          { cursor: 5, kind: 'session', entityId: 's1', changedAt: 101, hint: { pendingCount: 1, pendingVersion: 3 } },
+        ],
+      },
+    });
+
+    await expect(runSessionChangesSyncOnConnect({
+      reason: 'reconnect',
+      token: 'token-1',
+      sessionId: 's1',
+      lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1',
+      ...changesCursor,
+      catchUpSessionMessages: async () => {},
+      syncSessionSnapshotFromServer: async () => true,
+      refreshAccountSettingsForMinimumVersion: async () => { throw new Error('settings unavailable'); },
+      applyPendingQueueState,
+      onDebug: vi.fn(),
+    })).rejects.toThrow('settings unavailable');
+
+    expect(applyPendingQueueState).not.toHaveBeenCalled();
+    expect(changesCursor.writeChangesCursor).not.toHaveBeenCalled();
+  });
+
+  it('force-refreshes settings on reconnect when no settings hint survived', async () => {
+    const events: string[] = [];
+    fetchChanges.mockResolvedValueOnce({ status: 'ok', response: { changes: [], nextCursor: 8 } });
+
+    await runSessionChangesSyncOnConnect({
+      reason: 'reconnect',
+      token: 'token-1',
+      sessionId: 's1',
+      lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1',
+      readChangesCursor: async () => 3,
+      writeChangesCursor: async (_accountId, cursor) => { events.push(`cursor:${cursor}`); },
+      catchUpSessionMessages: async () => {},
+      syncSessionSnapshotFromServer: async () => true,
+      refreshAccountSettingsForMinimumVersion: async (version) => { events.push(`settings:${version ?? 'force'}`); },
+      onDebug: vi.fn(),
+    });
+
+    expect(events).toEqual(['settings:force', 'cursor:8']);
+  });
+
+  it('force-refreshes settings before Pending and cursor work for a full changes page', async () => {
+    const events: string[] = [];
+    const changes = [
+      ...Array.from({ length: 199 }, (_, index) => ({
+        cursor: index + 1,
+        kind: 'machine',
+        entityId: `machine-${index}`,
+        changedAt: index + 1,
+        hint: null,
+      })),
+      { cursor: 200, kind: 'session', entityId: 's1', changedAt: 200, hint: { pendingCount: 1, pendingVersion: 2 } },
+    ];
+    fetchChanges.mockResolvedValueOnce({ status: 'ok', response: { changes, nextCursor: 200 } });
+
+    await runSessionChangesSyncOnConnect({
+      reason: 'connect',
+      token: 'token-1',
+      sessionId: 's1',
+      lastObservedMessageSeq: 0,
+      getAccountId: async () => 'account-1',
+      readChangesCursor: async () => 0,
+      writeChangesCursor: async (_accountId, cursor) => { events.push(`cursor:${cursor}`); },
+      catchUpSessionMessages: async () => {},
+      syncSessionSnapshotFromServer: async () => {
+        events.push('snapshot');
+        return true;
+      },
+      refreshAccountSettingsForMinimumVersion: async (version) => { events.push(`settings:${version ?? 'force'}`); },
+      applyPendingQueueState: () => { events.push('pending'); },
+      onDebug: vi.fn(),
+    });
+
+    expect(events).toEqual(['settings:force', 'pending', 'snapshot', 'cursor:200']);
+  });
+
+  it('force-refreshes settings for cursor-gone reconnect and advances only after transcript and snapshot convergence', async () => {
+    const events: string[] = [];
+    fetchChanges.mockResolvedValueOnce({ status: 'cursor-gone', currentCursor: 12 });
+
+    await runSessionChangesSyncOnConnect({
+      reason: 'reconnect',
+      token: 'token-1',
+      sessionId: 's1',
+      lastObservedMessageSeq: 11,
+      getAccountId: async () => 'account-1',
+      readChangesCursor: async () => 3,
+      writeChangesCursor: async (_accountId, cursor) => { events.push(`cursor:${cursor}`); },
+      catchUpSessionMessages: async () => { events.push('transcript'); },
+      syncSessionSnapshotFromServer: async () => {
+        events.push('snapshot');
+        return false;
+      },
+      refreshAccountSettingsForMinimumVersion: async (version) => { events.push(`settings:${version ?? 'force'}`); },
+      applyPendingQueueState: vi.fn(),
+      onDebug: vi.fn(),
+    });
+
+    expect(events).toEqual(['transcript', 'settings:force', 'snapshot']);
+  });
+
+  it('uses snapshot-only convergence without advancing the cursor when the changes route is unsupported', async () => {
+    const changesCursor = createChangesCursorStore();
+    const catchUpSessionMessages = vi.fn(async () => {});
+    const syncSessionSnapshotFromServer = vi.fn(async () => true);
+    const refreshAccountSettingsForMinimumVersion = vi.fn(async () => {});
+    fetchChanges.mockResolvedValueOnce({ status: 'error', error: new Error('404') });
+
+    await runSessionChangesSyncOnConnect({
+      reason: 'reconnect',
+      token: 'token-1',
+      sessionId: 's1',
+      lastObservedMessageSeq: 11,
+      getAccountId: async () => 'account-1',
+      ...changesCursor,
+      catchUpSessionMessages,
+      syncSessionSnapshotFromServer,
+      refreshAccountSettingsForMinimumVersion,
+      applyPendingQueueState: vi.fn(),
+      onDebug: vi.fn(),
+    });
+
+    expect(refreshAccountSettingsForMinimumVersion).toHaveBeenCalledWith(null);
+    expect(catchUpSessionMessages).toHaveBeenCalledTimes(1);
+    expect(syncSessionSnapshotFromServer).toHaveBeenCalledTimes(1);
+    expect(changesCursor.writeChangesCursor).not.toHaveBeenCalled();
   });
 
   it('applies pending queue hints from relevant session changes', async () => {
@@ -87,45 +248,7 @@ describe('runSessionChangesSyncOnConnect', () => {
     expect(changesCursor.writeChangesCursor).toHaveBeenCalledWith('account-1', 8);
   });
 
-  it('falls back to targeted degraded detail repair for relevant non-self-sufficient safety changes', async () => {
-    const changesCursor = createChangesCursorStore();
-    const syncSessionSnapshotFromServer = vi.fn();
-    const catchUpSessionMessages = vi.fn();
-    fetchChanges.mockResolvedValueOnce({
-      status: 'ok',
-      response: {
-        nextCursor: 9,
-        changes: [
-          {
-            cursor: 5,
-            kind: 'share',
-            entityId: 's1',
-            changedAt: 123,
-            hint: null,
-          },
-        ],
-      },
-    });
-
-    await runSessionChangesSyncOnConnect({
-      reason: 'stale-safety',
-      token: 'token-1',
-      sessionId: 's1',
-      lastObservedMessageSeq: 0,
-      getAccountId: async () => 'account-1',
-      ...changesCursor,
-      catchUpSessionMessages,
-      syncSessionSnapshotFromServer,
-      applyPendingQueueState: vi.fn(),
-      onDebug: vi.fn(),
-    });
-
-    expect(catchUpSessionMessages).not.toHaveBeenCalled();
-    expect(syncSessionSnapshotFromServer).toHaveBeenCalledWith({ reason: 'degraded-socket' });
-    expect(changesCursor.writeChangesCursor).toHaveBeenCalledWith('account-1', 9);
-  });
-
-  it('does not advance the changes cursor when stale-safety transcript catch-up fails', async () => {
+  it('does not advance the changes cursor when reconnect transcript catch-up fails', async () => {
     const changesCursor = createChangesCursorStore();
     const syncSessionSnapshotFromServer = vi.fn();
     const catchUpSessionMessages = vi.fn(async () => {
@@ -148,27 +271,25 @@ describe('runSessionChangesSyncOnConnect', () => {
     });
 
     await runSessionChangesSyncOnConnect({
-      reason: 'stale-safety',
+      reason: 'reconnect',
       token: 'token-1',
       sessionId: 's1',
       lastObservedMessageSeq: 9,
       getAccountId: async () => 'account-1',
       ...changesCursor,
       catchUpSessionMessages,
-      syncSessionSnapshotFromServer,
+      syncSessionSnapshotFromServer: vi.fn(async () => true),
       applyPendingQueueState: vi.fn(),
       onDebug: vi.fn(),
     });
 
     expect(catchUpSessionMessages).toHaveBeenCalledWith({
       afterSeq: 9,
-      authorization: 'reconnect_watermark',
     });
-    expect(syncSessionSnapshotFromServer).not.toHaveBeenCalled();
     expect(changesCursor.writeChangesCursor).not.toHaveBeenCalled();
   });
 
-  it('authorizes reconnect fallback catch-up requests with the reconnect watermark', async () => {
+  it('uses the exact reconnect cursor for fallback catch-up requests', async () => {
     const changesCursor = createChangesCursorStore();
     const catchUpSessionMessages = vi.fn();
     fetchChanges.mockResolvedValueOnce({
@@ -191,7 +312,6 @@ describe('runSessionChangesSyncOnConnect', () => {
 
     expect(catchUpSessionMessages).toHaveBeenCalledWith({
       afterSeq: 11,
-      authorization: 'reconnect_watermark',
     });
   });
 
@@ -217,7 +337,7 @@ describe('runSessionChangesSyncOnConnect', () => {
     }));
 
     await runSessionChangesSyncOnConnect({
-      reason: 'stale-safety',
+      reason: 'connect',
       token: 'token-1',
       sessionId: 's1',
       lastObservedMessageSeq: 0,
@@ -231,7 +351,7 @@ describe('runSessionChangesSyncOnConnect', () => {
 
     const applyPendingQueueStateForSecondSession = vi.fn();
     await runSessionChangesSyncOnConnect({
-      reason: 'stale-safety',
+      reason: 'connect',
       token: 'token-1',
       sessionId: 's2',
       lastObservedMessageSeq: 0,

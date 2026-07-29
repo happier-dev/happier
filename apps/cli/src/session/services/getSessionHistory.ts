@@ -112,7 +112,8 @@ export async function getSessionHistory(params: Readonly<{
       createdAt: item.createdAt,
       role: item.storedMessageRole ?? item.semanticRole,
       kind: item.kind,
-      text: item.text ?? item.summary ?? item.kind,
+      text: item.text ?? item.summary ?? '',
+      ...(item.origin ? { origin: item.origin } : {}),
     })),
   };
 }

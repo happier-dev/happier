@@ -1,17 +1,8 @@
 export async function activate(api) {
     const activatedAtMs = Date.now();
 
-    api.registerAction({
-        id: 'examples.reload.report',
-        handler: async () => ({
-            ok: true,
-            data: {
-                activatedAtMs
-            }
-        })
-    });
-
-    api.onDispose(async () => {
+    api.actions.register('reload-report', async () => ({ activatedAtMs }));
+    return async () => {
         return undefined;
-    });
+    };
 }

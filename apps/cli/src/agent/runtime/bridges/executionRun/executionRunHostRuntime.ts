@@ -37,18 +37,16 @@ export type ExecutionRunHostRuntime = Readonly<{
         meta?: Readonly<{
             localInputId?: string | null;
             localInputIds?: readonly string[];
-            providerClaimedPendingLocalIds?: readonly string[];
             userMessageSeq?: number | null;
             userMessageSeqs?: readonly number[];
         }>,
-    ) => Promise<void>;
+    ) => Promise<unknown>;
     sendSteerPrompt?: (
         sessionId: string,
         prompt: string,
         meta?: Readonly<{
             localInputId?: string | null;
             localInputIds?: readonly string[];
-            providerClaimedPendingLocalIds?: readonly string[];
             userMessageSeq?: number | null;
             userMessageSeqs?: readonly number[];
         }>,

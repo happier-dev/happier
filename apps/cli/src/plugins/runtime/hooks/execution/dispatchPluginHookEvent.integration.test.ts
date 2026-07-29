@@ -4,12 +4,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
-import { createPluginStateStore } from '@/plugins/store/state';
+import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
-import { resolvePluginHookHandlerRegistry } from '@/plugins/runtime/resolvePluginHookHandlerRegistry';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 
 import { dispatchPluginHookEvent } from './dispatchPluginHookEvent';
 
@@ -38,6 +35,10 @@ async function writeHookPluginFixture(params: Readonly<{
       '  return "session-message-hook-fired";',
       '}',
       '',
+      'export function activate(api) {',
+      '  api.hooks.register("message-send", recordHookInvocation);',
+      '}',
+      '',
     ].join('\n'),
     'utf8',
   );
@@ -54,25 +55,24 @@ async function writeHookPluginFixture(params: Readonly<{
         engines: {
           happier: '^0.2.0',
         },
-        uses: ['hooks'],
         entrypoints: {
-          main: './daemon.mjs',
+          daemon: './daemon.mjs',
+        },
+        hostAccess: {
+          required: [],
+          optional: [],
         },
         contributes: {
           hooks: [
             {
-              hookApiVersion: 1,
-              id: hookId,
+              id: 'message-send',
+              on: hookId,
               category: 'lifecycle',
               scope: 'session',
               executionKind: 'observe',
               filters: {
                 sessionId: 'sess-1',
                 eventNames: [hookId],
-              },
-              handler: {
-                target: 'plugin',
-                exportName: 'recordHookInvocation',
               },
             },
           ],
@@ -90,73 +90,31 @@ async function writeEnabledLocalPathPluginState(params: Readonly<{
   pluginRoot: string;
   pluginId: string;
 }>): Promise<void> {
-  const stateDir = join(params.happyHomeDir, 'plugins', 'plugins', 'state');
-  const installedDir = join(params.happyHomeDir, 'plugins', 'plugins', 'installed');
-  const cacheDir = join(params.happyHomeDir, 'plugins', 'plugins', 'cache');
-  const logsDir = join(params.happyHomeDir, 'plugins', 'plugins', 'logs');
-  const locksDir = join(params.happyHomeDir, 'plugins', 'plugins', 'locks');
-
-  await Promise.all([
-    mkdir(stateDir, { recursive: true }),
-    mkdir(installedDir, { recursive: true }),
-    mkdir(cacheDir, { recursive: true }),
-    mkdir(logsDir, { recursive: true }),
-    mkdir(locksDir, { recursive: true }),
-  ]);
-
-  await writeFile(
-    join(stateDir, 'plugin-state.v1.json'),
-    JSON.stringify(
-      {
-        t: 'happier_plugin_state_v1',
-        schemaVersion: 1,
-        plugins: {
-          [params.pluginId]: {
-            source: {
-              kind: 'path',
-              locator: params.pluginRoot,
-              trustPolicy: 'local_trusted',
-              installPolicy: 'link',
-              resolvedPath: params.pluginRoot,
-              manifestPath: join(params.pluginRoot, '.happier-plugin', 'plugin.json'),
-            },
-            compatibility: {
-              status: 'unknown',
-              diagnostics: [],
-            },
-            install: {
-              mode: 'link',
-              manifestVersion: '1.0.0',
-              manifestDigest: null,
-              installedPath: null,
-            },
-            state: {
-              enabled: true,
-            },
-          },
-        },
+  await writeCommittedLocalPathPluginFixture({
+    happyHomeDir: params.happyHomeDir,
+    pluginId: params.pluginId,
+    sourceRootPath: params.pluginRoot,
+    plugin: {
+      source: {
+        kind: 'path',
+        locator: params.pluginRoot,
+        trustPolicy: 'local_trusted',
+        installPolicy: 'link',
+        resolvedPath: params.pluginRoot,
+        manifestPath: join(params.pluginRoot, '.happier-plugin', 'plugin.json'),
       },
-      null,
-      2,
-    ),
-    'utf8',
-  );
+      compatibility: { status: 'unknown', diagnostics: [] },
+      install: { mode: 'link', manifestVersion: '1.0.0', manifestDigest: null, installedPath: null },
+      state: { enabled: true },
+    },
+  });
 }
 
 async function resolveFixtureRuntimeRegistry(happyHomeDir: string) {
-  const pluginContributes = await resolvePluginContributes({
+  return await resolveExecutablePluginRuntimeRegistry({
+    generation: 1,
     happyHomeDir,
-    existingProviderIds: new Set(),
-    existingBackendIds: new Set(),
   });
-  const contributes = createResolvedContributionRegistry(pluginContributes);
-  const hookHandlerRegistry = await resolvePluginHookHandlerRegistry({
-    registry: contributes,
-  });
-  return {
-    hookHandlersByHookId: hookHandlerRegistry.handlersByHookId,
-    readHookEventEnvelopeV1,
-  };
 }
 
 describe('dispatchPluginHookEvent (integration)', () => {
@@ -181,6 +139,7 @@ describe('dispatchPluginHookEvent (integration)', () => {
       });
 
       const runtimeRegistry = await resolveFixtureRuntimeRegistry(happyHomeDir);
+      expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.session.hook'] ?? []).toEqual([]);
       const result = await dispatchPluginHookEvent({
         runtimeRegistry,
         event: {
@@ -205,8 +164,8 @@ describe('dispatchPluginHookEvent (integration)', () => {
         eventId: 'session.message.send',
         matchedHandlerCount: 1,
       }));
-      expect(await readFile(markerPath, 'utf8')).toContain('"eventId": "session.message.send"');
-      expect(await readFile(markerPath, 'utf8')).toContain('"happySessionId": "sess-1"');
+      expect(await readFile(markerPath, 'utf8')).toContain('"text": "hello world"');
+      expect(await readFile(markerPath, 'utf8')).toContain('"sessionId": "sess-1"');
     } finally {
       delete process.env.HOOK_MARKER_PATH;
       await rm(happyHomeDir, { recursive: true, force: true });
@@ -232,6 +191,7 @@ describe('dispatchPluginHookEvent (integration)', () => {
       });
 
       const runtimeRegistry = await resolveFixtureRuntimeRegistry(happyHomeDir);
+      expect(runtimeRegistry.pluginDiagnosticsByPluginId['acme.session.hook'] ?? []).toEqual([]);
       const result = await dispatchPluginHookEvent({
         runtimeRegistry,
         event: {
@@ -315,8 +275,8 @@ describe('dispatchPluginHookEvent (integration)', () => {
         eventId: 'session.spawned',
         matchedHandlerCount: 1,
       }));
-      expect(await readFile(markerPath, 'utf8')).toContain('"eventId": "session.spawned"');
-      expect(await readFile(markerPath, 'utf8')).toContain('"happySessionId": "sess-1"');
+      expect(await readFile(markerPath, 'utf8')).toContain('"agentId": "claude"');
+      expect(await readFile(markerPath, 'utf8')).toContain('"sessionId": "sess-1"');
     } finally {
       delete process.env.HOOK_MARKER_PATH;
       await rm(happyHomeDir, { recursive: true, force: true });

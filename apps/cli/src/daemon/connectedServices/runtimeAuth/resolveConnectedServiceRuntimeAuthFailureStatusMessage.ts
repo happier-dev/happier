@@ -115,6 +115,15 @@ export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
       'Connected-service recovery hit a temporary provider failure; retry scheduled.',
     );
   }
+  if (
+    outerResult?.status === 'recovery_superseded'
+    && outerResult.reason === 'source_tuple_mismatch'
+  ) {
+    return toStatusNote(
+      'recovery_superseded_source_tuple_mismatch',
+      'Connected-service account already updated; the old turn was interrupted. Retry your request.',
+    );
+  }
   if (outerResult?.status === 'temporary_retry_armed') {
     return toStatusNote(
       'temporary_retry_armed',
@@ -182,10 +191,19 @@ export function resolveConnectedServiceRuntimeAuthFailureStatusMessage(
   }
   if (switchResult?.status !== 'switched') return null;
   const activeProfileId = readNonEmptyString(switchResult.activeProfileId);
+  const switchedAccount = activeProfileId
+    ? `Connected-service account switched to ${activeProfileId}`
+    : 'Connected-service account switched';
+  const mode = readNonEmptyString(switchResult.mode);
+  const message = mode === 'restart_resume'
+    ? `${switchedAccount}; restarting session.`
+    : mode === 'hot_apply'
+      ? `${switchedAccount}; current session updated.`
+      : mode === 'spawn_next_turn'
+        ? `${switchedAccount}; the new account will apply on the next turn.`
+        : `${switchedAccount}.`;
   return toStatusNote(
     'switch_attempted_switched',
-    activeProfileId
-      ? `Connected-service account switched to ${activeProfileId}; restarting session.`
-      : 'Connected-service account switched; restarting session.',
+    message,
   );
 }

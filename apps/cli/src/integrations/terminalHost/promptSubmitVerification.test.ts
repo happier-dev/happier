@@ -49,7 +49,7 @@ describe('runTerminalPromptSubmission', () => {
         expect(calls).toEqual(['verify-before']);
     });
 
-    it('retries enter once when the pasted prompt remains in the composer after submit', async () => {
+    it('settles before verifying and retries enter once when the pasted prompt remains in the composer', async () => {
         const calls: string[] = [];
         let stillPending = true;
 
@@ -65,11 +65,21 @@ describe('runTerminalPromptSubmission', () => {
                 stillPending = false;
                 return result;
             },
-            wait: async () => {},
+            wait: async (delayMs) => {
+                calls.push(`wait:${delayMs}`);
+            },
             submitRetryDelayMs: 10,
         })).resolves.toEqual({ success: true });
 
-        expect(calls).toEqual(['enter', 'verify-after', 'enter', 'verify-after']);
+        expect(calls).toEqual([
+            'enter',
+            'wait:10',
+            'verify-after',
+            'wait:10',
+            'enter',
+            'wait:10',
+            'verify-after',
+        ]);
     });
 
     it('fails visibly when the prompt is still pending after the retry enter', async () => {

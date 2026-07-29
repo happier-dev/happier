@@ -169,6 +169,16 @@ function createAdministrativePathTestBackend(matchesAdministrativeWorkspacePath:
     } satisfies ScmBackend;
 }
 
+const emptyScmRegistry = createScmBackendRegistry([]);
+const administrativeScmRegistry = createScmBackendRegistry([
+    createAdministrativePathTestBackend(
+        (relativePath) => relativePath === '.git'
+            || relativePath.startsWith('.git/')
+            || relativePath === '.sl'
+            || relativePath.startsWith('.sl/'),
+    ),
+]);
+
 describe('scanWorkspaceManifest', () => {
     afterEach(async () => {
         await Promise.all(tempRoots.splice(0, tempRoots.length).map(async (directory) => await rm(directory, { recursive: true, force: true })));
@@ -184,7 +194,7 @@ describe('scanWorkspaceManifest', () => {
         await writeFile(join(root, 'src', 'nested', 'index.ts'), 'export const value = 1;\n');
         await symlink('../README.md', join(root, 'src', 'readme-link'));
 
-        await expect(scanWorkspaceManifest({ workspaceRoot: root })).resolves.toEqual({
+        await expect(scanWorkspaceManifest({ workspaceRoot: root, scmRegistry: emptyScmRegistry })).resolves.toEqual({
             entries: [
                 {
                     kind: 'directory',
@@ -234,7 +244,7 @@ describe('scanWorkspaceManifest', () => {
         await mkdir(join(root, 'links'), { recursive: true });
         await symlink('../target.txt', join(root, 'links', 'target-link'));
 
-        const manifest = await scanWorkspaceManifest({ workspaceRoot: root });
+        const manifest = await scanWorkspaceManifest({ workspaceRoot: root, scmRegistry: emptyScmRegistry });
         const symlinkEntry = manifest.entries.find((entry: WorkspaceManifestEntry) => entry.relativePath === 'links/target-link');
         if (!symlinkEntry || symlinkEntry.kind !== 'symlink') {
             throw new Error('Expected a symlink entry');
@@ -255,6 +265,7 @@ describe('scanWorkspaceManifest', () => {
 
         await scanWorkspaceManifest({
             workspaceRoot: root,
+            scmRegistry: emptyScmRegistry,
             onFileScanned: (file) => {
                 scannedFiles.push(file);
             },
@@ -298,6 +309,7 @@ describe('scanWorkspaceManifest', () => {
 
         await expect(scanWorkspaceManifest({
             workspaceRoot: root,
+            scmRegistry: emptyScmRegistry,
             assertCanContinue() {
                 if (shouldCancel) {
                     throw new Error('cancelled');
@@ -321,6 +333,7 @@ describe('scanWorkspaceManifest', () => {
         try {
             await expect(scanWorkspaceManifest({
                 workspaceRoot: root,
+                scmRegistry: emptyScmRegistry,
                 resolveCachedFileDigest: ({ relativePath, sizeBytes, executable }) => {
                     expect(relativePath).toBe('README.md');
                     expect(sizeBytes).toBe(6);
@@ -350,7 +363,7 @@ describe('scanWorkspaceManifest', () => {
         await writeFile(join(root, '.git', 'refs', 'main'), 'abc123\n');
         await writeFile(join(root, 'README.md'), 'hello\n');
 
-        await expect(scanWorkspaceManifest({ workspaceRoot: root })).resolves.toEqual({
+        await expect(scanWorkspaceManifest({ workspaceRoot: root, scmRegistry: administrativeScmRegistry })).resolves.toEqual({
             entries: [
                 {
                     kind: 'file',
@@ -363,27 +376,31 @@ describe('scanWorkspaceManifest', () => {
         });
     });
 
-    it('filters git admin paths through the plugin-backed default registry without an explicit registry', async () => {
+    it('filters git admin paths through the authoritative SCM registry', async () => {
         await expect(shouldFilterWorkspaceManifestPath(
             '.git/HEAD',
             DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+            administrativeScmRegistry,
         )).resolves.toBe(true);
 
         await expect(shouldFilterWorkspaceManifestPath(
             'README.md',
             DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+            administrativeScmRegistry,
         )).resolves.toBe(false);
     });
 
-    it('filters sapling admin paths through the plugin-backed default registry without an explicit registry', async () => {
+    it('filters sapling admin paths through the authoritative SCM registry', async () => {
         await expect(shouldFilterWorkspaceManifestPath(
             '.sl/store',
             DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+            administrativeScmRegistry,
         )).resolves.toBe(true);
 
         await expect(shouldFilterWorkspaceManifestPath(
             'src/store',
             DEFAULT_WORKSPACE_MANIFEST_SAFE_FILTER_POLICY,
+            administrativeScmRegistry,
         )).resolves.toBe(false);
     });
 
@@ -443,7 +460,7 @@ describe('scanWorkspaceManifest', () => {
         await chmod(join(root, 'private'), 0o000);
 
         try {
-            await expect(scanWorkspaceManifest({ workspaceRoot: root })).resolves.toEqual({
+            await expect(scanWorkspaceManifest({ workspaceRoot: root, scmRegistry: emptyScmRegistry })).resolves.toEqual({
                 entries: [
                     {
                         kind: 'directory',

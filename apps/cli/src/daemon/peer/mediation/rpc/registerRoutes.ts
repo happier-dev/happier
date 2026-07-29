@@ -1,14 +1,17 @@
 import type { FastifyInstance } from 'fastify';
 import {
     PEER_MACHINE_RPC_DIRECT_PATH_V1,
+    PEER_MACHINE_RPC_DIRECT_PATH_V2,
     PEER_MEDIATION_RECEIPTS,
     createPeerMachineRpcResultHashV1,
     type PeerMachineRpcCommandReceiptSuccessV1,
     type PeerMachineRpcDirectResponseV1,
+    type PeerMachineRpcDirectResponseV2,
 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import type { DirectRouteGrantTrustRoot } from '../verifyDirectRouteGrantV1';
+import { createAtomicRouteGrantConsumption } from '../tunnel/grantConsumption';
 import {
     type PeerMachineRpcDirectExpectedBinding,
     validatePeerMachineRpcDirectRequest,
@@ -85,10 +88,14 @@ export function registerPeerMediationMachineRpcDirectRoutes(
     const replayKeyCache = options.replayKeyCache ?? createPeerMachineRpcReplayKeyCache({
         nowMs: options.nowMs,
     });
+    const grantConsumption = createAtomicRouteGrantConsumption({ activationFailurePolicy: 'release' });
+    app.addHook('onClose', async () => {
+        grantConsumption.clear();
+    });
 
-    app.post(PEER_MACHINE_RPC_DIRECT_PATH_V1, async (request): Promise<PeerMachineRpcDirectResponseV1> => {
+    const handleRequest = async (body: unknown): Promise<PeerMachineRpcDirectResponseV1 | PeerMachineRpcDirectResponseV2> => {
         const validation = validatePeerMachineRpcDirectRequest({
-            body: request.body,
+            body,
             expected: options.expected,
             trustRoots: options.trustRoots,
             nowMs: options.nowMs(),
@@ -108,14 +115,47 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             return validation.response;
         }
 
+        const reservation = validation.request.v === 2
+            ? grantConsumption.reserve({
+                grantId: validation.grant.grantId,
+                expiresAt: validation.grant.exp,
+                nowMs: options.nowMs(),
+            })
+            : null;
+        if (validation.request.v === 2 && !reservation) {
+            validation.releaseCallLimit();
+            return {
+                v: 2,
+                ok: false,
+                receipt: PEER_MEDIATION_RECEIPTS.rpcFellBackToServer,
+                requestId: validation.request.requestId,
+                method: validation.request.method,
+                reasonCode: 'direct_call_limit_exceeded',
+            };
+        }
+
         try {
-            const result = await options.rpcHandlerManager.invokeLocal(
-                validation.request.method,
-                validation.request.params,
-            );
+            reservation?.commit();
+            let result: unknown;
+            try {
+                result = await options.rpcHandlerManager.invokeLocal(
+                    validation.request.method,
+                    validation.request.params,
+                );
+            } catch (error) {
+                if (validation.request.v === 1) throw error;
+                return {
+                    v: 2,
+                    ok: false,
+                    receipt: PEER_MEDIATION_RECEIPTS.rpcFellBackToServer,
+                    requestId: validation.request.requestId,
+                    method: validation.request.method,
+                    reasonCode: 'handler_unavailable',
+                };
+            }
             if (isMethodNotFoundResult(result)) {
                 return {
-                    v: 1,
+                    v: validation.request.v,
                     ok: false,
                     receipt: PEER_MEDIATION_RECEIPTS.rpcFellBackToServer,
                     requestId: validation.request.requestId,
@@ -125,7 +165,7 @@ export function registerPeerMediationMachineRpcDirectRoutes(
             }
 
             return {
-                v: 1,
+                v: validation.request.v,
                 ok: true,
                 receipt: PEER_MEDIATION_RECEIPTS.rpcDirectCallSucceeded,
                 requestId: validation.request.requestId,
@@ -146,5 +186,8 @@ export function registerPeerMediationMachineRpcDirectRoutes(
         } finally {
             validation.releaseCallLimit();
         }
-    });
+    };
+
+    app.post(PEER_MACHINE_RPC_DIRECT_PATH_V1, async (request) => await handleRequest(request.body));
+    app.post(PEER_MACHINE_RPC_DIRECT_PATH_V2, async (request) => await handleRequest(request.body));
 }

@@ -3,6 +3,7 @@ import { EventEmitter } from 'node:events';
 
 vi.mock('node:child_process', () => {
   return {
+    execFile: vi.fn(),
     spawn: vi.fn(),
   };
 });
@@ -45,10 +46,18 @@ describe('startHappySessionInVisibleWindowsConsole', () => {
       args: ['--version'],
     });
 
-    child.stdout.emit('data', Buffer.from('12345\r\n'));
+    child.stdout.emit(
+      'data',
+      Buffer.from('HAPPIER_LAUNCH:12345:1717171717000\r\n'),
+    );
     child.emit('close', 0);
 
-    await expect(p).resolves.toEqual({ ok: true, pid: 12345 });
+    await expect(p).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      pid: 12_345,
+      processStartTimeMs: 1_717_171_717_000,
+      cancel: expect.any(Function),
+    }));
     expect(spawn).toHaveBeenCalled();
   });
 
@@ -67,10 +76,18 @@ describe('startHappySessionInVisibleWindowsConsole', () => {
       args: ['--version'],
     });
 
-    child.stdout.emit('data', Buffer.from('12345\r\n'));
+    child.stdout.emit(
+      'data',
+      Buffer.from('HAPPIER_LAUNCH:12345:1717171717000\r\n'),
+    );
     child.emit('close', 0);
 
-    await expect(p).resolves.toEqual({ ok: true, pid: 12345 });
+    await expect(p).resolves.toEqual(expect.objectContaining({
+      ok: true,
+      pid: 12_345,
+      processStartTimeMs: 1_717_171_717_000,
+      cancel: expect.any(Function),
+    }));
     const spawnOptions = vi.mocked(spawn).mock.calls[0]?.[2];
     expect(spawnOptions?.env).toMatchObject({
       HAPPIER_VISIBLE_CONSOLE_DAEMON_ONLY_TEST: 'daemon-only',

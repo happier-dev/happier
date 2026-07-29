@@ -47,7 +47,14 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
   try {
     if (typeof session.enqueueAgentMessageCommitted === 'function') {
       committedSnapshotPromise = session
-        .enqueueAgentMessageCommitted(provider, body, { localId: durableLocalId, meta })
+        .enqueueAgentMessageCommitted(provider, body, {
+          localId: durableLocalId,
+          meta,
+          provenance: {
+            kind: 'non_dependent',
+            source: segment.sidechainId ? 'sidechain' : 'external',
+          },
+        })
         .then((result) => {
           if (result.persisted) markDurablyPersisted();
         });

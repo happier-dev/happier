@@ -2,7 +2,8 @@ import { type AgentId, getBuiltInAcpConfig } from '@happier-dev/agents';
 
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { AcpPermissionHandler } from '@/agent/acp/permissions/acpPermissionHandler';
-import type { AgentFactoryOptions, McpServerConfig } from '@/agent/core';
+import type { AgentFactoryOptions } from '@/agent/catalog/factoryOptions';
+import type { McpServerConfig } from '@/agent/core/AgentTypes';
 import { createSynchronousAcpBackendFromDefinition, normalizeBuiltInAcpDefinition } from '@/agent/acp/runtime/definition';
 
 export type BuiltInAcpBackendOptions = AgentFactoryOptions & Readonly<{

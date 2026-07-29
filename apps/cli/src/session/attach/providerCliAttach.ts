@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 
 import { resolveWindowsCommandInvocation, type CommandInvocation } from '@happier-dev/cli-common/process';
-import type { CatalogAgentLookupId, ProviderAttachOps, ProviderAttachScope } from '@/backends/types';
-import type { ProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
-import { requireProviderCliLaunchSpec } from '@/packagedRuntime/managedTools/requireProviderCliLaunchSpec';
+import type { CatalogAgentLookupId, ProviderAttachOps, ProviderAttachScope } from '@/agent/catalog/types';
+import type { AgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { requireAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 
 type SpawnedAttachProcess = Readonly<{
     once: {
@@ -69,7 +69,7 @@ export function createProviderCliAttachOps<TTarget extends object>(params: Reado
     createArgs: (target: TTarget) => readonly string[];
     buildHealthUrl?: (target: TTarget) => string | null;
     readFallbackServerBaseUrl?: () => Promise<string | null>;
-    resolveLaunchSpec?: (env?: NodeJS.ProcessEnv) => ProviderCliLaunchSpec;
+    resolveLaunchSpec?: (env?: NodeJS.ProcessEnv) => AgentCliLaunchSpec;
     resolveCommandInvocation?: (params: Readonly<{
         command: string;
         args: readonly string[];
@@ -156,7 +156,7 @@ export function createProviderCliAttachOps<TTarget extends object>(params: Reado
 
             const env = params.env ?? process.env;
             const launch = (params.resolveLaunchSpec ?? ((processEnv) =>
-                requireProviderCliLaunchSpec(params.agentId, { processEnv })))(env);
+                requireAgentCliLaunchSpec(params.agentId, { processEnv })))(env);
             const invocation = resolveInvocation({
                 command: launch.command,
                 args: [

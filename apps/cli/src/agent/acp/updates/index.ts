@@ -20,14 +20,11 @@ export {
 } from './messages';
 
 export {
-  formatDuration,
-  formatDurationMinutes,
-  startToolCall,
-  completeToolCall,
-  failToolCall,
+  markToolCallRunningAfterPermission,
+  markToolCallWaitingForPermission,
   handleToolCallUpdate,
   handleToolCall,
-} from './toolCalls';
+} from '../toolCalls/legacy/handlers';
 
 export {
   handleAvailableCommandsUpdate,

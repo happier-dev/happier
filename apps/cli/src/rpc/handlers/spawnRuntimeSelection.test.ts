@@ -7,11 +7,11 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
     expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'mcp',
           providerSessionId: 'canonical-thread',
-          providerExtra: {
+          agentExtra: {
             owner: 'codex',
             schemaId: 'codex.agentRuntimeDescriptorExtra',
             v: 1,
@@ -24,7 +24,7 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       },
       legacyAgentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'acp',
           providerSessionId: 'legacy-thread',
@@ -32,16 +32,17 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       },
     })).toEqual({
       codexBackendMode: 'appServer',
+      providerBackendMode: 'appServer',
       providerRuntimeSelection: {
         codexBackendMode: 'appServer',
       },
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'mcp',
           providerSessionId: 'canonical-thread',
-          providerExtra: {
+          agentExtra: {
             owner: 'codex',
             schemaId: 'codex.agentRuntimeDescriptorExtra',
             v: 1,
@@ -59,14 +60,14 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
     expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 42,
+        agentId: 42,
         provider: {
           backendMode: 'appServer',
         },
       },
       legacyAgentRuntimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'acp',
           providerSessionId: 'legacy-thread',
@@ -74,15 +75,65 @@ describe('readCanonicalSpawnRuntimeSelectionFromCompatIngress', () => {
       },
     })).toEqual({
       codexBackendMode: 'acp',
+      providerBackendMode: 'acp',
       providerRuntimeSelection: {
         codexBackendMode: 'acp',
       },
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
-        provider: {
+        agentId: 'codex',
+        agent: {
           backendMode: 'acp',
           providerSessionId: 'legacy-thread',
+        },
+      },
+    });
+  });
+
+  it('normalizes legacy Codex mcp mode to the canonical appServer runtime selection', () => {
+    expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+      codexBackendMode: 'mcp',
+    })).toEqual({
+      codexBackendMode: 'appServer',
+      providerRuntimeSelection: {
+        codexBackendMode: 'appServer',
+      },
+    });
+  });
+
+  it('prefers the canonical Codex backendMode over a stale legacy codexBackendMode', () => {
+    expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+      backendMode: 'appServer',
+      codexBackendMode: 'acp',
+    })).toEqual({
+      codexBackendMode: 'appServer',
+      providerRuntimeSelection: {
+        codexBackendMode: 'appServer',
+      },
+    });
+  });
+
+  it('projects runtime mode selections from non-Codex provider runtime descriptors', () => {
+    expect(readCanonicalSpawnRuntimeSelectionFromCompatIngress({
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'opencode',
+        provider: {
+          backendMode: 'server',
+          providerSessionId: 'opencode-thread',
+        },
+      },
+    })).toEqual({
+      providerBackendMode: 'server',
+      providerRuntimeSelection: {
+        opencodeBackendMode: 'server',
+      },
+      runtimeDescriptorV1: {
+        v: 1,
+        agentId: 'opencode',
+        agent: {
+          backendMode: 'server',
+          providerSessionId: 'opencode-thread',
         },
       },
     });

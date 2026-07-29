@@ -9,8 +9,10 @@ import { readCredentials, type Credentials } from '@/persistence';
 import { ensureMachineIdForCredentials } from '@/ui/auth';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 
 export type McpCommandDeps = Readonly<{
+  env?: NodeJS.ProcessEnv;
   readCredentials: () => Promise<Credentials | null>;
   bootstrapAccountSettingsContext: typeof bootstrapAccountSettingsContext;
   updateAccountSettingsV2WithRetry: typeof updateAccountSettingsV2WithRetry;
@@ -20,11 +22,13 @@ export type McpCommandDeps = Readonly<{
   randomUUID: () => string;
   nowMs: () => number;
   createExternalMcpServer: typeof createExternalMcpServer;
+  readDaemonPluginCatalog?: typeof readDaemonPluginCatalog;
   connectMcpStdio: (server: Pick<McpServer, 'connect'>) => Promise<void>;
 }>;
 
 export function resolveMcpCommandDeps(overrides?: Partial<McpCommandDeps>): McpCommandDeps {
   return {
+    env: overrides?.env ?? process.env,
     readCredentials: overrides?.readCredentials ?? readCredentials,
     bootstrapAccountSettingsContext: overrides?.bootstrapAccountSettingsContext ?? bootstrapAccountSettingsContext,
     updateAccountSettingsV2WithRetry: overrides?.updateAccountSettingsV2WithRetry ?? updateAccountSettingsV2WithRetry,
@@ -34,6 +38,7 @@ export function resolveMcpCommandDeps(overrides?: Partial<McpCommandDeps>): McpC
     randomUUID: overrides?.randomUUID ?? randomUUID,
     nowMs: overrides?.nowMs ?? (() => Date.now()),
     createExternalMcpServer: overrides?.createExternalMcpServer ?? createExternalMcpServer,
+    readDaemonPluginCatalog: overrides?.readDaemonPluginCatalog ?? readDaemonPluginCatalog,
     connectMcpStdio: overrides?.connectMcpStdio ?? (async (server) => {
       const transport = new StdioServerTransport();
       await server.connect(transport);

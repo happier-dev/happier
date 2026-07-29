@@ -13,6 +13,7 @@ import { relative, resolve, sep } from 'node:path';
 import { rewriteDirectPeerEndpointCandidatesForTransferId } from '@/machines/transfer/rewriteDirectPeerEndpointCandidatesForTransferId';
 import { requestDirectPeerTransferToFileWithRetry } from '@/machines/transfer/requestDirectPeerTransferToFileWithRetry';
 import type { TransferPayloadSource } from '@/machines/transfer/transferPayloadSource';
+import type { ScmBackendRegistry } from '@/scm/registry';
 import type { ScmWorkspaceIntegrationWorkspaceExportArtifacts } from '@/scm/workspace/workspaceExportArtifacts';
 import { buildWorkspaceExportArtifactsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
 import {
@@ -171,6 +172,7 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
   sourceRootPath: string;
   activeServerDir: string;
   workspaceTransfer: SessionHandoffWorkspaceTransfer;
+  scmRegistry?: ScmBackendRegistry;
   sessionMetadata?: Record<string, unknown>;
   sessionTranscriptRecords?: readonly unknown[];
   agentBundle?: SessionHandoffAgentBundle;
@@ -192,6 +194,7 @@ export async function createSessionHandoffWorkspaceReplicationState(input: Reado
   const workspaceExportArtifacts = await buildWorkspaceExportArtifactsWithScmWorkspace({
     sourcePath: input.sourceRootPath,
     workspaceTransfer,
+    registry: input.scmRegistry,
   });
   const workspaceReplicationMetadata = createSessionHandoffWorkspaceReplicationMetadata({
     sourceRootPath: input.sourceRootPath,
@@ -237,12 +240,14 @@ async function loadCurrentTargetManifestViaEnginePlan(input: Readonly<{
   targetMachineId: string;
   targetPath: string;
   sourceManifest: WorkspaceManifest;
+  scmRegistry?: ScmBackendRegistry;
   transfers: WorkspaceReplicationTransfers;
 }>): Promise<WorkspaceManifest> {
   try {
     const engine = createWorkspaceReplicationEngine({
       activeServerDir: input.activeServerDir,
       localMachineId: input.targetMachineId,
+      scmRegistry: input.scmRegistry,
     });
 
     const scope = {
@@ -283,6 +288,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
   directPeerManifestEndpointCandidates?: readonly TransferEndpointCandidate[];
   machineTransferChannel?: MachineTransferChannel;
   allowServerRoutedFallback?: boolean;
+  scmRegistry?: ScmBackendRegistry;
   transfers: WorkspaceReplicationTransfers;
   blobPackTargetBytes: number;
   blobPackMaxBlobs: number;
@@ -317,6 +323,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
         targetMachineId: input.targetMachineId,
         targetPath: input.targetPath,
         sourceManifest: metadata.manifest,
+        scmRegistry: input.scmRegistry,
         transfers: input.transfers,
       })
       : { entries: [] };
@@ -351,6 +358,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
       const engine = createWorkspaceReplicationEngine({
         activeServerDir: input.activeServerDir,
         localMachineId: input.targetMachineId,
+        scmRegistry: input.scmRegistry,
       });
 
       const metadata = input.metadata;
@@ -388,6 +396,7 @@ export async function prepareSessionHandoffWorkspaceTarget(input: Readonly<{
           targetPath: input.targetPath,
           strategy: effectiveStrategy,
           conflictPolicy: effectiveConflictPolicy,
+          registry: input.scmRegistry,
         },
         requestBlobPackToFile: async ({ packId, digests, destinationPath }) => {
           if (input.actualTransportStrategy === 'server_routed_stream' && input.machineTransferChannel) {
@@ -511,6 +520,7 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
   activeServerDir: string;
   negotiatedTransportStrategy?: SessionHandoffTransportStrategy;
   workspaceTransfer?: SessionHandoffWorkspaceTransfer;
+  scmRegistry?: ScmBackendRegistry;
   directPeerTransfer?: DirectPeerTransferPublisher;
   sourceRootPath: string;
   agentBundleTransferPublication?: SessionHandoffAgentBundleTransferPublication;
@@ -528,6 +538,7 @@ export async function prepareSessionHandoffSourceWorkspaceTransfer(input: Readon
       sourceRootPath: input.sourceRootPath,
       activeServerDir: input.activeServerDir,
       workspaceTransfer: input.workspaceTransfer,
+      scmRegistry: input.scmRegistry,
       sessionMetadata: input.sessionMetadata,
       sessionTranscriptRecords: input.sessionTranscriptRecords,
       agentBundle: input.agentBundle,

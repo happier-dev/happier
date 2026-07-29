@@ -7,6 +7,9 @@
   "engines": {
     "happier": "^0.2.0"
   },
+  "runtime": {
+    "apiVersion": 1
+  },
   "uses": [
     "actions"
   ],

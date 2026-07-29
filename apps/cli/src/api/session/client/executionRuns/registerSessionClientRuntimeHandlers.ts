@@ -1,6 +1,5 @@
-import { randomUUID } from 'node:crypto';
-
 import { configuration } from '@/configuration';
+import { notifyDaemonConnectedServiceUsageLimitWaitResumeCancel } from '@/daemon/controlClient';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { readCredentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -41,9 +40,12 @@ import {
     readAcpConfiguredBackendV1FromMetadata,
     readRuntimeDescriptorV1FromMetadata,
     readVoiceAgentTurnPayloadFromMeta,
+    type SessionTranscriptObservationProvenanceV1,
 } from '@happier-dev/protocol';
 import type { ExecutionRunPermissionRequestStoreProvider } from '@/agent/runtime/bridges/executionRun/executionRunPermissionResponseTarget';
 import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
+import type { EphemeralSendResult } from '@/api/session/client/transcript/ephemeralSendOutcome';
+import type { VoiceAgentTranscriptTurnCommitParams } from '@/api/session/client/transcript/sessionClientTranscriptApi';
 
 export function resolveSessionClientParentProvider(metadata: unknown): ACPProvider {
     const configuredAcpBackendId = typeof readAcpConfiguredBackendV1FromMetadata(metadata)?.backendId === 'string'
@@ -113,11 +115,15 @@ export function registerSessionClientRuntimeHandlers(
         enqueueAgentMessageCommitted?: (
             provider: ACPProvider,
             body: ACPMessageData,
-            opts: { localId: string; meta?: Record<string, unknown> },
+            opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 },
+        ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
+        enqueueVoiceAgentTranscriptTurnCommitted: (
+            provider: ACPProvider,
+            params: VoiceAgentTranscriptTurnCommitParams,
         ) => Promise<Readonly<{ persisted: boolean; delivered: boolean }>>;
         sendAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }) => Promise<void>;
-        sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }) => void;
-        sendAgentMessageEphemeralDelta?: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => void;
+        sendAgentMessageEphemeral: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; createdAt: number; updatedAt?: number; meta?: Record<string, unknown>; tick?: number }) => EphemeralSendResult;
+        sendAgentMessageEphemeralDelta?: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; tick: number; baseLength: number; createdAt: number; updatedAt?: number; meta?: Record<string, unknown> }) => EphemeralSendResult;
         getEphemeralStreamConnectionEpoch?: () => number;
         enqueueRegisteredSessionStateFieldMutation?: (mutation: RegisteredSessionStateFieldMutationV1) => void | Promise<void>;
         getTranscriptQueryContext: () => Readonly<{
@@ -139,6 +145,7 @@ export function registerSessionClientRuntimeHandlers(
         getServerFeaturesSnapshot?: (() => CliServerFeaturesSnapshot | undefined) | null;
         persistVoiceAgentRunMetadataFromPublicRun: (run: unknown, welcomedEpoch?: number) => void;
         socketEmitExecutionRunUpdated: (run: unknown) => void;
+        observeExecutionRunPublicState?: (run: unknown) => void;
     }>,
 ): void {
     const parentProvider = resolveSessionClientParentProvider(params.metadata);
@@ -184,15 +191,17 @@ export function registerSessionClientRuntimeHandlers(
     });
 
     registerSessionHandlers(params.rpcHandlerManager, workingDirectory, {
+        sessionId: params.sessionId,
         getSessionMetadata: () => params.getSessionMetadata(),
         sessionRuntimeControls: params.sessionRuntimeControls ?? null,
-        enqueueRegisteredSessionStateFieldMutation: params.enqueueRegisteredSessionStateFieldMutation,
         enqueueSessionUserMessage: (request: Readonly<{
             text: string;
             localId?: string;
             meta?: Record<string, unknown>;
         }>) => params.enqueueSessionUserMessage(request),
         transcriptActionExecutor,
+        notifyUsageLimitWaitResumeCancelled: async (request) =>
+            await notifyDaemonConnectedServiceUsageLimitWaitResumeCancel(request),
     });
 
     const transcriptWriter = {
@@ -202,31 +211,71 @@ export function registerSessionClientRuntimeHandlers(
         appendAssistantText: (text: string, meta: Record<string, unknown>) => {
             params.sendAgentMessage(parentProvider as ACPProvider, { type: 'message', message: text }, { meta });
         },
-        appendUserTextCommitted: async (text: string, meta: Record<string, unknown>) => {
-            const voiceTurn = readVoiceAgentTurnPayloadFromMeta(meta);
+        appendUserTextCommitted: async (
+            text: string,
+            options: Readonly<{ localId: string; meta: Record<string, unknown> }>,
+        ) => {
             await params.sendUserTextMessageCommitted(text, {
-                localId: voiceTurn ? deriveVoiceAgentTurnLocalId(voiceTurn) : randomUUID(),
-                meta,
+                localId: options.localId,
+                meta: options.meta,
             });
+            return { persisted: true, delivered: true };
         },
-        appendAssistantTextCommitted: async (text: string, meta: Record<string, unknown>) => {
-            const voiceTurn = readVoiceAgentTurnPayloadFromMeta(meta);
-            const opts = {
-                localId: voiceTurn ? deriveVoiceAgentTurnLocalId(voiceTurn) : randomUUID(),
-                meta,
-            };
-            const body = { type: 'message', message: text } satisfies ACPMessageData;
-            if (typeof params.enqueueAgentMessageCommitted === 'function') {
-                await params.enqueueAgentMessageCommitted(parentProvider as ACPProvider, body, opts);
-            } else {
-                await params.sendAgentMessageCommitted(parentProvider as ACPProvider, body, opts);
+        appendAssistantTextCommitted: async (
+            text: string,
+            options: Readonly<{ localId: string; meta: Record<string, unknown> }>,
+        ) => {
+            await params.sendAgentMessageCommitted(
+                parentProvider as ACPProvider,
+                { type: 'message', message: text },
+                { localId: options.localId, meta: options.meta },
+            );
+            return { persisted: true, delivered: true };
+        },
+        commitVoiceAgentTranscriptTurn: async (turn: Readonly<{
+            turnId: string;
+            user: Readonly<{ text: string; localId: string; meta: Record<string, unknown> }>;
+            assistant: Readonly<{ text: string; meta: Record<string, unknown> }>;
+        }>) => {
+            const userTurn = readVoiceAgentTurnPayloadFromMeta(turn.user.meta);
+            const assistantTurn = readVoiceAgentTurnPayloadFromMeta(turn.assistant.meta);
+            if (!userTurn || !assistantTurn) {
+                throw new Error('Voice-agent transcript turn metadata is required for durable pair commit');
             }
+            if (
+                userTurn.role !== 'user'
+                || assistantTurn.role !== 'assistant'
+                || userTurn.streamId !== turn.turnId
+                || assistantTurn.streamId !== turn.turnId
+                || userTurn.voiceAgentId !== assistantTurn.voiceAgentId
+                || userTurn.runId !== assistantTurn.runId
+                || userTurn.epoch !== assistantTurn.epoch
+            ) {
+                throw new Error('Voice-agent transcript pair must describe one canonical user/assistant turn');
+            }
+            return await params.enqueueVoiceAgentTranscriptTurnCommitted(parentProvider as ACPProvider, {
+                turnId: turn.turnId,
+                user: {
+                    text: turn.user.text,
+                    localId: turn.user.localId,
+                    meta: turn.user.meta,
+                },
+                assistant: {
+                    text: turn.assistant.text,
+                    localId: deriveVoiceAgentTurnLocalId(assistantTurn),
+                    meta: turn.assistant.meta,
+                },
+            });
         },
     };
 
     registerExecutionRunHandlers(params.rpcHandlerManager, {
         sessionId: params.sessionId,
         cwd: workingDirectory,
+        ...(typeof (params.metadata as { machineId?: unknown })?.machineId === 'string'
+            && (params.metadata as { machineId: string }).machineId.trim().length > 0
+            ? { machineId: (params.metadata as { machineId: string }).machineId.trim() }
+            : {}),
         serverUrl: configuration.serverUrl,
         parentProvider,
         browserControl: params.getBrowserDaemonControlRoutes?.() ?? null,
@@ -270,6 +319,7 @@ export function registerSessionClientRuntimeHandlers(
             : null,
         onExecutionRunPublicStateUpdated: (run) => {
             try {
+                params.observeExecutionRunPublicState?.(run);
                 params.persistVoiceAgentRunMetadataFromPublicRun(run);
                 params.socketEmitExecutionRunUpdated(run);
             } catch {

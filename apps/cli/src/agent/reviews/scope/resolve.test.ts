@@ -6,12 +6,39 @@ import {
   createScmCapabilities,
   type ScmStatusSnapshotResponse,
 } from '@happier-dev/protocol';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createScmBackendRegistry } from '@/scm/registry';
+import type { ScmBackendRegistry } from '@/scm/registry';
 import type { ScmBackend } from '@/scm/types';
 
 import { resolveReviewScmScope } from './resolve';
+
+const scmCatalogMock = vi.hoisted(() => {
+  type TestScmBackendRegistry = Readonly<{
+    listBackends: () => readonly unknown[];
+    selectBackend: () => Promise<null>;
+  }>;
+  let defaultRegistry: TestScmBackendRegistry | ScmBackendRegistry | null = null;
+  const runWithScmBackendRegistryLease = vi.fn(async <T>(
+    registry: ScmBackendRegistry | undefined,
+    run: (resolvedRegistry: TestScmBackendRegistry | ScmBackendRegistry) => Promise<T>,
+  ): Promise<T> => {
+    if (registry) return await run(registry);
+    if (!defaultRegistry) throw new Error('test default SCM registry not configured');
+    return await run(defaultRegistry);
+  });
+  return {
+    runWithScmBackendRegistryLease,
+    setDefaultRegistry: (registry: ScmBackendRegistry | null) => {
+      defaultRegistry = registry;
+    },
+  };
+});
+
+vi.mock('@/scm/scmBackendCatalog', () => ({
+  runWithScmBackendRegistryLease: scmCatalogMock.runWithScmBackendRegistryLease,
+}));
 
 function createGitBackend(snapshot: ScmStatusSnapshotResponse['snapshot']): ScmBackend {
   const notNeeded = async () => {
@@ -70,6 +97,82 @@ function createGitBackend(snapshot: ScmStatusSnapshotResponse['snapshot']): ScmB
 }
 
 describe('resolveReviewScmScope', () => {
+  it('uses the async SCM backend registry resolver when no registry is injected', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-review-scope-default-registry-'));
+    try {
+      scmCatalogMock.setDefaultRegistry(createScmBackendRegistry([
+        createGitBackend({
+          projectKey: 'project-1',
+          fetchedAt: 123,
+          repo: {
+            isRepo: true,
+            rootPath: cwd,
+            backendId: 'git',
+            mode: '.git',
+            defaultBranch: 'main',
+            worktrees: [],
+            remotes: [],
+          },
+          capabilities: createScmCapabilities({
+            readStatus: true,
+            readDiffFile: true,
+            supportedDiffAreas: ['pending', 'both'],
+          }),
+          branch: {
+            head: 'feature',
+            upstream: null,
+            ahead: 0,
+            behind: 0,
+            detached: false,
+          },
+          stashCount: 0,
+          hasConflicts: false,
+          entries: [{
+            path: 'src/review.ts',
+            previousPath: null,
+            kind: 'modified',
+            includeStatus: '',
+            pendingStatus: 'M',
+            hasIncludedDelta: false,
+            hasPendingDelta: true,
+            stats: {
+              includedAdded: 0,
+              includedRemoved: 0,
+              pendingAdded: 1,
+              pendingRemoved: 1,
+              isBinary: false,
+            },
+          }],
+          totals: {
+            includedFiles: 0,
+            pendingFiles: 1,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 1,
+            pendingRemoved: 1,
+          },
+        }),
+      ]));
+      scmCatalogMock.runWithScmBackendRegistryLease.mockClear();
+
+      await expect(resolveReviewScmScope({ cwd })).resolves.toMatchObject({
+        kind: 'review_scm_scope.v1',
+        status: 'supported',
+        scmBackendId: 'git',
+        repositoryRoot: cwd,
+        selectedPaths: ['src/review.ts'],
+      });
+      expect(scmCatalogMock.runWithScmBackendRegistryLease).toHaveBeenCalledWith(
+        undefined,
+        expect.any(Function),
+      );
+    } finally {
+      scmCatalogMock.setDefaultRegistry(null);
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('builds supported Git review scope from SCM status snapshots', async () => {
     const cwd = await mkdtemp(join(tmpdir(), 'happier-review-scope-git-'));
     try {
@@ -166,6 +269,102 @@ describe('resolveReviewScmScope', () => {
         kind: 'review_scm_scope.v1',
         status: 'unsupported',
         diagnostics: [expect.objectContaining({ code: 'not_repository' })],
+      });
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('does not read provider-owned engine config when resolving selected scope paths', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'happier-review-scope-generic-selected-'));
+    try {
+      const registry = createScmBackendRegistry([
+        createGitBackend({
+          projectKey: 'project-1',
+          fetchedAt: 123,
+          repo: {
+            isRepo: true,
+            rootPath: cwd,
+            backendId: 'git',
+            mode: '.git',
+            defaultBranch: 'main',
+            worktrees: [],
+            remotes: [],
+          },
+          capabilities: createScmCapabilities({
+            readStatus: true,
+            readDiffFile: true,
+            supportedDiffAreas: ['included', 'pending', 'both'],
+          }),
+          branch: {
+            head: 'feature',
+            upstream: 'origin/feature',
+            ahead: 0,
+            behind: 0,
+            detached: false,
+          },
+          stashCount: 0,
+          hasConflicts: false,
+          entries: [{
+            path: 'src/auth.ts',
+            previousPath: null,
+            kind: 'modified',
+            includeStatus: '',
+            pendingStatus: 'M',
+            hasIncludedDelta: false,
+            hasPendingDelta: true,
+            stats: {
+              includedAdded: 0,
+              includedRemoved: 0,
+              pendingAdded: 3,
+              pendingRemoved: 1,
+              isBinary: false,
+            },
+          }, {
+            path: 'src/secret.ts',
+            previousPath: null,
+            kind: 'modified',
+            includeStatus: '',
+            pendingStatus: 'M',
+            hasIncludedDelta: false,
+            hasPendingDelta: true,
+            stats: {
+              includedAdded: 0,
+              includedRemoved: 0,
+              pendingAdded: 5,
+              pendingRemoved: 2,
+              isBinary: false,
+            },
+          }],
+          totals: {
+            includedFiles: 0,
+            pendingFiles: 2,
+            untrackedFiles: 0,
+            includedAdded: 0,
+            includedRemoved: 0,
+            pendingAdded: 8,
+            pendingRemoved: 3,
+          },
+        }),
+      ]);
+
+      await expect(resolveReviewScmScope({
+        cwd,
+        registry,
+        intentInput: {
+          engineIds: ['deepsec'],
+          instructions: 'Review.',
+          changeType: 'uncommitted',
+          base: { kind: 'none' },
+          selectedFiles: ['src/auth.ts'],
+          engines: {
+            deepsec: { selectedFiles: ['src/secret.ts'] },
+          },
+        },
+      })).resolves.toMatchObject({
+        kind: 'review_scm_scope.v1',
+        status: 'supported',
+        selectedPaths: ['src/auth.ts'],
       });
     } finally {
       await rm(cwd, { recursive: true, force: true });

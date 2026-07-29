@@ -13,8 +13,7 @@ describe('extractPermissionInputWithFallback', () => {
     expect(
       extractPermissionInputWithFallback(
         { toolCall: { rawInput: { filePath: '/tmp/a' } } },
-        'call_1',
-        new Map([['call_1', { filePath: '/tmp/fallback' }]])
+        { filePath: '/tmp/fallback' },
       )
     ).toEqual({ filePath: '/tmp/a' });
   });
@@ -23,8 +22,6 @@ describe('extractPermissionInputWithFallback', () => {
     expect(
       extractPermissionInputWithFallback(
         { toolCall: { rawInput: ['bash', '-lc', 'echo hi'] } },
-        'call_argv',
-        new Map(),
       ),
     ).toEqual({ command: ['bash', '-lc', 'echo hi'] });
   });
@@ -33,8 +30,6 @@ describe('extractPermissionInputWithFallback', () => {
     expect(
       extractPermissionInputWithFallback(
         { toolCall: { rawInput: "bash -lc 'echo hi'" } },
-        'call_str',
-        new Map(),
       ),
     ).toEqual({ command: "bash -lc 'echo hi'" });
   });
@@ -43,14 +38,13 @@ describe('extractPermissionInputWithFallback', () => {
     expect(
       extractPermissionInputWithFallback(
         { toolCall: { kind: 'other' } },
-        'call_2',
-        new Map([['call_2', { filePath: '/tmp/fallback' }]])
+        { filePath: '/tmp/fallback' },
       )
     ).toEqual({ filePath: '/tmp/fallback' });
   });
 
   it('returns empty object when nothing is available', () => {
-    expect(extractPermissionInputWithFallback({}, 'call_3', new Map())).toEqual({});
+    expect(extractPermissionInputWithFallback({})).toEqual({});
   });
 
   it('uses execute toolCall titles as command input before permission option labels', () => {
@@ -68,8 +62,6 @@ describe('extractPermissionInputWithFallback', () => {
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
         } as any,
-        'call_4',
-        new Map(),
       ),
     ).toEqual({
       command:
@@ -86,8 +78,6 @@ describe('extractPermissionInputWithFallback', () => {
             title: 'Run terminal command: git status --short',
           },
         } as any,
-        'call_4b',
-        new Map(),
       ),
     ).toEqual({ command: 'git status --short' });
   });
@@ -106,8 +96,7 @@ describe('extractPermissionInputWithFallback', () => {
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
         } as any,
-        'call_5',
-        new Map([['call_5', { path: 'package.json' }]]),
+        { path: 'package.json' },
       ),
     ).toEqual({ path: 'package.json' });
   });
@@ -125,8 +114,6 @@ describe('extractPermissionInputWithFallback', () => {
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
         } as any,
-        'call_6',
-        new Map(),
       ),
     ).toEqual({});
   });
@@ -144,8 +131,7 @@ describe('extractPermissionInputWithFallback', () => {
             { optionId: 'cancel', kind: 'reject_once', name: 'Reject' },
           ],
         } as any,
-        'call_7',
-        new Map([['call_7', { command: 'git status --porcelain' }]]),
+        { command: 'git status --porcelain' },
       ),
     ).toEqual({ command: 'git status --porcelain' });
   });
@@ -173,8 +159,6 @@ describe('extractPermissionInputWithFallback', () => {
             ],
           },
         } as any,
-        'call_8',
-        new Map(),
       ),
     ).toEqual({
       command:
@@ -259,8 +243,7 @@ describe('resolvePermissionToolName', () => {
     expect(
       resolvePermissionToolName({
         toolNameHint: 'web_fetch',
-        toolCallId: 'call_fetch_1',
-        toolCallIdToNameMap: new Map([['call_fetch_1', 'read']]),
+        mappedToolName: 'read',
       }),
     ).toBe('web_fetch');
   });
@@ -269,8 +252,7 @@ describe('resolvePermissionToolName', () => {
     expect(
       resolvePermissionToolName({
         toolNameHint: 'read',
-        toolCallId: 'call_fetch_2',
-        toolCallIdToNameMap: new Map([['call_fetch_2', 'web_fetch']]),
+        mappedToolName: 'web_fetch',
       }),
     ).toBe('web_fetch');
   });
@@ -280,8 +262,7 @@ describe('resolvePermissionToolName', () => {
     expect(
       resolvePermissionToolName({
         toolNameHint: 'bash',
-        toolCallId: 'call_bash_1',
-        toolCallIdToNameMap: new Map([['call_bash_1', 'read']]),
+        mappedToolName: 'read',
       }),
     ).toBe('bash');
   });

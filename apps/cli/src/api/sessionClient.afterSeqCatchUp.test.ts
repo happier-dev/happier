@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { encodeBase64, encrypt } from './encryption';
 import { ApiSessionClient } from './session/sessionClient';
-import { writeLastChangesCursor } from '@/persistence';
+import { writeAccountChangesCursor } from '@/persistence';
 import { createMockSession } from '@/testkit/backends/sessionFixtures';
 import { bindApiSessionSocketPairMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 
@@ -16,8 +16,8 @@ vi.mock('socket.io-client', () => ({
 
 vi.mock('@/persistence', () => ({
     readCredentials: vi.fn(async () => null),
-    readLastChangesCursor: vi.fn(async () => 0),
-    writeLastChangesCursor: vi.fn(async () => {}),
+    readAccountChangesCursor: vi.fn(async () => 0),
+    writeAccountChangesCursor: vi.fn(async () => {}),
 }));
 
 vi.mock('axios');
@@ -107,11 +107,11 @@ describe('ApiSessionClient reconnect transcript catch-up (afterSeq)', () => {
 
         mockSocket.trigger('connect');
         await vi.waitFor(() => {
-            expect(onUserMessage).toHaveBeenCalledTimes(1);
+            expect(writeAccountChangesCursor).toHaveBeenCalledWith('account-1', 1);
         });
-        expect(onUserMessage).toHaveBeenCalledWith(expect.objectContaining({ localId: 'local-1' }));
+        expect(onUserMessage).not.toHaveBeenCalled();
         await vi.waitFor(() => {
-            expect(writeLastChangesCursor).toHaveBeenCalledWith('account-1', 1);
+            expect(writeAccountChangesCursor).toHaveBeenCalledWith('account-1', 1);
         });
 
         await client.close();

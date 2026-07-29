@@ -14,8 +14,8 @@ import {
     type ScmRepositoryRemoveIndexLockResponse,
 } from '@happier-dev/protocol';
 
-import { resolveScmBackendRegistry } from '@/scm/scmBackendCatalog';
-import type { ScmBackendRegistry } from '@/scm/registry';
+import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
+import { resolveScmBackendById, type ScmBackendRegistry } from '@/scm/registry';
 import { runScmRoute } from '@/scm/rpc/dispatch';
 import { resolveTildePath } from '@/scm/runtime';
 import type { ScmBackend, ScmBackendContext } from '@/scm/types';
@@ -82,17 +82,53 @@ function repositoryCloneUnsupportedResponse(message: string): ScmRepositoryClone
     };
 }
 
-function findGitRepositoryInitBackend(registry: ScmBackendRegistry): ScmBackend | null {
-    return registry.listBackends().find((backend) => backend.id === 'git' && backend.repositoryInit) ?? null;
+function isGitBackend(backend: ScmBackend): boolean {
+    return backend.kind === 'git' || (!backend.kind && backend.id === 'git');
 }
 
-function findGitRepositoryCloneBackend(registry: ScmBackendRegistry): ScmBackend | null {
-    return registry.listBackends().find((backend) => backend.id === 'git' && backend.repositoryClone) ?? null;
+function supportsLifecycleOperation(
+    backend: ScmBackend,
+    operation: 'init' | 'clone',
+): boolean {
+    const declared = backend.declaredCapabilities?.lifecycle?.[operation];
+    return declared
+        ? declared.support !== 'unsupported'
+        : operation === 'init'
+            ? typeof backend.repositoryInit === 'function'
+            : typeof backend.repositoryClone === 'function';
+}
+
+function findGitRepositoryLifecycleBackend(
+    registry: ScmBackendRegistry,
+    operation: 'init' | 'clone',
+    preferredBackendId?: string | null,
+): ScmBackend | null {
+    const candidates = registry.listBackends().filter((backend) => (
+        isGitBackend(backend)
+        && supportsLifecycleOperation(backend, operation)
+    ));
+    if (preferredBackendId) {
+        const preferredBackend = resolveScmBackendById(
+            registry.listBackends(),
+            preferredBackendId,
+        );
+        return preferredBackend && candidates.some((backend) => backend.id === preferredBackend.id)
+            ? preferredBackend
+            : null;
+    }
+
+    return candidates
+        .slice()
+        .sort((left, right) => (
+            (right.selection.modeSelectionScores['.git'] ?? 0)
+            - (left.selection.modeSelectionScores['.git'] ?? 0)
+        ))[0] ?? null;
 }
 
 function createNonRepositoryGitContext(input: {
     workingDirectory: string;
     cwd: string;
+    signal?: AbortSignal;
 }): ScmBackendContext {
     return {
         cwd: input.cwd,
@@ -102,6 +138,7 @@ function createNonRepositoryGitContext(input: {
             rootPath: null,
             mode: null,
         },
+        ...(input.signal ? { signal: input.signal } : {}),
     };
 }
 
@@ -110,46 +147,53 @@ export async function runScmRepositoryInitRoute(input: {
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
     registry?: ScmBackendRegistry;
+    signal?: AbortSignal;
 }): Promise<ScmRepositoryInitResponse> {
-    const registry = await resolveScmBackendRegistry(input.registry);
-    return runScmRoute<ScmRepositoryInitRequest, ScmRepositoryInitResponse>({
-        request: input.request,
-        workingDirectory: input.workingDirectory,
-        accessPolicy: input.accessPolicy,
-        registry,
-        onNonRepository: async ({ cwd, workingDirectory }) => {
-            const preferredBackendId = input.request.backendPreference?.kind === 'prefer'
-                ? input.request.backendPreference.backendId
-                : null;
-            if (preferredBackendId && preferredBackendId !== 'git') {
-                return repositoryInitUnsupportedResponse(
-                    `The selected backend "${preferredBackendId}" does not support repository initialization.`,
+    if (input.signal?.aborted) throw new Error('SCM operation was aborted');
+    return runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        if (input.signal?.aborted) throw new Error('SCM operation was aborted');
+        return runScmRoute<ScmRepositoryInitRequest, ScmRepositoryInitResponse>({
+            request: input.request,
+            workingDirectory: input.workingDirectory,
+            accessPolicy: input.accessPolicy,
+            registry,
+            signal: input.signal,
+            onNonRepository: async ({ cwd, workingDirectory }) => {
+                const preferredBackendId = input.request.backendPreference?.kind === 'prefer'
+                    ? input.request.backendPreference.backendId
+                    : null;
+                const gitBackend = findGitRepositoryLifecycleBackend(
+                    registry,
+                    'init',
+                    preferredBackendId,
                 );
-            }
+                if (!gitBackend?.repositoryInit) {
+                    return preferredBackendId
+                        ? repositoryInitUnsupportedResponse(
+                            `The selected backend "${preferredBackendId}" does not support repository initialization.`,
+                        )
+                        : repositoryInitBackendUnavailableResponse(
+                            'Git repository initialization is unavailable.',
+                        );
+                }
 
-            const gitBackend = findGitRepositoryInitBackend(registry);
-            if (!gitBackend?.repositoryInit) {
-                return repositoryInitBackendUnavailableResponse(
-                    'Git repository initialization is unavailable.',
-                );
-            }
-
-            return gitBackend.repositoryInit({
-                context: createNonRepositoryGitContext({ workingDirectory, cwd }),
-                request: input.request,
-            });
-        },
-        runWithBackend: async ({ context, selection }) => {
-            if (!selection.backend.repositoryInit) {
-                return repositoryInitUnsupportedResponse(
-                    `The selected backend "${selection.backend.id}" does not support repository initialization.`,
-                );
-            }
-            return selection.backend.repositoryInit({
-                context,
-                request: input.request,
-            });
-        },
+                return gitBackend.repositoryInit({
+                    context: createNonRepositoryGitContext({ workingDirectory, cwd, signal: input.signal }),
+                    request: input.request,
+                });
+            },
+            runWithBackend: async ({ context, selection }) => {
+                if (!selection.backend.repositoryInit) {
+                    return repositoryInitUnsupportedResponse(
+                        `The selected backend "${selection.backend.id}" does not support repository initialization.`,
+                    );
+                }
+                return selection.backend.repositoryInit({
+                    context,
+                    request: input.request,
+                });
+            },
+        });
     });
 }
 
@@ -158,47 +202,52 @@ export async function runScmRepositoryCloneRoute(input: {
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
     registry?: ScmBackendRegistry;
+    signal?: AbortSignal;
 }): Promise<ScmRepositoryCloneOutput> {
-    const registry = await resolveScmBackendRegistry(input.registry);
-    const normalizedWorkingDirectory = resolveTildePath(input.workingDirectory);
-    if (
-        !isAbsolute(input.request.destinationParentPath)
-        || hasUnsafeCloneParentPath(input.request.destinationParentPath)
-    ) {
-        return {
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-            error: 'Repository clone destination parent must be an absolute path without home expansion or traversal segments.',
-        };
-    }
-    const destinationParent = validatePath(
-        input.request.destinationParentPath,
-        normalizedWorkingDirectory,
-        [],
-        input.accessPolicy,
-    );
-    if (!destinationParent.valid || !destinationParent.resolvedPath) {
-        return {
-            success: false,
-            errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
-            error: destinationParent.error ?? 'Repository clone destination parent is not allowed.',
-        };
-    }
+    if (input.signal?.aborted) throw new Error('SCM operation was aborted');
+    return runWithScmBackendRegistryLease(input.registry, async (registry) => {
+        if (input.signal?.aborted) throw new Error('SCM operation was aborted');
+        const normalizedWorkingDirectory = resolveTildePath(input.workingDirectory);
+        if (
+            !isAbsolute(input.request.destinationParentPath)
+            || hasUnsafeCloneParentPath(input.request.destinationParentPath)
+        ) {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
+                error: 'Repository clone destination parent must be an absolute path without home expansion or traversal segments.',
+            };
+        }
+        const destinationParent = validatePath(
+            input.request.destinationParentPath,
+            normalizedWorkingDirectory,
+            [],
+            input.accessPolicy,
+        );
+        if (!destinationParent.valid || !destinationParent.resolvedPath) {
+            return {
+                success: false,
+                errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH,
+                error: destinationParent.error ?? 'Repository clone destination parent is not allowed.',
+            };
+        }
 
-    const gitBackend = findGitRepositoryCloneBackend(registry);
-    if (!gitBackend?.repositoryClone) {
-        return repositoryCloneUnsupportedResponse('Git repository clone is unavailable.');
-    }
+        const gitBackend = findGitRepositoryLifecycleBackend(registry, 'clone');
+        if (!gitBackend?.repositoryClone) {
+            return repositoryCloneUnsupportedResponse('Git repository clone is unavailable.');
+        }
 
-    return gitBackend.repositoryClone({
-        context: createNonRepositoryGitContext({
-            workingDirectory: normalizedWorkingDirectory,
-            cwd: destinationParent.resolvedPath,
-        }),
-        request: {
-            ...input.request,
-            destinationParentPath: destinationParent.resolvedPath,
-        },
+        return gitBackend.repositoryClone({
+            context: createNonRepositoryGitContext({
+                workingDirectory: normalizedWorkingDirectory,
+                cwd: destinationParent.resolvedPath,
+                signal: input.signal,
+            }),
+            request: {
+                ...input.request,
+                destinationParentPath: destinationParent.resolvedPath,
+            },
+        });
     });
 }
 
@@ -207,12 +256,14 @@ export function runScmRepositoryRemoveIndexLockRoute(input: {
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
     registry?: ScmBackendRegistry;
+    signal?: AbortSignal;
 }): Promise<ScmRepositoryRemoveIndexLockResponse> {
     return runScmRoute<ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse>({
         request: input.request,
         workingDirectory: input.workingDirectory,
         accessPolicy: input.accessPolicy,
         registry: input.registry,
+        signal: input.signal,
         onNonRepository: async () =>
             removeIndexLockUnsupportedResponse('The selected path is not a Git repository.'),
         runWithBackend: async ({ context, selection }) => {
@@ -234,12 +285,14 @@ export function runScmHostingRepositoryPublishRoute(input: {
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
     registry?: ScmBackendRegistry;
+    signal?: AbortSignal;
 }): Promise<ScmHostingRepositoryPublishResponse> {
     return runScmRoute<ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse>({
         request: input.request,
         workingDirectory: input.workingDirectory,
         accessPolicy: input.accessPolicy,
         registry: input.registry,
+        signal: input.signal,
         onNonRepository: async () =>
             hostingRepositoryPublishUnsupportedResponse('The selected path is not a Git repository.'),
         runWithBackend: async ({ context, selection }) => {
@@ -261,12 +314,14 @@ export function runScmHostingRepositoryDescribePublishTargetsRoute(input: {
     workingDirectory: string;
     accessPolicy?: FilesystemAccessPolicy;
     registry?: ScmBackendRegistry;
+    signal?: AbortSignal;
 }): Promise<ScmHostingRepositoryDescribePublishTargetsResponse> {
     return runScmRoute<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>({
         request: input.request,
         workingDirectory: input.workingDirectory,
         accessPolicy: input.accessPolicy,
         registry: input.registry,
+        signal: input.signal,
         onNonRepository: async () =>
             hostingRepositoryDescribePublishTargetsUnsupportedResponse('The selected path is not a Git repository.'),
         runWithBackend: async ({ context, selection }) => {

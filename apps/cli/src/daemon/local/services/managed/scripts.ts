@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -19,6 +20,9 @@ export type LocalServiceRunTarget = Readonly<{
 }>;
 
 const SERVER_SCRIPT_PRIORITY = ['dev', 'serve', 'preview', 'start'] as const;
+const RUN_TARGET_ID_MAX_LENGTH = 256;
+const RUN_TARGET_ID_HASH_LENGTH = 12;
+const DEFAULT_MAX_VISITED_DIRECTORIES = 5_000;
 const IGNORED_DIRECTORY_NAMES = new Set([
     '.git',
     '.hg',
@@ -30,6 +34,30 @@ const IGNORED_DIRECTORY_NAMES = new Set([
     'dist',
     'node_modules',
 ]);
+
+function disambiguatedRunTargetId(baseId: string, cwd: string): string {
+    const suffix = `:${createHash('sha256').update(cwd).digest('hex').slice(0, RUN_TARGET_ID_HASH_LENGTH)}`;
+    if (baseId.length + suffix.length <= RUN_TARGET_ID_MAX_LENGTH) {
+        return `${baseId}${suffix}`;
+    }
+    return `${baseId.slice(0, RUN_TARGET_ID_MAX_LENGTH - suffix.length)}${suffix}`;
+}
+
+function disambiguateRunTargetIds(targets: readonly LocalServiceRunTarget[]): readonly LocalServiceRunTarget[] {
+    const countById = new Map<string, number>();
+    for (const target of targets) {
+        countById.set(target.id, (countById.get(target.id) ?? 0) + 1);
+    }
+    return targets.map((target) => {
+        if ((countById.get(target.id) ?? 0) <= 1) {
+            return target;
+        }
+        return {
+            ...target,
+            id: disambiguatedRunTargetId(target.id, target.cwd),
+        };
+    });
+}
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -99,9 +127,16 @@ async function readPackageJson(cwd: string): Promise<Readonly<{
     };
 }
 
-async function collectPackageDirectories(root: string): Promise<string[]> {
+async function collectPackageDirectories(
+    root: string,
+    budget: { remaining: number },
+): Promise<string[]> {
     const out: string[] = [];
     const visit = async (directory: string): Promise<void> => {
+        if (budget.remaining <= 0) {
+            return;
+        }
+        budget.remaining -= 1;
         if (await pathExists(join(directory, 'package.json'))) {
             out.push(directory);
         }
@@ -119,13 +154,17 @@ async function collectPackageDirectories(root: string): Promise<string[]> {
 
 export async function discoverLocalServiceRunTargets(input: Readonly<{
     roots: readonly string[];
+    maxVisitedDirectories?: number;
 }>): Promise<readonly LocalServiceRunTarget[]> {
     const targets: LocalServiceRunTarget[] = [];
     const seenDirectories = new Set<string>();
+    const traversalBudget = {
+        remaining: Math.max(0, input.maxVisitedDirectories ?? DEFAULT_MAX_VISITED_DIRECTORIES),
+    };
 
     for (const root of input.roots) {
         const packageManager = await resolvePackageManager(root);
-        const directories = await collectPackageDirectories(root);
+        const directories = await collectPackageDirectories(root, traversalBudget);
         for (const cwd of directories) {
             if (seenDirectories.has(cwd)) {
                 continue;
@@ -158,5 +197,5 @@ export async function discoverLocalServiceRunTargets(input: Readonly<{
         }
     }
 
-    return targets;
+    return disambiguateRunTargetIds(targets);
 }

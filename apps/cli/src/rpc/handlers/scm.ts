@@ -1,6 +1,7 @@
 import type {
     ScmBackendDescribeRequest,
     ScmBackendDescribeResponse,
+    ScmBackendPreference,
     ScmBranchIntegrationRequest,
     ScmBranchIntegrationResponse,
     ScmBranchCheckoutRequest,
@@ -79,8 +80,9 @@ import type {
 } from '@happier-dev/protocol';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
-import type { RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import {
     createNonRepositoryScmSnapshotResponse,
     notRepositoryResponse,
@@ -95,25 +97,87 @@ import {
 } from '@/scm/rpc/repositoryProvisioningDispatch';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
+type MutatingScmRouteRequest = {
+    cwd?: string;
+    backendPreference?: ScmBackendPreference;
+};
+
+type MutatingScmRouteResponse = {
+    success: boolean;
+    error?: string;
+    errorCode?: string;
+};
+
+const scmRpcOperationSignalStorage = new AsyncLocalStorage<AbortSignal>();
+
 export function registerScmHandlers(
     rpcHandlerManager: RpcHandlerRegistrar,
     workingDirectory: string,
     deps?: Readonly<{ accessPolicy?: FilesystemAccessPolicy }>,
 ): void {
+    const scmRpcHandlerManager: RpcHandlerRegistrar = {
+        registerHandler<TRequest = any, TResponse = any>(
+            method: string,
+            handler: RpcHandler<TRequest, TResponse>,
+        ): void {
+            rpcHandlerManager.registerHandler(method, (request, context) => {
+                const operationContext = context ?? Object.freeze({ signal: new AbortController().signal });
+                return (
+                scmRpcOperationSignalStorage.run(
+                    operationContext.signal,
+                    () => handler(request, operationContext),
+                )
+                );
+            });
+        },
+    };
     const routeBase = {
         workingDirectory,
         accessPolicy: deps?.accessPolicy,
+        get signal(): AbortSignal | undefined {
+            return scmRpcOperationSignalStorage.getStore();
+        },
     } as const;
     const statusSnapshotInFlight = new Map<string, Promise<ScmStatusSnapshotResponse>>();
+    const statusSnapshotCache = new Map<string, { value: ScmStatusSnapshotResponse; expiresAtMs: number }>();
+    let statusSnapshotCacheGeneration = 0;
+    const statusSnapshotCacheTtlMs = (() => {
+        const raw = (process.env.HAPPIER_SCM_STATUS_SNAPSHOT_CACHE_TTL_MS ?? '').trim();
+        if (!raw) return 1_000;
+        const parsed = Number.parseInt(raw, 10);
+        return Number.isFinite(parsed) && parsed >= 0 ? parsed : 1_000;
+    })();
     const statusSnapshotKey = (request: ScmStatusSnapshotRequest): string => JSON.stringify({
         cwd: request.cwd ?? null,
         backendPreference: request.backendPreference ?? null,
         includeWorktreeStatus: request.includeWorktreeStatus === true,
     });
+    const invalidateStatusSnapshotCache = (): void => {
+        statusSnapshotCacheGeneration += 1;
+        statusSnapshotInFlight.clear();
+        statusSnapshotCache.clear();
+    };
+    const runWithStatusSnapshotCacheInvalidation = async <T>(operation: () => Promise<T>): Promise<T> => {
+        invalidateStatusSnapshotCache();
+        try {
+            return await operation();
+        } finally {
+            invalidateStatusSnapshotCache();
+        }
+    };
+    const runMutatingScmRoute = <TRequest extends MutatingScmRouteRequest, TResponse extends MutatingScmRouteResponse>(
+        input: Parameters<typeof runScmRoute<TRequest, TResponse>>[0],
+    ): Promise<TResponse> =>
+        runWithStatusSnapshotCacheInvalidation(() => runScmRoute<TRequest, TResponse>(input));
     const runStatusSnapshot = (request: ScmStatusSnapshotRequest): Promise<ScmStatusSnapshotResponse> => {
         const key = statusSnapshotKey(request);
+        const cached = statusSnapshotCache.get(key);
+        if (cached && cached.expiresAtMs > Date.now()) {
+            return Promise.resolve(cached.value);
+        }
         const existing = statusSnapshotInFlight.get(key);
         if (existing) return existing;
+        const cacheGeneration = statusSnapshotCacheGeneration;
         const promise = runScmRoute<ScmStatusSnapshotRequest, ScmStatusSnapshotResponse>({
             request,
             ...routeBase,
@@ -124,6 +188,11 @@ export function registerScmHandlers(
                 }),
             runWithBackend: ({ context, selection }) =>
                 selection.backend.statusSnapshot({ context, request }),
+        }).then((value) => {
+            if (statusSnapshotCacheTtlMs > 0 && statusSnapshotCacheGeneration === cacheGeneration) {
+                statusSnapshotCache.set(key, { value, expiresAtMs: Date.now() + statusSnapshotCacheTtlMs });
+            }
+            return value;
         });
         statusSnapshotInFlight.set(key, promise);
         void promise.finally(() => {
@@ -134,7 +203,7 @@ export function registerScmHandlers(
         return promise;
     };
 
-    rpcHandlerManager.registerHandler<ScmBackendDescribeRequest, ScmBackendDescribeResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBackendDescribeRequest, ScmBackendDescribeResponse>(
         RPC_METHODS.SCM_BACKEND_DESCRIBE,
         async (request) =>
             runScmRoute<ScmBackendDescribeRequest, ScmBackendDescribeResponse>({
@@ -146,12 +215,12 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmStatusSnapshotRequest, ScmStatusSnapshotResponse>(
+    scmRpcHandlerManager.registerHandler<ScmStatusSnapshotRequest, ScmStatusSnapshotResponse>(
         RPC_METHODS.SCM_STATUS_SNAPSHOT,
         async (request) => runStatusSnapshot(request)
     );
 
-    rpcHandlerManager.registerHandler<ScmWorktreesEnrichmentRequest, ScmWorktreesEnrichmentResponse>(
+    scmRpcHandlerManager.registerHandler<ScmWorktreesEnrichmentRequest, ScmWorktreesEnrichmentResponse>(
         RPC_METHODS.SCM_WORKTREES_ENRICHMENT,
         async (request) =>
             runScmRoute<ScmWorktreesEnrichmentRequest, ScmWorktreesEnrichmentResponse>({
@@ -172,7 +241,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmDiffFileRequest, ScmDiffFileResponse>(
+    scmRpcHandlerManager.registerHandler<ScmDiffFileRequest, ScmDiffFileResponse>(
         RPC_METHODS.SCM_DIFF_FILE,
         async (request) =>
             runScmRoute<ScmDiffFileRequest, ScmDiffFileResponse>({
@@ -184,7 +253,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmDiffCommitRequest, ScmDiffCommitResponse>(
+    scmRpcHandlerManager.registerHandler<ScmDiffCommitRequest, ScmDiffCommitResponse>(
         RPC_METHODS.SCM_DIFF_COMMIT,
         async (request) =>
             runScmRoute<ScmDiffCommitRequest, ScmDiffCommitResponse>({
@@ -196,10 +265,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmChangeApplyRequest, ScmChangeApplyResponse>(
+    scmRpcHandlerManager.registerHandler<ScmChangeApplyRequest, ScmChangeApplyResponse>(
         RPC_METHODS.SCM_CHANGE_INCLUDE,
         async (request) =>
-            runScmRoute<ScmChangeApplyRequest, ScmChangeApplyResponse>({
+            runMutatingScmRoute<ScmChangeApplyRequest, ScmChangeApplyResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmChangeApplyResponse>(),
@@ -208,10 +277,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmChangeApplyRequest, ScmChangeApplyResponse>(
+    scmRpcHandlerManager.registerHandler<ScmChangeApplyRequest, ScmChangeApplyResponse>(
         RPC_METHODS.SCM_CHANGE_EXCLUDE,
         async (request) =>
-            runScmRoute<ScmChangeApplyRequest, ScmChangeApplyResponse>({
+            runMutatingScmRoute<ScmChangeApplyRequest, ScmChangeApplyResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmChangeApplyResponse>(),
@@ -220,10 +289,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmChangeDiscardRequest, ScmChangeDiscardResponse>(
+    scmRpcHandlerManager.registerHandler<ScmChangeDiscardRequest, ScmChangeDiscardResponse>(
         RPC_METHODS.SCM_CHANGE_DISCARD,
         async (request) =>
-            runScmRoute<ScmChangeDiscardRequest, ScmChangeDiscardResponse>({
+            runMutatingScmRoute<ScmChangeDiscardRequest, ScmChangeDiscardResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmChangeDiscardResponse>(),
@@ -232,10 +301,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmCommitCreateRequest, ScmCommitCreateResponse>(
+    scmRpcHandlerManager.registerHandler<ScmCommitCreateRequest, ScmCommitCreateResponse>(
         RPC_METHODS.SCM_COMMIT_CREATE,
         async (request) =>
-            runScmRoute<ScmCommitCreateRequest, ScmCommitCreateResponse>({
+            runMutatingScmRoute<ScmCommitCreateRequest, ScmCommitCreateResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmCommitCreateResponse>(),
@@ -244,7 +313,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmLogListRequest, ScmLogListResponse>(
+    scmRpcHandlerManager.registerHandler<ScmLogListRequest, ScmLogListResponse>(
         RPC_METHODS.SCM_LOG_LIST,
         async (request) =>
             runScmRoute<ScmLogListRequest, ScmLogListResponse>({
@@ -256,7 +325,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmBranchListRequest, ScmBranchListResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBranchListRequest, ScmBranchListResponse>(
         RPC_METHODS.SCM_BRANCH_LIST,
         async (request) =>
             runScmRoute<ScmBranchListRequest, ScmBranchListResponse>({
@@ -268,10 +337,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmBranchCreateRequest, ScmBranchCreateResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBranchCreateRequest, ScmBranchCreateResponse>(
         RPC_METHODS.SCM_BRANCH_CREATE,
         async (request) =>
-            runScmRoute<ScmBranchCreateRequest, ScmBranchCreateResponse>({
+            runMutatingScmRoute<ScmBranchCreateRequest, ScmBranchCreateResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchCreateResponse>(),
@@ -280,10 +349,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmBranchCheckoutRequest, ScmBranchCheckoutResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBranchCheckoutRequest, ScmBranchCheckoutResponse>(
         RPC_METHODS.SCM_BRANCH_CHECKOUT,
         async (request) =>
-            runScmRoute<ScmBranchCheckoutRequest, ScmBranchCheckoutResponse>({
+            runMutatingScmRoute<ScmBranchCheckoutRequest, ScmBranchCheckoutResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchCheckoutResponse>(),
@@ -292,10 +361,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>(
         RPC_METHODS.SCM_BRANCH_MERGE,
         async (request) =>
-            runScmRoute<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>({
+            runMutatingScmRoute<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
@@ -304,10 +373,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>(
         RPC_METHODS.SCM_BRANCH_REBASE,
         async (request) =>
-            runScmRoute<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>({
+            runMutatingScmRoute<ScmBranchIntegrationRequest, ScmBranchIntegrationResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
@@ -316,10 +385,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>(
         RPC_METHODS.SCM_BRANCH_OPERATION_CONTINUE,
         async (request) =>
-            runScmRoute<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>({
+            runMutatingScmRoute<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
@@ -328,10 +397,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>(
+    scmRpcHandlerManager.registerHandler<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>(
         RPC_METHODS.SCM_BRANCH_OPERATION_ABORT,
         async (request) =>
-            runScmRoute<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>({
+            runMutatingScmRoute<ScmBranchOperationControlRequest, ScmBranchIntegrationResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmBranchIntegrationResponse>(),
@@ -340,10 +409,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmWorktreeCreateRequest, ScmWorktreeCreateResponse>(
+    scmRpcHandlerManager.registerHandler<ScmWorktreeCreateRequest, ScmWorktreeCreateResponse>(
         RPC_METHODS.SCM_WORKTREE_CREATE,
         async (request) =>
-            runScmRoute<ScmWorktreeCreateRequest, ScmWorktreeCreateResponse>({
+            runMutatingScmRoute<ScmWorktreeCreateRequest, ScmWorktreeCreateResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmWorktreeCreateResponse>(),
@@ -352,10 +421,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmWorktreeRemoveRequest, ScmWorktreeRemoveResponse>(
+    scmRpcHandlerManager.registerHandler<ScmWorktreeRemoveRequest, ScmWorktreeRemoveResponse>(
         RPC_METHODS.SCM_WORKTREE_REMOVE,
         async (request) =>
-            runScmRoute<ScmWorktreeRemoveRequest, ScmWorktreeRemoveResponse>({
+            runMutatingScmRoute<ScmWorktreeRemoveRequest, ScmWorktreeRemoveResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmWorktreeRemoveResponse>(),
@@ -364,10 +433,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmWorktreePruneRequest, ScmWorktreePruneResponse>(
+    scmRpcHandlerManager.registerHandler<ScmWorktreePruneRequest, ScmWorktreePruneResponse>(
         RPC_METHODS.SCM_WORKTREE_PRUNE,
         async (request) =>
-            runScmRoute<ScmWorktreePruneRequest, ScmWorktreePruneResponse>({
+            runMutatingScmRoute<ScmWorktreePruneRequest, ScmWorktreePruneResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmWorktreePruneResponse>(),
@@ -376,10 +445,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmCommitBackoutRequest, ScmCommitBackoutResponse>(
+    scmRpcHandlerManager.registerHandler<ScmCommitBackoutRequest, ScmCommitBackoutResponse>(
         RPC_METHODS.SCM_COMMIT_BACKOUT,
         async (request) =>
-            runScmRoute<ScmCommitBackoutRequest, ScmCommitBackoutResponse>({
+            runMutatingScmRoute<ScmCommitBackoutRequest, ScmCommitBackoutResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmCommitBackoutResponse>(),
@@ -388,10 +457,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRemoteAddRequest, ScmRemoteManagementResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRemoteAddRequest, ScmRemoteManagementResponse>(
         RPC_METHODS.SCM_REMOTE_ADD,
         async (request) =>
-            runScmRoute<ScmRemoteAddRequest, ScmRemoteManagementResponse>({
+            runMutatingScmRoute<ScmRemoteAddRequest, ScmRemoteManagementResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteManagementResponse>(),
@@ -400,10 +469,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRemoteSetUrlRequest, ScmRemoteManagementResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRemoteSetUrlRequest, ScmRemoteManagementResponse>(
         RPC_METHODS.SCM_REMOTE_SET_URL,
         async (request) =>
-            runScmRoute<ScmRemoteSetUrlRequest, ScmRemoteManagementResponse>({
+            runMutatingScmRoute<ScmRemoteSetUrlRequest, ScmRemoteManagementResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteManagementResponse>(),
@@ -412,10 +481,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRemoteRemoveRequest, ScmRemoteManagementResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRemoteRemoveRequest, ScmRemoteManagementResponse>(
         RPC_METHODS.SCM_REMOTE_REMOVE,
         async (request) =>
-            runScmRoute<ScmRemoteRemoveRequest, ScmRemoteManagementResponse>({
+            runMutatingScmRoute<ScmRemoteRemoveRequest, ScmRemoteManagementResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteManagementResponse>(),
@@ -424,10 +493,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRemoteRequest, ScmRemoteResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRemoteRequest, ScmRemoteResponse>(
         RPC_METHODS.SCM_REMOTE_FETCH,
         async (request) =>
-            runScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
+            runMutatingScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteResponse>(),
@@ -436,10 +505,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRemoteRequest, ScmRemoteResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRemoteRequest, ScmRemoteResponse>(
         RPC_METHODS.SCM_REMOTE_PUSH,
         async (request) =>
-            runScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
+            runMutatingScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteResponse>(),
@@ -448,10 +517,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRemoteRequest, ScmRemoteResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRemoteRequest, ScmRemoteResponse>(
         RPC_METHODS.SCM_REMOTE_PULL,
         async (request) =>
-            runScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
+            runMutatingScmRoute<ScmRemoteRequest, ScmRemoteResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemoteResponse>(),
@@ -460,10 +529,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRemotePublishRequest, ScmRemotePublishResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRemotePublishRequest, ScmRemotePublishResponse>(
         RPC_METHODS.SCM_REMOTE_PUBLISH,
         async (request) =>
-            runScmRoute<ScmRemotePublishRequest, ScmRemotePublishResponse>({
+            runMutatingScmRoute<ScmRemotePublishRequest, ScmRemotePublishResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmRemotePublishResponse>(),
@@ -472,7 +541,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmPullRequestListRequest, ScmPullRequestListResponse>(
+    scmRpcHandlerManager.registerHandler<ScmPullRequestListRequest, ScmPullRequestListResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_LIST,
         async (request) =>
             runScmRoute<ScmPullRequestListRequest, ScmPullRequestListResponse>({
@@ -486,7 +555,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmPullRequestGetRequest, ScmPullRequestGetResponse>(
+    scmRpcHandlerManager.registerHandler<ScmPullRequestGetRequest, ScmPullRequestGetResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_GET,
         async (request) =>
             runScmRoute<ScmPullRequestGetRequest, ScmPullRequestGetResponse>({
@@ -500,7 +569,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse>(
+    scmRpcHandlerManager.registerHandler<ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE,
         async (request) =>
             runScmRoute<ScmPullRequestOpenComposeRequest, ScmPullRequestOpenComposeResponse>({
@@ -514,10 +583,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>(
+    scmRpcHandlerManager.registerHandler<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_OPEN_OR_REUSE,
         async (request) =>
-            runScmRoute<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>({
+            runMutatingScmRoute<ScmPullRequestOpenOrReuseRequest, ScmPullRequestOpenOrReuseResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmPullRequestOpenOrReuseResponse>(),
@@ -528,10 +597,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>(
+    scmRpcHandlerManager.registerHandler<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_CHECKOUT,
         async (request) =>
-            runScmRoute<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>({
+            runMutatingScmRoute<ScmPullRequestCheckoutRequest, ScmPullRequestCheckoutResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmPullRequestCheckoutResponse>(),
@@ -542,10 +611,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>(
+    scmRpcHandlerManager.registerHandler<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_PREPARE_WORKTREE,
         async (request) =>
-            runScmRoute<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>({
+            runMutatingScmRoute<ScmPullRequestPrepareWorktreeRequest, ScmPullRequestPrepareWorktreeResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmPullRequestPrepareWorktreeResponse>(),
@@ -556,10 +625,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>(
+    scmRpcHandlerManager.registerHandler<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>(
         RPC_METHODS.SCM_PULL_REQUEST_RUN_STACKED,
         async (request) =>
-            runScmRoute<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>({
+            runMutatingScmRoute<ScmPullRequestRunStackedRequest, ScmPullRequestRunStackedResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmPullRequestRunStackedResponse>(),
@@ -570,25 +639,29 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmRepositoryInitRequest, ScmRepositoryInitResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRepositoryInitRequest, ScmRepositoryInitResponse>(
         RPC_METHODS.SCM_REPOSITORY_INIT,
         async (request) =>
-            runScmRepositoryInitRoute({
-                request,
-                ...routeBase,
-            })
+            runWithStatusSnapshotCacheInvalidation(() =>
+                runScmRepositoryInitRoute({
+                    request,
+                    ...routeBase,
+                }),
+            )
     );
 
-    rpcHandlerManager.registerHandler<ScmRepositoryCloneInput, ScmRepositoryCloneOutput>(
+    scmRpcHandlerManager.registerHandler<ScmRepositoryCloneInput, ScmRepositoryCloneOutput>(
         RPC_METHODS.SCM_REPOSITORY_CLONE,
         async (request) =>
-            runScmRepositoryCloneRoute({
-                request,
-                ...routeBase,
-            })
+            runWithStatusSnapshotCacheInvalidation(() =>
+                runScmRepositoryCloneRoute({
+                    request,
+                    ...routeBase,
+                }),
+            )
     );
 
-    rpcHandlerManager.registerHandler<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>(
+    scmRpcHandlerManager.registerHandler<ScmHostingRepositoryDescribePublishTargetsRequest, ScmHostingRepositoryDescribePublishTargetsResponse>(
         RPC_METHODS.SCM_HOSTING_REPOSITORY_DESCRIBE_PUBLISH_TARGETS,
         async (request) =>
             runScmHostingRepositoryDescribePublishTargetsRoute({
@@ -597,25 +670,29 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse>(
+    scmRpcHandlerManager.registerHandler<ScmHostingRepositoryPublishRequest, ScmHostingRepositoryPublishResponse>(
         RPC_METHODS.SCM_HOSTING_REPOSITORY_PUBLISH,
         async (request) =>
-            runScmHostingRepositoryPublishRoute({
-                request,
-                ...routeBase,
-            })
+            runWithStatusSnapshotCacheInvalidation(() =>
+                runScmHostingRepositoryPublishRoute({
+                    request,
+                    ...routeBase,
+                }),
+            )
     );
 
-    rpcHandlerManager.registerHandler<ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse>(
+    scmRpcHandlerManager.registerHandler<ScmRepositoryRemoveIndexLockRequest, ScmRepositoryRemoveIndexLockResponse>(
         RPC_METHODS.SCM_REPOSITORY_REMOVE_INDEX_LOCK,
         async (request) =>
-            runScmRepositoryRemoveIndexLockRoute({
-                request,
-                ...routeBase,
-            })
+            runWithStatusSnapshotCacheInvalidation(() =>
+                runScmRepositoryRemoveIndexLockRoute({
+                    request,
+                    ...routeBase,
+                }),
+            )
     );
 
-    rpcHandlerManager.registerHandler<ScmStashListRequest, ScmStashListResponse>(
+    scmRpcHandlerManager.registerHandler<ScmStashListRequest, ScmStashListResponse>(
         RPC_METHODS.SCM_STASH_LIST,
         async (request) =>
             runScmRoute<ScmStashListRequest, ScmStashListResponse>({
@@ -627,10 +704,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmStashDropRequest, ScmStashDropResponse>(
+    scmRpcHandlerManager.registerHandler<ScmStashDropRequest, ScmStashDropResponse>(
         RPC_METHODS.SCM_STASH_DROP,
         async (request) =>
-            runScmRoute<ScmStashDropRequest, ScmStashDropResponse>({
+            runMutatingScmRoute<ScmStashDropRequest, ScmStashDropResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashDropResponse>(),
@@ -639,10 +716,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmStashPopRequest, ScmStashPopResponse>(
+    scmRpcHandlerManager.registerHandler<ScmStashPopRequest, ScmStashPopResponse>(
         RPC_METHODS.SCM_STASH_POP,
         async (request) =>
-            runScmRoute<ScmStashPopRequest, ScmStashPopResponse>({
+            runMutatingScmRoute<ScmStashPopRequest, ScmStashPopResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashPopResponse>(),
@@ -651,10 +728,10 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmStashApplyRequest, ScmStashApplyResponse>(
+    scmRpcHandlerManager.registerHandler<ScmStashApplyRequest, ScmStashApplyResponse>(
         RPC_METHODS.SCM_STASH_APPLY,
         async (request) =>
-            runScmRoute<ScmStashApplyRequest, ScmStashApplyResponse>({
+            runMutatingScmRoute<ScmStashApplyRequest, ScmStashApplyResponse>({
                 request,
                 ...routeBase,
                 onNonRepository: async () => notRepositoryResponse<ScmStashApplyResponse>(),
@@ -663,7 +740,7 @@ export function registerScmHandlers(
             })
     );
 
-    rpcHandlerManager.registerHandler<ScmStashShowRequest, ScmStashShowResponse>(
+    scmRpcHandlerManager.registerHandler<ScmStashShowRequest, ScmStashShowResponse>(
         RPC_METHODS.SCM_STASH_SHOW,
         async (request) =>
             runScmRoute<ScmStashShowRequest, ScmStashShowResponse>({

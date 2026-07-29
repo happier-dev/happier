@@ -6,11 +6,8 @@
 // root cause behind the live Codex/Pi/Claude recovery loops: recovery was cleared
 // while the provider session was still broken.
 //
-// This helper accepts only DETERMINISTIC evidence at this stage of the work:
-//   - account-adoption verified (the switch already runs post-switch account
-//     adoption verification and surfaces it as `verificationByServiceId`); or
-//   - a genuinely fresh candidate was selected (the adopted profile differs from
-//     the exhausted/failed profile).
+// This helper accepts only provider-qualified activity or explicit terminal
+// evidence. A genuinely fresh candidate remains useful intermediate evidence.
 //
 // A bare `credential_refreshed`, a generic `ok: true`, or an `observed_generation`
 // with no verification and no candidate change is INTERMEDIATE: the local step
@@ -29,9 +26,8 @@
 // This resolver MAPS the runtime-auth switch result onto the shared,
 // provider-agnostic `ProviderOutcomeProofKind` contract. The mapping is thin and
 // behavior-preserving: the deterministic evidence it can establish is
-// `account_adoption_verified` and `fresh_candidate_selected`. Only
-// account-adoption is a recovered proof today; fresh-candidate selection
-// intentionally stays intermediate until later provider activity/native
+// `fresh_candidate_selected`. Fresh-candidate selection intentionally stays
+// intermediate until later provider activity/native
 // resume/quota proof arrives. All other local completions (credential_refreshed,
 // generic ok:true, unverified switch/observed_generation) map to `null`
 // (no proof).
@@ -63,15 +59,6 @@ export function readRuntimeAuthRecoverySwitchResult(
   return result;
 }
 
-function hasVerifiedAccountAdoption(switchResult: Readonly<Record<string, unknown>>): boolean {
-  const verificationByServiceId = switchResult.verificationByServiceId;
-  if (!isRecord(verificationByServiceId)) return false;
-  return Object.values(verificationByServiceId).some((verification) => (
-    isRecord(verification)
-    && (verification.status === 'verified' || verification.status === 'weakly_verified')
-  ));
-}
-
 function hasFreshCandidateSelected(switchResult: Readonly<Record<string, unknown>>): boolean {
   const activeProfileId = readString(switchResult.activeProfileId);
   if (!activeProfileId) return false;
@@ -82,13 +69,9 @@ function hasFreshCandidateSelected(switchResult: Readonly<Record<string, unknown
   return fromProfileId !== activeProfileId;
 }
 
-// Runtime-auth recovery can deterministically establish exactly these two proof
-// classes of the shared contract. (The shared union is wider — quota_probe_fresh /
-// native_resume / provider_activity / terminal_* are produced by other owners.)
-export type RuntimeAuthRecoveryProofKind = Extract<
-  ProviderOutcomeProofKind,
-  'account_adoption_verified' | 'fresh_candidate_selected'
->;
+// Runtime-auth recovery may carry explicit provider activity and terminal proof
+// from their owning producers. Quota proof is settled directly by the quota owner.
+export type RuntimeAuthRecoveryProofKind = ProviderOutcomeProofKind;
 
 /**
  * Resolve whether a runtime-auth recovery result carries deterministic
@@ -98,7 +81,11 @@ export type RuntimeAuthRecoveryProofKind = Extract<
 export function resolveRuntimeAuthRecoveryProof(result: unknown): RuntimeAuthRecoveryProofKind | null {
   const switchResult = readRuntimeAuthRecoverySwitchResult(result);
   if (!switchResult) return null;
-  if (hasVerifiedAccountAdoption(switchResult)) return 'account_adoption_verified';
+  if (switchResult.proofKind === 'provider_activity') return 'provider_activity';
+  if (
+    switchResult.proofKind === 'terminal_action_required'
+    || switchResult.proofKind === 'terminal_exhausted'
+  ) return switchResult.proofKind;
   if (hasFreshCandidateSelected(switchResult)) return 'fresh_candidate_selected';
   return null;
 }

@@ -7,15 +7,14 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import { validateInstalledPluginUiArtifactManifest } from './artifacts';
-import type { PluginUiArtifactRevocationState } from './revocation';
 
 export type HostedWebAssetRuntimeResolutionCode =
   | 'invalid_runtime_mode'
   | 'invalid_artifact_manifest'
   | 'artifact_entry_missing'
   | 'artifact_id_mismatch'
+  | 'artifact_platform_mismatch'
   | 'artifact_digest_mismatch'
-  | 'artifact_revoked'
   | 'contribution_id_mismatch'
   | 'invalid_artifact_manifest'
   | 'plugin_id_mismatch'
@@ -37,8 +36,6 @@ export type HostedWebAssetRuntimeResolutionResult =
       pluginId: string;
       contributionId: string;
       artifactKind: 'hostedWebAsset';
-      signature?: string;
-      signingKeyId?: string;
     }>;
   }>
   | Readonly<{
@@ -69,11 +66,10 @@ function isDeclaredUnderAssetRoot(path: string, assetRootId: string): boolean {
 export function resolveHostedWebAssetRuntime(params: Readonly<{
   pluginId?: string;
   contributionId: string;
+  manifestContributionId?: string;
   runtimeMode: unknown;
   manifest: unknown;
   artifact?: unknown;
-  revokedDigests?: ReadonlySet<string>;
-  revocationState?: PluginUiArtifactRevocationState;
 }>): HostedWebAssetRuntimeResolutionResult {
   const runtimeMode = PluginHostedWebRuntimeModeV1Schema.safeParse(params.runtimeMode);
   if (!runtimeMode.success) {
@@ -95,23 +91,21 @@ export function resolveHostedWebAssetRuntime(params: Readonly<{
 
   return resolveParsedHostedWebAssetRuntime({
     contributionId: params.contributionId,
+    manifestContributionId: params.manifestContributionId,
     pluginId: params.pluginId,
     runtimeMode: runtimeMode.data,
     manifest: manifest.data,
     artifact: params.artifact,
-    revokedDigests: params.revokedDigests ?? new Set(),
-    revocationState: params.revocationState,
   });
 }
 
 function resolveParsedHostedWebAssetRuntime(params: Readonly<{
   pluginId?: string;
   contributionId: string;
+  manifestContributionId?: string;
   runtimeMode: PluginHostedWebRuntimeModeV1;
   manifest: PluginUiArtifactsManifestV1;
   artifact?: unknown;
-  revokedDigests: ReadonlySet<string>;
-  revocationState?: PluginUiArtifactRevocationState;
 }>): HostedWebAssetRuntimeResolutionResult {
   if (params.runtimeMode.kind === 'managedLocalService') {
     return Object.freeze({
@@ -129,12 +123,27 @@ function resolveParsedHostedWebAssetRuntime(params: Readonly<{
     });
   }
 
-  const entry = findHostedWebManifestEntry(params.manifest, params.contributionId);
+  const manifestContributionId = params.manifestContributionId ?? params.contributionId;
+  const entry = findHostedWebManifestEntry(params.manifest, manifestContributionId);
   if (!entry) {
     return Object.freeze({
       ok: false,
       code: 'artifact_entry_missing',
       diagnostics: Object.freeze(['hosted_web_artifact_entry_missing']),
+    });
+  }
+  if (params.manifestContributionId !== undefined && entry.platform !== 'web') {
+    return Object.freeze({
+      ok: false,
+      code: 'artifact_platform_mismatch',
+      diagnostics: Object.freeze(['hosted_web_artifact_platform_mismatch']),
+    });
+  }
+  if (params.manifestContributionId !== undefined && params.runtimeMode.artifactId !== manifestContributionId) {
+    return Object.freeze({
+      ok: false,
+      code: 'artifact_id_mismatch',
+      diagnostics: Object.freeze(['hosted_web_artifact_id_mismatch']),
     });
   }
 
@@ -144,8 +153,6 @@ function resolveParsedHostedWebAssetRuntime(params: Readonly<{
     contributionId: params.contributionId,
     runtimeMode: params.runtimeMode,
     manifestEntry: entry,
-    revokedDigests: params.revokedDigests,
-    revocationState: params.revocationState,
   });
   if (!artifactValidation.ok) {
     return artifactValidation;
@@ -153,7 +160,7 @@ function resolveParsedHostedWebAssetRuntime(params: Readonly<{
 
   const assetRootId = normalizeArtifactPath(params.runtimeMode.assetRootId);
   const entryIsInAssetRoot = isDeclaredUnderAssetRoot(entry.entry, assetRootId)
-    && entry.files.every((file) => isDeclaredUnderAssetRoot(file, assetRootId));
+    && entry.files.every((file) => isDeclaredUnderAssetRoot(file.relativePath, assetRootId));
   if (!entryIsInAssetRoot) {
     return Object.freeze({
       ok: false,
@@ -167,7 +174,7 @@ function resolveParsedHostedWebAssetRuntime(params: Readonly<{
     artifactId: params.runtimeMode.artifactId,
     assetRootId,
     entryPath: entry.entry,
-    files: Object.freeze([...entry.files]),
+    files: Object.freeze(entry.files.map((file) => file.relativePath)),
     digest: entry.digest,
     ...artifactValidation.data,
   });
@@ -179,8 +186,6 @@ function validateHostedWebArtifactIfProvided(params: Readonly<{
   contributionId: string;
   runtimeMode: Extract<PluginHostedWebRuntimeModeV1, { kind: 'installedStaticAssets' }>;
   manifestEntry: PluginUiArtifactsManifestEntryV1;
-  revokedDigests: ReadonlySet<string>;
-  revocationState?: PluginUiArtifactRevocationState;
 }>): Readonly<{ ok: true; data: Record<string, never> | Pick<Extract<HostedWebAssetRuntimeResolutionResult, { ok: true }>, 'cacheKey' | 'integrity'> }>
   | Extract<HostedWebAssetRuntimeResolutionResult, { ok: false }> {
   if (params.artifact === undefined) {
@@ -197,15 +202,12 @@ function validateHostedWebArtifactIfProvided(params: Readonly<{
     artifact: params.artifact,
     expectedPluginId: params.pluginId,
     expectedContributionId: params.contributionId,
-    revokedDigests: params.revokedDigests,
-    revocationState: params.revocationState,
   });
   if (!validation.ok) {
     const diagnosticsByCode: Record<typeof validation.code, string> = {
       invalid_manifest: 'hosted_web_artifact_manifest_invalid',
       plugin_id_mismatch: 'hosted_web_artifact_plugin_mismatch',
       contribution_id_mismatch: 'hosted_web_artifact_contribution_mismatch',
-      artifact_revoked: 'hosted_web_artifact_revoked',
     };
     return Object.freeze({
       ok: false,
@@ -243,8 +245,6 @@ function validateHostedWebArtifactIfProvided(params: Readonly<{
         pluginId: validation.artifact.pluginId,
         contributionId: validation.artifact.contributionId,
         artifactKind: 'hostedWebAsset' as const,
-        signature: validation.artifact.integrity.signature,
-        signingKeyId: validation.artifact.integrity.signingKeyId,
       }),
     },
   });

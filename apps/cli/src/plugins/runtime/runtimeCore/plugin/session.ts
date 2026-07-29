@@ -2,42 +2,60 @@ import {
     createCatalogHostSessionRuntimeConfig,
     createCatalogHostSessionRuntimePlan,
 } from '@/agent/runtime/session/loop/catalogPlan';
-import type { HostSessionRuntimeFactoryParams } from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import type {
+    HostRuntimeReplacementLifecycle,
+    HostSessionRuntimeConfig,
+    HostSessionRuntimeFactoryParams,
+    HostSessionRuntimeStartupSeed,
+    HostSessionRuntimeRunOptions,
+} from '@/agent/runtime/session/loop/runHostSessionRuntime';
+import { readRequiredStartupMachineId } from '@/agent/runtime/startup/readRequiredStartupMachineId';
+import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import type { HostSessionRuntimePlan } from '@/agent/runtime/session/loop/lifecycle';
 import type {
     RuntimeTurnCompletionOptions,
     RuntimeTurnConfigUpdate,
-    RuntimeTurnMessage,
     RuntimeTurnMessageHandler,
-    RuntimeTurnSessionIdentity,
-    RuntimeTurnStartOrLoadOptions,
     RuntimeTurnPromptMeta,
-    RuntimeConfigUpdateOutcomeV1,
+    RuntimeTurnSessionOpenIntent,
 } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
-    createRuntimeTurnFailureAlreadySurfacedError,
-} from '@/agent/runtime/turns/runtimeTurnOperations';
-import { resolveContributionProviderAgentId } from '@/plugins/projection/registry/resolveContributionProviderAgentId';
+    normalizeBuiltInAgentId,
+    resolveContributionCatalogAgentId,
+} from '@/plugins/projection/registry/resolveContributionCatalogAgentId';
 import type {
     ResolvedAgentRuntimeContribution,
     ResolvedAgentContribution,
 } from '@/plugins/projection/registry/types';
 import { createProviderTerminalDisplay } from '@/ui/providers/providerTerminalDisplay';
-import type { AgentId } from '@happier-dev/agents';
 import {
+    getAgentResumeConfig,
+    resolveModelSelectionIntentFromSessionMetadata,
+} from '@happier-dev/agents';
+import {
+    buildBackendTargetKeyV2,
+    buildUnsupportedSessionPendingInputInterruptAndRunResult,
     buildUnsupportedSessionTerminalComposerClearResult,
-    type RuntimeEventV1,
+    readBackendTargetRefV2,
+    readPendingLocalId,
+    SessionModelSelectionResolutionError,
+    SessionModelSelectionV1Schema,
+    resolveSessionModelSelectionInputRefV1,
+    type SessionModelSelectionV1,
 } from '@happier-dev/protocol';
+import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import type {
-    CreateSessionRuntimeParamsV1,
-    RuntimeCancelResultV1,
-    RuntimeDisposeReasonV1,
-    RuntimeSendOptionsV1,
-    RuntimeSendResultV1,
-    SessionRuntimeConfigUpdateV1,
-    SessionRuntimeMcpServerConfigV1,
-    SessionRuntimeV1,
-} from '@happier-dev/plugin-sdk';
+    AgentSessionHostServices,
+} from '@happier-dev/plugin-sdk/agent-runtime';
+import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
+import type { NativeForkSource } from '@/session/shared/spawnSessionContract';
+import { logger } from '@/ui/logger';
+import {
+    readReleasedStartupOverridesCacheV1,
+    writeReleasedStartupOverridesCacheV1,
+} from '@/agent/runtime/startup/releasedStartupOverridesCacheV1';
+import { configuration } from '@/configuration';
+import type { PermissionMode } from '@/api/types';
 
 import {
     decorateRuntimeTurnOperationsWithMetadata,
@@ -47,8 +65,10 @@ import type {
     PluginRuntimeApplyConfigDeltaInFlight,
     PluginRuntimeClearTerminalComposer,
     PluginRuntimeHookOperations,
+    PluginRuntimeInterruptPendingInputAndRun,
+    PluginRuntimeInFlightConfigApplyOutcome,
     PluginRuntimePromptAcceptedHandler,
-    PluginRuntimeUndeliverablePrompt,
+    PluginRuntimePromptDeliveryOutcome,
 } from './sessionRuntimeHooks';
 import {
     buildPluginHostSessionRuntimeOptions,
@@ -57,70 +77,18 @@ import {
     buildPluginSessionLaunchParams,
 } from './sessionLaunch';
 
-type PublicSessionRuntimeCreate = (
-    params: CreateSessionRuntimeParamsV1 & Readonly<Record<string, unknown>>,
-) => SessionRuntimeV1 | Promise<SessionRuntimeV1>;
+type AgentSessionModelsSource = Parameters<AgentSessionHostServices['models']['bind']>[0];
+type AgentSessionModelsSnapshot = ReturnType<AgentSessionModelsSource['read']>;
 
-type PublicRuntimeStartOrLoadSession = (opts?: RuntimeTurnStartOrLoadOptions) => Promise<unknown> | unknown;
-type PublicRuntimeBeginTurnLifecycle = () => void;
-type PublicRuntimeWaitForTurnCompletion = (opts?: RuntimeTurnCompletionOptions) => Promise<void> | void;
-type PublicRuntimeCancelTurn = () => Promise<void> | void;
-type PublicRuntimeReadSessionIdentity = () => RuntimeTurnSessionIdentity;
-type PublicRuntimeUpdateSessionRuntimeConfig = (
-    update: SessionRuntimeConfigUpdateV1 & Readonly<Record<string, unknown>>,
-) => Promise<RuntimeConfigUpdateOutcomeV1 | void> | RuntimeConfigUpdateOutcomeV1 | void;
-type PublicRuntimeResetOrDisposeRuntime = (
-    reason?: RuntimeDisposeReasonV1 | Readonly<{ reason?: RuntimeDisposeReasonV1 }>,
-) => Promise<void> | void;
-type PublicRuntimePromptAcceptedHandler = (info: Readonly<{
-    localInputId?: string | null;
-    localInputIds?: readonly string[];
-    userMessageSeq: number | null;
-    userMessageSeqs?: readonly number[];
-}>) => void;
-type PublicRuntimePromptTerminallyRejectedBeforeProviderHandler = (
-    info: Readonly<{
-        localInputId?: string | null;
-        localInputIds?: readonly string[];
-        userMessageSeq: number | null;
-        userMessageSeqs?: readonly number[];
-    }>,
-) => void;
-type PublicRuntimeUndeliverablePrompt = Readonly<{
-    text: string;
-    localInputId?: string | null;
-    localInputIds?: readonly string[];
-    userMessageSeq: number | null;
-    userMessageSeqs?: readonly number[];
-}>;
-type PublicRuntimeSetPromptAcceptedByProvider = (handler: PublicRuntimePromptAcceptedHandler | null) => void;
-type PublicRuntimeSetPromptTerminallyRejectedBeforeProvider = (
-    handler: PublicRuntimePromptTerminallyRejectedBeforeProviderHandler | null,
-) => void;
-type PublicRuntimeSetUndeliverablePrompts = (
-    handler: ((prompts: ReadonlyArray<PublicRuntimeUndeliverablePrompt>) => void) | null,
-) => void;
-type PublicRuntimeSupportsInFlightSteer = () => boolean;
-type PublicRuntimeIsTurnInFlight = () => boolean;
-type PublicRuntimeCanSteerPrompt = () => boolean;
+type NativeAgentSessionOpenIntent =
+    | Readonly<{ kind: 'create' }>
+    | Readonly<{ kind: 'resume'; providerSessionId: string; importHistory: boolean }>
+    | Readonly<{ kind: 'fork'; source: NativeForkSource }>;
 
-type PublicRuntimeTerminalEvent = Extract<
-    RuntimeEventV1,
-    { kind: 'turn-complete' | 'turn-cancelled' | 'turn-failed' }
->;
-type PublicRuntimeTurnStartEvent = Extract<RuntimeEventV1, { kind: 'turn-start' }>;
-
-type PublicRuntimeBridgeCompletion = Readonly<{
-    isSettled: () => boolean;
-    noteTurnStart: (event: PublicRuntimeTurnStartEvent) => void;
-    settle: (event?: PublicRuntimeTerminalEvent) => void;
-    settleTerminalEvent: (event: PublicRuntimeTerminalEvent) => void;
-    fail: (error: Error) => void;
-    throwIfFailed: () => void;
-    wait: (opts?: RuntimeTurnCompletionOptions) => Promise<void>;
-}>;
-
-const DEFAULT_PUBLIC_RUNTIME_TURN_COMPLETION_TIMEOUT_MS = 30 * 60_000;
+type NativeAgentSessionRuntimeCreate = (
+    intent: NativeAgentSessionOpenIntent,
+    hostRuntime: HostSessionRuntimeFactoryParams,
+) => PluginRuntimeHookOperations | Promise<PluginRuntimeHookOperations>;
 
 function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== 'string') return null;
@@ -128,638 +96,219 @@ function normalizeNonEmptyString(value: unknown): string | null {
     return trimmed.length > 0 ? trimmed : null;
 }
 
-function readRuntimeExtraFunction<TFunction extends (...args: never[]) => unknown>(
-    runtime: SessionRuntimeV1,
-    key: string,
-): TFunction | null {
-    const candidate = (runtime as Readonly<Record<string, unknown>>)[key];
-    return typeof candidate === 'function' ? candidate as TFunction : null;
-}
-
-function createRuntimeInput(prompt: string): Readonly<{ v: 1; text: string }> {
-    return { v: 1, text: prompt };
-}
-
-function assertRuntimeSendAccepted(result: RuntimeSendResultV1): void {
-    if (result.status === 'accepted') return;
-    const diagnostic = result.diagnostic ? `: ${result.diagnostic}` : '';
-    throw new Error(`Plugin session runtime rejected prompt with status '${result.status}'${diagnostic}`);
-}
-
-function normalizePublicConfigUpdate(update: RuntimeTurnConfigUpdate): SessionRuntimeConfigUpdateV1 {
-    return Object.freeze({
-        ...(typeof update.modeId === 'string' ? { modeId: update.modeId } : {}),
-        ...(typeof update.modelId === 'string' ? { modelId: update.modelId } : {}),
-        ...(typeof update.permissionMode === 'string' ? { permissionMode: update.permissionMode } : {}),
-        ...(update.configOption ? { configOption: update.configOption } : {}),
-    });
-}
-
-function readPublicRuntimeIdentity(runtime: SessionRuntimeV1): RuntimeTurnSessionIdentity {
-    return {
-        sessionId: normalizeNonEmptyString(runtime.identity.read().providerSessionId),
-    };
-}
-
-async function dispatchPublicRuntimePrompt(
-    runtime: SessionRuntimeV1,
-    prompt: string,
-    options?: RuntimeSendOptionsV1,
-): Promise<RuntimeSendResultV1> {
-    const result = await runtime.send(createRuntimeInput(prompt), options);
-    assertRuntimeSendAccepted(result);
-    return result;
-}
-
-function isPublicRuntimeTerminalEvent(message: RuntimeTurnMessage): message is Extract<
-    RuntimeEventV1,
-    { kind: 'turn-complete' | 'turn-cancelled' | 'turn-failed' }
-> {
-    if (!('kind' in message)) return false;
-    return message.kind === 'turn-complete'
-        || message.kind === 'turn-cancelled'
-        || message.kind === 'turn-failed';
-}
-
-function isPublicRuntimeTurnStartEvent(message: RuntimeTurnMessage): message is PublicRuntimeTurnStartEvent {
-    if (!('kind' in message)) return false;
-    return message.kind === 'turn-start';
-}
-
-function normalizeWaitTimeoutMs(opts?: RuntimeTurnCompletionOptions): number | null {
-    const timeoutMs = opts?.timeoutMs;
-    if (timeoutMs === null || timeoutMs === undefined) return null;
-    if (!Number.isFinite(timeoutMs)) return null;
-    return Math.max(0, Math.trunc(timeoutMs));
-}
-
-function resolvePublicRuntimeBridgeWaitTimeoutMs(opts?: RuntimeTurnCompletionOptions): number | null {
-    if (opts && Object.prototype.hasOwnProperty.call(opts, 'timeoutMs') && opts.timeoutMs === null) {
-        return null;
-    }
-    return normalizeWaitTimeoutMs(opts) ?? DEFAULT_PUBLIC_RUNTIME_TURN_COMPLETION_TIMEOUT_MS;
-}
-
-function publicRuntimeWaitOptionsWithDefault(opts?: RuntimeTurnCompletionOptions): RuntimeTurnCompletionOptions {
-    const timeoutMs = resolvePublicRuntimeBridgeWaitTimeoutMs(opts);
-    return {
-        ...(opts ?? {}),
-        timeoutMs,
-    };
-}
-
-function errorFromUnknown(error: unknown): Error {
-    if (error instanceof Error) return error;
-    return new Error(String(error));
-}
-
-function createPublicRuntimeTerminalFailureError(event: PublicRuntimeTerminalEvent | undefined): Error | null {
-    if (event?.kind !== 'turn-failed') return null;
-    const preview = typeof event.issue.sanitizedPreview === 'string'
-        ? event.issue.sanitizedPreview.trim()
-        : '';
-    const suffix = preview.length > 0 ? `: ${preview}` : '';
-    return createRuntimeTurnFailureAlreadySurfacedError({
-        message: `Plugin session runtime turn failed${suffix}`,
-        event,
-    });
-}
-
-function createPublicRuntimeBridgeCompletion(params?: Readonly<{
-    onTimeoutTurnIds?: (turnIds: readonly string[]) => void;
-}>): PublicRuntimeBridgeCompletion {
-    let settled = false;
-    let settledError: Error | null = null;
-    const observedTurnIds = new Set<string>();
-    const waiters = new Set<{
-        resolve: () => void;
-        reject: (error: Error) => void;
-        timer: NodeJS.Timeout | null;
-    }>();
-
-    const complete = (error: Error | null): void => {
-        if (settled) return;
-        settled = true;
-        settledError = error;
-        for (const waiter of Array.from(waiters)) {
-            if (waiter.timer) clearTimeout(waiter.timer);
-            if (settledError) {
-                waiter.reject(settledError);
-            } else {
-                waiter.resolve();
+function resolveNativeAgentVendorResumeIdField(
+    agent: ResolvedAgentContribution,
+    policyAgentId: string,
+): string | null {
+    const definition = agent.richDefinition?.definition;
+    if (definition && typeof definition === 'object' && !Array.isArray(definition)) {
+        const core = (definition as Readonly<Record<string, unknown>>).core;
+        if (core && typeof core === 'object' && !Array.isArray(core)) {
+            const resume = (core as Readonly<Record<string, unknown>>).resume;
+            if (resume && typeof resume === 'object' && !Array.isArray(resume)) {
+                const declared = normalizeNonEmptyString(
+                    (resume as Readonly<Record<string, unknown>>).vendorResumeIdField,
+                );
+                if (declared) return declared;
             }
         }
-        waiters.clear();
-    };
-
-    const fail = (error: Error): void => {
-        complete(error);
-    };
-
-    const settle = (event?: PublicRuntimeTerminalEvent): void => {
-        complete(createPublicRuntimeTerminalFailureError(event));
-    };
-
-    return Object.freeze({
-        isSettled: () => settled,
-        noteTurnStart: (event: PublicRuntimeTurnStartEvent) => {
-            if (settled) return;
-            const turnId = normalizeNonEmptyString(event.turnId);
-            if (turnId) observedTurnIds.add(turnId);
-        },
-        settle,
-        settleTerminalEvent: (event: PublicRuntimeTerminalEvent) => {
-            if (settled) return;
-            const turnId = normalizeNonEmptyString(event.turnId);
-            if (observedTurnIds.size > 0 && (!turnId || !observedTurnIds.has(turnId))) return;
-            settle(event);
-        },
-        fail,
-        throwIfFailed: () => {
-            if (settledError) throw settledError;
-        },
-        wait: async (opts?: RuntimeTurnCompletionOptions): Promise<void> => {
-            if (settled) {
-                if (settledError) throw settledError;
-                return;
-            }
-            const timeoutMs = resolvePublicRuntimeBridgeWaitTimeoutMs(opts);
-            await new Promise<void>((resolve, reject) => {
-                const waiter = {
-                    resolve: () => {
-                        waiters.delete(waiter);
-                        resolve();
-                    },
-                    reject: (error: Error) => {
-                        waiters.delete(waiter);
-                        reject(error);
-                    },
-                    timer: null as NodeJS.Timeout | null,
-                };
-                waiters.add(waiter);
-                if (timeoutMs !== null) {
-                    waiter.timer = setTimeout(() => {
-                        if (observedTurnIds.size > 0) {
-                            params?.onTimeoutTurnIds?.([...observedTurnIds]);
-                        }
-                        fail(new Error(`Plugin session runtime turn did not complete within ${timeoutMs}ms`));
-                    }, timeoutMs);
-                    waiter.timer.unref?.();
-                }
-            });
-        },
-    });
-}
-
-function normalizeNonEmptyStringList(values: readonly unknown[] | null | undefined): string[] {
-    const normalized: string[] = [];
-    for (const value of values ?? []) {
-        const text = normalizeNonEmptyString(value);
-        if (!text || normalized.includes(text)) continue;
-        normalized.push(text);
     }
-    return normalized;
+
+    const bundledAgentId = normalizeBuiltInAgentId(policyAgentId);
+    if (!bundledAgentId) return null;
+    return normalizeNonEmptyString(getAgentResumeConfig(bundledAgentId).vendorResumeIdField);
 }
 
-function normalizeSeqList(values: readonly unknown[] | null | undefined): number[] {
-    const normalized: number[] = [];
-    for (const value of values ?? []) {
-        if (!Number.isSafeInteger(value) || (value as number) < 0) continue;
-        if (normalized.includes(value as number)) continue;
-        normalized.push(value as number);
-    }
-    return normalized;
-}
-
-function runtimeSendOptionsForTurnMeta(meta?: Readonly<{
-    localId?: string | null;
-    localIds?: readonly string[];
-    modelId?: string | null;
-    providerClaimedPendingLocalIds?: readonly string[];
-    userMessageSeq?: number | null;
-    userMessageSeqs?: readonly number[];
-}>): RuntimeSendOptionsV1 | undefined {
-    const localInputId = normalizeNonEmptyString(meta?.localId);
-    const localInputIds = normalizeNonEmptyStringList([
-        ...(localInputId ? [localInputId] : []),
-        ...(meta?.localIds ?? []),
-    ]);
-    const modelId = normalizeNonEmptyString(meta?.modelId);
-    const providerClaimedPendingLocalIds = normalizeNonEmptyStringList(meta?.providerClaimedPendingLocalIds);
-    const userMessageSeq = meta?.userMessageSeq;
-    const userMessageSeqs = normalizeSeqList([
-        ...(typeof userMessageSeq === 'number' && Number.isFinite(userMessageSeq) ? [Math.trunc(userMessageSeq)] : []),
-        ...(meta?.userMessageSeqs ?? []),
-    ]);
-    const result: RuntimeSendOptionsV1 = {
-        ...(localInputId ? { localInputId } : {}),
-        ...(localInputIds.length > 0 ? { localInputIds } : {}),
-        ...(modelId ? { modelId } : {}),
-        ...(providerClaimedPendingLocalIds.length > 0 ? { providerClaimedPendingLocalIds } : {}),
-        ...(typeof userMessageSeq === 'number' && Number.isFinite(userMessageSeq)
-            ? { userMessageSeq: Math.trunc(userMessageSeq) }
-            : {}),
-        ...(userMessageSeqs.length > 0 ? { userMessageSeqs } : {}),
-    };
-    return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function runtimeSendOptionsForSteer(
-    options?: Readonly<{
-        localId?: string | null;
-        localIds?: readonly string[];
-        modelId?: string | null;
-        providerClaimedPendingLocalIds?: readonly string[];
-        userMessageSeq?: number | null;
-        userMessageSeqs?: readonly number[];
-    }>,
-): RuntimeSendOptionsV1 {
-    const localInputId = normalizeNonEmptyString(options?.localId);
-    const localInputIds = normalizeNonEmptyStringList([
-        ...(localInputId ? [localInputId] : []),
-        ...(options?.localIds ?? []),
-    ]);
-    const modelId = normalizeNonEmptyString(options?.modelId);
-    const providerClaimedPendingLocalIds = normalizeNonEmptyStringList(options?.providerClaimedPendingLocalIds);
-    const userMessageSeq = options?.userMessageSeq;
-    const userMessageSeqs = normalizeSeqList([
-        ...(typeof userMessageSeq === 'number' && Number.isFinite(userMessageSeq) ? [Math.trunc(userMessageSeq)] : []),
-        ...(options?.userMessageSeqs ?? []),
-    ]);
-    return {
-        deliverAs: 'steer',
-        ...(localInputId ? { localInputId } : {}),
-        ...(localInputIds.length > 0 ? { localInputIds } : {}),
-        ...(modelId ? { modelId } : {}),
-        ...(providerClaimedPendingLocalIds.length > 0 ? { providerClaimedPendingLocalIds } : {}),
-        ...(typeof userMessageSeq === 'number' && Number.isFinite(userMessageSeq)
-            ? { userMessageSeq: Math.trunc(userMessageSeq) }
-            : {}),
-        ...(userMessageSeqs.length > 0 ? { userMessageSeqs } : {}),
-    };
-}
-
-function publicAcceptedInfoToInternal(info: Parameters<PublicRuntimePromptAcceptedHandler>[0]): Readonly<{
-    localIds?: readonly string[];
-    userMessageSeq: number | null;
-    userMessageSeqs?: readonly number[];
+function bindReplaceableNativeAgentSessionOperations(params: Readonly<{
+    initialOperations: PluginRuntimeHookOperations;
+    recreateOperations?: (intent: RuntimeTurnSessionOpenIntent) => Promise<PluginRuntimeHookOperations>;
+}>): PluginRuntimeHookOperations & Readonly<{
+    setRuntimeReplacementLifecycle?: (lifecycle: HostRuntimeReplacementLifecycle) => void;
 }> {
-    const localInputId = normalizeNonEmptyString(info.localInputId);
-    const localIds = normalizeNonEmptyStringList([
-        ...(localInputId ? [localInputId] : []),
-        ...(info.localInputIds ?? []),
-    ]);
-    const userMessageSeqs = normalizeSeqList([
-        ...(typeof info.userMessageSeq === 'number' && Number.isFinite(info.userMessageSeq)
-            ? [Math.trunc(info.userMessageSeq)]
-            : []),
-        ...(info.userMessageSeqs ?? []),
-    ]);
-    return {
-        userMessageSeq: typeof info.userMessageSeq === 'number' && Number.isFinite(info.userMessageSeq)
-            ? Math.trunc(info.userMessageSeq)
-            : null,
-        ...(localIds.length > 0 ? { localIds } : {}),
-        ...(userMessageSeqs.length > 0 ? { userMessageSeqs } : {}),
-    };
-}
-
-function clonePublicSessionMcpServers(
-    mcpServers: HostSessionRuntimeFactoryParams['mcpServers'],
-): Readonly<Record<string, SessionRuntimeMcpServerConfigV1>> {
-    const entries = Object.entries(mcpServers);
-    if (entries.length === 0) return Object.freeze({});
-    const cloned: Record<string, SessionRuntimeMcpServerConfigV1> = {};
-    for (const [name, config] of entries) {
-        cloned[name] = Object.freeze({
-            ...config,
-            ...(config.env ? { env: Object.freeze({ ...config.env }) } : {}),
-            ...(config.args ? { args: Object.freeze([...config.args]) } : {}),
-        });
-    }
-    return Object.freeze(cloned);
-}
-
-function adaptSinglePublicSessionRuntimeToTurnOperations(runtime: SessionRuntimeV1): PluginRuntimeHookOperations {
-    const beginTurnLifecycle = readRuntimeExtraFunction<PublicRuntimeBeginTurnLifecycle>(
-        runtime,
-        'beginTurnLifecycle',
-    );
-    const startOrLoadSession = readRuntimeExtraFunction<PublicRuntimeStartOrLoadSession>(
-        runtime,
-        'startOrLoadSession',
-    );
-    const waitForTurnCompletion = readRuntimeExtraFunction<PublicRuntimeWaitForTurnCompletion>(
-        runtime,
-        'waitForTurnCompletion',
-    );
-    const cancelTurn = readRuntimeExtraFunction<PublicRuntimeCancelTurn>(
-        runtime,
-        'cancelTurn',
-    );
-    const readSessionIdentity = readRuntimeExtraFunction<PublicRuntimeReadSessionIdentity>(
-        runtime,
-        'readSessionIdentity',
-    );
-    const updateSessionRuntimeConfig = readRuntimeExtraFunction<PublicRuntimeUpdateSessionRuntimeConfig>(
-        runtime,
-        'updateSessionRuntimeConfig',
-    );
-    const resetOrDisposeRuntime = readRuntimeExtraFunction<PublicRuntimeResetOrDisposeRuntime>(
-        runtime,
-        'resetOrDisposeRuntime',
-    );
-    const supportsInFlightSteer = readRuntimeExtraFunction<PublicRuntimeSupportsInFlightSteer>(
-        runtime,
-        'supportsInFlightSteer',
-    );
-    const isTurnInFlight = readRuntimeExtraFunction<PublicRuntimeIsTurnInFlight>(
-        runtime,
-        'isTurnInFlight',
-    );
-    const canSteerPrompt = readRuntimeExtraFunction<PublicRuntimeCanSteerPrompt>(
-        runtime,
-        'canSteerPrompt',
-    );
-    const applyConfigDeltaInFlight = readRuntimeExtraFunction<PluginRuntimeApplyConfigDeltaInFlight>(
-        runtime,
-        'applyConfigDeltaInFlight',
-    );
-    const setOnPromptAcceptedByProvider = readRuntimeExtraFunction<PublicRuntimeSetPromptAcceptedByProvider>(
-        runtime,
-        'setOnPromptAcceptedByProvider',
-    );
-    const setOnPromptTerminallyRejectedBeforeProvider = readRuntimeExtraFunction<PublicRuntimeSetPromptTerminallyRejectedBeforeProvider>(
-        runtime,
-        'setOnPromptTerminallyRejectedBeforeProvider',
-    );
-    const setOnUndeliverablePrompts = readRuntimeExtraFunction<PublicRuntimeSetUndeliverablePrompts>(
-        runtime,
-        'setOnUndeliverablePrompts',
-    );
-    const clearTerminalComposer = readRuntimeExtraFunction<PluginRuntimeClearTerminalComposer>(
-        runtime,
-        'clearTerminalComposer',
-    );
-    const permissions = runtime.permissions;
-    let currentPrompt: Promise<RuntimeSendResultV1> | null = null;
-    let currentCompletion: PublicRuntimeBridgeCompletion | null = null;
-    const timedOutTurnIds = new Set<string>();
-
-    const ensureBridgeCompletion = (): PublicRuntimeBridgeCompletion => {
-        if (!currentCompletion || currentCompletion.isSettled()) {
-            currentCompletion = createPublicRuntimeBridgeCompletion({
-                onTimeoutTurnIds: (turnIds) => {
-                    for (const turnId of turnIds) timedOutTurnIds.add(turnId);
-                },
-            });
-        }
-        return currentCompletion;
-    };
-
-    const runtimeEventUnsubscribe = runtime.events.subscribe((event) => {
-        if (isPublicRuntimeTurnStartEvent(event)) {
-            currentCompletion?.noteTurnStart(event);
-            return;
-        }
-        if (isPublicRuntimeTerminalEvent(event)) {
-            const turnId = normalizeNonEmptyString(event.turnId);
-            if (turnId && timedOutTurnIds.delete(turnId)) return;
-            currentCompletion?.settleTerminalEvent(event);
-        }
-    });
-
-    async function waitForSubmittedPrompt(): Promise<void> {
-        const promptWork = currentPrompt;
-        if (!promptWork) return;
-        try {
-            await promptWork;
-        } finally {
-            if (currentPrompt === promptWork) currentPrompt = null;
-        }
+    if (!params.recreateOperations) {
+        return params.initialOperations;
     }
 
-    async function submitPrompt(prompt: string, options?: RuntimeSendOptionsV1): Promise<void> {
-        ensureBridgeCompletion();
-        const promptWork = dispatchPublicRuntimePrompt(runtime, prompt, options);
-        currentPrompt = promptWork;
-        try {
-            await promptWork;
-        } catch (error) {
-            if (currentPrompt === promptWork) currentPrompt = null;
-            currentCompletion?.settle();
-            throw error;
-        }
-    }
-
-    return Object.freeze({
-        ...(permissions?.capability ? { permissionCapability: permissions.capability } : {}),
-        beginTurnLifecycle() {
-            ensureBridgeCompletion();
-            beginTurnLifecycle?.();
-        },
-        async startOrLoadSession(opts?: RuntimeTurnStartOrLoadOptions) {
-            if (startOrLoadSession) {
-                return await startOrLoadSession(opts);
-            }
-            return readPublicRuntimeIdentity(runtime).sessionId;
-        },
-        async sendTurnPrompt(prompt: string, meta?: RuntimeTurnPromptMeta) {
-            await submitPrompt(prompt, runtimeSendOptionsForTurnMeta(meta));
-        },
-        async steerInFlightTurn(message: string, meta?: RuntimeTurnPromptMeta) {
-            await submitPrompt(message, runtimeSendOptionsForSteer(meta));
-        },
-        async steerPrompt(message, options) {
-            await submitPrompt(message, runtimeSendOptionsForSteer(options));
-        },
-        ...(supportsInFlightSteer ? { supportsInFlightSteer: () => supportsInFlightSteer() } : {}),
-        ...(isTurnInFlight ? { isTurnInFlight: () => isTurnInFlight() } : {}),
-        ...(canSteerPrompt ? { canSteerPrompt: () => canSteerPrompt() } : {}),
-        ...(applyConfigDeltaInFlight
-            ? {
-                applyConfigDeltaInFlight: (
-                    delta: Parameters<PluginRuntimeApplyConfigDeltaInFlight>[0],
-                ) => applyConfigDeltaInFlight(delta),
-            }
-            : {}),
-        ...(setOnPromptAcceptedByProvider
-            ? {
-                setOnPromptAcceptedByProvider: (handler: PluginRuntimePromptAcceptedHandler | null) => {
-                    setOnPromptAcceptedByProvider(handler
-                        ? (info) => handler(publicAcceptedInfoToInternal(info))
-                        : null);
-                },
-            }
-            : {}),
-        ...(setOnPromptTerminallyRejectedBeforeProvider
-            ? {
-                setOnPromptTerminallyRejectedBeforeProvider: (
-                    handler: PluginRuntimePromptAcceptedHandler | null,
-                ) => {
-                    setOnPromptTerminallyRejectedBeforeProvider(handler
-                        ? (info) => handler(publicAcceptedInfoToInternal(info))
-                        : null);
-                },
-            }
-            : {}),
-        ...(setOnUndeliverablePrompts
-            ? {
-                setOnUndeliverablePrompts: (
-                    handler: ((prompts: ReadonlyArray<PluginRuntimeUndeliverablePrompt>) => void) | null,
-                ) => {
-                    setOnUndeliverablePrompts(handler
-                        ? (prompts) => handler(prompts.map((prompt) => {
-                            const localInputId = normalizeNonEmptyString(prompt.localInputId);
-                            const localIds = normalizeNonEmptyStringList([
-                                ...(localInputId ? [localInputId] : []),
-                                ...(prompt.localInputIds ?? []),
-                            ]);
-                            const userMessageSeqs = normalizeSeqList([
-                                ...(typeof prompt.userMessageSeq === 'number' && Number.isFinite(prompt.userMessageSeq)
-                                    ? [Math.trunc(prompt.userMessageSeq)]
-                                    : []),
-                                ...(prompt.userMessageSeqs ?? []),
-                            ]);
-                            return {
-                                text: prompt.text,
-                                userMessageSeq: typeof prompt.userMessageSeq === 'number' && Number.isFinite(prompt.userMessageSeq)
-                                    ? Math.trunc(prompt.userMessageSeq)
-                                    : null,
-                                ...(localIds.length > 0 ? { localIds } : {}),
-                                ...(userMessageSeqs.length > 0 ? { userMessageSeqs } : {}),
-                            };
-                        }))
-                        : null);
-                },
-            }
-            : {}),
-        ...(clearTerminalComposer
-            ? {
-                clearTerminalComposer: (request: Parameters<PluginRuntimeClearTerminalComposer>[0]) =>
-                    clearTerminalComposer(request),
-            }
-            : {}),
-        async waitForTurnCompletion(opts?: RuntimeTurnCompletionOptions) {
-            await waitForSubmittedPrompt();
-            if (waitForTurnCompletion) {
-                const completion = currentCompletion;
-                const waitOptions = publicRuntimeWaitOptionsWithDefault(opts);
-                const customWait = Promise.resolve()
-                    .then(() => waitForTurnCompletion(waitOptions))
-                    .then(
-                        () => {
-                            completion?.settle();
-                        },
-                        (error: unknown) => {
-                            const normalizedError = errorFromUnknown(error);
-                            completion?.fail(normalizedError);
-                            throw normalizedError;
-                        },
-                    );
-                customWait.catch(() => undefined);
-                const bridgeWait = completion?.wait(waitOptions);
-                bridgeWait?.catch(() => undefined);
-                if (bridgeWait) {
-                    await Promise.race([customWait, bridgeWait]);
-                } else {
-                    await customWait;
-                }
-                return;
-            }
-            await currentCompletion?.wait(opts);
-        },
-        subscribeRuntimeEvents(handler: RuntimeTurnMessageHandler) {
-            return runtime.events.subscribe(handler);
-        },
-        ...(permissions?.capability === 'responds'
-            ? {
-                async respondToPermission(requestId: string, approved: boolean) {
-                    return await permissions.respond({ requestId, approved });
-                },
-            }
-            : {}),
-        async cancelTurn() {
-            if (cancelTurn) {
-                await cancelTurn();
-                return;
-            }
-            const result: RuntimeCancelResultV1 | undefined = await runtime.cancel?.({ reason: 'user' });
-            if (result?.status === 'unavailable') {
-                throw new Error(result.diagnostic ?? 'Plugin session runtime cancel is unavailable');
-            }
-        },
-        readSessionIdentity(): RuntimeTurnSessionIdentity {
-            return readSessionIdentity?.() ?? readPublicRuntimeIdentity(runtime);
-        },
-        async updateSessionRuntimeConfig(update: RuntimeTurnConfigUpdate) {
-            if (updateSessionRuntimeConfig) {
-                return await updateSessionRuntimeConfig(normalizePublicConfigUpdate(update));
-            }
-            return await runtime.updateConfig?.(normalizePublicConfigUpdate(update));
-        },
-        async resetOrDisposeRuntime() {
-            runtimeEventUnsubscribe();
-            if (resetOrDisposeRuntime) {
-                await resetOrDisposeRuntime({ reason: 'session_closed' });
-                return;
-            }
-            await runtime.dispose('session_closed');
-        },
-    });
-}
-
-function adaptPublicSessionRuntimeToTurnOperations(params: Readonly<{
-    initialRuntime: SessionRuntimeV1;
-    recreateRuntime?: (opts?: RuntimeTurnStartOrLoadOptions) => Promise<SessionRuntimeV1>;
-}>): PluginRuntimeHookOperations {
-    if (!params.recreateRuntime) {
-        return adaptSinglePublicSessionRuntimeToTurnOperations(params.initialRuntime);
-    }
-
-    let currentOperations = adaptSinglePublicSessionRuntimeToTurnOperations(params.initialRuntime);
+    let currentOperations = params.initialOperations;
+    const hasRollbackConversation = currentOperations.rollbackConversation !== undefined;
+    const hasRefreshGoal = currentOperations.refreshGoal !== undefined;
+    const hasSetGoal = currentOperations.setGoal !== undefined;
+    const hasClearGoal = currentOperations.clearGoal !== undefined;
+    const hasListVendorPlugins = currentOperations.listVendorPlugins !== undefined;
+    const hasListSkills = currentOperations.listSkills !== undefined;
+    const hasCheckUsageLimitRecoveryNow = currentOperations.checkUsageLimitRecoveryNow !== undefined;
+    const hasConsumeUsageLimitResetCredit = currentOperations.consumeUsageLimitResetCredit !== undefined;
+    const hasInterruptPendingInputAndRun =
+        currentOperations.interruptPendingInputAndRun !== undefined;
+    const hasCanonicalAgentSessionEventProducer =
+        currentOperations.subscribeCanonicalAgentSessionEvents !== undefined;
     let runtimeClosed = false;
+    let runtimeBindingEpoch = 0;
+    let replacementLifecycle: HostRuntimeReplacementLifecycle | null = null;
     const runtimeEventHandlers = new Set<RuntimeTurnMessageHandler>();
     let runtimeEventUnsubscribe: (() => void) | null = null;
+    const canonicalEventHandlers = new Set<(event: AgentSessionRuntimeEventV1) => void>();
+    let canonicalEventUnsubscribe: (() => void) | null = null;
     let promptAcceptedHandler: PluginRuntimePromptAcceptedHandler | null = null;
+    let promptDeliveryOutcomeHandler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null = null;
     let promptTerminallyRejectedHandler: PluginRuntimePromptAcceptedHandler | null = null;
-    let undeliverablePromptsHandler: ((prompts: ReadonlyArray<PluginRuntimeUndeliverablePrompt>) => void) | null = null;
+    const hasModelsSource = params.initialOperations.models !== undefined;
+    const modelSubscribers = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
+    let modelSourceUnsubscribe: ReturnType<AgentSessionModelsSource['subscribe']> | null = null;
+    let modelSnapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null });
+
+    const publishModelSnapshot = (snapshot: AgentSessionModelsSnapshot): void => {
+        modelSnapshot = Object.freeze({ ...snapshot });
+        for (const subscriber of Array.from(modelSubscribers)) subscriber(modelSnapshot);
+    };
+
+    const detachModelSource = (): void => {
+        const unsubscribe = modelSourceUnsubscribe;
+        modelSourceUnsubscribe = null;
+        unsubscribe?.dispose();
+    };
+
+    const attachModelSource = (): void => {
+        detachModelSource();
+        const source = currentOperations.models;
+        if (!source) {
+            publishModelSnapshot({ models: null });
+            return;
+        }
+        const bindingEpoch = runtimeBindingEpoch;
+        const apply = (snapshot: AgentSessionModelsSnapshot): void => {
+            if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
+            publishModelSnapshot({
+                models: snapshot.models,
+                ...(snapshot.currentModelId === undefined ? {} : { currentModelId: snapshot.currentModelId }),
+            });
+        };
+        apply(source.read());
+        modelSourceUnsubscribe = source.subscribe(apply);
+    };
+
+    const stableModels: AgentSessionModelsSource | undefined = hasModelsSource
+        ? Object.freeze({
+            read: () => modelSnapshot,
+            subscribe(handler: (snapshot: AgentSessionModelsSnapshot) => void) {
+                modelSubscribers.add(handler);
+                handler(modelSnapshot);
+                return Object.freeze({
+                    dispose: () => {
+                        modelSubscribers.delete(handler);
+                    },
+                });
+            },
+        })
+        : undefined;
+    if (hasModelsSource) attachModelSource();
 
     const detachRuntimeEvents = (): void => {
-        runtimeEventUnsubscribe?.();
+        const unsubscribe = runtimeEventUnsubscribe;
         runtimeEventUnsubscribe = null;
+        unsubscribe?.();
     };
 
     const attachRuntimeEvents = (): void => {
         detachRuntimeEvents();
         if (runtimeEventHandlers.size === 0) return;
+        const bindingEpoch = runtimeBindingEpoch;
         runtimeEventUnsubscribe = currentOperations.subscribeRuntimeEvents((event) => {
+            if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
             for (const handler of Array.from(runtimeEventHandlers)) {
                 handler(event);
             }
         });
     };
 
+    const detachCanonicalEvents = (): void => {
+        const unsubscribe = canonicalEventUnsubscribe;
+        canonicalEventUnsubscribe = null;
+        unsubscribe?.();
+    };
+
+    const attachCanonicalEvents = (): void => {
+        detachCanonicalEvents();
+        if (canonicalEventHandlers.size === 0 || !currentOperations.subscribeCanonicalAgentSessionEvents) return;
+        const bindingEpoch = runtimeBindingEpoch;
+        canonicalEventUnsubscribe = currentOperations.subscribeCanonicalAgentSessionEvents((event) => {
+            if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
+            for (const handler of canonicalEventHandlers) handler(event);
+        });
+    };
+
+    const detachRuntimeSources = (): void => {
+        let firstError: unknown;
+        let hasError = false;
+        for (const detach of [detachRuntimeEvents, detachCanonicalEvents, detachModelSource]) {
+            try {
+                detach();
+            } catch (error) {
+                if (!hasError) firstError = error;
+                hasError = true;
+            }
+        }
+        if (hasError) throw firstError;
+    };
+
+    const bindProviderInputHandlersToCurrentRuntime = (): void => {
+        const bindingEpoch = runtimeBindingEpoch;
+        currentOperations.setOnPromptAcceptedByProvider?.(promptAcceptedHandler
+            ? (info) => {
+                if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
+                promptAcceptedHandler?.(info);
+            }
+            : null);
+        currentOperations.setOnPromptDeliveryOutcome?.(promptDeliveryOutcomeHandler
+            ? (outcome) => {
+                if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
+                promptDeliveryOutcomeHandler?.(outcome);
+            }
+            : null);
+        currentOperations.setOnPromptTerminallyRejectedBeforeProvider?.(promptTerminallyRejectedHandler
+            ? (info) => {
+                if (runtimeClosed || bindingEpoch !== runtimeBindingEpoch) return;
+                promptTerminallyRejectedHandler?.(info);
+            }
+            : null);
+    };
+
     const reapplyRuntimeHandlers = (): void => {
+        if (canonicalEventHandlers.size > 0
+            && hasCanonicalAgentSessionEventProducer
+            && !currentOperations.subscribeCanonicalAgentSessionEvents) {
+            throw new Error('Recreated plugin session runtime dropped its activated canonical Activity producer');
+        }
         if (promptAcceptedHandler && !currentOperations.setOnPromptAcceptedByProvider) {
             throw new Error('Recreated plugin session runtime dropped its provider-acceptance seam after the host registered a provider-acceptance handler');
         }
-        currentOperations.setOnPromptAcceptedByProvider?.(promptAcceptedHandler);
-        currentOperations.setOnPromptTerminallyRejectedBeforeProvider?.(promptTerminallyRejectedHandler);
-        currentOperations.setOnUndeliverablePrompts?.(undeliverablePromptsHandler);
+        if (promptDeliveryOutcomeHandler && !currentOperations.setOnPromptDeliveryOutcome) {
+            throw new Error('Recreated plugin session runtime dropped its prompt-delivery-outcome seam after the host registered a prompt-delivery-outcome handler');
+        }
+        bindProviderInputHandlersToCurrentRuntime();
     };
 
-    const recreateClosedRuntime = async (opts?: RuntimeTurnStartOrLoadOptions): Promise<void> => {
-        if (!runtimeClosed) return;
-        const nextRuntime = await params.recreateRuntime?.(opts);
-        if (!nextRuntime) return;
-        currentOperations = adaptSinglePublicSessionRuntimeToTurnOperations(nextRuntime);
+    const recreateClosedRuntime = async (intent: RuntimeTurnSessionOpenIntent): Promise<boolean> => {
+        if (!runtimeClosed) return false;
+        const nextOperations = await params.recreateOperations?.(intent);
+        if (!nextOperations) return false;
+        currentOperations = nextOperations;
+        runtimeBindingEpoch += 1;
         try {
             reapplyRuntimeHandlers();
+            await replacementLifecycle?.onSuccessorBound();
             runtimeClosed = false;
+            if (hasModelsSource) attachModelSource();
             attachRuntimeEvents();
+            attachCanonicalEvents();
+            return true;
         } catch (error) {
-            detachRuntimeEvents();
+            runtimeBindingEpoch += 1;
+            try {
+                detachRuntimeSources();
+            } catch {
+                // Preserve the binding failure while still disposing the rejected successor.
+            }
             runtimeClosed = true;
             await currentOperations.resetOrDisposeRuntime().catch(() => undefined);
             throw error;
@@ -767,15 +316,34 @@ function adaptPublicSessionRuntimeToTurnOperations(params: Readonly<{
     };
 
     return Object.freeze({
+        setRuntimeReplacementLifecycle(lifecycle: HostRuntimeReplacementLifecycle) {
+            replacementLifecycle = lifecycle;
+        },
+        ...(stableModels ? { models: stableModels } : {}),
+        ...(hasCanonicalAgentSessionEventProducer
+            ? {
+                subscribeCanonicalAgentSessionEvents(handler: (event: AgentSessionRuntimeEventV1) => void) {
+                    canonicalEventHandlers.add(handler);
+                    try {
+                        if (canonicalEventHandlers.size === 1) attachCanonicalEvents();
+                    } catch (error) {
+                        canonicalEventHandlers.delete(handler);
+                        throw error;
+                    }
+                    return () => {
+                        canonicalEventHandlers.delete(handler);
+                        if (canonicalEventHandlers.size === 0) {
+                            detachCanonicalEvents();
+                        }
+                    };
+                },
+            }
+            : {}),
         get permissionCapability() {
             return currentOperations.permissionCapability;
         },
         beginTurnLifecycle() {
             currentOperations.beginTurnLifecycle();
-        },
-        async startOrLoadSession(opts?: RuntimeTurnStartOrLoadOptions) {
-            await recreateClosedRuntime(opts);
-            return await currentOperations.startOrLoadSession(opts);
         },
         async sendTurnPrompt(prompt: string, meta?: RuntimeTurnPromptMeta) {
             await currentOperations.sendTurnPrompt(prompt, meta);
@@ -789,7 +357,10 @@ function adaptPublicSessionRuntimeToTurnOperations(params: Readonly<{
         supportsInFlightSteer: () => currentOperations.supportsInFlightSteer?.() ?? false,
         isTurnInFlight: () => currentOperations.isTurnInFlight?.() ?? false,
         canSteerPrompt: () => currentOperations.canSteerPrompt?.() ?? false,
-        async applyConfigDeltaInFlight(delta: Parameters<PluginRuntimeApplyConfigDeltaInFlight>[0]) {
+        notifyPromptQueuedDuringTurn: () => currentOperations.notifyPromptQueuedDuringTurn?.(),
+        async applyConfigDeltaInFlight(
+            delta: Parameters<PluginRuntimeApplyConfigDeltaInFlight>[0],
+        ): Promise<PluginRuntimeInFlightConfigApplyOutcome> {
             const apply = currentOperations.applyConfigDeltaInFlight;
             if (!apply) {
                 return {
@@ -803,17 +374,21 @@ function adaptPublicSessionRuntimeToTurnOperations(params: Readonly<{
             ? {
                 setOnPromptAcceptedByProvider(handler: PluginRuntimePromptAcceptedHandler | null) {
                     promptAcceptedHandler = handler;
-                    currentOperations.setOnPromptAcceptedByProvider?.(handler);
+                    bindProviderInputHandlersToCurrentRuntime();
+                },
+            }
+            : {}),
+        ...(currentOperations.setOnPromptDeliveryOutcome
+            ? {
+                setOnPromptDeliveryOutcome(handler: ((outcome: PluginRuntimePromptDeliveryOutcome) => void) | null) {
+                    promptDeliveryOutcomeHandler = handler;
+                    bindProviderInputHandlersToCurrentRuntime();
                 },
             }
             : {}),
         setOnPromptTerminallyRejectedBeforeProvider(handler: PluginRuntimePromptAcceptedHandler | null) {
             promptTerminallyRejectedHandler = handler;
-            currentOperations.setOnPromptTerminallyRejectedBeforeProvider?.(handler);
-        },
-        setOnUndeliverablePrompts(handler: ((prompts: ReadonlyArray<PluginRuntimeUndeliverablePrompt>) => void) | null) {
-            undeliverablePromptsHandler = handler;
-            currentOperations.setOnUndeliverablePrompts?.(handler);
+            bindProviderInputHandlersToCurrentRuntime();
         },
         clearTerminalComposer(request: Parameters<PluginRuntimeClearTerminalComposer>[0]) {
             return currentOperations.clearTerminalComposer?.(request)
@@ -822,6 +397,113 @@ function adaptPublicSessionRuntimeToTurnOperations(params: Readonly<{
                     'session.terminalComposer.clear',
                 );
         },
+        ...(hasInterruptPendingInputAndRun
+            ? {
+                interruptPendingInputAndRun(
+                    request: Parameters<PluginRuntimeInterruptPendingInputAndRun>[0],
+                ) {
+                    const control =
+                        currentOperations.interruptPendingInputAndRun;
+                    if (!control) {
+                        return buildUnsupportedSessionPendingInputInterruptAndRunResult(
+                            request.sessionId,
+                            request.localId,
+                            'session.pendingInput.interruptAndRun',
+                        );
+                    }
+                    return control(request);
+                },
+            }
+            : {}),
+        ...(hasRollbackConversation
+            ? {
+                async rollbackConversation(
+                    request: Parameters<NonNullable<PluginRuntimeHookOperations['rollbackConversation']>>[0],
+                ) {
+                    const control = currentOperations.rollbackConversation;
+                    if (!control) {
+                        return {
+                            ok: false as const,
+                            errorCode: 'native_conversation_rollback_unavailable',
+                            errorMessage: 'Native Agent conversation rollback is unavailable.',
+                        };
+                    }
+                    return await control(request);
+                },
+            }
+            : {}),
+        ...(hasRefreshGoal
+            ? {
+                refreshGoal: () => currentOperations.refreshGoal?.() ?? {
+                    ok: false as const,
+                    errorCode: 'native_goal_control_unavailable',
+                    error: 'native_goal_control_unavailable',
+                },
+            }
+            : {}),
+        ...(hasSetGoal
+            ? {
+                setGoal: (
+                    objective: Parameters<NonNullable<PluginRuntimeHookOperations['setGoal']>>[0],
+                    options?: Parameters<NonNullable<PluginRuntimeHookOperations['setGoal']>>[1],
+                ) => currentOperations.setGoal?.(objective, options) ?? {
+                    ok: false as const,
+                    errorCode: 'native_goal_control_unavailable',
+                    error: 'native_goal_control_unavailable',
+                },
+            }
+            : {}),
+        ...(hasClearGoal
+            ? {
+                clearGoal: () => currentOperations.clearGoal?.() ?? {
+                    ok: false as const,
+                    errorCode: 'native_goal_control_unavailable',
+                    error: 'native_goal_control_unavailable',
+                },
+            }
+            : {}),
+        ...(hasListVendorPlugins
+            ? {
+                listVendorPlugins: (
+                    options?: Parameters<NonNullable<PluginRuntimeHookOperations['listVendorPlugins']>>[0],
+                ) => currentOperations.listVendorPlugins?.(options) ?? Promise.resolve({
+                    unsupported: true,
+                    vendorPlugins: [],
+                }),
+            }
+            : {}),
+        ...(hasListSkills
+            ? {
+                listSkills: (
+                    options?: Parameters<NonNullable<PluginRuntimeHookOperations['listSkills']>>[0],
+                ) => currentOperations.listSkills?.(options) ?? Promise.resolve({
+                    unsupported: true,
+                    skills: [],
+                }),
+            }
+            : {}),
+        ...(hasCheckUsageLimitRecoveryNow
+            ? {
+                checkUsageLimitRecoveryNow: (
+                    request: Parameters<NonNullable<PluginRuntimeHookOperations['checkUsageLimitRecoveryNow']>>[0],
+                ) => currentOperations.checkUsageLimitRecoveryNow?.(request) ?? {
+                    status: 'unavailable',
+                    diagnostic: { code: 'native_usage_limit_recovery_unavailable' },
+                    retryable: true,
+                },
+            }
+            : {}),
+        ...(hasConsumeUsageLimitResetCredit
+            ? {
+                consumeUsageLimitResetCredit: (
+                    request: Parameters<NonNullable<PluginRuntimeHookOperations['consumeUsageLimitResetCredit']>>[0],
+                ) => currentOperations.consumeUsageLimitResetCredit?.(request) ?? {
+                    status: 'unavailable',
+                    diagnostic: { code: 'native_usage_limit_recovery_unavailable' },
+                    retryable: true,
+                },
+            }
+            : {}),
         async waitForTurnCompletion(opts?: RuntimeTurnCompletionOptions) {
             await currentOperations.waitForTurnCompletion(opts);
         },
@@ -853,80 +535,333 @@ function adaptPublicSessionRuntimeToTurnOperations(params: Readonly<{
         async updateSessionRuntimeConfig(update: RuntimeTurnConfigUpdate) {
             return await currentOperations.updateSessionRuntimeConfig(update);
         },
-        async resetOrDisposeRuntime() {
+        async resetOrDisposeRuntime(reason, nextSessionOpenIntent) {
+            await replacementLifecycle?.beforeReplacement();
+            runtimeClosed = true;
+            runtimeBindingEpoch += 1;
+            let detachError: unknown;
+            let detachFailed = false;
             try {
-                await currentOperations.resetOrDisposeRuntime();
+                detachRuntimeSources();
+            } catch (error) {
+                detachError = error;
+                detachFailed = true;
+            }
+            if (hasModelsSource) publishModelSnapshot({ models: null });
+            try {
+                await currentOperations.resetOrDisposeRuntime(reason);
             } finally {
                 runtimeClosed = true;
-                detachRuntimeEvents();
+            }
+            if (detachFailed) throw detachError;
+            if (nextSessionOpenIntent) {
+                const recreated = await recreateClosedRuntime(nextSessionOpenIntent);
+                if (recreated) {
+                    try {
+                        await replacementLifecycle?.onSuccessorUsable();
+                    } catch (error) {
+                        runtimeClosed = true;
+                        runtimeBindingEpoch += 1;
+                        try {
+                            detachRuntimeSources();
+                        } catch {
+                            // Preserve the successor usability failure while still disposing it.
+                        }
+                        await currentOperations.resetOrDisposeRuntime().catch(() => undefined);
+                        throw error;
+                    }
+                }
             }
         },
     });
 }
 
-function buildPublicSessionRuntimeParams(params: Readonly<{
-    backend: ResolvedAgentRuntimeContribution;
+export function resolvePublicSessionModelSelection(params: Readonly<{
     sessionInput: PluginSessionBindingInput;
-    runtime: HostSessionRuntimeFactoryParams;
-}>): CreateSessionRuntimeParamsV1 & Readonly<Record<string, unknown>> {
-    return Object.freeze({
-        sessionId: params.runtime.session.sessionId,
-        backendId: params.backend.id,
-        cwd: params.runtime.directory,
-        directory: params.runtime.directory,
-        permissionMode: params.sessionInput.runtimePreferences.permission?.mode ?? params.runtime.getPermissionMode(),
-        metadata: params.runtime.metadata,
-        credentials: params.sessionInput.credentials,
-        accountSettings: params.runtime.accountSettings ?? null,
-        mcpServers: clonePublicSessionMcpServers(params.runtime.mcpServers),
-        ...(params.sessionInput.bootstrap.environmentVariables
-            ? { env: { ...params.sessionInput.bootstrap.environmentVariables } }
-            : {}),
-        sessionModeId: params.sessionInput.runtimePreferences.sessionMode?.id,
-        modelId: params.sessionInput.runtimePreferences.model?.id,
-        ...(params.sessionInput.resume.resumeSessionId ? { resume: params.sessionInput.resume.resumeSessionId } : {}),
-    });
+    metadata: Readonly<Record<string, unknown>>;
+}>): SessionModelSelectionV1 | undefined {
+    const hasMetadataIntent = Object.prototype.hasOwnProperty.call(params.metadata, 'modelSelectionIntentV1')
+        || Object.prototype.hasOwnProperty.call(params.metadata, 'modelOverrideV1');
+    if (!hasMetadataIntent) return params.sessionInput.runtimePreferences.modelSelection;
+
+    const backendTarget = params.sessionInput.bootstrap.target
+        ? readBackendTargetRefV2(params.sessionInput.bootstrap.target)
+        : resolveBackendTargetFromSessionMetadata(params.metadata);
+    const targetKey = backendTarget
+        ? buildBackendTargetKeyV2(backendTarget)
+        : params.sessionInput.runtimePreferences.modelSelection?.ref.agentTargetKey ?? null;
+    if (!targetKey) {
+        throw new SessionModelSelectionResolutionError('model_selection_agent_target_unknown');
+    }
+    const intent = resolveModelSelectionIntentFromSessionMetadata(params.metadata, targetKey);
+    return intent?.selection
+        ? SessionModelSelectionV1Schema.parse({
+            v: 1,
+            updatedAt: intent.updatedAt,
+            ref: intent.selection,
+        })
+        : undefined;
 }
 
-function buildPluginDisplayName(provider: ResolvedAgentContribution, backend: ResolvedAgentRuntimeContribution): string {
-    const providerTitle = normalizeNonEmptyString(provider.runtimeSpec?.title);
-    if (providerTitle) return providerTitle;
+function resolveInitialNativeAgentSessionOpenIntent(
+    sessionInput: PluginSessionBindingInput,
+): NativeAgentSessionOpenIntent {
+    const providerSessionId = normalizeNonEmptyString(sessionInput.resume.resumeSessionId);
+    const nativeForkSource = sessionInput.nativeForkSource;
+    if (nativeForkSource) {
+        return Object.freeze({ kind: 'fork', source: nativeForkSource });
+    }
+    if (providerSessionId) {
+        return Object.freeze({
+            kind: 'resume',
+            providerSessionId,
+            importHistory: true,
+        });
+    }
+    return Object.freeze({ kind: 'create' });
+}
 
-    const richDisplayName = provider.richDefinition?.provenance === 'external'
-        ? normalizeNonEmptyString(provider.richDefinition.definition.display?.name)
+function buildPluginDisplayName(agent: ResolvedAgentContribution, backend: ResolvedAgentRuntimeContribution): string {
+    const agentTitle = normalizeNonEmptyString(agent.runtimeSpec?.title);
+    if (agentTitle) return agentTitle;
+
+    const richDisplayName = agent.richDefinition?.provenance === 'external'
+        ? normalizeNonEmptyString(
+            typeof agent.richDefinition.definition.title === 'string'
+                ? agent.richDefinition.definition.title
+                : agent.richDefinition.definition.title.fallback,
+        )
         : null;
     if (richDisplayName) return richDisplayName;
 
-    return normalizeNonEmptyString(backend.id) ?? normalizeNonEmptyString(provider.id) ?? 'Plugin Runtime';
+    return normalizeNonEmptyString(backend.id) ?? normalizeNonEmptyString(agent.id) ?? 'Plugin Runtime';
 }
+
+function normalizeOptionalString(value: unknown): string | null {
+    if (typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
+function createNativeAgentDeferredStartupConfig(params: Readonly<{
+    backend: ResolvedAgentRuntimeContribution;
+    agent: ResolvedAgentContribution;
+    displayName: string;
+}>): Pick<HostSessionRuntimePlan['config'], 'startupBootstrap'> | Record<string, never> {
+    const shouldUseDeferredSessionStartup =
+        params.agent.catalogEntry?.shouldUseDeferredSessionStartup;
+    if (!shouldUseDeferredSessionStartup) return {};
+
+    const uiLogPrefix = `[${params.displayName}]`;
+    const timingLogPrefix = `[${params.backend.id}-startup]`;
+    const releasedCachePolicy = params.agent.catalogEntry?.releasedStartupOverridesCacheV1;
+    let lastReleasedCacheWriteAt = 0;
+    return {
+        startupBootstrap: {
+            ...(releasedCachePolicy
+                ? {
+                    resolveSeed: ({
+                        opts,
+                        seed,
+                    }: Readonly<{
+                        opts: HostSessionRuntimeRunOptions;
+                        seed: HostSessionRuntimeStartupSeed;
+                    }>) => {
+                        const providerResumeId = normalizeOptionalString(opts.resume);
+                        if (!providerResumeId || typeof opts.permissionMode === 'string') return seed;
+                        const cached = readReleasedStartupOverridesCacheV1({
+                            backendId: params.backend.id,
+                            nowMs: Date.now(),
+                            maxAgeMs: configuration.startupOverridesCacheMaxAgeMs,
+                        });
+                        if (!cached) return seed;
+                        const agentTargetKey = opts.backendTarget
+                            ? buildBackendTargetKeyV2(readBackendTargetRefV2(opts.backendTarget))
+                            : buildBackendTargetKeyV2({
+                                kind: 'backend',
+                                backendId: params.backend.id,
+                                sourceKind: 'built_in',
+                            });
+                        const cachedModelRef = cached.modelId
+                            ? resolveSessionModelSelectionInputRefV1({
+                                agentTargetKey,
+                                providerConnectionId: null,
+                                modelId: cached.modelId,
+                            })
+                            : null;
+                        const currentProviderBoundModel =
+                            seed.modelSelection?.ref.providerConnectionId !== null
+                            && seed.modelSelection?.ref.providerConnectionId !== undefined
+                                ? seed.modelSelection
+                                : null;
+                        return Object.freeze({
+                            permissionMode: cached.permissionMode,
+                            permissionModeUpdatedAt: cached.permissionModeUpdatedAt,
+                            permissionModeSource: 'released_cache_v1',
+                            modelSelection: currentProviderBoundModel
+                                ? currentProviderBoundModel
+                                : cachedModelRef
+                                ? SessionModelSelectionV1Schema.parse({
+                                    v: 1,
+                                    updatedAt: cached.modelUpdatedAt,
+                                    ref: cachedModelRef,
+                                })
+                                : seed.modelSelection,
+                        });
+                    },
+                    writeRuntimeOverrides: (overrides: Readonly<{
+                        permissionMode: PermissionMode;
+                        permissionModeUpdatedAt: number;
+                        modelSelection: SessionModelSelectionV1 | null;
+                    }>) => {
+                        lastReleasedCacheWriteAt = Math.max(
+                            Date.now(),
+                            lastReleasedCacheWriteAt + 1,
+                        );
+                        writeReleasedStartupOverridesCacheV1({
+                            backendId: params.backend.id,
+                            permissionMode: overrides.permissionMode,
+                            permissionModeUpdatedAt: overrides.permissionModeUpdatedAt,
+                            modelId: overrides.modelSelection?.ref.modelId ?? null,
+                            modelUpdatedAt: overrides.modelSelection?.updatedAt ?? 0,
+                            updatedAt: lastReleasedCacheWriteAt,
+                        });
+                    },
+                }
+                : {}),
+            shouldCreate: ({ opts, seed }) => {
+                if (seed.modelSelection?.ref.providerConnectionId) return false;
+                return shouldUseDeferredSessionStartup({
+                    startedBy: opts.startedBy === 'daemon' ? 'daemon' : 'terminal',
+                    startingMode:
+                        opts.startingMode === 'terminal'
+                        || opts.startingMode === 'remote'
+                        || opts.startingMode === 'local'
+                            ? opts.startingMode
+                            : null,
+                    existingSessionId: normalizeOptionalString(opts.existingSessionId),
+                    sessionAttachFilePath: normalizeOptionalString(opts.sessionAttachFilePath),
+                    providerResumeId: normalizeOptionalString(opts.resume),
+                    hasExplicitPermissionMode: typeof opts.permissionMode === 'string',
+                    permissionModeSeedSource: seed.permissionModeSource,
+                    hasTerminalTty: process.stdin.isTTY === true && process.stdout.isTTY === true,
+                });
+            },
+            create: async ({
+                opts,
+                seed,
+                createPreparedDeferredStartupBootstrap,
+            }: Readonly<{
+                opts: HostSessionRuntimeRunOptions & Readonly<{
+                    launchControlMetadata: NonNullable<HostSessionRuntimeRunOptions['launchControlMetadata']>;
+                }>;
+                seed: HostSessionRuntimeStartupSeed;
+                createPreparedDeferredStartupBootstrap:
+                    NonNullable<HostSessionRuntimePlan['config']['startupBootstrap']>['create'] extends (
+                        params: infer TParams,
+                    ) => unknown
+                        ? TParams extends Readonly<{
+                            createPreparedDeferredStartupBootstrap: infer TCreate;
+                        }>
+                            ? TCreate
+                            : never
+                        : never;
+            }>) => {
+                const initialMachineId = await readRequiredStartupMachineId();
+                return await createPreparedDeferredStartupBootstrap({
+                    credentials: opts.credentials,
+                    flavor: params.backend.id,
+                    workingDirectory: normalizeOptionalString(opts.directory) ?? process.cwd(),
+                    startedBy: opts.startedBy === 'daemon' ? 'daemon' : 'terminal',
+                    initialMachineId,
+                    machineMetadata: initialMachineMetadata,
+                    uiLogPrefix,
+                    timingLogPrefix,
+                    initialPermissionMode: seed.permissionMode,
+                    explicitPermissionMode: seed.permissionMode,
+                    explicitPermissionModeUpdatedAt: seed.permissionModeUpdatedAt,
+                    sessionModeId: opts.sessionModeId,
+                    sessionModeUpdatedAt: opts.sessionModeUpdatedAt,
+                    modelSelection: seed.modelSelection ?? undefined,
+                    terminalRuntime: opts.terminalRuntime ?? null,
+                    launchControlMetadata: opts.launchControlMetadata,
+                    existingSessionId: normalizeOptionalString(opts.existingSessionId) ?? undefined,
+                    sessionAttachFilePath: normalizeOptionalString(opts.sessionAttachFilePath) ?? undefined,
+                    allowOfflineStub: true,
+                    startupSideEffectsOrder: 'persist-first',
+                    onBackgroundStartFailure: (error) => {
+                        logger.debug(`${timingLogPrefix} Background attach failed (non-fatal)`, error);
+                    },
+                });
+            },
+        },
+    };
+}
+
+type RegisteredExternalAgentIdentity = Readonly<{
+    kind: 'registered_external_agent';
+    pluginId: string;
+    agentId: string;
+}>;
 
 function resolvePluginPolicyAgentId(params: Readonly<{
     backend: ResolvedAgentRuntimeContribution;
-    provider: ResolvedAgentContribution;
-}>): AgentId {
-    const policyAgentId = resolveContributionProviderAgentId({
+    agent: ResolvedAgentContribution;
+    registeredAgentIdentity?: RegisteredExternalAgentIdentity;
+}>): string {
+    const policyAgentId = resolveContributionCatalogAgentId({
         backend: params.backend,
-        provider: params.provider,
+        agent: params.agent,
     });
     if (policyAgentId) {
         return policyAgentId;
     }
 
+    const registeredIdentity = params.registeredAgentIdentity;
+    if (registeredIdentity) {
+        if (normalizeBuiltInAgentId(registeredIdentity.agentId)) {
+            throw new Error(
+                `External Agent '${registeredIdentity.agentId}' from plugin '${registeredIdentity.pluginId}' collides with a built-in Agent id`,
+            );
+        }
+        const declaredIds = [params.backend.id, params.backend.agentId, params.agent.id];
+        if (declaredIds.some((id) => id !== registeredIdentity.agentId)) {
+            throw new Error(
+                `Registered external Agent '${registeredIdentity.agentId}' does not match its resolved Agent contribution identity`,
+            );
+        }
+        if (
+            params.backend.provenance !== 'external'
+            || params.agent.provenance !== 'external'
+            || params.agent.richDefinition?.provenance !== 'external'
+            || params.backend.pluginId !== registeredIdentity.pluginId
+            || params.agent.pluginId !== registeredIdentity.pluginId
+        ) {
+            throw new Error(
+                `Registered external Agent '${registeredIdentity.agentId}' does not match its resolved plugin ownership`,
+            );
+        }
+        // Host policy lookups accept string identities and fail closed for unknown
+        // Agents. Preserve the current Agent's exact identity here; never grant it
+        // another Agent's built-in policy through an implicit compatibility alias.
+        return registeredIdentity.agentId;
+    }
+
     throw new Error(
-        `Plugin backend '${params.backend.id}' requires providerAgentId to resolve to an exact built-in policy agent id before it can become a live session runtime`,
+        `Plugin backend '${params.backend.id}' requires catalogAgentId to resolve to an exact built-in policy agent id before it can become a live session runtime`,
     );
 }
 
 export async function createPluginSessionRuntimePlan(params: Readonly<{
     backend: ResolvedAgentRuntimeContribution;
-    provider: ResolvedAgentContribution;
+    agent: ResolvedAgentContribution;
     launch: PluginSessionLaunchHandler;
     sessionInput: PluginSessionBindingInput;
 }>): Promise<HostSessionRuntimePlan> {
-    const displayName = buildPluginDisplayName(params.provider, params.backend);
+    const displayName = buildPluginDisplayName(params.agent, params.backend);
     const policyAgentId = resolvePluginPolicyAgentId({
         backend: params.backend,
-        provider: params.provider,
+        agent: params.agent,
     });
     const TerminalDisplay = createProviderTerminalDisplay({
         title: displayName,
@@ -935,23 +870,23 @@ export async function createPluginSessionRuntimePlan(params: Readonly<{
     });
 
     return createCatalogHostSessionRuntimePlan({
-        providerId: params.backend.id,
+        agentId: params.backend.id,
         opts: buildPluginHostSessionRuntimeOptions(params.sessionInput),
         config: createCatalogHostSessionRuntimeConfig({
-            providerId: params.backend.id,
+            agentId: params.backend.id,
             config: {
                 displayName,
                 flavor: params.backend.id,
                 policyAgentId,
+                ...(params.agent.catalogEntry?.runtimeActivityApplicability !== undefined
+                    ? { runtimeActivityApplicability: params.agent.catalogEntry.runtimeActivityApplicability }
+                    : {}),
                 terminalDisplay: TerminalDisplay,
-                userMessageDeliveryWatermarkMode: 'providerAcceptance',
-                providerAcceptancePendingMaterialization:
-                    params.sessionInput.runtimePreferences.providerAcceptancePendingMaterialization,
                 formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
                 createNativeRuntime: async (runtimeParams) => {
                     const sessionLaunchParams = buildPluginSessionLaunchParams({
                         backend: params.backend,
-                        provider: params.provider,
+                        agent: params.agent,
                         input: params.sessionInput,
                         runtime: {
                             sessionId: runtimeParams.session.sessionId,
@@ -971,52 +906,81 @@ export async function createPluginSessionRuntimePlan(params: Readonly<{
     });
 }
 
-export async function createPublicPluginSessionRuntimePlan(params: Readonly<{
+export async function createNativeAgentHostSessionRuntimePlan(params: Readonly<{
     backend: ResolvedAgentRuntimeContribution;
-    provider: ResolvedAgentContribution;
-    createSessionRuntime: PublicSessionRuntimeCreate;
+    agent: ResolvedAgentContribution;
+    createSessionRuntime: NativeAgentSessionRuntimeCreate;
     sessionInput: PluginSessionBindingInput;
+    registeredAgentIdentity?: RegisteredExternalAgentIdentity;
+    daemonAgentRuntimeCarrierRetirementSignal?: AbortSignal;
+    agentSessionRealtimeVoiceAuthority?:
+        HostSessionRuntimeConfig['agentSessionRealtimeVoiceAuthority'];
 }>): Promise<HostSessionRuntimePlan> {
-    const displayName = buildPluginDisplayName(params.provider, params.backend);
+    const displayName = buildPluginDisplayName(params.agent, params.backend);
     const policyAgentId = resolvePluginPolicyAgentId({
         backend: params.backend,
-        provider: params.provider,
+        agent: params.agent,
+        ...(params.registeredAgentIdentity
+            ? { registeredAgentIdentity: params.registeredAgentIdentity }
+            : {}),
     });
     const TerminalDisplay = createProviderTerminalDisplay({
         title: displayName,
         footerName: displayName,
         accentColor: 'cyan',
     });
+    const providerSessionMetadataKey = resolveNativeAgentVendorResumeIdField(params.agent, policyAgentId);
 
     return createCatalogHostSessionRuntimePlan({
-        providerId: params.backend.id,
+        agentId: params.backend.id,
         opts: buildPluginHostSessionRuntimeOptions(params.sessionInput),
         config: createCatalogHostSessionRuntimeConfig({
-            providerId: params.backend.id,
+            agentId: params.backend.id,
             config: {
                 displayName,
                 flavor: params.backend.id,
                 policyAgentId,
+                ...(params.agentSessionRealtimeVoiceAuthority
+                    ? {
+                        agentSessionRealtimeVoiceAuthority:
+                            params.agentSessionRealtimeVoiceAuthority,
+                    }
+                    : {}),
+                ...(params.daemonAgentRuntimeCarrierRetirementSignal
+                    ? {
+                        daemonAgentRuntimeCarrierRetirementSignal:
+                            params.daemonAgentRuntimeCarrierRetirementSignal,
+                    }
+                    : {}),
+                ...createNativeAgentDeferredStartupConfig({
+                    backend: params.backend,
+                    agent: params.agent,
+                    displayName,
+                }),
+                ...(params.agent.catalogEntry?.runtimeActivityApplicability !== undefined
+                    ? { runtimeActivityApplicability: params.agent.catalogEntry.runtimeActivityApplicability }
+                    : {}),
                 terminalDisplay: TerminalDisplay,
                 formatPromptErrorMessage: (error) => `Error: ${error instanceof Error ? error.message : String(error)}`,
+                ...(providerSessionMetadataKey ? { providerSessionMetadataKey } : {}),
                 createNativeRuntime: async (runtimeParams) => {
-                    const publicRuntimeParams = buildPublicSessionRuntimeParams({
-                        backend: params.backend,
-                        sessionInput: params.sessionInput,
-                        runtime: runtimeParams,
-                    });
-                    const { resume: _initialResume, ...runtimeParamsWithoutResume } =
-                        publicRuntimeParams as CreateSessionRuntimeParamsV1 & Readonly<Record<string, unknown>>;
-                    void _initialResume;
-                    const publicRuntime = await params.createSessionRuntime(publicRuntimeParams);
-                    return adaptPublicSessionRuntimeToTurnOperations({
-                        initialRuntime: publicRuntime,
-                        recreateRuntime: async (opts) => {
-                            const resumeId = normalizeNonEmptyString(opts?.resumeId);
-                            return await params.createSessionRuntime(Object.freeze({
-                                ...runtimeParamsWithoutResume,
-                                ...(resumeId ? { resume: resumeId } : {}),
-                            }));
+                    const initialOperations = await params.createSessionRuntime(
+                        resolveInitialNativeAgentSessionOpenIntent(params.sessionInput),
+                        runtimeParams,
+                    );
+                    return bindReplaceableNativeAgentSessionOperations({
+                        initialOperations,
+                        recreateOperations: async (intent) => {
+                            return await params.createSessionRuntime(
+                                intent.kind === 'resume'
+                                    ? Object.freeze({
+                                        kind: 'resume',
+                                        providerSessionId: intent.providerSessionId,
+                                        importHistory: intent.importHistory,
+                                    })
+                                    : Object.freeze({ kind: 'create' }),
+                                runtimeParams,
+                            );
                         },
                     });
                 },

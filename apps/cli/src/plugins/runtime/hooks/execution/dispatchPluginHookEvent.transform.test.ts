@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 
-import type { ResolvedHookRegistration } from '@/plugins/projection/registry/types';
+import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
 import type { PluginRuntimeHookHandler, ResolvedPluginHookHandler } from '../../types';
 
 import { dispatchPluginHookEvent } from './dispatchPluginHookEvent';
@@ -17,7 +17,7 @@ function createTransformHookRegistration(params: Readonly<{
   pluginId: string;
   hookId?: 'agent.context.before' | 'session.input.transform';
   priority?: number;
-}>): ResolvedHookRegistration {
+}>): ResolvedActivatedHookRegistration {
   const hookId = params.hookId ?? 'agent.context.before';
   return {
     provenance: 'external',
@@ -39,10 +39,6 @@ function createTransformHookRegistration(params: Readonly<{
       scope: hookId === 'session.input.transform' ? 'session' : 'agent',
       executionKind: 'augment',
       ...(params.priority !== undefined ? { priority: params.priority } : {}),
-      handler: {
-        target: 'plugin',
-        exportName: 'transform',
-      },
     },
   };
 }
@@ -162,7 +158,80 @@ describe('dispatchPluginHookEvent transform hooks', () => {
     ]);
   });
 
-  it('keeps the prior payload when a transform returns an invalid replacement, rejects, or times out', async () => {
+  it('rolls back a valid transform prefix and stops after an invalid replacement', async () => {
+    const firstRegistration = createTransformHookRegistration({ pluginId: 'first.plugin', hookId: 'session.input.transform', priority: 1 });
+    const invalidRegistration = createTransformHookRegistration({ pluginId: 'invalid.plugin', hookId: 'session.input.transform', priority: 2 });
+    const laterRegistration = createTransformHookRegistration({ pluginId: 'later.plugin', hookId: 'session.input.transform', priority: 3 });
+    const laterHandler = vi.fn(async (event: unknown) => ({
+      ...readPayload(event),
+      text: 'must not run',
+    }));
+    const resolved = (
+      registration: ResolvedActivatedHookRegistration,
+      registrationIndex: number,
+      handler: ResolvedPluginHookHandler['handler'],
+    ): ResolvedPluginHookHandler => ({
+      pluginId: registration.pluginId,
+      hookId: 'session.input.transform',
+      priority: registration.definition.priority ?? 0,
+      registrationIndex,
+      manifestPath: registration.manifestPath,
+      manifestDigest: registration.manifestDigest,
+      daemonEntryPath: registration.daemonEntryPath!,
+      registration,
+      handler,
+    });
+
+    const result = await dispatchPluginHookEvent({
+      runtimeRegistry: {
+        readHookEventEnvelopeV1,
+        hookHandlersByHookId: new Map([['session.input.transform', Object.freeze([
+          resolved(firstRegistration, 0, async (event) => ({
+            ...readPayload(event),
+            text: 'valid prefix',
+          })),
+          resolved(invalidRegistration, 1, async () => ({ text: 'missing required subject' })),
+          resolved(laterRegistration, 2, laterHandler),
+        ])]]),
+      },
+      event: {
+        hookVersion: 1,
+        eventId: 'session.input.transform',
+        category: 'augmentation',
+        scope: 'session',
+        happySessionId: 'session-1',
+        timestampMs: 1,
+        payload: {
+          sessionId: 'session-1',
+          localId: 'local-1',
+          text: 'original',
+          meta: { source: 'ui' },
+          timestampMs: 1,
+        },
+      },
+    });
+
+    expect(laterHandler).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      matchedHandlerCount: 2,
+      outcomes: [
+        expect.objectContaining({ pluginId: 'first.plugin', status: 'fulfilled' }),
+        expect.objectContaining({ pluginId: 'invalid.plugin', status: 'rejected' }),
+      ],
+      aggregate: {
+        executionKind: 'augment',
+        result: {
+          sessionId: 'session-1',
+          localId: 'local-1',
+          text: 'original',
+          meta: { source: 'ui' },
+          timestampMs: 1,
+        },
+      },
+    });
+  });
+
+  it('rolls back immediately when the first transform throws', async () => {
     const invalidRegistration = createTransformHookRegistration({ pluginId: 'invalid.plugin', hookId: 'session.input.transform', priority: 1 });
     const rejectingRegistration = createTransformHookRegistration({ pluginId: 'rejecting.plugin', hookId: 'session.input.transform', priority: 2 });
     const timedOutRegistration = createTransformHookRegistration({ pluginId: 'timeout.plugin', hookId: 'session.input.transform', priority: 3 });
@@ -183,22 +252,10 @@ describe('dispatchPluginHookEvent transform hooks', () => {
         hookHandlersByHookId: new Map<string, readonly ResolvedPluginHookHandler[]>([
           ['session.input.transform', Object.freeze([
             {
-              pluginId: 'invalid.plugin',
+              pluginId: 'rejecting.plugin',
               hookId: 'session.input.transform',
               priority: 1,
               registrationIndex: 0,
-              manifestPath: invalidRegistration.manifestPath,
-              manifestDigest: invalidRegistration.manifestDigest,
-              daemonEntryPath: invalidRegistration.daemonEntryPath!,
-              exportName: 'transform',
-              registration: invalidRegistration,
-              handler: async () => ({ text: 'missing required session fields' }),
-            },
-            {
-              pluginId: 'rejecting.plugin',
-              hookId: 'session.input.transform',
-              priority: 2,
-              registrationIndex: 1,
               manifestPath: rejectingRegistration.manifestPath,
               manifestDigest: rejectingRegistration.manifestDigest,
               daemonEntryPath: rejectingRegistration.daemonEntryPath!,
@@ -207,6 +264,18 @@ describe('dispatchPluginHookEvent transform hooks', () => {
               handler: async () => {
                 throw new Error('transform failed');
               },
+            },
+            {
+              pluginId: 'invalid.plugin',
+              hookId: 'session.input.transform',
+              priority: 2,
+              registrationIndex: 1,
+              manifestPath: invalidRegistration.manifestPath,
+              manifestDigest: invalidRegistration.manifestDigest,
+              daemonEntryPath: invalidRegistration.daemonEntryPath!,
+              exportName: 'transform',
+              registration: invalidRegistration,
+              handler: async () => ({ text: 'missing required session fields' }),
             },
             {
               pluginId: 'timeout.plugin',
@@ -256,34 +325,24 @@ describe('dispatchPluginHookEvent transform hooks', () => {
       },
     });
 
-    expect(finalHandlerMock.mock.calls[0]?.[0]).toMatchObject({
-      payload: {
-        text: 'original',
-      },
-    });
+    expect(finalHandlerMock).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       eventId: 'session.input.transform',
-      matchedHandlerCount: 4,
+      matchedHandlerCount: 1,
       aggregate: {
         executionKind: 'augment',
         result: {
           sessionId: 'session-1',
           localId: 'local-1',
-          text: 'original final',
+          text: 'original',
         },
       },
       outcomes: [
-        expect.objectContaining({ pluginId: 'invalid.plugin', status: 'rejected' }),
-        expect.objectContaining({ pluginId: 'rejecting.plugin', status: 'rejected', error: 'transform failed' }),
-        expect.objectContaining({ pluginId: 'timeout.plugin', status: 'rejected', error: expect.stringContaining('timed out') }),
-        expect.objectContaining({ pluginId: 'final.plugin', status: 'fulfilled' }),
+        expect.objectContaining({ pluginId: 'rejecting.plugin', status: 'rejected', error: 'plugin_hook_handler_failed' }),
       ],
     });
     expect(observations).toEqual([
-      expect.objectContaining({ pluginId: 'invalid.plugin', status: 'rejected' }),
       expect.objectContaining({ pluginId: 'rejecting.plugin', status: 'rejected' }),
-      expect.objectContaining({ pluginId: 'timeout.plugin', status: 'rejected' }),
-      expect.objectContaining({ pluginId: 'final.plugin', status: 'fulfilled' }),
     ]);
   });
 });

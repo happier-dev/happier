@@ -1,9 +1,9 @@
 import type {
-    TerminalRuntimeHostOrchestrationV1,
-    TerminalRuntimeProcessServiceV1,
-    TerminalRuntimeProjectionHostServiceV1,
-    TerminalRuntimeTranscriptBindingHostServiceV1,
-} from '@happier-dev/agents';
+    HostTerminalOrchestration,
+    HostTerminalProcessService,
+    HostTerminalProjectionService,
+    HostTerminalTranscriptFollowService,
+} from './contract';
 
 import { createTerminalRuntimeInputTriggerService } from './inputTrigger';
 import {
@@ -12,7 +12,6 @@ import {
     type TerminalRuntimeExecutableGrantVerifier,
 } from './launchProcess';
 import { createTerminalRuntimeSwitchHandlerService } from './switchHandler';
-import { createTerminalRuntimeTranscriptBindingHostService } from './transcriptBinding';
 
 type TerminalHostMessageQueue = Parameters<typeof createTerminalRuntimeInputTriggerService>[0]['messageQueue'];
 type TerminalHostSession = Readonly<{
@@ -24,12 +23,12 @@ type TerminalHostSession = Readonly<{
 export function createTerminalRuntimeHostOrchestration(params: Readonly<{
     messageQueue?: TerminalHostMessageQueue | null;
     session: TerminalHostSession;
-    process?: TerminalRuntimeProcessServiceV1;
-    projection?: TerminalRuntimeProjectionHostServiceV1;
-    transcripts?: TerminalRuntimeTranscriptBindingHostServiceV1;
+    process?: HostTerminalProcessService;
+    projection?: HostTerminalProjectionService;
+    transcriptFollow?: HostTerminalTranscriptFollowService;
     verifyExecutableGrant?: TerminalRuntimeExecutableGrantVerifier;
     registerExecutableGrant?: TerminalRuntimeExecutableGrantRegistrar;
-}>): TerminalRuntimeHostOrchestrationV1 | null {
+}>): HostTerminalOrchestration | null {
     const registerHandler = params.session.rpcHandlerManager?.registerHandler?.bind(params.session.rpcHandlerManager);
     if (!params.messageQueue || !registerHandler) {
         return null;
@@ -52,7 +51,9 @@ export function createTerminalRuntimeHostOrchestration(params: Readonly<{
         input: createTerminalRuntimeInputTriggerService({ messageQueue: params.messageQueue }),
         switching: createTerminalRuntimeSwitchHandlerService({ registerHandler }),
         process,
-        transcripts: params.transcripts ?? createTerminalRuntimeTranscriptBindingHostService(),
         projection: params.projection,
+        ...(params.transcriptFollow
+            ? { transcriptFollow: params.transcriptFollow }
+            : {}),
     });
 }

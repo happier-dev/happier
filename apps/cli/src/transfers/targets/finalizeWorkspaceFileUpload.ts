@@ -5,8 +5,33 @@ import { dirname } from 'path';
 import {
   CrossDeviceMoveSourceCleanupError,
   moveFileWithCrossDeviceFallback,
+  type MoveFileOperations,
 } from '../../utils/fs/moveFileWithCrossDeviceFallback';
-import type { UploadTransferFinalizeResult } from './uploadTransferTarget';
+import {
+  TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE,
+  type UploadTransferFinalizeResult,
+} from './uploadTransferTarget';
+
+export type WorkspaceFileFinalizeOperations = MoveFileOperations;
+
+function mapCrossDeviceRecoveryFailure(
+  error: CrossDeviceMoveSourceCleanupError,
+): UploadTransferFinalizeResult {
+  if (!error.destinationRolledBack) {
+    return {
+      success: false,
+      error: 'Failed to finalize uploaded file because destination recovery was incomplete. Recovery files were preserved; inspect the destination before retrying.',
+      errorCode: TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE,
+      keepSession: true,
+    };
+  }
+
+  return {
+    success: false,
+    error: 'Failed to finalize uploaded file because the staged upload file is still in use. Retry the upload finalization.',
+    keepSession: true,
+  };
+}
 
 export async function finalizeWorkspaceFileUpload(input: Readonly<{
   tempPath: string;
@@ -14,6 +39,7 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
   destDisplayPath: string;
   overwrite: boolean;
   sizeBytes: number;
+  fileOperations?: WorkspaceFileFinalizeOperations | null;
 }>): Promise<UploadTransferFinalizeResult> {
   await mkdir(dirname(input.destPath), { recursive: true });
 
@@ -35,8 +61,10 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
   }
 
   if (!input.overwrite) {
+    const copyFileOperation = input.fileOperations?.copyFile ?? copyFile;
+    const rmOperation = input.fileOperations?.rm ?? rm;
     try {
-      await copyFile(input.tempPath, input.destPath, constants.COPYFILE_EXCL);
+      await copyFileOperation(input.tempPath, input.destPath, constants.COPYFILE_EXCL);
     } catch (error) {
       const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : null;
       if (code === 'EEXIST') {
@@ -45,15 +73,29 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
       throw error;
     }
     try {
-      await rm(input.tempPath, { force: true });
+      await rmOperation(input.tempPath, { force: true });
     } catch (error) {
-      await rm(input.destPath, { force: true }).catch(() => undefined);
-      throw new CrossDeviceMoveSourceCleanupError({
+      try {
+        await rmOperation(input.destPath, { force: true });
+      } catch (rollbackError) {
+        return mapCrossDeviceRecoveryFailure(new CrossDeviceMoveSourceCleanupError({
+          sourcePath: input.tempPath,
+          destPath: input.destPath,
+          backupPath: null,
+          destinationRolledBack: false,
+          cause: new AggregateError(
+            [error, rollbackError],
+            'Failed to clean up the staged upload source and roll back the copied destination',
+          ),
+        }));
+      }
+      return mapCrossDeviceRecoveryFailure(new CrossDeviceMoveSourceCleanupError({
         sourcePath: input.tempPath,
         destPath: input.destPath,
+        backupPath: null,
         destinationRolledBack: true,
         cause: error,
-      });
+      }));
     }
     return {
       success: true,
@@ -63,14 +105,14 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
   }
 
   try {
-    await moveFileWithCrossDeviceFallback(input.tempPath, input.destPath);
+    await moveFileWithCrossDeviceFallback(
+      input.tempPath,
+      input.destPath,
+      input.fileOperations ?? undefined,
+    );
   } catch (error) {
-    if (error instanceof CrossDeviceMoveSourceCleanupError && error.destinationRolledBack) {
-      return {
-        success: false,
-        error: 'Failed to finalize uploaded file because the staged upload file is still in use. Retry the upload finalization.',
-        keepSession: true,
-      };
+    if (error instanceof CrossDeviceMoveSourceCleanupError) {
+      return mapCrossDeviceRecoveryFailure(error);
     }
     throw error;
   }

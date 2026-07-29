@@ -39,7 +39,12 @@ export { typeTextViaSendKeys, type TmuxCommandExecutor, type TmuxTypeTextResult 
 export { evaluateTmuxPaneLiveness, type TmuxPaneLivenessExecutor } from './paneLiveness';
 export { createTmuxTerminalHostAdapter, type TmuxTerminalHostUtility } from './adapter';
 
-export { TmuxUtilities, type TmuxSpawnOptions } from './TmuxUtilities';
+export {
+  TmuxUtilities,
+  type TmuxSpawnOptions,
+  type TmuxSpawnResult,
+  type TmuxWindowCreationDisposition,
+} from './TmuxUtilities';
 
 export { createTmuxSession, getTmuxUtilities, isTmuxAvailable } from './factory';
 

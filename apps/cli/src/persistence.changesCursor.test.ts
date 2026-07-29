@@ -24,22 +24,22 @@ describe('changes cursor persistence', () => {
                 HAPPIER_ACTIVE_SERVER_ID: undefined,
             });
 
-            const [{ configuration }, { readLastChangesCursor, writeLastChangesCursor }] = await Promise.all([
+            const [{ configuration }, { readAccountChangesCursor, writeAccountChangesCursor }] = await Promise.all([
                 import('./configuration'),
                 import('./persistence'),
             ]);
 
-            expect(await readLastChangesCursor('acc-1')).toBe(0);
+            expect(await readAccountChangesCursor('acc-1')).toBe(0);
 
-            await writeLastChangesCursor('acc-1', 12);
-            expect(await readLastChangesCursor('acc-1')).toBe(12);
+            await writeAccountChangesCursor('acc-1', 12);
+            expect(await readAccountChangesCursor('acc-1')).toBe(12);
 
             const raw = JSON.parse(readFileSync(configuration.settingsFile, 'utf8'));
             expect(raw.lastChangesCursorByServerIdByAccountId).toEqual({ cloud: { 'acc-1': 12 } });
 
             // Writing 0 removes the entry to keep settings small.
-            await writeLastChangesCursor('acc-1', 0);
-            expect(await readLastChangesCursor('acc-1')).toBe(0);
+            await writeAccountChangesCursor('acc-1', 0);
+            expect(await readAccountChangesCursor('acc-1')).toBe(0);
         });
     });
 
@@ -84,11 +84,11 @@ describe('changes cursor persistence', () => {
             };
             writeFileSync(settingsPath, JSON.stringify(seed, null, 2), 'utf8');
 
-            const { readLastChangesCursor, writeLastChangesCursor } = await import('./persistence');
+            const { readAccountChangesCursor, writeAccountChangesCursor } = await import('./persistence');
 
-            expect(await readLastChangesCursor('acc-1')).toBe(9);
+            expect(await readAccountChangesCursor('acc-1')).toBe(9);
 
-            await writeLastChangesCursor('acc-1', 12);
+            await writeAccountChangesCursor('acc-1', 12);
             const raw = JSON.parse(readFileSync(settingsPath, 'utf8'));
             expect(raw.lastChangesCursorByServerIdByAccountId.cloud['acc-1']).toBe(5);
             expect(raw.lastChangesCursorByServerIdByAccountId[envServerId]['acc-1']).toBe(12);

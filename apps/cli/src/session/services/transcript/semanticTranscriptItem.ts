@@ -1,3 +1,5 @@
+import type { ConversationTurnOriginV1 } from '@happier-dev/protocol';
+
 import type { RawTranscriptRow } from '@/session/replay/fetchEncryptedTranscriptMessages';
 
 export type TranscriptDirection = 'before' | 'after';
@@ -20,6 +22,7 @@ export type SemanticTranscriptItem = Readonly<{
   semanticRole: SemanticTranscriptRole;
   role: SemanticTranscriptRole;
   kind: string;
+  origin?: ConversationTurnOriginV1;
   provider?: string;
   text?: string;
   summary?: string;

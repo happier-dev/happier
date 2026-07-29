@@ -1,5 +1,6 @@
 import {
   createActionExecutor,
+  createUnavailableRuntimeActionExecutor,
   ExecutionRunEnsureOrStartRequestSchema,
   ExecutionRunEnsureRequestSchema,
   ExecutionRunActionRequestSchema,
@@ -12,8 +13,38 @@ import {
   ExecutionRunTurnStreamStartRequestSchema,
   convertBackendTargetRefV2ToV1,
   type ActionExecutorDeps,
+  type ActionExecuteResult,
+  type PluginPermissionGrantRequestActionInputV1,
+  isRuntimeActionIdV1,
+  type RuntimeActionExecute,
+  type RuntimeActionIdV1,
 } from '@happier-dev/protocol';
 
+import { createSimulatorDaemonRuntimeActionExecutor } from '@/daemon/devices/simulator/actions/runtimeActionExecutor';
+import { createSimulatorDaemonFeatureGate } from '@/daemon/devices/simulator/featureGate';
+import type { SimulatorPreviewRoutes } from '@/daemon/devices/simulator/previewRoutes.types';
+import { createBrowserDaemonRuntimeActionExecutor } from '@/daemon/browser/actions/runtimeActionExecutor';
+import { createBrowserDaemonFeatureGate } from '@/daemon/browser/featureGate';
+import type { BrowserDaemonControlRoutes } from '@/daemon/browser/control/routes';
+import type { BrowserContextRoutes } from '@/daemon/browser/context/routes';
+import type { BrowserAutomationRoutes } from '@/daemon/browser/automation/routes';
+import type { BrowserRecordingRoutes } from '@/daemon/browser/recording/routes';
+import { createBrowserRecordingActionRoutes } from '@/daemon/browser/recording/actionRoutes';
+import type { BrowserDiagnosticsActionRoutes } from '@/daemon/browser/diagnostics/actionRoutes';
+import {
+  createBrowserRecordingAttachToComposer,
+  type BrowserRecordingComposerAttachInput,
+  type BrowserRecordingComposerAttachResult,
+} from '@/daemon/browser/recording/attachToComposer';
+import {
+  createLocalServicesDaemonRuntimeActionExecutor,
+  type LocalServicesRuntimeActionRoutes,
+} from '@/daemon/local/services/actions/runtimeActionExecutor';
+import {
+  createPeerMediationObservabilityDaemonRuntimeActionExecutor,
+  type DaemonPeerMediationObservabilityRuntimeActionContext,
+} from '@/daemon/peer/mediation/observability/runtimeActionExecutor';
+import { createLocalServicesDaemonFeatureGate } from '@/daemon/local/services/featureGate';
 import {
   resolveExecutionRunIntentPolicy,
   resolveExecutionRunStartBoundedTimeoutMs,
@@ -28,6 +59,10 @@ import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/f
 import { isActionApprovalRequiredByEnv, isActionEnabledByEnv } from '@/settings/actionsSettings';
 
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
+import type {
+  ExecutionRunHostActionCurrentIntentResult,
+  ExecutionRunHostActionCurrentIntentSubject,
+} from '@/session/actions/approvals/executionRunHostActionCurrentIntent';
 
 export type ExecutionRunRpcApprovalDeps = Pick<
   ActionExecutorDeps,
@@ -37,9 +72,22 @@ export type ExecutionRunRpcApprovalDeps = Pick<
   | 'approvalsResolveBlockingDecision'
   | 'approvalsUpdate'
   | 'approvalsWaitForDecision'
->;
+  | 'reviewCommentAction'
+> & Readonly<{
+  executionRunHostActionCurrentIntent?: (
+    subject: ExecutionRunHostActionCurrentIntentSubject,
+  ) => Promise<ExecutionRunHostActionCurrentIntentResult>;
+  pluginPermissionGrantRequest?: (
+    input: PluginPermissionGrantRequestActionInputV1 & Readonly<{ serverId?: string }>,
+  ) => Promise<unknown>;
+}>;
 
-type ExecutionRunRpcFailure = Readonly<{ ok: false; error: string; errorCode: string }>;
+type ExecutionRunRpcFailure = Readonly<{
+  ok: false;
+  error: string;
+  errorCode: string;
+  details?: unknown;
+}>;
 type ExecutionRunStartResult =
   | Readonly<{ ok: true; runId: string; callId: string; sidechainId: string }>
   | ExecutionRunRpcFailure;
@@ -57,6 +105,23 @@ type ExecutionRunRpcActionContext = Readonly<{
   cwd: string;
   serverUrl?: string;
   budgetRegistry?: unknown;
+  browserControl?: BrowserDaemonControlRoutes | null;
+  browserContext?: BrowserContextRoutes | null;
+  browserAutomation?: BrowserAutomationRoutes | null;
+  browserDiagnostics?: BrowserDiagnosticsActionRoutes | null;
+  browserRecording?: BrowserRecordingRoutes | null;
+  // Canonical composer/session-media attach owner for finalized browser recordings. When
+  // present, the `browser.recording.attachToComposer` leaf routes the recording's reference-only
+  // mediaRef here; absent, the attach leaf stays fail-closed (`browser_recording_route_unavailable`).
+  attachBrowserRecordingToComposer?: (
+    input: BrowserRecordingComposerAttachInput,
+  ) => Promise<BrowserRecordingComposerAttachResult>;
+  localServices?: LocalServicesRuntimeActionRoutes | null;
+  simulatorPreview?: SimulatorPreviewRoutes | null;
+  // PMS-WIRE: the shared peer-mediation observability store + daemon scope, handed across the Api
+  // provider bridge from the machine-sync bootstrap (write-path owner) so the read-path executor
+  // here returns LIVE flow counters rather than a separate, empty store.
+  peerMediationObservability?: DaemonPeerMediationObservabilityRuntimeActionContext | null;
   getServerFeaturesSnapshot?: () => CliServerFeaturesSnapshot | undefined;
   resolveAccountSettings?: () => Promise<Record<string, unknown> | null> | Record<string, unknown> | null;
 }>;
@@ -67,6 +132,18 @@ function executionRunsDisabled(): ExecutionRunRpcFailure {
 
 function invalidParams(): ExecutionRunRpcFailure {
   return { ok: false, error: 'Invalid params', errorCode: 'execution_run_invalid_action_input' };
+}
+
+function executionRunNotFound(): ExecutionRunRpcFailure {
+  return { ok: false, error: 'Not found', errorCode: 'execution_run_not_found' };
+}
+
+function runtimeActionResultToExecutionRunActionResponse(
+  result: ActionExecuteResult,
+): Readonly<{ ok: true; result: unknown } | { ok: false; errorCode: string; error: string; details?: unknown }> {
+  return result.ok
+    ? { ok: true, result: result.result }
+    : result;
 }
 
 function readParentRef(raw: unknown, key: 'parentRunId' | 'parentCallId'): string {
@@ -81,11 +158,123 @@ async function unsupportedActionDependency(): Promise<never> {
   throw new Error('action_not_supported_in_execution_run_rpc');
 }
 
-function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams): ActionExecutorDeps {
+export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams): ActionExecutorDeps {
   const ensureEnabled = (): ExecutionRunRpcFailure | null => params.isExecutionRunsEnabled()
     ? null
     : executionRunsDisabled();
   let cachedServerSnapshot: CliServerFeaturesSnapshot | undefined;
+  const unavailableRuntimeActionExecutor = createUnavailableRuntimeActionExecutor();
+  // PMS-WIRE read-path: route `peerMediation.observability.*` to an executor over the shared
+  // bootstrap-owned store. The server feature gate is read fail-closed from the same cached
+  // server-features accessor used by the browser/local-service daemon gates.
+  const peerMediationObservabilityRuntimeActionExecutor = params.context.peerMediationObservability
+    ? createPeerMediationObservabilityDaemonRuntimeActionExecutor({
+        store: params.context.peerMediationObservability.store,
+        accountId: params.context.peerMediationObservability.accountId,
+        machineId: params.context.peerMediationObservability.machineId,
+        featurePayload: () => {
+          const snapshot = params.context.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot;
+          return snapshot?.status === 'ready' ? snapshot.features : {};
+        },
+        fallback: unavailableRuntimeActionExecutor,
+      })
+    : unavailableRuntimeActionExecutor;
+  // OWNER-GATE execution chokepoint for the simulator family: same cached synchronous
+  // server-features accessor as the browser/local-services gates, so a server-disabled
+  // `devices.simulatorPreview` is refused at the daemon execution boundary even when the preview
+  // route owner is present.
+  const simulatorDaemonFeatureGate = createSimulatorDaemonFeatureGate({
+    env: process.env,
+    resolveServerFeaturesSnapshot: () => params.context.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot,
+  });
+  const simulatorRuntimeActionExecutor = params.context.simulatorPreview
+    ? createSimulatorDaemonRuntimeActionExecutor({
+        routes: params.context.simulatorPreview,
+        fallback: peerMediationObservabilityRuntimeActionExecutor,
+        featureGate: simulatorDaemonFeatureGate,
+      })
+    : peerMediationObservabilityRuntimeActionExecutor;
+  // OWNER-GATE execution chokepoint for local services: same cached synchronous server-features
+  // accessor as the browser gate, so a server-disabled local-service feature is refused at the
+  // daemon execution boundary even when its route owner is present.
+  const localServicesDaemonFeatureGate = createLocalServicesDaemonFeatureGate({
+    env: process.env,
+    resolveServerFeaturesSnapshot: () => params.context.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot,
+  });
+  const localServicesRuntimeActionExecutor = params.context.localServices
+    ? createLocalServicesDaemonRuntimeActionExecutor({
+        routes: params.context.localServices,
+        fallback: simulatorRuntimeActionExecutor,
+        featureGate: localServicesDaemonFeatureGate,
+      })
+    : simulatorRuntimeActionExecutor;
+  const browserRecordingAttachToComposer = (
+    params.context.browserRecording && params.context.attachBrowserRecordingToComposer
+  )
+    ? createBrowserRecordingAttachToComposer({
+        routes: params.context.browserRecording,
+        attachToComposer: params.context.attachBrowserRecordingToComposer,
+      })
+    : undefined;
+  // OWNER-GATE action-execution chokepoint. The gate reuses the daemon's already-cached
+  // synchronous server-features accessor (the same one driving the voice gate above) — no fresh
+  // fetch. resolveCliFeatureDecision reads the cached snapshot synchronously, so the executor
+  // refuses each dispatchable browser family on server-disable even if a route owner is present.
+  const browserDaemonFeatureGate = createBrowserDaemonFeatureGate({
+    env: process.env,
+    resolveServerFeaturesSnapshot: () => params.context.getServerFeaturesSnapshot?.() ?? cachedServerSnapshot,
+  });
+  // BA-5: the non-attach recording lifecycle (start/stop/cancel/status/listForView/discard/
+  // cleanupExpired) routes through the service-backed recording routes that are already threaded
+  // into this context. `attachToComposer` keeps its dedicated composer-attach executor above.
+  const browserRecordingActionRoutes = params.context.browserRecording
+    ? createBrowserRecordingActionRoutes({ routes: params.context.browserRecording })
+    : undefined;
+  const browserRuntimeActionExecutor = createBrowserDaemonRuntimeActionExecutor({
+    ...(params.context.browserControl ? { control: params.context.browserControl } : {}),
+    ...(params.context.browserContext ? { context: params.context.browserContext } : {}),
+    ...(params.context.browserAutomation ? { automation: params.context.browserAutomation } : {}),
+    ...(params.context.browserDiagnostics ? { diagnostics: params.context.browserDiagnostics } : {}),
+    ...(browserRecordingActionRoutes ? { recording: browserRecordingActionRoutes } : {}),
+    ...(browserRecordingAttachToComposer ? { recordingAttach: browserRecordingAttachToComposer } : {}),
+    featureGate: browserDaemonFeatureGate,
+    fallback: localServicesRuntimeActionExecutor,
+  });
+  const browserRuntimeActionExecutorWithGate: RuntimeActionExecute = async (args) => {
+    // Refresh the daemon gates' caches from the synchronous accessor before dispatch (no network
+    // fetch). The local-services and simulator executors are fallbacks of the browser executor,
+    // so their gates must be primed here too for their actions to be evaluated fail-closed.
+    await Promise.all([
+      browserDaemonFeatureGate.refresh(),
+      localServicesDaemonFeatureGate.refresh(),
+      simulatorDaemonFeatureGate.refresh(),
+    ]);
+    return await browserRuntimeActionExecutor(args);
+  };
+  let actionDeps: ActionExecutorDeps | null = null;
+  let runtimeActionExecutorForRunActions: ReturnType<typeof createActionExecutor> | null = null;
+
+  async function executeRuntimeActionFromRunAction(
+    actionId: RuntimeActionIdV1,
+    input: unknown,
+    context: Readonly<{
+      defaultSessionId: string;
+      serverId?: string | null;
+      callerPermissionMode?: string | null;
+    }>,
+  ): Promise<ActionExecuteResult> {
+    if (!actionDeps) {
+      return { ok: false, errorCode: 'execution_run_failed', error: 'execution_run_action_executor_unavailable' };
+    }
+    runtimeActionExecutorForRunActions ??= createActionExecutor(actionDeps);
+    return await runtimeActionExecutorForRunActions.execute(actionId, input, {
+      defaultSessionId: context.defaultSessionId,
+      ...(context.serverId ? { serverId: context.serverId } : {}),
+      surface: 'agent',
+      placement: null,
+      ...(context.callerPermissionMode ? { callerPermissionMode: context.callerPermissionMode } : {}),
+    });
+  }
 
   async function startRun(raw: unknown): Promise<ExecutionRunStartResult> {
     const disabled = ensureEnabled();
@@ -111,8 +300,15 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
       if (featureDecision.state !== 'enabled') {
         return {
           ok: false,
-          error: featureId === 'voice' ? 'Voice feature disabled' : 'Feature disabled',
+          error: featureId === 'voice' || featureId.startsWith('voice.')
+            ? 'Voice feature disabled'
+            : 'Feature disabled',
           errorCode: 'execution_run_not_allowed',
+          details: {
+            featureId,
+            blockedBy: featureDecision.blockedBy,
+            blockerCode: featureDecision.blockerCode,
+          },
         };
       }
     }
@@ -199,7 +395,7 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
     }
   }
 
-  return {
+  actionDeps = {
     executionRunStart: async (_sessionId, request) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
@@ -335,10 +531,26 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
       }
       return { ok: true };
     },
-    executionRunAction: async (_sessionId, request) => {
+    executionRunAction: async (sessionId, request, opts) => {
       const disabled = ensureEnabled();
       if (disabled) return disabled;
       const parsed = ExecutionRunActionRequestSchema.parse(request);
+      if (isRuntimeActionIdV1(parsed.actionId)) {
+        const run = params.manager.getPublic(parsed.runId);
+        if (!run) return executionRunNotFound();
+        const defaultSessionId = typeof sessionId === 'string' && sessionId.trim().length > 0
+          ? sessionId.trim()
+          : params.context.sessionId;
+        return runtimeActionResultToExecutionRunActionResponse(await executeRuntimeActionFromRunAction(
+          parsed.actionId,
+          parsed.input,
+          {
+            defaultSessionId,
+            ...(opts?.serverId ? { serverId: opts.serverId } : {}),
+            callerPermissionMode: run.permissionMode,
+          },
+        ));
+      }
       const acted = await params.manager.applyAction(parsed.runId, {
         actionId: parsed.actionId,
         input: parsed.input,
@@ -357,6 +569,7 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
       };
     },
     executionRunWait: unsupportedActionDependency,
+    runtimeActionExecute: browserRuntimeActionExecutorWithGate,
 
     sessionOpen: unsupportedActionDependency,
     sessionFork: unsupportedActionDependency,
@@ -397,6 +610,7 @@ function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDepsParams
       surface: ctx.surface ?? null,
     }),
   };
+  return actionDeps;
 }
 
 export function createExecutionRunRpcActionExecutor(

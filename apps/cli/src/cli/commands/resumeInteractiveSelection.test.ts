@@ -53,6 +53,7 @@ describe('buildResumeSelectionModel', () => {
         flavor: 'claude',
         path: '/tmp/claude-workspace',
         claudeSessionId: 'claude-vendor-1',
+        claudeTranscriptPath: '/tmp/claude-workspace/claude-vendor-1.jsonl',
       }),
     });
     const disabled = createSessionRecordFixture({

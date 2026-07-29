@@ -1,27 +1,29 @@
 import type {
-    PluginHookIdV1,
-    PluginProjectionDiagnosticV2,
+    PluginDiagnosticRecordV1,
+    PluginProjectedSettingsFieldV2,
     PluginProjectionInstalledPackageV2,
     PluginProjectionV2,
+    PluginSettingFieldSchemaV2,
+    PluginSettingFieldV2,
 } from '@happier-dev/protocol';
-import { getPluginHookDefinitionV1, normalizePluginBackendCapabilitiesV1, PluginHookIdV1Schema } from '@happier-dev/protocol';
+import {
+    buildQualifiedPluginContributionKey,
+    createPluginContributionIdentity,
+    PluginResourceKindV2Schema,
+} from '@happier-dev/protocol';
 
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import type {
     ResolvedActionContribution,
-    ResolvedAgentRuntimeContribution,
     ResolvedContributionRegistry,
     ResolvedContributionProvenance,
     ResolvedContributionSource,
     ResolvedContributionSourceKind,
-    ResolvedHookRegistration,
     ResolvedAgentContribution,
-    ResolvedUiDescriptorContribution,
 } from '../types';
 import {
     buildPluginProjectionFamiliesByIdV2,
-    type PluginProjectionFamilyDescriptorV2,
 } from '@/plugins/projection/families';
 import { managedDependenciesProjectionFamily } from '../managedDependencies';
 import { mcpProjectionFamily } from '../mcp';
@@ -31,46 +33,143 @@ import {
     pluginUiProjectionFamily,
     type PluginUiProjectionHostRuntimeContext,
 } from '../ui/projection';
-import { pluginBrowserProjectionFamily } from '@/plugins/browser/projection';
+import { pluginBrowserProjectionFamily } from '../browser';
+import { providerProjectionFamily } from '../providers';
+import { connectedAccountProjectionFamily } from '../connectedAccounts';
+import { voiceModelPackProjectionFamily, voiceProviderProjectionFamily } from '../voiceDeclarations';
+import { projectPluginContributionIntrospection } from '@/plugins/projection/introspection/project';
+import type { PluginTargetActivationIntrospectionSnapshot } from '@/plugins/projection/introspection/targetActivationFacts';
+import {
+    PluginLocalSettingsDeclarationError,
+    resolveLocalSettingsDeclarations,
+} from '@/plugins/settings/localSettingsContributions';
+import { resolveNotificationChannelSettingsContributions } from '@/plugins/settings/notificationChannelSettings';
 
 function readOptionalString(value: unknown): string | undefined {
     const normalized = typeof value === 'string' ? value.trim() : '';
     return normalized.length > 0 ? normalized : undefined;
 }
 
-function readProjectedHookEventId(value: unknown): PluginHookIdV1 | null {
-    const parsed = PluginHookIdV1Schema.safeParse(value);
-    return parsed.success ? parsed.data : null;
+function readLocalizedText(value: unknown): string | undefined {
+    if (typeof value === 'string') return readOptionalString(value);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    return readOptionalString((value as Readonly<{ fallback?: unknown }>).fallback);
 }
 
-function readAgentTitle(provider: ResolvedAgentContribution): string | undefined {
-    const rich = provider.richDefinition;
-    if (!rich || rich.provenance !== 'external') return undefined;
-    return readOptionalString(rich.definition.display?.name);
+function qualifiedProjectionKey(pluginId: string, localId: string): string {
+    return buildQualifiedPluginContributionKey(createPluginContributionIdentity({ pluginId, localId }));
 }
 
-function readAgentSubtitle(provider: ResolvedAgentContribution): string | undefined {
-    const rich = provider.richDefinition;
+function readAgentTitle(agent: ResolvedAgentContribution): string | undefined {
+    const rich = agent.richDefinition;
     if (!rich || rich.provenance !== 'external') return undefined;
-    return readOptionalString(rich.definition.display?.subtitle);
+    return readLocalizedText(rich.definition.title);
+}
+
+function readAgentSubtitle(agent: ResolvedAgentContribution): string | undefined {
+    const rich = agent.richDefinition;
+    if (!rich || rich.provenance !== 'external') return undefined;
+    return readLocalizedText(rich.definition.description);
 }
 
 function readAgentProjectionDefinition(
-    provider: ResolvedAgentContribution,
+    agent: ResolvedAgentContribution,
 ): Readonly<Record<string, unknown>> {
-    return (provider.richDefinition?.definition ?? provider.definition) as Readonly<Record<string, unknown>>;
+    return (agent.richDefinition?.definition ?? agent.definition) as Readonly<Record<string, unknown>>;
 }
 
-function readAgentProjectionProviderAgentId(
+function readAgentProjectionCatalogAgentId(
     definition: Readonly<Record<string, unknown>>,
 ): string | undefined {
-    return readOptionalString(definition.providerAgentId) ?? readOptionalString(definition.catalogAgentId);
+    return readOptionalString(definition.catalogAgentId);
+}
+
+function readAgentProviderOwnedEnvironmentKeys(
+    definition: Readonly<Record<string, unknown>>,
+): readonly string[] {
+    const providerRequirements = definition.providerRequirements;
+    if (!providerRequirements || typeof providerRequirements !== 'object' || Array.isArray(providerRequirements)) return [];
+    const authIsolation = Reflect.get(providerRequirements, 'authIsolation');
+    if (!authIsolation || typeof authIsolation !== 'object' || Array.isArray(authIsolation)) return [];
+    const ownedEnvKeys = Reflect.get(authIsolation, 'ownedEnvKeys');
+    return Array.isArray(ownedEnvKeys)
+        ? ownedEnvKeys.filter((key): key is string => typeof key === 'string')
+        : [];
+}
+
+function projectAgentStartupInstructionsCapability(
+    agent: ResolvedAgentContribution,
+): PluginProjectionV2['agentsById'][string]['capabilities'] {
+    const capabilities = agent.richDefinition?.definition.capabilities;
+    const sessions = capabilities && 'sessions' in capabilities
+        ? capabilities.sessions
+        : undefined;
+    return sessions?.startupInstructions?.versions[0] === 1
+        ? { sessions: { startupInstructions: { versions: [1] } } }
+        : undefined;
+}
+
+function projectAgentExternalSessions(
+    agent: ResolvedAgentContribution,
+    generation: number,
+): PluginProjectionV2['agentsById'][string]['externalSessions'] {
+    const identity = agent.identity;
+    const definition = agent.richDefinition?.definition;
+    const surfaces = definition?.capabilities.surfaces ?? [];
+    const sources = definition?.surfaces?.externalSession?.sources ?? [];
+    if (
+        !identity
+        || !surfaces.includes('externalSessions')
+        || sources.length === 0
+    ) {
+        return undefined;
+    }
+    return {
+        agent: identity,
+        generation,
+        operations: {
+            listCandidates: true,
+            resolveLinkIdentity: true,
+            pageTranscript: true,
+            readAfterTranscript: true,
+        },
+        sources: sources.map((source) => {
+            const { instances, ...declaration } = source;
+            return {
+                ...declaration,
+                schema: {
+                    ...source.schema,
+                    fields: source.schema.fields.map((field) => ({ ...field })),
+                },
+                key: {
+                    segments: source.key.segments.map((segment) => ({ ...segment })),
+                },
+                ...(instances
+                    ? {
+                        instances: instances.map((instance) => (
+                            instance.kind === 'connectedServiceProfiles'
+                                ? {
+                                    kind: instance.kind,
+                                    serviceId: instance.serviceId,
+                                    constants: { ...(instance.constants ?? {}) },
+                                    fields: { ...instance.fields },
+                                }
+                                : {
+                                    kind: instance.kind,
+                                    constants: { ...(instance.constants ?? {}) },
+                                }
+                        )),
+                    }
+                    : {}),
+            };
+        }),
+    };
 }
 
 function resolveActionSurfaces(
     surfaces: Readonly<Record<string, unknown>>,
-): ('agent' | 'mcp' | 'cli')[] {
-    const projected = new Set<'agent' | 'mcp' | 'cli'>();
+): ('agent' | 'mcp' | 'cli' | 'ui')[] {
+    const projected = new Set<'agent' | 'mcp' | 'cli' | 'ui'>();
     if (surfaces.cli === true) {
         projected.add('cli');
     }
@@ -79,6 +178,9 @@ function resolveActionSurfaces(
     }
     if (surfaces.agent === true) {
         projected.add('agent');
+    }
+    if (surfaces.ui === true) {
+        projected.add('ui');
     }
     if (projected.size === 0) {
         projected.add('cli');
@@ -97,91 +199,6 @@ function resolveActionScopes(
         return ['settings'];
     }
     return ['global'];
-}
-
-function resolveUiDescriptorSurface(
-    surface: string,
-): 'settings' | 'setup' | 'status' | 'agentSettings' | null {
-    switch (surface) {
-        case 'setup':
-            return 'setup';
-        case 'status':
-            return 'status';
-        case 'agentSettings':
-            return 'agentSettings';
-        case 'settings':
-            return 'settings';
-        default:
-            return null;
-    }
-}
-
-function resolveUiFieldType(kind: string): 'text' | 'boolean' | 'select' | 'secret' | 'number' | 'markdown' | 'action' {
-    switch (kind) {
-        case 'boolean':
-        case 'select':
-        case 'secret':
-        case 'number':
-        case 'markdown':
-        case 'action':
-        case 'text':
-            return kind;
-        default:
-            return 'text';
-    }
-}
-
-function resolveUiDescriptorTone(value: unknown): 'info' | 'success' | 'neutral' | 'warning' | 'danger' | undefined {
-    switch (value) {
-        case 'info':
-        case 'success':
-        case 'neutral':
-        case 'warning':
-        case 'danger':
-            return value;
-        default:
-            return undefined;
-    }
-}
-
-function resolveHookExecutionKind(value: unknown): 'integrate' | 'observe' | 'augment' | 'decide' | undefined {
-    switch (value) {
-        case 'integrate':
-        case 'observe':
-        case 'augment':
-        case 'decide':
-            return value;
-        case 'decision':
-            return 'decide';
-        default:
-            return undefined;
-    }
-}
-
-function resolveHookAggregation(
-    value: unknown,
-): 'none' | 'replace' | 'orderedList' | 'mergeObject' | 'firstDecision' | 'allDecisions' | undefined {
-    switch (value) {
-        case 'none':
-        case 'replace':
-        case 'orderedList':
-        case 'mergeObject':
-        case 'firstDecision':
-        case 'allDecisions':
-            return value;
-        default:
-            return undefined;
-    }
-}
-
-function resolveHookFailureMode(value: unknown): 'bestEffort' | 'failClosed' | undefined {
-    switch (value) {
-        case 'bestEffort':
-        case 'failClosed':
-            return value;
-        default:
-            return undefined;
-    }
 }
 
 type PluginContributionMetadata = Readonly<{
@@ -238,25 +255,15 @@ function collectPluginContributionMetadata(
         });
     }
 
-    for (const provider of registry.agents) {
+    for (const agent of registry.agents) {
         upsert({
-            provenance: provider.provenance,
-            source: provider.source,
-            pluginId: provider.pluginId,
-            manifestPath: provider.manifestPath,
-            manifestDigest: provider.manifestDigest,
-            sourceSpec: provider.sourceSpec,
-            displayName: readAgentTitle(provider),
-        });
-    }
-    for (const backend of registry.agentRuntimes) {
-        upsert({
-            provenance: backend.provenance,
-            source: backend.source,
-            pluginId: backend.pluginId,
-            manifestPath: backend.manifestPath,
-            manifestDigest: backend.manifestDigest,
-            sourceSpec: backend.sourceSpec,
+            provenance: agent.provenance,
+            source: agent.source,
+            pluginId: agent.pluginId,
+            manifestPath: agent.manifestPath,
+            manifestDigest: agent.manifestDigest,
+            sourceSpec: agent.sourceSpec,
+            displayName: readAgentTitle(agent),
         });
     }
     for (const action of registry.actions) {
@@ -271,19 +278,11 @@ function collectPluginContributionMetadata(
     for (const resource of registry.resources) {
         upsert(resource);
     }
-    for (const descriptor of registry.uiDescriptors) {
-        if (resolveUiDescriptorSurface(descriptor.definition.surface)) {
-            upsert(descriptor);
-        }
-    }
     for (const target of registry.browserTargets ?? []) {
         upsert(target);
     }
     for (const action of registry.browserActions ?? []) {
         upsert(action);
-    }
-    for (const hook of registry.hookRegistrations) {
-        upsert(hook);
     }
     for (const target of registry.activationTargets) {
         upsert(target);
@@ -296,10 +295,15 @@ function collectPluginContributionMetadata(
             manifestPath: provider.manifestPath,
             manifestDigest: provider.manifestDigest,
             sourceSpec: provider.sourceSpec,
-            displayName: provider.definition.displayName,
+            displayName: readLocalizedText(provider.definition.title),
         });
     }
     for (const dependency of registry.managedDependencies ?? []) {
+        const title = 'key' in dependency.definition
+            ? dependency.definition.display.name
+            : typeof dependency.definition.title === 'string'
+                ? dependency.definition.title
+                : dependency.definition.title.fallback;
         upsert({
             provenance: dependency.provenance,
             source: dependency.source,
@@ -307,7 +311,21 @@ function collectPluginContributionMetadata(
             manifestPath: dependency.manifestPath,
             manifestDigest: dependency.manifestDigest,
             sourceSpec: dependency.sourceSpec,
-            displayName: dependency.definition.display.name,
+            displayName: title,
+        });
+    }
+    for (const systemTool of registry.systemTools ?? []) {
+        const title = typeof systemTool.definition.title === 'string'
+            ? systemTool.definition.title
+            : systemTool.definition.title.fallback;
+        upsert({
+            provenance: systemTool.provenance,
+            source: systemTool.source,
+            pluginId: systemTool.pluginId,
+            manifestPath: systemTool.manifestPath,
+            manifestDigest: systemTool.manifestDigest,
+            sourceSpec: systemTool.sourceSpec,
+            displayName: title,
         });
     }
     for (const server of registry.mcpServers ?? []) {
@@ -320,46 +338,14 @@ function collectPluginContributionMetadata(
     return metadata;
 }
 
-function pushPluginDiagnostics(
-    bucket: Map<string, PluginProjectionDiagnosticV2[]>,
-    pluginId: string,
-    diagnostics: readonly PluginCompatibilityDiagnostic[],
-): void {
-    if (diagnostics.length === 0) {
-        return;
-    }
-    const existing = bucket.get(pluginId) ?? [];
-    const dedupe = new Set(existing.map((diagnostic) => `${diagnostic.code}:${diagnostic.message}`));
-    for (const diagnostic of diagnostics) {
-        const key = `${diagnostic.code}:${diagnostic.message}`;
-        if (dedupe.has(key)) {
-            continue;
-        }
-        dedupe.add(key);
-        existing.push({
-            severity: 'error',
-            code: diagnostic.code,
-            message: diagnostic.message,
-            pluginId,
-        });
-    }
-    bucket.set(pluginId, existing);
-}
-
 function buildDiagnostics(params: Readonly<{
     installedPackages: readonly PluginCatalogEntry[];
-    pluginDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
-}>): PluginProjectionDiagnosticV2[] {
-    const diagnosticsByPluginId = new Map<string, PluginProjectionDiagnosticV2[]>();
-    for (const entry of params.installedPackages) {
-        pushPluginDiagnostics(diagnosticsByPluginId, entry.pluginId, entry.diagnostics);
-    }
-    for (const [pluginId, diagnostics] of Object.entries(params.pluginDiagnosticsByPluginId)) {
-        pushPluginDiagnostics(diagnosticsByPluginId, pluginId, diagnostics);
-    }
-    return [...diagnosticsByPluginId.entries()]
-        .sort(([left], [right]) => left.localeCompare(right))
-        .flatMap(([, diagnostics]) => diagnostics);
+    diagnosticRecords: readonly PluginDiagnosticRecordV1[];
+}>): PluginDiagnosticRecordV1[] {
+    return [
+        ...params.installedPackages.flatMap((entry) => entry.contributionIntrospection.diagnostics),
+        ...params.diagnosticRecords,
+    ];
 }
 
 function toInstalledPackage(
@@ -433,99 +419,36 @@ function buildInstalledPackagesById(params: Readonly<{
     return installedPackagesById;
 }
 
-function buildProvidersById(
+function buildAgentsById(
     registry: ResolvedContributionRegistry,
-): PluginProjectionV2['providersById'] {
-    const providersById: PluginProjectionV2['providersById'] = {};
-    for (const provider of registry.agents) {
-        const projectionDefinition = readAgentProjectionDefinition(provider);
-        providersById[provider.id] = {
-            id: provider.id,
-            title: readAgentTitle(provider),
-            subtitle: readAgentSubtitle(provider),
-            channel: provider.provenance === 'external' ? 'plugin' : undefined,
-            isBuiltIn: provider.provenance === 'first_party',
-            settingsBackendId: readOptionalString(projectionDefinition.settingsBackendId),
-            providerAgentId: readAgentProjectionProviderAgentId(projectionDefinition),
-            iconAgentId: readOptionalString(projectionDefinition.iconAgentId),
-        };
-    }
-    return providersById;
-}
-
-function buildBackendsById(
-    registry: ResolvedContributionRegistry,
-): PluginProjectionV2['backendsById'] {
-    const backendsById: PluginProjectionV2['backendsById'] = {};
-    for (const backend of registry.agentRuntimes) {
-        const richDefinition = backend.richDefinition?.provenance === 'external' ? backend.richDefinition.definition : null;
-        const runtimeOwnerId = backend.agentId;
-        backendsById[backend.id] = {
-            id: backend.id,
-            providerId: runtimeOwnerId,
-            title: readOptionalString(richDefinition?.title),
-            subtitle: readOptionalString(richDefinition?.subtitle),
-            providerAgentId: readOptionalString(richDefinition?.providerAgentId),
-            iconAgentId: readOptionalString(richDefinition?.iconAgentId),
-            capabilities: cloneProjectedBackendCapabilities(backend.capabilities),
-        };
-    }
-    return backendsById;
-}
-
-function cloneProjectedBackendCapabilities(
-    capabilities: ResolvedAgentRuntimeContribution['capabilities'],
-): NonNullable<PluginProjectionV2['backendsById'][string]>['capabilities'] {
-    return normalizePluginBackendCapabilitiesV1({
-        ...(capabilities ?? {}),
-        executionRun: {
-            ...(capabilities?.executionRun ?? {}),
-            supported: capabilities?.executionRun?.supported !== false,
-        },
-    });
-}
-
-function buildHooksById(
-    registry: ResolvedContributionRegistry,
-): NonNullable<PluginProjectionV2['hooksById']> {
-    const hooksById: NonNullable<PluginProjectionV2['hooksById']> = {};
-    const hookRegistrationCountsByPluginAndEvent = new Map<string, number>();
-    const sortedHookRegistrations = [...registry.hookRegistrations].sort((left, right) => (
-        left.pluginId.localeCompare(right.pluginId)
-        || left.definition.id.localeCompare(right.definition.id)
-        || (left.manifestPath ?? '').localeCompare(right.manifestPath ?? '')
-        || (left.daemonEntryPath ?? '').localeCompare(right.daemonEntryPath ?? '')
-        || (left.definition.priority ?? 0) - (right.definition.priority ?? 0)
-        || (left.definition.handler.exportName ?? '').localeCompare(right.definition.handler.exportName ?? '')
-        || JSON.stringify(left.definition.filters ?? {}).localeCompare(JSON.stringify(right.definition.filters ?? {}))
-    ));
-
-    for (const hook of sortedHookRegistrations) {
-        const hookDefinition = getPluginHookDefinitionV1(hook.definition.id);
-        const rawDefinition = hook.definition as Readonly<Record<string, unknown>>;
-        const eventId = readProjectedHookEventId(
-            hookDefinition?.id ?? readOptionalString(rawDefinition.eventId) ?? hook.definition.id,
-        );
-        if (!eventId) {
-            continue;
+    generation: number,
+): PluginProjectionV2['agentsById'] {
+    const agentsById: PluginProjectionV2['agentsById'] = {};
+    for (const agent of registry.agents) {
+        const identity = agent.identity;
+        if (!identity) {
+            throw new Error(`Agent '${agent.id}' is missing its manifest-qualified identity`);
         }
-        const countKey = `${hook.pluginId}:${hook.definition.id}`;
-        const ordinal = (hookRegistrationCountsByPluginAndEvent.get(countKey) ?? 0) + 1;
-        hookRegistrationCountsByPluginAndEvent.set(countKey, ordinal);
-        const projectedHookId = `${hook.pluginId}:${hook.definition.id}:${ordinal}`;
-        hooksById[projectedHookId] = {
-            id: projectedHookId,
-            pluginId: hook.pluginId,
-            eventId,
-            category: hookDefinition?.category ?? hook.definition.category,
-            scope: hookDefinition?.scope ?? hook.definition.scope,
-            executionKind: hookDefinition?.executionKind ?? resolveHookExecutionKind(hook.definition.executionKind),
-            aggregation: hookDefinition?.aggregation ?? resolveHookAggregation(rawDefinition.aggregation),
-            failureMode: hookDefinition?.failureMode ?? resolveHookFailureMode(rawDefinition.failureMode),
-            priority: hook.definition.priority,
+        const projectionDefinition = readAgentProjectionDefinition(agent);
+        const externalSessions = projectAgentExternalSessions(agent, generation);
+        const capabilities = projectAgentStartupInstructionsCapability(agent);
+        agentsById[agent.id] = {
+            id: agent.id,
+            identity,
+            title: readAgentTitle(agent),
+            subtitle: readAgentSubtitle(agent),
+            channel: agent.provenance === 'external' ? 'plugin' : undefined,
+            isBuiltIn: agent.provenance === 'first_party',
+            settingsBackendId: readOptionalString(projectionDefinition.settingsBackendId),
+            catalogAgentId: readAgentProjectionCatalogAgentId(projectionDefinition),
+            iconAgentId: readOptionalString(projectionDefinition.iconAgentId),
+            providerOwnedEnvironmentKeys: [...readAgentProviderOwnedEnvironmentKeys(projectionDefinition)],
+            ...(capabilities ? { capabilities } : {}),
+            ...(agent.cliMetadata ? { cli: agent.cliMetadata } : {}),
+            ...(externalSessions ? { externalSessions } : {}),
         };
     }
-    return hooksById;
+    return agentsById;
 }
 
 function buildActionsById(
@@ -536,7 +459,7 @@ function buildActionsById(
         if (!action.pluginId) {
             continue;
         }
-        actionsById[action.definition.id] = {
+        actionsById[qualifiedProjectionKey(action.pluginId, action.definition.id)] = {
             id: action.definition.id,
             pluginId: action.pluginId,
             title: action.definition.title,
@@ -544,7 +467,10 @@ function buildActionsById(
             scopes: resolveActionScopes(action),
             surfaces: resolveActionSurfaces(action.definition.surfaces),
             placement: 'detailsPanel',
-            dangerLevel: action.definition.safety === 'safe' ? 'safe' : 'writesLocal',
+            dangerLevel: action.definition.dangerLevel,
+            ...(action.definition.confirmation
+                ? { confirmation: action.definition.confirmation }
+                : {}),
             available: true,
         };
     }
@@ -559,12 +485,12 @@ function buildToolsById(
         if (!tool.pluginId) {
             continue;
         }
-        toolsById[tool.definition.id] = {
+        toolsById[qualifiedProjectionKey(tool.pluginId, tool.definition.id)] = {
             id: tool.definition.id,
             pluginId: tool.pluginId,
-            title: tool.definition.title,
-            description: readOptionalString(tool.definition.description),
-            exposesToAgent: tool.definition.surfaces.mcp === true || tool.definition.surfaces.agent === true,
+            title: readLocalizedText(tool.definition.title) ?? tool.definition.id,
+            description: readLocalizedText(tool.definition.description),
+            exposesToAgent: tool.definition.surfaces.includes('mcp') || tool.definition.surfaces.includes('agent'),
         };
     }
     return toolsById;
@@ -578,13 +504,13 @@ function buildCommandsById(
         if (!command.pluginId) {
             continue;
         }
-        commandsById[command.definition.id] = {
+        commandsById[qualifiedProjectionKey(command.pluginId, command.definition.id)] = {
             id: command.definition.id,
             pluginId: command.pluginId,
-            title: command.definition.rootHelpLabel ?? command.definition.command,
-            description: readOptionalString(command.definition.rootHelpDescription ?? command.definition.rootHelpDetail),
+            title: readLocalizedText(command.definition.title) ?? command.definition.id,
+            description: readLocalizedText(command.definition.description),
             surfaces: ['cli'],
-            tokens: [command.definition.command],
+            tokens: command.definition.path,
         };
     }
     return commandsById;
@@ -598,16 +524,17 @@ function buildResourcesById(
         if (!resource.pluginId) {
             continue;
         }
-        resourcesById[resource.definition.id] = {
+        const resourceKind = PluginResourceKindV2Schema.safeParse(resource.definition.type);
+        if (!resourceKind.success) {
+            throw new Error(
+                `Invalid resource kind for '${resource.pluginId}/${resource.definition.id}'`,
+            );
+        }
+        const key = qualifiedProjectionKey(resource.pluginId, resource.definition.id);
+        resourcesById[key] = {
             id: resource.definition.id,
             pluginId: resource.pluginId,
-            resourceKind: resource.definition.type === 'prompt'
-                || resource.definition.type === 'skill'
-                || resource.definition.type === 'template'
-                || resource.definition.type === 'asset'
-                || resource.definition.type === 'config'
-                ? resource.definition.type
-                : 'asset',
+            resourceKind: resourceKind.data,
             path: resource.definition.path ?? resource.definition.id,
             digest: readOptionalString(resource.definition.digest),
             contentType: readOptionalString(resource.definition.contentType),
@@ -616,80 +543,249 @@ function buildResourcesById(
     return resourcesById;
 }
 
-function buildUiDescriptorsById(
-    registry: ResolvedContributionRegistry,
-): PluginProjectionV2['uiDescriptorsById'] {
-    const uiDescriptorsById: PluginProjectionV2['uiDescriptorsById'] = {};
-    for (const descriptor of registry.uiDescriptors) {
-        if (!descriptor.pluginId) {
-            continue;
-        }
-        const surface = resolveUiDescriptorSurface(descriptor.definition.surface);
-        if (!surface) {
-            continue;
-        }
-        const tone = resolveUiDescriptorTone(descriptor.definition.tone);
-        uiDescriptorsById[descriptor.definition.id] = {
-            id: descriptor.definition.id,
-            pluginId: descriptor.pluginId,
-            title: descriptor.definition.title,
-            description: readOptionalString(descriptor.definition.description),
-            surface,
-            ...(typeof descriptor.definition.order === 'number' ? { order: descriptor.definition.order } : {}),
-            ...(tone ? { tone } : {}),
-            ...(descriptor.definition.featureGate !== undefined ? { featureGate: descriptor.definition.featureGate } : {}),
-            ...(descriptor.definition.helpUrl !== undefined ? { helpUrl: descriptor.definition.helpUrl } : {}),
-            fields: descriptor.definition.fields.map((field) => ({
-                id: field.id,
-                type: resolveUiFieldType(field.kind),
-                title: field.title,
-                description: readOptionalString(field.description),
-                ...(typeof field.order === 'number' ? { order: field.order } : {}),
-                ...(field.groupId !== undefined ? { groupId: field.groupId } : {}),
-                ...(field.featureGate !== undefined ? { featureGate: field.featureGate } : {}),
-                ...(field.actionId !== undefined ? { actionId: field.actionId } : {}),
-                options: (field.options ?? []).map((option) => ({
-                    value: option.value,
-                    label: option.label,
-                })),
-            })),
-        };
+type ProjectedSettingsValueType = NonNullable<PluginProjectedSettingsFieldV2['valueSchema']['type']>;
+
+const ALL_PROJECTED_SETTINGS_VALUE_TYPES: readonly ProjectedSettingsValueType[] = [
+    'null',
+    'boolean',
+    'number',
+    'integer',
+    'string',
+    'array',
+    'object',
+];
+
+export class PluginSettingsProjectionError extends Error {
+    readonly code = 'PLUGIN_SETTINGS_PROJECTION_INVALID' as const;
+
+    constructor(
+        message: string,
+        readonly pluginId: string,
+        readonly contributionId: string,
+        readonly fieldId: string | null,
+    ) {
+        super(message);
+        this.name = 'PluginSettingsProjectionError';
     }
-    return uiDescriptorsById;
+}
+
+function invalidSettingsProjection(params: Readonly<{
+    pluginId: string;
+    contributionId: string;
+    fieldId?: string | null;
+    reason: string;
+}>): PluginSettingsProjectionError {
+    const fieldContext = params.fieldId ? ` field '${params.fieldId}'` : '';
+    return new PluginSettingsProjectionError(
+        `Cannot project settings contribution '${params.pluginId}/${params.contributionId}'${fieldContext}: ${params.reason}`,
+        params.pluginId,
+        params.contributionId,
+        params.fieldId ?? null,
+    );
+}
+
+function intersectSettingsValueTypes(
+    left: ReadonlySet<ProjectedSettingsValueType>,
+    right: ReadonlySet<ProjectedSettingsValueType>,
+): Set<ProjectedSettingsValueType> {
+    return new Set([...left].filter((type) => right.has(type)));
+}
+
+function resolvePossibleSettingsValueTypes(
+    schema: PluginSettingFieldSchemaV2,
+): Set<ProjectedSettingsValueType> {
+    let possibleTypes = new Set<ProjectedSettingsValueType>(
+        schema.type ? [schema.type] : ALL_PROJECTED_SETTINGS_VALUE_TYPES,
+    );
+
+    if (schema.anyOf) {
+        const alternativeTypes = new Set<ProjectedSettingsValueType>();
+        for (const alternative of schema.anyOf) {
+            for (const type of resolvePossibleSettingsValueTypes(alternative)) {
+                alternativeTypes.add(type);
+            }
+        }
+        possibleTypes = intersectSettingsValueTypes(possibleTypes, alternativeTypes);
+    }
+
+    if (schema.oneOf) {
+        const alternativeTypeCounts = new Map<ProjectedSettingsValueType, number>();
+        for (const alternative of schema.oneOf) {
+            for (const type of resolvePossibleSettingsValueTypes(alternative)) {
+                alternativeTypeCounts.set(type, (alternativeTypeCounts.get(type) ?? 0) + 1);
+            }
+        }
+        const exclusiveAlternativeTypes = new Set<ProjectedSettingsValueType>(
+            [...alternativeTypeCounts]
+                .filter(([, count]) => count === 1)
+                .map(([type]) => type),
+        );
+        possibleTypes = intersectSettingsValueTypes(possibleTypes, exclusiveAlternativeTypes);
+    }
+
+    for (const constraint of schema.allOf ?? []) {
+        possibleTypes = intersectSettingsValueTypes(
+            possibleTypes,
+            resolvePossibleSettingsValueTypes(constraint),
+        );
+    }
+
+    return possibleTypes;
+}
+
+function resolveProjectedSettingsValueType(params: Readonly<{
+    pluginId: string;
+    contributionId: string;
+    fieldId: string;
+    schema: PluginSettingFieldSchemaV2;
+    control?: 'auto' | 'text' | 'textarea' | 'switch' | 'select' | 'multiSelect' | 'number' | 'json';
+}>): ProjectedSettingsValueType {
+    const valueTypes = [...resolvePossibleSettingsValueTypes(params.schema)];
+    if (valueTypes.length === 1) {
+        return valueTypes[0]!;
+    }
+    if (
+        params.control === 'number'
+        && valueTypes.every((type) => type === 'number' || type === 'integer' || type === 'null')
+    ) {
+        return valueTypes.includes('integer') ? 'integer' : 'number';
+    }
+    if (params.control === 'json') {
+        return 'object';
+    }
+
+    throw invalidSettingsProjection({
+        pluginId: params.pluginId,
+        contributionId: params.contributionId,
+        fieldId: params.fieldId,
+        reason: valueTypes.length === 0
+            ? 'schema accepts no declared value types'
+            : `schema can accept multiple value types (${valueTypes.sort().join(', ')})`,
+    });
+}
+
+function projectSettingsField(params: Readonly<{
+    pluginId: string;
+    contributionId: string;
+    field: PluginSettingFieldV2;
+}>): PluginProjectedSettingsFieldV2 {
+    const valueType = resolveProjectedSettingsValueType({
+        pluginId: params.pluginId,
+        contributionId: params.contributionId,
+        fieldId: params.field.id,
+        schema: params.field.schema,
+        control: params.field.presentation?.control,
+    });
+    if (params.field.secret === true && valueType !== 'string') {
+        throw invalidSettingsProjection({
+            pluginId: params.pluginId,
+            contributionId: params.contributionId,
+            fieldId: params.field.id,
+            reason: `secret fields must resolve to string, received '${valueType}'`,
+        });
+    }
+    const requestedControl = params.field.presentation?.control;
+    const control: PluginProjectedSettingsFieldV2['control'] = params.field.secret === true
+        ? 'password'
+        : requestedControl && requestedControl !== 'auto'
+            ? requestedControl
+            : valueType === 'boolean'
+                ? 'switch'
+                : valueType === 'string'
+                    ? 'text'
+                    : valueType === 'number' || valueType === 'integer'
+                        ? 'number'
+                        : 'json';
+    const displayKey = readLocalizedText(params.field.title);
+    if (!displayKey) {
+        throw invalidSettingsProjection({
+            pluginId: params.pluginId,
+            contributionId: params.contributionId,
+            fieldId: params.field.id,
+            reason: 'title has no displayable text',
+        });
+    }
+    const descriptionKey = readLocalizedText(params.field.description);
+
+    return {
+        id: params.field.id,
+        kind: 'settings.field',
+        version: '1.0.0',
+        valueSchema: params.field.schema,
+        valueType,
+        control,
+        displayKey,
+        ...(descriptionKey ? { descriptionKey } : {}),
+        ...(params.field.presentation ? { presentation: params.field.presentation } : {}),
+        ...(params.field.availability ? { availability: params.field.availability } : {}),
+        ...(params.field.analytics ? { analytics: params.field.analytics } : {}),
+        ...(params.field.presentation?.order !== undefined
+            ? { order: params.field.presentation.order }
+            : {}),
+        capabilityGates: [],
+        permissionGates: [],
+        redaction: params.field.secret === true ? 'secret' : 'none',
+        clearWhenEmpty: params.field.secret === true ? 'omit' : 'persist',
+        ...(valueType === 'boolean' && typeof params.field.default === 'boolean'
+            ? { defaultBooleanValue: params.field.default }
+            : {}),
+        ...(params.field.secret !== true && params.field.default !== undefined
+            ? { defaultValue: params.field.default }
+            : {}),
+    };
 }
 
 function buildSettingsById(
     registry: ResolvedContributionRegistry,
 ): PluginProjectionV2['settingsById'] {
     const settingsById: PluginProjectionV2['settingsById'] = {};
-    for (const settings of registry.settings ?? []) {
-        if (!settings.pluginId) {
-            continue;
-        }
-        settingsById[settings.definition.id] = {
-            id: settings.definition.id,
-            pluginId: settings.pluginId,
-            storageScope: 'pluginLocal',
-            fields: settings.definition.fields
-                .filter((field) => field.hidden !== true)
-                .map((field) => ({
-                    id: field.id,
-                    kind: 'settings.field',
-                    version: field.version,
-                    valueSchema: { type: field.valueSchema.type },
-                    control: field.control,
-                    displayKey: field.displayKey,
-                    ...(field.descriptionKey !== undefined ? { descriptionKey: field.descriptionKey } : {}),
-                    ...(field.groupId !== undefined ? { groupId: field.groupId } : {}),
-                    ...(typeof field.order === 'number' ? { order: field.order } : {}),
-                    capabilityGates: [...(field.capabilityGates ?? [])],
-                    permissionGates: [...(field.permissionGates ?? [])],
-                    redaction: field.redaction ?? 'none',
-                    clearWhenEmpty: field.clearWhenEmpty ?? 'persist',
-                    ...(field.defaultBooleanValue !== undefined
-                        ? { defaultBooleanValue: field.defaultBooleanValue }
-                        : {}),
-                })),
+    let declarations;
+    try {
+        declarations = resolveLocalSettingsDeclarations({
+            settings: [
+                ...(registry.settings ?? []),
+                ...resolveNotificationChannelSettingsContributions(registry.notificationChannels ?? []),
+            ],
+        });
+    } catch (error) {
+        if (!(error instanceof PluginLocalSettingsDeclarationError)) throw error;
+        throw invalidSettingsProjection({
+            pluginId: error.pluginId,
+            contributionId: error.contributionId,
+            ...(error.fieldId ? { fieldId: error.fieldId } : {}),
+            reason: error.reason,
+        });
+    }
+    for (const declaration of declarations) {
+        settingsById[qualifiedProjectionKey(declaration.pluginId, declaration.definition.id)] = {
+            id: declaration.definition.id,
+            pluginId: declaration.pluginId,
+            version: declaration.definition.version,
+            title: readLocalizedText(declaration.definition.title) ?? declaration.definition.id,
+            ...(declaration.definition.description
+                ? { description: readLocalizedText(declaration.definition.description) }
+                : {}),
+            storageScope: declaration.definition.scope,
+            presentation: declaration.definition.presentation,
+            target: declaration.definition.target.kind === 'plugin'
+                ? { kind: 'plugin' }
+                : {
+                    kind: 'agent',
+                    agent: typeof declaration.definition.target.agent === 'string'
+                        ? { pluginId: declaration.pluginId, localId: declaration.definition.target.agent }
+                        : declaration.definition.target.agent,
+                },
+            fields: declaration.definition.fields.map((field) => {
+                const projected = projectSettingsField({
+                    pluginId: declaration.pluginId,
+                    contributionId: declaration.definition.id,
+                    field,
+                });
+                const groupId = declaration.definition.presentation.sections.find((section) => (
+                    section.fields.includes(field.id)
+                ))?.id;
+                return groupId ? { ...projected, groupId } : projected;
+            }),
         };
     }
     return settingsById;
@@ -700,19 +796,32 @@ export function buildPluginProjectionV2(params: Readonly<{
     generation: number;
     installedPackages?: readonly PluginCatalogEntry[];
     pluginDiagnosticsByPluginId?: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>;
-    familyDescriptors?: readonly PluginProjectionFamilyDescriptorV2[];
     pluginUiHostRuntime?: PluginUiProjectionHostRuntimeContext;
+    introspectionRuntimeSnapshot?: PluginTargetActivationIntrospectionSnapshot;
+    scmRuntimeAvailability?: Readonly<{
+        backendIds: ReadonlySet<string>;
+        hostingProviderIds: ReadonlySet<string>;
+    }>;
 }>): PluginProjectionV2 {
     const installedPackages = params.installedPackages ?? [];
     const pluginDiagnosticsByPluginId = params.pluginDiagnosticsByPluginId ?? params.registry.pluginDiagnosticsByPluginId;
+    if (params.introspectionRuntimeSnapshot && params.introspectionRuntimeSnapshot.generation !== params.generation) {
+        throw new Error(
+            `Introspection runtime generation '${params.introspectionRuntimeSnapshot.generation}' does not match projection generation '${params.generation}'`,
+        );
+    }
+    const runtimeDiagnosticRecords = params.introspectionRuntimeSnapshot?.diagnosticRecords ?? [];
     const familyDescriptors = [
+        providerProjectionFamily,
+        connectedAccountProjectionFamily,
         scmHostingProviderProjectionFamily,
         scmBackendProjectionFamily,
         managedDependenciesProjectionFamily,
         mcpProjectionFamily,
         pluginUiProjectionFamily,
         pluginBrowserProjectionFamily,
-        ...(params.familyDescriptors ?? []),
+        voiceModelPackProjectionFamily,
+        voiceProviderProjectionFamily,
     ];
 
     return {
@@ -723,23 +832,33 @@ export function buildPluginProjectionV2(params: Readonly<{
             installedPackages,
             pluginDiagnosticsByPluginId,
         }),
-        providersById: buildProvidersById(params.registry),
-        backendsById: buildBackendsById(params.registry),
+        agentsById: buildAgentsById(params.registry, params.generation),
+        // The V2 wire field remains for mixed-version readers, but the host no
+        // longer projects a parallel backend/runtime registry.
+        backendsById: {},
         actionsById: buildActionsById(params.registry),
         toolsById: buildToolsById(params.registry),
         commandsById: buildCommandsById(params.registry),
-        hooksById: buildHooksById(params.registry),
         resourcesById: buildResourcesById(params.registry),
-        uiDescriptorsById: buildUiDescriptorsById(params.registry),
         settingsById: buildSettingsById(params.registry),
         familiesById: buildPluginProjectionFamiliesByIdV2({
             registry: params.registry,
             generation: params.generation,
             pluginUiHostRuntime: params.pluginUiHostRuntime,
+            scmRuntimeAvailability: params.scmRuntimeAvailability,
         }, familyDescriptors),
+        contributionIntrospection: projectPluginContributionIntrospection({
+            generation: params.generation,
+            candidates: params.registry.introspectionContributions ?? [],
+            diagnostics: buildDiagnostics({
+                installedPackages,
+                diagnosticRecords: runtimeDiagnosticRecords,
+            }),
+            runtimeFactsByQualifiedId: params.introspectionRuntimeSnapshot?.runtimeFactsByQualifiedId,
+        }),
         diagnostics: buildDiagnostics({
             installedPackages,
-            pluginDiagnosticsByPluginId,
+            diagnosticRecords: runtimeDiagnosticRecords,
         }),
     };
 }

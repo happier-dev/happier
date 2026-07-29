@@ -22,6 +22,12 @@ export function readExecutionRunErrorCode(error: unknown): string | null {
   return typeof code === 'string' && code.trim() ? code.trim() : null;
 }
 
+export function createExecutionRunCodedError(code: string, message: string): Error {
+  const error = new Error(message);
+  Object.assign(error, { executionRunErrorCode: code });
+  return error;
+}
+
 export function isExecutionRunTimeoutError(error: unknown): error is ExecutionRunTimeoutError {
   const code = readExecutionRunErrorCode(error);
   return code === 'provider_inactivity_timeout';

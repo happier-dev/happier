@@ -1,5 +1,8 @@
 import type { DaemonState, DaemonTransferListenerState } from '@/api/types';
+import type { MachinePublicationOutcome } from '@/api/apiMachine';
 import type { DirectTransferServerLifecycleState } from '@/machines/transfer/directTransferServerLifecycle';
+
+const SUPPRESSED_MACHINE_PUBLICATION_OUTCOME = 'suppressed' satisfies MachinePublicationOutcome;
 
 type DirectPeerRuntimeConfig = Readonly<{
   featureEnabled: boolean;
@@ -8,11 +11,6 @@ type DirectPeerRuntimeConfig = Readonly<{
   bindPort: number;
   advertisedHosts: readonly string[];
 }>;
-
-function isLoopbackBindHost(bindHost: string): boolean {
-  const normalized = bindHost.trim().toLowerCase();
-  return normalized === '127.0.0.1' || normalized === '::1' || normalized === 'localhost';
-}
 
 function createListenerState(params: Readonly<{
   enabled: boolean;
@@ -39,7 +37,6 @@ export function createDaemonTransferRuntimeState(params: Readonly<{
 }>): NonNullable<DaemonState['transfer']> {
   const directPeerSupported = params.directPeer.featureEnabled && params.directPeer.serverEnabled;
   const loopbackConfigured = directPeerSupported;
-  const lanConfigured = directPeerSupported && !isLoopbackBindHost(params.directPeer.bindHost);
 
   return {
     supported: {
@@ -50,11 +47,6 @@ export function createDaemonTransferRuntimeState(params: Readonly<{
       loopback_http: createListenerState({
         enabled: loopbackConfigured,
         configured: loopbackConfigured,
-        active: false,
-      }),
-      lan_http: createListenerState({
-        enabled: lanConfigured,
-        configured: lanConfigured,
         active: false,
       }),
       tailscale_serve_https: createListenerState({
@@ -98,12 +90,6 @@ function applyDirectTransferServerLifecycleState(
           ? resolveListenerActive(lifecycleState, 'loopback_http')
           : false,
       },
-      lan_http: {
-        ...initialTransferState.listenerClasses.lan_http,
-        active: initialTransferState.listenerClasses.lan_http.enabled
-          ? resolveListenerActive(lifecycleState, 'lan_http')
-          : false,
-      },
       tailscale_serve_https: {
         ...initialTransferState.listenerClasses.tailscale_serve_https,
       },
@@ -133,11 +119,13 @@ function applyTailscaleTransferListenerState(
 
 export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
   initialTransferState: NonNullable<DaemonState['transfer']>;
+  isDaemonQuiescing?: () => boolean;
   warn?: (message: string, error?: unknown) => void;
 }>): Readonly<{
   attachApiMachine: (apiMachine: DaemonTransferRuntimeStatePublisherApiMachine | null) => Promise<void>;
   publishDirectTransferServerLifecycleState: (state: DirectTransferServerLifecycleState) => Promise<void>;
   publishTailscaleTransferListenerState: (state: DaemonTransferListenerState) => Promise<void>;
+  resume: () => Promise<void>;
 }> {
   let apiMachine: DaemonTransferRuntimeStatePublisherApiMachine | null = null;
   let latestDirectLifecycleState: DirectTransferServerLifecycleState | null = null;
@@ -146,12 +134,12 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
   let flushInFlight: Promise<void> | null = null;
 
   const flushPendingState = async (): Promise<boolean> => {
-    if (!apiMachine || !hasPendingState) {
+    if (!apiMachine || !hasPendingState || params.isDaemonQuiescing?.() === true) {
       return false;
     }
     hasPendingState = false;
     try {
-      await apiMachine.updateDaemonState((state) => {
+      const publicationOutcome = await apiMachine.updateDaemonState((state) => {
         const baseState: DaemonState = state ?? {
           status: 'running',
           transfer: params.initialTransferState,
@@ -174,6 +162,10 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
           transfer: transferState,
         };
       });
+      if (publicationOutcome === SUPPRESSED_MACHINE_PUBLICATION_OUTCOME) {
+        hasPendingState = true;
+        return false;
+      }
       return true;
     } catch (error) {
       hasPendingState = true;
@@ -184,7 +176,11 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
 
   const scheduleFlush = async (): Promise<void> => {
     if (flushInFlight) {
-      return await flushInFlight;
+      await flushInFlight;
+      if (apiMachine && hasPendingState && params.isDaemonQuiescing?.() !== true) {
+        await scheduleFlush();
+      }
+      return;
     }
     flushInFlight = (async () => {
       while (apiMachine && hasPendingState) {
@@ -214,6 +210,10 @@ export function createDaemonTransferRuntimeStatePublisher(params: Readonly<{
     async publishTailscaleTransferListenerState(state) {
       latestTailscaleTransferListenerState = state;
       hasPendingState = true;
+      await scheduleFlush();
+    },
+
+    async resume() {
       await scheduleFlush();
     },
   };

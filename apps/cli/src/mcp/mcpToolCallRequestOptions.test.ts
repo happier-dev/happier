@@ -92,4 +92,25 @@ describe('callMcpToolWithResolvedTimeout', () => {
       { timeout: 165_000 },
     );
   });
+
+  it('forwards the caller abort signal alongside the resolved timeout', async () => {
+    const callTool = vi.fn().mockResolvedValue({ content: [] });
+    const client = { callTool } as unknown as Pick<Client, 'callTool'>;
+    const controller = new AbortController();
+
+    await callMcpToolWithResolvedTimeout({
+      client,
+      toolName: 'get_status',
+      args: {},
+      signal: controller.signal,
+    });
+
+    expect(callTool).toHaveBeenCalledWith(
+      { name: 'get_status', arguments: {} },
+      undefined,
+      expect.objectContaining({
+        signal: controller.signal,
+      }),
+    );
+  });
 });

@@ -342,4 +342,52 @@ describe('handleConnectedServiceRuntimeAuthFailure', () => {
         });
         expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
     });
+
+    it('honors policy temporary-retry for provider-scoped rate limits instead of falling through to group switching', async () => {
+        const switchAfterClassifiedFailure = vi.fn();
+        const enable = vi.fn(async () => ({
+            status: 'waiting',
+            nextRetryAtMs: 12_500,
+            attemptCount: 0,
+            maxAttempts: 3,
+        }));
+
+        await expect(handleConnectedServiceRuntimeAuthFailure({
+            sessionId: 'sess_1',
+            selection: {
+                kind: 'group',
+                serviceId: 'openai-codex',
+                groupId: 'group_1',
+                activeProfileId: 'primary',
+            },
+            classification: {
+                kind: 'rate_limit',
+                limitCategory: 'rate_limit',
+                serviceId: 'openai-codex',
+                profileId: 'primary',
+                groupId: 'group_1',
+                resetsAtMs: 12_500,
+                retryAfterMs: 2_500,
+                quotaScope: 'provider',
+                providerLimitId: 'provider_rate_limit',
+                action: null,
+                planType: null,
+                rateLimits: null,
+                source: 'structured_provider_error',
+            },
+            switchesThisTurn: 1,
+            switchCoordinator: { switchAfterClassifiedFailure },
+            temporaryThrottleRecovery: { enable },
+        })).resolves.toMatchObject({
+            status: 'temporary_retry_armed',
+            retryAfterMs: 2_500,
+            retryAtMs: 12_500,
+        });
+
+        expect(enable).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: 'sess_1',
+            issueFingerprint: 'temporary-retry:rate_limit:openai-codex:group_1:primary',
+        }));
+        expect(switchAfterClassifiedFailure).not.toHaveBeenCalled();
+    });
 });

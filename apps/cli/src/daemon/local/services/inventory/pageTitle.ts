@@ -1,3 +1,9 @@
+import type {
+    NormalizedLocalServiceInventoryEntry,
+    NormalizedLocalServiceInventorySnapshot,
+} from './scanner';
+import { buildLocalServiceEndpointUrl } from './endpoint';
+
 export type LocalPageTitleSource = 'application_name' | 'og_title' | 'twitter_title' | 'html_title';
 
 export type LocalPageTitleResult = Readonly<{
@@ -15,8 +21,16 @@ export type LocalPageTitleEnricherParams = Readonly<{
     concurrency: number;
     successTtlMs: number;
     failureTtlMs: number;
+    /**
+     * Hard upper bound on cached title entries. A long-lived daemon scanning many
+     * ephemeral loopback ports would otherwise grow the TTL-only cache without limit;
+     * once exceeded, the oldest entry is evicted (insertion-order FIFO).
+     */
+    maxCacheEntries?: number;
     fetch: typeof fetch;
 }>;
+
+const DEFAULT_LOCAL_PAGE_TITLE_MAX_CACHE_ENTRIES = 512;
 
 function decodeHtmlEntity(input: string): string {
     return input
@@ -68,7 +82,11 @@ function parseIpv4(host: string): readonly number[] | null {
 
 export function isLocalPageTitleHost(host: string): boolean {
     const normalized = host.toLowerCase().replace(/^\[|\]$/g, '');
-    if (normalized === 'localhost' || normalized.endsWith('.localhost')) return true;
+    // Only the literal `localhost` is trusted by name. A `*.localhost` label can be
+    // pointed at a non-loopback address by a hostile resolver (DNS rebinding), so it is
+    // NOT trusted on the string alone — it must resolve to a loopback/private IP form
+    // (matched by the IP branches below) to pass.
+    if (normalized === 'localhost') return true;
     if (normalized === '::' || normalized === '::1') return true;
     if ((normalized.startsWith('fc') || normalized.startsWith('fd')) && normalized.includes(':')) return true;
     if (normalized.startsWith('fe80:')) return true;
@@ -130,6 +148,18 @@ function isHtmlResponse(response: Response): boolean {
 
 export function createLocalPageTitleEnricher(params: LocalPageTitleEnricherParams): LocalPageTitleEnricher {
     const cache = new Map<string, Readonly<{ expiresAt: number; value: LocalPageTitleResult | null }>>();
+    const maxCacheEntries = Math.max(1, Math.trunc(params.maxCacheEntries ?? DEFAULT_LOCAL_PAGE_TITLE_MAX_CACHE_ENTRIES));
+    const setCacheEntry = (key: string, entry: Readonly<{ expiresAt: number; value: LocalPageTitleResult | null }>) => {
+        // Re-insert so an updated key moves to the most-recent position, then evict the
+        // oldest insertion-order entries until within the bound.
+        cache.delete(key);
+        cache.set(key, entry);
+        while (cache.size > maxCacheEntries) {
+            const oldest = cache.keys().next().value;
+            if (oldest === undefined) break;
+            cache.delete(oldest);
+        }
+    };
     const active = { count: 0 };
     const waiters: Array<() => void> = [];
 
@@ -185,7 +215,7 @@ export function createLocalPageTitleEnricher(params: LocalPageTitleEnricherParam
             await acquire();
             try {
                 const value = await fetchOnce(url, 3);
-                cache.set(url, {
+                setCacheEntry(url, {
                     value,
                     expiresAt: now + (value ? params.successTtlMs : params.failureTtlMs),
                 });
@@ -194,5 +224,51 @@ export function createLocalPageTitleEnricher(params: LocalPageTitleEnricherParam
                 release();
             }
         },
+    };
+}
+
+function localTitleHostForEntry(entry: NormalizedLocalServiceInventoryEntry): string | null {
+    const host = entry.address.host;
+    if (entry.address.kind === 'wildcard') {
+        return '127.0.0.1';
+    }
+    if (entry.address.family === 'ipv6') {
+        return `[${host.replace(/^\[|\]$/gu, '')}]`;
+    }
+    return host;
+}
+
+export function buildLocalPageTitleUrl(entry: NormalizedLocalServiceInventoryEntry): string | null {
+    if (entry.state !== 'listening') return null;
+    const endpointUrl = entry.endpoint ? buildLocalServiceEndpointUrl(entry.endpoint) : null;
+    if (endpointUrl) return endpointUrl;
+    const host = localTitleHostForEntry(entry);
+    if (!host || entry.endpoint?.scheme === 'unknown') return null;
+    return null;
+}
+
+export async function enrichLocalServiceInventoryPageTitles(input: Readonly<{
+    snapshot: NormalizedLocalServiceInventorySnapshot;
+    enricher: LocalPageTitleEnricher;
+}>): Promise<NormalizedLocalServiceInventorySnapshot> {
+    const entries = await Promise.all(input.snapshot.entries.map(async (entry) => {
+        const url = buildLocalPageTitleUrl(entry);
+        if (!url) return entry;
+        const title = await input.enricher.fetchTitle(url);
+        if (!title) return entry;
+        return {
+            ...entry,
+            presentation: {
+                ...entry.presentation,
+                pageTitle: title.title,
+                pageTitleSource: title.source,
+                addressLabel: entry.presentation?.addressLabel ?? `${entry.address.host}:${entry.port}`,
+            },
+        };
+    }));
+
+    return {
+        ...input.snapshot,
+        entries,
     };
 }

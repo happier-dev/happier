@@ -2,7 +2,10 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { registerPermissionModeMessageQueueBinding } from './bindModeQueue';
-import type { PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
+import type {
+  PermissionModeQueuedPrompt,
+  PermissionModeQueuedPromptMode,
+} from '@/agent/runtime/permissions/queuedPrompt';
 
 function createSessionHarness() {
   let handler: ((message: any) => void) | null = null;
@@ -31,7 +34,7 @@ function createSessionHarness() {
 
 function createQueue() {
   // MessageQueue2 already implements push + pushIsolateAndClear.
-  const queue = new MessageQueue2<{ permissionMode: any; model?: string }, PermissionModeQueuedPrompt>(
+  const queue = new MessageQueue2<PermissionModeQueuedPromptMode, PermissionModeQueuedPrompt>(
     (mode) => JSON.stringify(mode),
   );
   const spyPush = vi.spyOn(queue, 'push');
@@ -40,6 +43,299 @@ function createQueue() {
 }
 
 describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
+  it.each([
+    ['steer capability is unavailable', { supportsInFlightSteer: () => false }],
+    ['the active turn is no longer steerable', { canSteerPrompt: () => false }],
+    ['provider input is not admitted', { isProviderInputAdmitted: () => false }],
+  ] as const)('terminally rejects an exact claimed steer when %s and never queues it', async (_label, override) => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const steerText = vi.fn(async () => {});
+    const rejectPromptBeforeProvider = vi.fn();
+
+    registerPermissionModeMessageQueueBinding({
+      session: {
+        ...session,
+        getCommittedUserMessageSeq: (localId: string) => localId === 'exact-steer-unavailable' ? 71 : null,
+      },
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+        rejectPromptBeforeProvider,
+        ...override,
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'exact steer only' },
+      localId: 'exact-steer-unavailable',
+      meta: {},
+      pendingProviderAction: 'steer',
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(spyIsolate).not.toHaveBeenCalled();
+    expect(rejectPromptBeforeProvider).toHaveBeenCalledExactlyOnceWith({
+      localIds: ['exact-steer-unavailable'],
+      userMessageSeq: 71,
+      userMessageSeqs: [71],
+    });
+  });
+
+  it('reports an exact claimed steer as effect-possible when steerText throws after invocation and never queues it', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const rejectPromptBeforeProvider = vi.fn();
+    const reportPromptEffectMayHaveOccurred = vi.fn();
+    const steerText = vi.fn(async () => {
+      throw new Error('provider rejected before accepting steer');
+    });
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+        rejectPromptBeforeProvider,
+        reportPromptEffectMayHaveOccurred,
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'do not queue me later' },
+      localId: 'exact-steer-throw',
+      meta: {},
+      pendingProviderAction: 'steer',
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).toHaveBeenCalledTimes(1);
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(spyIsolate).not.toHaveBeenCalled();
+    expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
+    expect(reportPromptEffectMayHaveOccurred).toHaveBeenCalledExactlyOnceWith({
+      localIds: ['exact-steer-throw'],
+      userMessageSeq: null,
+    });
+  });
+
+  it('rejects an exact claimed steer before provider input when steerability is lost before the queued dispatch runs', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const rejectPromptBeforeProvider = vi.fn();
+    const reportPromptEffectMayHaveOccurred = vi.fn();
+    const steerText = vi.fn(async () => {});
+    let canSteerPrompt = true;
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => canSteerPrompt,
+        supportsInFlightSteer: () => true,
+        canSteerPrompt: () => canSteerPrompt,
+        isProviderInputAdmitted: () => true,
+        steerText,
+        rejectPromptBeforeProvider,
+        reportPromptEffectMayHaveOccurred,
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'stale exact steer' },
+      localId: 'exact-steer-stale-before-dispatch',
+      meta: {},
+      pendingProviderAction: 'steer',
+    });
+    canSteerPrompt = false;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(spyIsolate).not.toHaveBeenCalled();
+    expect(rejectPromptBeforeProvider).toHaveBeenCalledExactlyOnceWith({
+      localIds: ['exact-steer-stale-before-dispatch'],
+      userMessageSeq: null,
+    });
+    expect(reportPromptEffectMayHaveOccurred).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['exact claimed steer', 'steer', true],
+    ['ambient input', undefined, false],
+  ] as const)('handles an admission-race cancellation for %s without losing the prompt', async (
+    _label,
+    pendingProviderAction,
+    expectRejection,
+  ) => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const rejectPromptBeforeProvider = vi.fn();
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        isProviderInputAdmitted: () => true,
+        runProviderInputDispatch: vi.fn(async () => ({ status: 'cancelled' as const })),
+        steerText,
+        rejectPromptBeforeProvider,
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'admission changed before dispatch' },
+      localId: `admission-race-${expectRejection ? 'exact' : 'ambient'}`,
+      meta: {},
+      ...(pendingProviderAction ? { pendingProviderAction } : {}),
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyIsolate).not.toHaveBeenCalled();
+    if (expectRejection) {
+      expect(spyPush).not.toHaveBeenCalled();
+      expect(rejectPromptBeforeProvider).toHaveBeenCalledTimes(1);
+    } else {
+      expect(spyPush).toHaveBeenCalledTimes(1);
+      expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
+    }
+  });
+
+  it('executes a claimed send action as an isolated queued invocation and never steers an active turn', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+      },
+    } as any);
+
+    emitUserMessage({ content: { text: 'send next' }, localId: 'send-local', meta: {}, pendingProviderAction: 'send' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(spyIsolate).toHaveBeenCalledWith(
+      expect.objectContaining({ text: 'send next', localId: 'send-local' }),
+      { permissionMode: 'default' },
+    );
+  });
+
+  it('interrupts before isolating a claimed interrupt-and-send action', async () => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const effects: string[] = [];
+    const rejectPromptBeforeProvider = vi.fn();
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText: vi.fn(async () => {}),
+        rejectPromptBeforeProvider,
+        interruptActiveTurn: vi.fn(async () => {
+          effects.push('interrupt');
+          return { status: 'interrupted' as const };
+        }),
+      },
+    } as any);
+    spyIsolate.mockImplementation(((..._args: unknown[]) => { effects.push('send'); }) as any);
+
+    emitUserMessage({ content: { text: 'interrupt then send' }, localId: 'interrupt-local', meta: {}, pendingProviderAction: 'interrupt_and_send' });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(effects).toEqual(['interrupt', 'send']);
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(rejectPromptBeforeProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the interrupt capability is unavailable', undefined],
+    [
+      'the interrupt capability reports unsupported',
+      vi.fn(async () => ({ status: 'unsupported' as const, reason: 'runtime_without_interrupt' })),
+    ],
+    [
+      'the interrupt capability throws',
+      vi.fn(async () => {
+        throw new Error('interrupt failed before replacement input');
+      }),
+    ],
+  ] as const)('rejects interrupt-and-send before provider input when %s', async (
+    _label,
+    interruptActiveTurn,
+  ) => {
+    const { session, emitUserMessage } = createSessionHarness();
+    const { queue, spyPush, spyIsolate } = createQueue();
+    const rejectPromptBeforeProvider = vi.fn();
+    const reportPromptEffectMayHaveOccurred = vi.fn();
+    const steerText = vi.fn(async () => {});
+
+    registerPermissionModeMessageQueueBinding({
+      session,
+      queue,
+      getCurrentPermissionMode: () => 'default',
+      setCurrentPermissionMode: () => {},
+      inFlightSteer: {
+        isTurnInFlight: () => true,
+        supportsInFlightSteer: () => true,
+        steerText,
+        rejectPromptBeforeProvider,
+        reportPromptEffectMayHaveOccurred,
+        ...(interruptActiveTurn ? { interruptActiveTurn } : {}),
+      },
+    } as any);
+
+    emitUserMessage({
+      content: { text: 'do not send without interrupt' },
+      localId: 'interrupt-and-send-unavailable',
+      meta: {},
+      pendingProviderAction: 'interrupt_and_send',
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(steerText).not.toHaveBeenCalled();
+    expect(spyPush).not.toHaveBeenCalled();
+    expect(spyIsolate).not.toHaveBeenCalled();
+    expect(rejectPromptBeforeProvider).toHaveBeenCalledExactlyOnceWith({
+      localIds: ['interrupt-and-send-unavailable'],
+      userMessageSeq: null,
+      reason: 'unsupported_action',
+    });
+    expect(reportPromptEffectMayHaveOccurred).not.toHaveBeenCalled();
+  });
+
   it('queues messages normally when no steer controller is provided', async () => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue, spyPush } = createQueue();
@@ -90,6 +386,7 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
 
     registerPermissionModeMessageQueueBinding({
       session,
+      agentTargetKey: 'backend:opencode',
       queue,
       getCurrentPermissionMode: () => 'default',
       setCurrentPermissionMode: () => {},
@@ -103,18 +400,35 @@ describe('registerPermissionModeMessageQueueBinding (in-flight steer)', () => {
     emitUserMessage({
       content: { text: 'switch model next' },
       localId: 'local-model-steer-1',
-      meta: { model: 'opencode/big-pickle' },
+      meta: {
+        modelSelectionV1: {
+          v: 1,
+          updatedAt: 42,
+          ref: {
+            agentTargetKey: 'backend:opencode',
+            providerConnectionId: null,
+            modelId: 'opencode/big-pickle',
+          },
+        },
+      },
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(steerText).not.toHaveBeenCalled();
     expect(spyPush).toHaveBeenCalledWith(
       { text: 'switch model next', localId: 'local-model-steer-1', localIds: ['local-model-steer-1'] },
-      { permissionMode: 'default', model: 'opencode/big-pickle' },
+      {
+        permissionMode: 'default',
+        modelSelection: {
+          agentTargetKey: 'backend:opencode',
+          providerConnectionId: null,
+          modelId: 'opencode/big-pickle',
+        },
+      },
     );
   });
 
-  it('passes the committed user-message seq to steerText so provider acceptance can confirm the watermark (HF-1)', async () => {
+  it('passes the committed user-message seq to steerText for exact transcript anchoring', async () => {
     const { session, emitUserMessage } = createSessionHarness();
     const { queue, spyPush } = createQueue();
 

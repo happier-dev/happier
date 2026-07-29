@@ -8,6 +8,7 @@ import {
   createFileTransferPayloadSource,
   type TransferPayloadSource,
 } from '@/machines/transfer/transferPayloadSource';
+import { writeFileHandleFully } from '@/utils/fs/writeFileHandleFully';
 
 import { createWorkspaceReplicationCasStore } from '../cas/workspaceReplicationCasStore';
 import { WorkspaceReplicationError } from '../workspaceReplicationError';
@@ -22,8 +23,13 @@ async function writeBufferPart(input: Readonly<{
   file: Awaited<ReturnType<typeof open>>;
   hash: ReturnType<typeof createHash>;
   buffer: Buffer;
+  position: number;
 }>): Promise<number> {
-  await input.file.write(input.buffer);
+  await writeFileHandleFully({
+    fileHandle: input.file,
+    buffer: input.buffer,
+    position: input.position,
+  });
   input.hash.update(input.buffer);
   return input.buffer.byteLength;
 }
@@ -44,11 +50,14 @@ export async function createWorkspaceReplicationBlobPackPayloadSource(input: Rea
   const hash = createHash('sha256');
   let sizeBytes = 0;
 
+  let writeFailed = false;
+  let writeFailure: unknown;
   try {
     sizeBytes += await writeBufferPart({
       file,
       hash,
       buffer: createWorkspaceReplicationBlobPackHeaderBuffer(),
+      position: sizeBytes,
     });
 
     for (const digest of input.digests) {
@@ -73,6 +82,7 @@ export async function createWorkspaceReplicationBlobPackPayloadSource(input: Rea
           digest,
           sizeBytes: blobStats.size,
         }),
+        position: sizeBytes,
       });
 
       const stream = casStore.openReadStream(digest);
@@ -82,6 +92,7 @@ export async function createWorkspaceReplicationBlobPackPayloadSource(input: Rea
           file,
           hash,
           buffer,
+          position: sizeBytes,
         });
       }
     }
@@ -90,14 +101,26 @@ export async function createWorkspaceReplicationBlobPackPayloadSource(input: Rea
       file,
       hash,
       buffer: createWorkspaceReplicationBlobPackEndMarkerBuffer(),
+      position: sizeBytes,
     });
   } catch (error) {
-    await file.close();
-    await rm(filePath, { force: true }).catch(() => undefined);
-    throw error;
+    writeFailed = true;
+    writeFailure = error;
   }
 
-  await file.close();
+  try {
+    await file.close();
+  } catch (error) {
+    if (!writeFailed) {
+      writeFailed = true;
+      writeFailure = error;
+    }
+  }
+
+  if (writeFailed) {
+    await rm(filePath, { force: true }).catch(() => undefined);
+    throw writeFailure;
+  }
 
   return createFileTransferPayloadSource({
     filePath,

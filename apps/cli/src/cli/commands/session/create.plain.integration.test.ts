@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { DEFAULT_CATALOG_AGENT_ID } from '@/backends/types';
+import { DEFAULT_CATALOG_AGENT_ID } from '@/agent/catalog/ids';
 import { bindApiSessionSocketMock, createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
@@ -22,9 +22,11 @@ describe('happier session create plaintext sessions (integration)', () => {
   let envScope = createEnvKeyScope(envKeys);
   let server: Server | null = null;
   let happyHomeDir = '';
+  let observedMetadataUpdateCallCount = 0;
 
   beforeEach(async () => {
     happyHomeDir = await createTempDir('happier-cli-session-create-plain-');
+    observedMetadataUpdateCallCount = 0;
 
     const sessionId = 'sess_integration_create_plain_123';
     let metadataJson = JSON.stringify({ path: process.cwd(), host: 'spawn-host' });
@@ -101,19 +103,23 @@ describe('happier session create plaintext sessions (integration)', () => {
     });
 
     const socket = createApiSessionSocketStub({
-      emit: async (event: string, args: unknown[]) => {
+      emit: (event: string, args: unknown[]) => {
         if (event !== 'update-metadata') return;
         const [data, callback] = args as [any, ((value: unknown) => void) | undefined];
+        observedMetadataUpdateCallCount += 1;
+        expect(data?.expectedVersion).toBe(metadataVersion);
         const decrypted = JSON.parse(String(data?.metadata ?? '{}'));
-        expect(decrypted?.summary?.text).toBe('My Title');
         expect(decrypted?.tag).toBe('MyTag');
+        if (decrypted?.summary !== undefined) {
+          expect(decrypted?.summary?.text).toBe('My Title');
+        }
         expect(observedSpawnBody).toEqual(expect.objectContaining({
           directory: process.cwd(),
-          backendTarget: { kind: 'backend', backendId: DEFAULT_CATALOG_AGENT_ID, sourceKind: 'built_in' },
+          backendTarget: { kind: 'builtInAgent', agentId: DEFAULT_CATALOG_AGENT_ID },
           spawnNonce: expect.any(String),
         }));
         metadataJson = String(data.metadata);
-        metadataVersion = 1;
+        metadataVersion += 1;
         callback?.({ result: 'success', version: metadataVersion, metadata: metadataJson });
       },
     });
@@ -169,6 +175,7 @@ describe('happier session create plaintext sessions (integration)', () => {
       expect(parsed.data?.session?.title).toBe('My Title');
       expect(parsed.data?.session?.active).toBe(true);
       expect(parsed.data?.session?.encryptionMode).toBe('plain');
+      expect(observedMetadataUpdateCallCount).toBeGreaterThanOrEqual(1);
     } finally {
       output.restore();
     }

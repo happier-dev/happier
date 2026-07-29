@@ -61,6 +61,8 @@ export async function stopExecutionRun(args: Readonly<{
     // ignore
   }
   ctrl.resolveTerminal();
-  args.controllers.delete(args.runId);
+  if (args.controllers.get(args.runId) === ctrl) {
+    args.controllers.delete(args.runId);
+  }
   return { ok: true };
 }

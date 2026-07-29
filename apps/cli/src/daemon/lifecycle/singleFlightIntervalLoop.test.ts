@@ -128,4 +128,67 @@ describe('startSingleFlightIntervalLoop', () => {
       clearIntervalSpy.mockRestore();
     }
   });
+
+  it('backs off automatic retries after failures and resets after success', async () => {
+    vi.useFakeTimers();
+    try {
+      let shouldFail = true;
+      const task = vi.fn(async () => {
+        if (shouldFail) {
+          throw new Error('temporary outage');
+        }
+      });
+
+      const loop = startSingleFlightIntervalLoop({
+        intervalMs: 50,
+        failureBackoffMs: 100,
+        maxFailureBackoffMs: 100,
+        task,
+        onError: vi.fn(),
+      });
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(90);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      shouldFail = false;
+      await vi.advanceTimersByTimeAsync(20);
+      expect(task).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(50);
+      expect(task).toHaveBeenCalledTimes(3);
+
+      loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('manual trigger bypasses failure backoff', async () => {
+    vi.useFakeTimers();
+    try {
+      const task = vi.fn(async () => {
+        throw new Error('temporary outage');
+      });
+      const loop = startSingleFlightIntervalLoop({
+        intervalMs: 10,
+        failureBackoffMs: 60_000,
+        task,
+        onError: vi.fn(),
+      });
+
+      await vi.advanceTimersByTimeAsync(11);
+      expect(task).toHaveBeenCalledTimes(1);
+
+      loop.trigger();
+      await Promise.resolve();
+      expect(task).toHaveBeenCalledTimes(2);
+
+      loop.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

@@ -100,6 +100,10 @@ describe('Api server error handling', () => {
         'HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS',
         'HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS',
         'HAPPIER_E2E_DELAY_CREATE_SESSION_MS',
+        'HAPPIER_LOCAL_SERVER_URL',
+        'HAPPIER_SERVER_URL',
+        'HAPPIER_PUBLIC_SERVER_URL',
+        'HAPPIER_STACK_ENV_FILE',
     ] as const;
     let envScope = createEnvKeyScope(envKeys);
 
@@ -114,7 +118,11 @@ describe('Api server error handling', () => {
             ['HAPPIER_API_CREATE_SESSION_RETRY_MAX_ATTEMPTS', '3'],
             ['HAPPIER_API_CREATE_SESSION_RETRY_BASE_DELAY_MS', '0'],
             ['HAPPIER_API_CREATE_SESSION_RETRY_MAX_DELAY_MS', '0'],
-        ]) as Readonly<Record<string, string>>);
+            ['HAPPIER_LOCAL_SERVER_URL', undefined],
+            ['HAPPIER_SERVER_URL', undefined],
+            ['HAPPIER_PUBLIC_SERVER_URL', undefined],
+            ['HAPPIER_STACK_ENV_FILE', undefined],
+        ]) as Readonly<Record<string, string | undefined>>);
 
         // Create a mock credential
         const mockCredential = {

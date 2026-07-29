@@ -1,40 +1,33 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { LocalHostedDirectTranscriptBinding } from '@/agent/terminalRuntime/directTranscriptBinding';
-
-const { resolveBackendExecutionSurfaces, getTerminalRuntimeOps } = vi.hoisted(() => ({
+const { resolveExecutionSurfaces, resolveBackendExecutionSurfaces } = vi.hoisted(() => ({
+  resolveExecutionSurfaces: vi.fn(),
   resolveBackendExecutionSurfaces: vi.fn(),
-  getTerminalRuntimeOps: vi.fn(),
+}));
+
+vi.mock('@/agent/runtime/bridges/session/SessionHostBridge', () => ({
+  getSessionHostBridge: () => ({
+    resolveExecutionSurfaces,
+  }),
 }));
 
 vi.mock('@/agent/runtime/registry/engineRegistry', () => ({
   resolveBackendExecutionSurfaces,
-  getTerminalRuntimeOps,
 }));
 
-import { requireTerminalRuntimeResolveTranscriptBinding } from './resolveTranscriptBinding';
 import { requireTerminalRuntimeLaunch } from './requireTerminalRuntimeLaunch';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  resolveExecutionSurfaces.mockReset();
+  resolveBackendExecutionSurfaces.mockReset();
 });
 
-function createMockLocalHostedDirectTranscriptBinding(): LocalHostedDirectTranscriptBinding {
-  return {
-    providerId: 'codex',
-    source: {
-      kind: 'codexHome',
-      home: 'user',
-      homePath: '/tmp/runtime-binding',
-    },
-    remoteSessionId: 'runtime-binding',
-  };
-}
-
-describe('terminal runtime requirement helpers', () => {
-  it('resolve launch through the generic backend execution surface', async () => {
+describe('terminal runtime launch requirement helper', () => {
+  it('resolves launch through SessionHostBridge execution surfaces', async () => {
     const launch = vi.fn(async () => 'launched');
-    resolveBackendExecutionSurfaces.mockResolvedValue({
+    resolveBackendExecutionSurfaces.mockRejectedValue(new Error('bypassed SessionHostBridge'));
+    resolveExecutionSurfaces.mockResolvedValue({
       terminalRuntime: {
         launch,
       },
@@ -44,44 +37,11 @@ describe('terminal runtime requirement helpers', () => {
       fork: null,
       checkpoint: null,
     });
-    getTerminalRuntimeOps.mockReset();
-
     const resolvedLaunch = await requireTerminalRuntimeLaunch('acme.runtime.backend');
     await expect(resolvedLaunch({})).resolves.toBe('launched');
 
-    expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith('acme.runtime.backend');
-    expect(getTerminalRuntimeOps).not.toHaveBeenCalled();
+    expect(resolveExecutionSurfaces).toHaveBeenCalledWith('acme.runtime.backend');
+    expect(resolveBackendExecutionSurfaces).not.toHaveBeenCalled();
     expect(launch).toHaveBeenCalledWith({});
-  });
-
-  it('resolve transcript binding through the generic backend execution surface', async () => {
-    const binding = createMockLocalHostedDirectTranscriptBinding();
-    const resolveTranscriptBinding = vi.fn(async () => binding);
-    resolveBackendExecutionSurfaces.mockResolvedValue({
-      terminalRuntime: {
-        resolveTranscriptBinding,
-      },
-      externalSession: null,
-      attach: null,
-      handoff: null,
-      fork: null,
-      checkpoint: null,
-    });
-    getTerminalRuntimeOps.mockReset();
-
-    const resolvedTranscriptBinding = await requireTerminalRuntimeResolveTranscriptBinding('acme.runtime.backend');
-    await expect(resolvedTranscriptBinding({})).resolves.toEqual({
-      providerId: 'codex',
-      source: {
-        kind: 'codexHome',
-        home: 'user',
-        homePath: '/tmp/runtime-binding',
-      },
-      remoteSessionId: 'runtime-binding',
-    });
-
-    expect(resolveBackendExecutionSurfaces).toHaveBeenCalledWith('acme.runtime.backend');
-    expect(getTerminalRuntimeOps).not.toHaveBeenCalled();
-    expect(resolveTranscriptBinding).toHaveBeenCalledWith({});
   });
 });

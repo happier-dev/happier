@@ -16,12 +16,6 @@ export function resolveDefaultCandidatesLimit(): number {
     return Math.max(1, Math.min(500, configured));
 }
 
-export function resolveRecentActivityWindowMs(): number {
-    const raw = Number.parseInt(String(process.env.HAPPIER_EXTERNAL_SESSIONS_RECENT_ACTIVITY_WINDOW_MS ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 15_000;
-    return Math.max(1000, Math.min(60 * 60 * 1000, configured));
-}
-
 export function resolveTakeoverReadinessCacheMs(): number {
     const raw = Number.parseInt(String(process.env.HAPPIER_EXTERNAL_SESSIONS_STATUS_TAKEOVER_CACHE_MS ?? ''), 10);
     const configured = Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 5_000;

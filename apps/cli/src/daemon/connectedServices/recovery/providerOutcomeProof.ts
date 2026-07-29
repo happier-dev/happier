@@ -31,29 +31,22 @@
  * Positive (recovery may complete / terminate visibly):
  * - `provider_activity`: meaningful provider output, tool call, assistant delta,
  *   or accepted in-flight steer AFTER the recovery boundary and matching the
- *   recovery identity. The continuation controller owns the bounded wait and
- *   timeout state; schedulers consume the proof through this shared vocabulary.
- * - `native_resume`: provider-specific evidence that the recovered provider
- *   accepted vendor/session resume state.
+ *   recovery identity. The applicable recovery owner consumes the proof through
+ *   this shared vocabulary.
  * - `quota_probe_fresh`: a provider quota probe proves the selected profile is
  *   not exhausted for the same service/fingerprint.
  * - `fresh_candidate_selected`: the adopted connected-service profile/account is
  *   genuinely DIFFERENT from the exhausted/failed one (and not known-exhausted
  *   for the same fingerprint). This is useful evidence, but it is still
  *   INTERMEDIATE: the provider has not yet accepted work under the new account.
- * - `account_adoption_verified`: a post-switch verification accepted the new auth surface.
- *   `verified` may carry exact account proof; `weakly_verified` is provenance/auth-surface
- *   proof only and must not be treated as exact runtime-account identity.
  * - `terminal_action_required`: no automatic path is valid; a visible user action
  *   state is emitted.
  * - `terminal_exhausted`: retry/dead-letter budget reached and visible.
  */
 export type ProviderOutcomeProofKind =
   | 'provider_activity'
-  | 'native_resume'
   | 'quota_probe_fresh'
   | 'fresh_candidate_selected'
-  | 'account_adoption_verified'
   | 'terminal_action_required'
   | 'terminal_exhausted';
 
@@ -64,9 +57,7 @@ export type ProviderOutcomeProofKind =
 export type ProviderOutcomeRecoveredProofKind = Extract<
   ProviderOutcomeProofKind,
   | 'provider_activity'
-  | 'native_resume'
   | 'quota_probe_fresh'
-  | 'account_adoption_verified'
 >;
 
 /**
@@ -80,9 +71,7 @@ export type ProviderOutcomeTerminalProofKind = Extract<
 
 const RECOVERED_PROOF_KINDS: ReadonlySet<ProviderOutcomeProofKind> = new Set<ProviderOutcomeProofKind>([
   'provider_activity',
-  'native_resume',
   'quota_probe_fresh',
-  'account_adoption_verified',
 ]);
 
 const TERMINAL_PROOF_KINDS: ReadonlySet<ProviderOutcomeProofKind> = new Set<ProviderOutcomeProofKind>([

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import { createDeferred } from '@/testkit/async/deferred';
 import { BasePermissionHandler, type PermissionResult } from './BasePermissionHandler';
 
 class FakeRpcHandlerManager {
@@ -27,21 +28,59 @@ class FakeSession {
   }
 }
 
+class DeferredUpdateSession extends FakeSession {
+  private deferredUpdate: ReturnType<typeof createDeferred<void>> | null = null;
+  private deferredUpdater: ((state: any) => any) | null = null;
+
+  deferNextUpdate(): void {
+    this.deferredUpdate = createDeferred<void>();
+  }
+
+  releaseDeferredUpdate(): void {
+    const deferred = this.deferredUpdate;
+    const updater = this.deferredUpdater;
+    this.deferredUpdate = null;
+    this.deferredUpdater = null;
+    if (updater) {
+      this.agentState = updater(this.agentState);
+    }
+    deferred?.resolve();
+  }
+
+  override updateAgentState(updater: any) {
+    const deferred = this.deferredUpdate;
+    if (!deferred) {
+      return super.updateAgentState(updater);
+    }
+    this.deferredUpdater = updater;
+    return deferred.promise;
+  }
+}
+
 class TestPermissionHandler extends BasePermissionHandler {
   protected getLogPrefix(): string {
     return '[Test]';
   }
 
   request(toolCallId: string, toolName: string, input: unknown): Promise<PermissionResult> {
-    return new Promise<PermissionResult>((resolve, reject) => {
-      this.pendingRequests.set(toolCallId, { resolve, reject, toolName, input });
-      this.addPendingRequestToState(toolCallId, toolName, input);
-    });
+    return this.requestPermissionDecision(toolCallId, toolName, input);
   }
 
   isAllowed(toolName: string, input: unknown): boolean {
     return this.isAllowedForSession(toolName, input);
   }
+}
+
+async function settledState<T>(promise: Promise<T>): Promise<'pending' | 'fulfilled' | 'rejected'> {
+  await Promise.resolve();
+  await Promise.resolve();
+  return Promise.race([
+    promise.then(
+      () => 'fulfilled' as const,
+      () => 'rejected' as const,
+    ),
+    new Promise<'pending'>((resolve) => setTimeout(() => resolve('pending'), 0)),
+  ]);
 }
 
 describe('BasePermissionHandler allowlist', () => {
@@ -83,9 +122,42 @@ describe('BasePermissionHandler allowlist', () => {
       expect.objectContaining({ tool: 'Bash', kind: 'permission' }),
     );
 
-    handler.reset();
+    await handler.reset();
     await expect(askPromise).rejects.toThrow('Session reset');
     await expect(bashPromise).rejects.toThrow('Session reset');
+  });
+
+  it('makes concurrent reset callers await the same active permission cleanup', async () => {
+    const session = new DeferredUpdateSession();
+    const handler = new TestPermissionHandler(session as any);
+    const pending = handler.request('perm-concurrent-reset', 'Bash', { command: ['bash', '-lc', 'echo hello'] });
+
+    session.deferNextUpdate();
+    const firstReset = handler.reset();
+    const secondReset = handler.reset();
+    let firstSettled = false;
+    let secondSettled = false;
+    void firstReset.then(() => {
+      firstSettled = true;
+    });
+    void secondReset.then(() => {
+      secondSettled = true;
+    });
+
+    await expect(pending).rejects.toThrow('Session reset');
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(firstSettled).toBe(false);
+    expect(secondSettled).toBe(false);
+
+    session.releaseDeferredUpdate();
+
+    await expect(firstReset).resolves.toBeUndefined();
+    await expect(secondReset).resolves.toBeUndefined();
+    expect(session.agentState.requests['perm-concurrent-reset']).toBeUndefined();
+    expect(session.agentState.completedRequests['perm-concurrent-reset']).toEqual(
+      expect.objectContaining({ status: 'canceled', decision: 'abort', reason: 'Session reset' }),
+    );
   });
 
   it('finalizes agentState requests even when the pending request map is missing the entry (lifecycle mismatch)', async () => {
@@ -157,7 +229,7 @@ describe('BasePermissionHandler allowlist', () => {
     expect(result.decision).toBe('approved_for_session');
     expect(handler.isAllowed('bash', input)).toBe(true);
 
-    handler.reset();
+    await handler.reset();
     expect(handler.isAllowed('bash', input)).toBe(false);
   });
 
@@ -283,12 +355,111 @@ describe('BasePermissionHandler allowlist', () => {
 
     const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer');
     expect(rpc).toBeDefined();
-    await rpc!({ id: 'perm-ask', approved: true, answers: { q1: 'a' } });
+    await rpc!({
+      id: 'perm-ask',
+      approved: true,
+      answers: { q1: ['a'], q2: ['Alpha, Beta', 'Gamma'] },
+    });
 
     const result = await promise;
     expect(result.decision).toBe('approved');
-    expect((result as any).answers).toEqual({ q1: 'a' });
+    expect((result as any).answers).toEqual({
+      q1: ['a'],
+      q2: ['Alpha, Beta', 'Gamma'],
+    });
   });
+
+  it('retains the released preview scalar answer reader for old UI to new CLI skew', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const promise = handler.request('perm-ask-legacy', 'AskUserQuestion', {
+      questions: [{ question: 'q1', choices: ['a', 'b'] }],
+    });
+
+    await session.rpcHandlerManager.handlers.get('session.user_action.answer')!({
+      id: 'perm-ask-legacy',
+      approved: true,
+      answers: { q1: 'Alpha, Beta' },
+    });
+
+    await expect(promise).resolves.toMatchObject({
+      decision: 'approved',
+      answers: { q1: 'Alpha, Beta' },
+    });
+  });
+
+  it('keeps a schema-invalid structured answer retryable until a valid answer arrives', async () => {
+    const session = new FakeSession();
+    const handler = new TestPermissionHandler(session as any);
+    const pending = handler.request('question-retryable', 'AskUserQuestion', {
+      questions: [{ question: 'q1', options: [{ label: 'a' }] }],
+    });
+    const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer');
+
+    await expect(rpc!({
+      id: 'question-retryable',
+      approved: true,
+      answers: { q1: ['a', 'a'] },
+    })).rejects.toThrow('Invalid structured question answers');
+    expect(session.agentState.requests['question-retryable']).toBeDefined();
+    expect(await settledState(pending)).toBe('pending');
+
+    await rpc!({
+      id: 'question-retryable',
+      approved: true,
+      answers: { q1: ['a'] },
+    });
+    await expect(pending).resolves.toEqual({
+      decision: 'approved',
+      answers: { q1: ['a'] },
+    });
+  });
+
+  it('accepts a response only through the session handler that owns the live request', async () => {
+    const ownerSession = new FakeSession();
+    const owner = new TestPermissionHandler(ownerSession as any);
+    const nonOwnerSession = new FakeSession();
+    const nonOwner = new TestPermissionHandler(nonOwnerSession as any);
+    const pending = owner.request('owned-question', 'AskUserQuestion', {
+      questions: [{ question: 'q1', options: [{ label: 'a' }] }],
+    });
+
+    await expect(nonOwner.respondToPendingPermission({
+      id: 'owned-question',
+      approved: true,
+      answers: { q1: ['a'] },
+    })).resolves.toEqual({ status: 'not_found' });
+    expect(await settledState(pending)).toBe('pending');
+
+    await expect(owner.respondToPendingPermission({
+      id: 'owned-question',
+      approved: true,
+      answers: { q1: ['a'] },
+    })).resolves.toEqual({ status: 'resolved' });
+    await expect(pending).resolves.toEqual({
+      decision: 'approved',
+      answers: { q1: ['a'] },
+    });
+  });
+
+  it.each(['denied', 'abort'] as const)(
+    'delivers an answerless AskUserQuestion %s decision to its live waiter',
+    async (decision) => {
+      const session = new FakeSession();
+      const handler = new TestPermissionHandler(session as any);
+      const pending = handler.request(`question-${decision}`, 'AskUserQuestion', {
+        questions: [{ question: 'q1', options: [{ label: 'a' }] }],
+      });
+      const rpc = session.rpcHandlerManager.handlers.get('session.user_action.answer');
+
+      await rpc!({ id: `question-${decision}`, approved: false, decision });
+
+      await expect(pending).resolves.toEqual({ decision });
+      expect(session.agentState.completedRequests[`question-${decision}`]).toEqual(
+        expect.objectContaining({ status: 'denied', decision }),
+      );
+    },
+  );
 
   it('invokes onAbortRequested when user responds with abort', async () => {
     const session = new FakeSession();

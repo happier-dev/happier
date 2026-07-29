@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { AddressInfo } from 'node:net';
@@ -32,6 +32,83 @@ async function resolveRemoteBridgeInvocation(): Promise<{
   return resolveNodeBackedMcpServerCommand({
     distEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.mjs'],
     sourceEntrypointSegments: ['mcp', 'bridges', 'remoteMcpStdioBridge.ts'],
+    preferSourceEntrypoint: true,
+  });
+}
+
+async function waitForJsonRpcResponse(
+  child: ChildProcessWithoutNullStreams,
+  id: number,
+  timeoutMs = 10_000,
+): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let buffer = '';
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timed out waiting for JSON-RPC response ${id}`));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.stdout.off('data', onData);
+      child.off('exit', onExit);
+      child.off('error', onError);
+    };
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString('utf8');
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        try {
+          const message = JSON.parse(line) as Readonly<{ id?: unknown }>;
+          if (message.id === id) {
+            cleanup();
+            resolve();
+            return;
+          }
+        } catch {
+          // Keep reading until a complete JSON-RPC response arrives.
+        }
+      }
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      cleanup();
+      reject(new Error(`Bridge exited before JSON-RPC response ${id}: ${code ?? signal ?? 'unknown'}`));
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    child.stdout.on('data', onData);
+    child.once('exit', onExit);
+    child.once('error', onError);
+  });
+}
+
+async function waitForChildExit(
+  child: ChildProcessWithoutNullStreams,
+  timeoutMs = 3_000,
+): Promise<number | null> {
+  if (child.exitCode !== null) return child.exitCode;
+  return await new Promise<number | null>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for remote MCP bridge process to exit'));
+    }, timeoutMs);
+    const cleanup = () => {
+      clearTimeout(timeout);
+      child.off('exit', onExit);
+      child.off('error', onError);
+    };
+    const onExit = (code: number | null) => {
+      cleanup();
+      resolve(code);
+    };
+    const onError = (error: Error) => {
+      cleanup();
+      reject(error);
+    };
+    child.once('exit', onExit);
+    child.once('error', onError);
   });
 }
 
@@ -43,9 +120,13 @@ async function startTestMcpHttpServer(): Promise<{ url: string; stop: () => void
       {
         description: 'Echo',
         inputSchema: z.object({ text: z.string() }).passthrough(),
+        outputSchema: z.object({ echoed: z.string() }),
+        annotations: { readOnlyHint: true },
+        _meta: { 'acme.example/source': 'integration-test' },
       } as any,
       async (args: any) => ({
         content: [{ type: 'text' as const, text: String(args?.text ?? '') }],
+        structuredContent: { echoed: String(args?.text ?? '') },
         isError: false as const,
       }),
     );
@@ -84,9 +165,16 @@ async function startTestMcpSseServer(): Promise<{ url: string; stop: () => void 
       const mcp = new McpServer({ name: 'test-mcp-sse', version: '1.0.0' });
       mcp.registerTool(
         'echo',
-        { description: 'Echo', inputSchema: z.object({ text: z.string() }).passthrough() } as any,
+        {
+          description: 'Echo',
+          inputSchema: z.object({ text: z.string() }).passthrough(),
+          outputSchema: z.object({ echoed: z.string() }),
+          annotations: { readOnlyHint: true },
+          _meta: { 'acme.example/source': 'sse-integration-test' },
+        } as any,
         async (args: any) => ({
           content: [{ type: 'text' as const, text: String(args?.text ?? '') }],
+          structuredContent: { echoed: String(args?.text ?? '') },
           isError: false as const,
         }),
       );
@@ -159,13 +247,36 @@ describe('remoteMcpStdioBridge', () => {
       const client = new Client({ name: 'bridge-test', version: '1.0.0' }, { capabilities: {} });
       await client.connect(transport);
 
-      const tools = await client.listTools();
+      const tools = await client.listTools(undefined, { timeout: 180_000 });
       const names = (tools.tools ?? []).map((t: any) => String(t.name));
       expect(names).toContain('echo');
+      expect(tools.tools.find((tool) => tool.name === 'echo')?.inputSchema).toMatchObject({
+        type: 'object',
+        properties: {
+          text: { type: 'string' },
+        },
+        required: ['text'],
+      });
+      expect(tools.tools.find((tool) => tool.name === 'echo')).toMatchObject({
+        outputSchema: {
+          type: 'object',
+          properties: {
+            echoed: { type: 'string' },
+          },
+          required: ['echoed'],
+        },
+        annotations: { readOnlyHint: true },
+        _meta: { 'acme.example/source': 'integration-test' },
+      });
 
-      const res = await client.callTool({ name: 'echo', arguments: { text: 'hi' } });
+      const res = await client.callTool(
+        { name: 'echo', arguments: { text: 'hi' } },
+        undefined,
+        { timeout: 180_000 },
+      );
       const text = String((res as any)?.content?.[0]?.text ?? '');
       expect(text).toBe('hi');
+      expect(res.structuredContent).toEqual({ echoed: 'hi' });
 
       await client.close();
     } finally {
@@ -204,12 +315,87 @@ describe('remoteMcpStdioBridge', () => {
       const client = new Client({ name: 'bridge-test-sse', version: '1.0.0' }, { capabilities: {} });
       await client.connect(transport);
 
-      const res = await client.callTool({ name: 'echo', arguments: { text: 'hi' } });
+      const tools = await client.listTools(undefined, { timeout: 180_000 });
+      expect(tools.tools.find((tool) => tool.name === 'echo')).toMatchObject({
+        inputSchema: {
+          type: 'object',
+          properties: {
+            text: { type: 'string' },
+          },
+          required: ['text'],
+        },
+        outputSchema: {
+          type: 'object',
+          properties: {
+            echoed: { type: 'string' },
+          },
+          required: ['echoed'],
+        },
+        annotations: { readOnlyHint: true },
+        _meta: { 'acme.example/source': 'sse-integration-test' },
+      });
+
+      const res = await client.callTool(
+        { name: 'echo', arguments: { text: 'hi' } },
+        undefined,
+        { timeout: 180_000 },
+      );
       const text = String((res as any)?.content?.[0]?.text ?? '');
       expect(text).toBe('hi');
+      expect(res.structuredContent).toEqual({ echoed: 'hi' });
 
       await client.close();
     } finally {
+      sseServer.stop();
+      await rm(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('closes the remote SSE client and exits when the controlling stdio stream ends', async () => {
+    const sseServer = await startTestMcpSseServer();
+    const tmp = await mkdtemp(join(tmpdir(), 'happier-mcp-bridge-it-'));
+    let child: ChildProcessWithoutNullStreams | null = null;
+    try {
+      const configPath = join(tmp, 'happier-mcp-remote-bridge.it.json');
+      await writeFile(
+        configPath,
+        JSON.stringify({
+          transport: 'sse',
+          url: sseServer.url,
+          headers: {},
+        }),
+        { mode: 0o600 },
+      );
+      const bridgeInvocation = await resolveRemoteBridgeInvocation();
+      child = spawn(bridgeInvocation.command, bridgeInvocation.args, {
+        env: {
+          ...resolveEnvRecord(),
+          ...(bridgeInvocation.env ?? {}),
+          HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      child.stdin.write(`${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2025-06-18',
+          capabilities: {},
+          clientInfo: { name: 'bridge-eof-test', version: '1.0.0' },
+        },
+      })}\n`);
+      await waitForJsonRpcResponse(child, 1);
+
+      child.stdin.end();
+
+      await expect(waitForChildExit(child)).resolves.toBe(0);
+    } finally {
+      if (child && child.exitCode === null) {
+        child.kill('SIGKILL');
+        await waitForChildExit(child).catch(() => undefined);
+      }
       sseServer.stop();
       await rm(tmp, { recursive: true, force: true });
     }

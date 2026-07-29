@@ -321,6 +321,95 @@ describe('memoryWorker', () => {
     worker.stop();
   });
 
+  it('logs retryable selected-transcript fetch failures through the shared server endpoint classifier', async () => {
+    const fetchSessionById = vi.fn(async () => ({}));
+    const fetchSessionsPage = vi.fn(async () => ({ sessions: [], nextCursor: null, hasNext: false }));
+    const maintenanceError = Object.assign(new Error('planned maintenance'), {
+      response: { status: 503 },
+    });
+    const fetchEncryptedTranscriptMessagesPage = vi.fn(async () => {
+      throw maintenanceError;
+    });
+    const loggerDebug = vi.fn();
+    const runMemoryHintsExecutionRun = vi.fn(async () => {
+      throw new Error('summarizer should not run when transcript rows are unavailable');
+    });
+
+    vi.doMock('@/ui/logger', () => ({
+      logger: { debug: loggerDebug },
+    }));
+    vi.doMock('@/session/transport/http/sessionsHttp', () => ({
+      fetchSessionById,
+      fetchSessionsPage,
+    }));
+    vi.doMock('@/session/replay/fetchEncryptedTranscriptMessages', () => ({
+      fetchEncryptedTranscriptMessagesPage,
+    }));
+    vi.doMock('./hints/runMemoryHintsExecutionRun', () => ({
+      runMemoryHintsExecutionRun,
+    }));
+    vi.doMock('@/session/systemRecords/memory/fetchMemorySystemRecords', () => ({
+      fetchMemorySummaryShardSystemRecords: async () => [],
+    }));
+    vi.doMock('@/session/systemRecords/memory/commitMemorySystemRecords', () => ({
+      commitMemorySystemRecords: async () => {},
+    }));
+
+    const { resetServerEndpointFailureLogSamplingForTests } = await import('@/api/client/serverEndpointFailureLog');
+    resetServerEndpointFailureLogSamplingForTests();
+    const { writeMemorySettingsToDisk } = await import('@/settings/memorySettings');
+    await writeMemorySettingsToDisk({
+      v: 1,
+      enabled: true,
+      indexMode: 'hints',
+      backfillPolicy: 'all_history',
+      coveragePolicy: { type: 'full' },
+      hints: {
+        updateMode: 'continuous',
+        idleDelayMs: 0,
+        windowSizeMessages: 5,
+        targetShardMessages: 10,
+        maxShardChars: 12_000,
+        maxSummaryChars: 500,
+        maxKeywords: 5,
+        maxEntities: 5,
+        maxDecisions: 5,
+        maxRunsPerHour: 999,
+        maxShardsPerSession: 250,
+        failureBackoffBaseMs: 0,
+        failureBackoffMaxMs: 0,
+      },
+    });
+
+    const { startMemoryWorker } = await import('./memoryWorker');
+
+    const credentials: Credentials = { token: 't', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } };
+    const worker = await startMemoryWorker({
+      credentials,
+      machineId: 'machine_1',
+    });
+
+    await worker.reloadSettings();
+    await worker.ensureUpToDate('sess-maintenance');
+
+    expect(fetchEncryptedTranscriptMessagesPage).toHaveBeenCalled();
+    expect(runMemoryHintsExecutionRun).not.toHaveBeenCalled();
+    expect(loggerDebug).toHaveBeenCalledWith(
+      '[API] memory worker transcript page temporarily unavailable; will retry or recover when the server is ready.',
+      expect.objectContaining({
+        classification: expect.objectContaining({
+          retryable: true,
+          statusCode: 503,
+        }),
+      }),
+    );
+    expect(loggerDebug.mock.calls.map((call) => call[0])).not.toContain(
+      '[memoryWorker] Failed to fetch/decrypt transcript page (best-effort)',
+    );
+
+    worker.stop();
+  });
+
   it('continues background deep indexing for recently updated inactive sessions when backfill policy is new_only', async () => {
     vi.useFakeTimers();
     const argvBackup = process.argv.slice();

@@ -1,4 +1,4 @@
-import type { TerminalRuntimeInputTriggerServiceV1 } from '@happier-dev/agents';
+import type { HostTerminalInputTriggerService } from './contract';
 
 type MessageQueueInputTriggerSource = Readonly<{
     setOnMessage(handler: ((message: unknown, mode: unknown) => void) | null): void;
@@ -6,7 +6,7 @@ type MessageQueueInputTriggerSource = Readonly<{
 
 export function createTerminalRuntimeInputTriggerService(params: Readonly<{
     messageQueue: MessageQueueInputTriggerSource;
-}>): TerminalRuntimeInputTriggerServiceV1 {
+}>): HostTerminalInputTriggerService {
     let sequence = 0;
     const subscribers = new Set<(trigger: { sequence: number }) => void | Promise<void>>();
 

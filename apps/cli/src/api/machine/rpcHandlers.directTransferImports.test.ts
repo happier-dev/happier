@@ -22,6 +22,7 @@ function createRpcHandlerManager(): {
 describe('rpcHandlers (direct transfer imports)', () => {
   it('registers daemon.directTransfer.import.prepare and forwards the request to the direct transfer service', async () => {
     const mgr = createRpcHandlerManager();
+    const abortImportSession = vi.fn(async () => {});
     const prepareImportSession = vi.fn(async () => ({
       uploadId: 'upload-1',
       destDisplayPath: 'payload.bin',
@@ -46,6 +47,7 @@ describe('rpcHandlers (direct transfer imports)', () => {
         requestShutdown: () => {},
         directTransferImport: {
           prepareImportSession,
+          abortImportSession,
         },
       },
     });
@@ -77,5 +79,44 @@ describe('rpcHandlers (direct transfer imports)', () => {
       ],
     });
     expect(prepareImportSession).toHaveBeenCalledWith(request);
+
+    const abortHandler = mgr.handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT);
+    expect(abortHandler).toEqual(expect.any(Function));
+    await expect(abortHandler?.({ uploadId: 'upload-1' })).resolves.toEqual({ success: true });
+    expect(abortImportSession).toHaveBeenCalledWith({ uploadId: 'upload-1' });
+  });
+
+  it('fails closed for missing, blank, or oversized direct import abort upload ids', async () => {
+    const mgr = createRpcHandlerManager();
+    const abortImportSession = vi.fn(async () => {});
+    registerMachineRpcHandlers({
+      rpcHandlerManager: mgr as never,
+      handlers: {
+        spawnSession: async () => ({ type: 'error', errorCode: 'unknown', errorMessage: 'not implemented' }) as never,
+        stopSession: async () => true,
+        requestShutdown: () => {},
+        directTransferImport: {
+          prepareImportSession: async () => {
+            throw new Error('prepare should not be called');
+          },
+          abortImportSession,
+        },
+      },
+    });
+    const abortHandler = mgr.handlers.get(RPC_METHODS.DAEMON_DIRECT_TRANSFER_IMPORT_ABORT);
+
+    await expect(abortHandler?.({})).resolves.toEqual({
+      success: false,
+      error: 'Invalid direct transfer import abort request',
+    });
+    await expect(abortHandler?.({ uploadId: '   ' })).resolves.toEqual({
+      success: false,
+      error: 'Invalid direct transfer import abort request',
+    });
+    await expect(abortHandler?.({ uploadId: 'x'.repeat(257) })).resolves.toEqual({
+      success: false,
+      error: 'Invalid direct transfer import abort request',
+    });
+    expect(abortImportSession).not.toHaveBeenCalled();
   });
 });

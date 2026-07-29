@@ -4,8 +4,14 @@ import {
     ExecutionRunGetResponseSchema,
     ExecutionRunListResponseSchema,
     ExecutionRunPublicStateSchema,
+    FeatureAxisSchema,
+    FeatureBlockerCodeSchema,
+    isFeatureId,
     type ExecutionRunListRequest,
     type ExecutionRunPublicState,
+    type FeatureAxis,
+    type FeatureBlockerCode,
+    type FeatureId,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -34,9 +40,22 @@ type ExecutionRunRpcContext = Readonly<{
 }>;
 
 export type ExecutionRunTerminalStatus = 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+declare const executionRunFeatureBlockerDetailsBrand: unique symbol;
+export type ExecutionRunFeatureBlockerDetails = Readonly<{
+    featureId: FeatureId;
+    blockedBy: FeatureAxis;
+    blockerCode: FeatureBlockerCode;
+    [executionRunFeatureBlockerDetailsBrand]: true;
+}>;
+type ExecutionRunServiceFailure = Readonly<{
+    ok: false;
+    code: string;
+    message?: string;
+    details?: ExecutionRunFeatureBlockerDetails;
+}>;
 export type ExecutionRunServiceResult<T> =
     | Readonly<{ ok: true; data: T }>
-    | Readonly<{ ok: false; code: string; message?: string }>;
+    | ExecutionRunServiceFailure;
 
 export type WaitForExecutionRunResult =
     | {
@@ -44,16 +63,38 @@ export type WaitForExecutionRunResult =
           status: ExecutionRunTerminalStatus;
           result: unknown;
       }
-    | {
-          ok: false;
-          code: string;
-          message?: string;
-      };
+    | ExecutionRunServiceFailure;
 
 type ExecutionRunMarkerRecord = Readonly<Record<string, unknown>>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readOwnDataProperty(record: Record<string, unknown>, key: string): unknown {
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    return descriptor && Object.prototype.hasOwnProperty.call(descriptor, 'value')
+        ? descriptor.value
+        : undefined;
+}
+
+export function normalizeExecutionRunFeatureBlockerDetails(
+    value: unknown,
+): ExecutionRunFeatureBlockerDetails | undefined {
+    if (!isRecord(value)) return undefined;
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) return undefined;
+
+    const featureId = readOwnDataProperty(value, 'featureId');
+    const blockedBy = FeatureAxisSchema.safeParse(readOwnDataProperty(value, 'blockedBy'));
+    const blockerCode = FeatureBlockerCodeSchema.safeParse(readOwnDataProperty(value, 'blockerCode'));
+    if (!isFeatureId(featureId)) return undefined;
+    if (!blockedBy.success || !blockerCode.success) return undefined;
+    return {
+        featureId,
+        blockedBy: blockedBy.data,
+        blockerCode: blockerCode.data,
+    } as ExecutionRunFeatureBlockerDetails;
 }
 
 function isFallbackSafeExecutionRunRpcError(error: unknown): boolean {
@@ -323,10 +364,12 @@ export function normalizeExecutionRunRpcPayload<T>(payload: unknown): ExecutionR
                   : null;
 
         if (topLevelError || topLevelErrorCode) {
+            const details = normalizeExecutionRunFeatureBlockerDetails(payload.details);
             return {
                 ok: false,
                 code: topLevelErrorCode ?? 'execution_run_failed',
                 ...(topLevelError ? { message: topLevelError } : {}),
+                ...(details ? { details } : {}),
             };
         }
 
@@ -337,6 +380,7 @@ export function normalizeExecutionRunRpcPayload<T>(payload: unknown): ExecutionR
     }
 
     if (payload.ok === false) {
+        const details = normalizeExecutionRunFeatureBlockerDetails(payload.details);
         return {
             ok: false,
             code:
@@ -350,6 +394,7 @@ export function normalizeExecutionRunRpcPayload<T>(payload: unknown): ExecutionR
                 : typeof payload.message === 'string' && payload.message.trim().length > 0
                   ? { message: payload.message }
                   : {}),
+            ...(details ? { details } : {}),
         };
     }
 

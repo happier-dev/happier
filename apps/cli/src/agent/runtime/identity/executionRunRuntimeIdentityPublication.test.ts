@@ -75,7 +75,7 @@ function createEngineResolution(
       runtimeKind: 'plugin',
       capabilities: backendCapabilities,
     },
-    provider: {
+    agent: {
       id: 'acme.provider',
       provenance: 'external',
       source: { kind: 'path' },

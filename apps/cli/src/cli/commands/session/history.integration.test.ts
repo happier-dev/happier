@@ -81,10 +81,28 @@ describe('happier session history (integration)', () => {
           role: 'agent',
           content: {
             type: 'acp',
-            provider: 'opencode',
+            agentId: 'opencode',
             data: {
               type: 'message',
               message: 'provider compact text',
+            },
+          },
+        },
+        dek,
+      ),
+      'base64',
+    );
+
+    const acpTextCiphertext = encodeBase64Session(
+      encryptWithDataKey(
+        {
+          role: 'agent',
+          content: {
+            type: 'acp',
+            agentId: 'agent',
+            data: {
+              type: 'text',
+              text: 'CODEX_LUNA_LOW_READY',
             },
           },
         },
@@ -164,6 +182,11 @@ describe('happier session history (integration)', () => {
                 seq: 4,
                 createdAt: 1700000001000,
                 content: { t: 'encrypted', c: acpMessageCiphertext },
+              },
+              {
+                seq: 5,
+                createdAt: 1700000002000,
+                content: { t: 'encrypted', c: acpTextCiphertext },
               },
             ],
           }),
@@ -279,6 +302,40 @@ describe('happier session history (integration)', () => {
     }
   });
 
+  it('returns compact semantic text for current native ACP text rows', async () => {
+    const { handleSessionCommand } = await import('./index');
+
+    const output = captureConsoleJsonOutput();
+
+    try {
+      await handleSessionCommand(
+        ['history', 'sess_integration_history_123', '--limit', '10', '--format', 'compact', '--json'],
+        {
+          readCredentialsFn: async () => ({
+            token: 'token_test',
+            encryption: {
+              type: 'dataKey',
+              publicKey: deriveBoxPublicKeyFromSeed(new Uint8Array(32).fill(8)),
+              machineKey: new Uint8Array(32).fill(8),
+            },
+          }),
+        },
+      );
+      const parsed = output.json();
+      const acpText = parsed.data?.messages?.find(
+        (message: any) => message.text === 'CODEX_LUNA_LOW_READY',
+      );
+      expect(acpText).toEqual(expect.objectContaining({
+        seq: 5,
+        role: 'agent',
+        kind: 'acp',
+        text: 'CODEX_LUNA_LOW_READY',
+      }));
+    } finally {
+      output.restore();
+    }
+  });
+
   it('skips memory artifact transcript rows in raw history output', async () => {
     const { handleSessionCommand } = await import('./index');
 
@@ -306,6 +363,21 @@ describe('happier session history (integration)', () => {
       const structuredMessage = parsed.data?.messages?.find((message: any) => message.raw?.meta?.happier?.kind === 'review_findings.v1');
       expect(structuredMessage).toEqual(expect.objectContaining({
         role: 'agent',
+      }));
+      const acpText = parsed.data?.messages?.find(
+        (message: any) => message.raw?.content?.data?.type === 'text',
+      );
+      expect(acpText).toEqual(expect.objectContaining({
+        seq: 5,
+        role: 'agent',
+        raw: expect.objectContaining({
+          content: expect.objectContaining({
+            data: {
+              type: 'text',
+              text: 'CODEX_LUNA_LOW_READY',
+            },
+          }),
+        }),
       }));
     } finally {
       output.restore();
@@ -425,6 +497,24 @@ describe('happier session history (plaintext integration)', () => {
                   },
                 },
               },
+              {
+                seq: 4,
+                createdAt: 1700000001000,
+                content: {
+                  t: 'plain',
+                  v: {
+                    role: 'agent',
+                    content: {
+                      type: 'acp',
+                      agentId: 'agent',
+                      data: {
+                        type: 'text',
+                        text: 'PLAINTEXT_NATIVE_READY',
+                      },
+                    },
+                  },
+                },
+              },
             ],
           }),
         );
@@ -493,6 +583,12 @@ describe('happier session history (plaintext integration)', () => {
       expect(parsedDefault.data?.format).toBe('compact');
       expect(parsedDefault.data?.sessionId).toBe('sess_integration_history_plain_123');
       expect(parsedDefault.data?.messages?.[0]?.structuredKind).toBe('review_findings.v1');
+      expect(parsedDefault.data?.messages).toContainEqual(expect.objectContaining({
+        seq: 4,
+        role: 'agent',
+        kind: 'acp',
+        text: 'PLAINTEXT_NATIVE_READY',
+      }));
     } finally {
       output.restore();
     }

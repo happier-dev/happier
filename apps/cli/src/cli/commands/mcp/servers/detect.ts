@@ -16,6 +16,7 @@ export async function cmdMcpServersDetect(
   const detected = await deps.detectProviderMcpServers({
     directory: directory ?? null,
     providers,
+    env: deps.env ?? process.env,
   });
 
   if (opts.json) {
@@ -35,4 +36,3 @@ export async function cmdMcpServersDetect(
     console.log(`- ${server.provider}:${server.name} (${server.transport})`);
   }
 }
-

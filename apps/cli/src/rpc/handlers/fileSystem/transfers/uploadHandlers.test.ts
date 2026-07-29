@@ -26,10 +26,32 @@ function createRpcHandlerManager(): { handlers: Map<string, Handler>; registerHa
   };
 }
 
-afterEach(() => {
+const directTransferStores: TransferSessionStore[] = [];
+const fileSystemRegistrations: Array<ReturnType<typeof registerFileSystemHandlers>> = [];
+
+function createTrackedTransferSessionStore(deps: ConstructorParameters<typeof TransferSessionStore>[0]): TransferSessionStore {
+  const store = new TransferSessionStore(deps);
+  directTransferStores.push(store);
+  return store;
+}
+
+afterEach(async () => {
+  const registrations = fileSystemRegistrations.splice(0);
+  const stores = directTransferStores.splice(0);
+  await Promise.all([
+    ...registrations.map(async (registration) => await registration.dispose()),
+    ...stores.map(async (store) => await store.dispose()),
+  ]);
   vi.useRealTimers();
   vi.restoreAllMocks();
 });
+
+function registerTrackedFileSystemHandlers(
+  manager: RpcHandlerManager,
+  workingDirectory: string,
+): void {
+  fileSystemRegistrations.push(registerFileSystemHandlers(manager, workingDirectory));
+}
 
 function createEncryptedUploadChunkRequest(input: Readonly<{
   uploadId: string;
@@ -56,7 +78,7 @@ describe('file transfers (upload)', () => {
   it('uploads a file in chunks and creates parent directories', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const mgr = createRpcHandlerManager();
-    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+    registerTrackedFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
     const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
     const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
@@ -94,7 +116,7 @@ describe('file transfers (upload)', () => {
     writeFileSync(join(workspace, 'file.txt'), 'old\n', 'utf8');
 
     const mgr = createRpcHandlerManager();
-    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+    registerTrackedFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
     const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
     const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
@@ -131,7 +153,7 @@ describe('file transfers (upload)', () => {
     writeFileSync(join(workspace, 'existingdir', 'nested', 'keep.txt'), 'important\n', 'utf8');
 
     const mgr = createRpcHandlerManager();
-    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+    registerTrackedFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
     const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
     const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
@@ -172,7 +194,7 @@ describe('file transfers (upload)', () => {
     vi.setSystemTime(0);
 
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
-    const store = new TransferSessionStore({ ttlMs: 1000 });
+    const store = createTrackedTransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
     registerTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, { workingDirectory: workspace, store });
 
@@ -220,7 +242,7 @@ describe('file transfers (upload)', () => {
   it('rejects malformed base64 chunks instead of silently decoding corrupted bytes', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const mgr = createRpcHandlerManager();
-    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+    registerTrackedFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
     const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
     const chunk = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK);
@@ -252,7 +274,7 @@ describe('file transfers (upload)', () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     writeFileSync(join(workspace, 'file.txt'), 'old\n', 'utf8');
 
-    const store = new TransferSessionStore({ ttlMs: 1000 });
+    const store = createTrackedTransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
     registerTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
@@ -302,7 +324,7 @@ describe('file transfers (upload)', () => {
 
   it('rejects session-routed uploads that exceed the advertised server-routed size limit', async () => {
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
-    const store = new TransferSessionStore({ ttlMs: 1000 });
+    const store = createTrackedTransferSessionStore({ ttlMs: 1000 });
     const mgr = createRpcHandlerManager();
     registerTransferUploadRpcHandlers(mgr as unknown as RpcHandlerManager, {
       workingDirectory: workspace,
@@ -331,7 +353,7 @@ describe('file transfers (upload)', () => {
 
     const workspace = mkdtempSync(join(tmpdir(), 'happier-files-upload-'));
     const mgr = createRpcHandlerManager();
-    registerFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
+    registerTrackedFileSystemHandlers(mgr as unknown as RpcHandlerManager, workspace);
 
     const init = mgr.handlers.get(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT);
     if (!init) throw new Error('expected upload init handler');

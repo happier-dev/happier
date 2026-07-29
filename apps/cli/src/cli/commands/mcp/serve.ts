@@ -46,7 +46,17 @@ export async function runMcpServeCommand(
     delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
   }
 
-  const { mcp } = deps.createExternalMcpServer({ credentials, defaultSessionId });
+  const daemonCatalog = await deps.readDaemonPluginCatalog?.().catch(() => ({
+    kind: 'unavailable' as const,
+    code: 'daemon_unavailable',
+  }));
+  const { mcp } = deps.createExternalMcpServer({
+    credentials,
+    defaultSessionId,
+    pluginToolCatalog: daemonCatalog?.kind === 'available'
+      ? daemonCatalog.tools
+      : Object.freeze([]),
+  });
 
   await deps.connectMcpStdio(mcp);
 }

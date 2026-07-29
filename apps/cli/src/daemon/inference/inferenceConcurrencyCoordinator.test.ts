@@ -100,4 +100,43 @@ describe('inferenceConcurrencyCoordinator', () => {
       'inference-2:end',
     ]);
   });
+
+  it('removes a queued inference waiter when its signal aborts', async () => {
+    const coordinator = createInferenceConcurrencyCoordinator();
+    const order: string[] = [];
+    const controller = new AbortController();
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+
+    const first = coordinator.runExclusive('m1', async () => {
+      order.push('first:start');
+      await firstGate;
+      order.push('first:end');
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const second = coordinator.runExclusive(
+      'm1',
+      async () => {
+        order.push('second:start');
+      },
+      { signal: controller.signal },
+    ).catch((error) => error);
+
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    controller.abort();
+
+    const queuedResult = await Promise.race([
+      second,
+      new Promise((resolve) => setTimeout(() => resolve('still-pending'), 25)),
+    ]);
+    expect(queuedResult).toMatchObject({ code: 'cancelled' });
+
+    releaseFirst();
+    await first;
+    expect(order).toEqual(['first:start', 'first:end']);
+  });
 });

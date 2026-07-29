@@ -86,14 +86,14 @@ export async function executeBoundedBackendRun(args: Readonly<{
       return backendCtrl.pendingExternalMessagesSignal.promise;
     }
 
-    function sendTurnPrompt(turnPrompt: string): Promise<void> {
+    async function sendTurnPrompt(turnPrompt: string): Promise<void> {
       backendCtrl.turnCount += 1;
       backendCtrl.turnEpoch += 1;
       backendCtrl.turnInFlight = true;
       backendCtrl.buffer = '';
       backendCtrl.sidechainStreamBuffer = '';
       backendCtrl.sidechainStreamKey = '';
-      return backendCtrl.backend.sendPrompt(backendCtrl.childSessionId!, turnPrompt);
+      await backendCtrl.backend.sendPrompt(backendCtrl.childSessionId!, turnPrompt);
     }
 
     async function waitForTurnComplete(sendPromptPromise: Promise<void>): Promise<void> {
@@ -152,6 +152,13 @@ export async function executeBoundedBackendRun(args: Readonly<{
 
         if (action === 'busy') {
           next.reject(new Error('Run is busy'));
+          continue;
+        }
+
+        try {
+          await next.authorizeProviderEffect?.();
+        } catch (e) {
+          next.reject(e instanceof Error ? e : new Error('Connected-service generation check failed'));
           continue;
         }
 

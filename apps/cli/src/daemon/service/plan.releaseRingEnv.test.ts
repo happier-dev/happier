@@ -9,6 +9,7 @@ describe('daemon service plan release ring env', () => {
       mode: 'user',
       channel: 'publicdev',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       userHomeDir: '/home/alice',
       happierHomeDir: '/home/alice/.happier',
       serverUrl: 'https://api.example.test',

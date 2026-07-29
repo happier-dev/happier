@@ -1,13 +1,14 @@
 import type { HookEventEnvelopeV1 } from '@happier-dev/protocol';
 
 import { logger } from '@/ui/logger';
+import { tryCreateDaemonAgentRuntimeTurnContributionsBridge } from '@/agent/runtime/session/process/agentRuntimeDaemonBridgeClient';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { dispatchPluginHookEvent } from './dispatchPluginHookEvent';
 
 type HookPayload = Record<string, unknown>;
 type HookRuntimeRegistry = Parameters<typeof dispatchPluginHookEvent>[0]['runtimeRegistry'];
 
-type ToolPromptContribution = Readonly<{
+export type ToolPromptContribution = Readonly<{
   id: string;
   name?: string | null;
   title?: string | null;
@@ -25,6 +26,10 @@ function isRecord(value: unknown): value is HookPayload {
 function readOptionalString(value: unknown): string | undefined {
   const normalized = typeof value === 'string' ? value.trim() : '';
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function readLocalizedString(value: string | Readonly<{ fallback: string }>): string {
+  return typeof value === 'string' ? value : value.fallback;
 }
 
 function readTimestampMs(payload: HookPayload): number {
@@ -61,6 +66,7 @@ async function dispatchTransformHookWithRuntimeRegistry(params: Readonly<{
   eventId: HookEventEnvelopeV1['eventId'];
   scope: HookEventEnvelopeV1['scope'];
   payload: HookPayload;
+  signal?: AbortSignal;
 }>): Promise<HookPayload> {
   const result = await dispatchPluginHookEvent({
     runtimeRegistry: params.runtimeRegistry,
@@ -71,9 +77,24 @@ async function dispatchTransformHookWithRuntimeRegistry(params: Readonly<{
       payload: params.payload,
     }),
     handlerTimeoutMs: AGENT_TRANSFORM_HOOK_TIMEOUT_MS,
+    ...(params.signal ? { context: { signal: params.signal } } : {}),
   });
   const transformed = result.aggregate?.result;
   return isRecord(transformed) ? transformed : params.payload;
+}
+
+export async function transformAgentContextThroughPluginRuntimeRegistry(
+  runtimeRegistry: HookRuntimeRegistry,
+  payload: HookPayload,
+  options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<HookPayload> {
+  return await dispatchTransformHookWithRuntimeRegistry({
+    runtimeRegistry,
+    eventId: 'agent.context.before',
+    scope: 'agent',
+    payload,
+    ...(options?.signal ? { signal: options.signal } : {}),
+  });
 }
 
 async function dispatchTransformHook(params: Readonly<{
@@ -90,18 +111,18 @@ async function dispatchTransformHook(params: Readonly<{
       scope: params.scope,
       payload: params.payload,
     });
-  } catch (error) {
+  } catch {
     logger.debug('[plugins] Plugin transform hook dispatch failed; using prior payload', {
       hookId: params.eventId,
-      error,
+      error: 'plugin_hook_dispatch_failed',
     });
     return params.payload;
   } finally {
     if (lease) {
-      await lease.release().catch((error: unknown) => {
+      await lease.release().catch(() => {
         logger.debug('[plugins] Failed to release plugin runtime registry lease after hook dispatch', {
           hookId: params.eventId,
-          error,
+          error: 'plugin_hook_registry_release_failed',
         });
       });
     }
@@ -109,10 +130,37 @@ async function dispatchTransformHook(params: Readonly<{
 }
 
 export async function transformSessionInputThroughPluginHooks(payload: HookPayload): Promise<HookPayload> {
+  const daemonBridge = tryCreateDaemonAgentRuntimeTurnContributionsBridge();
+  const sessionId = readOptionalString(payload.sessionId);
+  if (daemonBridge && sessionId) {
+    try {
+      return await daemonBridge.transformSessionInput({
+        sessionId,
+        payload,
+      });
+    } catch {
+      logger.debug('[plugins] Daemon session input transform failed; using prior payload');
+      return payload;
+    }
+  }
   return await dispatchTransformHook({
     eventId: 'session.input.transform',
     scope: 'session',
     payload,
+  });
+}
+
+export async function transformSessionInputThroughRuntimeRegistry(
+  runtimeRegistry: HookRuntimeRegistry,
+  payload: HookPayload,
+  options?: Readonly<{ signal?: AbortSignal }>,
+): Promise<HookPayload> {
+  return await dispatchTransformHookWithRuntimeRegistry({
+    runtimeRegistry,
+    eventId: 'session.input.transform',
+    scope: 'session',
+    payload,
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
 }
 
@@ -143,32 +191,39 @@ export async function transformAgentRequestThroughRuntimeRegistry(
       scope: 'agent',
       payload,
     });
-  } catch (error) {
-    logger.debug('[plugins] Plugin ACP request hook dispatch failed; using prior payload', { error });
+  } catch {
+    logger.debug('[plugins] Plugin ACP request hook dispatch failed; using prior payload');
     return payload;
   }
+}
+
+export async function observeAgentStreamTokenThroughRuntimeRegistry(
+  runtimeRegistry: HookRuntimeRegistry,
+  payload: HookPayload,
+): Promise<void> {
+  await dispatchPluginHookEvent({
+    runtimeRegistry,
+    event: buildHookEnvelope({
+      eventId: 'agent.stream.token',
+      category: 'lifecycle',
+      scope: 'agent',
+      payload,
+    }),
+    handlerTimeoutMs: AGENT_STREAM_TOKEN_HOOK_TIMEOUT_MS,
+  });
 }
 
 export async function observeAgentStreamTokenThroughPluginHooks(payload: HookPayload): Promise<void> {
   let lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>> | null = null;
   try {
     lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-    await dispatchPluginHookEvent({
-      runtimeRegistry: lease.registry,
-      event: buildHookEnvelope({
-        eventId: 'agent.stream.token',
-        category: 'lifecycle',
-        scope: 'agent',
-        payload,
-      }),
-      handlerTimeoutMs: AGENT_STREAM_TOKEN_HOOK_TIMEOUT_MS,
-    });
-  } catch (error) {
-    logger.debug('[plugins] Plugin stream token hook dispatch failed (non-fatal)', { error });
+    await observeAgentStreamTokenThroughRuntimeRegistry(lease.registry, payload);
+  } catch {
+    logger.debug('[plugins] Plugin stream token hook dispatch failed (non-fatal)');
   } finally {
     if (lease) {
-      await lease.release().catch((error: unknown) => {
-        logger.debug('[plugins] Failed to release plugin runtime registry lease after stream token hook dispatch', { error });
+      await lease.release().catch(() => {
+        logger.debug('[plugins] Failed to release plugin runtime registry lease after stream token hook dispatch');
       });
     }
   }
@@ -178,24 +233,60 @@ export async function resolvePluginToolPromptContributions(): Promise<readonly T
   let lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>> | null = null;
   try {
     lease = await acquireAuthoritativePluginRuntimeRegistryLease();
-    return Object.freeze((lease.registry.contributes.tools ?? [])
-      .map((tool) => tool.definition)
-      .filter((tool) => Boolean(tool.promptSnippet) || (tool.promptGuidelines?.length ?? 0) > 0)
-      .map((tool) => Object.freeze({
-        id: tool.id,
-        name: tool.name,
-        title: tool.title,
-        promptSnippet: tool.promptSnippet ?? null,
-        promptGuidelines: tool.promptGuidelines ?? null,
-      })));
-  } catch (error) {
-    logger.debug('[plugins] Failed to resolve plugin tool prompt contributions', { error });
+    return resolvePluginToolPromptContributionsThroughRuntimeRegistry(
+      lease.registry,
+    );
+  } catch {
+    logger.debug('[plugins] Failed to resolve plugin tool prompt contributions');
     return Object.freeze([]);
   } finally {
     if (lease) {
-      await lease.release().catch((error: unknown) => {
-        logger.debug('[plugins] Failed to release plugin runtime registry lease after tool prompt resolution', { error });
+      await lease.release().catch(() => {
+        logger.debug('[plugins] Failed to release plugin runtime registry lease after tool prompt resolution');
       });
     }
+  }
+}
+
+export function resolvePluginToolPromptContributionsThroughRuntimeRegistry(
+  runtimeRegistry: HookRuntimeRegistry & Readonly<{
+    contributes: Readonly<{
+      tools?: readonly Readonly<{
+        definition: Readonly<{
+          id: string;
+          name?: string | null;
+          title: string | Readonly<{ fallback: string }>;
+          promptSnippet?: string | null;
+          promptGuidelines?: readonly string[] | null;
+        }>;
+      }>[];
+    }>;
+  }>,
+): readonly ToolPromptContribution[] {
+  return Object.freeze((runtimeRegistry.contributes.tools ?? [])
+    .map((tool) => tool.definition)
+    .filter((tool) => Boolean(tool.promptSnippet) || (tool.promptGuidelines?.length ?? 0) > 0)
+    .map((tool) => Object.freeze({
+      id: tool.id,
+      name: tool.name,
+      title: readLocalizedString(tool.title),
+      promptSnippet: tool.promptSnippet ?? null,
+      promptGuidelines: tool.promptGuidelines ?? null,
+    })));
+}
+
+export async function resolvePluginPromptAssetBlocks(params: Readonly<{
+  agentId: string;
+  selectedAsset?: Readonly<{ pluginId: string; localId: string }>;
+  sessionId?: string;
+  machineId?: string;
+  featureIds?: readonly string[];
+  signal?: AbortSignal;
+}>): Promise<readonly import('@happier-dev/protocol').PromptBlockV1[]> {
+  const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+  try {
+    return await lease.registry.resolvePromptAssetBlocks(params);
+  } finally {
+    await lease.release();
   }
 }

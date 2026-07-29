@@ -275,6 +275,37 @@ describe.sequential('happier mcp servers --json', () => {
     expect(exitCode).toBe(0);
   });
 
+  it('prints an expected JSON error when binding a missing MCP server', async () => {
+    let storedSettings = createStoredAccountSettings(McpServersSettingsV1Schema.parse({
+      v: 1,
+      strictMode: false,
+      servers: [],
+      bindings: [],
+    }));
+
+    const { parsed, exitCode } = await runJsonMcpCommand([
+      'servers',
+      'bind',
+      '--mcp-server',
+      'missing',
+      '--all-machines',
+      '--json',
+    ], {
+      readCredentials: async () => createCredentialsStub(),
+      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
+        storedSettings = accountSettingsParse(mutate(storedSettings));
+        return { version: 12 };
+      },
+    } satisfies Partial<McpCommandDeps>);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.kind).toBe('mcp_servers_bind');
+    expect(parsed.error?.code).toBe('invalid_arguments');
+    expect(String(parsed.error?.message ?? '')).toContain('MCP server not found');
+    expect(McpServersSettingsV1Schema.parse(storedSettings.mcpServersSettingsV1).bindings).toHaveLength(0);
+    expect(exitCode).toBe(1);
+  });
+
 
   it('prints a mcp_servers_unbind JSON envelope and removes a binding', async () => {
     let storedSettings = createStoredAccountSettings(McpServersSettingsV1Schema.parse({
@@ -327,6 +358,36 @@ describe.sequential('happier mcp servers --json', () => {
     expect(exitCode).toBe(0);
   });
 
+  it('prints an expected JSON error when unbinding a missing MCP binding', async () => {
+    let storedSettings = createStoredAccountSettings(McpServersSettingsV1Schema.parse({
+      v: 1,
+      strictMode: false,
+      servers: [],
+      bindings: [],
+    }));
+
+    const { parsed, exitCode } = await runJsonMcpCommand([
+      'servers',
+      'unbind',
+      '--binding-id',
+      'missing-binding',
+      '--json',
+    ], {
+      readCredentials: async () => createCredentialsStub(),
+      updateAccountSettingsV2WithRetry: async ({ mutate }) => {
+        storedSettings = accountSettingsParse(mutate(storedSettings));
+        return { version: 13 };
+      },
+    } satisfies Partial<McpCommandDeps>);
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.kind).toBe('mcp_servers_unbind');
+    expect(parsed.error?.code).toBe('invalid_arguments');
+    expect(String(parsed.error?.message ?? '')).toContain('Binding not found');
+    expect(McpServersSettingsV1Schema.parse(storedSettings.mcpServersSettingsV1).bindings).toHaveLength(0);
+    expect(exitCode).toBe(1);
+  });
+
 
   it('prints a mcp_servers_detect JSON envelope', async () => {
     const { parsed, exitCode } = await runJsonMcpCommand([
@@ -363,6 +424,11 @@ describe.sequential('happier mcp servers --json', () => {
 
   it('prints a mcp_servers_test JSON envelope', async () => {
     const bootstrapCalls: unknown[] = [];
+    const commandEnv = {
+      WAVE31_MCP_TOKEN: 'from-deps-env',
+    } satisfies NodeJS.ProcessEnv;
+    let capturedProbeBaseEnv: NodeJS.ProcessEnv | null = null;
+    let capturedProbeConfigEnv: Record<string, string> | undefined;
     const mcpSettings = McpServersSettingsV1Schema.parse({
       v: 1,
       strictMode: true,
@@ -372,7 +438,7 @@ describe.sequential('happier mcp servers --json', () => {
           name: 'example',
           transport: 'stdio',
           stdio: { command: 'node', args: ['server.js'] },
-          env: {},
+          env: { API_KEY: { t: 'literal', v: '${WAVE31_MCP_TOKEN}' } },
           createdAt: 1,
           updatedAt: 1,
         },
@@ -399,12 +465,17 @@ describe.sequential('happier mcp servers --json', () => {
       '--json',
     ], {
       readCredentials: async () => createCredentialsStub(),
+      env: commandEnv,
       ensureMachineIdForCredentials: async () => ({ machineId: 'machine-1' }),
       bootstrapAccountSettingsContext: async (args: unknown) => {
         bootstrapCalls.push(args);
         return createAccountSettingsContextStub({ mcpServersSettingsV1: mcpSettings });
       },
-      probeMcpStdioServerTools: async () => [{ name: 'tool-a' }, { name: 'tool-b' }],
+      probeMcpStdioServerTools: async (params) => {
+        capturedProbeBaseEnv = params.baseEnv ?? null;
+        capturedProbeConfigEnv = params.config.env;
+        return [{ name: 'tool-a' }, { name: 'tool-b' }];
+      },
     } satisfies Partial<McpCommandDeps>);
 
     expect(parsed.ok).toBe(true);
@@ -416,6 +487,8 @@ describe.sequential('happier mcp servers --json', () => {
     expect(bootstrapCalls).toEqual([
       expect.objectContaining({ mode: 'blocking', refresh: 'force' }),
     ]);
+    expect(capturedProbeBaseEnv).toBe(commandEnv);
+    expect(capturedProbeConfigEnv).toEqual({ API_KEY: 'from-deps-env' });
     expect(exitCode).toBe(0);
   });
 

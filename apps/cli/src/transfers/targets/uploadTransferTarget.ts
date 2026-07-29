@@ -1,8 +1,12 @@
 export type FinalizeUploadTransferInput = Readonly<{
+  uploadId: string;
   tempPath: string;
   sizeBytes: number;
   sha256: string;
 }>;
+
+export const TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE =
+  'TRANSFER_FINALIZE_RECOVERY_REQUIRED' as const;
 
 export type UploadTransferFinalizeResult<TResult = undefined> =
   | Readonly<{
@@ -15,6 +19,13 @@ export type UploadTransferFinalizeResult<TResult = undefined> =
       success: false;
       error: string;
       keepSession?: boolean;
+      errorCode?: never;
+    }>
+  | Readonly<{
+      success: false;
+      error: string;
+      errorCode: typeof TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE;
+      keepSession: true;
     }>;
 
 export type UploadTransferTarget<TResult = undefined> = Readonly<{

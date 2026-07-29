@@ -10,7 +10,6 @@
 export type {
   AgentMessage,
   AgentMessageHandler,
-  AgentBackend,
   AgentBackendConfig,
   AcpAgentConfig,
   McpServerConfig,
@@ -19,11 +18,10 @@ export type {
   SessionId,
   ToolCallId,
   StartSessionResult,
-  AgentFactory,
-  AgentFactoryOptions,
 } from './core';
+export type { AgentFactoryOptions } from './catalog/factoryOptions';
 
 // ACP backend (low-level)
 export * from './acp';
 
-// Note: ACP backend creation is catalog-driven (see `@/agent/acp/createCatalogAcpBackend`).
+// ACP compatibility runtime creation is definition-driven through the configured runtime core.

@@ -3,7 +3,9 @@ import { rm } from 'node:fs/promises';
 import type {
   AccountSettings,
   ConnectedServiceCredentialRecordV1,
+  ConnectedServiceCredentialRevisionV1,
   ConnectedServiceId,
+  QualifiedConnectedAccountPurposeBindingV1,
 } from '@happier-dev/protocol';
 
 export type ConnectedServiceResolvedSelection =
@@ -12,6 +14,7 @@ export type ConnectedServiceResolvedSelection =
       serviceId: ConnectedServiceId;
       profileId: string;
       record: ConnectedServiceCredentialRecordV1;
+      credentialRevision?: ConnectedServiceCredentialRevisionV1;
     }>
   | Readonly<{
       kind: 'group';
@@ -21,6 +24,7 @@ export type ConnectedServiceResolvedSelection =
       fallbackProfileId: string;
       generation: number;
       record: ConnectedServiceCredentialRecordV1;
+      credentialRevision?: ConnectedServiceCredentialRevisionV1;
       policy: unknown;
     }>;
 
@@ -79,6 +83,7 @@ export type ConnectedServicesMaterializer = (params: Readonly<{
   sessionDirectory?: string | null;
   recordsByServiceId: ReadonlyMap<ConnectedServiceId, ConnectedServiceCredentialRecordV1>;
   selectionsByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceResolvedSelection>;
+  requestAuthPurposeBindings?: readonly QualifiedConnectedAccountPurposeBindingV1[];
   accountSettings?: AccountSettings | Readonly<Record<string, unknown>> | null;
   processEnv?: NodeJS.ProcessEnv;
 }>) => Promise<ConnectedServicesMaterialization | null>;

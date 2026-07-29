@@ -7,7 +7,7 @@ import {
     type SessionHandoffLocalMetadataSource,
 } from '@/session/handoff/metadata/runtimeLocalSessionHandoffMetadata';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
-import { buildRuntimeLocalHandoffMetadataForAgent } from '@/backends/catalog';
+import { buildRuntimeLocalHandoffMetadataForAgent } from '@/session/handoff/metadata/catalogHooks';
 import type { TrackedSession } from '../types';
 import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/resolveConcreteBackendTargetRefs';
 import {
@@ -15,6 +15,7 @@ import {
     isAgentId,
 } from '@happier-dev/agents';
 import { buildProviderSessionIdSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { projectAgentVisibleSessionMetadata } from '@/agent/runtime/sessionMetadataVisibility';
 
 function asMetadataRecord(value: unknown): Metadata | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -145,7 +146,7 @@ export function buildHandoffSessionMetadataFromTrackedSession(params: Readonly<{
             );
         }
         const providerRuntimeLocalMetadata = buildRuntimeLocalHandoffMetadataForAgent(agentId, {
-            metadata,
+            metadata: projectAgentVisibleSessionMetadata(metadata),
             trackedSession: params.trackedSession,
             vendorResumeId,
         });

@@ -8,11 +8,11 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { TmuxUtilities } from '@/integrations/tmux';
+import { createTmuxTerminalHostAdapter, TmuxUtilities } from '@/integrations/tmux';
 
 function isTmuxInstalled(): boolean {
     const result = spawnSync('tmux', ['-V'], { encoding: 'utf8' });
@@ -74,6 +74,7 @@ function writeDumpScript(dir: string): string {
             '    TMUX: process.env.TMUX,',
             '    TMUX_PANE: process.env.TMUX_PANE,',
             '    TMUX_TMPDIR: process.env.TMUX_TMPDIR,',
+            '    HAPPIER_TMUX_UNSET_CANARY: process.env.HAPPIER_TMUX_UNSET_CANARY,',
             '  },',
             '};',
             'fs.writeFileSync(outFile, JSON.stringify(payload));',
@@ -93,6 +94,7 @@ type DumpScriptPayload = {
         TMUX?: string;
         TMUX_PANE?: string;
         TMUX_TMPDIR?: string;
+        HAPPIER_TMUX_UNSET_CANARY?: string;
     };
 };
 
@@ -166,6 +168,18 @@ function killIsolatedTmuxServer(socketPath: string): void {
     }
 }
 
+function resolveRealTmuxPath(): string {
+    const result = spawnSync('/bin/sh', ['-c', 'command -v tmux'], { encoding: 'utf8' });
+    if (result.status !== 0 || !result.stdout.trim()) {
+        throw new Error(`Failed to resolve real tmux path: ${result.stderr}`);
+    }
+    return result.stdout.trim();
+}
+
+function shellSingleQuote(value: string): string {
+    return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
 describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt-in)', { timeout: 20_000 }, () => {
     it('spawnInTmux can start many windows concurrently without index-conflict failures', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
@@ -214,6 +228,7 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
             );
 
             expect(result.success).toBe(true);
+            if (!result.success) throw new Error(result.error ?? 'expected tmux launch to succeed');
             expect(typeof result.pid).toBe('number');
             expect(result.pid).toBeGreaterThan(0);
 
@@ -240,7 +255,66 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
         }
     });
 
-    it('spawnInTmux passes -e KEY=VALUE env values literally (regression: PR107 quoting/escaping)', async () => {
+    it('creates and disposes an owned terminal host as one exact tmux session', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-owned-it-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const utils = new TmuxUtilities('happy', undefined, socketPath);
+        const adapter = createTmuxTerminalHostAdapter({ tmux: utils });
+
+        try {
+            const scriptPath = writeDumpScript(dir);
+            const outFile = join(dir, 'owned.json');
+            const sessionName = `happy-owned-it-${process.pid}-${Date.now()}`;
+            const handle = await adapter.createOrAttachHost({
+                sessionName,
+                workingDirectory: dir,
+                spawnArgv: [process.execPath, scriptPath, outFile, '5000', 'owned-host'],
+                spawnEnv: { FOO: 'owned-value' },
+                isolatedEnv: true,
+            });
+
+            await waitForFile(outFile, 2_000);
+            const payload = readDumpPayload(outFile);
+            expect(payload.argv).toEqual(['owned-host']);
+            expect(payload.env?.FOO).toBe('owned-value');
+
+            const windows = runTmux(['-S', socketPath, 'list-windows', '-t', sessionName, '-F', '#{window_name}']);
+            expect(windows.status).toBe(0);
+            expect(windows.stdout.trim().split('\n')).toEqual([sessionName]);
+            expect(handle.attachMetadata.topology).toBe('exclusive');
+
+            await expect(adapter.createOrAttachHost({
+                sessionName,
+                workingDirectory: dir,
+                spawnArgv: [process.execPath, scriptPath, join(dir, 'duplicate.json'), '5000', 'duplicate-host'],
+                spawnEnv: {},
+                isolatedEnv: true,
+            })).rejects.toThrow(/Failed to create tmux session/);
+            const afterDuplicateRefusal = runTmux([
+                '-S',
+                socketPath,
+                'list-windows',
+                '-t',
+                sessionName,
+                '-F',
+                '#{window_name}',
+            ]);
+            expect(afterDuplicateRefusal.status).toBe(0);
+            expect(afterDuplicateRefusal.stdout.trim().split('\n')).toEqual([sessionName]);
+
+            await adapter.dispose(handle);
+
+            const afterDispose = runTmux(['-S', socketPath, 'has-session', '-t', sessionName]);
+            expect(afterDispose.status).not.toBe(0);
+        } finally {
+            if (runTmux(['-S', socketPath, 'list-sessions']).status === 0) {
+                killIsolatedTmuxServer(socketPath);
+            }
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('spawnInTmux delivers exact window environment values through the private launcher', async () => {
         const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
         const socketPath = join(dir, 'tmux.sock');
         const utils = new TmuxUtilities('happy', undefined, socketPath);
@@ -270,6 +344,37 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
 
             expect(payload.env?.FOO).toBe(env.FOO);
             expect(payload.env?.BAR).toBe(env.BAR);
+        } finally {
+            killIsolatedTmuxServer(socketPath);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('spawnInTmux removes explicitly unset variables inherited by the tmux server', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const inheritedKey = 'HAPPIER_TMUX_UNSET_CANARY';
+        const utils = new TmuxUtilities('happy', { [inheritedKey]: 'server-value' }, socketPath);
+
+        try {
+            const scriptPath = writeDumpScript(dir);
+            const outFile = join(dir, 'out.json');
+            const result = await utils.spawnInTmux(
+                [process.execPath, scriptPath, outFile, '5000', 'unset-check'],
+                {
+                    sessionName: `happy-it-${process.pid}-${Date.now()}`,
+                    windowName: 'unset-env',
+                    cwd: dir,
+                    unsetEnvKeys: [inheritedKey],
+                },
+                {},
+            );
+
+            expect(result.success).toBe(true);
+            if (!result.success) throw new Error(result.error ?? 'expected tmux launch to succeed');
+            await waitForFile(outFile, 2_000);
+            const payload = readDumpPayload(outFile);
+            expect(payload.env?.[inheritedKey]).toBeUndefined();
         } finally {
             killIsolatedTmuxServer(socketPath);
             rmSync(dir, { recursive: true, force: true });
@@ -307,6 +412,149 @@ describe.skipIf(!shouldRunTmuxIntegration())('tmux (real) integration tests (opt
 
             // If quoting were broken, the shell would execute `touch <sentinel>` and create the file.
             expect(existsSync(sentinelFile)).toBe(false);
+        } finally {
+            killIsolatedTmuxServer(socketPath);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('does not execute the target when the real window readiness helper fails', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const helperDir = join(dir, 'helper-bin');
+        const helperPath = join(helperDir, 'tmux');
+        const targetMarker = join(dir, 'target-executed');
+        const sessionName = `happy-it-${process.pid}-${Date.now()}`;
+        const originalTimeout = process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS;
+
+        try {
+            mkdirSync(helperDir, { recursive: true });
+            writeFileSync(helperPath, [
+                '#!/bin/sh',
+                'if [ -n "$TMUX" ]; then exit 23; fi',
+                `exec ${shellSingleQuote(resolveRealTmuxPath())} "$@"`,
+                '',
+            ].join('\n'), { encoding: 'utf8', mode: 0o700 });
+            const utils = new TmuxUtilities('happy', {
+                PATH: `${helperDir}:${process.env.PATH ?? ''}`,
+            }, socketPath);
+            process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS = '300';
+
+            const result = await utils.spawnInTmux(
+                ['/bin/sh', '-c', `printf executed > ${shellSingleQuote(targetMarker)}`],
+                { sessionName, windowName: 'failed-ready', cwd: dir },
+                {},
+            );
+
+            expect(result).toMatchObject({
+                success: false,
+                creationDisposition: 'created_and_absent',
+            });
+            expect(existsSync(targetMarker)).toBe(false);
+        } finally {
+            if (originalTimeout === undefined) delete process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS;
+            else process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS = originalTimeout;
+            killIsolatedTmuxServer(socketPath);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('recovers the exact live pane when delayed readiness outlives the tmux client', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const helperDir = join(dir, 'helper-bin');
+        const helperPath = join(helperDir, 'tmux');
+        const targetMarker = join(dir, 'target-executed');
+        const sessionName = `happy-it-${process.pid}-${Date.now()}`;
+        const windowName = `delayed-ready-${process.pid}-${Date.now()}`;
+        const originalTimeout = process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS;
+
+        try {
+            mkdirSync(helperDir, { recursive: true });
+            writeFileSync(helperPath, [
+                '#!/bin/sh',
+                'if [ -n "$TMUX" ]; then sleep 0.5; fi',
+                `exec ${shellSingleQuote(resolveRealTmuxPath())} "$@"`,
+                '',
+            ].join('\n'), { encoding: 'utf8', mode: 0o700 });
+            const utils = new TmuxUtilities('happy', {
+                PATH: `${helperDir}:${process.env.PATH ?? ''}`,
+            }, socketPath);
+            process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS = '150';
+
+            const result = await utils.spawnInTmux(
+                ['/bin/sh', '-c', `printf executed > ${shellSingleQuote(targetMarker)}; sleep 2`],
+                { sessionName, windowName, windowNameIsUnique: true, cwd: dir },
+                {},
+            );
+
+            expect(result).toMatchObject({
+                success: true,
+                sessionId: `${sessionName}:${windowName}`,
+            });
+            if (!result.success) throw new Error(result.error ?? 'expected recovered tmux launch');
+            await waitForFile(targetMarker, 2_000);
+            const panes = runTmux(['-S', socketPath, 'list-panes', '-t', `${sessionName}:${windowName}`, '-F', '#{pane_pid}']);
+            expect(panes.status).toBe(0);
+            expect(panes.stdout.trim()).toBe(String(result.pid));
+        } finally {
+            if (originalTimeout === undefined) delete process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS;
+            else process.env.HAPPIER_CLI_TMUX_COMMAND_TIMEOUT_MS = originalTimeout;
+            killIsolatedTmuxServer(socketPath);
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it('unsets owned inherited keys before the real window readiness helper runs', async () => {
+        const dir = mkdtempSync(join(tmpdir(), 'happier-cli-tmux-it-'));
+        const socketPath = join(dir, 'tmux.sock');
+        const helperDir = join(dir, 'helper-bin');
+        const helperPath = join(helperDir, 'tmux');
+        const readinessObservation = join(dir, 'readiness-observation');
+        const targetObservation = join(dir, 'target-observation');
+        const inheritedKey = 'HAPPIER_TMUX_READY_UNSET_CANARY';
+        const sessionName = `happy-it-${process.pid}-${Date.now()}`;
+
+        try {
+            mkdirSync(helperDir, { recursive: true });
+            writeFileSync(helperPath, [
+                '#!/bin/sh',
+                'if [ -n "$TMUX" ]; then',
+                `  if [ "\${${inheritedKey}+x}" = x ]; then`,
+                '    printf inherited > "$HAPPIER_TMUX_READY_OBSERVATION"',
+                '  else',
+                '    printf unset > "$HAPPIER_TMUX_READY_OBSERVATION"',
+                '  fi',
+                'fi',
+                `exec ${shellSingleQuote(resolveRealTmuxPath())} "$@"`,
+                '',
+            ].join('\n'), { encoding: 'utf8', mode: 0o700 });
+            const utils = new TmuxUtilities('happy', {
+                PATH: `${helperDir}:${process.env.PATH ?? ''}`,
+                [inheritedKey]: 'ambient-native-secret',
+                HAPPIER_TMUX_READY_OBSERVATION: readinessObservation,
+            }, socketPath);
+
+            const result = await utils.spawnInTmux(
+                [
+                    '/bin/sh',
+                    '-c',
+                    `printf "%s" "\${${inheritedKey}-unset}" > "$TARGET_OBSERVATION"`,
+                ],
+                {
+                    sessionName,
+                    windowName: 'pre-ready-unset',
+                    cwd: dir,
+                    unsetEnvKeys: [inheritedKey],
+                },
+                { TARGET_OBSERVATION: targetObservation },
+            );
+
+            expect(result.success).toBe(true);
+            await waitForFile(readinessObservation, 2_000);
+            await waitForFile(targetObservation, 2_000);
+            expect(readFileSync(readinessObservation, 'utf8')).toBe('unset');
+            expect(readFileSync(targetObservation, 'utf8')).toBe('unset');
         } finally {
             killIsolatedTmuxServer(socketPath);
             rmSync(dir, { recursive: true, force: true });

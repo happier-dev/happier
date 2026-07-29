@@ -1,0 +1,2029 @@
+import { createHash } from 'node:crypto';
+import {
+    chmod,
+    mkdir,
+    open,
+    readFile,
+    stat,
+    unlink,
+    type FileHandle,
+} from 'node:fs/promises';
+import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
+
+import type {
+    ExternalSessionsSource,
+    PluginContributionIdentityV1,
+} from '@happier-dev/protocol';
+
+import {
+    ExternalSessionProviderFailureError,
+    type ExternalSessionCandidatesPage,
+    type ExternalSessionExecutionSurface,
+} from '@/session/external/providerOps';
+import { EXTERNAL_SESSIONS_INVOCATION_POLICY } from '@/session/external/agentExternalSessionsInvocation';
+import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
+import { writeBytesAtomic, writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
+
+type StrictJson =
+    | null
+    | boolean
+    | number
+    | string
+    | readonly StrictJson[]
+    | Readonly<{ [key: string]: StrictJson }>;
+
+type StrictJsonObject = Readonly<{ [key: string]: StrictJson }>;
+
+type StoredCandidate = Readonly<{
+    remoteSessionId: string;
+    updatedAtMs: number;
+    createdAtMs?: number;
+    archived?: boolean;
+    linkData?: StrictJsonObject;
+}>;
+
+type PersistedCompleteCandidate = StoredCandidate & Readonly<{
+    indexOrdinal: number;
+    contentAddressDigest: string;
+}>;
+
+type CandidateCorpusDigest = Readonly<{
+    v: 1;
+    digest: string;
+    count: number;
+}>;
+
+type CandidateIndexValidation = Readonly<{
+    scanCursor: string;
+    scanned: number;
+    total?: number;
+    corpus: CandidateCorpusDigest;
+    continuationHistory: readonly string[];
+}>;
+
+type CandidateIndexRecord = Readonly<{
+    v: 2;
+    state: 'building' | 'complete';
+    agentKey: string;
+    sourceKey: string;
+    startToken: string;
+    scanCursor: string | null;
+    scanned: number;
+    total?: number;
+    corpus: CandidateCorpusDigest;
+    validation?: CandidateIndexValidation;
+    continuationHistory?: readonly string[];
+    indexGeneration?: string;
+    candidates: readonly StoredCandidate[];
+}>;
+
+type CandidateIndexCursor = Readonly<{
+    v: 2;
+    kind: 'external_session_candidate_index';
+    agentKey: string;
+    sourceKey: string;
+    indexGeneration: string;
+    offset: number;
+    byteOffset: number;
+    pageLength: number;
+    pageDigest: string;
+}>;
+
+type CandidateIndexFileIdentity = Readonly<{
+    dev: bigint;
+    ino: bigint;
+    size: bigint;
+    mtimeNs: bigint;
+    ctimeNs: bigint;
+}>;
+
+const INDEX_CURSOR_PREFIX = 'happier_external_candidate_index_v1:';
+const MAX_INDEX_CANDIDATES = 250_000;
+const MAX_INDEX_SERIALIZED_BYTES = 64 * 1024 * 1024;
+const INDEX_SCAN_CHUNK_LIMIT = 50;
+// A fast 10k crawl fits one slice; slower leaves checkpoint often enough to keep Browse progress responsive.
+const INDEX_CONTINUATION_CALL_LIMIT = 250;
+const INDEX_CONTINUATION_WORK_BUDGET_MS = 250;
+const MAX_INDEX_CONTINUATION_STEPS = MAX_INDEX_CANDIDATES;
+const MAX_INDEX_CONTINUATION_HISTORY_SERIALIZED_BYTES = 1 + (67 * MAX_INDEX_CONTINUATION_STEPS);
+const CORPUS_DIGEST_VERSION = 1;
+const EMPTY_CORPUS_DIGEST = digest('happier-external-session-candidate-corpus-v1');
+const COMPLETE_INDEX_HEADER_READ_BYTES = 16 * 1024;
+const INDEX_PAGE_READ_CHUNK_BYTES = 64 * 1024;
+const CORRUPT_CANDIDATE_INDEX_BODY = Symbol('corrupt_candidate_index_body');
+
+function snapshotCandidateIndexFileIdentity(
+    stats: Readonly<{
+        dev: bigint;
+        ino: bigint;
+        size: bigint;
+        mtimeNs: bigint;
+        ctimeNs: bigint;
+    }>,
+): CandidateIndexFileIdentity {
+    return Object.freeze({
+        dev: stats.dev,
+        ino: stats.ino,
+        size: stats.size,
+        mtimeNs: stats.mtimeNs,
+        ctimeNs: stats.ctimeNs,
+    });
+}
+
+async function readCandidateIndexHandleIdentity(
+    handle: FileHandle,
+): Promise<CandidateIndexFileIdentity | null> {
+    const stats = await handle.stat({ bigint: true }).catch(() => null);
+    return stats ? snapshotCandidateIndexFileIdentity(stats) : null;
+}
+
+async function readCandidateIndexPathIdentity(
+    path: string,
+): Promise<CandidateIndexFileIdentity | null> {
+    const stats = await stat(path, { bigint: true }).catch(() => null);
+    return stats ? snapshotCandidateIndexFileIdentity(stats) : null;
+}
+
+function candidateIndexFileIdentitiesEqual(
+    left: CandidateIndexFileIdentity | null,
+    right: CandidateIndexFileIdentity | null,
+): boolean {
+    return left !== null
+        && right !== null
+        && left.dev === right.dev
+        && left.ino === right.ino
+        && left.size === right.size
+        && left.mtimeNs === right.mtimeNs
+        && left.ctimeNs === right.ctimeNs;
+}
+
+export function isExternalSessionCandidateIndexStateWithinByteCapacity(
+    candidatesSerializedBytes: number,
+    continuationStateSerializedBytes: number,
+): boolean {
+    return Number.isSafeInteger(candidatesSerializedBytes)
+        && candidatesSerializedBytes >= 0
+        && candidatesSerializedBytes <= MAX_INDEX_SERIALIZED_BYTES
+        && Number.isSafeInteger(continuationStateSerializedBytes)
+        && continuationStateSerializedBytes >= 0
+        && continuationStateSerializedBytes
+            <= MAX_INDEX_SERIALIZED_BYTES - candidatesSerializedBytes;
+}
+
+export function isExternalSessionCandidateIndexContinuationStepCountWithinCapacity(
+    continuationSteps: number,
+): boolean {
+    return Number.isSafeInteger(continuationSteps)
+        && continuationSteps >= 0
+        && continuationSteps <= MAX_INDEX_CONTINUATION_STEPS;
+}
+
+export function isExternalSessionCandidateIndexSourceWorkWithinCapacity(
+    scanned: unknown,
+    total?: unknown,
+): boolean {
+    return typeof scanned === 'number'
+        && Number.isSafeInteger(scanned)
+        && scanned >= 0
+        && scanned <= MAX_INDEX_CANDIDATES
+        && (
+            total === undefined
+            || (
+                typeof total === 'number'
+                &&
+                Number.isSafeInteger(total)
+                && total >= scanned
+                && total <= MAX_INDEX_CANDIDATES
+            )
+        );
+}
+
+function assertCandidateIndexStateWithinByteCapacity(
+    candidatesSerializedBytes: number,
+    continuationStateSerializedBytes: number,
+): void {
+    if (isExternalSessionCandidateIndexStateWithinByteCapacity(
+        candidatesSerializedBytes,
+        continuationStateSerializedBytes,
+    )) return;
+    throw new ExternalSessionProviderFailureError({
+        code: 'invalid_request',
+        operation: 'listCandidates',
+        message: 'External-session candidate index byte capacity exceeded',
+        retryable: false,
+    });
+}
+
+function canonicalJson(value: unknown): string {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') {
+        return JSON.stringify(value);
+    }
+    if (typeof value === 'number') {
+        if (!Number.isFinite(value)) throw new Error('Candidate-index identity contains a non-finite number');
+        return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+    if (!value || typeof value !== 'object') {
+        throw new Error('Candidate-index identity is not strict JSON');
+    }
+    const record = value as Readonly<Record<string, unknown>>;
+    return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+        .join(',')}}`;
+}
+
+function digest(value: string): string {
+    return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function resolveKeys(
+    agentIdentity: PluginContributionIdentityV1,
+    source: unknown,
+): Readonly<{ agentKey: string; sourceKey: string }> {
+    const agentKey = digest(`${agentIdentity.pluginId}\u0000${agentIdentity.localId}`);
+    const sourceKey = digest(canonicalJson(source));
+    return Object.freeze({
+        agentKey,
+        sourceKey,
+    });
+}
+
+function resolvePaths(
+    activeServerDir: string,
+    keys: Readonly<{ agentKey: string; sourceKey: string }>,
+): Readonly<{ directory: string; indexPath: string; lockPath: string }> {
+    const directory = join(
+        activeServerDir,
+        'external-sessions',
+        'candidate-indexes',
+        'v1',
+        keys.agentKey,
+        keys.sourceKey,
+    );
+    return Object.freeze({
+        directory,
+        indexPath: join(directory, 'index.json'),
+        lockPath: join(directory, 'index.lock'),
+    });
+}
+
+async function ensurePrivateDirectory(path: string): Promise<void> {
+    await mkdir(path, { recursive: true, mode: 0o700 });
+    if (process.platform !== 'win32') await chmod(path, 0o700);
+}
+
+async function withCandidateIndexLock<TResult>(
+    lockPath: string,
+    effect: () => Promise<TResult>,
+): Promise<TResult> {
+    return await withJsonOwnerFileLock({
+        lockPath,
+        timeoutMs: 15_000,
+        staleAfterMs: 30_000,
+        errorCode: 'external_session_candidate_index_lock_timeout',
+        pollIntervalMs: 10,
+    }, effect);
+}
+
+function readStrictJson(value: unknown): StrictJson | null {
+    if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (Array.isArray(value)) {
+        const items = value.map(readStrictJson);
+        return items.some((item, index) => item === null && value[index] !== null)
+            ? null
+            : Object.freeze(items as StrictJson[]);
+    }
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Readonly<Record<string, unknown>>;
+    const parsed: Record<string, StrictJson> = {};
+    for (const [key, item] of Object.entries(record)) {
+        const next = readStrictJson(item);
+        if (next === null && item !== null) return null;
+        parsed[key] = next;
+    }
+    return Object.freeze(parsed);
+}
+
+function sanitizeCandidate(value: ExternalSessionCandidatesPage['candidates'][number]): StoredCandidate | null {
+    if (
+        typeof value.remoteSessionId !== 'string'
+        || value.remoteSessionId.length === 0
+        || !Number.isSafeInteger(value.updatedAtMs)
+        || (value.createdAtMs !== undefined && !Number.isSafeInteger(value.createdAtMs))
+        || (value.archived !== undefined && typeof value.archived !== 'boolean')
+    ) return null;
+    const rawLinkData = Reflect.get(value as object, 'linkData');
+    const parsedLinkData = rawLinkData === undefined ? undefined : readStrictJson(rawLinkData);
+    if (
+        rawLinkData !== undefined
+        && (
+            !parsedLinkData
+            || typeof parsedLinkData !== 'object'
+            || Array.isArray(parsedLinkData)
+        )
+    ) return null;
+    const linkData = parsedLinkData as StrictJsonObject | undefined;
+    return Object.freeze({
+        remoteSessionId: value.remoteSessionId,
+        updatedAtMs: value.updatedAtMs,
+        ...(value.createdAtMs === undefined ? {} : { createdAtMs: value.createdAtMs }),
+        ...(value.archived === undefined ? {} : { archived: value.archived }),
+        ...(linkData === undefined ? {} : { linkData }),
+    });
+}
+
+export function resolveExternalSessionCandidateIdentityKey(candidate: Readonly<{
+    remoteSessionId: string;
+    linkData?: unknown;
+}>): string {
+    if (!candidate.remoteSessionId) {
+        throw new Error('External-session candidate identity requires a remote session id');
+    }
+    const parsedLinkData = candidate.linkData === undefined
+        ? null
+        : readStrictJson(candidate.linkData);
+    if (
+        candidate.linkData !== undefined
+        && (
+            !parsedLinkData
+            || typeof parsedLinkData !== 'object'
+            || Array.isArray(parsedLinkData)
+        )
+    ) {
+        throw new Error('External-session candidate identity requires strict JSON link data');
+    }
+    const linkData = parsedLinkData as StrictJsonObject | null;
+    return digest(canonicalJson({
+        remoteSessionId: candidate.remoteSessionId,
+        linkData,
+    }));
+}
+
+function candidateIdentity(candidate: StoredCandidate): string {
+    return resolveExternalSessionCandidateIdentityKey(candidate);
+}
+
+export async function hydrateExternalSessionCandidateThroughAgentSource(params: Readonly<{
+    source: ExternalSessionsSource;
+    candidate: Readonly<{
+        remoteSessionId: string;
+        updatedAtMs: number;
+        createdAtMs?: number;
+        archived?: boolean;
+        linkData?: StrictJsonObject;
+    }>;
+    providerOps: Pick<ExternalSessionExecutionSurface, 'listCandidates' | 'resolveLinkIdentity'>;
+    maxBytes?: number;
+    signal?: AbortSignal;
+}>): Promise<ExternalSessionCandidatesPage['candidates'][number]> {
+    if (!params.providerOps.resolveLinkIdentity || !params.providerOps.listCandidates) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'agent_unavailable',
+            operation: 'listCandidates',
+            message: 'External-session candidate hydration is unavailable',
+            retryable: true,
+        });
+    }
+    const resolved = await params.providerOps.resolveLinkIdentity({
+        source: params.source,
+        remoteSessionId: params.candidate.remoteSessionId,
+        metadata: params.candidate.linkData === undefined
+            ? {}
+            : { linkData: params.candidate.linkData },
+        ...(params.signal === undefined ? {} : { signal: params.signal }),
+    });
+    const page = await params.providerOps.listCandidates({
+        source: resolved.source,
+        limit: 1,
+        searchTerm: params.candidate.remoteSessionId,
+        searchMode: 'fast',
+        ...(params.maxBytes === undefined ? {} : { maxBytes: params.maxBytes }),
+        ...(params.signal === undefined ? {} : { signal: params.signal }),
+    });
+    const expectedIdentity = candidateIdentity(params.candidate);
+    const hydrated = page.candidates.find(
+        (candidate) => resolveExternalSessionCandidateIdentityKey(candidate) === expectedIdentity,
+    );
+    if (!hydrated) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'candidate_not_found',
+            operation: 'listCandidates',
+            message: 'External-session candidate disappeared while hydrating an indexed page',
+            retryable: true,
+        });
+    }
+    return hydrated;
+}
+
+function emptyCorpusDigest(): CandidateCorpusDigest {
+    return Object.freeze({
+        v: CORPUS_DIGEST_VERSION,
+        digest: EMPTY_CORPUS_DIGEST,
+        count: 0,
+    });
+}
+
+function extendCorpusDigest(
+    current: CandidateCorpusDigest,
+    candidates: readonly StoredCandidate[],
+): CandidateCorpusDigest {
+    let nextDigest = current.digest;
+    let nextCount = current.count;
+    for (const candidate of candidates) {
+        nextDigest = digest(canonicalJson({
+            v: CORPUS_DIGEST_VERSION,
+            previous: nextDigest,
+            candidate,
+        }));
+        nextCount += 1;
+    }
+    return Object.freeze({
+        v: CORPUS_DIGEST_VERSION,
+        digest: nextDigest,
+        count: nextCount,
+    });
+}
+
+function corpusDigestsEqual(
+    left: CandidateCorpusDigest,
+    right: CandidateCorpusDigest,
+): boolean {
+    return left.v === right.v
+        && left.digest === right.digest
+        && left.count === right.count;
+}
+
+function compareCandidateSortKey(left: string, right: string): number {
+    if (left < right) return -1;
+    if (left > right) return 1;
+    return 0;
+}
+
+function compareCandidates(left: StoredCandidate, right: StoredCandidate): number {
+    return right.updatedAtMs - left.updatedAtMs
+        || compareCandidateSortKey(left.remoteSessionId, right.remoteSessionId)
+        || compareCandidateSortKey(candidateIdentity(left), candidateIdentity(right));
+}
+
+function sortCandidates(candidates: readonly StoredCandidate[]): readonly StoredCandidate[] {
+    return Object.freeze([...candidates].sort(compareCandidates));
+}
+
+function computeIndexGeneration(
+    corpus: CandidateCorpusDigest,
+    sortedCandidates: readonly StoredCandidate[],
+): string {
+    return digest(canonicalJson({
+        v: CORPUS_DIGEST_VERSION,
+        corpus,
+        candidates: sortedCandidates,
+    }));
+}
+
+function computePersistedCandidateDigest(
+    indexGeneration: string,
+    candidateCount: number,
+    indexOrdinal: number,
+    candidate: StoredCandidate,
+): string {
+    return digest(canonicalJson({
+        v: 1,
+        indexGeneration,
+        candidateCount,
+        indexOrdinal,
+        candidate,
+    }));
+}
+
+function createCandidateAccumulator(current: readonly StoredCandidate[]): Readonly<{
+    candidates: Map<string, StoredCandidate>;
+    serializedEntryBytes: Map<string, number>;
+    serializedBytes: { value: number };
+}> {
+    const candidates = new Map<string, StoredCandidate>();
+    const serializedEntryBytes = new Map<string, number>();
+    let serializedBytes = 2;
+    for (const candidate of current) {
+        const identity = candidateIdentity(candidate);
+        const candidateBytes = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
+        if (!candidates.has(identity)) serializedBytes += candidates.size === 0 ? candidateBytes : candidateBytes + 1;
+        else serializedBytes += candidateBytes - (serializedEntryBytes.get(identity) ?? 0);
+        candidates.set(identity, candidate);
+        serializedEntryBytes.set(identity, candidateBytes);
+    }
+    return {
+        candidates,
+        serializedEntryBytes,
+        serializedBytes: { value: serializedBytes },
+    };
+}
+
+function appendCandidateChunk(
+    accumulator: ReturnType<typeof createCandidateAccumulator>,
+    next: readonly StoredCandidate[],
+): void {
+    for (const candidate of next) {
+        const identity = candidateIdentity(candidate);
+        const candidateBytes = Buffer.byteLength(JSON.stringify(candidate), 'utf8');
+        const previousBytes = accumulator.serializedEntryBytes.get(identity);
+        accumulator.serializedBytes.value += previousBytes === undefined
+            ? (accumulator.candidates.size === 0 ? candidateBytes : candidateBytes + 1)
+            : candidateBytes - previousBytes;
+        accumulator.candidates.set(identity, candidate);
+        accumulator.serializedEntryBytes.set(identity, candidateBytes);
+    }
+    if (accumulator.candidates.size > MAX_INDEX_CANDIDATES) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'invalid_request',
+            operation: 'listCandidates',
+            message: 'External-session candidate index capacity exceeded',
+            retryable: false,
+        });
+    }
+    assertCandidateIndexStateWithinByteCapacity(accumulator.serializedBytes.value, 0);
+}
+
+function isExactKeys(record: Record<string, unknown>, keys: readonly string[]): boolean {
+    const actual = Object.keys(record).sort();
+    const expected = [...keys].sort();
+    return actual.length === expected.length
+        && actual.every((key, index) => key === expected[index]);
+}
+
+function parseStoredCandidate(value: unknown): StoredCandidate | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const optionalKeys = ['createdAtMs', 'archived', 'linkData'].filter((key) => record[key] !== undefined);
+    if (!isExactKeys(record, ['remoteSessionId', 'updatedAtMs', ...optionalKeys])) return null;
+    return sanitizeCandidate(record as ExternalSessionCandidatesPage['candidates'][number]);
+}
+
+function parsePersistedCompleteCandidate(
+    value: unknown,
+    indexGeneration: string,
+    candidateCount: number,
+    expectedOrdinal: number,
+): StoredCandidate | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const optionalKeys = ['createdAtMs', 'archived', 'linkData'].filter((key) => record[key] !== undefined);
+    if (!isExactKeys(record, [
+        'remoteSessionId',
+        'updatedAtMs',
+        'indexOrdinal',
+        'contentAddressDigest',
+        ...optionalKeys,
+    ])) return null;
+    if (
+        record.indexOrdinal !== expectedOrdinal
+        || typeof record.contentAddressDigest !== 'string'
+        || !/^[a-f0-9]{64}$/.test(record.contentAddressDigest)
+    ) return null;
+    const candidate = sanitizeCandidate(record as ExternalSessionCandidatesPage['candidates'][number]);
+    if (
+        !candidate
+        || record.contentAddressDigest !== computePersistedCandidateDigest(
+            indexGeneration,
+            candidateCount,
+            expectedOrdinal,
+            candidate,
+        )
+    ) return null;
+    return candidate;
+}
+
+function parseCorpusDigest(value: unknown): CandidateCorpusDigest | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    if (
+        !isExactKeys(record, ['v', 'digest', 'count'])
+        || record.v !== CORPUS_DIGEST_VERSION
+        || typeof record.digest !== 'string'
+        || !/^[a-f0-9]{64}$/.test(record.digest)
+        || !Number.isSafeInteger(record.count)
+        || (record.count as number) < 0
+    ) return null;
+    return Object.freeze({
+        v: CORPUS_DIGEST_VERSION,
+        digest: record.digest,
+        count: record.count as number,
+    });
+}
+
+function continuationCursorIdentity(cursor: string): string {
+    return digest(cursor);
+}
+
+type ContinuationHistoryAccumulator = {
+    identities: string[];
+    identitySet: Set<string>;
+    serializedBytes: number;
+};
+
+function createContinuationHistoryAccumulator(
+    history: readonly string[],
+): ContinuationHistoryAccumulator {
+    return {
+        identities: [...history],
+        identitySet: new Set(history),
+        serializedBytes: Buffer.byteLength(JSON.stringify(history), 'utf8'),
+    };
+}
+
+function snapshotContinuationHistory(
+    accumulator: ContinuationHistoryAccumulator,
+): readonly string[] {
+    return Object.freeze([...accumulator.identities]);
+}
+
+function parseContinuationHistory(value: unknown): readonly string[] | null {
+    if (
+        !Array.isArray(value)
+        || !isExternalSessionCandidateIndexContinuationStepCountWithinCapacity(value.length)
+        || Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_INDEX_CONTINUATION_HISTORY_SERIALIZED_BYTES
+        || value.some((entry) => typeof entry !== 'string' || !/^[a-f0-9]{64}$/.test(entry))
+        || new Set(value).size !== value.length
+    ) return null;
+    return Object.freeze([...value] as string[]);
+}
+
+function parseValidation(value: unknown): CandidateIndexValidation | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    const optionalKeys = ['total'].filter((key) => record[key] !== undefined);
+    if (
+        !isExactKeys(record, ['scanCursor', 'scanned', 'corpus', 'continuationHistory', ...optionalKeys])
+        || typeof record.scanCursor !== 'string'
+        || record.scanCursor.length === 0
+        || !isExternalSessionCandidateIndexSourceWorkWithinCapacity(
+            record.scanned,
+            record.total,
+        )
+    ) return null;
+    const corpus = parseCorpusDigest(record.corpus);
+    const continuationHistory = parseContinuationHistory(record.continuationHistory);
+    if (
+        !corpus
+        || !continuationHistory
+        || continuationHistory.at(-1) !== continuationCursorIdentity(record.scanCursor)
+    ) return null;
+    return Object.freeze({
+        scanCursor: record.scanCursor,
+        scanned: record.scanned as number,
+        ...(record.total === undefined ? {} : { total: record.total as number }),
+        corpus,
+        continuationHistory,
+    });
+}
+
+function parseIndexRecord(
+    raw: string,
+    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+): CandidateIndexRecord | null {
+    try {
+        const value = JSON.parse(raw) as unknown;
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const record = value as Record<string, unknown>;
+        const optionalKeys = [
+            'total',
+            'validation',
+            'continuationHistory',
+            'indexGeneration',
+            'candidateCount',
+        ].filter(
+            (key) => record[key] !== undefined,
+        );
+        if (!isExactKeys(record, [
+            'v',
+            'state',
+            'agentKey',
+            'sourceKey',
+            'startToken',
+            'scanCursor',
+            'scanned',
+            'corpus',
+            'candidates',
+            ...optionalKeys,
+        ])) return null;
+        if (
+            record.v !== 2
+            || (record.state !== 'building' && record.state !== 'complete')
+            || record.agentKey !== expected.agentKey
+            || record.sourceKey !== expected.sourceKey
+            || typeof record.startToken !== 'string'
+            || record.startToken.length === 0
+            || (record.scanCursor !== null && typeof record.scanCursor !== 'string')
+            || !isExternalSessionCandidateIndexSourceWorkWithinCapacity(
+                record.scanned,
+                record.total,
+            )
+            || !Array.isArray(record.candidates)
+            || (record.state === 'building' && record.indexGeneration !== undefined)
+            || (record.state === 'building' && record.candidateCount !== undefined)
+            || (record.state === 'building' && record.continuationHistory === undefined)
+            || (record.state === 'complete' && record.continuationHistory !== undefined)
+            || (
+                record.state === 'complete'
+                && (
+                    typeof record.indexGeneration !== 'string'
+                    || !/^[a-f0-9]{64}$/.test(record.indexGeneration)
+                    || !Number.isSafeInteger(record.candidateCount)
+                    || (record.candidateCount as number) < 0
+                    || record.candidateCount !== record.candidates.length
+                )
+            )
+            || (record.state === 'complete' && record.scanCursor !== null)
+        ) return null;
+        const candidates = record.state === 'complete'
+            ? record.candidates.map((candidate, index) => parsePersistedCompleteCandidate(
+                candidate,
+                record.indexGeneration as string,
+                record.candidateCount as number,
+                index,
+            ))
+            : record.candidates.map(parseStoredCandidate);
+        if (candidates.some((candidate) => candidate === null)) return null;
+        const corpus = parseCorpusDigest(record.corpus);
+        if (!corpus) return null;
+        const continuationHistory = record.continuationHistory === undefined
+            ? undefined
+            : parseContinuationHistory(record.continuationHistory);
+        if (continuationHistory === null) return null;
+        if (
+            record.state === 'building'
+            && (
+                !continuationHistory
+                || (
+                    record.scanCursor === null
+                        ? continuationHistory.length !== 0
+                        : continuationHistory.at(-1) !== continuationCursorIdentity(record.scanCursor)
+                )
+            )
+        ) return null;
+        const parsedCandidates = Object.freeze(candidates as StoredCandidate[]);
+        const candidatesSerializedBytes = Buffer.byteLength(JSON.stringify(record.candidates), 'utf8');
+        if (
+            parsedCandidates.length > MAX_INDEX_CANDIDATES
+            || candidatesSerializedBytes > MAX_INDEX_SERIALIZED_BYTES
+        ) return null;
+        if (
+            record.state === 'building'
+            && !corpusDigestsEqual(
+                corpus,
+                extendCorpusDigest(emptyCorpusDigest(), parsedCandidates),
+            )
+        ) return null;
+        if (record.state === 'complete') {
+            const sortedCandidates = sortCandidates(parsedCandidates);
+            if (
+                canonicalJson(parsedCandidates) !== canonicalJson(sortedCandidates)
+                || record.indexGeneration !== computeIndexGeneration(corpus, sortedCandidates)
+            ) return null;
+        }
+        let validation: CandidateIndexValidation | undefined;
+        if (record.validation !== undefined) {
+            const parsedValidation = parseValidation(record.validation);
+            if (!parsedValidation) return null;
+            validation = parsedValidation;
+        }
+        const continuationStateBytes = (
+            continuationHistory === undefined
+                ? 0
+                : Buffer.byteLength(JSON.stringify(continuationHistory), 'utf8')
+        ) + (
+            validation === undefined
+                ? 0
+                : Buffer.byteLength(JSON.stringify(validation.continuationHistory), 'utf8')
+        );
+        if (!isExternalSessionCandidateIndexStateWithinByteCapacity(
+            candidatesSerializedBytes,
+            continuationStateBytes,
+        )) {
+            return null;
+        }
+        return Object.freeze({
+            v: 2,
+            state: record.state,
+            agentKey: expected.agentKey,
+            sourceKey: expected.sourceKey,
+            startToken: record.startToken,
+            scanCursor: record.scanCursor as string | null,
+            scanned: record.scanned as number,
+            ...(record.total === undefined ? {} : { total: record.total as number }),
+            corpus,
+            ...(validation === undefined ? {} : { validation }),
+            ...(continuationHistory === undefined ? {} : { continuationHistory }),
+            ...(record.indexGeneration === undefined ? {} : { indexGeneration: record.indexGeneration as string }),
+            candidates: parsedCandidates,
+        });
+    } catch {
+        return null;
+    }
+}
+
+async function readIndexRecord(
+    indexPath: string,
+    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+): Promise<CandidateIndexRecord | null> {
+    const raw = await readFile(indexPath, 'utf8').catch(() => null);
+    return raw === null ? null : parseIndexRecord(raw, expected);
+}
+
+type CompleteCandidateIndexHeader = Readonly<{
+    v: 2;
+    state: 'complete';
+    agentKey: string;
+    sourceKey: string;
+    startToken: string;
+    scanCursor: null;
+    scanned: number;
+    total?: number;
+    corpus: CandidateCorpusDigest;
+    indexGeneration: string;
+    candidateCount: number;
+    candidatesByteOffset: number;
+}>;
+
+type SerializedCompleteCandidateIndex = Readonly<{
+    bytes: Uint8Array;
+    candidateByteOffsets: readonly number[];
+}>;
+
+function serializeCompleteIndexRecord(
+    record: CandidateIndexRecord,
+): SerializedCompleteCandidateIndex {
+    if (record.state !== 'complete' || !record.indexGeneration) {
+        throw new Error('Candidate index must be complete before page-addressable serialization');
+    }
+    const header = {
+        v: 2,
+        state: 'complete',
+        agentKey: record.agentKey,
+        sourceKey: record.sourceKey,
+        startToken: record.startToken,
+        scanCursor: null,
+        scanned: record.scanned,
+        ...(record.total === undefined ? {} : { total: record.total }),
+        corpus: record.corpus,
+        indexGeneration: record.indexGeneration,
+        candidateCount: record.candidates.length,
+    } as const;
+    const prefix = Buffer.from(`${JSON.stringify(header).slice(0, -1)},"candidates":[`, 'utf8');
+    const suffix = Buffer.from(']}\n', 'utf8');
+    const segments: Buffer[] = [prefix];
+    const candidateByteOffsets: number[] = [];
+    let byteOffset = prefix.byteLength;
+    for (const [index, candidate] of record.candidates.entries()) {
+        if (index > 0) {
+            segments.push(Buffer.from(','));
+            byteOffset += 1;
+        }
+        candidateByteOffsets.push(byteOffset);
+        const persistedCandidate: PersistedCompleteCandidate = Object.freeze({
+            ...candidate,
+            indexOrdinal: index,
+            contentAddressDigest: computePersistedCandidateDigest(
+                record.indexGeneration,
+                record.candidates.length,
+                index,
+                candidate,
+            ),
+        });
+        const serialized = Buffer.from(JSON.stringify(persistedCandidate), 'utf8');
+        segments.push(serialized);
+        byteOffset += serialized.byteLength;
+    }
+    segments.push(suffix);
+    return Object.freeze({
+        bytes: Buffer.concat(segments),
+        candidateByteOffsets: Object.freeze(candidateByteOffsets),
+    });
+}
+
+async function writeCompleteIndexRecord(
+    indexPath: string,
+    record: CandidateIndexRecord,
+): Promise<SerializedCompleteCandidateIndex> {
+    const serialized = serializeCompleteIndexRecord(record);
+    assertCandidateIndexStateWithinByteCapacity(serialized.bytes.byteLength, 0);
+    await writeBytesAtomic(indexPath, serialized.bytes);
+    return serialized;
+}
+
+function parseCompleteIndexHeader(
+    raw: string,
+    candidatesByteOffset: number,
+    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+): CompleteCandidateIndexHeader | null {
+    try {
+        const value = JSON.parse(raw) as unknown;
+        if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+        const record = value as Record<string, unknown>;
+        const optionalKeys = ['total'].filter((key) => record[key] !== undefined);
+        if (!isExactKeys(record, [
+            'v',
+            'state',
+            'agentKey',
+            'sourceKey',
+            'startToken',
+            'scanCursor',
+            'scanned',
+            'corpus',
+            'indexGeneration',
+            'candidateCount',
+            'candidates',
+            ...optionalKeys,
+        ])) return null;
+        const corpus = parseCorpusDigest(record.corpus);
+        if (
+            record.v !== 2
+            || record.state !== 'complete'
+            || record.agentKey !== expected.agentKey
+            || record.sourceKey !== expected.sourceKey
+            || typeof record.startToken !== 'string'
+            || record.startToken.length === 0
+            || record.scanCursor !== null
+            || !isExternalSessionCandidateIndexSourceWorkWithinCapacity(record.scanned, record.total)
+            || !corpus
+            || !Array.isArray(record.candidates)
+            || record.candidates.length !== 0
+            || typeof record.indexGeneration !== 'string'
+            || !/^[a-f0-9]{64}$/.test(record.indexGeneration)
+            || !Number.isSafeInteger(record.candidateCount)
+            || (record.candidateCount as number) < 0
+            || (record.candidateCount as number) > MAX_INDEX_CANDIDATES
+            || !Number.isSafeInteger(candidatesByteOffset)
+            || candidatesByteOffset <= 0
+        ) return null;
+        return Object.freeze({
+            v: 2,
+            state: 'complete',
+            agentKey: expected.agentKey,
+            sourceKey: expected.sourceKey,
+            startToken: record.startToken,
+            scanCursor: null,
+            scanned: record.scanned as number,
+            ...(record.total === undefined ? {} : { total: record.total as number }),
+            corpus,
+            indexGeneration: record.indexGeneration,
+            candidateCount: record.candidateCount as number,
+            candidatesByteOffset,
+        });
+    } catch {
+        return null;
+    }
+}
+
+async function readCompleteIndexHeaderFromHandle(
+    handle: FileHandle,
+    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+): Promise<CompleteCandidateIndexHeader | null> {
+    const buffer = Buffer.alloc(COMPLETE_INDEX_HEADER_READ_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, 0);
+    if (bytesRead === 0) return null;
+    const prefix = buffer.subarray(0, bytesRead).toString('utf8');
+    const marker = '"candidates":[';
+    const markerOffset = prefix.indexOf(marker);
+    if (markerOffset < 0) return null;
+    const candidatesByteOffset = Buffer.byteLength(
+        prefix.slice(0, markerOffset + marker.length),
+        'utf8',
+    );
+    const headerJson = `${prefix.slice(0, markerOffset)}"candidates":[]}`;
+    return parseCompleteIndexHeader(headerJson, candidatesByteOffset, expected);
+}
+
+async function readCompleteIndexHeader(
+    indexPath: string,
+    expected: Readonly<{ agentKey: string; sourceKey: string }>,
+): Promise<CompleteCandidateIndexHeader | null> {
+    const handle = await open(indexPath, 'r').catch(() => null);
+    if (!handle) return null;
+    try {
+        return await readCompleteIndexHeaderFromHandle(handle, expected);
+    } finally {
+        await handle.close();
+    }
+}
+
+type StoredCandidatePageRead = Readonly<{
+    candidates: readonly StoredCandidate[];
+    candidateByteOffsets: readonly number[];
+    nextByteOffset: number | null;
+}>;
+
+function isJsonWhitespaceByte(value: number): boolean {
+    return value === 0x20 || value === 0x09 || value === 0x0a || value === 0x0d;
+}
+
+async function readStoredCandidatePage(
+    handle: FileHandle,
+    byteOffset: number,
+    offset: number,
+    limit: number,
+    header: CompleteCandidateIndexHeader,
+): Promise<StoredCandidatePageRead | null> {
+    if (
+        !Number.isSafeInteger(byteOffset)
+        || byteOffset < 0
+        || !Number.isSafeInteger(offset)
+        || offset < 0
+        || offset > header.candidateCount
+    ) return null;
+    let bufferedBytes = 0;
+    let filePosition = byteOffset;
+    let candidateStartByteOffset = -1;
+    let candidateChunks: Buffer[] = [];
+    let candidateBytes = 0;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    const candidates: StoredCandidate[] = [];
+    const candidateByteOffsets: number[] = [];
+    const candidateIdentities = new Set<string>();
+
+    while (bufferedBytes <= MAX_INDEX_SERIALIZED_BYTES) {
+        const chunk = Buffer.alloc(INDEX_PAGE_READ_CHUNK_BYTES);
+        const chunkFilePosition = filePosition;
+        const { bytesRead } = await handle.read(
+            chunk,
+            0,
+            chunk.byteLength,
+            filePosition,
+        );
+        if (bytesRead === 0) return null;
+        bufferedBytes += bytesRead;
+        filePosition += bytesRead;
+        let candidateChunkStart = candidateStartByteOffset < 0 ? -1 : 0;
+
+        for (let scanOffset = 0; scanOffset < bytesRead; scanOffset += 1) {
+            const value = chunk[scanOffset]!;
+            if (candidateStartByteOffset < 0) {
+                if (isJsonWhitespaceByte(value) || value === 0x2c) continue;
+                if (value === 0x5d) {
+                    if (offset + candidates.length !== header.candidateCount) return null;
+                    return Object.freeze({
+                        candidates: Object.freeze(candidates),
+                        candidateByteOffsets: Object.freeze(candidateByteOffsets),
+                        nextByteOffset: null,
+                    });
+                }
+                if (value !== 0x7b) return null;
+                if (candidates.length === limit) {
+                    if (offset + candidates.length >= header.candidateCount) return null;
+                    return Object.freeze({
+                        candidates: Object.freeze(candidates),
+                        candidateByteOffsets: Object.freeze(candidateByteOffsets),
+                        nextByteOffset: chunkFilePosition + scanOffset,
+                    });
+                }
+                candidateStartByteOffset = chunkFilePosition + scanOffset;
+                candidateByteOffsets.push(candidateStartByteOffset);
+                candidateChunkStart = scanOffset;
+                depth = 1;
+                inString = false;
+                escaped = false;
+                continue;
+            }
+            if (inString) {
+                if (escaped) {
+                    escaped = false;
+                } else if (value === 0x5c) {
+                    escaped = true;
+                } else if (value === 0x22) {
+                    inString = false;
+                }
+                continue;
+            }
+            if (value === 0x22) {
+                inString = true;
+            } else if (value === 0x7b || value === 0x5b) {
+                depth += 1;
+            } else if (value === 0x7d || value === 0x5d) {
+                depth -= 1;
+                if (depth < 0) return null;
+                if (depth === 0) {
+                    if (candidateChunkStart < 0) return null;
+                    const finalChunk = chunk.subarray(candidateChunkStart, scanOffset + 1);
+                    candidateChunks.push(finalChunk);
+                    candidateBytes += finalChunk.byteLength;
+                    const rawCandidate = (
+                        candidateChunks.length === 1
+                            ? candidateChunks[0]!
+                            : Buffer.concat(candidateChunks, candidateBytes)
+                    ).toString('utf8');
+                    let parsedValue: unknown;
+                    try {
+                        parsedValue = JSON.parse(rawCandidate) as unknown;
+                    } catch {
+                        return null;
+                    }
+                    const expectedOrdinal = offset + candidates.length;
+                    if (expectedOrdinal >= header.candidateCount) return null;
+                    const candidate = parsePersistedCompleteCandidate(
+                        parsedValue,
+                        header.indexGeneration,
+                        header.candidateCount,
+                        expectedOrdinal,
+                    );
+                    if (!candidate) return null;
+                    const previous = candidates.at(-1);
+                    const identity = candidateIdentity(candidate);
+                    if (
+                        candidateIdentities.has(identity)
+                        || (previous && compareCandidates(previous, candidate) >= 0)
+                    ) return null;
+                    candidateIdentities.add(identity);
+                    candidates.push(candidate);
+                    candidateStartByteOffset = -1;
+                    candidateChunks = [];
+                    candidateBytes = 0;
+                    candidateChunkStart = -1;
+                }
+            }
+        }
+        if (candidateStartByteOffset >= 0) {
+            if (candidateChunkStart < 0) return null;
+            const pendingChunk = chunk.subarray(candidateChunkStart, bytesRead);
+            candidateChunks.push(pendingChunk);
+            candidateBytes += pendingChunk.byteLength;
+        }
+    }
+    return null;
+}
+
+function computeCandidatePageDigest(
+    candidates: readonly StoredCandidate[],
+    offset: number,
+    byteOffset: number,
+): string {
+    return digest(canonicalJson({
+        offset,
+        byteOffset,
+        candidates,
+    }));
+}
+
+function buildValidationToken(page: ExternalSessionCandidatesPage): string {
+    const candidates = page.candidates.map(sanitizeCandidate);
+    if (candidates.some((candidate) => candidate === null)) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'invalid_request',
+            operation: 'listCandidates',
+            message: 'External-session candidate-index chunk is invalid',
+            retryable: false,
+        });
+    }
+    return digest(canonicalJson({
+        candidates,
+        nextCursor: page.nextCursor,
+        preparation: page.preparation,
+    }));
+}
+
+function readPreparedChunk(page: ExternalSessionCandidatesPage): Readonly<{
+    candidates: readonly StoredCandidate[];
+    corpus: CandidateCorpusDigest;
+    scanned: number;
+    total?: number;
+    nextCursor: string | null;
+}> {
+    if (!page.preparation) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'agent_unavailable',
+            operation: 'listCandidates',
+            message: 'External-session candidate index build changed mode',
+            retryable: true,
+        });
+    }
+    if (!isExternalSessionCandidateIndexSourceWorkWithinCapacity(
+        page.preparation.scanned,
+        page.preparation.total,
+    )) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'invalid_request',
+            operation: 'listCandidates',
+            message: 'External-session candidate source scan capacity exceeded',
+            retryable: false,
+        });
+    }
+    const candidates = page.candidates.map(sanitizeCandidate);
+    if (candidates.some((candidate) => candidate === null)) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'invalid_request',
+            operation: 'listCandidates',
+            message: 'External-session candidate-index chunk is invalid',
+            retryable: false,
+        });
+    }
+    return Object.freeze({
+        candidates: Object.freeze(candidates as StoredCandidate[]),
+        corpus: extendCorpusDigest(emptyCorpusDigest(), candidates as StoredCandidate[]),
+        scanned: page.preparation.scanned,
+        ...(page.preparation.total === undefined ? {} : { total: page.preparation.total }),
+        nextCursor: page.nextCursor,
+    });
+}
+
+function createBuildingRecord(
+    keys: Readonly<{ agentKey: string; sourceKey: string }>,
+    initialPage: ExternalSessionCandidatesPage,
+): CandidateIndexRecord {
+    const chunk = readPreparedChunk(initialPage);
+    const continuationHistory = Object.freeze(
+        chunk.nextCursor ? [continuationCursorIdentity(chunk.nextCursor)] : [],
+    );
+    assertCandidateIndexStateWithinByteCapacity(
+        Buffer.byteLength(JSON.stringify(chunk.candidates), 'utf8'),
+        Buffer.byteLength(JSON.stringify(continuationHistory), 'utf8'),
+    );
+    return Object.freeze({
+        v: 2,
+        state: 'building',
+        agentKey: keys.agentKey,
+        sourceKey: keys.sourceKey,
+        startToken: buildValidationToken(initialPage),
+        scanCursor: chunk.nextCursor,
+        scanned: chunk.scanned,
+        ...(chunk.total === undefined ? {} : { total: chunk.total }),
+        corpus: chunk.corpus,
+        continuationHistory,
+        candidates: chunk.candidates,
+    });
+}
+
+function sourceInvalid(message: string): ExternalSessionProviderFailureError {
+    return new ExternalSessionProviderFailureError({
+        code: 'source_invalid',
+        operation: 'listCandidates',
+        message,
+        retryable: true,
+    });
+}
+
+function addPreparationProgress(
+    progressOffset: number,
+    progress: number,
+): number {
+    const combined = progressOffset + progress;
+    if (!Number.isSafeInteger(combined)) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'invalid_request',
+            operation: 'listCandidates',
+            message: 'External-session candidate preparation progress capacity exceeded',
+            retryable: false,
+        });
+    }
+    return combined;
+}
+
+function preparationResponse(
+    page: ExternalSessionCandidatesPage,
+    progressOffset = 0,
+    totalOffset = progressOffset,
+): ExternalSessionCandidatesPage {
+    if (!page.preparation) {
+        throw new Error('Candidate-index preparation response requires preparation state');
+    }
+    const preparation = progressOffset === 0 && totalOffset === 0
+        ? page.preparation
+        : Object.freeze({
+            ...page.preparation,
+            scanned: addPreparationProgress(progressOffset, page.preparation.scanned),
+            ...(page.preparation.total === undefined
+                ? {}
+                : { total: addPreparationProgress(totalOffset, page.preparation.total) }),
+        });
+    return Object.freeze({
+        candidates: Object.freeze([]),
+        nextCursor: null,
+        preparation,
+    });
+}
+
+function publishCandidatePage(
+    page: ExternalSessionCandidatesPage,
+    maxItems: number,
+    maxBytes: number,
+): ExternalSessionCandidatesPage {
+    const published = Object.freeze({
+        ...page,
+        candidates: Object.freeze(page.candidates.map((candidate) => Object.freeze({
+            ...candidate,
+            candidateKey: resolveExternalSessionCandidateIdentityKey(candidate),
+        }))),
+    });
+    if (
+        published.candidates.length > maxItems
+        || new TextEncoder().encode(JSON.stringify(published)).byteLength > maxBytes
+    ) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'agent_error',
+            operation: 'listCandidates',
+            message: 'External-session candidate result exceeded its item or serialized-byte budget',
+            retryable: false,
+        });
+    }
+    return published;
+}
+
+function encodeIndexCursor(cursor: CandidateIndexCursor): string {
+    return `${INDEX_CURSOR_PREFIX}${Buffer.from(JSON.stringify(cursor), 'utf8').toString('base64url')}`;
+}
+
+function decodeIndexCursor(value: string): CandidateIndexCursor | null {
+    if (!value.startsWith(INDEX_CURSOR_PREFIX)) return null;
+    try {
+        const decoded = JSON.parse(
+            Buffer.from(value.slice(INDEX_CURSOR_PREFIX.length), 'base64url').toString('utf8'),
+        ) as unknown;
+        if (!decoded || typeof decoded !== 'object' || Array.isArray(decoded)) return null;
+        const record = decoded as Record<string, unknown>;
+        if (
+            !isExactKeys(record, [
+                'v',
+                'kind',
+                'agentKey',
+                'sourceKey',
+                'indexGeneration',
+                'offset',
+                'byteOffset',
+                'pageLength',
+                'pageDigest',
+            ])
+            || record.v !== 2
+            || record.kind !== 'external_session_candidate_index'
+            || typeof record.agentKey !== 'string'
+            || typeof record.sourceKey !== 'string'
+            || typeof record.indexGeneration !== 'string'
+            || !/^[a-f0-9]{64}$/.test(record.indexGeneration)
+            || !Number.isSafeInteger(record.offset)
+            || (record.offset as number) < 0
+            || !Number.isSafeInteger(record.byteOffset)
+            || (record.byteOffset as number) < 0
+            || !Number.isSafeInteger(record.pageLength)
+            || (record.pageLength as number) <= 0
+            || (record.pageLength as number) > EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates.maxItems
+            || typeof record.pageDigest !== 'string'
+            || !/^[a-f0-9]{64}$/.test(record.pageDigest)
+        ) return null;
+        return record as CandidateIndexCursor;
+    } catch {
+        return null;
+    }
+}
+
+async function hydrateAndPublishStoredCandidatePage(params: Readonly<{
+    storedCandidates: readonly StoredCandidate[];
+    nextCursor: string | null;
+    limit: number,
+    maxBytes: number,
+    hydrateCandidate: ((candidate: StoredCandidate) => Promise<ExternalSessionCandidatesPage['candidates'][number]>) | undefined,
+    invalidate: () => Promise<void>,
+    publish: (
+        page: ExternalSessionCandidatesPage,
+    ) => Promise<ExternalSessionCandidatesPage>,
+}>): Promise<ExternalSessionCandidatesPage> {
+    const candidates: ExternalSessionCandidatesPage['candidates'][number][] = [];
+    for (const storedCandidate of params.storedCandidates) {
+        if (!params.hydrateCandidate) {
+            candidates.push(storedCandidate);
+            continue;
+        }
+        let hydrated: ExternalSessionCandidatesPage['candidates'][number];
+        try {
+            hydrated = await params.hydrateCandidate(storedCandidate);
+        } catch (error) {
+            const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
+            if (code === 'candidate_not_found' || code === 'source_invalid') {
+                await params.invalidate();
+                throw sourceInvalid(
+                    'External-session candidate source changed while hydrating an indexed page',
+                );
+            }
+            throw error;
+        }
+        if (
+            resolveExternalSessionCandidateIdentityKey(hydrated)
+            !== candidateIdentity(storedCandidate)
+        ) {
+            await params.invalidate();
+            throw sourceInvalid(
+                'External-session candidate identity changed while hydrating an indexed page',
+            );
+        }
+        const hydratedWithoutLinkData = { ...hydrated };
+        delete hydratedWithoutLinkData.linkData;
+        candidates.push(Object.freeze({
+            ...hydratedWithoutLinkData,
+            remoteSessionId: storedCandidate.remoteSessionId,
+            ...(storedCandidate.linkData === undefined
+                ? {}
+                : { linkData: storedCandidate.linkData }),
+        }));
+    }
+    return await params.publish(Object.freeze({
+        candidates: Object.freeze(candidates),
+        nextCursor: params.nextCursor,
+    }));
+}
+
+async function serveIndexPage(
+    record: CandidateIndexRecord,
+    offset: number,
+    limit: number,
+    maxBytes: number,
+    hydrateCandidate: ((candidate: StoredCandidate) => Promise<ExternalSessionCandidatesPage['candidates'][number]>) | undefined,
+    invalidate: () => Promise<void>,
+    publish: (
+        page: ExternalSessionCandidatesPage,
+    ) => Promise<ExternalSessionCandidatesPage> = async (page) => publishCandidatePage(
+        page,
+        limit,
+        maxBytes,
+    ),
+): Promise<ExternalSessionCandidatesPage> {
+    if (record.state !== 'complete' || !record.indexGeneration) {
+        throw new Error('Candidate index is not complete');
+    }
+    const storedCandidates = record.candidates.slice(offset, offset + limit);
+    const nextOffset = offset + storedCandidates.length;
+    let nextCursor: string | null = null;
+    if (nextOffset < record.candidates.length) {
+        const serialized = serializeCompleteIndexRecord(record);
+        const byteOffset = serialized.candidateByteOffsets[nextOffset];
+        if (byteOffset === undefined) throw new Error('Candidate index page address is missing');
+        nextCursor = encodeIndexCursor({
+            v: 2,
+            kind: 'external_session_candidate_index',
+            agentKey: record.agentKey,
+            sourceKey: record.sourceKey,
+            indexGeneration: record.indexGeneration,
+            offset: nextOffset,
+            byteOffset,
+            pageLength: Math.min(limit, record.candidates.length - nextOffset),
+            pageDigest: computeCandidatePageDigest(
+                record.candidates.slice(nextOffset, nextOffset + limit),
+                nextOffset,
+                byteOffset,
+            ),
+        });
+    }
+    return await hydrateAndPublishStoredCandidatePage({
+        storedCandidates,
+        nextCursor,
+        limit,
+        maxBytes,
+        hydrateCandidate,
+        invalidate,
+        publish,
+    });
+}
+
+function invalidCursor(): never {
+    throw new ExternalSessionProviderFailureError({
+        code: 'invalid_request',
+        operation: 'listCandidates',
+        message: 'External-session candidate index cursor is stale or invalid',
+        retryable: false,
+    });
+}
+
+export async function executeExternalSessionCandidateQuery(params: Readonly<{
+    activeServerDir: string;
+    agentIdentity: PluginContributionIdentityV1;
+    source: unknown;
+    cursor?: string;
+    limit: number;
+    maxBytes?: number;
+    searchTerm?: string;
+    searchMode?: 'fast' | 'full';
+    listCandidates(request: Readonly<{
+        cursor?: string;
+        limit: number;
+        searchTerm?: string;
+        searchMode?: 'fast' | 'full';
+    }>): Promise<ExternalSessionCandidatesPage>;
+    hydrateCandidate?(
+        candidate: Readonly<{
+            remoteSessionId: string;
+            updatedAtMs: number;
+            createdAtMs?: number;
+            archived?: boolean;
+            linkData?: StrictJsonObject;
+        }>,
+    ): Promise<ExternalSessionCandidatesPage['candidates'][number]>;
+}>): Promise<ExternalSessionCandidatesPage> {
+    const candidatePolicy = EXTERNAL_SESSIONS_INVOCATION_POLICY.listCandidates;
+    const limit = Math.min(
+        candidatePolicy.maxItems,
+        Math.max(1, Math.trunc(params.limit)),
+    );
+    const maxBytes = params.maxBytes === undefined
+        ? candidatePolicy.maxSerializedBytes
+        : Number.isSafeInteger(params.maxBytes) && params.maxBytes > 0
+            ? Math.min(params.maxBytes, candidatePolicy.maxSerializedBytes)
+            : 0;
+    if (maxBytes === 0) {
+        throw new ExternalSessionProviderFailureError({
+            code: 'invalid_request',
+            operation: 'listCandidates',
+            message: 'External-session candidate result byte budget is invalid',
+            retryable: false,
+        });
+    }
+    const keys = resolveKeys(params.agentIdentity, params.source);
+    const paths = resolvePaths(params.activeServerDir, keys);
+    const indexCursor = params.cursor ? decodeIndexCursor(params.cursor) : null;
+    if (params.cursor && params.cursor.startsWith(INDEX_CURSOR_PREFIX) && !indexCursor) invalidCursor();
+
+    if (params.searchTerm || (params.cursor && !indexCursor)) {
+        return publishCandidatePage(await params.listCandidates({
+            ...(params.cursor ? { cursor: params.cursor } : {}),
+            limit,
+            ...(params.searchTerm ? { searchTerm: params.searchTerm } : {}),
+            ...(params.searchMode ? { searchMode: params.searchMode } : {}),
+        }), limit, maxBytes);
+    }
+
+    if (indexCursor) {
+        const handle = await open(paths.indexPath, 'r').catch(() => null);
+        if (!handle) invalidCursor();
+        let header: CompleteCandidateIndexHeader | null = null;
+        let storedPage: StoredCandidatePageRead | null = null;
+        let nextCursor: string | null = null;
+        let bodyCorrupt = false;
+        let inspectedFileIdentity: CandidateIndexFileIdentity | null = null;
+        try {
+            const parsedHeader = await readCompleteIndexHeaderFromHandle(handle, keys);
+            if (
+                !parsedHeader
+                || parsedHeader.indexGeneration !== indexCursor.indexGeneration
+                || parsedHeader.agentKey !== indexCursor.agentKey
+                || parsedHeader.sourceKey !== indexCursor.sourceKey
+                || indexCursor.offset >= MAX_INDEX_CANDIDATES
+            ) invalidCursor();
+            header = parsedHeader;
+            const cursorPage = await readStoredCandidatePage(
+                handle,
+                indexCursor.byteOffset,
+                indexCursor.offset,
+                indexCursor.pageLength,
+                header,
+            );
+            if (
+                !cursorPage
+                || cursorPage.candidates.length !== indexCursor.pageLength
+                || computeCandidatePageDigest(
+                    cursorPage.candidates,
+                    indexCursor.offset,
+                    indexCursor.byteOffset,
+                ) !== indexCursor.pageDigest
+            ) throw CORRUPT_CANDIDATE_INDEX_BODY;
+            const selectedCount = Math.min(limit, cursorPage.candidates.length);
+            const selectedCandidates = Object.freeze(cursorPage.candidates.slice(0, selectedCount));
+            const nextByteOffset = selectedCount < cursorPage.candidates.length
+                ? cursorPage.candidateByteOffsets[selectedCount] ?? null
+                : cursorPage.nextByteOffset;
+            storedPage = Object.freeze({
+                candidates: selectedCandidates,
+                candidateByteOffsets: Object.freeze(
+                    cursorPage.candidateByteOffsets.slice(0, selectedCount),
+                ),
+                nextByteOffset,
+            });
+            if (nextByteOffset !== null) {
+                const lookahead = await readStoredCandidatePage(
+                    handle,
+                    nextByteOffset,
+                    indexCursor.offset + selectedCount,
+                    limit,
+                    header,
+                );
+                const previousCandidate = selectedCandidates.at(-1);
+                const nextCandidate = lookahead?.candidates[0];
+                if (
+                    !lookahead
+                    || !previousCandidate
+                    || !nextCandidate
+                    || compareCandidates(previousCandidate, nextCandidate) >= 0
+                    || candidateIdentity(previousCandidate) === candidateIdentity(nextCandidate)
+                ) throw CORRUPT_CANDIDATE_INDEX_BODY;
+                nextCursor = encodeIndexCursor({
+                    v: 2,
+                    kind: 'external_session_candidate_index',
+                    agentKey: header.agentKey,
+                    sourceKey: header.sourceKey,
+                    indexGeneration: header.indexGeneration,
+                    offset: indexCursor.offset + selectedCount,
+                    byteOffset: nextByteOffset,
+                    pageLength: lookahead.candidates.length,
+                    pageDigest: computeCandidatePageDigest(
+                        lookahead.candidates,
+                        indexCursor.offset + selectedCount,
+                        nextByteOffset,
+                    ),
+                });
+            } else if (indexCursor.offset + selectedCount !== header.candidateCount) {
+                throw CORRUPT_CANDIDATE_INDEX_BODY;
+            }
+        } catch (error) {
+            if (error !== CORRUPT_CANDIDATE_INDEX_BODY) throw error;
+            bodyCorrupt = true;
+            inspectedFileIdentity = await readCandidateIndexHandleIdentity(handle);
+        } finally {
+            await handle.close();
+        }
+        if (!header) invalidCursor();
+        const isCurrentGeneration = (current: CompleteCandidateIndexHeader | null): boolean => (
+            current?.indexGeneration === header.indexGeneration
+            && current.agentKey === header.agentKey
+            && current.sourceKey === header.sourceKey
+        );
+        if (bodyCorrupt) {
+            await withCandidateIndexLock(paths.lockPath, async () => {
+                if (!isCurrentGeneration(await readCompleteIndexHeader(paths.indexPath, keys))) return;
+                if (!candidateIndexFileIdentitiesEqual(
+                    inspectedFileIdentity,
+                    await readCandidateIndexPathIdentity(paths.indexPath),
+                )) return;
+                await unlink(paths.indexPath).catch(() => undefined);
+            });
+            invalidCursor();
+        }
+        if (!storedPage) invalidCursor();
+        return await hydrateAndPublishStoredCandidatePage({
+            storedCandidates: storedPage.candidates,
+            nextCursor,
+            limit,
+            maxBytes,
+            hydrateCandidate: params.hydrateCandidate,
+            invalidate: async () => {
+                await withCandidateIndexLock(paths.lockPath, async () => {
+                    if (!isCurrentGeneration(await readCompleteIndexHeader(paths.indexPath, keys))) return;
+                    await unlink(paths.indexPath).catch(() => undefined);
+                });
+            },
+            publish: async (page) => await withCandidateIndexLock(paths.lockPath, async () => {
+                if (!isCurrentGeneration(await readCompleteIndexHeader(paths.indexPath, keys))) {
+                    invalidCursor();
+                }
+                return publishCandidatePage(page, limit, maxBytes);
+            }),
+        });
+    }
+
+    const initialPage = await params.listCandidates({
+        limit: Math.min(INDEX_SCAN_CHUNK_LIMIT, limit),
+    });
+    if (!initialPage.preparation) {
+        return publishCandidatePage(initialPage, limit, maxBytes);
+    }
+
+    await ensurePrivateDirectory(paths.directory);
+    return await withCandidateIndexLock(paths.lockPath, async () => {
+        const freshBuilding = createBuildingRecord(keys, initialPage);
+        const continuationWorkStartedAt = performance.now();
+        let continuationCalls = 0;
+        const canContinueWorkSlice = (): boolean => (
+            continuationCalls < INDEX_CONTINUATION_CALL_LIMIT
+            && performance.now() - continuationWorkStartedAt < INDEX_CONTINUATION_WORK_BUDGET_MS
+        );
+        const rebuildAndThrow = async (message: string): Promise<never> => {
+            await writeJsonAtomic(paths.indexPath, freshBuilding);
+            throw sourceInvalid(message);
+        };
+        const requireContinuationProgress = async (params: Readonly<{
+            phase: 'build' | 'validation';
+            consumedCursor: string;
+            previousScanned: number;
+            chunk: Readonly<{
+                scanned: number;
+                nextCursor: string | null;
+            }>;
+        }>): Promise<void> => {
+            if (params.chunk.scanned <= params.previousScanned) {
+                return await rebuildAndThrow(
+                    `External-session candidate ${params.phase} progress did not advance`,
+                );
+            }
+            if (params.chunk.nextCursor === params.consumedCursor) {
+                return await rebuildAndThrow(
+                    `External-session candidate ${params.phase} continuation cursor cycled`,
+                );
+            }
+        };
+        const admitContinuationCursor = async (
+            history: ContinuationHistoryAccumulator,
+            nextCursor: string | null,
+            phase: 'build' | 'validation',
+            candidatesSerializedBytes: number,
+        ): Promise<void> => {
+            if (!nextCursor) return;
+            const cursorIdentity = continuationCursorIdentity(nextCursor);
+            if (history.identitySet.has(cursorIdentity)) {
+                return await rebuildAndThrow(
+                    `External-session candidate ${phase} continuation cursor repeated`,
+                );
+            }
+            if (!isExternalSessionCandidateIndexContinuationStepCountWithinCapacity(
+                history.identities.length + 1,
+            )) {
+                return await rebuildAndThrow(
+                    `External-session candidate ${phase} continuation step capacity exceeded`,
+                );
+            }
+            const additionalSerializedBytes = history.identities.length === 0 ? 66 : 67;
+            assertCandidateIndexStateWithinByteCapacity(
+                candidatesSerializedBytes,
+                history.serializedBytes + additionalSerializedBytes,
+            );
+            history.identities.push(cursorIdentity);
+            history.identitySet.add(cursorIdentity);
+            history.serializedBytes += additionalSerializedBytes;
+        };
+        const readContinuation = async (
+            cursor: string,
+            phase: 'build' | 'validation',
+        ): Promise<ExternalSessionCandidatesPage> => {
+            continuationCalls += 1;
+            try {
+                return await params.listCandidates({
+                    cursor,
+                    limit: INDEX_SCAN_CHUNK_LIMIT,
+                });
+            } catch (error) {
+                if (
+                    error instanceof ExternalSessionProviderFailureError
+                    && error.code === 'source_invalid'
+                ) {
+                    return await rebuildAndThrow(
+                        `External-session candidate index source changed during ${phase}`,
+                    );
+                }
+                throw error;
+            }
+        };
+        const finishOrPersistValidation = async (
+            record: CandidateIndexRecord,
+            page: ExternalSessionCandidatesPage,
+            corpus: CandidateCorpusDigest,
+        ): Promise<ExternalSessionCandidatesPage> => {
+            const chunk = readPreparedChunk(page);
+            if (chunk.nextCursor) {
+                const continuationHistory = createContinuationHistoryAccumulator(
+                    record.validation?.continuationHistory ?? [],
+                );
+                await admitContinuationCursor(
+                    continuationHistory,
+                    chunk.nextCursor,
+                    'validation',
+                    Buffer.byteLength(JSON.stringify(record.candidates), 'utf8'),
+                );
+                const validating: CandidateIndexRecord = Object.freeze({
+                    ...record,
+                    ...(record.state === 'building'
+                        ? { continuationHistory: Object.freeze([]) }
+                        : {}),
+                    validation: Object.freeze({
+                        scanCursor: chunk.nextCursor,
+                        scanned: chunk.scanned,
+                        ...(chunk.total === undefined ? {} : { total: chunk.total }),
+                        corpus,
+                        continuationHistory: snapshotContinuationHistory(continuationHistory),
+                    }),
+                });
+                await writeJsonAtomic(paths.indexPath, validating);
+                return preparationResponse(page, record.state === 'building' ? record.scanned : 0);
+            }
+            if (!corpusDigestsEqual(record.corpus, corpus)) {
+                return await rebuildAndThrow(
+                    'External-session candidate corpus changed during validation',
+                );
+            }
+            const sorted = record.state === 'complete'
+                ? record.candidates
+                : sortCandidates(record.candidates);
+            const indexGeneration = record.state === 'complete'
+                ? record.indexGeneration!
+                : computeIndexGeneration(record.corpus, sorted);
+            const complete: CandidateIndexRecord = Object.freeze({
+                v: 2,
+                state: 'complete',
+                agentKey: record.agentKey,
+                sourceKey: record.sourceKey,
+                startToken: record.startToken,
+                scanCursor: null,
+                scanned: record.scanned,
+                ...(record.total === undefined ? {} : { total: record.total }),
+                corpus: record.corpus,
+                indexGeneration,
+                candidates: sorted,
+            });
+            await writeCompleteIndexRecord(paths.indexPath, complete);
+            return await serveIndexPage(
+                complete,
+                0,
+                limit,
+                maxBytes,
+                params.hydrateCandidate,
+                async () => {
+                    await unlink(paths.indexPath).catch(() => undefined);
+                },
+            );
+        };
+        const continueValidation = async (
+            record: CandidateIndexRecord,
+            initialValidation: CandidateIndexValidation,
+        ): Promise<ExternalSessionCandidatesPage> => {
+            let scanCursor = initialValidation.scanCursor;
+            let scanned = initialValidation.scanned;
+            let total = initialValidation.total;
+            let corpus = initialValidation.corpus;
+            const continuationHistory = createContinuationHistoryAccumulator(
+                initialValidation.continuationHistory,
+            );
+            const candidatesSerializedBytes = Buffer.byteLength(
+                JSON.stringify(record.candidates),
+                'utf8',
+            );
+            while (true) {
+                const page = await readContinuation(scanCursor, 'validation');
+                const chunk = readPreparedChunk(page);
+                await requireContinuationProgress({
+                    phase: 'validation',
+                    consumedCursor: scanCursor,
+                    previousScanned: scanned,
+                    chunk,
+                });
+                corpus = extendCorpusDigest(corpus, chunk.candidates);
+                if (!chunk.nextCursor) {
+                    return await finishOrPersistValidation(record, page, corpus);
+                }
+                await admitContinuationCursor(
+                    continuationHistory,
+                    chunk.nextCursor,
+                    'validation',
+                    candidatesSerializedBytes,
+                );
+                scanCursor = chunk.nextCursor;
+                scanned = chunk.scanned;
+                total = chunk.total;
+                if (canContinueWorkSlice()) continue;
+                const validation: CandidateIndexValidation = Object.freeze({
+                    scanCursor,
+                    scanned,
+                    ...(total === undefined ? {} : { total }),
+                    corpus,
+                    continuationHistory: snapshotContinuationHistory(continuationHistory),
+                });
+                const validating: CandidateIndexRecord = Object.freeze({
+                    ...record,
+                    validation,
+                });
+                await writeJsonAtomic(paths.indexPath, validating);
+                return preparationResponse(page, record.state === 'building' ? record.scanned : 0);
+            }
+        };
+        const beginValidation = async (
+            record: CandidateIndexRecord,
+            allowContinuation: boolean,
+        ): Promise<ExternalSessionCandidatesPage> => {
+            if (record.startToken !== buildValidationToken(initialPage)) {
+                return await rebuildAndThrow(
+                    'External-session candidate corpus first chunk changed',
+                );
+            }
+            const initialChunk = readPreparedChunk(initialPage);
+            if (!initialChunk.nextCursor) {
+                return await finishOrPersistValidation(
+                    record,
+                    initialPage,
+                    initialChunk.corpus,
+                );
+            }
+            const initialContinuationHistory = Object.freeze([
+                continuationCursorIdentity(initialChunk.nextCursor),
+            ]);
+            assertCandidateIndexStateWithinByteCapacity(
+                Buffer.byteLength(JSON.stringify(record.candidates), 'utf8'),
+                Buffer.byteLength(JSON.stringify(initialContinuationHistory), 'utf8'),
+            );
+            if (!allowContinuation) {
+                const validating: CandidateIndexRecord = Object.freeze({
+                    ...record,
+                    ...(record.state === 'building'
+                        ? { continuationHistory: Object.freeze([]) }
+                        : {}),
+                    validation: Object.freeze({
+                        scanCursor: initialChunk.nextCursor,
+                        scanned: initialChunk.scanned,
+                        ...(initialChunk.total === undefined ? {} : { total: initialChunk.total }),
+                        corpus: initialChunk.corpus,
+                        continuationHistory: initialContinuationHistory,
+                    }),
+                });
+                await writeJsonAtomic(paths.indexPath, validating);
+                return preparationResponse(
+                    initialPage,
+                    record.state === 'building' ? record.scanned : 0,
+                );
+            }
+            return await continueValidation(
+                record,
+                Object.freeze({
+                    scanCursor: initialChunk.nextCursor,
+                    scanned: initialChunk.scanned,
+                    ...(initialChunk.total === undefined ? {} : { total: initialChunk.total }),
+                    corpus: initialChunk.corpus,
+                    continuationHistory: initialContinuationHistory,
+                }),
+            );
+        };
+
+        const existing = await readIndexRecord(paths.indexPath, keys);
+        if (!existing) {
+            await writeJsonAtomic(paths.indexPath, freshBuilding);
+            return preparationResponse(
+                initialPage,
+                0,
+                initialPage.preparation?.total ?? 0,
+            );
+        }
+
+        if (existing.startToken !== buildValidationToken(initialPage)) {
+            return await rebuildAndThrow(
+                'External-session candidate corpus first chunk changed',
+            );
+        }
+
+        if (existing.validation) {
+            return await continueValidation(
+                existing,
+                existing.validation,
+            );
+        }
+
+        if (existing.state === 'building' && existing.scanCursor) {
+            let scanCursor: string | null = existing.scanCursor;
+            let scanned = existing.scanned;
+            let total = existing.total;
+            let corpus = existing.corpus;
+            const continuationHistory = createContinuationHistoryAccumulator(
+                existing.continuationHistory!,
+            );
+            const candidateAccumulator = createCandidateAccumulator(existing.candidates);
+            const snapshotBuilding = (): CandidateIndexRecord => Object.freeze({
+                v: 2,
+                state: 'building',
+                agentKey: existing.agentKey,
+                sourceKey: existing.sourceKey,
+                startToken: existing.startToken,
+                scanCursor,
+                scanned,
+                ...(total === undefined ? {} : { total }),
+                corpus,
+                continuationHistory: snapshotContinuationHistory(continuationHistory),
+                candidates: Object.freeze([...candidateAccumulator.candidates.values()]),
+            });
+            while (scanCursor) {
+                const consumedCursor = scanCursor;
+                const page = await readContinuation(consumedCursor, 'build');
+                const chunk = readPreparedChunk(page);
+                await requireContinuationProgress({
+                    phase: 'build',
+                    consumedCursor,
+                    previousScanned: scanned,
+                    chunk,
+                });
+                scanCursor = chunk.nextCursor;
+                scanned = chunk.scanned;
+                total = chunk.total;
+                corpus = extendCorpusDigest(corpus, chunk.candidates);
+                appendCandidateChunk(candidateAccumulator, chunk.candidates);
+                await admitContinuationCursor(
+                    continuationHistory,
+                    chunk.nextCursor,
+                    'build',
+                    candidateAccumulator.serializedBytes.value,
+                );
+                if (!chunk.nextCursor) {
+                    return await beginValidation(snapshotBuilding(), false);
+                }
+                if (canContinueWorkSlice()) continue;
+                const building = snapshotBuilding();
+                await writeJsonAtomic(paths.indexPath, building);
+                return preparationResponse(
+                    page,
+                    0,
+                    page.preparation?.total ?? 0,
+                );
+            }
+        }
+
+        return await beginValidation(existing, true);
+    });
+}

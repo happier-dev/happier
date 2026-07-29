@@ -1,21 +1,33 @@
 import {
   ReviewStartInputSchema,
+  SessionConnectedServiceAuthApplyGenerationRequestV1Schema,
+  SessionConnectedServiceAuthApplyGenerationResponseV1Schema,
   SessionConnectedServiceAuthInvalidateTransportsRequestV1Schema,
+  SessionConnectedServiceAuthReadRuntimeIdentityRequestV1Schema,
+  SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema,
   SessionGoalClearRequestV1Schema,
   SessionGoalGetRequestV1Schema,
   SessionGoalSetRequestV1Schema,
+  SessionPendingQueueWakeCapabilityRequestV1Schema,
+  SessionPendingQueueWakeRequestV1Schema,
   SessionUsageLimitCheckNowRequestV1Schema,
-  SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
+  SessionUsageLimitConsumeResetCreditRequestV1Schema,
   SessionSkillCatalogListRequestV1Schema,
+  SessionTerminalComposerClearRequestV1Schema,
+  SessionTerminalComposerClearResultV1Schema,
   SessionUsageLimitWaitResumeCancelRequestV1Schema,
   SessionUsageLimitWaitResumeEnableRequestV1Schema,
   type SessionUsageLimitRecoveryResumePromptModeV1,
-  type SessionUsageLimitRecoveryV1,
-  SessionUsageLimitRecoveryV1Schema,
   SessionVendorPluginCatalogListRequestV1Schema,
   SessionWorkStateGetRequestV1Schema,
   SessionWorkStateV1Schema,
+  buildUnsupportedSessionTerminalComposerClearResult,
+  SessionPendingInputInterruptAndRunRequestV1Schema,
+  SessionPendingInputInterruptAndRunResultV1Schema,
+  buildUnsupportedSessionPendingInputInterruptAndRunResult,
   readDisplayableSessionWorkStateV1,
+  type SessionConnectedServiceAuthApplyGenerationRequestV1,
+  type SessionConnectedServiceAuthReadRuntimeIdentityRequestV1,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -30,8 +42,6 @@ import {
   buildUsageLimitRecoveryOperationSuccess,
   normalizeUsageLimitRecoveryOperationResult,
 } from '@/session/usageLimitRecoveryControls/sessionUsageLimitRecoveryOperationResult';
-import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
-import { enqueueDurableRegisteredSessionStateFieldWrite } from '@/agent/runtime/state/registeredFieldDurability';
 
 export type SessionRuntimeControls = {
   refreshGoal?: () => unknown;
@@ -47,6 +57,13 @@ export type SessionRuntimeControls = {
   listSkills?: (options?: Readonly<{ cwd?: string }>) => Promise<unknown>;
   startInlineReview?: (input: unknown) => Promise<unknown> | unknown;
   invalidateConnectedServiceAuthTransports?: () => Promise<unknown> | unknown;
+  applyConnectedServiceAuthGeneration?: (
+    request: Readonly<SessionConnectedServiceAuthApplyGenerationRequestV1>,
+  ) => Promise<unknown> | unknown;
+  readConnectedServiceRuntimeIdentity?: (
+    request: Readonly<SessionConnectedServiceAuthReadRuntimeIdentityRequestV1>,
+  ) => Promise<unknown> | unknown;
+  wakePendingMaterialization?: () => void;
   enableUsageLimitWaitResume?: (request: Readonly<{
     sessionId: string;
     issueFingerprint?: string;
@@ -55,12 +72,29 @@ export type SessionRuntimeControls = {
   }>) => Promise<unknown> | unknown;
   cancelUsageLimitWaitResume?: (request: Readonly<{
     sessionId: string;
-    issueFingerprint?: string | null;
+    issueFingerprint: string;
+    armedAtMs: number;
+    runtimeAuthRecoveryAttemptId?: string;
   }>) => Promise<unknown> | unknown;
   checkUsageLimitRecoveryNow?: (request: Readonly<{
     sessionId: string;
-    provider?: string;
+    agentId?: string;
     resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
+  }>) => Promise<unknown> | unknown;
+  consumeUsageLimitResetCredit?: (request: Readonly<{
+    sessionId: string;
+    agentId?: string;
+    issueFingerprint?: string;
+    resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
+  }>) => Promise<unknown> | unknown;
+  clearTerminalComposer?: (request: Readonly<{
+    sessionId: string;
+    expectedStateAtMs?: number;
+  }>) => Promise<unknown> | unknown;
+  interruptPendingInputAndRun?: (request: Readonly<{
+    sessionId: string;
+    localId: string;
+    expectedStateAtMs?: number;
   }>) => Promise<unknown> | unknown;
   handleUserMessage?: (
     request: Readonly<{
@@ -81,8 +115,20 @@ function unsupported(method: string): Readonly<{ ok: false; errorCode: string; e
   };
 }
 
+function pendingWakeUnavailable() {
+  return { ok: false as const, error: 'pending_materialization_wake_unavailable' as const, errorCode: 'runtime_upgrade_required' as const };
+}
+
 function invalidInput(): Readonly<{ ok: false; errorCode: string; error: string }> {
   return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+}
+
+function malformedRuntimeControlResult(): Readonly<{ ok: false; errorCode: string; error: string }> {
+  return {
+    ok: false,
+    errorCode: 'malformed_runtime_control_result',
+    error: 'malformed_runtime_control_result',
+  };
 }
 
 function readWorkState(getSessionMetadata?: (() => Metadata | null) | null): unknown {
@@ -140,46 +186,31 @@ function readUsageLimitWaitResumeEnableRequest(raw: unknown): Readonly<{
 function readUsageLimitWaitResumeCancelRequest(raw: unknown): Readonly<{
   sessionId: string;
   issueFingerprint?: string | null;
+  armedAtMs?: number;
+  runtimeAuthRecoveryAttemptId?: string;
 }> | null {
   const parsed = SessionUsageLimitWaitResumeCancelRequestV1Schema.safeParse(raw);
   if (!parsed.success) return null;
   return {
     sessionId: parsed.data.sessionId,
     ...(parsed.data.issueFingerprint !== undefined ? { issueFingerprint: parsed.data.issueFingerprint } : {}),
+    ...(typeof parsed.data.armedAtMs === 'number' ? { armedAtMs: parsed.data.armedAtMs } : {}),
+    ...(typeof parsed.data.runtimeAuthRecoveryAttemptId === 'string'
+      ? { runtimeAuthRecoveryAttemptId: parsed.data.runtimeAuthRecoveryAttemptId }
+      : {}),
   };
-}
-
-function buildUsageLimitRecoveryIntent(input: Readonly<{
-  issueFingerprint?: string;
-  nowMs: number;
-  resumePromptMode?: SessionUsageLimitRecoveryResumePromptModeV1;
-}>): SessionUsageLimitRecoveryV1 {
-  return SessionUsageLimitRecoveryV1Schema.parse({
-    v: 1,
-    status: 'waiting',
-    resumePromptMode: input.resumePromptMode ?? 'standard',
-    issueFingerprint: input.issueFingerprint ?? `usage-limit:${input.nowMs}`,
-    armedAtMs: input.nowMs,
-    resetAtMs: null,
-    nextCheckAtMs: null,
-    attemptCount: 0,
-    maxAttempts: 0,
-    lastProbeError: null,
-    selectedAuth: { kind: 'native' },
-  });
-}
-
-function readCurrentUsageLimitRecoveryIntent(metadata: Metadata): unknown {
-  return (metadata as Record<string, unknown>)[SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY];
 }
 
 export function registerSessionControlHandlers(
   rpc: RpcHandlerRegistrar,
   opts: Readonly<{
     getSessionMetadata?: (() => Metadata | null) | null;
-    enqueueRegisteredSessionStateFieldMutation?: ((mutation: RegisteredSessionStateFieldMutationV1) => Promise<void> | void) | null;
     sessionRuntimeControls?: SessionRuntimeControls | null;
     isUsageLimitRecoveryEnabled?: (() => Promise<boolean> | boolean) | null;
+    notifyUsageLimitWaitResumeCancelled?: ((request: Readonly<{
+      sessionId: string;
+      attemptId: string;
+    }>) => Promise<unknown> | unknown) | null;
   }>,
 ): void {
   const isUsageLimitRecoveryEnabled = async (): Promise<boolean> => {
@@ -256,6 +287,96 @@ export function registerSessionControlHandlers(
     return { ok: true };
   });
 
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION, async (raw: unknown) => {
+    const parsed = SessionConnectedServiceAuthApplyGenerationRequestV1Schema.safeParse(raw);
+    if (!parsed.success) return invalidInput();
+    if (typeof opts.sessionRuntimeControls?.applyConnectedServiceAuthGeneration !== 'function') {
+      return unsupported(SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_APPLY_GENERATION);
+    }
+    const result = SessionConnectedServiceAuthApplyGenerationResponseV1Schema.safeParse(
+      await opts.sessionRuntimeControls.applyConnectedServiceAuthGeneration(parsed.data),
+    );
+    return result.success ? result.data : malformedRuntimeControlResult();
+  });
+
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY, async (raw: unknown) => {
+    const parsed = SessionConnectedServiceAuthReadRuntimeIdentityRequestV1Schema.safeParse(raw);
+    if (!parsed.success) return invalidInput();
+    if (typeof opts.sessionRuntimeControls?.readConnectedServiceRuntimeIdentity !== 'function') {
+      return unsupported(SESSION_RPC_METHODS.SESSION_CONNECTED_SERVICE_AUTH_READ_RUNTIME_IDENTITY);
+    }
+    const result = SessionConnectedServiceAuthReadRuntimeIdentityResponseV1Schema.safeParse(
+      await opts.sessionRuntimeControls.readConnectedServiceRuntimeIdentity(parsed.data),
+    );
+    return result.success ? result.data : malformedRuntimeControlResult();
+  });
+
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_MATERIALIZE_NEXT, async (raw: unknown) => {
+    void raw;
+    return { ok: true as const, didMaterialize: false as const, result: { type: 'deferred' as const, reason: 'runtime_upgrade_required' as const } };
+  });
+
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_CAPABILITY_GET_V1, async (raw: unknown) => {
+    if (!SessionPendingQueueWakeCapabilityRequestV1Schema.safeParse(raw).success) return pendingWakeUnavailable();
+    if (typeof opts.sessionRuntimeControls?.wakePendingMaterialization !== 'function') return pendingWakeUnavailable();
+    return { ok: true as const, capability: 'pending_queue_wake_v1' as const, protocolVersion: 1 as const, method: SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1 };
+  });
+
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_PENDING_QUEUE_WAKE_V1, async (raw: unknown) => {
+    const parsed = SessionPendingQueueWakeRequestV1Schema.safeParse(raw);
+    if (!parsed.success) return pendingWakeUnavailable();
+    if (typeof opts.sessionRuntimeControls?.wakePendingMaterialization !== 'function') return pendingWakeUnavailable();
+    opts.sessionRuntimeControls.wakePendingMaterialization();
+    return { ok: true as const, result: 'wake_published' as const };
+  });
+
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR, async (raw: unknown) => {
+    const parsed = SessionTerminalComposerClearRequestV1Schema.safeParse(raw);
+    if (!parsed.success) return invalidInput();
+    if (typeof opts.sessionRuntimeControls?.clearTerminalComposer !== 'function') {
+      return buildUnsupportedSessionTerminalComposerClearResult(
+        parsed.data.sessionId,
+        SESSION_RPC_METHODS.SESSION_TERMINAL_COMPOSER_CLEAR,
+      );
+    }
+    const result = SessionTerminalComposerClearResultV1Schema.safeParse(
+      await opts.sessionRuntimeControls.clearTerminalComposer({
+        sessionId: parsed.data.sessionId,
+        ...(parsed.data.expectedStateAtMs !== undefined
+          ? { expectedStateAtMs: parsed.data.expectedStateAtMs }
+          : {}),
+      }),
+    );
+    if (result.success) return result.data;
+    return {
+      ...malformedRuntimeControlResult(),
+      status: 'clear_failed',
+      sessionId: parsed.data.sessionId,
+    };
+  });
+
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN, async (raw: unknown) => {
+    const parsed = SessionPendingInputInterruptAndRunRequestV1Schema.safeParse(raw);
+    if (!parsed.success) return invalidInput();
+    if (typeof opts.sessionRuntimeControls?.interruptPendingInputAndRun !== 'function') {
+      return buildUnsupportedSessionPendingInputInterruptAndRunResult(
+        parsed.data.sessionId,
+        parsed.data.localId,
+        SESSION_RPC_METHODS.SESSION_PENDING_INPUT_INTERRUPT_AND_RUN,
+      );
+    }
+    const result = SessionPendingInputInterruptAndRunResultV1Schema.safeParse(
+      await opts.sessionRuntimeControls.interruptPendingInputAndRun(parsed.data),
+    );
+    if (result.success) return result.data;
+    return {
+      ...malformedRuntimeControlResult(),
+      status: 'interrupt_failed',
+      sessionId: parsed.data.sessionId,
+      localId: parsed.data.localId,
+    };
+  });
+
   rpc.registerHandler(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE, async (raw: unknown) => {
     const request = readUsageLimitWaitResumeEnableRequest(raw);
     if (!request) {
@@ -269,29 +390,17 @@ export function registerSessionControlHandlers(
         sessionId: request.sessionId,
       });
     }
+    if (typeof request.issueFingerprint !== 'string') {
+      return buildUsageLimitRecoveryOperationError({
+        errorCode: 'usage_limit_recovery_attempt_identity_required',
+        status: 'unsupported',
+      });
+    }
     if (typeof opts.sessionRuntimeControls?.enableUsageLimitWaitResume !== 'function') {
-      if (typeof opts.enqueueRegisteredSessionStateFieldMutation !== 'function') {
-        return normalizeUsageLimitRecoveryOperationResult(
-          unsupported(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE),
-          { sessionId: request.sessionId },
-        );
-      }
-      const intent = buildUsageLimitRecoveryIntent({
-        issueFingerprint: request.issueFingerprint,
-        nowMs: Date.now(),
-        resumePromptMode: request.resumePromptMode,
-      });
-      await enqueueDurableRegisteredSessionStateFieldWrite({
-        sessionId: request.sessionId,
-        fieldId: 'runtime.usageLimitRecovery',
-        value: intent,
-        source: 'daemon',
-        enqueue: opts.enqueueRegisteredSessionStateFieldMutation,
-      });
-      return buildUsageLimitRecoveryOperationSuccess({
-        sessionId: request.sessionId,
-        status: 'waiting',
-      });
+      return normalizeUsageLimitRecoveryOperationResult(
+        unsupported(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_ENABLE),
+        { sessionId: request.sessionId },
+      );
     }
     return normalizeUsageLimitRecoveryOperationResult(
       await opts.sessionRuntimeControls.enableUsageLimitWaitResume(request),
@@ -312,40 +421,50 @@ export function registerSessionControlHandlers(
         sessionId: request.sessionId,
       });
     }
-    if (typeof opts.sessionRuntimeControls?.cancelUsageLimitWaitResume !== 'function') {
-      if (typeof opts.enqueueRegisteredSessionStateFieldMutation !== 'function') {
-        return normalizeUsageLimitRecoveryOperationResult(
-          unsupported(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL),
-          { sessionId: request.sessionId },
-        );
-      }
-      const metadata = opts.getSessionMetadata?.() ?? null;
-      const parsed = metadata
-        ? SessionUsageLimitRecoveryV1Schema.safeParse(readCurrentUsageLimitRecoveryIntent(metadata))
-        : { success: false } as const;
-      const current = parsed.success
-        ? parsed.data
-        : buildUsageLimitRecoveryIntent({ nowMs: Date.now() });
-      await enqueueDurableRegisteredSessionStateFieldWrite({
-        sessionId: request.sessionId,
-        fieldId: 'runtime.usageLimitRecovery',
-        value: {
-          ...current,
-          status: 'cancelled',
-          ...(request.issueFingerprint !== undefined ? { issueFingerprint: request.issueFingerprint ?? current.issueFingerprint } : {}),
-        },
-        source: 'daemon',
-        enqueue: opts.enqueueRegisteredSessionStateFieldMutation,
-      });
-      return buildUsageLimitRecoveryOperationSuccess({
-        sessionId: request.sessionId,
-        status: 'cancelled',
+    if (typeof request.issueFingerprint !== 'string' || typeof request.armedAtMs !== 'number') {
+      return buildUsageLimitRecoveryOperationError({
+        errorCode: 'usage_limit_recovery_attempt_identity_required',
+        status: 'unsupported',
       });
     }
-    return normalizeUsageLimitRecoveryOperationResult(
-      await opts.sessionRuntimeControls.cancelUsageLimitWaitResume(request),
+    const exactRequest = {
+      sessionId: request.sessionId,
+      issueFingerprint: request.issueFingerprint,
+      armedAtMs: request.armedAtMs,
+      ...(request.runtimeAuthRecoveryAttemptId
+        ? { runtimeAuthRecoveryAttemptId: request.runtimeAuthRecoveryAttemptId }
+        : {}),
+    };
+    const propagateCancelToDaemon = async <T>(result: T): Promise<T> => {
+      if (
+        !result
+        || typeof result !== 'object'
+        || (result as { ok?: unknown }).ok !== true
+        || typeof opts.notifyUsageLimitWaitResumeCancelled !== 'function'
+        || typeof exactRequest.runtimeAuthRecoveryAttemptId !== 'string'
+      ) {
+        return result;
+      }
+      try {
+        await opts.notifyUsageLimitWaitResumeCancelled({
+          sessionId: exactRequest.sessionId,
+          attemptId: exactRequest.runtimeAuthRecoveryAttemptId,
+        });
+      } catch {
+        // Best-effort propagation must not turn a successful user cancel into a failure.
+      }
+      return result;
+    };
+    if (typeof opts.sessionRuntimeControls?.cancelUsageLimitWaitResume !== 'function') {
+      return normalizeUsageLimitRecoveryOperationResult(
+        unsupported(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_WAIT_RESUME_CANCEL),
+        { sessionId: request.sessionId },
+      );
+    }
+    return await propagateCancelToDaemon(normalizeUsageLimitRecoveryOperationResult(
+      await opts.sessionRuntimeControls.cancelUsageLimitWaitResume(exactRequest),
       { sessionId: request.sessionId },
-    );
+    ));
   });
 
   rpc.registerHandler(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CHECK_NOW, async (raw: unknown) => {
@@ -369,7 +488,34 @@ export function registerSessionControlHandlers(
     }
     return normalizeUsageLimitRecoveryOperationResult(await opts.sessionRuntimeControls.checkUsageLimitRecoveryNow({
       sessionId: parsed.data.sessionId,
-      ...(parsed.data.provider ? { provider: parsed.data.provider } : {}),
+      ...(parsed.data.agentId ? { agentId: parsed.data.agentId } : {}),
+      ...(parsed.data.resumePromptMode ? { resumePromptMode: parsed.data.resumePromptMode } : {}),
+    }), { sessionId: parsed.data.sessionId });
+  });
+
+  rpc.registerHandler(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT, async (raw: unknown) => {
+    const parsed = SessionUsageLimitConsumeResetCreditRequestV1Schema.safeParse(raw);
+    if (!parsed.success) {
+      return buildUsageLimitRecoveryOperationError({
+        errorCode: 'invalid_parameters',
+        status: 'malformed_response',
+      });
+    }
+    if (!await isUsageLimitRecoveryEnabled()) {
+      return normalizeUsageLimitRecoveryOperationResult(usageLimitRecoveryDisabledResult(), {
+        sessionId: parsed.data.sessionId,
+      });
+    }
+    if (typeof opts.sessionRuntimeControls?.consumeUsageLimitResetCredit !== 'function') {
+      return normalizeUsageLimitRecoveryOperationResult(
+        unsupported(SESSION_RPC_METHODS.SESSION_USAGE_LIMIT_CONSUME_RESET_CREDIT),
+        { sessionId: parsed.data.sessionId },
+      );
+    }
+    return normalizeUsageLimitRecoveryOperationResult(await opts.sessionRuntimeControls.consumeUsageLimitResetCredit({
+      sessionId: parsed.data.sessionId,
+      ...(parsed.data.agentId ? { agentId: parsed.data.agentId } : {}),
+      ...(parsed.data.issueFingerprint !== undefined ? { issueFingerprint: parsed.data.issueFingerprint } : {}),
       ...(parsed.data.resumePromptMode ? { resumePromptMode: parsed.data.resumePromptMode } : {}),
     }), { sessionId: parsed.data.sessionId });
   });

@@ -1,4 +1,5 @@
 import { reloadConfiguration, configuration } from '@/configuration';
+import { deriveServerIdFromUrl } from '@/server/serverId';
 import { getServerProfile, upsertServerProfileByUrl, useServerProfile } from '@/server/serverProfiles';
 
 function takeFlagValue(args: string[], name: string): { value: string | null; rest: string[] } {
@@ -162,7 +163,12 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
     throw new Error('Cannot use --webapp-url without --server-url');
   }
 
-  const applyEphemeralSelectionEnv = (params: Readonly<{ serverUrl: string; webappUrl: string; localServerUrl?: string | null }>) => {
+  const applyEphemeralSelectionEnv = (params: Readonly<{
+    serverUrl: string;
+    webappUrl: string;
+    activeServerId: string;
+    localServerUrl?: string | null;
+  }>) => {
     const canonical = normalizeUrlOrThrow(params.serverUrl, '--server-url');
     const local = params.localServerUrl ? normalizeUrlOrThrow(params.localServerUrl, '--local-server-url') : '';
 
@@ -175,6 +181,7 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
       delete process.env.HAPPIER_LOCAL_SERVER_URL;
       process.env.HAPPIER_SERVER_URL = canonical;
     }
+    process.env.HAPPIER_ACTIVE_SERVER_ID = params.activeServerId;
     process.env.HAPPIER_WEBAPP_URL = normalizeUrlOrThrow(params.webappUrl, '--webapp-url');
   };
 
@@ -183,6 +190,7 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
     applyEphemeralSelectionEnv({
       serverUrl: profile.serverUrl,
       webappUrl: profile.webappUrl,
+      activeServerId: profile.id,
       localServerUrl: (profile as any).localServerUrl ?? null,
     });
     reloadConfiguration();
@@ -197,7 +205,13 @@ export async function applyEphemeralServerSelectionFromPrefixArgs(argsRaw: strin
       // Avoid noisy config warnings by defaulting to the server origin.
       normalizedWebappUrl = new URL(normalizeUrlOrThrow(serverUrl, '--server-url')).origin;
     }
-    applyEphemeralSelectionEnv({ serverUrl, webappUrl: normalizedWebappUrl, localServerUrl });
+    const normalizedServerUrl = normalizeUrlOrThrow(serverUrl, '--server-url');
+    applyEphemeralSelectionEnv({
+      serverUrl: normalizedServerUrl,
+      webappUrl: normalizedWebappUrl,
+      activeServerId: deriveServerIdFromUrl(normalizedServerUrl),
+      localServerUrl,
+    });
     reloadConfiguration();
     return args.slice(i);
   }
@@ -270,6 +284,7 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
         delete process.env.HAPPIER_LOCAL_SERVER_URL;
         process.env.HAPPIER_SERVER_URL = profile.serverUrl;
       }
+      process.env.HAPPIER_ACTIVE_SERVER_ID = profile.id;
       process.env.HAPPIER_WEBAPP_URL = profile.webappUrl;
     } else {
       await useServerProfile(server.value);
@@ -292,6 +307,7 @@ export async function applyServerSelectionFromArgs(argsRaw: string[]): Promise<s
         delete process.env.HAPPIER_LOCAL_SERVER_URL;
         process.env.HAPPIER_SERVER_URL = normalizedServerUrl;
       }
+      process.env.HAPPIER_ACTIVE_SERVER_ID = deriveServerIdFromUrl(normalizedServerUrl);
       process.env.HAPPIER_WEBAPP_URL = normalizedWebappUrl ?? deriveDefaultWebappUrl(normalizedServerUrl);
       reloadConfiguration();
       return args;

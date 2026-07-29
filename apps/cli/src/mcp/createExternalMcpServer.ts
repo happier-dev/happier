@@ -10,6 +10,8 @@ import { isActionEnabledByEnv, readActionsSettingsFromEnv } from '@/settings/act
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
+import { createDaemonPluginActionExecutor } from '@/session/actions/createDaemonPluginActionExecutor';
+import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 
 function normalizeId(raw: unknown): string {
   return String(raw ?? '').trim();
@@ -24,13 +26,14 @@ function readSessionIdFromToolArgs(args: unknown): string | null {
 export function createExternalMcpServer(params: Readonly<{
   credentials: Credentials;
   defaultSessionId?: string | null;
+  pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
 }>): Readonly<{ mcp: McpServer; toolNames: string[] }> {
   const toolSurface = 'mcp' as const;
 
   const ctx = resolveSessionEncryptionContextFromCredentials(params.credentials);
   let defaultSessionId: string | null = normalizeId(params.defaultSessionId) || null;
 
-  const { executor } = createCliActionExecutorHarness(
+  const { executor: baseExecutor } = createCliActionExecutorHarness(
     {
       token: params.credentials.token,
       credentials: params.credentials,
@@ -51,6 +54,7 @@ export function createExternalMcpServer(params: Readonly<{
       },
     },
   );
+  const executor = createDaemonPluginActionExecutor({ base: baseExecutor });
 
   const mcp = new McpServer({
     name: 'Happier MCP',
@@ -71,12 +75,14 @@ export function createExternalMcpServer(params: Readonly<{
     },
     surface: toolSurface,
     actionsSettings,
+    pluginToolCatalog: params.pluginToolCatalog,
   });
 
   const { toolNames } = registerHappierMcpBuiltInTools(mcp as any, {
     sessionId: 'cli-global',
     surface: toolSurface,
     actionsSettings,
+    pluginToolCatalog: params.pluginToolCatalog,
     resolveSessionId: (toolArgs) => readSessionIdFromToolArgs(toolArgs) ?? defaultSessionId ?? 'cli-global',
     deps: {
       changeTitle: createChangeTitleToolHandler({

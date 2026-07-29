@@ -20,6 +20,10 @@ import {
   reportSessionToDaemonIfRunning,
   sendTerminalFallbackMessageIfNeeded,
 } from '@/agent/runtime/startupSideEffects'
+import {
+  clearPendingFirstInputFromEnv,
+  readPendingFirstInputFromEnv,
+} from '@/daemon/spawn/pendingFirstInput'
 
 export interface InitializeBackendRunSessionOptions {
   api: Pick<ApiClient, 'getOrCreateSession' | 'sessionSyncClient'>
@@ -27,6 +31,7 @@ export interface InitializeBackendRunSessionOptions {
   metadata: Metadata
   state: AgentState
   existingSessionId?: string
+  sessionAttachFilePath?: string
   uiLogPrefix: string
   startupMetadataOverrides: {
     permissionModeOverride: PermissionModeOverride
@@ -42,10 +47,13 @@ export interface InitializeBackendRunSessionOptions {
   offlineNotify?: (message: string) => void
   allowOfflineStub?: boolean
   onSessionSwap?: (newSession: ApiSessionClient) => void | Promise<void>
+  configureSessionClient?: (session: ApiSessionClient) => void
   onAttachMetadataSnapshotError?: (error: unknown) => void
   onAttachMetadataSnapshotMissing?: (error: unknown | null) => void
   onAttachMetadataSnapshotReady?: (snapshot: unknown, session: ApiSessionClient) => void | Promise<void>
   startupSideEffectsOrder?: 'report-first' | 'persist-first'
+  deferPendingFirstInputCommitUntilRuntimeReady?: boolean
+  signal?: AbortSignal
 }
 
 export interface InitializeBackendRunSessionResult {
@@ -53,6 +61,7 @@ export interface InitializeBackendRunSessionResult {
   reconnectionHandle: { cancel: () => void } | null
   reportedSessionId: string | null
   attachedToExistingSession: boolean
+  commitPendingFirstInputAfterRuntimeReady?: (() => Promise<void>) | null
 }
 
 type DaemonReportMode = 'await' | 'background'
@@ -76,12 +85,25 @@ function normalizeExistingSessionId(existingSessionId: string | undefined): stri
   return existingSessionId.trim()
 }
 
-async function waitForAttachMetadataWakeup(session: Pick<ApiSessionClient, 'waitForMetadataUpdate'>): Promise<void> {
+function throwIfSignalAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return
+  throw signal.reason ?? new Error('Backend run session initialization cancelled')
+}
+
+async function waitForAttachMetadataWakeup(
+  session: Pick<ApiSessionClient, 'waitForMetadataUpdate'>,
+  signal?: AbortSignal,
+): Promise<void> {
+  throwIfSignalAborted(signal)
   const controller = new AbortController()
   const timer = setTimeout(() => {
     controller.abort()
   }, HANDOFF_ATTACH_METADATA_PUBLISH_WAIT_MS)
   timer.unref?.()
+  const onAbort = () => {
+    controller.abort(signal?.reason)
+  }
+  signal?.addEventListener('abort', onAbort, { once: true })
 
   try {
     await session.waitForMetadataUpdate(controller.signal)
@@ -89,7 +111,9 @@ async function waitForAttachMetadataWakeup(session: Pick<ApiSessionClient, 'wait
     // Best effort only; a subsequent retry may still succeed if the connection races in.
   } finally {
     clearTimeout(timer)
+    signal?.removeEventListener('abort', onAbort)
   }
+  throwIfSignalAborted(signal)
 }
 
 async function applyAttachStartupMetadataUpdateWithRetry(opts: {
@@ -97,12 +121,15 @@ async function applyAttachStartupMetadataUpdateWithRetry(opts: {
   runtimeMetadata: Metadata
   attachMetadataIdentityPolicy: SessionAttachMetadataIdentityPolicy | null
   applyUpdate: () => Promise<void>
+  signal?: AbortSignal
 }): Promise<void> {
   const shouldVerifyRuntimeIdentity =
     opts.attachMetadataIdentityPolicy === 'replace_with_runtime_identity'
 
   for (let attempt = 1; attempt <= HANDOFF_ATTACH_METADATA_PUBLISH_MAX_ATTEMPTS; attempt += 1) {
+    throwIfSignalAborted(opts.signal)
     await opts.applyUpdate()
+    throwIfSignalAborted(opts.signal)
 
     if (!shouldVerifyRuntimeIdentity) {
       return
@@ -116,7 +143,9 @@ async function applyAttachStartupMetadataUpdateWithRetry(opts: {
       return
     }
 
-    await waitForAttachMetadataWakeup(opts.session)
+    throwIfSignalAborted(opts.signal)
+    await waitForAttachMetadataWakeup(opts.session, opts.signal)
+    throwIfSignalAborted(opts.signal)
   }
 }
 
@@ -132,7 +161,39 @@ export async function initializeBackendRunSession(
   const persistTerminalAttachmentInfoIfNeededFn = deps.persistTerminalAttachmentInfoIfNeededFn ?? persistTerminalAttachmentInfoIfNeeded
   const sendTerminalFallbackMessageIfNeededFn = deps.sendTerminalFallbackMessageIfNeededFn ?? sendTerminalFallbackMessageIfNeeded
   const nowFn = deps.nowFn ?? (() => Date.now())
+  const throwIfAborted = (): void => throwIfSignalAborted(opts.signal)
+  throwIfAborted()
   const startupSideEffectsOrder = opts.startupSideEffectsOrder ?? 'report-first'
+  const pendingFirstInput = readPendingFirstInputFromEnv()
+  let pendingFirstInputCommitted = pendingFirstInput === null
+  let commitPendingFirstInputAfterRuntimeReady: (() => Promise<void>) | null = null
+  const commitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
+    throwIfAborted()
+    if (pendingFirstInputCommitted || pendingFirstInput === null) return
+    await session.enqueueSessionUserMessage({
+      text: pendingFirstInput.text,
+      localId: pendingFirstInput.localId,
+      meta: { source: 'ui', sentFrom: 'cli' },
+    })
+    pendingFirstInputCommitted = true
+    clearPendingFirstInputFromEnv()
+    throwIfAborted()
+  }
+  const deferOrCommitPendingFirstInput = async (session: ApiSessionClient): Promise<void> => {
+    if (
+      !opts.deferPendingFirstInputCommitUntilRuntimeReady
+      || pendingFirstInput === null
+    ) {
+      await commitPendingFirstInput(session)
+      return
+    }
+
+    let commitPromise: Promise<void> | null = null
+    commitPendingFirstInputAfterRuntimeReady = () => {
+      commitPromise ??= commitPendingFirstInput(session)
+      return commitPromise
+    }
+  }
 
   const existingSessionId = normalizeExistingSessionId(opts.existingSessionId)
   const attachMetadataIdentityPolicy =
@@ -140,8 +201,18 @@ export async function initializeBackendRunSession(
     ?? readSessionAttachMetadataIdentityPolicyFromEnv()
     ?? null
   const terminal = opts.metadata.terminal
-  const startDaemonReport = (sessionId: string, metadata: Metadata, mode: DaemonReportMode): Promise<void> => {
-    const reportPromise = reportSessionToDaemonIfRunningFn({ sessionId, metadata })
+  const startDaemonReport = (
+    sessionId: string,
+    metadata: Metadata,
+    mode: DaemonReportMode,
+    requireDaemonAck: boolean,
+  ): Promise<void> => {
+    throwIfAborted()
+    const reportPromise = reportSessionToDaemonIfRunningFn({
+      sessionId,
+      metadata,
+      ...(requireDaemonAck ? { requireDaemonAck: true } : {}),
+    })
     if (mode === 'background') {
       void reportPromise.catch(() => {})
       return Promise.resolve()
@@ -153,38 +224,67 @@ export async function initializeBackendRunSession(
     sessionId: string,
     metadata: Metadata,
     daemonReportMode: DaemonReportMode,
+    requireDaemonAck: boolean,
   ): Promise<void> => {
     if (startupSideEffectsOrder === 'persist-first') {
+      throwIfAborted()
       await persistTerminalAttachmentInfoIfNeededFn({ sessionId, terminal })
+      throwIfAborted()
       sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
-      await startDaemonReport(sessionId, metadata, daemonReportMode)
+      throwIfAborted()
+      await startDaemonReport(sessionId, metadata, daemonReportMode, requireDaemonAck)
+      throwIfAborted()
       return
     }
 
-    await startDaemonReport(sessionId, metadata, daemonReportMode)
+    throwIfAborted()
+    await startDaemonReport(sessionId, metadata, daemonReportMode, requireDaemonAck)
+    throwIfAborted()
     await persistTerminalAttachmentInfoIfNeededFn({ sessionId, terminal })
+    throwIfAborted()
     sendTerminalFallbackMessageIfNeededFn({ session: sessionToUse, terminal })
+    throwIfAborted()
   }
 
   if (existingSessionId) {
+    throwIfAborted()
     const baseSession = await createBaseSessionForAttachFn({
       existingSessionId,
       metadata: opts.metadata,
       state: opts.state,
+      ...(opts.sessionAttachFilePath ? { sessionAttachFilePath: opts.sessionAttachFilePath } : {}),
     })
+    throwIfAborted()
     const session = opts.api.sessionSyncClient(baseSession)
+    opts.configureSessionClient?.(session)
 
-    let snapshot: Metadata | null = null
-    let snapshotError: unknown = null
-    let daemonReportMetadata = opts.metadata
-    try {
-      snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 })
-    } catch (error) {
-      snapshotError = error
-      opts.onAttachMetadataSnapshotError?.(error)
+    let attachCleanupPromise: Promise<void> | null = null
+    const disposeAttachedSession = (): Promise<void> => {
+      attachCleanupPromise ??= session.close().catch(() => undefined)
+      return attachCleanupPromise
     }
+    const onAttachAbort = () => {
+      void disposeAttachedSession()
+    }
+    opts.signal?.addEventListener('abort', onAttachAbort, { once: true })
 
-    if (snapshot) {
+    try {
+      throwIfAborted()
+
+      let snapshot: Metadata | null = null
+      let snapshotError: unknown = null
+      let daemonReportMetadata = opts.metadata
+      try {
+        snapshot = await session.ensureMetadataSnapshot({ timeoutMs: 30_000 })
+      } catch (error) {
+        throwIfAborted()
+        snapshotError = error
+        opts.onAttachMetadataSnapshotError?.(error)
+        throwIfAborted()
+      }
+      throwIfAborted()
+
+      if (snapshot) {
       const startupNowMs = nowFn()
       daemonReportMetadata = mergeSessionMetadataForStartup({
         current: normalizeLegacySessionModeMetadataCompat(snapshot),
@@ -201,6 +301,7 @@ export async function initializeBackendRunSession(
         session,
         runtimeMetadata: daemonReportMetadata,
         attachMetadataIdentityPolicy,
+        signal: opts.signal,
         applyUpdate: async () => {
           await applyStartupMetadataUpdateToSessionFn({
             session,
@@ -215,9 +316,13 @@ export async function initializeBackendRunSession(
           })
         },
       })
+      throwIfAborted()
       await opts.onAttachMetadataSnapshotReady?.(snapshot, session)
-    } else {
+      throwIfAborted()
+      } else {
+      throwIfAborted()
       opts.onAttachMetadataSnapshotMissing?.(snapshotError)
+      throwIfAborted()
       if (attachMetadataIdentityPolicy === 'replace_with_runtime_identity') {
         const startupNowMs = nowFn()
         await applyAttachStartupMetadataUpdateWithRetry({
@@ -227,6 +332,7 @@ export async function initializeBackendRunSession(
             lifecycleState: 'running',
           },
           attachMetadataIdentityPolicy,
+          signal: opts.signal,
           applyUpdate: async () => {
             await applyStartupMetadataUpdateToSessionFn({
               session,
@@ -242,24 +348,37 @@ export async function initializeBackendRunSession(
           },
         })
       }
-    }
+      }
 
-    primeAgentStateForUiFn(session, opts.uiLogPrefix)
-    await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background')
+      throwIfAborted()
+      primeAgentStateForUiFn(session, opts.uiLogPrefix)
+      await deferOrCommitPendingFirstInput(session)
+      throwIfAborted()
+      await runStartupSideEffects(session, existingSessionId, daemonReportMetadata, 'background', false)
 
-    return {
-      session,
-      reconnectionHandle: null,
-      reportedSessionId: existingSessionId,
-      attachedToExistingSession: true,
+      return {
+        session,
+        reconnectionHandle: null,
+        reportedSessionId: existingSessionId,
+        attachedToExistingSession: true,
+        commitPendingFirstInputAfterRuntimeReady,
+      }
+    } finally {
+      opts.signal?.removeEventListener('abort', onAttachAbort)
+      if (opts.signal?.aborted) {
+        await disposeAttachedSession()
+      }
     }
   }
 
+  throwIfAborted()
   const response = await opts.api.getOrCreateSession({
     tag: opts.sessionTag,
     metadata: opts.metadata,
     state: opts.state,
+    ...(opts.signal ? { signal: opts.signal } : {}),
   })
+  throwIfAborted()
 
   if (!response && !opts.allowOfflineStub) {
     throw new Error('Failed to create session')
@@ -267,10 +386,14 @@ export async function initializeBackendRunSession(
 
   const reportedSessionId = response ? response.id : null
   let ranStartupSideEffects = false
-  const runStartupSideEffectsOnce = async (sessionToUse: ApiSessionClient, sessionId: string): Promise<void> => {
+  const runStartupSideEffectsOnce = async (
+    sessionToUse: ApiSessionClient,
+    sessionId: string,
+    requireDaemonAck = false,
+  ): Promise<void> => {
     if (ranStartupSideEffects) return
     ranStartupSideEffects = true
-    await runStartupSideEffects(sessionToUse, sessionId, opts.metadata, 'await')
+    await runStartupSideEffects(sessionToUse, sessionId, opts.metadata, 'await', requireDaemonAck)
   }
 
   const { session, reconnectionHandle } = setupOfflineReconnectionFn({
@@ -279,8 +402,13 @@ export async function initializeBackendRunSession(
     metadata: opts.metadata,
     state: opts.state,
     response: response as Session | null,
+    configureSessionClient: opts.configureSessionClient,
     onNotify: opts.offlineNotify,
     onSessionSwap: (newSession) => {
+      if (opts.signal?.aborted) {
+        void newSession.close().catch(() => undefined)
+        return
+      }
       if (opts.onSessionSwap) {
         try {
           void Promise.resolve(opts.onSessionSwap(newSession)).catch(() => {})
@@ -297,19 +425,61 @@ export async function initializeBackendRunSession(
       if (!nextId || nextId.startsWith('offline-')) return
 
       primeAgentStateForUiFn(newSession, opts.uiLogPrefix)
-      void runStartupSideEffectsOnce(newSession, nextId).catch(() => {})
+      if (opts.metadata.startedBy === 'daemon') {
+        void runStartupSideEffectsOnce(newSession, nextId, true)
+          .then(() => commitPendingFirstInput(newSession))
+          .catch(() => {})
+      } else {
+        void commitPendingFirstInput(newSession)
+          .then(() => runStartupSideEffectsOnce(newSession, nextId))
+          .catch(() => {})
+      }
     },
   })
 
-  primeAgentStateForUiFn(session, opts.uiLogPrefix)
-  if (reportedSessionId) {
-    await runStartupSideEffectsOnce(session, reportedSessionId)
+  let acquiredResourceCleanupPromise: Promise<void> | null = null
+  const disposeAcquiredResources = (): Promise<void> => {
+    acquiredResourceCleanupPromise ??= (async () => {
+      try {
+        reconnectionHandle?.cancel()
+      } catch {
+        // Cancellation is best effort; the session close still fences local use.
+      }
+      await session.close().catch(() => undefined)
+    })()
+    return acquiredResourceCleanupPromise
   }
+  const onAcquiredResourceAbort = () => {
+    void disposeAcquiredResources()
+  }
+  opts.signal?.addEventListener('abort', onAcquiredResourceAbort, { once: true })
 
-  return {
-    session,
-    reconnectionHandle,
-    reportedSessionId,
-    attachedToExistingSession: false,
+  try {
+    throwIfAborted()
+    primeAgentStateForUiFn(session, opts.uiLogPrefix)
+    if (reportedSessionId) {
+      if (opts.metadata.startedBy === 'daemon') {
+        await runStartupSideEffectsOnce(session, reportedSessionId, true)
+        throwIfAborted()
+        await deferOrCommitPendingFirstInput(session)
+      } else {
+        await deferOrCommitPendingFirstInput(session)
+        throwIfAborted()
+        await runStartupSideEffectsOnce(session, reportedSessionId)
+      }
+    }
+
+    return {
+      session,
+      reconnectionHandle,
+      reportedSessionId,
+      attachedToExistingSession: false,
+      commitPendingFirstInputAfterRuntimeReady,
+    }
+  } finally {
+    opts.signal?.removeEventListener('abort', onAcquiredResourceAbort)
+    if (opts.signal?.aborted) {
+      await disposeAcquiredResources()
+    }
   }
 }

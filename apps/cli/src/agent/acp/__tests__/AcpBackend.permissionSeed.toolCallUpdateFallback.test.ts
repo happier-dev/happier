@@ -177,7 +177,7 @@ function writeFakeAcpWebFetchRefinementScript(params: { dir: string }): string {
             toolCallId: 'call-web-1',
             status: 'completed',
             title: 'web_fetch',
-            output: {
+            rawOutput: {
               url: 'https://example.com/docs',
               title: 'Example documentation',
             },
@@ -334,10 +334,6 @@ describe('AcpBackend permission seed + tool_call_update fallback', () => {
         });
 
         const started = await backend.startSession();
-        ((backend as unknown as { toolCallIdToNameMap: Map<string, string> }).toolCallIdToNameMap).set(
-          'call-web-1',
-          'read',
-        );
         await backend.sendPrompt(started.sessionId, 'hi');
 
         const startMs = Date.now();

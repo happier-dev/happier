@@ -4,13 +4,28 @@ import { hashProcessCommand, writeSessionMarker } from './sessionRegistry';
 import type { DaemonSessionMarker } from './sessionRegistry';
 import type { Credentials } from '@/persistence';
 import type { TrackedSession } from './types';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { projectPath } from '@/projectPath';
 import { resolvePackagedRuntimeProjectRoots } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import {
+  buildSessionRunnerRespawnDescriptorV1FromSpawnOptions,
   buildSpawnSessionOptionsFromRespawnDescriptorV1,
   SessionRunnerRespawnDescriptorV1Schema,
 } from './processSupervision/sessionRunnerRespawnDescriptor';
+import { extractResumeIdFromCommand } from './sessions/extractResumeIdFromCommand';
+import { resolveSessionRuntimeSnapshot } from './sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
+import { buildTrackedSessionFromMarker } from './sessions/trackedSessionFromMarker';
+import {
+  PersistedProviderResumeBindingError,
+  readPersistedProviderResumeState,
+} from '@/providers/lifecycle/readPersistedResumeSelection';
+import { readProcessIdentityByPid } from './processIdentity';
+import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
+import {
+  normalizeProcessCommandPathValue,
+  processCommandContainsPathFragment,
+} from '@/subprocess/processCommandPathMatch';
 
 const LIVE_RECOVERABLE_HAPPY_SESSION_PROCESS_TYPES = new Set([
   'daemon-spawned-session',
@@ -26,15 +41,11 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function normalizePathLike(value: string): string {
-  return value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
-}
-
 function resolveCliRuntimeRootFromEntrypoint(pathLike: string | undefined): string | null {
   const normalized = normalizeOptionalString(pathLike);
   if (!normalized) return null;
 
-  const normalizedPath = normalizePathLike(normalized);
+  const normalizedPath = normalizeProcessCommandPathValue(normalized);
   const packageDistMarker = '/package-dist/';
   const distMarker = '/dist/';
   const srcMarker = '/src/';
@@ -64,10 +75,10 @@ function resolveOwnedLiveDaemonSessionRuntimeRoots(): string[] {
   }
 
   for (const runtimeRoot of resolvePackagedRuntimeProjectRoots()) {
-    ownedRoots.add(normalizePathLike(runtimeRoot));
+    ownedRoots.add(normalizeProcessCommandPathValue(runtimeRoot));
   }
 
-  ownedRoots.add(normalizePathLike(projectPath()));
+  ownedRoots.add(normalizeProcessCommandPathValue(projectPath()));
 
   return [...ownedRoots];
 }
@@ -79,8 +90,8 @@ export function isOwnedLiveDaemonSessionProcessCommand(command: string): boolean
   const ownedRoots = resolveOwnedLiveDaemonSessionRuntimeRoots();
   if (ownedRoots.length === 0) return false;
 
-  const normalizedProcessCommand = normalizePathLike(normalizedCommand);
-  return ownedRoots.some((ownedRoot) => normalizedProcessCommand.includes(ownedRoot));
+  const normalizedProcessCommand = normalizeProcessCommandPathValue(normalizedCommand);
+  return ownedRoots.some((ownedRoot) => processCommandContainsPathFragment(normalizedProcessCommand, ownedRoot));
 }
 
 function canAdoptDaemonStartedHashDriftMarker(params: Readonly<{
@@ -128,6 +139,7 @@ export function adoptSessionsFromMarkers(params: {
   happyProcesses: HappyProcessInfo[];
   pidToTrackedSession: Map<number, TrackedSession>;
   credentials?: Credentials | null;
+  processIdentityByPid?: ReadonlyMap<number, LocalServiceProcessFact>;
 }): { adopted: number; eligible: number } {
   const happyPidToType = new Map(params.happyProcesses.map((p) => [p.pid, p.type] as const));
   const happyPidToCommandHash = new Map(params.happyProcesses.map((p) => [p.pid, hashProcessCommand(p.command)] as const));
@@ -145,6 +157,15 @@ export function adoptSessionsFromMarkers(params: {
       continue;
     }
     eligible++;
+    if (marker.processStartTimeMs !== undefined) {
+      const processIdentity = params.processIdentityByPid?.get(marker.pid);
+      if (
+        processIdentity?.processStartTimeMs !== marker.processStartTimeMs
+        || hashProcessCommand(processIdentity.command) !== marker.processCommandHash
+      ) {
+        continue;
+      }
+    }
 
     // Stronger PID reuse safety: require the marker's observed command hash to match what is currently running.
     if (!marker.processCommandHash) {
@@ -152,6 +173,11 @@ export function adoptSessionsFromMarkers(params: {
     }
     const currentHash = happyPidToCommandHash.get(marker.pid);
     if (!currentHash) {
+      continue;
+    }
+    const markerHasRespawnDescriptor = marker.respawn !== undefined;
+    const respawnParsed = SessionRunnerRespawnDescriptorV1Schema.safeParse(marker.respawn);
+    if (markerHasRespawnDescriptor && !respawnParsed.success) {
       continue;
     }
     if (currentHash !== marker.processCommandHash) {
@@ -162,7 +188,7 @@ export function adoptSessionsFromMarkers(params: {
           markerProcessCommand: marker.processCommand,
           currentProcessCommand: currentCommand,
           procType,
-          markerHasRespawnDescriptor: typeof marker.respawn === 'object' && marker.respawn !== null,
+          markerHasRespawnDescriptor: respawnParsed.success,
         })
       ) {
         continue;
@@ -175,22 +201,54 @@ export function adoptSessionsFromMarkers(params: {
       continue;
     }
 
-    const respawnParsed = SessionRunnerRespawnDescriptorV1Schema.safeParse((marker as any).respawn);
-    const spawnOptions = respawnParsed.success
-      ? buildSpawnSessionOptionsFromRespawnDescriptorV1(respawnParsed.data, encryptionMaterial ? { encryptionMaterial } : undefined)
-      : undefined;
+    const persistedMetadata = marker.metadata && typeof marker.metadata === 'object' && !Array.isArray(marker.metadata)
+      ? marker.metadata as Record<string, unknown>
+      : null;
+    let persistedProviderResumeState: ReturnType<typeof readPersistedProviderResumeState>;
+    try {
+      persistedProviderResumeState = readPersistedProviderResumeState(persistedMetadata);
+    } catch (error) {
+      if (error instanceof PersistedProviderResumeBindingError) continue;
+      throw error;
+    }
+    if (persistedProviderResumeState.binding && (!respawnParsed.success || respawnParsed.data.version !== 2)) {
+      continue;
+    }
 
-    params.pidToTrackedSession.set(marker.pid, {
-      startedBy: marker.startedBy ?? 'reattached',
-      happySessionId: marker.happySessionId,
-      happySessionMetadataFromLocalWebhook: marker.metadata,
+    const commandVendorResumeId = normalizeOptionalString(extractResumeIdFromCommand(currentCommand));
+    let spawnOptions: SpawnSessionOptions | undefined;
+    let vendorResumeId = commandVendorResumeId;
+    if (respawnParsed.success) {
+      const restoredSpawnOptions = buildSpawnSessionOptionsFromRespawnDescriptorV1(
+        respawnParsed.data,
+        encryptionMaterial ? { encryptionMaterial } : undefined,
+      );
+      const runtimeSnapshot = resolveSessionRuntimeSnapshot({
+        incomingOptions: restoredSpawnOptions,
+        persistedMetadata,
+        trackedVendorResumeId: commandVendorResumeId,
+        persistedVendorResumeId: respawnParsed.data.vendorResumeId,
+      });
+      spawnOptions = runtimeSnapshot.spawnOptions;
+      vendorResumeId = runtimeSnapshot.snapshot.vendorResumeId?.value
+        ?? commandVendorResumeId
+        ?? normalizeOptionalString(respawnParsed.data.vendorResumeId);
+
+      const validatedRespawnDescriptor = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(spawnOptions);
+      if (!validatedRespawnDescriptor || validatedRespawnDescriptor.version !== respawnParsed.data.version) {
+        continue;
+      }
+    }
+
+    params.pidToTrackedSession.set(marker.pid, buildTrackedSessionFromMarker({
+      marker,
+      startedByFallback: 'reattached',
       ...(spawnOptions ? { spawnOptions } : {}),
-      ...(normalizeOptionalString(spawnOptions?.resume) ? { vendorResumeId: normalizeOptionalString(spawnOptions?.resume) } : {}),
-      pid: marker.pid,
+      ...(vendorResumeId ? { vendorResumeId } : {}),
       processCommandHash: currentHash,
       processCommand: currentCommand,
       reattachedFromDiskMarker: true,
-    });
+    }));
     adopted++;
   }
 
@@ -201,6 +259,7 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
   happyProcesses: HappyProcessInfo[];
   markedPids: ReadonlySet<number>;
   pidToTrackedSession: Map<number, TrackedSession>;
+  readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
 }>): Promise<number> {
   let adopted = 0;
 
@@ -220,14 +279,25 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
     if (!isOwnedLiveDaemonSessionProcessCommand(proc.command)) {
       continue;
     }
+    const processIdentity = await (
+      params.readProcessIdentityByPidFn ?? readProcessIdentityByPid
+    )(proc.pid);
+    if (
+      processIdentity?.processStartTimeMs === undefined
+      || hashProcessCommand(processIdentity.command) !== hashProcessCommand(proc.command)
+    ) {
+      continue;
+    }
 
     const happySessionId = `PID-${proc.pid}`;
     const processCommandHash = hashProcessCommand(proc.command);
+    const processStartTimeMs = processIdentity.processStartTimeMs;
     params.pidToTrackedSession.set(proc.pid, {
       startedBy: 'daemon',
       happySessionId,
       pid: proc.pid,
       processCommandHash,
+      processStartTimeMs,
     });
     adopted++;
 
@@ -236,6 +306,7 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
       happySessionId,
       startedBy: 'daemon',
       processCommandHash,
+      processStartTimeMs,
       processCommand: proc.command,
     }).catch((e) => {
       // Best-effort healing only; keep the recovered live session tracked in memory even if

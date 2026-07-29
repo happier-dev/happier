@@ -6,7 +6,7 @@ import type { Credentials } from '@/persistence';
 import { readCredentials } from '@/persistence';
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { initialMachineMetadata } from '@/daemon/startDaemon';
+import { initialMachineMetadata } from '@/daemon/machine/metadata';
 import { initializeBackendApiContext } from '@/agent/runtime/initializeBackendApiContext';
 import { listBuiltInHappierTools } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { callBuiltInHappierTool } from '@/agent/tools/happierTools/callBuiltInHappierTool';
@@ -16,6 +16,7 @@ import {
   type ResolvedCustomHappierToolWarning,
 } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
 import { callResolvedCustomHappierTool } from '@/agent/tools/happierTools/customMcp/callResolvedCustomHappierTool';
+import { readDaemonPluginCatalog } from '@/daemon/controlClient';
 
 type BuiltInToolEntry = Awaited<ReturnType<typeof listBuiltInHappierTools>>[number];
 type CustomToolEntry = Awaited<ReturnType<typeof listResolvedCustomHappierTools>>['tools'][number];
@@ -36,7 +37,16 @@ function resolveToolsCommandDeps(overrides?: Partial<ToolsCommandDeps>): ToolsCo
     readCredentials,
     initializeBackendApiContext,
     bootstrapAccountSettingsContext,
-    listBuiltInHappierTools: async () => listBuiltInHappierTools({ surface: 'cli' }),
+    listBuiltInHappierTools: async () => {
+      const catalog = await readDaemonPluginCatalog().catch(() => ({
+        kind: 'unavailable' as const,
+        code: 'daemon_unavailable',
+      }));
+      return listBuiltInHappierTools({
+        surface: 'cli',
+        pluginToolCatalog: catalog.kind === 'available' ? catalog.tools : Object.freeze([]),
+      });
+    },
     callBuiltInHappierTool,
     resolveCustomHappierToolsContext,
     listResolvedCustomHappierTools,

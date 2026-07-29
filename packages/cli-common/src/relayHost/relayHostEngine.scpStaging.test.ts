@@ -694,6 +694,7 @@ describe('RelayHostEngine (remote SSH)', () => {
 
     expect(capturedLocalBinaryPath).toBe('/tmp/local/happier-server');
     expect(renderedEnvText).toContain('HAPPIER_SQLITE_MIGRATIONS_DIR=/home/remote-user/.happier/happier-server/current/prisma/sqlite/migrations');
+    expect(renderedEnvText).toContain('connection_limit=4');
     expect(renderedEnvText).not.toContain('/tmp/local/happier-server');
   });
 

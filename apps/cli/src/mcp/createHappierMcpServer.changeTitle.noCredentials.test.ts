@@ -29,7 +29,7 @@ describe('createHappierMcpServer (change_title without credentials)', () => {
             {
                 sessionId: 'sess_change_title_no_creds_2',
                 rpcHandlerManager: { invokeLocal: async () => ({}) },
-                sendClaudeSessionMessage: () => {},
+                sendProviderMessage: () => {},
                 updateMetadata,
             } as any,
             { credentials: null },

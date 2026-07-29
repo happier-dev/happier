@@ -12,6 +12,9 @@ export default defineConfig({
   test: {
     globals: false,
     environment: 'node',
+    maxWorkers: 6,
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     include: ['src/**/*.slow.test.ts'],
     exclude: [...configDefaults.exclude, ...resolveVitestFeatureTestExcludeGlobs({ ...process.env, ...testEnv })],
     globalSetup: ['./src/test-setup.slow.ts'],

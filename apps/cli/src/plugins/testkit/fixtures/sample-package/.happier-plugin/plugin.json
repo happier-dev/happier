@@ -7,182 +7,56 @@
   "engines": {
     "happier": "^0.2.0"
   },
-  "uses": [
-    "agents",
-    "hooks"
-  ],
-  "entrypoints": {
-    "main": "./daemon.mjs"
+  "runtime": {
+    "apiVersion": 1
   },
-  "permissions": {
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "hostAccess": {
     "required": [],
     "optional": []
   },
   "contributes": {
     "agents": [
       {
-        "kindVersion": 1,
-        "id": "acme.sample.provider",
-        "display": {
-          "name": "Acme Sample Provider",
-          "tags": [
-            "plugin"
-          ]
-        },
-        "ownedBackendIds": [
-          "acme.sample.provider"
-        ],
-        "catalogAgentId": "claude",
+        "id": "sample-provider",
+        "title": "Acme Sample CLI",
+        "description": "Current Manifest V2 custom Agent test fixture",
         "runtime": {
           "kind": "custom"
         },
-        "agentCliRuntime": {
-          "kindVersion": 1,
-          "id": "acme.sample.provider",
-          "title": "Acme Sample CLI",
-          "binaryName": "acme-sample",
-          "sourcePreferenceDefault": "system-first",
-          "managedInstall": {
-            "kind": "managed_package",
-            "packageName": "@acme/sample-cli",
-            "binaryName": "acme-sample"
-          },
-          "manualInstallKind": "command",
-          "manualInstallRecipes": null,
-          "acceptsJavaScriptFileOverride": false
-        },
-        "capabilities": {},
-        "surfaceHandlers": [
-          {
-            "id": "backend.terminalRuntime.launch",
-            "kind": "terminalRuntime",
-            "operation": "launch",
-            "handler": {
-              "target": "daemon",
-              "exportName": "launch"
-            }
-          },
-          {
-            "id": "backend.terminalRuntime.discoverIdentity",
-            "kind": "terminalRuntime",
-            "operation": "discoverIdentity",
-            "handler": {
-              "target": "daemon",
-              "exportName": "discoverIdentity"
-            }
-          },
-          {
-            "id": "backend.terminalRuntime.resolveTranscriptBinding",
-            "kind": "terminalRuntime",
-            "operation": "resolveTranscriptBinding",
-            "handler": {
-              "target": "daemon",
-              "exportName": "resolveTranscriptBinding"
-            }
-          },
-          {
-            "id": "backend.externalSession.resolveSource",
-            "kind": "externalSession",
-            "operation": "resolveSource",
-            "handler": {
-              "target": "daemon",
-              "exportName": "validateSource"
-            }
-          },
-          {
-            "id": "backend.externalSession.listCandidates",
-            "kind": "externalSession",
-            "operation": "listCandidates",
-            "handler": {
-              "target": "daemon",
-              "exportName": "listCandidates"
-            }
-          },
-          {
-            "id": "backend.externalSession.getActivity",
-            "kind": "externalSession",
-            "operation": "getActivity",
-            "handler": {
-              "target": "daemon",
-              "exportName": "getActivity"
-            }
-          },
-          {
-            "id": "backend.externalSession.pageTranscript",
-            "kind": "externalSession",
-            "operation": "pageTranscript",
-            "handler": {
-              "target": "daemon",
-              "exportName": "pageTranscript"
-            }
-          },
-          {
-            "id": "backend.externalSession.readAfterTranscript",
-            "kind": "externalSession",
-            "operation": "readAfterTranscript",
-            "handler": {
-              "target": "daemon",
-              "exportName": "readAfterTranscript"
-            }
-          },
-          {
-            "id": "backend.externalSession.resolveTakeoverLaunch",
-            "kind": "externalSession",
-            "operation": "resolveTakeoverLaunch",
-            "handler": {
-              "target": "daemon",
-              "exportName": "resolveTakeoverSpawnOptions"
-            }
-          },
-          {
-            "id": "backend.attach.evaluateAvailability",
-            "kind": "attach",
-            "operation": "evaluateAvailability",
-            "handler": {
-              "target": "daemon",
-              "exportName": "evaluateAvailability"
-            }
-          },
-          {
-            "id": "backend.attach.attach",
-            "kind": "attach",
-            "operation": "attach",
-            "handler": {
-              "target": "daemon",
-              "exportName": "attach"
-            }
-          },
-          {
-            "id": "backend.handoff.exportBundle",
-            "kind": "handoff",
-            "operation": "exportBundle",
-            "handler": {
-              "target": "daemon",
-              "exportName": "exportBundle"
-            }
-          },
-          {
-            "id": "backend.handoff.importBundle",
-            "kind": "handoff",
-            "operation": "importBundle",
-            "handler": {
-              "target": "daemon",
-              "exportName": "importBundle"
-            }
+        "primary": "sessions",
+        "capabilities": {
+          "sessions": {
+            "open": [
+              "create",
+              "resume"
+            ],
+            "delivery": [
+              "newTurn",
+              "steer",
+              "followUp"
+            ],
+            "cancel": true
           }
-        ]
+        }
       }
     ],
     "hooks": [
       {
-        "hookApiVersion": 1,
-        "id": "agent.resolvePrerequisites",
+        "id": "resolve-prerequisites",
+        "on": "agent.resolvePrerequisites",
         "category": "decision",
         "scope": "agent",
-        "executionKind": "decide",
-        "handler": {
-          "target": "plugin"
-        }
+        "executionKind": "decide"
       }
     ]
   }

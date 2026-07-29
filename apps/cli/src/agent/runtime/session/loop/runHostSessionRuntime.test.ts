@@ -1,11 +1,186 @@
-import { describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKey, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import {
+  buildBackendTargetKey,
+  ProviderConnectionIdSchema,
+  redactBugReportSensitiveText,
+  type PluginVoiceProviderContributionV1,
+} from '@happier-dev/protocol';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type {
+  AgentSessionRealtimeConversation,
+  AgentSessionRealtimeHandle,
+  AgentSessionRealtimeLifecycleEvent,
+  PluginVoiceAgentSessionRealtimeService,
+} from '@happier-dev/plugin-sdk/experimental/agent-runtime/realtime';
+
+const { loggerDebugMock } = vi.hoisted(() => ({
+  loggerDebugMock: vi.fn(),
+}));
+
+vi.mock('@/ui/logger', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/ui/logger')>();
+  return {
+    ...actual,
+    logger: new Proxy(actual.logger, {
+      get(target, property, receiver) {
+        if (property === 'debug') return loggerDebugMock;
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }),
+  };
+});
 
 import { runHostSessionRuntime, type HostSessionRuntimeConfig, type HostSessionRuntimeRunOptions } from './runHostSessionRuntime';
+import type { HostSessionTerminalRemoteModeLoop } from './terminalRemoteModeRuntime';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { resolveForkInheritedOverridesFromMetadata } from '@/session/fork/resolveForkInheritedOverridesFromMetadata';
-import { HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY } from '@/agent/runtime/daemonInitialPrompt';
+import {
+  HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY,
+  serializeProviderBindingLaunchHandoffForEnv,
+} from '@/plugins/runtime/providerBindings/handoff';
+import {
+  HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY,
+  serializePersistedTakeoverAdmissionForEnv,
+} from '@/daemon/spawn/persistedTakeoverAdmission';
+import { setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import type { Metadata, PermissionMode } from '@/api/types';
+import { resolveAgentSessionRealtimeVoiceAuthority } from '@/agent/runtime/session/realtime/resolveAgentSessionRealtimeVoiceAuthority';
+import { ApiSessionClient } from '@/api/session/sessionClient';
+import { resolveSessionClientDurableMutationOutboxPath } from '@/api/session/client/transport/mutations/sessionClientDurableMutationPersistence';
+import { resetSessionClientDurableMutationOutboxStateForTests } from '@/api/session/client/transport/mutations/createSessionClientDurableMutationOutbox';
+import { createPlainSessionFixture } from '@/testkit/backends/sessionFixtures';
+import { createFakeAcpRuntimeBackend } from '@/testkit/backends/acpRuntimeBackend';
+import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
+import { createAcpRuntime } from '@/agent/acp/runtime/createAcpRuntime';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
+
+vi.mock('@/api/session/client/transport/initializeSessionClientConnection', () => ({
+  initializeSessionClientConnection: (params: {
+    setSessionSocket(socket: unknown): void;
+    onStateChange(state: {
+      phase: 'online';
+      reason: null;
+      attempt: number;
+      nextRetryAt: null;
+      lastConnectedAt: number;
+      lastDisconnectedAt: null;
+      lastErrorMessage: null;
+    }): void;
+    markConnected(): Readonly<{ reason: 'connect' | 'reconnect'; epoch: number }> | 'connect' | 'reconnect';
+    setSessionSyncPendingInputServerContractResult?(result: Readonly<{
+      mode: 'released_server_v0_2_1';
+      sessionConnectionEpoch: number;
+      socket: unknown;
+    }>): Promise<void> | void;
+  }) => {
+    const userSocket = {
+      connected: false,
+      on: () => userSocket,
+      off: () => userSocket,
+      emit: () => undefined,
+      disconnect: () => undefined,
+      close: () => undefined,
+      volatile: {
+        emit: () => undefined,
+      },
+    };
+    const sessionSocket = {
+      connected: true,
+      on: () => sessionSocket,
+      off: () => sessionSocket,
+      emit: () => undefined,
+      timeout: () => sessionSocket,
+      emitWithAck: async (event: string, payload: unknown) => {
+        if (event === 'update-metadata') {
+          const request = payload as {
+            expectedVersion: number;
+            metadata: string;
+          };
+          return {
+            result: 'success',
+            version: request.expectedVersion + 1,
+            metadata: request.metadata,
+          };
+        }
+        return { ok: false };
+      },
+    };
+    params.setSessionSocket(sessionSocket);
+    const state = {
+      phase: 'online' as const,
+      reason: null,
+      attempt: 0,
+      nextRetryAt: null,
+      lastConnectedAt: Date.now(),
+      lastDisconnectedAt: null,
+      lastErrorMessage: null,
+    };
+    return {
+      userSocket,
+      sessionConnectionSupervisor: {
+        start: async () => {
+          params.onStateChange(state);
+          const markedConnected = params.markConnected();
+          await params.setSessionSyncPendingInputServerContractResult?.({
+            mode: 'released_server_v0_2_1',
+            sessionConnectionEpoch:
+              typeof markedConnected === 'string' ? 0 : markedConnected.epoch,
+            socket: sessionSocket,
+          });
+        },
+        stop: async () => undefined,
+        getState: () => state,
+        captureProbeReportScope: () => null,
+        reportProbeResult: () => undefined,
+      },
+    };
+  },
+}));
+
+const providerModelDescriptor = Object.freeze({
+  id: 'provider-model',
+  name: 'Provider Model',
+});
+
+type CreateAgentSessionRealtimeService = (input: Readonly<{
+  provider: Readonly<{ pluginId: string; localId: string }>;
+  conversationSessionId: string;
+  applicationAttemptId: string;
+  signal: AbortSignal;
+  sessionRpc(input: Readonly<{
+    sessionId: string;
+    method: string;
+    payload: unknown;
+    signal: AbortSignal;
+  }>): Promise<unknown>;
+  onTerminal(event: AgentSessionRealtimeLifecycleEvent): void;
+}>) => PluginVoiceAgentSessionRealtimeService;
+
+async function loadAgentSessionRealtimeService(): Promise<CreateAgentSessionRealtimeService> {
+  // This is an explicit cross-package composition seam; keep the CLI compiler
+  // from adopting UI source outside its rootDir while Vitest loads the real module.
+  const modulePath: string =
+    '../../../../../../ui/sources/voice/runtime/agentRealtime/createAgentSessionRealtimeService';
+  const loaded: unknown = await import(modulePath);
+  if (
+    typeof loaded !== 'object'
+    || loaded === null
+    || !('createAgentSessionRealtimeService' in loaded)
+    || typeof loaded.createAgentSessionRealtimeService !== 'function'
+  ) {
+    throw new Error('expected the real UI Agent-realtime service factory');
+  }
+  return loaded.createAgentSessionRealtimeService as CreateAgentSessionRealtimeService;
+}
 
 function createSessionFixture(sessionId: string) {
   const handlers = new Map<string, (payload?: unknown) => unknown>();
@@ -23,12 +198,20 @@ function createSessionFixture(sessionId: string) {
     keepAlive: vi.fn(),
     getMetadataSnapshot: () => ({ path: '/tmp/workspace', permissionMode: 'default' }),
     updateMetadata: vi.fn(),
+    on: vi.fn(),
+    off: vi.fn(),
+    refreshSessionSnapshotFromServerRequired: vi.fn(async () => undefined),
     enqueueSessionTurnMutation: vi.fn(async () => undefined),
-    deferDeliveredUserMessageWatermarkToProviderAcceptance: vi.fn(),
-    confirmUserMessageDeliveredToProvider: vi.fn(),
-    blockPendingMessageDelivery: vi.fn(async () => true),
-    retryPendingMessageDelivery: vi.fn(async () => true),
-    sendSessionDeath: vi.fn(),
+    enqueueRegisteredSessionStateFieldMutation: vi.fn(async () => undefined),
+    subscribeExecutionRunActivitySnapshots: vi.fn(() => () => undefined),
+    wakePendingMaterialization: vi.fn(),
+    claimCurrentSessionPublisherAuthorityForStartup: vi.fn(
+      async () => ({ status: 'claimed' as const }),
+    ),
+    activateDurableMutationDelivery: vi.fn(async () => undefined),
+    deactivateDurableMutationDelivery: vi.fn(),
+    stageInitialDurableMutationSnapshots: vi.fn(async () => undefined),
+    flushDurableMutationDelivery: vi.fn(async () => undefined),
     flush: vi.fn(async () => undefined),
     close: vi.fn(async () => undefined),
   };
@@ -74,16 +257,6 @@ function createHarness() {
         throw new Error('beginTurnLifecycle called with wrong receiver');
       }
       runtime.beginTurn();
-    }),
-    startOrLoad: vi.fn(async () => undefined),
-    startOrLoadSession: vi.fn(async function (this: unknown, opts?: { resumeId?: string | null; importHistory?: boolean }) {
-      if (this !== runtime) {
-        throw new Error('startOrLoadSession called with wrong receiver');
-      }
-      await runtime.startOrLoad({
-        ...(typeof opts?.resumeId === 'string' ? { resumeId: opts.resumeId } : {}),
-        ...(typeof opts?.importHistory === 'boolean' ? { importHistory: opts.importHistory } : {}),
-      });
     }),
     sendPrompt: vi.fn(async () => undefined),
     sendTurnPrompt: vi.fn(async function (this: unknown, prompt: string) {
@@ -172,6 +345,7 @@ function createHarness() {
     providerName: 'Qwen Code',
     waitingForCommandLabel: 'Qwen Code',
     agentMessageType: 'qwen',
+    runtimeActivityApplicability: 'not_applicable',
     machineMetadata: {
       host: 'host',
       platform: 'darwin',
@@ -336,6 +510,27 @@ function setSessionRuntimeFactory(
   config.createSessionRuntime = factory;
 }
 
+function setAgentSessionRealtimeVoiceAuthority(
+  config: HostSessionRuntimeConfig,
+  authority: NonNullable<
+    HostSessionRuntimeConfig['agentSessionRealtimeVoiceAuthority']
+  >,
+): void {
+  config.agentSessionRealtimeVoiceAuthority = authority;
+}
+
+function setTerminalRemoteModeLoop(
+  config: HostSessionRuntimeConfig,
+  terminalRemoteModeLoop: HostSessionTerminalRemoteModeLoop,
+): void {
+  const createSessionRuntime = config.createSessionRuntime;
+  if (!createSessionRuntime) throw new Error('expected session runtime factory');
+  config.createSessionRuntime = async (params) => ({
+    ...await createSessionRuntime(params),
+    terminalRemoteModeLoop,
+  });
+}
+
 function createTerminalRemoteModeLoopFixture() {
   return {
     startingMode: 'remote' as const,
@@ -347,6 +542,831 @@ function createTerminalRemoteModeLoopFixture() {
 }
 
 describe('runHostSessionRuntime', () => {
+  let runtimeRegistryLease: PluginRuntimeRegistryLease | null = null;
+
+  beforeAll(async () => {
+    runtimeRegistryLease = await pluginReloadController.acquireRuntimeRegistry({
+      resolveRuntimeRegistry: async () => await resolveExecutablePluginRuntimeRegistry({
+        contributes: getResolvedContributionRegistry(),
+        pluginIds: [],
+      }),
+    });
+  });
+
+  afterAll(async () => {
+    await runtimeRegistryLease?.release();
+    runtimeRegistryLease = null;
+    await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+  });
+
+  it('composes the bound UI Agent-realtime service through the host runtime RPC producer', async () => {
+    const createAgentSessionRealtimeService = await loadAgentSessionRealtimeService();
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    const provider = {
+      pluginId: 'happier.agent.codex',
+      localId: 'realtime-codex',
+    } as const;
+    const bundledAuthority = resolveAgentSessionRealtimeVoiceAuthority({
+      runtimeRegistry: runtimeRegistryLease?.registry ?? null,
+      policyAgentRef: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      agentRuntimeIdentity: {
+        pluginId: 'happier.agent.codex',
+        agentId: 'codex',
+        generation: 'bundled-registry-generation',
+        isCurrent: () => true,
+      },
+    });
+    if (!bundledAuthority) {
+      throw new Error('expected bundled Voice authority');
+    }
+    setAgentSessionRealtimeVoiceAuthority(harness.config, bundledAuthority);
+    const runtimeTerminalListeners = new Set<
+      (event: AgentSessionRealtimeLifecycleEvent) => void
+    >();
+    const startGate = createDeferred<void>();
+    let runtimeTerminal: AgentSessionRealtimeLifecycleEvent | null = null;
+    const runtimeHandle: AgentSessionRealtimeHandle = {
+      stop: vi.fn(async () => ({ status: 'stopped' as const })),
+      watch(listener) {
+        if (runtimeTerminal) listener(runtimeTerminal);
+        else runtimeTerminalListeners.add(listener);
+        return {
+          dispose() {
+            runtimeTerminalListeners.delete(listener);
+          },
+        };
+      },
+      dispose: vi.fn(),
+    };
+    const inspect = vi.fn(async () => ({
+      status: 'available' as const,
+      transport: 'webrtc' as const,
+    }));
+    const start = vi.fn<AgentSessionRealtimeConversation['start']>(async () => {
+      await startGate.promise;
+      return {
+        status: 'started' as const,
+        transport: {
+          kind: 'webrtc' as const,
+          answerSdp: 'v=0\r\na=answer:host-runtime\r\n',
+        },
+        handle: runtimeHandle,
+      };
+    });
+    const nativeRuntime = {
+      ...harness.runtime,
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: vi.fn(() => ({ dispose() {} })),
+      dispose: vi.fn(),
+      realtimeConversation: { inspect, start },
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: harness.runtime,
+      nativeRuntime,
+    }));
+
+    const rpcCalls: Array<Readonly<{
+      sessionId: string;
+      method: string;
+      payload: unknown;
+    }>> = [];
+    const onTerminal = vi.fn();
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      const service = createAgentSessionRealtimeService({
+        provider,
+        conversationSessionId: 'session-1',
+        applicationAttemptId: 'voice:host-runtime-composition',
+        signal: new AbortController().signal,
+        sessionRpc: async ({ sessionId, method, payload }) => {
+          rpcCalls.push({ sessionId, method, payload });
+          const handler = harness.handlers.get(method);
+          if (!handler) throw new Error(`missing host runtime RPC producer: ${method}`);
+          return await handler(payload);
+        },
+        onTerminal,
+      });
+
+      await expect(service.inspect()).resolves.toEqual({
+        status: 'available',
+        transport: 'webrtc',
+      });
+      const startedPromise = service.start({
+        transport: {
+          kind: 'webrtc',
+          offerSdp: 'v=0\r\na=offer:ui-service\r\n',
+        },
+      });
+      const startSettled = vi.fn();
+      void startedPromise.then(startSettled, startSettled);
+      await vi.waitFor(() => expect(start).toHaveBeenCalledTimes(1));
+      expect(startSettled).not.toHaveBeenCalled();
+
+      startGate.resolve();
+      const started = await startedPromise;
+      expect(started).toMatchObject({
+        status: 'started',
+        transport: {
+          kind: 'webrtc',
+          answerSdp: 'v=0\r\na=answer:host-runtime\r\n',
+        },
+      });
+      await vi.waitFor(() => {
+        expect(rpcCalls.map((call) => call.method)).toContain(
+          SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH,
+        );
+      });
+
+      runtimeTerminal = {
+        kind: 'terminal',
+        reason: 'upstream_closed',
+      };
+      for (const listener of [...runtimeTerminalListeners]) {
+        listener(runtimeTerminal);
+      }
+      runtimeTerminalListeners.clear();
+      await vi.waitFor(() => {
+        expect(onTerminal).toHaveBeenCalledWith(runtimeTerminal);
+      });
+
+      if (started.status !== 'started') {
+        throw new Error('expected the composed Agent-realtime attempt to start');
+      }
+      await expect(started.handle.stop()).resolves.toEqual({
+        status: 'already_stopped',
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(inspect).toHaveBeenCalledOnce();
+    expect(start).toHaveBeenCalledWith(
+      {
+        transport: {
+          kind: 'webrtc',
+          offerSdp: 'v=0\r\na=offer:ui-service\r\n',
+        },
+      },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(rpcCalls).toEqual([
+      {
+        sessionId: 'session-1',
+        method: SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
+        payload: { v: 1, provider },
+      },
+      {
+        sessionId: 'session-1',
+        method: SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START,
+        payload: {
+          v: 1,
+          provider,
+          applicationAttemptId: 'voice:host-runtime-composition',
+          transport: {
+            kind: 'webrtc',
+            offerSdp: 'v=0\r\na=offer:ui-service\r\n',
+          },
+        },
+      },
+      {
+        sessionId: 'session-1',
+        method: SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_WATCH,
+        payload: {
+          v: 1,
+          provider,
+          applicationAttemptId: 'voice:host-runtime-composition',
+        },
+      },
+      {
+        sessionId: 'session-1',
+        method: SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP,
+        payload: {
+          v: 1,
+          provider,
+          applicationAttemptId: 'voice:host-runtime-composition',
+        },
+      },
+    ]);
+    expect(JSON.stringify(rpcCalls)).not.toMatch(
+      /audio|pcm|voice_media|appendAudio|appendInputAudio|fallback/iu,
+    );
+    expect(runtimeHandle.stop).not.toHaveBeenCalled();
+    expect(runtimeHandle.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('preempts a delayed matching start when the bound Voice attempt aborts before daemon admission', async () => {
+    const createAgentSessionRealtimeService = await loadAgentSessionRealtimeService();
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    const provider = {
+      pluginId: 'happier.agent.codex',
+      localId: 'realtime-codex',
+    } as const;
+    const bundledAuthority = resolveAgentSessionRealtimeVoiceAuthority({
+      runtimeRegistry: runtimeRegistryLease?.registry ?? null,
+      policyAgentRef: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      agentRuntimeIdentity: {
+        pluginId: 'happier.agent.codex',
+        agentId: 'codex',
+        generation: 'bundled-registry-generation',
+        isCurrent: () => true,
+      },
+    });
+    if (!bundledAuthority) {
+      throw new Error('expected bundled Voice authority');
+    }
+    setAgentSessionRealtimeVoiceAuthority(harness.config, bundledAuthority);
+
+    const runtimeWatchDispose = vi.fn();
+    const runtimeHandle: AgentSessionRealtimeHandle = {
+      stop: vi.fn(async () => ({ status: 'stopped' as const })),
+      watch: vi.fn(() => ({ dispose: runtimeWatchDispose })),
+      dispose: vi.fn(),
+    };
+    const start = vi.fn<AgentSessionRealtimeConversation['start']>(async () => ({
+      status: 'started',
+      transport: {
+        kind: 'webrtc',
+        answerSdp: 'v=0\r\na=late-answer\r\n',
+      },
+      handle: runtimeHandle,
+    }));
+    const nativeRuntime = {
+      ...harness.runtime,
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: vi.fn(() => ({ dispose() {} })),
+      dispose: vi.fn(),
+      realtimeConversation: {
+        inspect: vi.fn(async () => ({
+          status: 'available' as const,
+          transport: 'webrtc' as const,
+        })),
+        start,
+      },
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: harness.runtime,
+      nativeRuntime,
+    }));
+
+    const delayedStart = createDeferred<void>();
+    const boundAttempt = new AbortController();
+    const callerOperation = new AbortController();
+    const rpcMethods: string[] = [];
+    const stopResults: unknown[] = [];
+    const startRpcSignals: AbortSignal[] = [];
+    const onTerminal = vi.fn();
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      const service = createAgentSessionRealtimeService({
+        provider,
+        conversationSessionId: 'session-1',
+        applicationAttemptId: 'voice:stop-before-start',
+        signal: boundAttempt.signal,
+        sessionRpc: async ({ method, payload, signal }) => {
+          rpcMethods.push(method);
+          const handler = harness.handlers.get(method);
+          if (!handler) throw new Error(`missing host runtime RPC producer: ${method}`);
+          if (method === SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START) {
+            startRpcSignals.push(signal);
+            await delayedStart.promise;
+          }
+          const result = await handler(payload);
+          if (method === SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP) {
+            stopResults.push(result);
+          }
+          return result;
+        },
+        onTerminal,
+      });
+
+      const startedPromise = service.start(
+        {
+          transport: {
+            kind: 'webrtc',
+            offerSdp: 'v=0\r\na=delayed-offer\r\n',
+          },
+        },
+        { signal: callerOperation.signal },
+      );
+      await vi.waitFor(() => {
+        expect(rpcMethods).toEqual([
+          SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START,
+        ]);
+      });
+
+      boundAttempt.abort();
+      await vi.waitFor(() => {
+        expect(rpcMethods).toEqual([
+          SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START,
+          SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP,
+        ]);
+      });
+      await vi.waitFor(() => {
+        expect(stopResults).toEqual([
+          { ok: true, status: 'already_stopped' },
+        ]);
+      });
+      const startObservedBoundAbort = startRpcSignals[0]?.aborted;
+      delayedStart.resolve();
+
+      await expect(startedPromise).resolves.toEqual({ status: 'aborted' });
+      expect(startObservedBoundAbort).toBe(true);
+      expect(callerOperation.signal.aborted).toBe(false);
+      expect(onTerminal).toHaveBeenCalledOnce();
+      expect(onTerminal).toHaveBeenCalledWith({
+        kind: 'terminal',
+        reason: 'aborted',
+      });
+      expect(rpcMethods).toEqual([
+        SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_START,
+        SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP,
+        SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_STOP,
+      ]);
+      await vi.waitFor(() => {
+        expect(stopResults).toEqual([
+          { ok: true, status: 'already_stopped' },
+          { ok: true, status: 'stopped' },
+        ]);
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(start).toHaveBeenCalledOnce();
+    expect(runtimeHandle.stop).toHaveBeenCalledOnce();
+    expect(runtimeHandle.watch).toHaveBeenCalledOnce();
+    expect(runtimeWatchDispose).toHaveBeenCalledOnce();
+    expect(runtimeHandle.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('authorizes a never-before-seen installed Agent-session Voice declaration from the selected runtime generation and fails closed otherwise', async () => {
+    const createAgentSessionRealtimeService = await loadAgentSessionRealtimeService();
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    const selectedAgent = {
+      pluginId: 'happier.agent.codex',
+      localId: 'codex',
+    } as const;
+    const installedProvider = {
+      pluginId: 'example.voice.never-seen',
+      localId: 'agent-session-conversation',
+    } as const;
+    const wrongAgentProvider = {
+      pluginId: installedProvider.pluginId,
+      localId: 'wrong-agent',
+    } as const;
+    const malformedProvider = {
+      pluginId: installedProvider.pluginId,
+      localId: 'malformed',
+    } as const;
+    const installedDeclaration = {
+      id: installedProvider.localId,
+      title: 'Never-seen installed Voice',
+      kind: 'conversation',
+      roles: ['realtime_conversation'],
+      platforms: ['web'],
+      capabilities: {
+        readiness: { requirements: [] },
+        turn: { cancelResponse: false, bargeIn: false },
+      },
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent: selectedAgent,
+      },
+      client: {
+        artifactId: 'installed-voice-runtime',
+        modulePath: './voice',
+        exportName: 'activate',
+      },
+    } satisfies PluginVoiceProviderContributionV1;
+    const wrongAgentDeclaration = {
+      ...installedDeclaration,
+      id: wrongAgentProvider.localId,
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent: { pluginId: 'happier.agent.other', localId: 'other' },
+      },
+    } satisfies PluginVoiceProviderContributionV1;
+    const malformedDeclaration = {
+      ...installedDeclaration,
+      id: malformedProvider.localId,
+      execution: {
+        kind: 'experimental_agent_session_realtime',
+        agent: 'happier.agent.codex/codex',
+      },
+    } as unknown as Extract<
+      PluginVoiceProviderContributionV1,
+      Readonly<{ kind: 'conversation' }>
+    >;
+    let generationCurrent = true;
+    const generationRetirement = new AbortController();
+    const installedAuthority = resolveAgentSessionRealtimeVoiceAuthority({
+      runtimeRegistry: {
+        contributes: {
+          voiceProviders: [
+            {
+              pluginId: installedProvider.pluginId,
+              identity: installedProvider,
+              manifestDigest: 'manifest:installed-voice',
+              definition: installedDeclaration,
+            },
+            {
+              pluginId: wrongAgentProvider.pluginId,
+              identity: wrongAgentProvider,
+              manifestDigest: 'manifest:installed-voice',
+              definition: wrongAgentDeclaration,
+            },
+            {
+              pluginId: malformedProvider.pluginId,
+              identity: malformedProvider,
+              manifestDigest: 'manifest:installed-voice',
+              definition: malformedDeclaration,
+            },
+          ],
+        },
+        resolveContributionRuntimeLifecycle: () => ({
+          generation: 'installed-provider-generation:42',
+          isCurrent: () => generationCurrent,
+          retirementSignal: generationRetirement.signal,
+        }),
+      },
+      policyAgentRef: selectedAgent,
+      agentRuntimeIdentity: {
+        pluginId: selectedAgent.pluginId,
+        agentId: selectedAgent.localId,
+        generation: 'installed-generation:42',
+        isCurrent: () => generationCurrent,
+      },
+      agentRetirementSignal: generationRetirement.signal,
+    });
+    if (!installedAuthority) {
+      throw new Error('expected installed Voice authority');
+    }
+    setAgentSessionRealtimeVoiceAuthority(harness.config, installedAuthority);
+
+    const runtimeHandle: AgentSessionRealtimeHandle = {
+      stop: vi.fn(async () => ({ status: 'stopped' as const })),
+      watch: vi.fn(() => ({ dispose() {} })),
+      dispose: vi.fn(),
+    };
+    const inspect = vi.fn(async () => ({
+      status: 'available' as const,
+      transport: 'webrtc' as const,
+    }));
+    const start = vi.fn<AgentSessionRealtimeConversation['start']>(async () => ({
+      status: 'started',
+      transport: {
+        kind: 'webrtc',
+        answerSdp: 'v=0\r\na=answer:installed\r\n',
+      },
+      handle: runtimeHandle,
+    }));
+    const nativeRuntime = {
+      ...harness.runtime,
+      send: vi.fn(async () => ({ status: 'admitted' as const })),
+      watch: vi.fn(() => ({ dispose() {} })),
+      dispose: vi.fn(),
+      realtimeConversation: { inspect, start },
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: harness.runtime,
+      nativeRuntime,
+    }));
+
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      const invoke = async (method: string, payload: unknown) => {
+        const handler = harness.handlers.get(method);
+        if (!handler) throw new Error(`missing host runtime RPC producer: ${method}`);
+        return await handler(payload);
+      };
+      for (const provider of [
+        { pluginId: 'example.voice.unknown', localId: installedProvider.localId },
+        wrongAgentProvider,
+        malformedProvider,
+      ]) {
+        await expect(invoke(
+          SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
+          { v: 1, provider },
+        )).resolves.toMatchObject({
+          ok: false,
+          status: 'unavailable',
+          code: 'agent_realtime_declaration_unavailable',
+        });
+      }
+      expect(inspect).not.toHaveBeenCalled();
+
+      const service = createAgentSessionRealtimeService({
+        provider: installedProvider,
+        conversationSessionId: 'session-1',
+        applicationAttemptId: 'voice:installed-generation',
+        signal: new AbortController().signal,
+        sessionRpc: async ({ sessionId, method, payload }) => {
+          expect(sessionId).toBe('session-1');
+          return await invoke(method, payload);
+        },
+        onTerminal: vi.fn(),
+      });
+      await expect(service.inspect()).resolves.toEqual({
+        status: 'available',
+        transport: 'webrtc',
+      });
+      await expect(service.start({
+        transport: {
+          kind: 'webrtc',
+          offerSdp: 'v=0\r\na=offer:installed\r\n',
+        },
+      })).resolves.toMatchObject({
+        status: 'started',
+        transport: {
+          kind: 'webrtc',
+          answerSdp: 'v=0\r\na=answer:installed\r\n',
+        },
+      });
+
+      generationCurrent = false;
+      generationRetirement.abort();
+      await expect(invoke(
+        SESSION_RPC_METHODS.SESSION_AGENT_REALTIME_INSPECT,
+        { v: 1, provider: installedProvider },
+      )).resolves.toMatchObject({
+        ok: false,
+        status: 'unavailable',
+        code: 'agent_realtime_declaration_unavailable',
+      });
+      expect(inspect).toHaveBeenCalledTimes(1);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(start).toHaveBeenCalledOnce();
+    expect(runtimeHandle.dispose).toHaveBeenCalledOnce();
+  });
+
+  it('does not seed current-runtime Activity from an existing session tuple', async () => {
+    const harness = createHarness();
+    harness.opts.existingSessionId = 'session-1';
+    harness.config.runtimeActivityApplicability = 'not_applicable';
+    let initialRuntimeActivityMutation: unknown = null;
+
+    harness.deps.initializeBackendApiContextFn = async () => ({
+      api: {
+        push: () => ({ sendToAllDevices: () => undefined }),
+        sessionSyncClient: (_sessionRow: unknown, options: { initialRegisteredSessionStateFieldMutations?: readonly unknown[] }) => {
+          initialRuntimeActivityMutation = options.initialRegisteredSessionStateFieldMutations?.[0] ?? null;
+          return harness.session;
+        },
+      },
+      machineId: 'machine-1',
+    });
+    harness.deps.initializeBackendRunSessionFn = async ({ api }: any) => {
+      api.sessionSyncClient({
+        id: 'session-1',
+        runtimeActivityState: 'active',
+        runtimeActivityActiveCount: 3,
+        runtimeActivityObservedAt: 10,
+        runtimeActivityRevision: 8,
+      });
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: true,
+      };
+    };
+    setSessionRuntimeFactory(harness.config, () => {
+      expect(initialRuntimeActivityMutation).toEqual(expect.objectContaining({
+        fieldId: 'runtime.activity',
+        op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+      }));
+      return { operations: harness.runtime, nativeRuntime: harness.runtime };
+    });
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('routes session-input transforms through the scoped daemon bridge', async () => {
+    const harness = createHarness();
+    const transformSessionInput = vi.fn(async (
+      params: Readonly<{
+        sessionId: string;
+        payload: Readonly<Record<string, unknown>>;
+      }>,
+    ) => ({
+      ...params.payload,
+      text: 'transformed by daemon',
+    }));
+    harness.deps.sessionLoopLifecycleDeps = {
+      daemonTurnContributionsBridge: {
+        resolvePrompt: vi.fn(async () => ({
+          kind: 'prompt' as const,
+          toolContributions: [],
+          assetContributions: [],
+        })),
+        transformAgentContext: vi.fn(async ({ payload }) => payload),
+        transformSessionInput,
+      },
+    };
+
+    let capturedTransformer:
+      | ((payload: Record<string, unknown>) => Promise<Record<string, unknown>> | Record<string, unknown>)
+      | undefined;
+    harness.deps.initializeBackendApiContextFn = async () => ({
+      api: {
+        push: () => ({ sendToAllDevices: () => undefined }),
+        sessionSyncClient: (
+          _sessionRow: unknown,
+          options: Readonly<{
+            transformSessionInputBeforeCommit?: typeof capturedTransformer;
+          }>,
+        ) => {
+          capturedTransformer = options.transformSessionInputBeforeCommit;
+          return harness.session;
+        },
+      },
+      machineId: 'machine-1',
+    });
+    let deferredPendingFirstInputCommit = false;
+    harness.deps.initializeBackendRunSessionFn = async ({
+      api,
+      deferPendingFirstInputCommitUntilRuntimeReady,
+    }: any) => {
+      deferredPendingFirstInputCommit =
+        deferPendingFirstInputCommitUntilRuntimeReady === true;
+      api.sessionSyncClient({ id: 'session-1' });
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: true,
+      };
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    if (!capturedTransformer) {
+      throw new Error('expected scoped session-input transformer');
+    }
+    const payload = {
+      sessionId: 'session-1',
+      localId: 'local-1',
+      text: 'original',
+      meta: {},
+      timestampMs: 1,
+    };
+    await expect(capturedTransformer(payload)).resolves.toEqual({
+      ...payload,
+      text: 'transformed by daemon',
+    });
+    expect(transformSessionInput).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      payload,
+    });
+    expect(deferredPendingFirstInputCommit).toBe(true);
+  });
+
+  it('commits retained daemon-bridge first input after runtime open and before prompt admission', async () => {
+    const harness = createHarness();
+    const order: string[] = [];
+    const runtimeOpenStarted = createDeferred<void>();
+    const releaseRuntimeOpen = createDeferred<void>();
+    const commitPendingFirstInputAfterRuntimeReady = vi.fn(async () => {
+      order.push('pending-input:commit');
+    });
+    harness.deps.initializeBackendRunSessionFn = async () => ({
+      session: harness.session,
+      reconnectionHandle: null,
+      reportedSessionId: 'session-1',
+      attachedToExistingSession: false,
+      commitPendingFirstInputAfterRuntimeReady,
+    });
+    setSessionRuntimeFactory(harness.config, async () => {
+      order.push('runtime:open-started');
+      runtimeOpenStarted.resolve();
+      await releaseRuntimeOpen.promise;
+      order.push('runtime:opened');
+      return { operations: harness.runtime, nativeRuntime: harness.runtime };
+    });
+    harness.deps.runSessionLoopLifecycleFn = async (params: Readonly<{
+      startupCoordinator?: Readonly<{ start?: () => Promise<void> }> | null;
+    }>) => {
+      order.push('lifecycle:entered');
+      await params.startupCoordinator?.start?.();
+      order.push('prompt:admitted');
+    };
+
+    const running = runHostSessionRuntime(
+      harness.opts,
+      harness.config,
+      harness.deps,
+    );
+    await runtimeOpenStarted.promise;
+    expect(commitPendingFirstInputAfterRuntimeReady).not.toHaveBeenCalled();
+    releaseRuntimeOpen.resolve();
+    await running;
+
+    expect(commitPendingFirstInputAfterRuntimeReady).toHaveBeenCalledOnce();
+    expect(order).toEqual([
+      'runtime:open-started',
+      'runtime:opened',
+      'lifecycle:entered',
+      'pending-input:commit',
+      'prompt:admitted',
+    ]);
+  });
+
+  it('does not commit retained daemon-bridge first input when runtime open fails', async () => {
+    const harness = createHarness();
+    const commitPendingFirstInputAfterRuntimeReady = vi.fn();
+    harness.deps.initializeBackendRunSessionFn = async () => ({
+      session: harness.session,
+      reconnectionHandle: null,
+      reportedSessionId: 'session-1',
+      attachedToExistingSession: false,
+      commitPendingFirstInputAfterRuntimeReady,
+    });
+    setSessionRuntimeFactory(harness.config, async () => {
+      throw new Error('daemon session.open failed');
+    });
+
+    await expect(runHostSessionRuntime(
+      harness.opts,
+      harness.config,
+      harness.deps,
+    )).rejects.toThrow('daemon session.open failed');
+    expect(commitPendingFirstInputAfterRuntimeReady).not.toHaveBeenCalled();
+  });
+
+  it('binds the supported current-runtime observer and publishes idle before provider input starts', async () => {
+    const harness = createHarness();
+    harness.config.runtimeActivityApplicability = 'supported';
+    let observerBound = false;
+    harness.runtime.subscribeCanonicalAgentSessionEvents = vi.fn((handler: (event: any) => void) => {
+      observerBound = true;
+      handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 1,
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        state: 'idle',
+        activeCount: 0,
+      });
+      return () => undefined;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      expect(observerBound).toBe(true);
+      await vi.waitFor(() => expect(harness.session.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+        })));
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('waits for the initial Runtime Activity authority settlement before provider input starts', async () => {
+    const harness = createHarness();
+    const authoritySettlement = createDeferred<void>();
+    harness.session.enqueueRegisteredSessionStateFieldMutation = vi.fn(
+      async () => await authoritySettlement.promise,
+    );
+    const runPermissionModePromptLoopFn = vi.fn(async () => undefined);
+    harness.deps.runPermissionModePromptLoopFn = runPermissionModePromptLoopFn;
+
+    const runPromise = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    await vi.waitFor(() => {
+      expect(harness.session.enqueueRegisteredSessionStateFieldMutation).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fieldId: 'runtime.activity',
+          op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+        }),
+      );
+    });
+    await Promise.resolve();
+
+    expect(runPermissionModePromptLoopFn).not.toHaveBeenCalled();
+
+    authoritySettlement.resolve();
+    await runPromise;
+    expect(runPermissionModePromptLoopFn).toHaveBeenCalledOnce();
+  });
+
+  it('does not publish idle when supported observer installation fails', async () => {
+    const harness = createHarness();
+    const observerFailure = new Error('observer installation failed');
+    harness.config.runtimeActivityApplicability = 'supported';
+    harness.runtime.subscribeCanonicalAgentSessionEvents = vi.fn(() => {
+      throw observerFailure;
+    });
+
+    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps)).rejects.toBe(observerFailure);
+    await Promise.resolve();
+    expect(harness.session.enqueueRegisteredSessionStateFieldMutation.mock.calls)
+      .not.toContainEqual([
+        expect.objectContaining({
+          op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+        }),
+      ]);
+  });
+
   it('preserves scoped unset environment keys through host option canonicalization', async () => {
     const harness = createHarness();
     harness.opts.unsetEnvironmentVariables = ['OPENAI_API_KEY', 'Gemini_Api_Key'];
@@ -365,60 +1385,6 @@ describe('runHostSessionRuntime', () => {
 
     await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
       .rejects.toThrow('Invalid environment variable unset key');
-  });
-
-  it('defers the delivered watermark before creating the native runtime', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    setSessionRuntimeFactory(harness.config, (params) => {
-      expect(params.session.sessionId).toBe(harness.session.sessionId);
-      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
-      return {
-        operations: harness.runtime as any,
-        nativeRuntime: harness.runtime as any,
-      };
-    });
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-  });
-
-  it('forwards the provider-acceptance pending materialization policy before creating the native runtime', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    harness.config.providerAcceptancePendingMaterialization = 'commitAtMaterialize';
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledWith({
-      pendingMaterialization: 'commitAtMaterialize',
-    });
-  });
-
-  it('marks new provider-acceptance sessions in initial metadata before session creation', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.deps.createSessionMetadataFn = ({ augmentMetadata }: any) => {
-      const metadata = augmentMetadata?.({ path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() })
-        ?? { path: '/tmp/workspace', permissionMode: 'default', permissionModeUpdatedAt: Date.now() };
-      return {
-        state: { controlledByUser: false },
-        metadata,
-      };
-    };
-    harness.deps.initializeBackendRunSessionFn = async ({ metadata }: any) => {
-      expect(metadata.userMessageDeliveryWatermarkModeV1).toBe('providerAcceptance');
-      return {
-        session: harness.session,
-        reconnectionHandle: null,
-        reportedSessionId: 'session-1',
-        attachedToExistingSession: false,
-      };
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
   it('does not emit idle keepAlive heartbeats at the thinking cadence', async () => {
@@ -523,6 +1489,431 @@ describe('runHostSessionRuntime', () => {
         readProviderField: expect.any(Function),
       }),
     }));
+  });
+
+  it('consumes provider binding materialization at the host-runtime ingress and passes it to the runtime factory', async () => {
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' };
+    harness.opts.modelSelection = {
+      v: 1, updatedAt: 1,
+      ref: { agentTargetKey: 'backend:codex', providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'), modelId: 'provider-model' },
+    };
+    const materialization = {
+      v: 1 as const,
+      kind: 'engineConfig' as const,
+      engineConfig: { model_provider: { name: 'gateway' } },
+    };
+    const sessionBindingMetadata = {
+      v: 1 as const,
+      connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+      contributionKey: 'plugin.openrouter/openrouter',
+      connectionRevision: 3,
+      model: providerModelDescriptor,
+      protocol: 'openai-responses' as const,
+      materialization: 'engineConfig' as const,
+      adapterBindingKey: 'openrouter',
+      compatibilityFingerprint: 'compatibility-v1',
+      bindingSecurityFingerprint: 'security-v1',
+      displaySnapshot: {
+        providerName: 'OpenRouter',
+        connectionName: 'Work',
+        connectionRole: 'named' as const,
+        connectionDisplayNameMode: 'custom' as const,
+      },
+    };
+    const createSessionRuntime = vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    }));
+    harness.config.createSessionRuntime = createSessionRuntime;
+    let persistedMetadata: Record<string, unknown> = { path: '/tmp/workspace', permissionMode: 'default' };
+    harness.deps.createSessionMetadataFn = (params: any) => {
+      persistedMetadata = params.augmentMetadata(persistedMetadata);
+      return {
+        state: { controlledByUser: false },
+        metadata: persistedMetadata,
+      };
+    };
+    harness.session.getMetadataSnapshot = () => persistedMetadata;
+    const previousHandoff = process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+    delete process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+    harness.opts.environmentVariables = {
+      [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
+        serializeProviderBindingLaunchHandoffForEnv(
+          materialization,
+          sessionBindingMetadata,
+        ),
+    };
+
+    try {
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+      expect(createSessionRuntime).toHaveBeenCalledWith(expect.objectContaining({
+        providerBindingMaterialization: materialization,
+        metadata: expect.objectContaining({ providerBindingV1: sessionBindingMetadata }),
+      }));
+      expect(process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]).toBeUndefined();
+    } finally {
+      if (previousHandoff === undefined) delete process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+      else process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY] = previousHandoff;
+    }
+  });
+
+  it('does not construct a provider-bound runtime before fresh daemon session initialization ACKs', async () => {
+    const createProviderBoundHarness = () => {
+      const harness = createHarness();
+      harness.config.policyAgentId = 'codex';
+      harness.opts.startedBy = 'daemon';
+      harness.opts.backendTarget = {
+        kind: 'backend',
+        backendId: 'codex',
+        sourceKind: 'built_in',
+      };
+      harness.opts.modelSelection = {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId:
+            ProviderConnectionIdSchema.parse('pc_work'),
+          modelId: providerModelDescriptor.id,
+        },
+      };
+      harness.opts.environmentVariables = {
+        [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
+          serializeProviderBindingLaunchHandoffForEnv(
+            {
+              v: 1,
+              kind: 'engineConfig',
+              engineConfig: { model_provider: { name: 'managed-gateway' } },
+            },
+            {
+              v: 1,
+              connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+              contributionKey: 'happier.provider.cliproxyapi/cliproxyapi',
+              connectionRevision: 1,
+              model: providerModelDescriptor,
+              protocol: 'openai-responses',
+              materialization: 'engineConfig',
+              adapterBindingKey: 'cliproxyapi',
+              compatibilityFingerprint: 'compatibility-v1',
+              bindingSecurityFingerprint: 'security-v1',
+              displaySnapshot: {
+                providerName: 'CLIProxyAPI',
+                connectionName: 'CLIProxyAPI',
+                connectionRole: 'default',
+                connectionDisplayNameMode: 'automatic',
+              },
+            },
+          ),
+      };
+      const createSessionRuntime = vi.fn(() => ({
+        operations: harness.runtime,
+        nativeRuntime: harness.runtime,
+      }));
+      harness.config.createSessionRuntime = createSessionRuntime;
+      const createDeferredBootstrap = vi.fn();
+      harness.config.startupBootstrap = {
+        shouldCreate: ({ seed }) =>
+          seed.modelSelection?.ref.providerConnectionId === null,
+        create: createDeferredBootstrap,
+      };
+      return {
+        harness,
+        createSessionRuntime,
+        createDeferredBootstrap,
+      };
+    };
+
+    const pending = createProviderBoundHarness();
+    const daemonAck = createDeferred<Awaited<
+      ReturnType<typeof pending.harness.deps.initializeBackendRunSessionFn>
+    >>();
+    pending.harness.deps.initializeBackendRunSessionFn =
+      vi.fn(async () => await daemonAck.promise);
+    const run = runHostSessionRuntime(
+      pending.harness.opts,
+      pending.harness.config,
+      pending.harness.deps,
+    );
+
+    await vi.waitFor(() => {
+      expect(
+        pending.harness.deps.initializeBackendRunSessionFn,
+      ).toHaveBeenCalledOnce();
+    });
+    expect(pending.createDeferredBootstrap).not.toHaveBeenCalled();
+    expect(pending.createSessionRuntime).not.toHaveBeenCalled();
+
+    daemonAck.resolve({
+      session: pending.harness.session,
+      reconnectionHandle: null,
+      reportedSessionId: 'canonical-session',
+      attachedToExistingSession: false,
+    });
+    await expect(run).resolves.toBeUndefined();
+    expect(pending.createSessionRuntime).toHaveBeenCalledOnce();
+
+    const failed = createProviderBoundHarness();
+    failed.harness.deps.initializeBackendRunSessionFn =
+      vi.fn(async () => {
+        throw new Error('required daemon ACK failed');
+      });
+    await expect(runHostSessionRuntime(
+      failed.harness.opts,
+      failed.harness.config,
+      failed.harness.deps,
+    )).rejects.toThrow('required daemon ACK failed');
+    expect(failed.createDeferredBootstrap).not.toHaveBeenCalled();
+    expect(failed.createSessionRuntime).not.toHaveBeenCalled();
+  });
+
+  it('fails closed before runtime creation when a Provider handoff omits or mismatches the selected exact model', async () => {
+    for (const model of [
+      undefined,
+      { id: 'different-provider-model', name: 'Different Provider Model' },
+    ] as const) {
+      const harness = createHarness();
+      harness.config.policyAgentId = 'codex';
+      harness.opts.backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' };
+      harness.opts.modelSelection = {
+        v: 1,
+        updatedAt: 1,
+        ref: {
+          agentTargetKey: 'backend:codex',
+          providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+          modelId: providerModelDescriptor.id,
+        },
+      };
+      const createSessionRuntime = vi.fn(() => ({
+        operations: harness.runtime,
+        nativeRuntime: harness.runtime,
+      }));
+      harness.config.createSessionRuntime = createSessionRuntime;
+      harness.opts.environmentVariables = {
+        [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]:
+          serializeProviderBindingLaunchHandoffForEnv(
+            { v: 1, kind: 'engineConfig', engineConfig: { model_provider: { name: 'gateway' } } },
+            {
+              v: 1,
+              connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+              contributionKey: 'plugin.openrouter/openrouter',
+              connectionRevision: 3,
+              ...(model ? { model } : {}),
+              protocol: 'openai-responses',
+              materialization: 'engineConfig',
+              adapterBindingKey: 'openrouter',
+              compatibilityFingerprint: 'compatibility-v1',
+              bindingSecurityFingerprint: 'security-v1',
+              displaySnapshot: {
+                providerName: 'OpenRouter',
+                connectionName: 'Work',
+                connectionRole: 'named',
+                connectionDisplayNameMode: 'custom',
+              },
+            },
+          ),
+      };
+
+      await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+        .rejects.toThrow('Provider binding handoff model does not match the selected model');
+      expect(createSessionRuntime).not.toHaveBeenCalled();
+    }
+  });
+
+  it('keeps provider-owned child credentials redacted for the whole runtime lifetime and releases them on factory failure', async () => {
+    const harness = createHarness();
+    const credential = 'provider-runtime-redaction-secret-value';
+    harness.config.policyAgentId = 'codex';
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' };
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        modelId: 'provider-model',
+      },
+    };
+    process.env.HAPPIER_CODEX_PROVIDER_API_KEY = credential;
+    process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY] =
+      serializeProviderBindingLaunchHandoffForEnv(
+        { v: 1, kind: 'engineConfig', engineConfig: { model_provider: { name: 'gateway' } } },
+        {
+          v: 1,
+          connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+          contributionKey: 'plugin.openrouter/openrouter',
+          connectionRevision: 3,
+          model: providerModelDescriptor,
+          protocol: 'openai-responses',
+          materialization: 'engineConfig',
+          adapterBindingKey: 'openrouter',
+          compatibilityFingerprint: 'compatibility-v1',
+          bindingSecurityFingerprint: 'security-v1',
+          displaySnapshot: {
+            providerName: 'OpenRouter',
+            connectionName: 'Work',
+            connectionRole: 'named',
+            connectionDisplayNameMode: 'custom',
+          },
+        },
+      );
+    harness.config.createSessionRuntime = () => {
+      expect(redactBugReportSensitiveText(credential)).toBe('[REDACTED]');
+      throw new Error('factory failed');
+    };
+
+    try {
+      await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+        .rejects.toThrow('factory failed');
+      expect(redactBugReportSensitiveText(credential)).toBe(credential);
+    } finally {
+      delete process.env.HAPPIER_CODEX_PROVIDER_API_KEY;
+      delete process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+    }
+  });
+
+  it('closes the current session when required continuation verification refuses during runtime creation', async () => {
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    const continuationError = new Error('Agent session continuation is unreachable.');
+    continuationError.name = 'AgentSessionContinuationUnreachableError';
+    const reconnectionCancel = vi.fn(() => {
+      throw new Error('injected reconnection cleanup failure');
+    });
+    const stopMcpServer = vi.fn(() => {
+      throw new Error('injected MCP cleanup failure');
+    });
+    harness.deps.initializeBackendRunSessionFn = vi.fn(async () => ({
+      session: harness.session,
+      reconnectionHandle: { cancel: reconnectionCancel },
+      reportedSessionId: 'session-1',
+      attachedToExistingSession: false,
+    }));
+    harness.deps.resolveRunnerMcpServersFn = vi.fn(async () => ({
+      happierMcpServer: { stop: stopMcpServer },
+      mcpServers: {},
+    }));
+    const runSessionLoopLifecycleFn = vi.fn(async () => undefined);
+    harness.deps.runSessionLoopLifecycleFn = runSessionLoopLifecycleFn;
+    harness.config.createSessionRuntime = vi.fn(async () => {
+      throw continuationError;
+    });
+
+    await expect(
+      runHostSessionRuntime(harness.opts, harness.config, harness.deps),
+    ).rejects.toBe(continuationError);
+
+    expect(harness.session.close).toHaveBeenCalledOnce();
+    expect(reconnectionCancel).toHaveBeenCalledOnce();
+    expect(stopMcpServer).toHaveBeenCalledOnce();
+    expect(runSessionLoopLifecycleFn).not.toHaveBeenCalled();
+  });
+
+  it('keeps provider-owned child credentials redacted while the session lifecycle is running', async () => {
+    const harness = createHarness();
+    const credential = 'provider-runtime-live-lifetime-secret';
+    const lifecycleEntered = createDeferred<void>();
+    const releaseLifecycle = createDeferred<void>();
+    harness.config.policyAgentId = 'codex';
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' };
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'),
+        modelId: 'provider-model',
+      },
+    };
+    const previousCredential = process.env.HAPPIER_CODEX_PROVIDER_API_KEY;
+    const previousHandoff = process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+    delete process.env.HAPPIER_CODEX_PROVIDER_API_KEY;
+    delete process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+    harness.opts.environmentVariables = {
+      HAPPIER_CODEX_PROVIDER_API_KEY: credential,
+      [HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY]: serializeProviderBindingLaunchHandoffForEnv(
+        { v: 1, kind: 'engineConfig', engineConfig: { model_provider: { name: 'gateway' } } },
+        {
+          v: 1,
+          connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+          contributionKey: 'plugin.openrouter/openrouter',
+          connectionRevision: 3,
+          model: providerModelDescriptor,
+          protocol: 'openai-responses',
+          materialization: 'engineConfig',
+          adapterBindingKey: 'openrouter',
+          compatibilityFingerprint: 'compatibility-v1',
+          bindingSecurityFingerprint: 'security-v1',
+          displaySnapshot: {
+            providerName: 'OpenRouter',
+            connectionName: 'Work',
+            connectionRole: 'named',
+            connectionDisplayNameMode: 'custom',
+          },
+        },
+      ),
+    };
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      lifecycleEntered.resolve();
+      await releaseLifecycle.promise;
+    };
+
+    try {
+      const running = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+      await lifecycleEntered.promise;
+      expect(redactBugReportSensitiveText(credential)).toBe('[REDACTED]');
+      releaseLifecycle.resolve();
+      await running;
+      expect(redactBugReportSensitiveText(credential)).toBe(credential);
+    } finally {
+      releaseLifecycle.resolve();
+      if (previousCredential === undefined) delete process.env.HAPPIER_CODEX_PROVIDER_API_KEY;
+      else process.env.HAPPIER_CODEX_PROVIDER_API_KEY = previousCredential;
+      if (previousHandoff === undefined) delete process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+      else process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY] = previousHandoff;
+    }
+  });
+
+  it('fails closed when a provider-bound model selection reaches the host without its validated binding handoff', async () => {
+    const harness = createHarness();
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' };
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: { agentTargetKey: 'backend:qwen', providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'), modelId: 'provider-model' },
+    };
+
+    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+      .rejects.toThrow('Provider-bound model selection requires a validated provider binding handoff');
+  });
+
+  it('fails closed when a provider handoff is paired with an explicit native model selection', async () => {
+    const harness = createHarness();
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' };
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: { agentTargetKey: 'backend:qwen', providerConnectionId: null, modelId: 'native-model' },
+    };
+    process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY] =
+      serializeProviderBindingLaunchHandoffForEnv(
+        { v: 1, kind: 'engineConfig', engineConfig: { provider: 'gateway' } },
+        {
+          v: 1, connectionId: ProviderConnectionIdSchema.parse('pc_work'), contributionKey: 'plugin.gateway/gateway', connectionRevision: 1,
+          protocol: 'openai-responses', materialization: 'engineConfig', adapterBindingKey: 'gateway',
+          compatibilityFingerprint: 'compatibility-v1', bindingSecurityFingerprint: 'security-v1',
+          displaySnapshot: { providerName: 'Gateway', connectionName: 'Gateway', connectionRole: 'default', connectionDisplayNameMode: 'automatic' },
+        },
+      );
+
+    try {
+      await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
+        .rejects.toThrow('Native model selection cannot include a provider binding handoff');
+    } finally {
+      delete process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+    }
   });
 
   it('publishes usage-limit recovery controls from native runtimes', async () => {
@@ -696,71 +2087,6 @@ describe('runHostSessionRuntime', () => {
     expect(applied).toEqual(['display.title:Host bridge title']);
   });
 
-  it('seeds initial daemon-prompt sessions with a canonical display.title before provider startup', async () => {
-    const previousInitialPrompt = process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY];
-    process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY] = '  Inspect this repo and summarize the modules\nInclude tests.  ';
-    const harness = createHarness();
-    let initializedMetadata: Record<string, any> | null = null;
-    const applied: string[] = [];
-    harness.deps.createSessionMetadataFn = ({ augmentMetadata }: any) => {
-      const metadata = augmentMetadata?.({ path: '/tmp/workspace', permissionMode: 'default' })
-        ?? { path: '/tmp/workspace', permissionMode: 'default' };
-      initializedMetadata = metadata;
-      return {
-        state: { controlledByUser: false },
-        metadata,
-      };
-    };
-    harness.deps.initializeBackendRunSessionFn = async ({ metadata }: any) => {
-      expect(metadata.summary?.text).toBe('Inspect this repo and summarize the modules');
-      expect(JSON.stringify(metadata)).not.toContain('Include tests.');
-      return {
-        session: harness.session,
-        reconnectionHandle: null,
-        reportedSessionId: 'session-1',
-        attachedToExistingSession: false,
-      };
-    };
-    harness.session.getMetadataSnapshot = () => initializedMetadata;
-    harness.config.sessionState = {
-      facet: {
-        capabilities: {
-          display: {
-            title: {
-              supported: true,
-              happierToProvider: { supported: true, transport: 'runtime-hook' },
-              providerToHappier: { supported: true, source: 'snapshot' },
-            },
-          },
-        },
-        applyHappierField: vi.fn(async (_ctx, field, value) => {
-          applied.push(`${field}:${String(value)}`);
-        }),
-        readField: vi.fn(async () => null),
-      },
-    };
-    harness.deps.runSessionLoopLifecycleFn = vi.fn(async (params: {
-      config: { onAfterStart?: () => Promise<void> | void };
-    }) => {
-      await params.config.onAfterStart?.();
-    });
-
-    try {
-      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-    } finally {
-      if (previousInitialPrompt === undefined) {
-        delete process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY];
-      } else {
-        process.env[HAPPIER_DAEMON_INITIAL_PROMPT_ENV_KEY] = previousInitialPrompt;
-      }
-    }
-
-    expect(initializedMetadata).toMatchObject({
-      summary: { text: 'Inspect this repo and summarize the modules' },
-    });
-    expect(applied).toEqual(['display.title:Inspect this repo and summarize the modules']);
-  });
-
   it('mirrors a fork-inherited display.title to the provider after the new runtime starts', async () => {
     const harness = createHarness();
     const applied: string[] = [];
@@ -791,9 +2117,7 @@ describe('runHostSessionRuntime', () => {
     };
     harness.deps.runSessionLoopLifecycleFn = vi.fn(async (params: {
       config: { onAfterStart?: () => Promise<void> | void };
-      runtime: { startOrLoadSession: (options?: unknown) => Promise<unknown> };
     }) => {
-      await params.runtime.startOrLoadSession({});
       await params.config.onAfterStart?.();
     });
 
@@ -804,22 +2128,78 @@ describe('runHostSessionRuntime', () => {
 
   it('keeps provider startup bootstrap inside the shared session loop instead of early-returning', async () => {
     const harness = createHarness();
+    const resolvedModelSelection = {
+      v: 1 as const,
+      updatedAt: 123,
+      ref: {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'qwen-fast',
+      },
+    };
     const bootstrapCleanup = vi.fn(async () => undefined);
     const bootstrapStart = vi.fn(async () => undefined);
     const bootstrapPushSender = {
       sendToAllDevices: vi.fn(() => undefined),
       sendToAllDevicesAsync: vi.fn(async () => undefined),
     };
-    const runSessionLoopLifecycleFn = vi.fn(async (_params: any) => undefined);
+    let currentPermissionMode: PermissionMode | undefined;
+    let currentPermissionModeUpdatedAt = 0;
+    const writeRuntimeOverrides = vi.fn();
+    const runSessionLoopLifecycleFn = vi.fn(async (params: any) => {
+      await params.config.onAfterStart?.({
+        session: params.session,
+        runtime: params.hookRuntime,
+      });
+      params.permissionModeState.setCurrentPermissionMode('yolo');
+      params.permissionModeState.setCurrentPermissionModeUpdatedAt(999);
+      await params.transitionModelSelection({
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'qwen-live',
+      }, 'command');
+    });
     const initializeBackendApiContextFn = vi.fn(harness.deps.initializeBackendApiContextFn);
     const initializeBackendRunSessionFn = vi.fn(harness.deps.initializeBackendRunSessionFn);
 
     harness.deps.runSessionLoopLifecycleFn = runSessionLoopLifecycleFn;
     harness.deps.initializeBackendApiContextFn = initializeBackendApiContextFn;
     harness.deps.initializeBackendRunSessionFn = initializeBackendRunSessionFn;
+    harness.deps.createPermissionModeQueueStateFn = (params: any) => {
+      currentPermissionMode = params.initialPermissionMode;
+      return {
+        messageQueue: {
+          reset: () => undefined,
+          size: () => 0,
+        },
+        rebindSession: () => undefined,
+        getCurrentPermissionMode: () => currentPermissionMode,
+        setCurrentPermissionMode: (mode: PermissionMode | undefined) => {
+          currentPermissionMode = mode;
+        },
+        getCurrentPermissionModeUpdatedAt: () => currentPermissionModeUpdatedAt,
+        setCurrentPermissionModeUpdatedAt: (updatedAt: number) => {
+          currentPermissionModeUpdatedAt = updatedAt;
+        },
+      };
+    };
+    harness.runtime.updateSessionRuntimeConfig.mockResolvedValue({ status: 'applied' });
+    harness.opts.permissionMode = 'acceptEdits';
+    harness.config.lifecycleHooks = {
+      resolveInitialModelSelection: async () => resolvedModelSelection,
+    };
     harness.session.getMetadataSnapshot = () => null;
-    harness.config.startupBootstrap = {
-      create: async () => ({
+    type StartupBootstrapCreate = NonNullable<
+      HostSessionRuntimeConfig['startupBootstrap']
+    >['create'];
+    const createBootstrap = vi.fn<StartupBootstrapCreate>(async (params) => {
+      expect(params.seed).toEqual({
+        permissionMode: 'safe-yolo',
+        permissionModeUpdatedAt: expect.any(Number),
+        permissionModeSource: 'explicit',
+        modelSelection: resolvedModelSelection,
+      });
+      return {
         api: {
           push: () => bootstrapPushSender,
         },
@@ -832,14 +2212,18 @@ describe('runHostSessionRuntime', () => {
           happyLibDir: '/tmp/lib',
           happyToolsDir: '/tmp/tools',
           path: '/tmp/bootstrap-workspace',
-          permissionMode: 'default',
+          permissionMode: 'acceptEdits' as const,
           permissionModeUpdatedAt: Date.now(),
         },
         attachedToExistingSession: false,
         reconnectionHandle: null,
         start: bootstrapStart,
         cleanup: bootstrapCleanup,
-      }),
+      };
+    });
+    harness.config.startupBootstrap = {
+      create: createBootstrap,
+      writeRuntimeOverrides,
     };
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
@@ -850,7 +2234,7 @@ describe('runHostSessionRuntime', () => {
       runtimeMetadata: Readonly<{ path?: string }>;
       machineId: string;
       startupCoordinator: Readonly<{
-        start: unknown;
+        start: () => Promise<void>;
         cleanup: unknown;
       }> | null;
     }> | undefined;
@@ -858,11 +2242,177 @@ describe('runHostSessionRuntime', () => {
     expect(lifecycleParams?.runtimeMetadata).toEqual(expect.objectContaining({ path: '/tmp/bootstrap-workspace' }));
     expect(lifecycleParams?.machineId).toBe('bootstrap-machine');
     expect(lifecycleParams?.startupCoordinator).toEqual(expect.objectContaining({
-      start: bootstrapStart,
+      start: expect.any(Function),
       cleanup: bootstrapCleanup,
     }));
+    await lifecycleParams?.startupCoordinator?.start();
+    expect(bootstrapStart).toHaveBeenCalledWith({
+      prepareSession: expect.any(Function),
+    });
     expect(initializeBackendApiContextFn).not.toHaveBeenCalled();
     expect(initializeBackendRunSessionFn).not.toHaveBeenCalled();
+    expect(createBootstrap).toHaveBeenCalledOnce();
+    expect(writeRuntimeOverrides).toHaveBeenLastCalledWith({
+      permissionMode: 'yolo',
+      permissionModeUpdatedAt: 999,
+      modelSelection: {
+        v: 1,
+        updatedAt: expect.any(Number),
+        ref: {
+          agentTargetKey: 'backend:qwen',
+          providerConnectionId: null,
+          modelId: 'qwen-fast',
+        },
+      },
+    });
+  });
+
+  it('uses the resolved startup seed for the synchronous path when deferred creation is ineligible', async () => {
+    const harness = createHarness();
+    const lifecycleModelSelection = {
+      v: 1 as const,
+      updatedAt: 120,
+      ref: {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'qwen-account',
+      },
+    };
+    const cachedModelSelection = {
+      v: 1 as const,
+      updatedAt: 121,
+      ref: {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'qwen-released-cache',
+      },
+    };
+    const createSessionMetadataFn = vi.fn(harness.deps.createSessionMetadataFn);
+    const initializeBackendRunSessionFn = vi.fn(harness.deps.initializeBackendRunSessionFn);
+    const createBootstrap = vi.fn();
+    harness.deps.createSessionMetadataFn = createSessionMetadataFn;
+    harness.deps.initializeBackendRunSessionFn = initializeBackendRunSessionFn;
+    harness.config.lifecycleHooks = {
+      resolveInitialModelSelection: async () => lifecycleModelSelection,
+    };
+    harness.config.startupBootstrap = {
+      resolveSeed: ({ seed }) => ({
+        ...seed,
+        permissionMode: 'safe-yolo',
+        permissionModeUpdatedAt: 122,
+        permissionModeSource: 'released_cache_v1',
+        modelSelection: cachedModelSelection,
+      }),
+      shouldCreate: () => false,
+      create: createBootstrap,
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(createBootstrap).not.toHaveBeenCalled();
+    expect(createSessionMetadataFn).toHaveBeenCalledWith(expect.objectContaining({
+      permissionMode: 'safe-yolo',
+      permissionModeUpdatedAt: 122,
+      modelSelectionIntent: {
+        v: 1,
+        updatedAt: 121,
+        selection: cachedModelSelection.ref,
+      },
+    }));
+    expect(initializeBackendRunSessionFn).toHaveBeenCalledWith(expect.objectContaining({
+      startupMetadataOverrides: {
+        permissionModeOverride: {
+          mode: 'safe-yolo',
+          updatedAt: 122,
+        },
+        modelOverride: {
+          v: 1,
+          updatedAt: 121,
+          selection: cachedModelSelection.ref,
+        },
+      },
+    }));
+  });
+
+  it('commits a fallback-derived live permission override only after its paired timestamp update', async () => {
+    const harness = createHarness();
+    const writeRuntimeOverrides = vi.fn();
+    let fallbackSeed:
+      | Readonly<{ permissionMode: PermissionMode; permissionModeUpdatedAt: number }>
+      | null = null;
+    let currentPermissionMode: PermissionMode | undefined;
+    let currentPermissionModeUpdatedAt = 0;
+    harness.deps.createPermissionModeQueueStateFn = (params: any) => {
+      currentPermissionMode = params.initialPermissionMode;
+      return {
+        messageQueue: {
+          reset: () => undefined,
+          size: () => 0,
+        },
+        rebindSession: () => undefined,
+        getCurrentPermissionMode: () => currentPermissionMode,
+        setCurrentPermissionMode: (mode: PermissionMode | undefined) => {
+          currentPermissionMode = mode;
+        },
+        getCurrentPermissionModeUpdatedAt: () => currentPermissionModeUpdatedAt,
+        setCurrentPermissionModeUpdatedAt: (updatedAt: number) => {
+          currentPermissionModeUpdatedAt = updatedAt;
+        },
+      };
+    };
+    harness.config.startupBootstrap = {
+      resolveSeed: ({ seed }) => {
+        fallbackSeed = seed;
+        return seed;
+      },
+      shouldCreate: () => false,
+      create: vi.fn(),
+      writeRuntimeOverrides,
+    };
+    harness.deps.runSessionLoopLifecycleFn = async (params: any) => {
+      await params.config.onAfterStart?.({
+        session: params.session,
+        runtime: params.hookRuntime,
+      });
+      if (!fallbackSeed) throw new Error('expected fallback startup seed');
+      params.permissionModeState.setCurrentPermissionMode(fallbackSeed.permissionMode);
+      params.permissionModeState.setCurrentPermissionModeUpdatedAt(
+        fallbackSeed.permissionModeUpdatedAt,
+      );
+      expect(writeRuntimeOverrides).not.toHaveBeenCalled();
+
+      params.permissionModeState.setCurrentPermissionMode('yolo');
+      expect(writeRuntimeOverrides).not.toHaveBeenCalled();
+      params.permissionModeState.setCurrentPermissionModeUpdatedAt(
+        fallbackSeed.permissionModeUpdatedAt + 1,
+      );
+      expect(writeRuntimeOverrides).toHaveBeenCalledWith(expect.objectContaining({
+        permissionMode: 'yolo',
+        permissionModeUpdatedAt: fallbackSeed.permissionModeUpdatedAt + 1,
+      }));
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(writeRuntimeOverrides).toHaveBeenCalledOnce();
+  });
+
+  it('persists an authoritative account-default startup override', async () => {
+    const harness = createHarness();
+    const writeRuntimeOverrides = vi.fn();
+    harness.config.startupBootstrap = {
+      resolveSeed: ({ seed }) => ({
+        ...seed,
+        permissionModeSource: 'account_default',
+      }),
+      shouldCreate: () => false,
+      create: vi.fn(),
+      writeRuntimeOverrides,
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(writeRuntimeOverrides).toHaveBeenCalledOnce();
   });
 
   it('uses default ready sender and runs lifecycle hooks', async () => {
@@ -972,7 +2522,7 @@ describe('runHostSessionRuntime', () => {
     expect(capturedStartRuntimeBeforeFirstPrompt).toBe(true);
   });
 
-  it('runs terminal remote switching through the shared lifecycle when the runtime exposes a mode loop', async () => {
+  it('runs terminal remote switching through the shared lifecycle when the session factory binds a mode loop', async () => {
     const harness = createHarness();
     const runTerminalRemoteSessionModeLoopFn = vi.fn(async () => 0);
     const modeLoop = {
@@ -982,7 +2532,7 @@ describe('runHostSessionRuntime', () => {
       runRemote: vi.fn(async () => 'exit' as const),
       onModeChange: vi.fn(),
     };
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    setTerminalRemoteModeLoop(harness.config, modeLoop);
     harness.deps.sessionLoopLifecycleDeps = {
       runTerminalRemoteSessionModeLoopFn,
     };
@@ -995,6 +2545,21 @@ describe('runHostSessionRuntime', () => {
       runTerminal: expect.any(Function),
       runRemote: expect.any(Function),
     }));
+  });
+
+  it('does not infer terminal remote switching from runtime method presence', async () => {
+    const harness = createHarness();
+    const runTerminalRemoteSessionModeLoopFn = vi.fn(async () => 0);
+    (
+      harness.runtime as unknown as Record<string, unknown>
+    ).resolveTerminalRemoteSessionModeLoop = () => createTerminalRemoteModeLoopFixture();
+    harness.deps.sessionLoopLifecycleDeps = {
+      runTerminalRemoteSessionModeLoopFn,
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(runTerminalRemoteSessionModeLoopFn).not.toHaveBeenCalled();
   });
 
   it('defers server pending materialization while the primary runtime turn is active', async () => {
@@ -1064,7 +2629,7 @@ describe('runHostSessionRuntime', () => {
       runRemote: vi.fn(async () => 'exit' as const),
       onModeChange: vi.fn(),
     };
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    setTerminalRemoteModeLoop(harness.config, modeLoop);
     harness.deps.sessionLoopLifecycleDeps = {
       runTerminalRemoteSessionModeLoopFn,
     };
@@ -1110,7 +2675,7 @@ describe('runHostSessionRuntime', () => {
       runRemote: vi.fn(async () => 'exit' as const),
       onModeChange: vi.fn(),
     };
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    setTerminalRemoteModeLoop(harness.config, modeLoop);
     harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
       beforePendingMaterialize?: () => boolean | Promise<boolean>;
     }>) => {
@@ -1148,7 +2713,7 @@ describe('runHostSessionRuntime', () => {
       runRemote: vi.fn(async () => 'exit' as const),
       onModeChange: vi.fn(),
     };
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    setTerminalRemoteModeLoop(harness.config, modeLoop);
     harness.deps.sessionLoopLifecycleDeps = {
       runTerminalRemoteSessionModeLoopFn,
     };
@@ -1194,7 +2759,7 @@ describe('runHostSessionRuntime', () => {
       runRemote: vi.fn(async () => 'exit' as const),
       onModeChange: vi.fn(),
     };
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    setTerminalRemoteModeLoop(harness.config, modeLoop);
     harness.deps.sessionLoopLifecycleDeps = {
       runTerminalRemoteSessionModeLoopFn,
     };
@@ -1249,7 +2814,7 @@ describe('runHostSessionRuntime', () => {
       runRemote: vi.fn(async () => 'exit' as const),
       onModeChange: vi.fn(),
     };
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    setTerminalRemoteModeLoop(harness.config, modeLoop);
     harness.deps.sessionLoopLifecycleDeps = {
       runTerminalRemoteSessionModeLoopFn,
     };
@@ -1272,6 +2837,16 @@ describe('runHostSessionRuntime', () => {
         },
       },
     });
+    expect(publishedStates).toContainEqual(expect.objectContaining({
+      terminalControl: {
+        pendingHandoffV1: expect.objectContaining({
+          status: 'switch_failed',
+          pendingCount: 1,
+          detail: 'remote_handoff_rejected',
+        }),
+      },
+    }));
+    expect(JSON.stringify(publishedStates)).not.toContain('switch handler unavailable');
   });
 
   it('surfaces terminal remote mode loop errors after the prompt loop exits first', async () => {
@@ -1288,7 +2863,7 @@ describe('runHostSessionRuntime', () => {
       runRemote: vi.fn(async () => 'exit' as const),
       onModeChange: vi.fn(),
     };
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => modeLoop);
+    setTerminalRemoteModeLoop(harness.config, modeLoop);
     harness.deps.runPermissionModePromptLoopFn = async () => undefined;
     harness.deps.sessionLoopLifecycleDeps = {
       runTerminalRemoteSessionModeLoopFn,
@@ -1410,6 +2985,406 @@ describe('runHostSessionRuntime', () => {
       'initialized:true:session-1',
       'runtime-created',
     ]);
+  });
+
+  it('does not create the provider runtime while backend session initialization is pending', async () => {
+    const harness = createHarness();
+    let resolveInitialization!: () => void;
+    const initializationGate = new Promise<void>((resolve) => {
+      resolveInitialization = resolve;
+    });
+    const initializeBackendRunSessionFn = vi.fn(async () => {
+      await initializationGate;
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    });
+    harness.deps.initializeBackendRunSessionFn = initializeBackendRunSessionFn;
+    const createSessionRuntime = vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    }));
+    setSessionRuntimeFactory(harness.config, createSessionRuntime);
+
+    const runPromise = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    await vi.waitFor(() => {
+      expect(initializeBackendRunSessionFn).toHaveBeenCalledOnce();
+      expect(createSessionRuntime).not.toHaveBeenCalled();
+    });
+
+    resolveInitialization();
+    await runPromise;
+    expect(createSessionRuntime).toHaveBeenCalledOnce();
+  });
+
+  it('waits for exact persisted-takeover admission after input setup and before native runtime creation', async () => {
+    const harness = createHarness();
+    const admission = createDeferred<void>();
+    const admit = vi.fn(async (correlation: Readonly<{ operationId: string; attemptId: string }>) => {
+      expect(correlation).toEqual({
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      });
+      expect(
+        harness.handlers.has(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION),
+      ).toBe(true);
+      await admission.promise;
+    });
+    harness.opts.persistedTakeoverAdmission = {
+      operationId: 'operation-1',
+      attemptId: 'attempt-1',
+    };
+    harness.deps.admitPersistedTakeoverBeforeRuntimeFn = admit;
+    harness.deps.reportPersistedTakeoverRuntimeBoundFn =
+      vi.fn(async () => undefined);
+    harness.session.materializeNextPendingMessageSafely = vi.fn(async () => ({
+      type: 'no_pending' as const,
+    }));
+    const createSessionRuntime = vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    }));
+    setSessionRuntimeFactory(harness.config, createSessionRuntime);
+
+    const runPromise = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    await vi.waitFor(() => {
+      expect(admit).toHaveBeenCalledOnce();
+      expect(createSessionRuntime).not.toHaveBeenCalled();
+    });
+    expect(harness.session.materializeNextPendingMessageSafely).not.toHaveBeenCalled();
+    expect(harness.session.wakePendingMaterialization).not.toHaveBeenCalled();
+    expect(harness.session.sendAgentMessage).not.toHaveBeenCalled();
+    expect(harness.metrics.defaultReadyCalls).toBe(0);
+
+    admission.resolve();
+    await runPromise;
+
+    expect(createSessionRuntime).toHaveBeenCalledOnce();
+    expect(createSessionRuntime).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        persistedTakeoverAdmission: expect.anything(),
+      }),
+    );
+  });
+
+  it('reports runtime_bound after required host bindings and before the long-lived loop', async () => {
+    const harness = createHarness();
+    const runtimeBound = createDeferred<void>();
+    const reportRuntimeBound = vi.fn(async (
+      correlation: Readonly<{ operationId: string; attemptId: string }>,
+    ) => {
+      expect(correlation).toEqual({
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      });
+      expect(harness.session.setSessionRuntimeControls).toHaveBeenCalledOnce();
+      await runtimeBound.promise;
+    });
+    harness.opts.persistedTakeoverAdmission = {
+      operationId: 'operation-1',
+      attemptId: 'attempt-1',
+    };
+    harness.deps.admitPersistedTakeoverBeforeRuntimeFn = vi.fn(async () => undefined);
+    harness.deps.reportPersistedTakeoverRuntimeBoundFn = reportRuntimeBound;
+    harness.session.materializeNextPendingMessageSafely = vi.fn(async () => ({
+      type: 'no_pending' as const,
+    }));
+    const runSessionLoopLifecycleFn = vi.fn(async () => undefined);
+    harness.deps.runSessionLoopLifecycleFn = runSessionLoopLifecycleFn;
+    setSessionRuntimeFactory(harness.config, vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    })));
+
+    const runPromise = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    await vi.waitFor(() => {
+      expect(reportRuntimeBound).toHaveBeenCalledOnce();
+      expect(runSessionLoopLifecycleFn).not.toHaveBeenCalled();
+    });
+    expect(harness.session.materializeNextPendingMessageSafely).not.toHaveBeenCalled();
+    expect(harness.session.wakePendingMaterialization).not.toHaveBeenCalled();
+    expect(harness.session.sendAgentMessage).not.toHaveBeenCalled();
+
+    runtimeBound.resolve();
+    await runPromise;
+    expect(runSessionLoopLifecycleFn).toHaveBeenCalledOnce();
+  });
+
+  it('does not enter the long-lived loop when runtime_bound remains ambiguous', async () => {
+    const harness = createHarness();
+    const ambiguousFailure = new Error(
+      'persisted takeover runtime_bound response remained ambiguous',
+    );
+    harness.opts.persistedTakeoverAdmission = {
+      operationId: 'operation-1',
+      attemptId: 'attempt-1',
+    };
+    harness.deps.admitPersistedTakeoverBeforeRuntimeFn =
+      vi.fn(async () => undefined);
+    harness.deps.reportPersistedTakeoverRuntimeBoundFn = vi.fn(async () => {
+      throw ambiguousFailure;
+    });
+    harness.session.materializeNextPendingMessageSafely = vi.fn(async () => ({
+      type: 'no_pending' as const,
+    }));
+    const runSessionLoopLifecycleFn = vi.fn(async () => undefined);
+    harness.deps.runSessionLoopLifecycleFn = runSessionLoopLifecycleFn;
+    const createSessionRuntime = vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    }));
+    setSessionRuntimeFactory(harness.config, createSessionRuntime);
+
+    await expect(
+      runHostSessionRuntime(harness.opts, harness.config, harness.deps),
+    ).rejects.toBe(ambiguousFailure);
+
+    expect(createSessionRuntime).toHaveBeenCalledOnce();
+    expect(harness.session.setSessionRuntimeControls).toHaveBeenCalledOnce();
+    expect(runSessionLoopLifecycleFn).not.toHaveBeenCalled();
+    expect(harness.session.materializeNextPendingMessageSafely).not.toHaveBeenCalled();
+    expect(harness.session.wakePendingMaterialization).not.toHaveBeenCalled();
+    expect(harness.session.sendAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it('routes the first persisted-takeover Agent output after runtime_bound through the hosted durable outbox', async () => {
+    const previousHome = process.env.HAPPIER_HOME_DIR;
+    const tempHome = await mkdtemp(join(tmpdir(), 'happier-persisted-takeover-output-'));
+    process.env.HAPPIER_HOME_DIR = tempHome;
+    const sessionId = 'persisted-takeover-hosted-output';
+    const session = new ApiSessionClient(
+      'token',
+      createPlainSessionFixture({ id: sessionId }),
+      { durableMutationDeliveryInitiallyActive: false },
+    );
+
+    try {
+      const harness = createHarness();
+      const correlation = {
+        operationId: 'operation-hosted-output',
+        attemptId: 'attempt-hosted-output',
+      } as const;
+      const order: string[] = [];
+      const backend = createFakeAcpRuntimeBackend({ sessionId: 'native-session-1' });
+      const initialSessionMetadata = session.getMetadataSnapshot();
+      if (!initialSessionMetadata) {
+        throw new Error('expected the canonical plain-session fixture metadata');
+      }
+      let sessionMetadata: Metadata = initialSessionMetadata;
+      session.updateMetadata = async (update: (metadata: Metadata) => Metadata) => {
+        sessionMetadata = update(sessionMetadata);
+      };
+      session.getMetadataSnapshot = () => sessionMetadata;
+      session.enqueueRegisteredSessionStateFieldMutation = async () => undefined;
+      session.refreshSessionSnapshotFromServerRequired = async () => undefined;
+
+      harness.opts.persistedTakeoverAdmission = correlation;
+      harness.deps.initializeBackendRunSessionFn = async () => ({
+        session,
+        reconnectionHandle: null,
+        reportedSessionId: sessionId,
+        attachedToExistingSession: true,
+      });
+      harness.deps.admitPersistedTakeoverBeforeRuntimeFn = vi.fn(async (actual) => {
+        expect(actual).toEqual(correlation);
+        order.push('admit');
+      });
+      harness.deps.reportPersistedTakeoverRuntimeBoundFn = vi.fn(async (actual) => {
+        expect(actual).toEqual(correlation);
+        order.push('runtime_bound');
+      });
+      harness.config.policyAgentId = 'claude';
+      harness.config.providerName = 'Claude';
+      harness.config.agentMessageType = 'claude';
+      setSessionRuntimeFactory(harness.config, (params) => {
+        const runtime = createAcpRuntime({
+          provider: 'claude',
+          directory: params.directory,
+          happierSessionId: sessionId,
+          session: params.session,
+          transcriptSession: params.transcriptSession,
+          messageBuffer: params.messageBuffer,
+          mcpServers: params.mcpServers,
+          permissionHandler: createApprovedPermissionHandler(),
+          onThinkingChange: params.setThinking,
+          ensureBackend: async () => backend,
+        });
+        return {
+          operations: runtime,
+          nativeRuntime: runtime,
+        };
+      });
+      harness.deps.runSessionLoopLifecycleFn = async ({
+        runtime,
+      }: Readonly<{ runtime: ReturnType<typeof createAcpRuntime> }>) => {
+        expect(order).toEqual(['admit', 'runtime_bound']);
+        await runtime.sendTurnPrompt('Begin the hosted turn');
+        runtime.beginTurnLifecycle();
+        backend.emit({
+          type: 'model-output',
+          textDelta: 'First hosted answer',
+        } satisfies AgentMessage);
+        order.push('provider_output');
+        await runtime.waitForTurnCompletion();
+      };
+
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+      const persisted = JSON.parse(
+        await readFile(resolveSessionClientDurableMutationOutboxPath(sessionId), 'utf8'),
+      ) as { mutations?: unknown[] };
+      const mutations = Array.isArray(persisted.mutations) ? persisted.mutations : [];
+      const transcriptMutations = mutations.filter((entry) => (
+        entry
+        && typeof entry === 'object'
+        && (entry as { kind?: unknown }).kind === 'transcript_message_append'
+      ));
+
+      expect(order).toEqual(['admit', 'runtime_bound', 'provider_output']);
+      expect(transcriptMutations).toHaveLength(1);
+      expect(transcriptMutations[0]).toMatchObject({
+        kind: 'transcript_message_append',
+        payload: {
+          sessionId,
+          source: 'transcript_message_append',
+          messageRole: 'agent',
+          content: {
+            t: 'plain',
+            v: {
+              role: 'agent',
+              content: {
+                data: {
+                  type: 'message',
+                  message: 'First hosted answer',
+                },
+              },
+            },
+          },
+        },
+      });
+      expect(JSON.stringify(mutations)).not.toContain('external_session_historical_import');
+    } finally {
+      await resetSessionClientDurableMutationOutboxStateForTests();
+      await rm(tempHome, { recursive: true, force: true });
+      if (previousHome === undefined) {
+        delete process.env.HAPPIER_HOME_DIR;
+      } else {
+        process.env.HAPPIER_HOME_DIR = previousHome;
+      }
+    }
+  });
+
+  it('consumes the one-shot persisted-takeover environment handoff even when an injected correlation wins', async () => {
+    const previousAdmission =
+      process.env[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY];
+    process.env[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY] =
+      serializePersistedTakeoverAdmissionForEnv({
+        operationId: 'stale-operation',
+        attemptId: 'stale-attempt',
+      });
+    try {
+      const harness = createHarness();
+      const admit = vi.fn(async () => undefined);
+      harness.opts.persistedTakeoverAdmission = {
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      };
+      harness.deps.admitPersistedTakeoverBeforeRuntimeFn = admit;
+      harness.deps.reportPersistedTakeoverRuntimeBoundFn =
+        vi.fn(async () => undefined);
+
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+      expect(admit).toHaveBeenCalledWith({
+        operationId: 'operation-1',
+        attemptId: 'attempt-1',
+      });
+      expect(
+        process.env[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY],
+      ).toBeUndefined();
+    } finally {
+      if (previousAdmission === undefined) {
+        delete process.env[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY];
+      } else {
+        process.env[HAPPIER_PERSISTED_TAKEOVER_ADMISSION_ENV_KEY] =
+          previousAdmission;
+      }
+    }
+  });
+
+  it('opens no native runtime when persisted-takeover admission fails ambiguously', async () => {
+    const harness = createHarness();
+    const ambiguousFailure = new Error('persisted takeover admission response was ambiguous');
+    const admit = vi.fn(async () => {
+      throw ambiguousFailure;
+    });
+    harness.opts.persistedTakeoverAdmission = {
+      operationId: 'operation-2',
+      attemptId: 'attempt-2',
+    };
+    harness.deps.admitPersistedTakeoverBeforeRuntimeFn = admit;
+    harness.session.materializeNextPendingMessageSafely = vi.fn(async () => ({
+      type: 'no_pending' as const,
+    }));
+    const createSessionRuntime = vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    }));
+    setSessionRuntimeFactory(harness.config, createSessionRuntime);
+
+    await expect(
+      runHostSessionRuntime(harness.opts, harness.config, harness.deps),
+    ).rejects.toBe(ambiguousFailure);
+
+    expect(admit).toHaveBeenCalledOnce();
+    expect(createSessionRuntime).not.toHaveBeenCalled();
+    expect(harness.session.materializeNextPendingMessageSafely).not.toHaveBeenCalled();
+    expect(harness.session.wakePendingMaterialization).not.toHaveBeenCalled();
+    expect(harness.session.sendAgentMessage).not.toHaveBeenCalled();
+    expect(harness.metrics.defaultReadyCalls).toBe(0);
+  });
+
+  it('fails closed as upgrade-required when the daemon reports persisted-takeover admission unsupported', async () => {
+    const harness = createHarness();
+    harness.opts.persistedTakeoverAdmission = {
+      operationId: 'operation-3',
+      attemptId: 'attempt-3',
+    };
+    harness.deps.admitPersistedTakeoverBeforeRuntimeFn = async () => {
+      throw Object.assign(
+        new Error('Persisted takeover admission requires a current daemon'),
+        { code: 'persisted_takeover_admission_upgrade_required' },
+      );
+    };
+    const createSessionRuntime = vi.fn(() => ({
+      operations: harness.runtime,
+      nativeRuntime: harness.runtime,
+    }));
+    setSessionRuntimeFactory(harness.config, createSessionRuntime);
+
+    await expect(
+      runHostSessionRuntime(harness.opts, harness.config, harness.deps),
+    ).rejects.toMatchObject({
+      code: 'persisted_takeover_admission_upgrade_required',
+    });
+
+    expect(createSessionRuntime).not.toHaveBeenCalled();
+  });
+
+  it('does not invoke persisted-takeover admission for an ordinary host runtime start', async () => {
+    const harness = createHarness();
+    const admit = vi.fn(async () => undefined);
+    const reportRuntimeBound = vi.fn(async () => undefined);
+    harness.deps.admitPersistedTakeoverBeforeRuntimeFn = admit;
+    harness.deps.reportPersistedTakeoverRuntimeBoundFn = reportRuntimeBound;
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(admit).not.toHaveBeenCalled();
+    expect(reportRuntimeBound).not.toHaveBeenCalled();
   });
 
   it('rejects the retirement callback compatibility seam and requires createSessionRuntime', async () => {
@@ -1549,8 +3524,107 @@ describe('runHostSessionRuntime', () => {
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
-    expect(initialSession.updateMetadata).not.toHaveBeenCalled();
+    expect(initialSession.updateMetadata).toHaveBeenCalledTimes(1);
     expect(swappedSession.updateMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it('binds exact and legacy provider outcomes to the one current-session host normalizer', async () => {
+    const harness = createHarness();
+    let deliveryHandler: ((outcome: any) => void) | null = null;
+    let acceptedHandler: ((info: any) => void) | null = null;
+    let rejectedHandler: ((info: any) => void) | null = null;
+    let blockerClearedHandler: ((info: any) => void) | null = null;
+    const observedSettlements: unknown[] = [];
+    harness.session.hasPendingProviderInput = vi.fn(() => true);
+    harness.session.observeProviderInputSettlement = vi.fn((outcome: unknown) => {
+      observedSettlements.push(outcome);
+    });
+    const runtime = {
+      ...harness.runtime,
+      setOnPromptDeliveryOutcome: vi.fn((handler: ((outcome: any) => void) | null) => {
+        deliveryHandler = handler;
+      }),
+      setOnPromptAcceptedByProvider: vi.fn((handler: ((info: any) => void) | null) => {
+        acceptedHandler = handler;
+      }),
+      setOnPromptTerminallyRejectedBeforeProvider: vi.fn((handler: ((info: any) => void) | null) => {
+        rejectedHandler = handler;
+      }),
+      setOnPromptDeliveryBlockerCleared: vi.fn((handler: ((info: any) => void) | null) => {
+        blockerClearedHandler = handler;
+      }),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({ operations: runtime, nativeRuntime: runtime }));
+    harness.deps.runSessionLoopLifecycleFn = async (params: any) => {
+      params.onProviderPromptDispatchPrepared({
+        localIds: ['local-exact'],
+        selection: {
+          agentTargetKey: 'backend:qwen',
+          providerConnectionId: null,
+          modelId: 'model-at-dispatch',
+        },
+      });
+      deliveryHandler?.({
+        type: 'input-accepted',
+        localId: 'local-exact',
+        userMessageSeq: 21,
+        userMessageSeqs: [21],
+        delivery: { kind: 'newTurn', turnId: 'turn-exact' },
+      });
+      acceptedHandler?.({
+        localIds: ['local-legacy'],
+        userMessageSeq: 22,
+        userMessageSeqs: [22],
+      });
+      rejectedHandler?.({
+        localIds: ['local-blocked'],
+        userMessageSeq: 23,
+        userMessageSeqs: [23],
+        deliveryBlockedReason: 'runtime_config_blocked',
+      });
+      blockerClearedHandler?.({ deliveryBlockedReason: 'runtime_config_blocked' });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(observedSettlements).toEqual([
+      {
+        kind: 'accepted',
+        localId: 'local-exact',
+        userMessageSeq: 21,
+        userMessageSeqs: [21],
+        providerTurnId: 'turn-exact',
+        providerDeliveryKind: 'newTurn',
+        appliedModel: {
+          provider: 'qwen',
+          selection: {
+            agentTargetKey: 'backend:qwen',
+            providerConnectionId: null,
+            modelId: 'model-at-dispatch',
+          },
+        },
+      },
+      {
+        kind: 'accepted',
+        localId: 'local-legacy',
+        userMessageSeq: 22,
+        userMessageSeqs: [22],
+      },
+      {
+        kind: 'rejected_before_effect',
+        localId: 'local-blocked',
+        userMessageSeq: 23,
+        userMessageSeqs: [23],
+        reason: 'runtime_config_blocked',
+        diagnostic: { code: 'runtime_config_blocked', severity: 'error' },
+        retryable: true,
+      },
+    ]);
+    expect(harness.session.wakePendingMaterialization).toHaveBeenCalledTimes(1);
+    expect(runtime.setOnPromptDeliveryOutcome).toHaveBeenLastCalledWith(null);
+    expect(runtime.setOnPromptAcceptedByProvider).toHaveBeenLastCalledWith(null);
+    expect(runtime.setOnPromptTerminallyRejectedBeforeProvider).toHaveBeenLastCalledWith(null);
+    expect(runtime.setOnPromptDeliveryBlockerCleared).toHaveBeenLastCalledWith(null);
   });
 
   it('registers abort control RPCs on the active swapped session manager', async () => {
@@ -1584,6 +3658,736 @@ describe('runHostSessionRuntime', () => {
       'qwen',
       expect.objectContaining({ type: 'turn_cancelled' }),
     );
+  });
+
+  it('registers the exact model-transition RPC on the active swapped session manager', async () => {
+    const harness = createHarness();
+    const swappedSessionFixture = harness.createSessionFixture('session-2');
+    let swappedMetadata: any = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+    };
+    swappedSessionFixture.session.getMetadataSnapshot = () => swappedMetadata;
+    swappedSessionFixture.session.updateMetadata.mockImplementation(
+      async (update: unknown) => {
+        swappedMetadata = typeof update === 'function'
+          ? (update as (metadata: typeof swappedMetadata) => typeof swappedMetadata)(swappedMetadata)
+          : update;
+      },
+    );
+
+    let swapSession: ((nextSession: any) => Promise<void>) | null = null;
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      swapSession = onSessionSwap;
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      await swapSession?.(swappedSessionFixture.session);
+      const transition = swappedSessionFixture.handlers.get(
+        SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+      );
+      expect(transition).toBeTypeOf('function');
+      const runtimeUpdateCount = harness.runtime.updateSessionRuntimeConfig.mock.calls.length;
+      const selection = {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'default',
+      } as const;
+
+      await expect(transition?.({ v: 1, selection })).resolves.toEqual({
+        ok: true,
+        status: 'already_active',
+        activeSelection: selection,
+      });
+      expect(swappedMetadata.modelSelectionIntentV1).toMatchObject({
+        v: 1,
+        selection,
+      });
+      expect(harness.runtime.updateSessionRuntimeConfig).toHaveBeenCalledTimes(
+        runtimeUpdateCount,
+      );
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('binds the model coordinator before refresh, then reconciles fresh intent before activating durable delivery and entering the loop', async () => {
+    const harness = createHarness();
+    const order: string[] = [];
+    const freshSelection = {
+      agentTargetKey: 'backend:qwen',
+      providerConnectionId: null,
+      modelId: 'fresh-model',
+    } as const;
+    let metadata: any = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+    };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(async (update: unknown) => {
+      metadata = typeof update === 'function'
+        ? (update as (current: typeof metadata) => typeof metadata)(metadata)
+        : update;
+    });
+    harness.session.rpcHandlerManager.registerHandler = vi.fn(
+      (name: string, handler: (payload?: unknown) => unknown) => {
+        harness.handlers.set(name, handler);
+        if (name === SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION) {
+          order.push('handler');
+        }
+      },
+    );
+    harness.session.claimCurrentSessionPublisherAuthorityForStartup = vi.fn(
+      async () => {
+        expect(harness.handlers.has(
+          SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+        )).toBe(true);
+        order.push('claim');
+        return { status: 'claimed' as const };
+      },
+    );
+    harness.session.activateDurableMutationDelivery = vi.fn(async () => {
+      expect(harness.handlers.has(
+        SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+      )).toBe(true);
+      expect(order).toEqual([
+        'runtime',
+        'handler',
+        'claim',
+        'refresh',
+        'reconcile',
+      ]);
+      order.push('durable-delivery');
+    });
+    harness.session.refreshSessionSnapshotFromServerRequired = vi.fn(
+      async () => {
+        order.push('refresh');
+        metadata = {
+          ...metadata,
+          modelSelectionIntentV1: {
+            v: 1,
+            updatedAt: 41,
+            selection: freshSelection,
+          },
+        };
+      },
+    );
+    harness.runtime.updateSessionRuntimeConfig.mockImplementation(
+      async (update: { modelId?: string | null }) => {
+        if (update.modelId === freshSelection.modelId) {
+          order.push('reconcile');
+        }
+        return { status: 'applied' as const };
+      },
+    );
+    setSessionRuntimeFactory(harness.config, () => {
+      order.push('runtime');
+      return {
+        operations: harness.runtime,
+        nativeRuntime: harness.runtime,
+      };
+    });
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      order.push('loop');
+      expect(order).toEqual([
+        'runtime',
+        'handler',
+        'claim',
+        'refresh',
+        'reconcile',
+        'durable-delivery',
+        'loop',
+      ]);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.refreshSessionSnapshotFromServerRequired).toHaveBeenCalledWith({
+      reason: 'startup-drain',
+    });
+  });
+
+  it('holds active model-transition RPC effects until the claimed owner reconciles the required authoritative refresh', async () => {
+    const harness = createHarness();
+    const refreshEntered = createDeferred<void>();
+    const releaseRefresh = createDeferred<void>();
+    const releaseLoop = createDeferred<void>();
+    const order: string[] = [];
+    const persistedSelection = {
+      agentTargetKey: 'backend:qwen',
+      providerConnectionId: null,
+      modelId: 'persisted-before-claim',
+    } as const;
+    const commandSelection = {
+      agentTargetKey: 'backend:qwen',
+      providerConnectionId: null,
+      modelId: 'command-after-claim',
+    } as const;
+    let metadata: any = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+    };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(async (update: unknown) => {
+      metadata = typeof update === 'function'
+        ? (update as (current: typeof metadata) => typeof metadata)(metadata)
+        : update;
+    });
+    harness.session.claimCurrentSessionPublisherAuthorityForStartup = vi.fn(
+      async () => {
+        order.push('claim');
+        return { status: 'claimed' as const };
+      },
+    );
+    harness.session.refreshSessionSnapshotFromServerRequired = vi.fn(
+      async () => {
+        order.push('refresh:start');
+        refreshEntered.resolve();
+        await releaseRefresh.promise;
+        metadata = {
+          ...metadata,
+          modelSelectionIntentV1: {
+            v: 1,
+            updatedAt: 41,
+            selection: persistedSelection,
+          },
+        };
+        order.push('refresh:end');
+      },
+    );
+    harness.runtime.updateSessionRuntimeConfig.mockImplementation(
+      async (update: { modelId?: string | null }) => {
+        if (typeof update.modelId === 'string') {
+          order.push(`apply:${update.modelId}`);
+        }
+        return { status: 'applied' as const };
+      },
+    );
+    harness.session.activateDurableMutationDelivery = vi.fn(async () => {
+      order.push('durable-delivery');
+    });
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      order.push('loop');
+      await releaseLoop.promise;
+    };
+
+    const run = runHostSessionRuntime(
+      harness.opts,
+      harness.config,
+      harness.deps,
+    );
+    await refreshEntered.promise;
+
+    const transition = harness.handlers.get(
+      SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+    );
+    expect(transition).toBeTypeOf('function');
+    let commandSettled = false;
+    const command = Promise.resolve(
+      transition?.({ v: 1, selection: commandSelection }),
+    ).then((result) => {
+      commandSettled = true;
+      order.push('command:settled');
+      return result;
+    });
+
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const commandSettledBeforeRefresh = commandSettled;
+    const commandAppliedBeforeRefresh = order.includes(
+      `apply:${commandSelection.modelId}`,
+    );
+
+    releaseRefresh.resolve();
+    const commandResult = await command.finally(() => {
+      releaseLoop.resolve();
+    });
+    await run;
+
+    expect(commandSettledBeforeRefresh).toBe(false);
+    expect(commandAppliedBeforeRefresh).toBe(false);
+    expect(order.indexOf(`apply:${persistedSelection.modelId}`)).toBeLessThan(
+      order.indexOf(`apply:${commandSelection.modelId}`),
+    );
+    expect(commandResult).toMatchObject({
+      ok: true,
+      activeSelection: commandSelection,
+    });
+    expect(order).toContain('durable-delivery');
+    expect(order).toContain('loop');
+  });
+
+  it('keeps released-server startup compatible while refusing model-transition RPCs without authoritative routing', async () => {
+    const harness = createHarness();
+    harness.session.claimCurrentSessionPublisherAuthorityForStartup = vi.fn(
+      async () => ({ status: 'unsupported' as const }),
+    );
+    let transitionRejection: unknown = null;
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      const transition = harness.handlers.get(
+        SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+      );
+      expect(transition).toBeTypeOf('function');
+      try {
+        await transition?.({
+          v: 1,
+          selection: {
+            agentTargetKey: 'backend:qwen',
+            providerConnectionId: null,
+            modelId: 'must-not-apply',
+          },
+        });
+      } catch (error) {
+        transitionRejection = error;
+      }
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(transitionRejection).toBeInstanceOf(Error);
+    expect(harness.runtime.updateSessionRuntimeConfig).not.toHaveBeenCalled();
+    expect(
+      harness.session.activateDurableMutationDelivery,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('strictly refreshes before immediate runtime-model publication and activates durable delivery after publication', async () => {
+    const harness = createHarness();
+    const order: string[] = [];
+    let metadata: any = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+    };
+    const modelsSnapshot = {
+      currentModelId: 'current-model',
+      models: [
+        { id: 'current-model', name: 'Current model' },
+      ],
+    };
+    harness.runtime.models = {
+      read: () => modelsSnapshot,
+      subscribe: (
+        listener: (snapshot: typeof modelsSnapshot) => void,
+      ) => {
+        listener(modelsSnapshot);
+        return { dispose: () => undefined };
+      },
+    };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(async (update: unknown) => {
+      const previous = metadata;
+      const next: typeof metadata = typeof update === 'function'
+        ? (update as (current: typeof metadata) => typeof metadata)(metadata)
+        : update as typeof metadata;
+      if (
+        previous.sessionModelsV1 === undefined
+        && next.sessionModelsV1 !== undefined
+      ) {
+        order.push('models');
+      }
+      metadata = next;
+    });
+    harness.session.refreshSessionSnapshotFromServerRequired = vi.fn(
+      async () => {
+        order.push('refresh');
+      },
+    );
+    harness.session.claimCurrentSessionPublisherAuthorityForStartup = vi.fn(
+      async () => {
+        order.push('claim');
+        return { status: 'claimed' as const };
+      },
+    );
+    harness.session.activateDurableMutationDelivery = vi.fn(async () => {
+      order.push('durable-delivery');
+    });
+    harness.deps.runSessionLoopLifecycleFn = async () => {
+      order.push('loop');
+      expect(order).toEqual([
+        'claim',
+        'refresh',
+        'models',
+        'durable-delivery',
+        'loop',
+      ]);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('drains queued runtime-model publication before terminal session close', async () => {
+    const harness = createHarness();
+    const order: string[] = [];
+    let closed = false;
+    let releaseMetadataWrite!: () => void;
+    const metadataWriteReleased = new Promise<void>((resolve) => {
+      releaseMetadataWrite = resolve;
+    });
+    let notifyMetadataWriteStarted!: () => void;
+    const metadataWriteStarted = new Promise<void>((resolve) => {
+      notifyMetadataWriteStarted = resolve;
+    });
+    let blockMetadataWrites = false;
+    let modelListener: ((snapshot: { models: readonly { id: string; name: string }[] | null }) => void) | null = null;
+    harness.runtime.models = {
+      read: () => ({ models: null }),
+      subscribe: (listener: (snapshot: { models: readonly { id: string; name: string }[] | null }) => void) => {
+        modelListener = listener;
+        listener({ models: null });
+        return { dispose: () => { modelListener = null; } };
+      },
+    };
+    harness.session.updateMetadata.mockImplementation(async () => {
+      if (!blockMetadataWrites) return;
+      order.push('metadata:start');
+      notifyMetadataWriteStarted();
+      await metadataWriteReleased;
+      if (closed) throw new Error('session_closed');
+      order.push('metadata:end');
+    });
+    harness.session.close.mockImplementation(async () => {
+      closed = true;
+      order.push('close');
+    });
+    harness.deps.runSessionLoopLifecycleFn = async (params: {
+      deps: { onBeforeSessionClose?: () => Promise<void> };
+      session: { close(): Promise<void> };
+      startupCoordinator?: { start(): Promise<void> } | null;
+    }) => {
+      await params.startupCoordinator?.start();
+      blockMetadataWrites = true;
+      modelListener?.({ models: [{ id: 'runtime', name: 'Runtime' }] });
+      await metadataWriteStarted;
+      const onBeforeSessionClose = params.deps.onBeforeSessionClose;
+      expect(onBeforeSessionClose).toBeTypeOf('function');
+      let drained = false;
+      const drain = onBeforeSessionClose!().then(() => { drained = true; });
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(drained).toBe(false);
+      expect(order).toEqual(['metadata:start']);
+      releaseMetadataWrite();
+      await drain;
+      await params.session.close();
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(order).toEqual(['metadata:start', 'metadata:end', 'close']);
+  });
+
+  it('fails startup closed without activating durable delivery when the required authoritative refresh fails', async () => {
+    const harness = createHarness();
+    const refreshFailure = new Error('authoritative refresh unavailable');
+    const runSessionLoopLifecycleFn = vi.fn(async () => undefined);
+    harness.deps.runSessionLoopLifecycleFn = runSessionLoopLifecycleFn;
+    harness.session.refreshSessionSnapshotFromServerRequired = vi.fn(async () => {
+      throw refreshFailure;
+    });
+
+    await expect(
+      runHostSessionRuntime(harness.opts, harness.config, harness.deps),
+    ).rejects.toBe(refreshFailure);
+
+    expect(harness.handlers.has(
+      SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+    )).toBe(true);
+    expect(
+      harness.session.activateDurableMutationDelivery,
+    ).not.toHaveBeenCalled();
+    expect(runSessionLoopLifecycleFn).not.toHaveBeenCalled();
+  });
+
+  it('classifies a spawn-only Agent native model change as restart-required before runtime effect', async () => {
+    const harness = createHarness();
+    let metadata: Record<string, unknown> = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+    };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(async (
+      update:
+        | Record<string, unknown>
+        | ((current: Record<string, unknown>) => Record<string, unknown>),
+    ) => {
+      metadata = typeof update === 'function' ? update(metadata) : update;
+    });
+    harness.config.policyAgentId = 'codex';
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'old-model',
+      },
+    };
+
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const transition = harness.handlers.get(
+        SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+      );
+      const selection = {
+        agentTargetKey: 'backend:codex',
+        providerConnectionId: null,
+        modelId: 'next-model',
+      } as const;
+      const runtimeUpdateCount =
+        harness.runtime.updateSessionRuntimeConfig.mock.calls.length;
+
+      await expect(transition?.({ v: 1, selection })).resolves.toMatchObject({
+        ok: false,
+        status: 'restart_required',
+        activeSelection: harness.opts.modelSelection?.ref,
+        requestedSelection: selection,
+      });
+      expect(harness.runtime.updateSessionRuntimeConfig).toHaveBeenCalledTimes(
+        runtimeUpdateCount,
+      );
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('atomically transfers the run-host model fence into prompt dispatch custody', async () => {
+    const harness = createHarness();
+    const activeSelection = {
+      agentTargetKey: 'backend:qwen',
+      providerConnectionId: null,
+      modelId: 'active-model',
+    } as const;
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: activeSelection,
+    };
+    let metadata: any = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 1,
+        selection: activeSelection,
+      },
+    };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(
+      async (update: unknown) => {
+        metadata = typeof update === 'function'
+          ? (update as (current: typeof metadata) => typeof metadata)(metadata)
+          : update;
+      },
+    );
+    harness.deps.runSessionLoopLifecycleFn = async (params: any) => {
+      let providerAccepted = false;
+      const result = await params.transitionModelSelection(
+        activeSelection,
+        'prompt',
+        async (transferPromptAdmission: (opts: {
+          abortSignal: AbortSignal;
+          dispatch: () => Promise<void>;
+        }) => Promise<{ status: 'dispatched' | 'cancelled' }>) => {
+          const outcome = await transferPromptAdmission({
+            abortSignal: new AbortController().signal,
+            dispatch: async () => {
+              providerAccepted = true;
+            },
+          });
+          expect(outcome.status).toBe('dispatched');
+        },
+      );
+      expect(result).toMatchObject({
+        ok: true,
+        status: 'already_active',
+        activeSelection,
+      });
+      expect(providerAccepted).toBe(true);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('keeps input fenced when a live transition returns no authoritative runtime outcome', async () => {
+    const harness = createHarness();
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'old-model',
+      },
+    };
+    let metadata: any = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 1,
+        selection: harness.opts.modelSelection.ref,
+      },
+    };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(
+      async (update: unknown) => {
+        metadata = typeof update === 'function'
+          ? (update as (current: typeof metadata) => typeof metadata)(metadata)
+          : update;
+      },
+    );
+    harness.runtime.updateSessionRuntimeConfig.mockResolvedValue(undefined);
+
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const transition = harness.handlers.get(
+        SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+      );
+      const selection = {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'next-model',
+      } as const;
+
+      await expect(transition?.({ v: 1, selection })).resolves.toMatchObject({
+        ok: false,
+        status: 'reconciliation_required',
+        activeSelection: null,
+        requestedSelection: selection,
+        reason: 'runtime_model_transition_outcome_unproven',
+      });
+      expect(metadata.modelSelectionIntentV1.selection).toEqual(selection);
+      expect(metadata.sessionModelsV1).toMatchObject({
+        currentModelId: 'old-model',
+      });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('publishes active facts and releases input after exact live-runtime model readback', async () => {
+    const harness = createHarness();
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 1,
+      ref: {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'old-model',
+      },
+    };
+    let metadata: any = {
+      path: '/tmp/workspace',
+      permissionMode: 'default',
+      modelSelectionIntentV1: {
+        v: 1,
+        updatedAt: 1,
+        selection: harness.opts.modelSelection.ref,
+      },
+    };
+    let currentModelId = 'old-model';
+    const readModels = () => ({
+      currentModelId,
+      models: [
+        { id: 'old-model', name: 'Old model' },
+        { id: 'next-model', name: 'Next model' },
+      ],
+    });
+    harness.runtime.models = {
+      read: readModels,
+      subscribe: (listener: (snapshot: ReturnType<typeof readModels>) => void) => {
+        listener(readModels());
+        return { dispose: () => undefined };
+      },
+    };
+    harness.session.getMetadataSnapshot = () => metadata;
+    harness.session.updateMetadata.mockImplementation(
+      async (update: unknown) => {
+        metadata = typeof update === 'function'
+          ? (update as (current: typeof metadata) => typeof metadata)(metadata)
+          : update;
+      },
+    );
+    harness.runtime.updateSessionRuntimeConfig.mockImplementation(
+      async (update: { modelId?: string | null }) => {
+        if (typeof update.modelId === 'string') {
+          currentModelId = update.modelId;
+        }
+        return undefined;
+      },
+    );
+
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const transition = harness.handlers.get(
+        SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION,
+      );
+      const selection = {
+        agentTargetKey: 'backend:qwen',
+        providerConnectionId: null,
+        modelId: 'next-model',
+      } as const;
+
+      await expect(transition?.({ v: 1, selection })).resolves.toMatchObject({
+        ok: true,
+        status: 'applied',
+        activeSelection: selection,
+      });
+      expect(metadata.modelSelectionIntentV1.selection).toEqual(selection);
+      expect(metadata.sessionModelsV1.currentModelId).toBe('next-model');
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('starts fresh provider input admitted after passive connected-service metadata reconstruction', async () => {
+    const harness = createHarness();
+    const connectedServices = {
+      v: 1 as const,
+      bindingsByServiceId: {
+        'openai-codex': {
+          source: 'connected' as const,
+          selection: 'group' as const,
+          profileId: 'primary',
+          groupId: 'team',
+        },
+      },
+    };
+    harness.deps.createSessionMetadataFn = () => ({
+      state: { controlledByUser: false },
+      metadata: {
+        path: '/tmp/workspace',
+        permissionMode: 'default',
+        permissionModeUpdatedAt: Date.now(),
+        connectedServices,
+      },
+    });
+    const swappedSessionFixture = harness.createSessionFixture('session-2');
+    let swapSession: ((nextSession: any) => Promise<void>) | null = null;
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      swapSession = onSessionSwap;
+      return {
+        session: harness.session,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{ inputConsumer?: any }>) => {
+      const consumer = params.inputConsumer;
+      expect(consumer?.readProviderInputAdmission()).toEqual({ kind: 'admitted' });
+      const initialRpc = harness.handlers.get(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION);
+      expect(initialRpc).toBeTypeOf('function');
+
+      await swapSession?.(swappedSessionFixture.session);
+      const swappedRpc = swappedSessionFixture.handlers.get(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION);
+      expect(swappedRpc).toBeTypeOf('function');
+      expect(consumer.readProviderInputAdmission()).toEqual({ kind: 'admitted' });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
   });
 
   it('registers kill control handlers on the active swapped session manager', async () => {
@@ -1753,6 +4557,415 @@ describe('runHostSessionRuntime', () => {
     ]);
   });
 
+  it('keeps a constructed replacement inactive until swap apply then deactivates and closes the prior client', async () => {
+    const harness = createHarness();
+    const order: string[] = [];
+    const initialSession = harness.session;
+    const replacement = harness.createSessionFixture('session-1').session;
+    initialSession.deactivateDurableMutationDelivery = vi.fn(() => order.push('old:deactivate'));
+    initialSession.close = vi.fn(async () => { order.push('old:close'); });
+    replacement.stageInitialDurableMutationSnapshots = vi.fn(async () => { order.push('replacement:stage'); });
+    replacement.activateDurableMutationDelivery = vi.fn(async () => { order.push('replacement:activate'); });
+    replacement.flushDurableMutationDelivery = vi.fn(async () => { order.push('replacement:flush'); });
+    let pendingApply: (() => Promise<void>) | null = null;
+    harness.config.lifecycleHooks = {
+      createSessionSwapStrategy: () => ({
+        requestSessionSwap: ({ applyImmediately }) => {
+          pendingApply = applyImmediately;
+        },
+        flushPendingSessionSwap: async () => {
+          await pendingApply?.();
+          pendingApply = null;
+        },
+      }),
+    };
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      await onSessionSwap(replacement);
+      expect(order).toEqual([]);
+      expect(initialSession.close).not.toHaveBeenCalled();
+      return {
+        session: initialSession,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      onAfterLoopBoundary?: (args: { reason: 'turn_completed' }) => Promise<void> | void;
+    }>) => {
+      expect(order).toEqual([]);
+      await params.onAfterLoopBoundary?.({ reason: 'turn_completed' });
+      expect(order).toEqual([
+        'old:deactivate',
+        'replacement:stage',
+        'replacement:activate',
+        'old:close',
+        'replacement:flush',
+      ]);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('retains Activity slot truth across a same-session client swap', async () => {
+    const harness = createHarness();
+    harness.config.runtimeActivityApplicability = 'supported';
+    const initialSession = harness.session;
+    const replacement = harness.createSessionFixture('session-1').session;
+    const runtimeActivityHandlers = new Set<(event: any) => void>();
+    const unsubscribeRuntimeActivity = vi.fn();
+    harness.runtime.subscribeCanonicalAgentSessionEvents = vi.fn((handler: (event: any) => void) => {
+      runtimeActivityHandlers.add(handler);
+      return () => {
+        runtimeActivityHandlers.delete(handler);
+        unsubscribeRuntimeActivity();
+      };
+    });
+    let pendingApply: (() => Promise<void>) | null = null;
+    harness.config.lifecycleHooks = {
+      createSessionSwapStrategy: () => ({
+        requestSessionSwap: ({ applyImmediately }) => {
+          pendingApply = applyImmediately;
+        },
+        flushPendingSessionSwap: async () => {
+          await pendingApply?.();
+          pendingApply = null;
+        },
+      }),
+    };
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      await onSessionSwap(replacement);
+      return {
+        session: initialSession,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      onAfterLoopBoundary?: (args: { reason: 'turn_completed' }) => Promise<void> | void;
+    }>) => {
+      for (const handler of runtimeActivityHandlers) {
+        handler({
+          kind: 'runtime-activity-snapshot',
+          sequence: 1,
+          sessionId: 'session-1',
+          emittedAtMs: 1,
+          state: 'active',
+          activeCount: 1,
+        });
+      }
+      await vi.waitFor(() => expect(initialSession.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'active', activeCount: 1 } },
+        })));
+
+      await params.onAfterLoopBoundary?.({ reason: 'turn_completed' });
+
+      expect(harness.runtime.subscribeCanonicalAgentSessionEvents).toHaveBeenCalledTimes(1);
+      expect(unsubscribeRuntimeActivity).not.toHaveBeenCalled();
+      expect(replacement.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'active', activeCount: 1 } },
+        }));
+
+      for (const handler of runtimeActivityHandlers) {
+        handler({
+          kind: 'runtime-activity-snapshot',
+          sequence: 2,
+          sessionId: 'session-1',
+          emittedAtMs: 2,
+          state: 'idle',
+          activeCount: 0,
+        });
+      }
+      await vi.waitFor(() => expect(replacement.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+        })));
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('rebinds Activity across a different-session client swap and fences the retired subscriber', async () => {
+    const harness = createHarness();
+    harness.config.runtimeActivityApplicability = 'supported';
+    loggerDebugMock.mockClear();
+    const initialSession = harness.session;
+    const replacement = harness.createSessionFixture('session-2').session;
+    const subscriptions: Array<{
+      handler: (event: any) => void;
+      unsubscribe: ReturnType<typeof vi.fn>;
+    }> = [];
+    const hostile = Proxy.revocable({}, {});
+    hostile.revoke();
+    harness.runtime.subscribeCanonicalAgentSessionEvents = vi.fn((handler: (event: any) => void) => {
+      const unsubscribe = vi.fn(() => {
+        handler({
+          kind: 'runtime-activity-snapshot',
+          sequence: 99,
+          sessionId: 'session-1',
+          emittedAtMs: 99,
+          state: 'active',
+          activeCount: 9,
+        });
+        throw hostile.proxy;
+      });
+      subscriptions.push({ handler, unsubscribe });
+      return unsubscribe;
+    });
+    let swapSession: ((nextSession: any) => Promise<void>) | null = null;
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      swapSession = onSessionSwap;
+      return {
+        session: initialSession,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      expect(subscriptions).toHaveLength(1);
+      subscriptions[0]!.handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 1,
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        state: 'active',
+        activeCount: 1,
+      });
+      await vi.waitFor(() => expect(initialSession.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'active', activeCount: 1 } },
+        })));
+
+      const initialCallsBeforeSwap = initialSession.enqueueRegisteredSessionStateFieldMutation.mock.calls.length;
+      await swapSession?.(replacement);
+      expect(subscriptions).toHaveLength(2);
+      expect(subscriptions[0]!.unsubscribe).toHaveBeenCalledOnce();
+      expect(initialSession.enqueueRegisteredSessionStateFieldMutation.mock.calls
+        .slice(initialCallsBeforeSwap)).not.toContainEqual([
+        expect.objectContaining({
+          op: expect.objectContaining({ value: expect.objectContaining({ activeCount: 9 }) }),
+        }),
+      ]);
+
+      const callsBeforeLateOldCallback = replacement.enqueueRegisteredSessionStateFieldMutation.mock.calls.length;
+      subscriptions[0]!.handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 2,
+        sessionId: 'session-2',
+        emittedAtMs: 2,
+        state: 'active',
+        activeCount: 9,
+      });
+      await Promise.resolve();
+      expect(replacement.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenCalledTimes(callsBeforeLateOldCallback);
+
+      subscriptions[1]!.handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 3,
+        sessionId: 'session-1',
+        emittedAtMs: 3,
+        state: 'active',
+        activeCount: 2,
+      });
+      await vi.waitFor(() => expect(replacement.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'active', activeCount: 2 } },
+        })));
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(subscriptions[0]!.unsubscribe).toHaveBeenCalledOnce();
+    expect(subscriptions[1]!.unsubscribe).toHaveBeenCalledOnce();
+    const disposalLog = loggerDebugMock.mock.calls.find(
+      ([message]) => message === '[Qwen] Runtime Activity subscriber disposal failed after logical fencing (non-fatal)',
+    );
+    expect(disposalLog?.[0]).toBe(
+      '[Qwen] Runtime Activity subscriber disposal failed after logical fencing (non-fatal)',
+    );
+    expect(Object.is(disposalLog?.[1], hostile.proxy)).toBe(false);
+    expect(disposalLog?.[1]).toEqual({
+      error: 'runtime_activity_subscriber_disposal_failed',
+    });
+  });
+
+  it('starts a same-session runtime replacement with a fenced empty Activity scope', async () => {
+    const harness = createHarness();
+    harness.config.runtimeActivityApplicability = 'supported';
+    const runtimeActivityHandlers = new Set<(event: any) => void>();
+    let replacementLifecycle: Readonly<{
+      beforeReplacement(): Promise<void>;
+      onSuccessorBound(): Promise<void>;
+      onSuccessorUsable(): Promise<void>;
+    }> | null = null;
+    harness.runtime.subscribeCanonicalAgentSessionEvents = vi.fn((handler: (event: any) => void) => {
+      runtimeActivityHandlers.add(handler);
+      return () => runtimeActivityHandlers.delete(handler);
+    });
+    harness.runtime.setRuntimeReplacementLifecycle = vi.fn((lifecycle: typeof replacementLifecycle) => {
+      replacementLifecycle = lifecycle;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      expect(replacementLifecycle).not.toBeNull();
+      runtimeActivityHandlers.forEach((handler) => handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 1,
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        state: 'active',
+        activeCount: 1,
+      }));
+      await vi.waitFor(() => expect(harness.session.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'active', activeCount: 1 } },
+        })));
+
+      await replacementLifecycle!.beforeReplacement();
+      await replacementLifecycle!.onSuccessorBound();
+      expect(harness.session.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+        }));
+      runtimeActivityHandlers.forEach((handler) => handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 2,
+        sessionId: 'session-1',
+        emittedAtMs: 2,
+        state: 'idle',
+        activeCount: 0,
+      }));
+
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await vi.waitFor(() => expect(harness.session.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'idle', activeCount: 0 } },
+        })));
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('restores the current producer binding when replacement empty-scope publication rejects', async () => {
+    const harness = createHarness();
+    harness.config.runtimeActivityApplicability = 'supported';
+    const runtimeActivityHandlers = new Set<(event: any) => void>();
+    const publicationFailure = new Error('replacement empty-scope publication rejected');
+    let rejectNextIdle = false;
+    harness.session.enqueueRegisteredSessionStateFieldMutation.mockImplementation(async (mutation: Readonly<{
+      op?: Readonly<{ value?: Readonly<{ state?: unknown }> }>;
+    }>) => {
+      if (rejectNextIdle && mutation.op?.value?.state === 'idle') {
+        rejectNextIdle = false;
+        throw publicationFailure;
+      }
+    });
+    let replacementLifecycle: Readonly<{
+      beforeReplacement(): Promise<void>;
+      onSuccessorBound(): Promise<void>;
+      onSuccessorUsable(): Promise<void>;
+    }> | null = null;
+    harness.runtime.subscribeCanonicalAgentSessionEvents = vi.fn((handler: (event: any) => void) => {
+      runtimeActivityHandlers.add(handler);
+      return () => runtimeActivityHandlers.delete(handler);
+    });
+    harness.runtime.setRuntimeReplacementLifecycle = vi.fn((lifecycle: typeof replacementLifecycle) => {
+      replacementLifecycle = lifecycle;
+    });
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      runtimeActivityHandlers.forEach((handler) => handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 1,
+        sessionId: 'session-1',
+        emittedAtMs: 1,
+        state: 'active',
+        activeCount: 1,
+      }));
+      await vi.waitFor(() => expect(harness.session.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'active', activeCount: 1 } },
+        })));
+
+      rejectNextIdle = true;
+      await expect(replacementLifecycle!.beforeReplacement()).rejects.toBe(publicationFailure);
+      runtimeActivityHandlers.forEach((handler) => handler({
+        kind: 'runtime-activity-snapshot',
+        sequence: 2,
+        sessionId: 'session-1',
+        emittedAtMs: 2,
+        state: 'active',
+        activeCount: 2,
+      }));
+      await vi.waitFor(() => expect(harness.session.enqueueRegisteredSessionStateFieldMutation)
+        .toHaveBeenLastCalledWith(expect.objectContaining({
+          op: { kind: 'set', value: { state: 'active', activeCount: 2 } },
+        })));
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('reactivates the prior delivery owner when replacement baseline persistence fails', async () => {
+    const harness = createHarness();
+    harness.config.runtimeActivityApplicability = 'supported';
+    const unsubscribeRuntimeActivity = vi.fn();
+    harness.runtime.subscribeCanonicalAgentSessionEvents = vi.fn(() => unsubscribeRuntimeActivity);
+    const order: string[] = [];
+    const initialSession = harness.session;
+    const replacement = harness.createSessionFixture('session-1').session;
+    initialSession.deactivateDurableMutationDelivery = vi.fn(() => order.push('old:deactivate'));
+    initialSession.activateDurableMutationDelivery = vi.fn(async () => { order.push('old:reactivate'); });
+    initialSession.close = vi.fn(async () => { order.push('old:close'); });
+    replacement.stageInitialDurableMutationSnapshots = vi.fn(async () => {
+      order.push('replacement:stage');
+      expect(unsubscribeRuntimeActivity).not.toHaveBeenCalled();
+      throw new Error('replacement baseline persistence rejected');
+    });
+    replacement.activateDurableMutationDelivery = vi.fn(async () => { order.push('replacement:activate'); });
+    let pendingApply: (() => Promise<void>) | null = null;
+    harness.config.lifecycleHooks = {
+      createSessionSwapStrategy: () => ({
+        requestSessionSwap: ({ applyImmediately }) => {
+          pendingApply = applyImmediately;
+        },
+        flushPendingSessionSwap: async () => {
+          await pendingApply?.();
+          pendingApply = null;
+        },
+      }),
+    };
+    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
+      await onSessionSwap(replacement);
+      return {
+        session: initialSession,
+        reconnectionHandle: null,
+        reportedSessionId: 'session-1',
+        attachedToExistingSession: false,
+      };
+    };
+    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
+      onAfterLoopBoundary?: (args: { reason: 'turn_completed' }) => Promise<void> | void;
+    }>) => {
+      order.length = 0;
+      await expect(params.onAfterLoopBoundary?.({ reason: 'turn_completed' })).rejects.toThrow(
+        'replacement baseline persistence rejected',
+      );
+      expect(order).toEqual([
+        'old:deactivate',
+        'replacement:stage',
+        'old:reactivate',
+      ]);
+      expect(replacement.activateDurableMutationDelivery).not.toHaveBeenCalled();
+      expect(initialSession.close).not.toHaveBeenCalled();
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(unsubscribeRuntimeActivity).toHaveBeenCalledOnce();
+  });
+
   it('trims the initial resume id before enabling strict resume mode', async () => {
     const harness = createHarness();
     harness.opts.resume = '  resume-id  ';
@@ -1796,6 +5009,36 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
     expect(capturedMcpServers).toEqual({ happier: { command: 'built-in' }, extra: { command: 'extra' } });
+  });
+
+  it('resolves and passes native MCP servers for the Grok catalog policy', async () => {
+    const harness = createHarness();
+    harness.config.flavor = 'grok';
+    harness.config.policyAgentId = 'grok';
+
+    let capturedMcpServers: unknown = null;
+    const createRuntimeOriginal = harness.config.createSessionRuntime;
+    if (!createRuntimeOriginal) {
+      throw new Error('Expected session runtime factory in harness');
+    }
+    const createRuntime = createRuntimeOriginal;
+    setSessionRuntimeFactory(harness.config, (params) => {
+      capturedMcpServers = params.mcpServers;
+      return createRuntime(params);
+    });
+
+    const resolveRunnerMcpServersFn = vi.fn(async () => ({
+      happierMcpServer: { stop: () => undefined },
+      mcpServers: { happier: { command: 'built-in' } },
+    }));
+
+    await runHostSessionRuntime(harness.opts, harness.config, {
+      ...harness.deps,
+      resolveRunnerMcpServersFn,
+    });
+
+    expect(resolveRunnerMcpServersFn).toHaveBeenCalledTimes(1);
+    expect(capturedMcpServers).toEqual({ happier: { command: 'built-in' } });
   });
 
   it('passes the MCP account settings snapshot to the provider runtime', async () => {
@@ -1901,6 +5144,104 @@ describe('runHostSessionRuntime', () => {
       host: harness.config.machineMetadata.host,
       machineId: 'machine-1',
     });
+  });
+
+  it('refreshes provider binding metadata on an attached session before creating its runtime', async () => {
+    const harness = createHarness();
+    harness.config.policyAgentId = 'codex';
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' };
+    harness.opts.modelSelection = {
+      v: 1, updatedAt: 1,
+      ref: { agentTargetKey: 'backend:codex', providerConnectionId: ProviderConnectionIdSchema.parse('pc_work'), modelId: 'provider-model' },
+    };
+    const materialization = {
+      v: 1 as const,
+      kind: 'engineConfig' as const,
+      engineConfig: { model_provider: { name: 'gateway' } },
+    };
+    const nextBinding = {
+      v: 1 as const,
+      connectionId: ProviderConnectionIdSchema.parse('pc_work'),
+      contributionKey: 'plugin.openrouter/openrouter',
+      connectionRevision: 4,
+      model: providerModelDescriptor,
+      protocol: 'openai-responses' as const,
+      materialization: 'engineConfig' as const,
+      adapterBindingKey: 'openrouter',
+      compatibilityFingerprint: 'compatibility-v1',
+      bindingSecurityFingerprint: 'security-v1',
+      displaySnapshot: {
+        providerName: 'OpenRouter', connectionName: 'Work', connectionRole: 'named' as const,
+        connectionDisplayNameMode: 'custom' as const,
+      },
+    };
+    let attachedMetadata: Record<string, unknown> = {
+      path: '/srv/attached-workspace',
+      providerBindingV1: { ...nextBinding, connectionRevision: 3 },
+    };
+    harness.session.getMetadataSnapshot = () => attachedMetadata;
+    harness.session.updateMetadata = vi.fn(async (updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => {
+      attachedMetadata = updater(attachedMetadata);
+    });
+    harness.deps.initializeBackendRunSessionFn = async () => ({
+      session: harness.session,
+      reconnectionHandle: null,
+      reportedSessionId: 'session-1',
+      attachedToExistingSession: true,
+    });
+    const createSessionRuntime = vi.fn(() => ({ operations: harness.runtime, nativeRuntime: harness.runtime }));
+    harness.config.createSessionRuntime = createSessionRuntime;
+    process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY] =
+      serializeProviderBindingLaunchHandoffForEnv(
+        materialization,
+        nextBinding,
+      );
+
+    try {
+      await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+      expect(harness.session.updateMetadata).toHaveBeenCalled();
+      expect(createSessionRuntime).toHaveBeenCalledWith(expect.objectContaining({
+        metadata: expect.objectContaining({ providerBindingV1: nextBinding }),
+      }));
+    } finally {
+      delete process.env[HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY];
+    }
+  });
+
+  it('clears stale provider binding metadata when an attached session explicitly restarts on a native model', async () => {
+    const harness = createHarness();
+    harness.opts.backendTarget = { kind: 'backend', backendId: 'qwen', sourceKind: 'built_in' };
+    harness.opts.modelSelection = {
+      v: 1,
+      updatedAt: 10,
+      ref: { agentTargetKey: 'backend:qwen', providerConnectionId: null, modelId: 'native-model' },
+    };
+    let attachedMetadata: Record<string, unknown> = {
+      path: '/srv/attached-workspace',
+      providerBindingV1: {
+        v: 1, connectionId: 'pc_old', contributionKey: 'plugin:old:old', connectionRevision: 1,
+        protocol: 'openai-responses', materialization: 'engineConfig', adapterBindingKey: 'old',
+        compatibilityFingerprint: 'compatibility-v1', bindingSecurityFingerprint: 'security-v1',
+        displaySnapshot: { providerName: 'Old', connectionName: 'Old', connectionRole: 'default', connectionDisplayNameMode: 'automatic' },
+      },
+    };
+    harness.session.getMetadataSnapshot = () => attachedMetadata;
+    harness.session.updateMetadata = vi.fn(async (updater: (metadata: Record<string, unknown>) => Record<string, unknown>) => {
+      attachedMetadata = updater(attachedMetadata);
+    });
+    harness.deps.initializeBackendRunSessionFn = async () => ({
+      session: harness.session, reconnectionHandle: null, reportedSessionId: 'session-1', attachedToExistingSession: true,
+    });
+    const createSessionRuntime = vi.fn(() => ({ operations: harness.runtime, nativeRuntime: harness.runtime }));
+    harness.config.createSessionRuntime = createSessionRuntime;
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(harness.session.updateMetadata).toHaveBeenCalled();
+    expect(createSessionRuntime).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.not.objectContaining({ providerBindingV1: expect.anything() }),
+    }));
   });
 
   it('does not pass attach metadata cleanup keys through the canonical shared startup contract for existing-session attaches', async () => {
@@ -2137,58 +5478,376 @@ describe('runHostSessionRuntime', () => {
     expect(runtime.steerPrompt).toHaveBeenCalledWith('hello');
   });
 
-  it('does not synthesize provider acceptance for native steerPrompt dispatch without an acceptance seam', async () => {
+  it('settles an unavailable exact steer through the canonical provider-rejection outcome without queue fallback', async () => {
     const harness = createHarness();
+    let userMessageHandler: ((message: unknown) => boolean | void) | null = null;
+    let providerRejectedHandler: ((info: Readonly<{
+      localIds?: readonly string[];
+      userMessageSeq: number | null;
+      userMessageSeqs?: readonly number[];
+    }>) => void) | null = null;
+    const observeProviderInputSettlement = vi.fn();
+    harness.session.onUserMessage = (handler: (message: unknown) => boolean | void) => {
+      userMessageHandler = handler;
+    };
+    harness.session.getCommittedUserMessageSeq = vi.fn((localId: string) => (
+      localId === 'local-exact-steer-unavailable' ? 92 : null
+    ));
+    harness.session.hasPendingProviderInput = vi.fn((localId: string) => (
+      localId === 'local-exact-steer-unavailable'
+    ));
+    harness.session.observeProviderInputSettlement = observeProviderInputSettlement;
+
     const runtime = {
       ...harness.runtime,
-      steerPrompt: vi.fn(async function (this: unknown) {
-        expect(this).toBe(runtime);
+      supportsInFlightSteer: vi.fn(() => false),
+      isTurnInFlight: vi.fn(() => true),
+      setOnPromptTerminallyRejectedBeforeProvider: vi.fn((handler: typeof providerRejectedHandler) => {
+        providerRejectedHandler = handler;
       }),
-      supportsInFlightSteer: vi.fn(() => true),
     };
-
     setSessionRuntimeFactory(harness.config, () => ({
       operations: runtime,
       nativeRuntime: runtime,
     }));
+    delete harness.deps.createPermissionModeQueueStateFn;
 
-    let inFlightSteer: any = null;
-    harness.deps.createPermissionModeQueueStateFn = (params: any) => {
-      inFlightSteer = params.inFlightSteer;
-      return {
-        messageQueue: {
-          reset: () => undefined,
-          size: () => 0,
-        },
-        rebindSession: () => undefined,
-        getCurrentPermissionMode: () => 'default',
-        setCurrentPermissionMode: () => undefined,
-        getCurrentPermissionModeUpdatedAt: () => 0,
-        setCurrentPermissionModeUpdatedAt: () => undefined,
-      };
-    };
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      expect(inFlightSteer).not.toBeNull();
-      await inFlightSteer.steerText('hello steer', {
-        localId: 'local-steer-prompt',
-        userMessageSeq: 88,
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      expect(userMessageHandler).toBeTypeOf('function');
+      expect(providerRejectedHandler).toBeTypeOf('function');
+
+      userMessageHandler?.({
+        role: 'user',
+        content: { type: 'text', text: 'exact steer only' },
+        localId: 'local-exact-steer-unavailable',
+        meta: {},
+        pendingProviderAction: 'steer',
       });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(params.messageQueue.size()).toBe(0);
+      expect(observeProviderInputSettlement).toHaveBeenCalledExactlyOnceWith({
+        kind: 'rejected_before_effect',
+        localId: 'local-exact-steer-unavailable',
+        userMessageSeq: 92,
+        userMessageSeqs: [92],
+        reason: 'provider_rejected_before_acceptance',
+        diagnostic: {
+          code: 'provider_rejected_before_acceptance',
+          severity: 'error',
+        },
+        retryable: false,
+      });
+
+      // A duplicate provider-side terminal rejection traverses the same host normalizer and must
+      // not settle Pending twice.
+      providerRejectedHandler?.({
+        localIds: ['local-exact-steer-unavailable'],
+        userMessageSeq: 92,
+        userMessageSeqs: [92],
+      });
+      expect(observeProviderInputSettlement).toHaveBeenCalledTimes(1);
+
+      userMessageHandler?.({
+        role: 'user',
+        content: { type: 'text', text: 'ambient input still queues' },
+        localId: 'local-ambient-input',
+        meta: {},
+      });
+      expect(params.messageQueue.size()).toBe(1);
     };
 
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(runtime.steerPrompt).toHaveBeenCalledWith('hello steer', {
-      localId: 'local-steer-prompt',
-      userMessageSeq: 88,
-    });
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
   });
 
-  it('passes direct native runtime-turn operations through without adding a synthetic acceptance hook', async () => {
+  it('keeps the foreground turn alive when an exact pre-effect steer rejection cannot be settled', async () => {
+    const harness = createHarness();
+    let userMessageHandler: ((message: unknown) => boolean | void) | null = null;
+    harness.session.onUserMessage = (handler: (message: unknown) => boolean | void) => {
+      userMessageHandler = handler;
+    };
+    harness.session.getCommittedUserMessageSeq = vi.fn(() => 93);
+    harness.session.hasPendingProviderInput = vi.fn(() => true);
+    harness.session.observeProviderInputSettlement = vi.fn(() => {
+      throw new Error('settlement owner unavailable');
+    });
+
+    const runtime = {
+      ...harness.runtime,
+      supportsInFlightSteer: vi.fn(() => false),
+      isTurnInFlight: vi.fn(() => true),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: runtime,
+      nativeRuntime: runtime,
+    }));
+    delete harness.deps.createPermissionModeQueueStateFn;
+
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      userMessageHandler?.({
+        role: 'user',
+        content: { type: 'text', text: 'exact steer only' },
+        localId: 'local-exact-steer-settlement-unavailable',
+        meta: {},
+        pendingProviderAction: 'steer',
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(params.messageQueue.size()).toBe(0);
+      expect(runtime.isTurnInFlight()).toBe(true);
+      expect(harness.session.sendAgentMessage.mock.calls).not.toContainEqual([
+        expect.anything(),
+        expect.objectContaining({ type: 'task_complete' }),
+      ]);
+      expect(harness.session.sendAgentMessage.mock.calls).not.toContainEqual([
+        expect.anything(),
+        expect.objectContaining({ type: 'turn_failed' }),
+      ]);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('classifies an invoked exact steer throw as uncertainty without queue fallback or foreground completion', async () => {
+    const harness = createHarness();
+    let userMessageHandler: ((message: unknown) => boolean | void) | null = null;
+    harness.session.onUserMessage = (handler: (message: unknown) => boolean | void) => {
+      userMessageHandler = handler;
+    };
+    harness.session.getCommittedUserMessageSeq = vi.fn(() => 94);
+    harness.session.hasPendingProviderInput = vi.fn(() => true);
+    harness.session.observeProviderInputSettlement = vi.fn();
+
+    const runtime = {
+      ...harness.runtime,
+      supportsInFlightSteer: vi.fn(() => true),
+      isTurnInFlight: vi.fn(() => true),
+      canSteerPrompt: vi.fn(() => true),
+      steerPrompt: vi.fn(async () => {
+        throw new Error('provider response lost after steer invocation');
+      }),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: runtime,
+      nativeRuntime: runtime,
+    }));
+    delete harness.deps.createPermissionModeQueueStateFn;
+
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      userMessageHandler?.({
+        role: 'user',
+        content: { type: 'text', text: 'exact ambiguous steer' },
+        localId: 'local-exact-steer-ambiguous',
+        meta: {},
+        pendingProviderAction: 'steer',
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      expect(runtime.steerPrompt).toHaveBeenCalledTimes(1);
+      expect(params.messageQueue.size()).toBe(0);
+      expect(harness.session.observeProviderInputSettlement).toHaveBeenCalledExactlyOnceWith({
+        kind: 'effect_may_have_occurred',
+        localId: 'local-exact-steer-ambiguous',
+        userMessageSeq: 94,
+        userMessageSeqs: [94],
+        issue: { code: 'provider_steer_outcome_unknown', severity: 'error' },
+        detail: 'provider_steer_outcome_unknown',
+      });
+      expect(runtime.isTurnInFlight()).toBe(true);
+      expect(harness.session.sendAgentMessage.mock.calls).not.toContainEqual([
+        expect.anything(),
+        expect.objectContaining({ type: 'task_complete' }),
+      ]);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('routes in-flight steer input through the admitted queue until the exact generation epoch clears', async () => {
+    const harness = createHarness();
+    let userMessageHandler: ((message: unknown) => boolean | void) | null = null;
+    let steerCallsWhileAdmitted = -1;
+    harness.session.onUserMessage = (handler: (message: unknown) => boolean | void) => {
+      userMessageHandler = handler;
+    };
+    harness.session.waitForMetadataUpdate = vi.fn(async () => false);
+    harness.session.shouldAttemptPendingMaterialization = vi.fn(() => true);
+    harness.session.reconcilePendingQueueState = vi.fn(async () => undefined);
+    harness.session.getCommittedUserMessageSeq = vi.fn((localId: string) => (
+      localId === 'local-admitted-steer' ? 91 : null
+    ));
+
+    const runtime = {
+      ...harness.runtime,
+      steerPrompt: vi.fn(async () => undefined),
+      supportsInFlightSteer: vi.fn(() => true),
+      isTurnInFlight: vi.fn(() => true),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: runtime,
+      nativeRuntime: runtime,
+    }));
+    delete harness.deps.createPermissionModeQueueStateFn;
+
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      const admission = harness.handlers.get(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION);
+      expect(admission).toBeTypeOf('function');
+      await admission?.({
+        action: 'enforce',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        reason: 'generation_pending',
+        epochId: 'generation:43',
+      });
+
+      expect(userMessageHandler).toBeTypeOf('function');
+      userMessageHandler?.({
+        role: 'user',
+        content: { type: 'text', text: 'wait for exact generation' },
+        localId: 'local-admitted-steer',
+        meta: {},
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      steerCallsWhileAdmitted = runtime.steerPrompt.mock.calls.length;
+      if (steerCallsWhileAdmitted > 0) return;
+
+      const abortController = new AbortController();
+      let releasedBatch: unknown = null;
+      const release = params.inputConsumer.waitForNextInput({
+        abortSignal: abortController.signal,
+      }).then((batch: unknown) => {
+        releasedBatch = batch;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+
+      await expect(admission?.({
+        action: 'clear',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        epochId: 'generation:42',
+      })).resolves.toEqual({ status: 'not_matched' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(releasedBatch).toBeNull();
+      expect(runtime.steerPrompt).not.toHaveBeenCalled();
+
+      await expect(admission?.({
+        action: 'clear',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        epochId: 'generation:43',
+      })).resolves.toEqual({ status: 'cleared' });
+      await release;
+      expect(releasedBatch).toEqual(expect.objectContaining({
+        message: expect.objectContaining({
+          text: 'wait for exact generation',
+          localId: 'local-admitted-steer',
+          localIds: ['local-admitted-steer'],
+          userMessageSeq: 91,
+          userMessageSeqs: [91],
+        }),
+      }));
+      expect(runtime.steerPrompt).not.toHaveBeenCalled();
+
+      userMessageHandler?.({
+        role: 'user',
+        content: { type: 'text', text: 'direct steer after clear' },
+        localId: 'local-direct-steer',
+        meta: {},
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(runtime.steerPrompt).toHaveBeenCalledTimes(1);
+      expect(runtime.steerPrompt).toHaveBeenCalledWith('direct steer after clear', {
+        localId: 'local-direct-steer',
+        localIds: ['local-direct-steer'],
+      });
+    };
+    harness.deps.runSessionLoopLifecycleFn = async (params: any) => {
+      await params.deps.runPermissionModePromptLoopFn({ runtime: params.runtime });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    expect(steerCallsWhileAdmitted).toBe(0);
+  });
+
+  it('keeps enforcement behind ACP or Claude steer preparation that already owns provider dispatch custody', async () => {
+    const harness = createHarness();
+    let userMessageHandler: ((message: unknown) => boolean | void) | null = null;
+    harness.session.onUserMessage = (handler: (message: unknown) => boolean | void) => {
+      userMessageHandler = handler;
+    };
+    let steerPreparationStartedResolve: () => void = () => {};
+    const steerPreparationStarted = new Promise<void>((resolve) => {
+      steerPreparationStartedResolve = resolve;
+    });
+    let releaseSteerPreparation: () => void = () => {};
+    const steerPreparationPaused = new Promise<void>((resolve) => {
+      releaseSteerPreparation = resolve;
+    });
+    const runtime = {
+      ...harness.runtime,
+      steerPrompt: vi.fn(async () => {
+        // ACP waits for backend creation here; Claude Unified waits for terminal readiness here.
+        steerPreparationStartedResolve();
+        await steerPreparationPaused;
+      }),
+      supportsInFlightSteer: vi.fn(() => true),
+      isTurnInFlight: vi.fn(() => true),
+    };
+    setSessionRuntimeFactory(harness.config, () => ({
+      operations: runtime,
+      nativeRuntime: runtime,
+    }));
+    delete harness.deps.createPermissionModeQueueStateFn;
+
+    harness.deps.runPermissionModePromptLoopFn = async () => {
+      const admission = harness.handlers.get(SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION);
+      expect(admission).toBeTypeOf('function');
+      if (!admission) throw new Error('provider input admission handler was not registered');
+      expect(userMessageHandler).toBeTypeOf('function');
+      userMessageHandler?.({
+        role: 'user',
+        content: { type: 'text', text: 'steer while provider prepares' },
+        localId: 'local-steer-preparation',
+        meta: {},
+      });
+      await steerPreparationStarted;
+
+      const enforcement = Promise.resolve(admission({
+        action: 'enforce',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        reason: 'generation_pending',
+        epochId: 'generation:steer-preparation',
+      }));
+      const enforcementSettled = vi.fn();
+      void enforcement.then(enforcementSettled, enforcementSettled);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      try {
+        expect(enforcementSettled).not.toHaveBeenCalled();
+      } finally {
+        releaseSteerPreparation();
+      }
+      await expect(enforcement).resolves.toEqual({ status: 'enforced' });
+      expect(runtime.steerPrompt).toHaveBeenCalledTimes(1);
+      await expect(Promise.resolve(admission({
+        action: 'clear',
+        serviceId: 'openai-codex',
+        groupId: 'codex-main',
+        epochId: 'generation:steer-preparation',
+      }))).resolves.toEqual({ status: 'cleared' });
+    };
+    harness.deps.runSessionLoopLifecycleFn = async (params: any) => {
+      await params.deps.runPermissionModePromptLoopFn({ runtime: params.runtime });
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+  });
+
+  it('passes direct native runtime-turn operations through unchanged', async () => {
     const harness = createHarness();
     const nativeRuntime = {
       beginTurnLifecycle: vi.fn(),
-      startOrLoadSession: vi.fn(async () => undefined),
       sendTurnPrompt: vi.fn(async () => undefined),
       steerInFlightTurn: vi.fn(async () => undefined),
       waitForTurnCompletion: vi.fn(async () => undefined),
@@ -2211,762 +5870,17 @@ describe('runHostSessionRuntime', () => {
 
     const lifecycleParams = (runSessionLoopLifecycleFn.mock.calls as unknown as Array<[unknown]>)[0]?.[0] as {
       runtime?: unknown;
-      hookRuntime?: { sendTurnPrompt?: unknown; setOnPromptAcceptedByProvider?: unknown };
+      hookRuntime?: { sendTurnPrompt?: unknown };
     } | undefined;
     expect(lifecycleParams?.runtime).toBe(nativeRuntime);
     expect(lifecycleParams?.hookRuntime).toBe(nativeRuntime);
     expect(typeof lifecycleParams?.hookRuntime?.sendTurnPrompt).toBe('function');
-    expect(typeof lifecycleParams?.hookRuntime?.setOnPromptAcceptedByProvider).toBe('undefined');
-  });
-
-  it('does not infer provider acceptance from successful native prompt dispatch', async () => {
-    const harness = createHarness();
-    let releaseSend!: () => void;
-    const sendCanResolve = new Promise<void>((resolve) => {
-      releaseSend = resolve;
-    });
-    const nativeRuntime = {
-      beginTurnLifecycle: vi.fn(),
-      startOrLoadSession: vi.fn(async () => undefined),
-      sendTurnPrompt: vi.fn(async () => {
-        await sendCanResolve;
-      }),
-      steerInFlightTurn: vi.fn(async () => undefined),
-      waitForTurnCompletion: vi.fn(async () => undefined),
-      subscribeRuntimeEvents: vi.fn(() => () => undefined),
-      cancelTurn: vi.fn(async () => undefined),
-      readSessionIdentity: vi.fn(() => ({ sessionId: null })),
-      updateSessionRuntimeConfig: vi.fn(async () => undefined),
-      resetOrDisposeRuntime: vi.fn(async () => undefined),
-    };
-    setSessionRuntimeFactory(harness.config, () => ({
-      operations: nativeRuntime as any,
-      nativeRuntime: nativeRuntime as any,
-    }));
-    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
-      runtime: Readonly<{
-        sendTurnPrompt: (
-          prompt: string,
-          meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>,
-        ) => Promise<void>;
-      }>;
-    }>) => {
-      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).not.toHaveBeenCalled();
-      const dispatch = params.runtime.sendTurnPrompt('queued prompt', {
-        localId: 'local-99',
-        userMessageSeq: 99,
-        userMessageSeqs: [99],
-      });
-      await Promise.resolve();
-      expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-      releaseSend();
-      await dispatch;
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(nativeRuntime.sendTurnPrompt).toHaveBeenCalledWith('queued prompt', {
-      localId: 'local-99',
-      userMessageSeq: 99,
-      userMessageSeqs: [99],
-    });
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-  });
-
-  it('does not infer provider acceptance from native meta and steer dispatch surfaces', async () => {
-    const harness = createHarness();
-    const nativeRuntime = {
-      beginTurnLifecycle: vi.fn(),
-      startOrLoadSession: vi.fn(async () => undefined),
-      sendTurnPrompt: vi.fn(async () => undefined),
-      sendPromptWithMeta: vi.fn(async function (this: unknown) {
-        expect(this).toBe(nativeRuntime);
-      }),
-      steerInFlightTurn: vi.fn(async function (this: unknown) {
-        expect(this).toBe(nativeRuntime);
-      }),
-      waitForTurnCompletion: vi.fn(async () => undefined),
-      subscribeRuntimeEvents: vi.fn(() => () => undefined),
-      cancelTurn: vi.fn(async () => undefined),
-      readSessionIdentity: vi.fn(() => ({ sessionId: null })),
-      updateSessionRuntimeConfig: vi.fn(async () => undefined),
-      resetOrDisposeRuntime: vi.fn(async () => undefined),
-    };
-    setSessionRuntimeFactory(harness.config, () => ({
-      operations: nativeRuntime as any,
-      nativeRuntime: nativeRuntime as any,
-    }));
-    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
-      runtime: Readonly<{
-        sendPromptWithMeta?: (
-          meta: Readonly<{ text: string; localIds?: readonly string[]; userMessageSeq?: number | null }>,
-        ) => Promise<void>;
-        steerInFlightTurn: (
-          prompt: string,
-          meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null }>,
-        ) => Promise<void>;
-      }>;
-    }>) => {
-      await params.runtime.sendPromptWithMeta?.({
-        text: 'meta prompt',
-        localIds: ['local-meta'],
-        userMessageSeq: 101,
-      });
-      await params.runtime.steerInFlightTurn('steer prompt', {
-        localId: 'local-steer',
-        userMessageSeq: 102,
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).not.toHaveBeenCalled();
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-  });
-
-  it('fails closed when provider-acceptance watermarking is requested without an acceptance seam', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    delete harness.runtime.setOnPromptAcceptedByProvider;
-    delete harness.runtime.setOnPromptTerminallyRejectedBeforeProvider;
-
-    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
-      .rejects
-      .toThrow(/provider-acceptance delivery watermarking/i);
-  });
-
-  it('fails closed when provider-acceptance watermarking has only a rejection seam', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    delete harness.runtime.setOnPromptAcceptedByProvider;
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn();
-
-    await expect(runHostSessionRuntime(harness.opts, harness.config, harness.deps))
-      .rejects
-      .toThrow(/provider-acceptance delivery watermarking/i);
-  });
-
-  it('defers the delivered watermark and confirms it only through provider acceptance from the native runtime', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let acceptedHandler:
-      | ((info: Readonly<{ localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn((handler) => {
-      acceptedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
-      expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-      acceptedHandler?.({ localIds: ['local-42'], userMessageSeq: 42, userMessageSeqs: [42] });
-      acceptedHandler?.({ userMessageSeq: null });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.runtime.setOnPromptAcceptedByProvider).toHaveBeenCalledTimes(1);
-    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledTimes(1);
-    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
-      localIds: ['local-42'],
-      userMessageSeq: 42,
-      userMessageSeqs: [42],
-    });
-  });
-
-  it('normalizes plugin SDK localInputIds when confirming native-runtime provider acceptance', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let acceptedHandler:
-      | ((info: Readonly<{ localInputIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn((handler) => {
-      acceptedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      acceptedHandler?.({ localInputIds: ['local-input-42'], userMessageSeq: null });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledTimes(1);
-    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
-      localIds: ['local-input-42'],
-      userMessageSeq: null,
-    });
-  });
-
-  it('blocks canonical pending delivery when the native runtime terminally rejects a prompt before provider custody', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{ localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      expect(harness.session.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
-      expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-      terminallyRejectedHandler?.({ localIds: ['local-84'], userMessageSeq: 84, userMessageSeqs: [84] });
-      terminallyRejectedHandler?.({ userMessageSeq: null });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.runtime.setOnPromptTerminallyRejectedBeforeProvider).toHaveBeenCalledTimes(1);
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['local-84'],
-      reason: 'provider_rejected_before_acceptance',
-    });
-  });
-
-  it('normalizes plugin SDK localInputIds when blocking terminally rejected native-runtime prompts before provider custody', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{ localInputIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({ localInputIds: ['local-input-84'], userMessageSeq: null });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['local-input-84'],
-      reason: 'provider_rejected_before_acceptance',
-    });
-  });
-
-  it('preserves native-runtime provider acceptance timeout reason when blocking canonical pending delivery', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{
-        localIds?: readonly string[];
-        userMessageSeq?: number | null;
-        userMessageSeqs?: readonly number[];
-        deliveryBlockedReason?: 'provider_acceptance_timeout';
-      }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({
-        localIds: ['local-timeout-84'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'provider_acceptance_timeout',
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['local-timeout-84'],
-      reason: 'provider_acceptance_timeout',
-    });
-  });
-
-  it('preserves runtime-config blocked reason when blocking canonical pending delivery', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{
-        localIds?: readonly string[];
-        userMessageSeq?: number | null;
-        deliveryBlockedReason?: 'runtime_config_blocked';
-      }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({
-        localIds: ['local-runtime-config-blocked'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'runtime_config_blocked',
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-    expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledWith({
-      localIds: ['local-runtime-config-blocked'],
-      reason: 'runtime_config_blocked',
-    });
-  });
-
-  it('retries a draft-blocked pending row once when the native runtime reports the blocker cleared', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{
-        localIds?: readonly string[];
-        userMessageSeq?: number | null;
-        deliveryBlockedReason?: 'terminal_composer_draft';
-      }>) => void)
-      | null = null;
-    let blockerClearedHandler: ((info?: Readonly<{ deliveryBlockedReason?: 'terminal_composer_draft' }>) => void) | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
-    });
-    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
-      blockerClearedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({
-        localIds: ['local-draft-blocked'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'terminal_composer_draft',
-      });
-      await vi.waitFor(() => {
-        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-      blockerClearedHandler?.({ deliveryBlockedReason: 'terminal_composer_draft' });
-      blockerClearedHandler?.({ deliveryBlockedReason: 'terminal_composer_draft' });
-      await vi.waitFor(() => {
-        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
-      localId: 'local-draft-blocked',
-    });
-  });
-
-  it('retries a runtime-config blocked pending row once when the native runtime reports the blocker cleared', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{
-        localIds?: readonly string[];
-        userMessageSeq?: number | null;
-        deliveryBlockedReason?: 'runtime_config_blocked';
-      }>) => void)
-      | null = null;
-    let blockerClearedHandler: ((info?: Readonly<{ deliveryBlockedReason?: 'runtime_config_blocked' }>) => void) | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
-    });
-    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
-      blockerClearedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({
-        localIds: ['local-runtime-config-blocked'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'runtime_config_blocked',
-      });
-      await vi.waitFor(() => {
-        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-      blockerClearedHandler?.({ deliveryBlockedReason: 'runtime_config_blocked' });
-      blockerClearedHandler?.({ deliveryBlockedReason: 'runtime_config_blocked' });
-      await vi.waitFor(() => {
-        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
-      localId: 'local-runtime-config-blocked',
-    });
-  });
-
-  it('retries a provider-unavailable pending row once when the native runtime reports the blocker cleared', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{
-        localIds?: readonly string[];
-        userMessageSeq?: number | null;
-        deliveryBlockedReason?: 'provider_unavailable_before_acceptance';
-      }>) => void)
-      | null = null;
-    let blockerClearedHandler:
-      | ((info?: Readonly<{ deliveryBlockedReason?: 'provider_unavailable_before_acceptance' }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
-    });
-    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
-      blockerClearedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({
-        localIds: ['local-provider-unavailable'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'provider_unavailable_before_acceptance',
-      });
-      await vi.waitFor(() => {
-        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-      blockerClearedHandler?.({ deliveryBlockedReason: 'provider_unavailable_before_acceptance' });
-      blockerClearedHandler?.({ deliveryBlockedReason: 'provider_unavailable_before_acceptance' });
-      await vi.waitFor(() => {
-        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
-      localId: 'local-provider-unavailable',
-    });
-  });
-
-  it.each([
-    'terminal_composer_draft',
-    'runtime_config_blocked',
-    'provider_unavailable_before_acceptance',
-  ] as const)('retries %s once when the native runtime clears it before the block write resolves', async (deliveryBlockedReason) => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    const blockWrite = createDeferred<boolean>();
-    harness.session.blockPendingMessageDelivery = vi.fn(() => blockWrite.promise);
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{
-        localIds?: readonly string[];
-        userMessageSeq?: number | null;
-        deliveryBlockedReason?: typeof deliveryBlockedReason;
-      }>) => void)
-      | null = null;
-    let blockerClearedHandler:
-      | ((info?: Readonly<{ deliveryBlockedReason?: typeof deliveryBlockedReason }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
-    });
-    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
-      blockerClearedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({
-        localIds: [`local-${deliveryBlockedReason}`],
-        userMessageSeq: null,
-        deliveryBlockedReason,
-      });
-      await vi.waitFor(() => {
-        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-
-      blockerClearedHandler?.({ deliveryBlockedReason });
-      blockerClearedHandler?.({ deliveryBlockedReason });
-      expect(harness.session.retryPendingMessageDelivery).not.toHaveBeenCalled();
-
-      blockWrite.resolve(true);
-      await vi.waitFor(() => {
-        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
-      localId: `local-${deliveryBlockedReason}`,
-    });
-  });
-
-  it('retries each same-reason pending row whose block write was in flight when the blocker cleared', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    const firstBlockWrite = createDeferred<boolean>();
-    const secondBlockWrite = createDeferred<boolean>();
-    harness.session.blockPendingMessageDelivery = vi.fn()
-      .mockReturnValueOnce(firstBlockWrite.promise)
-      .mockReturnValueOnce(secondBlockWrite.promise);
-    let terminallyRejectedHandler:
-      | ((info: Readonly<{
-        localIds?: readonly string[];
-        userMessageSeq?: number | null;
-        deliveryBlockedReason?: 'terminal_composer_draft';
-      }>) => void)
-      | null = null;
-    let blockerClearedHandler:
-      | ((info?: Readonly<{ deliveryBlockedReason?: 'terminal_composer_draft' }>) => void)
-      | null = null;
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnPromptTerminallyRejectedBeforeProvider = vi.fn((handler) => {
-      terminallyRejectedHandler = handler as typeof terminallyRejectedHandler;
-    });
-    harness.runtime.setOnPromptDeliveryBlockerCleared = vi.fn((handler: typeof blockerClearedHandler) => {
-      blockerClearedHandler = handler;
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      terminallyRejectedHandler?.({
-        localIds: ['local-draft-blocked-a'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'terminal_composer_draft',
-      });
-      terminallyRejectedHandler?.({
-        localIds: ['local-draft-blocked-b'],
-        userMessageSeq: null,
-        deliveryBlockedReason: 'terminal_composer_draft',
-      });
-      await vi.waitFor(() => {
-        expect(harness.session.blockPendingMessageDelivery).toHaveBeenCalledTimes(2);
-      });
-
-      blockerClearedHandler?.({ deliveryBlockedReason: 'terminal_composer_draft' });
-      firstBlockWrite.resolve(true);
-      await vi.waitFor(() => {
-        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(1);
-      });
-
-      secondBlockWrite.resolve(true);
-      await vi.waitFor(() => {
-        expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledTimes(2);
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
-      localId: 'local-draft-blocked-a',
-    });
-    expect(harness.session.retryPendingMessageDelivery).toHaveBeenCalledWith({
-      localId: 'local-draft-blocked-b',
-    });
-  });
-
-  it('keeps the deferred watermark policy on session swap and confirms accepted prompts on the active session', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    const initialSession = harness.session;
-    const swappedSessionFixture = harness.createSessionFixture('session-2');
-    const swappedSession = swappedSessionFixture.session;
-    let swapSession: ((nextSession: any) => Promise<void>) | null = null;
-    let acceptedHandler:
-      | ((info: Readonly<{ localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
-      | null = null;
-
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn((handler) => {
-      acceptedHandler = handler;
-    });
-    harness.deps.initializeBackendRunSessionFn = async ({ onSessionSwap }: any) => {
-      swapSession = onSessionSwap;
-      return {
-        session: initialSession,
-        reconnectionHandle: null,
-        reportedSessionId: 'session-1',
-        attachedToExistingSession: false,
-      };
-    };
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      await swapSession?.(swappedSession);
-      expect(swappedSession.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
-      acceptedHandler?.({ localIds: ['local-64'], userMessageSeq: 64, userMessageSeqs: [64] });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(initialSession.deferDeliveredUserMessageWatermarkToProviderAcceptance).toHaveBeenCalledTimes(1);
-    expect(initialSession.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-    expect(swappedSession.confirmUserMessageDeliveredToProvider).toHaveBeenCalledTimes(1);
-    expect(swappedSession.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
-      localIds: ['local-64'],
-      userMessageSeq: 64,
-      userMessageSeqs: [64],
-    });
-  });
-
-  it('hands undeliverable native-runtime prompts back to the mode queue with their seq without confirming the watermark', async () => {
-    const harness = createHarness();
-    let undeliverableHandler:
-      | ((prompts: ReadonlyArray<Readonly<{ text: string; localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>>) => void)
-      | null = null;
-    const messageQueue = {
-      reset: vi.fn(),
-      size: vi.fn(() => 0),
-      unshift: vi.fn(),
-    };
-
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnUndeliverablePrompts = vi.fn((handler) => {
-      undeliverableHandler = handler;
-    });
-    harness.deps.createPermissionModeQueueStateFn = () => ({
-      messageQueue,
-      rebindSession: () => undefined,
-      getCurrentPermissionMode: () => 'default',
-      setCurrentPermissionMode: () => undefined,
-      getCurrentPermissionModeUpdatedAt: () => 0,
-      setCurrentPermissionModeUpdatedAt: () => undefined,
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      undeliverableHandler?.([{
-        text: 'retry after runtime death',
-        localIds: ['local-77'],
-        userMessageSeq: 77,
-        userMessageSeqs: [77],
-      }]);
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.runtime.setOnUndeliverablePrompts).toHaveBeenCalledTimes(1);
-    expect(harness.session.confirmUserMessageDeliveredToProvider).not.toHaveBeenCalled();
-    expect(messageQueue.unshift).toHaveBeenCalledWith(
-      {
-        text: 'retry after runtime death',
-        localId: 'local-77',
-        localIds: ['local-77'],
-        userMessageSeq: 77,
-        userMessageSeqs: [77],
-      },
-      { permissionMode: 'default', suppressUserEcho: true, providerPromptAlreadyResolved: true },
-    );
-  });
-
-  it('does not requeue an undeliverable native-runtime prompt accepted during the same dispatch', async () => {
-    const harness = createHarness();
-    harness.config.userMessageDeliveryWatermarkMode = 'providerAcceptance';
-    let acceptedHandler:
-      | ((info: Readonly<{ localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>) => void)
-      | null = null;
-    let undeliverableHandler:
-      | ((prompts: ReadonlyArray<Readonly<{ text: string; localInputIds?: readonly string[]; localIds?: readonly string[]; userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>>) => void)
-      | null = null;
-    const messageQueue = {
-      reset: vi.fn(),
-      size: vi.fn(() => 0),
-      unshift: vi.fn(),
-    };
-    const nativeRuntime = {
-      ...harness.runtime,
-      setOnPromptAcceptedByProvider: vi.fn((handler) => {
-        acceptedHandler = handler;
-      }),
-      setOnUndeliverablePrompts: vi.fn((handler) => {
-        undeliverableHandler = handler;
-      }),
-      sendTurnPrompt: vi.fn(async function (
-        this: unknown,
-        prompt: string,
-        meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>,
-      ) {
-        expect(this).toBe(nativeRuntime);
-        undeliverableHandler?.([{
-          text: prompt,
-          localIds: meta?.localId ? [meta.localId] : [],
-          userMessageSeq: meta?.userMessageSeq ?? null,
-          userMessageSeqs: meta?.userMessageSeqs,
-        }]);
-        acceptedHandler?.({
-          localIds: meta?.localId ? [meta.localId] : [],
-          userMessageSeq: meta?.userMessageSeq ?? null,
-          userMessageSeqs: meta?.userMessageSeqs,
-        });
-      }),
-    };
-    setSessionRuntimeFactory(harness.config, () => ({
-      operations: nativeRuntime as any,
-      nativeRuntime: nativeRuntime as any,
-    }));
-    harness.deps.createPermissionModeQueueStateFn = () => ({
-      messageQueue,
-      rebindSession: () => undefined,
-      getCurrentPermissionMode: () => 'default',
-      setCurrentPermissionMode: () => undefined,
-      getCurrentPermissionModeUpdatedAt: () => 0,
-      setCurrentPermissionModeUpdatedAt: () => undefined,
-    });
-    harness.deps.runPermissionModePromptLoopFn = async (params: Readonly<{
-      runtime: Readonly<{
-        sendTurnPrompt: (
-          prompt: string,
-          meta?: Readonly<{ localId?: string | null; userMessageSeq?: number | null; userMessageSeqs?: readonly number[] }>,
-        ) => Promise<void>;
-      }>;
-    }>) => {
-      await params.runtime.sendTurnPrompt('internally retried prompt', {
-        localId: 'local-internal-retry',
-        userMessageSeq: 90,
-        userMessageSeqs: [90],
-      });
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(harness.session.confirmUserMessageDeliveredToProvider).toHaveBeenCalledWith({
-      localIds: ['local-internal-retry'],
-      userMessageSeq: 90,
-      userMessageSeqs: [90],
-    });
-    expect(messageQueue.unshift).not.toHaveBeenCalled();
-  });
-
-  it('normalizes plugin SDK localInputIds when handing undeliverable native-runtime prompts back to the queue', async () => {
-    const harness = createHarness();
-    let undeliverableHandler:
-      | ((prompts: ReadonlyArray<Readonly<{ text: string; localInputIds?: readonly string[]; userMessageSeq: number | null; userMessageSeqs?: readonly number[] }>>) => void)
-      | null = null;
-    const messageQueue = {
-      reset: vi.fn(),
-      size: vi.fn(() => 0),
-      unshift: vi.fn(),
-    };
-
-    harness.runtime.setOnPromptAcceptedByProvider = vi.fn();
-    harness.runtime.setOnUndeliverablePrompts = vi.fn((handler) => {
-      undeliverableHandler = handler;
-    });
-    harness.deps.createPermissionModeQueueStateFn = () => ({
-      messageQueue,
-      rebindSession: () => undefined,
-      getCurrentPermissionMode: () => 'default',
-      setCurrentPermissionMode: () => undefined,
-      getCurrentPermissionModeUpdatedAt: () => 0,
-      setCurrentPermissionModeUpdatedAt: () => undefined,
-    });
-    harness.deps.runPermissionModePromptLoopFn = async () => {
-      undeliverableHandler?.([{
-        text: 'retry local input id after runtime death',
-        localInputIds: ['local-input-77'],
-        userMessageSeq: null,
-      }]);
-    };
-
-    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
-
-    expect(messageQueue.unshift).toHaveBeenCalledWith(
-      {
-        text: 'retry local input id after runtime death',
-        localId: 'local-input-77',
-        localIds: ['local-input-77'],
-      },
-      { permissionMode: 'default', suppressUserEcho: true, providerPromptAlreadyResolved: true },
-    );
   });
 
   it('preserves native runtime restart policy when driving RuntimeTurnOperations', async () => {
     const harness = createHarness();
     const operations = {
       beginTurnLifecycle: vi.fn(),
-      startOrLoadSession: vi.fn(async () => undefined),
       sendTurnPrompt: vi.fn(async () => undefined),
       steerInFlightTurn: vi.fn(async () => undefined),
       waitForTurnCompletion: vi.fn(async () => undefined),
@@ -3053,7 +5967,7 @@ describe('runHostSessionRuntime', () => {
     harness.opts.startedBy = 'daemon';
     harness.opts.terminalRuntime = { mode: 'tmux' };
     harness.config.shouldRenderTerminalDisplay = () => true;
-    harness.runtime.resolveTerminalRemoteSessionModeLoop = vi.fn(() => createTerminalRemoteModeLoopFixture());
+    setTerminalRemoteModeLoop(harness.config, createTerminalRemoteModeLoopFixture());
 
     const renderFn = vi.fn(() => ({ unmount: vi.fn() }));
     const stopStaticControl = vi.fn(async () => undefined);
@@ -3294,10 +6208,9 @@ describe('runHostSessionRuntime', () => {
         notifyFinished = true;
         callOrder.push('after-notify');
       });
-      await Promise.resolve();
       try {
+        await vi.waitFor(() => expect(finishHook).toBeTypeOf('function'));
         expect(notifyFinished).toBe(false);
-        expect(finishHook).toBeTypeOf('function');
       } finally {
         finishHook?.();
         await notifyPromise;
@@ -3668,6 +6581,43 @@ describe('runHostSessionRuntime', () => {
     await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
 
     expect(observedPendingQueueDeliveryTiming).toBe('after_runtime_idle');
+  });
+
+  it('reads the live applied timing for each claim and wakes only when it broadens eligibility', async () => {
+    const harness = createHarness();
+    const setTiming = (timing: 'after_foreground_ready' | 'after_runtime_idle', version: number) => {
+      setActiveAccountSettingsSnapshot({
+        source: 'network',
+        settings: { sessionPendingQueueDeliveryTiming: timing } as any,
+        settingsVersion: version,
+        loadedAtMs: version,
+        settingsSecretsReadKeys: [],
+        scopeKey: 'run-host-live-timing',
+      });
+    };
+    setTiming('after_runtime_idle', 1);
+    const materializeNextPendingMessageSafely = vi.fn(async () => ({ type: 'no_pending' as const }));
+    harness.session.materializeNextPendingMessageSafely = materializeNextPendingMessageSafely;
+    harness.session.wakePendingMaterialization.mockClear();
+    harness.deps.runPermissionModePromptLoopFn = async (params: any) => {
+      setTiming('after_foreground_ready', 2);
+      expect(harness.session.wakePendingMaterialization).toHaveBeenCalledTimes(1);
+      await params.inputConsumer.drainPending({ maxPopPerWake: 1, reason: 'live-timing' });
+      setTiming('after_runtime_idle', 2);
+      setTiming('after_runtime_idle', 1);
+      expect(harness.session.wakePendingMaterialization).toHaveBeenCalledTimes(1);
+      setTiming('after_runtime_idle', 3);
+      expect(harness.session.wakePendingMaterialization).toHaveBeenCalledTimes(1);
+    };
+
+    await runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+
+    expect(materializeNextPendingMessageSafely).toHaveBeenCalledWith({
+      reconcileWhenEmpty: 'force',
+      deliveryTiming: 'after_foreground_ready',
+    });
+    setTiming('after_foreground_ready', 4);
+    expect(harness.session.wakePendingMaterialization).toHaveBeenCalledTimes(1);
   });
 
   it('does not stamp provider-enforced permission traces from the shared host path by default', async () => {

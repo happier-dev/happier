@@ -27,10 +27,13 @@ function isConcreteBackendTargetV2(target: BackendTargetRefV2): boolean {
   return true;
 }
 
-function normalizeBackendTargetV2(target: BackendTargetRefV2): BackendTargetRefV2 {
+function normalizeBackendTargetV2(target: BackendTargetRefV2): BackendTargetRefV2 | null {
   const backendId = target.backendId.trim();
   const configuredBackendId = target.configuredBackendId?.trim();
-  if (target.sourceKind === 'configured') {
+  if (target.configuredBackendId !== undefined && !configuredBackendId) {
+    return null;
+  }
+  if (target.sourceKind === 'configured' || configuredBackendId) {
     return {
       kind: 'backend',
       backendId,
@@ -54,7 +57,7 @@ export function resolveConcreteBackendTargetRefV2(
 
   try {
     const backendTargetV2 = normalizeBackendTargetV2(BackendTargetRefV2Schema.parse(input));
-    return isConcreteBackendTargetV2(backendTargetV2) ? backendTargetV2 : null;
+    return backendTargetV2 && isConcreteBackendTargetV2(backendTargetV2) ? backendTargetV2 : null;
   } catch {
     return null;
   }
@@ -69,7 +72,13 @@ export function resolveConcreteCompatBackendTargetRefs(
 
   let backendTargetV2: BackendTargetRefV2;
   try {
-    backendTargetV2 = normalizeBackendTargetV2(readBackendTargetRefV2(input as BackendTargetRefV2Input));
+    const normalizedBackendTargetV2 = normalizeBackendTargetV2(
+      readBackendTargetRefV2(input as BackendTargetRefV2Input),
+    );
+    if (!normalizedBackendTargetV2) {
+      return null;
+    }
+    backendTargetV2 = normalizedBackendTargetV2;
   } catch {
     return null;
   }

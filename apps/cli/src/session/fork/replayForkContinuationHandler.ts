@@ -1,4 +1,4 @@
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 
 export type ReplayForkContinuation = Readonly<{
   /**

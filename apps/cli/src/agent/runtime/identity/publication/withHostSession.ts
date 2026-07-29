@@ -86,12 +86,9 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
     beginTurnLifecycle() {
       params.runtime.beginTurnLifecycle();
     },
-    async startOrLoadSession(opts) {
-      await params.runtime.startOrLoadSession(opts);
-      hub.publishFallbackIdentity();
-    },
     async sendTurnPrompt(prompt, meta) {
       await params.runtime.sendTurnPrompt(prompt, meta);
+      hub.publishFallbackIdentity();
     },
     ...(typeof params.runtime.compactContext === 'function'
       ? {
@@ -107,7 +104,9 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
       await params.runtime.waitForTurnCompletion(opts);
     },
     subscribeRuntimeEvents(handler) {
-      return hub.subscribe(handler);
+      const unsubscribe = hub.subscribe(handler);
+      hub.publishFallbackIdentity();
+      return unsubscribe;
     },
     get respondToPermission() {
       const respondToPermission = readRespondToPermission();
@@ -124,9 +123,11 @@ function wrapRuntimeTurnOperationsWithPublication(params: Readonly<{
     async updateSessionRuntimeConfig(update) {
       await params.runtime.updateSessionRuntimeConfig(update);
     },
-    async resetOrDisposeRuntime() {
-      hub.dispose();
-      await params.runtime.resetOrDisposeRuntime();
+    async resetOrDisposeRuntime(reason, nextSessionOpenIntent) {
+      if (!nextSessionOpenIntent) {
+        hub.dispose();
+      }
+      await params.runtime.resetOrDisposeRuntime(reason, nextSessionOpenIntent);
     },
   });
 }
@@ -162,13 +163,18 @@ export function withHostSessionRuntimeIdentityPublication(params: Readonly<{
       ...configWithInitialRuntimeIdentity,
       async createSessionRuntime(runtimeParams) {
         const createdRuntime = await createSessionRuntime(runtimeParams);
-        const { runtime, nativeRuntime } = resolveHostSessionRuntimeFactoryResult(createdRuntime);
+        const {
+          runtime,
+          nativeRuntime,
+          terminalRemoteModeLoop,
+        } = resolveHostSessionRuntimeFactoryResult(createdRuntime);
         return {
           operations: wrapRuntimeTurnOperationsWithPublication({
             runtime,
             identity: params.identity,
           }),
           nativeRuntime,
+          terminalRemoteModeLoop,
         };
       },
     },

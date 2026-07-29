@@ -79,10 +79,10 @@ describe('createExecutionRunBackend (descriptor fallback governance)', () => {
         getExecutionRunBackendDescriptorMock.mockReturnValue({ factory: descriptorFactory });
         resolveBackendEngineAdapterResolutionMock.mockResolvedValue({
             backendId: reviewId,
-            providerId: 'review-provider',
+            agentId: 'review-provider',
             source: 'built_in',
-            backend: { id: reviewId, providerId: 'review-provider' },
-            provider: { id: 'review-provider' },
+            backend: { id: reviewId, agentId: 'review-provider' },
+            agent: { id: 'review-provider' },
             engineAdapter: {
                 runtimeCore: {
                     createExecutionRunBackend() {

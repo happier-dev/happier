@@ -294,4 +294,73 @@ describe('managedServerPersistence', () => {
         expect(killPid).not.toHaveBeenCalled();
         expect(removeState).toHaveBeenCalledTimes(1);
     });
+
+    it('releases a Windows managed server from canonical CIM process identity evidence', async () => {
+        const command = 'provider.exe serve --hostname=127.0.0.1 --port=43111';
+        const processStartTimeMs = Date.UTC(2025, 5, 30, 12, 34, 56, 123);
+        const execFile = vi.fn(async () => ({
+            stdout: JSON.stringify({
+                ProcessId: 777,
+                ParentProcessId: 12,
+                CreationDate: '20250630123456.123000+000',
+                CommandLine: `  ${command}  `,
+                ExecutablePath: 'C:\\Tools\\provider.exe',
+            }),
+        }));
+        const killPid = vi.fn(async () => true);
+        const removeState = vi.fn(async () => {});
+
+        const result = await releaseManagedServerForSwitchFromState({
+            readState: async () => buildState({
+                startTimeMs: processStartTimeMs,
+                expectedCmdlineHash: hashCommandLine(command),
+            }),
+            removeState,
+            isPidAlive: () => true,
+            processIdentityDependencies: {
+                platform: 'win32',
+                execFile,
+            },
+            killPid,
+            isExpectedProcessCommand: (observedCommand) => observedCommand.includes('provider.exe serve'),
+            expectedOwnerToken: 'owner-token-a',
+            expectedActiveServerDir: '/tmp/happy/servers/cloud',
+            expectedDaemonInstanceId: 'cloud',
+            drainMs: 9_000,
+            trackedClaimCount: 1,
+            allowCurrentSessionClaim: true,
+        });
+
+        expect(result).toEqual({ released: true, reason: 'released' });
+        expect(killPid).toHaveBeenCalledWith(777, 9_000);
+        expect(removeState).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        ['missing start time', { command: 'provider serve --hostname=127.0.0.1 --port=43111' }],
+        ['reused PID', { command: 'provider serve --hostname=127.0.0.1 --port=43111', processStartTimeMs: 8_000 }],
+        ['nonmatching PID', { pid: 778, command: 'provider serve --hostname=127.0.0.1 --port=43111', processStartTimeMs: 2_500 }],
+    ])('fails closed for canonical process identity with %s', async (_label, processInfo) => {
+        const killPid = vi.fn(async () => true);
+        const removeState = vi.fn(async () => {});
+
+        const result = await releaseManagedServerForSwitchFromState({
+            readState: async () => buildState(),
+            removeState,
+            isPidAlive: () => true,
+            readProcessInfo: async () => ({ pid: 777, ...processInfo }),
+            killPid,
+            isExpectedProcessCommand: (command) => command.includes('provider serve'),
+            expectedOwnerToken: 'owner-token-a',
+            expectedActiveServerDir: '/tmp/happy/servers/cloud',
+            expectedDaemonInstanceId: 'cloud',
+            drainMs: 9_000,
+            trackedClaimCount: 1,
+            allowCurrentSessionClaim: true,
+        });
+
+        expect(result).toEqual({ released: false, reason: 'process_identity_mismatch' });
+        expect(killPid).not.toHaveBeenCalled();
+        expect(removeState).toHaveBeenCalledTimes(1);
+    });
 });

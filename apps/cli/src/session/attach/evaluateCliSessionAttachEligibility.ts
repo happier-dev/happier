@@ -8,9 +8,10 @@ import type { Credentials } from '@/persistence';
 import type { TerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { createTerminalAttachPlan, type TerminalAttachPlan } from '@/terminal/attachment/terminalAttachPlan';
 import type { Metadata } from '@/api/types';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
+import { projectAgentVisibleSessionMetadata } from '@/agent/runtime/sessionMetadataVisibility';
 import type { RawSessionListRow, RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
+import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistryTypes';
 import { resolveCliSessionAttachBackendId } from './resolveCliSessionAttachBackendId';
 
 export type CliSessionAttachEligibilityReasonCode =
@@ -160,6 +161,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   localAttachmentInfo: TerminalAttachmentInfo | null;
   insideTmux: boolean;
   currentTmuxSocketPath?: string | null;
+  resolveExecutionSurfaces: (backendId: string) => Promise<BackendExecutionSurfaces>;
 }>): Promise<CliSessionAttachEligibility> {
   if (resolveArchivedAt(params.rawSession) !== null) {
     return {
@@ -180,7 +182,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     };
   }
 
-  const metadata = asRecord(tryDecryptSessionMetadata({
+  const metadata = asRecord(tryDecryptSessionOwnerMetadataView({
     credentials: params.credentials,
     rawSession: params.rawSession,
   }));
@@ -202,15 +204,17 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
   const hasSyncedTerminalMetadata = asRecord(metadata?.terminal) !== null;
   const sessionId = resolveSessionId(params.rawSession);
   const backendId = resolveCliSessionAttachBackendId(metadata);
-  const backendExecutionSurfaces = backendId ? await resolveBackendExecutionSurfaces(backendId) : null;
+  const backendExecutionSurfaces = backendId
+    ? await params.resolveExecutionSurfaces(backendId)
+    : null;
   const providerAttachOps = backendExecutionSurfaces?.attach ?? null;
   if (providerAttachOps) {
     const providerBackendId = backendId;
-    const providerAgentId = agentId;
-    if (!providerBackendId || !providerAgentId || !sessionId) {
+    const catalogAgentId = agentId;
+    if (!providerBackendId || !catalogAgentId || !sessionId) {
       return {
         eligible: false,
-        agentId: providerAgentId,
+        agentId: catalogAgentId,
         reasonCode: 'provider_attach_unavailable',
         reason: 'Provider attach is not available for this session.',
         metadata,
@@ -219,7 +223,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
 
     const evaluation = await providerAttachOps.evaluateAvailability({
       sessionId,
-      metadata,
+      metadata: projectAgentVisibleSessionMetadata(metadata),
       currentMachineId: params.currentMachineId,
       sessionMachineId,
       hasLocalAttachmentInfo: params.localAttachmentInfo !== null,
@@ -227,7 +231,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
     if (!evaluation.eligible) {
       return {
         eligible: false,
-        agentId: providerAgentId,
+        agentId: catalogAgentId,
         reasonCode: 'provider_attach_unavailable',
         reason: evaluation.reason,
         metadata,
@@ -236,7 +240,7 @@ export async function evaluateCliSessionAttachEligibility(params: Readonly<{
 
     return {
       eligible: true,
-      agentId: providerAgentId,
+      agentId: catalogAgentId,
       backendId: providerBackendId,
       attachStrategy: 'provider_attach',
       attachScope: evaluation.scope,

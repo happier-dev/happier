@@ -5,7 +5,10 @@ import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryp
 import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
 import { configuration } from '@/configuration';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import {
+  tryDecryptSessionMetadata,
+  tryDecryptSessionOwnerMetadataView,
+} from '@/session/transport/encryption/sessionEncryptionContext';
 import { fetchLatestMemorySynopsisSystemRecord } from '@/session/systemRecords/memory/fetchMemorySystemRecords';
 import { readMemorySynopsisPointerV1FromSessionMetadata } from '@/session/memoryArtifacts/memorySynopsisPointerV1';
 
@@ -181,7 +184,10 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
         : {}),
     });
 
-    const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession });
+    const metadata = tryDecryptSessionOwnerMetadataView({
+      credentials: params.credentials,
+      rawSession,
+    });
     if (!metadata) break;
     const fork = readForkV1FromMetadata(metadata);
     if (!fork) break;

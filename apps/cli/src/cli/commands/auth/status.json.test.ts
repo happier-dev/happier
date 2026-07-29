@@ -12,7 +12,7 @@ import { captureConsoleText } from '@/testkit/logger/captureOutput';
 
 import { handleAuthCommand } from '../auth';
 
-const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL'] as const;
+const envKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_WEBAPP_URL', 'HAPPIER_ACTIVE_SERVER_ID'] as const;
 let envScope = createEnvKeyScope(envKeys);
 
 beforeEach(() => {
@@ -190,13 +190,17 @@ describe('happier auth status --json', () => {
   it('honors --server-url passed after the subcommand (server selection) when resolving credentials', async () => {
     const prevExitCode = process.exitCode;
     process.exitCode = undefined;
-    const extendedEnvKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL'] as const;
+    const extendedEnvKeys = ['HAPPIER_HOME_DIR', 'HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID'] as const;
     const extendedScope = createEnvKeyScope(extendedEnvKeys);
     try {
       await withTempDir('happier-auth-status-json-server-url-', async (home) => {
         const output = captureConsoleText();
         try {
-          extendedScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'http://example.invalid' });
+          extendedScope.patch({
+            HAPPIER_HOME_DIR: home,
+            HAPPIER_SERVER_URL: 'http://example.invalid',
+            HAPPIER_ACTIVE_SERVER_ID: 'stale-host-active-server',
+          });
           reloadConfiguration();
           const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
             expect(String(input)).toBe('https://api.happier.dev/v1/account/profile');
@@ -209,7 +213,11 @@ describe('happier auth status --json', () => {
 
           const machineKey = new Uint8Array(32).fill(9);
 
-          extendedScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'https://api.happier.dev' });
+          extendedScope.patch({
+            HAPPIER_HOME_DIR: home,
+            HAPPIER_SERVER_URL: 'https://api.happier.dev',
+            HAPPIER_ACTIVE_SERVER_ID: undefined,
+          });
           reloadConfiguration();
           await writeCredentialsDataKey({
             token: 'token_super_secret',
@@ -217,7 +225,11 @@ describe('happier auth status --json', () => {
             machineKey,
           });
 
-          extendedScope.patch({ HAPPIER_HOME_DIR: home, HAPPIER_SERVER_URL: 'http://example.invalid' });
+          extendedScope.patch({
+            HAPPIER_HOME_DIR: home,
+            HAPPIER_SERVER_URL: 'http://example.invalid',
+            HAPPIER_ACTIVE_SERVER_ID: 'stale-host-active-server',
+          });
           reloadConfiguration();
 
           await handleAuthCommand(['status', '--json', '--server-url', 'https://api.happier.dev']);

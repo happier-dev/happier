@@ -32,7 +32,7 @@ describe('createAcpRuntime (token-count forwarding)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'token-count',
@@ -83,7 +83,7 @@ describe('createAcpRuntime (token-count forwarding)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({
       type: 'token-count',
@@ -128,7 +128,7 @@ describe('createAcpRuntime (token-count forwarding)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     backend.emit({ type: 'token-count', foo: 'bar' } as any);
 
@@ -160,7 +160,7 @@ describe('createAcpRuntime (token-count forwarding)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
+    await runtime.sendTurnPrompt('session setup');
 
     const tokens: Record<string, number> = { input: 1, output: 2 };
     for (let i = 0; i < 100; i++) {

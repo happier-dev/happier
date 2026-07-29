@@ -12,7 +12,7 @@ describe('createChangeTitleToolHandler', () => {
             result: { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' },
         }));
         const handler = createChangeTitleToolHandler({
-            surface: 'session_agent',
+            surface: 'agent',
             executor: {
                 execute,
             },
@@ -33,7 +33,7 @@ describe('createChangeTitleToolHandler', () => {
             result: { kind: 'approval_request_created', requestId: 'req_1' },
         }));
         const handler = createChangeTitleToolHandler({
-            surface: 'session_agent',
+            surface: 'agent',
             executor: {
                 execute,
             },
@@ -54,7 +54,7 @@ describe('createChangeTitleToolHandler', () => {
             result: { ok: true, sessionId: 'sess_1', title: 'New title' },
         }));
         const handler = createChangeTitleToolHandler({
-            surface: 'session_agent',
+            surface: 'agent',
             executor: {
                 execute,
             },
@@ -68,14 +68,14 @@ describe('createChangeTitleToolHandler', () => {
         expect(afterCommit).toHaveBeenCalledTimes(1);
     });
 
-    it('does not call afterCommit when the action already wrote metadata', async () => {
+    it('calls afterCommit when the action wrote metadata so provider-native title state can sync', async () => {
         const afterCommit = vi.fn();
         const execute = vi.fn<Execute>(async () => ({
             ok: true as const,
             result: { ok: true, sessionId: 'sess_1', title: 'New title', metadataUpdated: true },
         }));
         const handler = createChangeTitleToolHandler({
-            surface: 'session_agent',
+            surface: 'agent',
             executor: {
                 execute,
             },
@@ -86,6 +86,7 @@ describe('createChangeTitleToolHandler', () => {
             success: true,
             title: 'New title',
         });
-        expect(afterCommit).not.toHaveBeenCalled();
+        expect(afterCommit).toHaveBeenCalledTimes(1);
+        expect(afterCommit).toHaveBeenCalledWith({ sessionId: 'sess_1', title: 'New title' });
     });
 });

@@ -78,7 +78,6 @@ describe('external session transcript media read allowance', () => {
     const externalSessions = {
       validateSource: vi.fn(async ({ source }) => ({ ok: true as const, source })),
       listCandidates: vi.fn(async () => ({ candidates: [], nextCursor: null })),
-      getActivity: vi.fn(async () => ({ lastActivityAtMs: null, isRunning: false })),
       resolveTranscriptMediaReadRoots: vi.fn(async () => [providerDirectory]),
       pageTranscript: vi.fn(async () => ({
         items: [{
@@ -108,8 +107,7 @@ describe('external session transcript media read allowance', () => {
         hasMore: false,
         truncated: false,
       })),
-      readAfterTranscript: vi.fn(async () => ({ items: [], nextCursor: null, truncated: false })),
-      resolveTakeoverSpawnOptions: vi.fn(async () => null),
+      readAfterTranscript: vi.fn(async () => ({ outcome: 'already_current' as const })),
     } satisfies ExternalSessionProviderOps;
 
     resolveBackendExecutionSurfacesMock.mockResolvedValue({
@@ -136,7 +134,7 @@ describe('external session transcript media read allowance', () => {
 
       const pageResponse = await rpcHandlerManager.invokeLocal(RPC_METHODS.DAEMON_EXTERNAL_SESSION_TRANSCRIPT_PAGE, {
         machineId: 'machine-1',
-        providerId: 'opencode',
+        agentId: 'opencode',
         remoteSessionId: 'provider-session-1',
         source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096', directory: providerDirectory },
         direction: 'older',

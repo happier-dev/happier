@@ -36,18 +36,27 @@ export function buildWindowsTerminalWindowIdentity(params: {
   windowName?: string | null;
   now?: () => number;
   randomHex?: () => string;
-}): { windowId: string; title: string } {
+}): {
+  windowId: string;
+  title: string;
+  launchCorrelation: string;
+} {
   const now = params.now ?? (() => Date.now());
-  const randomHex = params.randomHex ?? (() => randomBytes(4).toString('hex'));
+  const randomHex =
+    params.randomHex
+    ?? (() => randomBytes(16).toString('hex'));
+  const launchCorrelation = randomHex();
   const base =
     (typeof params.existingSessionId === 'string' && params.existingSessionId.trim().length > 0
       ? params.existingSessionId.trim()
       : typeof params.reservedSessionId === 'string' && params.reservedSessionId.trim().length > 0
         ? params.reservedSessionId.trim()
-        : `spawn-${now()}-${randomHex()}`);
+        : `spawn-${now()}`);
   return {
     windowId: normalizeWindowsTerminalWindowName(params.windowName),
-    title: `Happier ${params.agentCommand} ${base}`,
+    title:
+      `Happier ${params.agentCommand} ${base} [${launchCorrelation}]`,
+    launchCorrelation,
   };
 }
 
@@ -56,6 +65,8 @@ export function buildWindowsHostedTerminalArgs(params: {
   actualMode: WindowsHostedActualMode;
   requestedMode: WindowsHostedRequestedMode;
   windowId?: string;
+  title?: string;
+  launchCorrelation?: string;
   fallbackReason?: string;
 }): string[] {
   return [
@@ -66,6 +77,16 @@ export function buildWindowsHostedTerminalArgs(params: {
     params.requestedMode,
     ...(params.actualMode === 'windows_terminal' && typeof params.windowId === 'string' && params.windowId.trim().length > 0
       ? ['--happy-terminal-window-id', params.windowId]
+      : []),
+    ...(params.actualMode === 'windows_terminal' && typeof params.title === 'string' && params.title.trim().length > 0
+      ? ['--happy-terminal-title', params.title]
+      : []),
+    ...(typeof params.launchCorrelation === 'string'
+      && /^[a-f0-9]{32}$/u.test(params.launchCorrelation)
+      ? [
+          '--happy-terminal-launch-correlation',
+          params.launchCorrelation,
+        ]
       : []),
     ...(typeof params.fallbackReason === 'string' && params.fallbackReason.trim().length > 0
       ? ['--happy-terminal-fallback-reason', params.fallbackReason]
@@ -89,7 +110,9 @@ export function buildWindowsHostedTerminalAttachment(params: {
       : {}),
     windows: {
       host: params.actualMode === 'windows_terminal' ? 'windows_terminal' : 'console',
-      pid: params.pid,
+      ...(params.actualMode === 'windows_console'
+        ? { pid: params.pid }
+        : {}),
       ...(params.actualMode === 'windows_terminal' && typeof params.windowId === 'string' && params.windowId.trim().length > 0
         ? { windowId: params.windowId }
         : {}),

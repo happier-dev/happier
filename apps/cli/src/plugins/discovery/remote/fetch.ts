@@ -216,8 +216,11 @@ export async function downloadRemoteFileWithLimits(params: Readonly<{
   });
 
   await mkdir(dirname(params.destinationPath), { recursive: true });
+  // Mixed DOM/Node declaration builds model the same runtime WHATWG stream with
+  // structurally incompatible interfaces. Keep the assertion at that boundary.
+  const responseBody = response.body as Parameters<typeof Readable.fromWeb>[0];
   await pipeline(
-    Readable.fromWeb(response.body!),
+    Readable.fromWeb(responseBody),
     createBodyByteLimitTransform({
       maxBytes,
       errorLabel: params.errorLabel,

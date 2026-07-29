@@ -1,7 +1,7 @@
 import { spawn, type SpawnOptions } from 'child_process';
+import { randomUUID } from 'node:crypto';
 
 import {
-  buildPosixShellCommand,
   isTmuxWindowIndexConflict,
   normalizeExitCode,
   readNonNegativeIntegerEnv,
@@ -15,6 +15,7 @@ import {
 } from './identifiers';
 import { parseTmuxCursorPosition } from './cursorPosition';
 import { COMMANDS_SUPPORTING_TARGET, CONTROL_SEQUENCES, WIN_OPS } from './operations';
+import { prepareTmuxWindowLaunch, type PreparedTmuxWindowLaunch } from './windowLaunchScript';
 import {
   TmuxControlState,
   type TmuxCommandResult,
@@ -42,7 +43,7 @@ function logTmuxWarn(message: string, ...args: unknown[]): void {
     .catch(() => undefined);
 }
 
-export interface TmuxSpawnOptions extends Omit<SpawnOptions, 'env'> {
+export interface TmuxSpawnOptions<TCommitRefusal = never> extends Omit<SpawnOptions, 'env'> {
   /** Target tmux session name */
   sessionName?: string;
   /** Custom tmux socket path */
@@ -51,13 +52,40 @@ export interface TmuxSpawnOptions extends Omit<SpawnOptions, 'env'> {
   createWindow?: boolean;
   /** Window name for new windows */
   windowName?: string;
+  /** The caller guarantees that `windowName` uniquely identifies this launch. */
+  windowNameIsUnique?: boolean;
+  /** Create a new owned session whose initial window runs the command; fail if the name exists. */
+  requireNewSession?: boolean;
   /** Environment names removed inside the new window before the command executes. */
   unsetEnvKeys?: readonly string[];
+  /**
+   * Final caller-owned authorization guard. A non-null value refuses the
+   * current create-window attempt and is returned verbatim to the caller.
+   */
+  beforeCreateWindow?: () => Promise<TCommitRefusal | null>;
   // Note: env is intentionally excluded from this interface.
-  // It's passed as a separate parameter to spawnInTmux() for clarity
-  // and efficiency - only variables that differ from the tmux server
-  // environment need to be passed via -e flags.
+  // It is passed separately so spawnInTmux can keep values out of tmux
+  // client arguments while installing the exact window environment.
 }
+
+export type TmuxWindowCreationDisposition = 'not_created' | 'created_and_absent' | 'created_or_uncertain';
+
+export type TmuxSpawnResult<TCommitRefusal = never> =
+  | Readonly<{
+      success: true;
+      creationDisposition: 'created_or_uncertain';
+      sessionId: string;
+      sessionName: string;
+      windowName: string;
+      pid: number;
+      commitRefusal?: never;
+    }>
+  | Readonly<{
+      success: false;
+      creationDisposition: TmuxWindowCreationDisposition;
+      error?: string;
+      commitRefusal?: TCommitRefusal;
+    }>;
 
 export class TmuxUtilities {
   /** Default session name to prevent interference */
@@ -458,21 +486,23 @@ export class TmuxUtilities {
   /**
    * Spawn process in tmux session with environment variables.
    *
-   * IMPORTANT: Unlike Node.js spawn(), env is a separate parameter.
-   * This is intentional because tmux sets window-scoped environment via `new-window -e KEY=VALUE`.
-   * Callers may provide a fully merged environment (daemon env + profile overrides) so tmux and
-   * non-tmux spawns behave consistently.
+   * IMPORTANT: Unlike Node.js spawn(), env is a separate parameter. Values
+   * travel through a private one-shot launcher rather than tmux client argv.
+   * Callers may provide a fully merged environment (daemon env + profile
+   * overrides) so tmux and non-tmux spawns behave consistently.
    *
    * @param args - Command and arguments to execute (as array, will be joined)
    * @param options - Spawn options (tmux-specific, excludes env)
    * @param env - Environment variables to set in window
    * @returns Result with success status and session identifier
    */
-  async spawnInTmux(
+  async spawnInTmux<TCommitRefusal = never>(
     args: string[],
-    options: TmuxSpawnOptions = {},
+    options: TmuxSpawnOptions<TCommitRefusal> = {},
     env?: Record<string, string>,
-  ): Promise<{ success: boolean; sessionId?: string; sessionName?: string; windowName?: string; pid?: number; error?: string }> {
+  ): Promise<TmuxSpawnResult<TCommitRefusal>> {
+    let preparedWindowLaunch: PreparedTmuxWindowLaunch | null = null;
+    let creationDisposition: TmuxWindowCreationDisposition = 'not_created';
     try {
       // Check if tmux is available
       const tmuxCheck = await this.executeTmuxCommand(['list-sessions']);
@@ -518,21 +548,23 @@ export class TmuxUtilities {
         sessionName = candidates[0]?.name ?? TmuxUtilities.DEFAULT_SESSION_NAME;
       }
 
-      const windowName = options.windowName || `happy-${Date.now()}`;
+      const generatedWindowName = options.windowName === undefined;
+      const windowName = options.windowName || `happy-${randomUUID()}`;
+      const windowNameIsUnique = generatedWindowName || options.windowNameIsUnique === true;
 
-      // Ensure session exists
-      await this.ensureSessionExists(sessionName);
+      const requireNewSession = options.requireNewSession === true;
+      if (!requireNewSession) {
+        await this.ensureSessionExists(sessionName);
+      }
 
-      // Build command to execute in the new window
-      const fullCommand = buildPosixShellCommand(args);
       const unsetEnvKeys = normalizeUnsetEnvKeys(options.unsetEnvKeys);
-      const scopedCommand = unsetEnvKeys.length > 0
-        ? `unset ${unsetEnvKeys.join(' ')}; exec ${fullCommand}`
-        : fullCommand;
+      const windowEnv: Record<string, string> = {};
 
       // Create new window in session with command and environment variables
       // IMPORTANT: Don't manually add -t here - executeTmuxCommand handles it via parameters
-      const createWindowArgs = ['new-window', '-d', '-P', '-F', '#{pane_pid}', '-n', windowName];
+      const createWindowArgs = requireNewSession
+        ? ['new-session', '-d', '-P', '-F', '#{window_id}\t#{pane_pid}', '-s', sessionName, '-n', windowName]
+        : ['new-window', '-d', '-P', '-F', '#{window_id}\t#{pane_pid}', '-n', windowName];
 
       // Add working directory if specified
       if (options.cwd) {
@@ -540,12 +572,13 @@ export class TmuxUtilities {
         createWindowArgs.push('-c', cwdPath);
       }
 
-      // Add target session explicitly so option ordering is correct.
-      createWindowArgs.push('-t', sessionName);
+      if (!requireNewSession) {
+        // Add target session explicitly so option ordering is correct.
+        createWindowArgs.push('-t', sessionName);
+      }
 
-      // Add environment variables using -e flag (sets them in the window's environment)
-      // Note: tmux windows inherit environment from tmux server, but we need to ensure
-      // the daemon's environment variables (especially expanded auth variables) are available
+      // Validate the exact environment that the one-shot window launcher will
+      // export. Values must never be added to tmux client arguments.
       if (env && Object.keys(env).length > 0) {
         for (const [key, value] of Object.entries(env)) {
           // Skip undefined/null values with warning
@@ -560,15 +593,10 @@ export class TmuxUtilities {
             continue;
           }
 
-          // `new-window -e` takes KEY=VALUE literally (no shell parsing).
-          // Do NOT quote or escape values intended for shell parsing.
-          createWindowArgs.push('-e', `${key}=${value}`);
+          windowEnv[key] = value;
         }
         logTmuxDebug(`[TMUX] Setting ${Object.keys(env).length} environment variables in tmux window`);
       }
-
-      // Add the command to run in the window (runs immediately when window is created)
-      createWindowArgs.push(scopedCommand);
 
       // Create window with command and get PID immediately.
       //
@@ -576,7 +604,9 @@ export class TmuxUtilities {
       // clients concurrently create windows in the same session (tmux does not always
       // auto-retry the window index allocation). Retry a few times to make concurrent
       // session starts robust.
-      const maxAttempts = readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
+      const maxAttempts = requireNewSession
+        ? 1
+        : readPositiveIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_MAX_ATTEMPTS', 3);
       const retryDelayMs = readNonNegativeIntegerEnv('HAPPIER_CLI_TMUX_CREATE_WINDOW_RETRY_DELAY_MS', 25);
 
       const withExplicitTargetWindowIndex = (args: string[], target: string): string[] => {
@@ -614,11 +644,41 @@ export class TmuxUtilities {
       let createResult: TmuxCommandResult | null = null;
       let createWindowArgsForAttempt = createWindowArgs;
       for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        const commitRefusal = await options.beforeCreateWindow?.() ?? null;
+        if (commitRefusal !== null) {
+          return { success: false, creationDisposition, commitRefusal };
+        }
+        if (!preparedWindowLaunch) {
+          const readySignal = `happier-window-${randomUUID()}`;
+          preparedWindowLaunch = await prepareTmuxWindowLaunch({
+            args,
+            env: windowEnv,
+            unsetEnvKeys,
+            readySignal,
+          });
+          createWindowArgs.push(
+            preparedWindowLaunch.command,
+            ';',
+            'wait-for',
+            readySignal,
+          );
+          createWindowArgsForAttempt = createWindowArgs;
+        }
+        creationDisposition = 'created_or_uncertain';
         createResult = await this.executeTmuxCommand(createWindowArgsForAttempt);
-        if (createResult && createResult.returncode === 0) break;
+        if (createResult && createResult.returncode === 0 && createResult.timedOut !== true) break;
 
         const stderr = createResult?.stderr;
-        const shouldRetry = attempt < maxAttempts && isTmuxWindowIndexConflict(stderr);
+        const explicitSessionNameConflict = requireNewSession
+          && createResult?.timedOut !== true
+          && /(?:duplicate session|session .+ already exists)/i.test(stderr ?? '');
+        const explicitWindowIndexConflict = !requireNewSession
+          && createResult?.timedOut !== true
+          && isTmuxWindowIndexConflict(stderr);
+        if (explicitSessionNameConflict || explicitWindowIndexConflict) {
+          creationDisposition = 'not_created';
+        }
+        const shouldRetry = attempt < maxAttempts && explicitWindowIndexConflict;
         if (!shouldRetry) break;
 
         // In high-concurrency starts, tmux may keep retrying the same conflicting index.
@@ -640,22 +700,107 @@ export class TmuxUtilities {
         }
       }
 
-      if (!createResult || createResult.returncode !== 0) {
+      if (creationDisposition === 'not_created' && createResult?.returncode !== 0) {
         const tIndex = createWindowArgsForAttempt.indexOf('-t');
         const target = tIndex >= 0 ? createWindowArgsForAttempt[tIndex + 1] : sessionName;
-        throw new Error(`Failed to create tmux window (target=${target}): ${createResult?.stderr}`);
+        const resourceKind = requireNewSession ? 'session' : 'window';
+        throw new Error(`Failed to create tmux ${resourceKind} (target=${target}): ${createResult?.stderr}`);
       }
 
-      // Extract the PID from the output
-      const panePidText = createResult.stdout.trim();
-      if (!/^\d+$/.test(panePidText)) {
-        const preview = panePidText.length > 200 ? `${panePidText.slice(0, 200)}…` : panePidText;
-        throw new Error(`Failed to extract PID from tmux output: ${preview}`);
-      }
+      const parsePositivePid = (value: string | undefined): number | null => {
+        const normalized = value?.trim() ?? '';
+        if (!/^\d+$/.test(normalized)) return null;
+        const parsed = Number.parseInt(normalized, 10);
+        return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+      };
+      const parseWindowId = (value: string | undefined): string | null => {
+        const normalized = value?.trim() ?? '';
+        return /^@\d+$/.test(normalized) ? normalized : null;
+      };
+      const createOutputParts = (createResult?.stdout ?? '').trim().split('\t');
+      const createdWindowId = parseWindowId(createOutputParts[0]);
+      const directlyReportedPid = createdWindowId
+        ? parsePositivePid(createOutputParts[1])
+        : parsePositivePid(createOutputParts[0]);
+      const createCompletedNormally = createResult?.returncode === 0 && createResult.timedOut !== true;
 
-      const panePid = Number.parseInt(panePidText, 10);
-      if (!Number.isFinite(panePid) || panePid <= 0) {
-        throw new Error(`Failed to extract PID from tmux output: ${panePidText}`);
+      let panePid = createCompletedNormally ? directlyReportedPid : null;
+      if (panePid === null) {
+        type ListedWindow = Readonly<{ windowId: string; windowName: string; panePid: number | null }>;
+        const listCreatedWindows = async (): Promise<readonly ListedWindow[] | null> => {
+          const listed = await this.executeTmuxCommand([
+            'list-windows',
+            '-t',
+            sessionName,
+            '-F',
+            '#{window_id}\t#{window_name}\t#{pane_pid}',
+          ]);
+          if (!listed || listed.returncode !== 0 || listed.timedOut === true) return null;
+          return listed.stdout
+            .split('\n')
+            .map((line): ListedWindow | null => {
+              const [windowIdRaw, listedWindowName = '', panePidRaw] = line.split('\t');
+              const windowId = parseWindowId(windowIdRaw);
+              if (!windowId) return null;
+              return {
+                windowId,
+                windowName: listedWindowName,
+                panePid: parsePositivePid(panePidRaw),
+              };
+            })
+            .filter((entry): entry is ListedWindow => entry !== null);
+        };
+
+        const listedWindows = await listCreatedWindows();
+        const exactIdMatch = createdWindowId
+          ? listedWindows?.find((entry) => entry.windowId === createdWindowId) ?? null
+          : null;
+        const exactNameMatches = listedWindows?.filter((entry) => entry.windowName === windowName) ?? null;
+        const recoveredWindow = createdWindowId
+          ? exactIdMatch
+          : (windowNameIsUnique && exactNameMatches?.length === 1 ? exactNameMatches[0]! : null);
+
+        if (recoveredWindow?.panePid) {
+          panePid = recoveredWindow.panePid;
+        } else {
+          const absenceWasAlreadyVerified = listedWindows !== null && (
+            createdWindowId
+              ? exactIdMatch === null
+              : windowNameIsUnique && exactNameMatches?.length === 0
+          );
+          let absenceVerified = absenceWasAlreadyVerified;
+
+          if (!absenceVerified) {
+            const exactKillTarget = createdWindowId
+              ?? (windowNameIsUnique
+                ? recoveredWindow?.windowId ?? `${sessionName}:${windowName}`
+                : null);
+            if (exactKillTarget) {
+              const killResult = await this.executeTmuxCommand(['kill-window', '-t', exactKillTarget]);
+              if (killResult?.returncode === 0 && killResult.timedOut !== true) {
+                absenceVerified = true;
+              } else {
+                const windowsAfterKill = await listCreatedWindows();
+                const killedWindowId = parseWindowId(exactKillTarget);
+                absenceVerified = windowsAfterKill !== null
+                  && !windowsAfterKill.some((entry) => (
+                    killedWindowId
+                      ? entry.windowId === killedWindowId
+                      : entry.windowName === windowName
+                  ));
+              }
+            }
+          }
+
+          const tIndex = createWindowArgsForAttempt.indexOf('-t');
+          const target = tIndex >= 0 ? createWindowArgsForAttempt[tIndex + 1] : sessionName;
+          if (absenceVerified) {
+            creationDisposition = 'created_and_absent';
+            throw new Error(`Failed to create a live tmux window (target=${target}); exact absence was verified`);
+          }
+          creationDisposition = 'created_or_uncertain';
+          throw new Error(`Failed to reconcile tmux window creation (target=${target}): ${createResult?.stderr}`);
+        }
       }
 
       logTmuxDebug(`[TMUX] Spawned command in tmux session ${sessionName}, window ${windowName}, PID ${panePid}`);
@@ -668,6 +813,7 @@ export class TmuxUtilities {
 
       return {
         success: true,
+        creationDisposition: 'created_or_uncertain',
         sessionId: formatTmuxSessionIdentifier(sessionIdentifier),
         sessionName,
         windowName,
@@ -677,8 +823,11 @@ export class TmuxUtilities {
       logTmuxDebug('[TMUX] Failed to spawn in tmux:', error);
       return {
         success: false,
+        creationDisposition,
         error: error instanceof Error ? error.message : String(error),
       };
+    } finally {
+      await preparedWindowLaunch?.cleanup();
     }
   }
 
@@ -711,7 +860,26 @@ export class TmuxUtilities {
       }
 
       const result = await this.executeTmuxCommand(['kill-window'], parsed.session, parsed.window);
-      return result !== null && result.returncode === 0;
+      if (!result || result.returncode !== 0 || result.timedOut === true) {
+        return false;
+      }
+      const inventory = await this.executeTmuxCommand([
+        'list-windows',
+        '-t',
+        parsed.session,
+        '-F',
+        '#{window_name}',
+      ]);
+      if (!inventory || inventory.timedOut === true) return false;
+      if (inventory.returncode === 0) {
+        return !inventory.stdout
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .includes(parsed.window);
+      }
+      return /(?:can't find session|no server running|failed to connect to server)/iu
+        .test(inventory.stderr);
     } catch (error) {
       if (error instanceof TmuxSessionIdentifierError) {
         logTmuxDebug(`[TMUX] Invalid window identifier: ${error.message}`);

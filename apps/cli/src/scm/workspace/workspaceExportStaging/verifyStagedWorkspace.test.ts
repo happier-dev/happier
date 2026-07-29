@@ -5,11 +5,13 @@ import { join } from 'node:path';
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createScmBackendRegistry } from '@/scm/registry';
 import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile';
 import { createWorkspaceStagingRoot } from './createWorkspaceStagingRoot';
 import { verifyStagedWorkspace } from './verifyStagedWorkspace';
 
 const tempRoots: string[] = [];
+const scmRegistry = createScmBackendRegistry([]);
 
 async function makeTempDir(prefix: string): Promise<string> {
     const directory = await mkdtemp(join(tmpdir(), prefix));
@@ -108,6 +110,7 @@ describe('verifyStagedWorkspace', () => {
             blobsDirectory: stagingRoot.blobsDirectory,
             expectedManifest,
             expectedBlobDigests,
+            scmRegistry,
         });
 
         expect(result.isVerified).toBe(true);
@@ -131,6 +134,7 @@ describe('verifyStagedWorkspace', () => {
             blobsDirectory: stagingRoot.blobsDirectory,
             expectedManifest,
             expectedBlobDigests: [],
+            scmRegistry,
         });
 
         expect(result.isVerified).toBe(false);
@@ -160,6 +164,7 @@ describe('verifyStagedWorkspace', () => {
             blobsDirectory: stagingRoot.blobsDirectory,
             expectedManifest,
             expectedBlobDigests: [firstDigest, secondDigest],
+            scmRegistry,
         });
 
         expect(result.isVerified).toBe(false);
@@ -223,6 +228,7 @@ describe('verifyStagedWorkspace', () => {
             blobsDirectory: stagingRoot.blobsDirectory,
             expectedManifest,
             expectedBlobDigests,
+            scmRegistry,
         });
 
         expect(result.isVerified).toBe(true);

@@ -3,17 +3,18 @@ import {
     SCM_OPERATION_ERROR_CODES,
 } from '@happier-dev/protocol';
 import type {
-    ScmBackendContribution,
+    ScmBackendCapabilities,
     ScmCapabilities,
     ScmPullRequestRunStackedResponse,
+    ScmRepoMode,
 } from '@happier-dev/protocol';
 import type {
     ScmBackendRuntimeRegistration,
     ScmBackendRuntimeServices,
     ScmHostingProviderRuntimeServices,
     ScmWorkspaceIntegrationPortableWorkspacePathClassification as PluginPortableWorkspacePathClassification,
-} from '@happier-dev/plugin-sdk';
-import { runWithScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk';
+} from '@happier-dev/plugin-sdk/experimental/scm';
+import { runWithScmHostingProviderRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm';
 import { runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/experimental/scm/backend';
 
 import type { ScmBackend } from '../types';
@@ -30,6 +31,16 @@ type UnsupportedResult = Readonly<{
     errorCode: typeof SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED;
     error: string;
 }>;
+
+const DEFAULT_SCM_OPERATION_SIGNAL = new AbortController().signal;
+
+function withOperationSignal<TInput extends object>(input: TInput): TInput & Readonly<{ signal: AbortSignal }> {
+    const context = Reflect.get(input, 'context') as Readonly<{ signal?: AbortSignal }> | undefined;
+    return Object.freeze({
+        ...input,
+        signal: context?.signal ?? DEFAULT_SCM_OPERATION_SIGNAL,
+    });
+}
 
 function unsupportedOperation(): Promise<UnsupportedResult> {
     return Promise.resolve({
@@ -58,28 +69,30 @@ function unsupportedRunStackedPullRequest(): Promise<ScmPullRequestRunStackedRes
     });
 }
 
-function useHandler<TInput, TResult>(
+function useHandler<TInput extends object, TResult>(
     services: ScmBackendRuntimeServices,
     hostingServices: ScmHostingProviderRuntimeServices,
-    handler: ((input: TInput) => Promise<TResult> | TResult) | undefined,
+    handler: ((input: TInput & Readonly<{ signal: AbortSignal }>) => Promise<TResult> | TResult) | undefined,
     input: TInput,
 ): Promise<TResult | UnsupportedResult> {
     if (!handler) {
         return unsupportedOperation();
     }
+    const operationInput = withOperationSignal(input);
     return runWithScmBackendRuntimeServices(
         services,
         () => runWithScmHostingProviderRuntimeServices(
             hostingServices,
-            () => Promise.resolve(handler(input)),
+            () => Promise.resolve(handler(operationInput)),
+            { signal: operationInput.signal },
         ),
     );
 }
 
 function createScmBackendRuntimeServices(
-    definition: ScmBackendContribution,
+    definition: ScmBackendExecutableDefinition,
 ): ScmBackendRuntimeServices {
-    const commandAuthorization = createScmInstallableCommandAuthorization(definition.tooling.commands);
+    const commandAuthorization = createScmInstallableCommandAuthorization(definition.commands);
     return {
         async runCommand(input) {
             const unauthorizedCommand = rejectUnauthorizedScmInstallableCommand({
@@ -100,6 +113,12 @@ function createScmBackendRuntimeServices(
         },
     };
 }
+
+export type ScmBackendExecutableDefinition = Readonly<{
+    repoModes: readonly ScmRepoMode[];
+    capabilities: ScmBackendCapabilities;
+    commands: readonly Readonly<{ installableKey: string; command: string }>[];
+}>;
 
 function normalizePortableWorkspacePathClassification(
     classification: PluginPortableWorkspacePathClassification,
@@ -210,12 +229,14 @@ function createWorkspaceIntegrationAdapter(
 }
 
 export function createRegisteredScmBackendAdapter(input: Readonly<{
-    definition: ScmBackendContribution;
+    definition: Readonly<{ id: string; kind?: string }>;
+    qualifiedId: string;
+    executableDefinition: ScmBackendExecutableDefinition;
     registration: ScmBackendRuntimeRegistration;
     hostingProviderRuntimeServices?: ScmHostingProviderRuntimeServices;
 }>): ScmBackend {
-    const preferredMode = input.definition.repoModes[0] ?? '.git';
-    const runtimeServices = createScmBackendRuntimeServices(input.definition);
+    const preferredMode = input.executableDefinition.repoModes[0] ?? '.git';
+    const runtimeServices = createScmBackendRuntimeServices(input.executableDefinition);
     const hostingProviderRuntimeServices = input.hostingProviderRuntimeServices ?? {};
 
     function getCapabilities(inputOptions: Readonly<{
@@ -223,21 +244,23 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
         executableAvailable?: boolean;
     }>): ScmCapabilities {
         return createScmCapabilitiesFromBackendCapabilities(resolveScmBackendCapabilities({
-            declaredCapabilities: input.definition.capabilities,
+            declaredCapabilities: input.executableDefinition.capabilities,
             mode: inputOptions.mode,
-            supportedRepoModes: input.definition.repoModes,
+            supportedRepoModes: input.executableDefinition.repoModes,
             executableAvailable: inputOptions.executableAvailable,
         }));
     }
 
     return {
-        id: input.definition.id,
-        declaredCapabilities: input.definition.capabilities,
+        id: input.qualifiedId,
+        localId: input.definition.id,
+        ...(input.definition.kind ? { kind: input.definition.kind } : {}),
+        declaredCapabilities: input.executableDefinition.capabilities,
         selection: {
             modeSelectionScores: Object.freeze(Object.fromEntries(
-                input.definition.repoModes.map((mode) => [mode, mode === '.sl' ? 100 : 50]),
+                input.executableDefinition.repoModes.map((mode) => [mode, mode === '.sl' ? 100 : 50]),
             )),
-            preferenceAllowedModes: Object.freeze([...input.definition.repoModes]),
+            preferenceAllowedModes: Object.freeze([...input.executableDefinition.repoModes]),
         },
         async detectRepo({ cwd }) {
             const handler = input.registration.handlers.detection?.detectRepo;
@@ -261,31 +284,45 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
                 mode: context.detection.mode ?? preferredMode,
             });
             const handler = input.registration.handlers.detection?.describeBackend;
-            return handler ? await runWithScmBackendRuntimeServices(
+            const response = handler ? await runWithScmBackendRuntimeServices(
                 runtimeServices,
                 async () => await runWithScmHostingProviderRuntimeServices(
                     hostingProviderRuntimeServices,
-                    async () => await handler({ context, request }),
+                    async () => await handler(withOperationSignal({ context, request })),
                 ),
             ) : {
                 success: true,
-                backendId: input.definition.id,
+                backendId: input.qualifiedId,
                 repoMode: context.detection.mode ?? preferredMode,
                 capabilities: fallbackCapabilities,
             };
+            return response.success
+                ? Object.freeze({ ...response, backendId: input.qualifiedId })
+                : response;
         },
         async statusSnapshot({ context, request }) {
             const handler = input.registration.handlers.read?.statusSnapshot;
             if (!handler) {
                 return unsupportedOperation();
             }
-            return await runWithScmBackendRuntimeServices(
+            const response = await runWithScmBackendRuntimeServices(
                 runtimeServices,
                 async () => await runWithScmHostingProviderRuntimeServices(
                     hostingProviderRuntimeServices,
-                    async () => await handler({ context, request }),
+                    async () => await handler(withOperationSignal({ context, request })),
                 ),
             );
+            if (!response.snapshot) return response;
+            return Object.freeze({
+                ...response,
+                snapshot: Object.freeze({
+                    ...response.snapshot,
+                    repo: Object.freeze({
+                        ...response.snapshot.repo,
+                        backendId: input.qualifiedId,
+                    }),
+                }),
+            });
         },
         async worktreesEnrichment({ context, request }) {
             return useHandler(runtimeServices, hostingProviderRuntimeServices, input.registration.handlers.read?.worktreesEnrichment, { context, request });
@@ -342,7 +379,7 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
                 runtimeServices,
                 async () => await runWithScmHostingProviderRuntimeServices(
                     hostingProviderRuntimeServices,
-                    async () => await handler({ context, request }),
+                    async () => await handler(withOperationSignal({ context, request })),
                 ),
             );
         },
@@ -428,7 +465,7 @@ export function createRegisteredScmBackendAdapter(input: Readonly<{
                 runtimeServices,
                 () => runWithScmHostingProviderRuntimeServices(
                     hostingProviderRuntimeServices,
-                    () => Promise.resolve(handler({ context, request })),
+                    () => Promise.resolve(handler(withOperationSignal({ context, request }))),
                 ),
             );
         },

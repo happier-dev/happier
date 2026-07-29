@@ -26,9 +26,7 @@ describe('createAcpRuntime (shared prompt ownership)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
-
-    await runtime.sendPrompt('Hello');
+    await runtime.sendTurnPrompt('Hello');
     await runtime.sendPrompt('Next');
 
     expect(captured.prompts).toHaveLength(2);
@@ -56,9 +54,7 @@ describe('createAcpRuntime (shared prompt ownership)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
-
-    await runtime.sendPrompt('Hello');
+    await runtime.sendTurnPrompt('Hello');
 
     expect(captured.prompts).toHaveLength(1);
     expect(captured.prompts[0]).toBe('Hello');
@@ -84,8 +80,7 @@ describe('createAcpRuntime (shared prompt ownership)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
-    await runtime.sendPrompt('Hello');
+    await runtime.sendTurnPrompt('Hello');
     await runtime.sendPrompt('Next');
 
     expect(captured.prompts).toHaveLength(2);
@@ -117,8 +112,7 @@ describe('createAcpRuntime (shared prompt ownership)', () => {
       ensureBackend: async () => backend,
     });
 
-    await runtime.startOrLoad({ resumeId: null });
-    await runtime.sendPrompt('Do you remember helios-amber?');
+    await runtime.sendTurnPrompt('Do you remember helios-amber?');
 
     expect(captured.prompts).toHaveLength(1);
     expect(captured.prompts[0]).toBe('Do you remember helios-amber?');

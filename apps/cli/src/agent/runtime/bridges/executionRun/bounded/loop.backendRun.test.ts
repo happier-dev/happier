@@ -229,6 +229,47 @@ describe('executeBoundedBackendRun', () => {
     await withTimeout(runPromise, 1_000);
   });
 
+  it('rejects a bounded external send before a provider effect when generation admission fails', async () => {
+    const runId = 'run_generation_fence';
+    const { runtime, getSendPromptCount } = createRuntimeWithBlockingSendPromptNoWaiter();
+    let resolveTerminal!: () => void;
+    const terminalPromise = new Promise<void>((resolve) => { resolveTerminal = resolve; });
+    const ctrl: ExecutionRunBackendController = {
+      kind: 'backend', backend: runtime, backendSupportsResume: false, childSessionId: 'child_session_1',
+      buffer: '', sidechainStreamBuffer: '', sidechainStreamKey: '', streamWriter: null, cancelled: false,
+      turnCount: 0, turnEpoch: 0, turnInFlight: false, turnCancelReason: null, turnCancelEpoch: null,
+      pendingExternalMessages: [], pendingExternalMessagesSignal: null, lastMarkerWriteAtMs: 0,
+      terminalPromise, resolveTerminal,
+    };
+    const controllers = new Map([[runId, ctrl]]);
+    const externalAck = new Promise<void>((resolve, reject) => {
+      ctrl.pendingExternalMessages.push({
+        message: 'external message', delivery: 'interrupt', resolve, reject,
+        authorizeProviderEffect: async () => {
+          const error = new Error('Connected-service credentials changed. Restart or resume this execution run before sending.');
+          Object.assign(error, { executionRunErrorCode: 'execution_run_connected_service_generation_refresh_required' });
+          throw error;
+        },
+      });
+    });
+    const runPromise = executeBoundedBackendRun({
+      runId, callId: 'call_generation_fence', sidechainId: 'call_generation_fence', startedAtMs: 0,
+      params: {
+        sessionId: 'parent_session_1', intent: 'memory_hints',
+        backendTarget: { kind: 'builtInAgent', agentId: TEST_PRIMARY_BACKEND_ID }, instructions: 'start',
+        permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+      },
+      controllers, sendAcp: () => {}, parentProvider: TEST_PRIMARY_BACKEND_ID, getNowMs: () => 1,
+      boundedTimeoutMs: null, finishRun: () => {},
+    });
+
+    await expect(withTimeout(externalAck, 250)).rejects.toThrow('Connected-service credentials changed');
+    expect(getSendPromptCount()).toBe(1);
+    ctrl.cancelled = true;
+    await runtime.cancel('child_session_1');
+    await withTimeout(runPromise, 1_000);
+  });
+
   it('acks external cancel+send promptly even when cancel is slow', async () => {
     mockedLogger.debug.mockClear();
     const runId = 'run_test_slow_cancel_1';

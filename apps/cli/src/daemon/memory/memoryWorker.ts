@@ -27,6 +27,7 @@ import { syncMemoryHintsForSessionsOnce } from './syncMemoryHintsForSessionsOnce
 import { runMemoryHintsExecutionRun } from './hints/runMemoryHintsExecutionRun';
 import { commitMemorySystemRecords } from '@/session/systemRecords/memory/commitMemorySystemRecords';
 import { fetchMemorySummaryShardSystemRecords } from '@/session/systemRecords/memory/fetchMemorySystemRecords';
+import { logServerEndpointFailure } from '@/api/client/serverEndpointFailureLog';
 import { chunkTranscriptRows } from './deepIndex/chunkTranscriptRows';
 import { syncDeepIndexForSessionsOnce } from './deepIndex/syncDeepIndexForSessionsOnce';
 import { resolveEmbeddingsProvider } from './deepIndex/embeddings/resolveEmbeddingsProvider';
@@ -78,6 +79,14 @@ function readSessionCreatedAtMs(raw: unknown): number {
   const n = typeof createdAt === 'number' ? createdAt : Number(createdAt);
   if (!Number.isFinite(n) || n <= 0) return 0;
   return Math.trunc(n);
+}
+
+function logMemoryWorkerServerEndpointFailure(operation: string, error: unknown): void {
+  logServerEndpointFailure({
+    logger,
+    operation: `memory worker ${operation}`,
+    error,
+  });
 }
 
 export async function startMemoryWorker(params: Readonly<{
@@ -189,9 +198,7 @@ export async function startMemoryWorker(params: Readonly<{
             ],
           });
         } catch (error) {
-          logger.debug('[memoryWorker] Failed to fetch/decrypt transcript page (best-effort)', {
-            message: error instanceof Error ? error.message : String(error),
-          });
+          logMemoryWorkerServerEndpointFailure('transcript page', error);
           return [];
         }
       },
@@ -271,46 +278,51 @@ export async function startMemoryWorker(params: Readonly<{
       },
       now: () => Date.now(),
       fetchRecentDecryptedRows: async (sessionId) => {
-        let ctx = sessionCtxCache.get(sessionId);
-        if (!ctx) {
-          const raw = await fetchSessionById({ token: params.credentials.token, sessionId });
-          if (!raw) return [];
-          ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
-          sessionCtxCache.set(sessionId, ctx);
-          sessionModeCache.set(sessionId, resolveSessionStoredContentEncryptionMode(raw));
-        }
-        const rawPageLimit = Math.max(1, Math.trunc(configuration.memoryMaxTranscriptWindowMessages));
-        const rows: DecryptedTranscriptRow[] = [];
-        let beforeSeq: number | undefined;
-        const maxPages = settings.coveragePolicy?.type === 'latest_messages' ? 1 : 100;
-        for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
-          const page = await fetchMemorySemanticTranscriptPage({
-            token: params.credentials.token,
-            sessionId,
-            ctx,
-            limit: rawPageLimit,
-            rawPageLimit,
-            maxRawRowsToScan: rawPageLimit * 4,
-            direction: 'before',
-            ...(typeof beforeSeq === 'number' ? { beforeSeq } : {}),
-            contentPolicy: settings.contentPolicy,
-          });
-          if (page.items.length > 0) {
-            for (const item of page.items) {
-              rows.push({
-                seq: item.seq,
-                createdAtMs: item.createdAtMs,
-                role: item.role === 'user' ? 'user' : 'agent',
-                content: { type: 'text', text: item.text },
-                meta: null,
-              });
-            }
+        try {
+          let ctx = sessionCtxCache.get(sessionId);
+          if (!ctx) {
+            const raw = await fetchSessionById({ token: params.credentials.token, sessionId });
+            if (!raw) return [];
+            ctx = resolveSessionEncryptionContextFromCredentials(params.credentials, raw);
+            sessionCtxCache.set(sessionId, ctx);
+            sessionModeCache.set(sessionId, resolveSessionStoredContentEncryptionMode(raw));
           }
-          if (!page.hasMore || !page.nextCursor) break;
-          beforeSeq = Number.parseInt(page.nextCursor, 10);
-          if (!Number.isFinite(beforeSeq)) break;
+          const rawPageLimit = Math.max(1, Math.trunc(configuration.memoryMaxTranscriptWindowMessages));
+          const rows: DecryptedTranscriptRow[] = [];
+          let beforeSeq: number | undefined;
+          const maxPages = settings.coveragePolicy?.type === 'latest_messages' ? 1 : 100;
+          for (let pageIndex = 0; pageIndex < maxPages; pageIndex += 1) {
+            const page = await fetchMemorySemanticTranscriptPage({
+              token: params.credentials.token,
+              sessionId,
+              ctx,
+              limit: rawPageLimit,
+              rawPageLimit,
+              maxRawRowsToScan: rawPageLimit * 4,
+              direction: 'before',
+              ...(typeof beforeSeq === 'number' ? { beforeSeq } : {}),
+              contentPolicy: settings.contentPolicy,
+            });
+            if (page.items.length > 0) {
+              for (const item of page.items) {
+                rows.push({
+                  seq: item.seq,
+                  createdAtMs: item.createdAtMs,
+                  role: item.role === 'user' ? 'user' : 'agent',
+                  content: { type: 'text', text: item.text },
+                  meta: null,
+                });
+              }
+            }
+            if (!page.hasMore || !page.nextCursor) break;
+            beforeSeq = Number.parseInt(page.nextCursor, 10);
+            if (!Number.isFinite(beforeSeq)) break;
+          }
+          return rows.sort((a, b) => a.seq - b.seq);
+        } catch (error) {
+          logMemoryWorkerServerEndpointFailure('selected transcript rows', error);
+          return [];
         }
-        return rows.sort((a, b) => a.seq - b.seq);
       },
       fetchCommittedSummaryShards,
       runSummarizer: async (prompt, sessionId) => {
@@ -367,9 +379,7 @@ export async function startMemoryWorker(params: Readonly<{
         ctx,
       });
     } catch (error) {
-      logger.debug('[memoryWorker] Failed to fetch memory summary system records (best-effort)', {
-        message: error instanceof Error ? error.message : String(error),
-      });
+      logMemoryWorkerServerEndpointFailure('summary system records', error);
       return [];
     }
   };

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Machine } from '@/api/types';
 import { createApiSessionSocketStub, type ApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 const {
@@ -43,6 +44,7 @@ const {
     let currentState: State = initialState();
     const socketHarnesses: Array<{
         socket: ApiSessionSocketStub;
+        triggerSocketEvent: (event: string, ...args: unknown[]) => void;
         transport: {
             connect: ReturnType<typeof vi.fn>;
             disconnect: ReturnType<typeof vi.fn>;
@@ -128,9 +130,25 @@ const {
         supervisorConfig?.onStateChange?.(currentState);
     }
 
-    function attachTransportToSupervisor(transport: { onDisconnected: (listener: DisconnectListener) => () => boolean }) {
+    function attachTransportToSupervisor(transport: {
+        onDisconnected: (listener: DisconnectListener) => () => boolean;
+        onError: (listener: (error: unknown) => void) => () => boolean;
+    }) {
         transport.onDisconnected((event) => {
             void supervisorConfig?.onDisconnected?.({ state: currentState, event });
+        });
+        transport.onError((error) => {
+            const probe = supervisorConfig?.classifyTransportErrorToProbeResult?.(error);
+            if (probe?.status !== 'auth_failed') {
+                return;
+            }
+            publishState({
+                phase: 'auth_failed',
+                reason: 'auth_invalid',
+                nextRetryAt: null,
+                lastErrorMessage: probe.errorMessage ?? null,
+            });
+            void supervisorConfig?.onAuthFailed?.({ state: currentState, probe });
         });
     }
 
@@ -184,6 +202,13 @@ const {
                 }
                 return next.socket;
             },
+            triggerSocketEvent(index: number, event: string, ...args: unknown[]) {
+                const next = socketHarnesses[index];
+                if (!next) {
+                    throw new Error(`missing socket harness at index ${index}`);
+                }
+                next.triggerSocketEvent(event, ...args);
+            },
             async emitAuthFailedFromStaleAttempt() {
                 await supervisorConfig?.onAuthFailed?.({
                     state: {
@@ -228,11 +253,14 @@ vi.mock('./rpc/RpcHandlerManager', () => ({
         async invokeLocal() {
             return { ok: true };
         }
+        hasHandler() {
+            return false;
+        }
         async waitForIdle() {}
     },
 }));
 vi.mock('./changes', () => ({ fetchChanges: vi.fn() }));
-vi.mock('@/persistence', () => ({ readLastChangesCursor: vi.fn(async () => 0), writeLastChangesCursor: vi.fn(async () => {}) }));
+vi.mock('@/persistence', () => ({ readAccountChangesCursor: vi.fn(async () => 0), writeAccountChangesCursor: vi.fn(async () => {}) }));
 vi.mock('./client/loopbackUrl', () => ({ resolveLoopbackHttpUrl: (value: string) => value }));
 vi.mock('@/utils/time', () => ({ backoff: async <T>(fn: () => Promise<T>) => await fn() }));
 vi.mock('@/api/connection/createLoopbackReadinessProbe', () => ({
@@ -480,6 +508,47 @@ describe('ApiMachineClient reconnect race handling', () => {
         expect(JSON.stringify(vi.mocked(logger.warn).mock.calls)).not.toContain('must-not-log');
     });
 
+    it('pauses daemon reconnects and publishes update-required state for a compatibility rejection', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine);
+        const states: Array<{ phase: string; nextRetryAt: number | null; lastErrorMessage: string | null }> = [];
+        client.onConnectionStateChange((state) => {
+            states.push(state);
+        });
+        client.connect();
+
+        harness.triggerSocketEvent(0, 'connect_error', {
+            message: 'client-upgrade-required',
+            data: {
+                error: 'client-upgrade-required',
+                requirement: {
+                    v: 1,
+                    minimumSessionSyncProtocolVersion: 2,
+                    clientKind: 'daemon',
+                    minimumAppVersion: '9.0.0',
+                    updateUrl: null,
+                },
+            },
+        });
+
+        expect(states.at(-1)).toEqual(expect.objectContaining({
+            phase: 'auth_failed',
+            nextRetryAt: null,
+            lastErrorMessage: 'This Happier daemon must be upgraded before it can sync sessions.',
+        }));
+    });
+
     it('stops reconnecting and reports a replaced machine from connect_error', async () => {
         const { ApiMachineClient } = await import('./apiMachine');
 
@@ -619,5 +688,63 @@ describe('ApiMachineClient reconnect race handling', () => {
         expect(createMachineSocketTransportMock).toHaveBeenNthCalledWith(3, expect.objectContaining({
             takeover: false,
         }));
+    });
+
+    it('tracks connected client RPC availability only from active machine-prefixed server events', async () => {
+        const { ApiMachineClient } = await import('./apiMachine');
+
+        const machine: Machine = {
+            id: 'machine-1',
+            encryptionKey: new Uint8Array(32).fill(7),
+            encryptionVariant: 'legacy',
+            metadata: null,
+            metadataVersion: 0,
+            daemonState: null,
+            daemonStateVersion: 0,
+        };
+
+        const client = new ApiMachineClient('token', machine);
+        client.connect();
+        const firstSocket = harness.getSocket(0);
+
+        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
+
+        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
+            method: RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME,
+        });
+        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
+            method: `other-machine:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
+        });
+
+        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
+
+        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
+            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
+        });
+
+        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(true);
+
+        harness.establishReconnectTransport();
+        const secondSocket = harness.getSocket(1);
+
+        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
+
+        firstSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
+            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
+        });
+
+        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
+
+        secondSocket.trigger(SOCKET_RPC_EVENTS.REGISTERED, {
+            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
+        });
+
+        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(true);
+
+        secondSocket.trigger(SOCKET_RPC_EVENTS.UNREGISTERED, {
+            method: `machine-1:${RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME}`,
+        });
+
+        expect(client.hasConnectedClientRpcHandler(RPC_METHODS.UI_BROWSER_RECORDING_CAPTURE_FRAME)).toBe(false);
     });
 });

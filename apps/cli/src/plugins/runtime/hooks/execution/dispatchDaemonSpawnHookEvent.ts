@@ -8,10 +8,10 @@ import type { BackendTargetRefV2 } from '@happier-dev/protocol';
 
 import { configuration } from '@/configuration';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
-import { matchesHookRegistrationFilters } from '@/plugins/projection/hooks/matchesHookRegistrationFilters';
+import { matchesHookDefinitionFilters } from '@/plugins/projection/hooks/matchesHookRegistrationFilters';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
+import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import { resolveEngineRuntimeContribution } from '@/agent/runtime/registry/engineRegistry/contributions';
 
 import {
   dispatchPluginHookEvent,
@@ -109,7 +109,7 @@ function buildTimedOutHookDispatchResult(
           hookDefinition?.aggregation === 'mergeObject'
             ? {}
             : hookDefinition?.failureMode === 'failClosed'
-              ? { allowed: false }
+              ? { decision: 'deny' }
               : [],
         ),
       }
@@ -136,7 +136,7 @@ function normalizeNonEmptyString(value: unknown): string | null {
 
 function resolveDaemonSpawnHookAgentId(params: Readonly<{
   event: DaemonSpawnHookDispatchEvent;
-  contributes: Pick<ResolvedContributionRegistry, 'agentRuntimeDefinitionsById'>;
+  contributes: Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>;
 }>): string | null {
   const explicitAgentId = normalizeNonEmptyString(params.event.agentId);
   if (explicitAgentId) return explicitAgentId;
@@ -145,7 +145,7 @@ function resolveDaemonSpawnHookAgentId(params: Readonly<{
   if (!backendId) return null;
 
   return normalizeNonEmptyString(
-    params.contributes.agentRuntimeDefinitionsById.get(backendId)?.agentId,
+    resolveEngineRuntimeContribution(params.contributes, backendId)?.agentId,
   );
 }
 
@@ -188,25 +188,32 @@ function buildDaemonSpawnHookEnvelope(params: Readonly<{
 function resolveDaemonSpawnHookPluginIds(params: Readonly<{
   event: DaemonSpawnHookDispatchEvent;
   envelope: HookEventEnvelopeV1;
-  contributes: Pick<ResolvedContributionRegistry, 'agentRuntimeDefinitionsById' | 'hookRegistrations'>;
+  contributes: Pick<
+    ResolvedContributionRegistry,
+    'agentDefinitionsById' | 'activationTargets'
+  >;
 }>): readonly string[] {
   const pluginIds = new Set<string>();
   const backendId = normalizeNonEmptyString(params.event.backendId);
   const backendOwnerPluginId = backendId
-    ? normalizeNonEmptyString(params.contributes.agentRuntimeDefinitionsById.get(backendId)?.pluginId)
+    ? normalizeNonEmptyString(
+      resolveEngineRuntimeContribution(params.contributes, backendId)?.pluginId,
+    )
     : null;
   if (backendOwnerPluginId) {
     pluginIds.add(backendOwnerPluginId);
   }
 
-  for (const registration of params.contributes.hookRegistrations) {
-    if (
-      registration.definition.id === params.event.eventId
-      && matchesHookRegistrationFilters(params.envelope, registration)
-    ) {
-      const pluginId = normalizeNonEmptyString(registration.pluginId);
-      if (pluginId) {
-        pluginIds.add(pluginId);
+  for (const target of params.contributes.activationTargets) {
+    for (const declaration of target.manifest.contributes.hooks) {
+      if (
+        declaration.on === params.event.eventId
+        && matchesHookDefinitionFilters(params.envelope, declaration)
+      ) {
+        const pluginId = normalizeNonEmptyString(target.pluginId);
+        if (pluginId) {
+          pluginIds.add(pluginId);
+        }
       }
     }
   }
@@ -217,41 +224,53 @@ function resolveDaemonSpawnHookPluginIds(params: Readonly<{
 export async function dispatchDaemonSpawnHookEvent(
   params: Readonly<{
     happyHomeDir: string;
+    runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
     event: DaemonSpawnHookDispatchEvent;
   }>,
   deps: DispatchDaemonSpawnHookEventDeps = {},
 ): Promise<DispatchPluginHookEventResultV1> {
-  const resolveRuntimeRegistry = deps.resolveRuntimeRegistry
-    ?? (async ({ happyHomeDir, contributes, pluginIds }: Readonly<{
-      happyHomeDir: string;
-      contributes?: ResolvedContributionRegistry;
-      pluginIds?: readonly string[];
-    }>) => {
-      const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
-      return await resolveExecutablePluginRuntimeRegistry({
-        happyHomeDir,
-        contributes,
-        pluginIds,
-      });
-    });
   const resolveContributes = deps.resolveContributes
-    ?? (async ({ happyHomeDir }: Readonly<{ happyHomeDir: string }>) => (
-      await resolveMergedContributionRegistry({ happyHomeDir })
-    ));
+    ?? (async ({ happyHomeDir }: Readonly<{ happyHomeDir: string }>) => {
+      const { resolveMergedContributionRegistry } = await import(
+        '@/plugins/projection/registry/createResolvedContributionRegistry'
+      );
+      return await resolveMergedContributionRegistry({ happyHomeDir });
+    });
   const dispatchEvent = deps.dispatchEvent ?? dispatchPluginHookEvent;
   const nowMs = deps.nowMs ?? (() => Date.now());
   const timeoutMs = normalizeTimeoutMs(deps.timeoutMs);
 
-  let lease: Awaited<ReturnType<typeof acquireAuthoritativePluginRuntimeRegistryLease>> | null = null;
+  let lease: PluginRuntimeRegistryLease | null = null;
   let event: HookEventEnvelopeV1 | null = null;
 
   try {
+    const acceptedRuntimeRegistry = params.runtimeRegistry;
+    if (acceptedRuntimeRegistry) {
+      const agentId = resolveDaemonSpawnHookAgentId({
+        event: params.event,
+        contributes: acceptedRuntimeRegistry.contributes,
+      });
+      const acceptedEvent = buildDaemonSpawnHookEnvelope({
+        event: params.event,
+        agentId,
+        nowMs,
+      });
+      return await withDaemonSpawnHookTimeout({
+        eventId: params.event.eventId,
+        timeoutMs,
+        operation: async () => await dispatchEvent({
+          runtimeRegistry: acceptedRuntimeRegistry,
+          event: acceptedEvent,
+          ...(params.event.context === undefined ? {} : { context: params.event.context }),
+        }),
+      });
+    }
+
     lease = await withDaemonSpawnHookTimeout({
       eventId: params.event.eventId,
       timeoutMs,
       operation: async () => {
-        const shouldResolveTargetedRegistry = Boolean(deps.resolveContributes) || !deps.resolveRuntimeRegistry;
-        if (shouldResolveTargetedRegistry) {
+        if (deps.resolveRuntimeRegistry) {
           const contributes = await resolveContributes({ happyHomeDir: params.happyHomeDir });
           const agentId = resolveDaemonSpawnHookAgentId({
             event: params.event,
@@ -268,36 +287,24 @@ export async function dispatchDaemonSpawnHookEvent(
             contributes,
           });
           if (pluginIds.length > 0) {
-            const registry = await resolveRuntimeRegistry({
+            const registry = await deps.resolveRuntimeRegistry({
               happyHomeDir: params.happyHomeDir,
               contributes,
               pluginIds,
             });
-            return {
-              registry,
-              source: 'ephemeral' as const,
-              release: async () => {
-                await registry.dispose();
-              },
-            };
+            const { createEphemeralPluginRuntimeRegistryLease } = await import(
+              '@/plugins/runtime/reload/runtimeLease'
+            );
+            return createEphemeralPluginRuntimeRegistryLease(registry);
           }
         }
 
-        const authoritativeLease = deps.resolveRuntimeRegistry
-          ? await (async () => {
-            const registry = await resolveRuntimeRegistry({ happyHomeDir: params.happyHomeDir });
-            return {
-              registry,
-              source: 'ephemeral' as const,
-              release: async () => {
-                await registry.dispose();
-              },
-            };
-          })()
-          : await acquireAuthoritativePluginRuntimeRegistryLease({
-            happyHomeDir: params.happyHomeDir,
-            resolveRuntimeRegistry: async () => await resolveRuntimeRegistry({ happyHomeDir: params.happyHomeDir }),
-          });
+        const { acquireAuthoritativePluginRuntimeRegistryLease } = await import(
+          '@/plugins/runtime/reload/runtimeLease'
+        );
+        const authoritativeLease = await acquireAuthoritativePluginRuntimeRegistryLease({
+          happyHomeDir: params.happyHomeDir,
+        });
         if (!event) {
           const agentId = resolveDaemonSpawnHookAgentId({
             event: params.event,

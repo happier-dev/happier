@@ -6,8 +6,8 @@
  * - Happier CLI
  * - Mobile app (via Happy server)
  *
- * These types are backend-agnostic and work with any agent that
- * implements the AgentBackend interface.
+ * These types are backend-agnostic and work with any runtime that
+ * emits canonical agent messages.
  *
  * @module AgentMessage
  */
@@ -52,6 +52,8 @@ export interface ToolCallMessage {
   toolName: string;
   args: Record<string, unknown>;
   callId: ToolCallId;
+  /** Stable bounded transcript identity for revision-capable producers. */
+  localId?: string;
 }
 
 /**
@@ -62,6 +64,8 @@ export interface ToolResultMessage {
   toolName: string;
   result: unknown;
   callId: ToolCallId;
+  /** Stable bounded transcript identity, domain-separated from the call identity. */
+  localId?: string;
   isError?: boolean;
 }
 

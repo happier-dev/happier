@@ -4,6 +4,7 @@ import { createDeferred } from '@/testkit/async/deferred';
 import { DeferredApiSessionClient } from './DeferredApiSessionClient';
 import type { Metadata } from '@/api/types';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
+import type { RegisteredSessionStateFieldMutationV1 } from '@/api/session/client/transport/mutations/sessionClientDurableMutationTypes';
 
 function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
   return {
@@ -18,6 +19,51 @@ function createMetadataStub(overrides?: Partial<Metadata>): Metadata {
 }
 
 describe('DeferredApiSessionClient', () => {
+  it('replays the latest pre-attach presence before pending materialization wakes', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'pending',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const calls: string[] = [];
+
+    deferred.keepAlive(false, 'local');
+    deferred.keepAlive(true, 'remote');
+    deferred.wakePendingMaterialization();
+
+    await deferred.attach({
+      keepAlive: (thinking: boolean, mode: 'local' | 'remote') => {
+        calls.push(`presence:${thinking}:${mode}`);
+      },
+      wakePendingMaterialization: () => {
+        calls.push('wake');
+      },
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+
+    expect(calls).toEqual(['presence:true:remote', 'wake']);
+  });
+
+  it('coalesces pre-attach wake debt and delegates future wakes directly', async () => {
+    const deferred = new DeferredApiSessionClient({ placeholderSessionId: 'pending', limits: { maxEntries: 10, maxBytes: 10_000 } });
+    const wakePendingMaterialization = vi.fn();
+    deferred.wakePendingMaterialization();
+    deferred.wakePendingMaterialization();
+    await deferred.attach({ wakePendingMaterialization } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+    expect(wakePendingMaterialization).toHaveBeenCalledTimes(1);
+    deferred.wakePendingMaterialization();
+    expect(wakePendingMaterialization).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops pre-attach wake debt when cancelled', async () => {
+    const deferred = new DeferredApiSessionClient({ placeholderSessionId: 'pending', limits: { maxEntries: 10, maxBytes: 10_000 } });
+    const wakePendingMaterialization = vi.fn();
+    const keepAlive = vi.fn();
+    deferred.keepAlive(true, 'remote');
+    deferred.wakePendingMaterialization();
+    deferred.cancel();
+    await deferred.attach({ keepAlive, wakePendingMaterialization } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+    expect(keepAlive).not.toHaveBeenCalled();
+    expect(wakePendingMaterialization).not.toHaveBeenCalled();
+  });
   it('invokes registered RPC handlers locally before attach', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',
@@ -84,7 +130,6 @@ describe('DeferredApiSessionClient', () => {
     await expect(deferred.discardPendingMessageQueueV2All({ reason: 'manual' })).resolves.toBe(1);
     await expect(deferred.discardCommittedMessageLocalIds({ localIds: ['a'], reason: 'manual' })).resolves.toBe(2);
 
-    deferred.sendSessionDeath();
     await deferred.flush();
     await deferred.close();
 
@@ -96,7 +141,6 @@ describe('DeferredApiSessionClient', () => {
     expect(real.waitForMetadataUpdate).toHaveBeenCalledTimes(1);
     expect(real.fetchLatestUserPermissionIntentFromTranscript).toHaveBeenCalledWith({ take: 3 });
     expect(real.popPendingMessage).toHaveBeenCalledTimes(1);
-    expect(real.sendSessionDeath).toHaveBeenCalledTimes(1);
     expect(real.setSessionRuntimeControls).toHaveBeenLastCalledWith(nextControls);
     expect(real.flush).toHaveBeenCalledTimes(1);
     expect(real.close).toHaveBeenCalledTimes(1);
@@ -121,6 +165,30 @@ describe('DeferredApiSessionClient', () => {
       type: 'deferred',
       reason: 'supervisor_offline',
     });
+  });
+
+  it('forwards pending provider custody reconciliation after attach without blocking startup before attach', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const reconciliationPort = deferred as unknown as Readonly<{
+      reconcilePendingProviderInputCustodyBeforeMaterialization: () => Promise<boolean>;
+    }>;
+
+    await expect(
+      reconciliationPort.reconcilePendingProviderInputCustodyBeforeMaterialization(),
+    ).resolves.toBe(true);
+
+    const reconcilePendingProviderInputCustodyBeforeMaterialization = vi.fn(async () => false);
+    await deferred.attach({
+      reconcilePendingProviderInputCustodyBeforeMaterialization,
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+
+    await expect(
+      reconciliationPort.reconcilePendingProviderInputCustodyBeforeMaterialization(),
+    ).resolves.toBe(false);
+    expect(reconcilePendingProviderInputCustodyBeforeMaterialization).toHaveBeenCalledTimes(1);
   });
 
   it('forwards user message handlers registered before attach', async () => {
@@ -217,7 +285,7 @@ describe('DeferredApiSessionClient', () => {
     ]);
   });
 
-  it('buffers transcript live and committed writes until attach then flushes them in order', async () => {
+  it('rejects detached live sends while preserving buffered durable transcript writes', async () => {
     const deferred = new DeferredApiSessionClient({
       placeholderSessionId: 'PID-1',
       limits: { maxEntries: 10, maxBytes: 10_000 },
@@ -232,6 +300,7 @@ describe('DeferredApiSessionClient', () => {
       sendAgentMessage: vi.fn(),
       sendAgentMessageEphemeral: vi.fn((_provider: unknown, body: any) => {
         calls.push(`live:${String(body?.message ?? '')}`);
+        return { accepted: true as const, epoch: 1 };
       }),
       sendAgentMessageCommitted: vi.fn(async (_provider: unknown, body: any) => {
         calls.push(`commit:${String(body?.message ?? '')}`);
@@ -253,7 +322,7 @@ describe('DeferredApiSessionClient', () => {
       close: vi.fn(async () => {}),
     } as const;
 
-    (deferred as any).sendAgentMessageEphemeral(
+    const liveOutcome = (deferred as any).sendAgentMessageEphemeral(
       'codex',
       { type: 'message', message: 'Hello' },
       { localId: 'segment-1', createdAt: 1, updatedAt: 2 },
@@ -264,12 +333,17 @@ describe('DeferredApiSessionClient', () => {
       { localId: 'segment-1' },
     );
 
+    expect(liveOutcome).toEqual({
+      accepted: false,
+      epoch: 0,
+      reason: 'transport_unavailable',
+    });
     expect(calls).toEqual([]);
 
     await deferred.attach(real as any);
     await committedPromise;
 
-    expect(calls).toEqual(['live:Hello', 'commit:Hello world']);
+    expect(calls).toEqual(['commit:Hello world']);
   });
 
   it('rejects failed buffered metadata writes while continuing later buffered calls', async () => {
@@ -473,6 +547,372 @@ describe('DeferredApiSessionClient', () => {
 
     expect(calls).toEqual(['event', 'provider', 'agent', 'metadata', 'agentState']);
     expect(rpcHandlers.map((h) => h.method)).toEqual(['abort']);
+  });
+
+  it('binds RPC handlers before attach preparation and drains delivery only after preparation settles', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const preparationGate = createDeferred<void>();
+    const order: string[] = [];
+    const real = {
+      sessionId: 'sess_1',
+      rpcHandlerManager: {
+        registerHandler: vi.fn((method: string) => {
+          order.push(`handler:${method}`);
+        }),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      sendSessionEvent: vi.fn((event: unknown) => {
+        const type =
+          event && typeof event === 'object' && 'type' in event
+            ? String(event.type)
+            : 'unknown';
+        order.push(`delivery:${type}`);
+      }),
+      onUserMessage: vi.fn((handler: (data: unknown) => void) => {
+        order.push('user-handler:bind');
+        handler({ id: 'buffered-user-input' });
+      }),
+      keepAlive: vi.fn(() => {
+        order.push('presence');
+      }),
+      wakePendingMaterialization: vi.fn(() => {
+        order.push('wake');
+      }),
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0];
+
+    deferred.rpcHandlerManager.registerHandler('session.model.transition', async () => ({}));
+    deferred.onUserMessage(() => {
+      order.push('user-callback');
+    });
+    deferred.keepAlive(true, 'remote');
+    deferred.wakePendingMaterialization();
+    deferred.sendSessionEvent({ type: 'ready' });
+
+    const attach = (
+      deferred.attach as unknown as (
+        target: Parameters<DeferredApiSessionClient['attach']>[0],
+        options: Readonly<{
+          beforeBufferedDrain(target: Parameters<DeferredApiSessionClient['attach']>[0]): Promise<void>;
+        }>,
+      ) => Promise<void>
+    )(real, {
+      beforeBufferedDrain: async () => {
+        order.push('prepare:start');
+        expect(order).toEqual([
+          'handler:session.model.transition',
+          'prepare:start',
+        ]);
+        await preparationGate.promise;
+        order.push('prepare:end');
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(order).toContain('prepare:start');
+    });
+    expect(order).toEqual([
+      'handler:session.model.transition',
+      'prepare:start',
+    ]);
+
+    deferred.sendSessionEvent({ type: 'message', message: 'during preparation' });
+    preparationGate.resolve(undefined);
+    await attach;
+
+    expect(order).toEqual([
+      'handler:session.model.transition',
+      'prepare:start',
+      'prepare:end',
+      'delivery:ready',
+      'delivery:message',
+      'user-handler:bind',
+      'user-callback',
+      'presence',
+      'wake',
+    ]);
+  });
+
+  it('accepts durable activity buffer custody immediately and preserves FIFO across a failed attach retry', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const mutationPort = deferred as unknown as Readonly<{
+      enqueueRegisteredSessionStateFieldMutation(
+        mutation: RegisteredSessionStateFieldMutationV1,
+      ): Promise<void>;
+    }>;
+    const createMutation = (
+      mutationId: string,
+      state: 'idle' | 'active',
+    ): RegisteredSessionStateFieldMutationV1 => ({
+      v: 1,
+      sessionId: 'sess_1',
+      mutationId,
+      fieldId: 'runtime.activity',
+      deliveryClass: 'durable_best_effort',
+      op: {
+        kind: 'set',
+        value: {
+          state,
+          activeCount: state === 'active' ? 1 : 0,
+        },
+      },
+      source: 'runtime',
+      observedAt: 1,
+    });
+    const first = createMutation('activity:first', 'idle');
+    const second = createMutation('activity:second', 'active');
+
+    await expect(
+      mutationPort.enqueueRegisteredSessionStateFieldMutation(first),
+    ).resolves.toBeUndefined();
+    await expect(
+      mutationPort.enqueueRegisteredSessionStateFieldMutation(second),
+    ).resolves.toBeUndefined();
+
+    const rejectedTargetEnqueue = vi.fn(async () => undefined);
+    await expect(deferred.attach({
+      sessionId: 'sess_rejected',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      enqueueRegisteredSessionStateFieldMutation: rejectedTargetEnqueue,
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0], {
+      beforeBufferedDrain: async () => {
+        throw new Error('authority preparation rejected');
+      },
+    })).rejects.toThrow('authority preparation rejected');
+    expect(rejectedTargetEnqueue).not.toHaveBeenCalled();
+
+    const deliveredMutationIds: string[] = [];
+    await deferred.attach({
+      sessionId: 'sess_1',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      enqueueRegisteredSessionStateFieldMutation: vi.fn(async (mutation) => {
+        deliveredMutationIds.push(mutation.mutationId);
+      }),
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+
+    expect(deliveredMutationIds).toEqual([
+      'activity:first',
+      'activity:second',
+    ]);
+
+    const cancelled = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-2',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const cancelledPort = cancelled as unknown as typeof mutationPort;
+    await expect(
+      cancelledPort.enqueueRegisteredSessionStateFieldMutation(first),
+    ).resolves.toBeUndefined();
+    cancelled.cancel();
+    const cancelledTargetEnqueue = vi.fn(async () => undefined);
+    await cancelled.attach({
+      sessionId: 'sess_cancelled',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      enqueueRegisteredSessionStateFieldMutation: cancelledTargetEnqueue,
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0]);
+    expect(cancelledTargetEnqueue).not.toHaveBeenCalled();
+  });
+
+  it('retains metadata and execution observers before attach without allowing reentrant delivery through the barrier', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const observerPort = deferred as unknown as Readonly<{
+      on(eventName: 'metadata-updated', listener: () => void): unknown;
+      off(eventName: 'metadata-updated', listener: () => void): unknown;
+      subscribeExecutionRunActivitySnapshots(
+        listener: (activeCount: number) => void,
+      ): () => void;
+    }>;
+    const preparationGate = createDeferred<void>();
+    const order: string[] = [];
+    const metadataListener = () => {
+      order.push('metadata');
+    };
+    observerPort.on('metadata-updated', metadataListener);
+    const unsubscribeExecution = observerPort.subscribeExecutionRunActivitySnapshots(
+      (activeCount) => {
+        order.push(`execution:${activeCount}`);
+        if (activeCount > 0) {
+          deferred.sendSessionEvent({
+            type: 'execution-observer-publication',
+          });
+        }
+      },
+    );
+    expect(order).toEqual(['execution:0']);
+
+    const metadataListeners = new Set<() => void>();
+    const executionListeners = new Set<(activeCount: number) => void>();
+    const real = {
+      sessionId: 'sess_1',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      on: vi.fn((_eventName: 'metadata-updated', listener: () => void) => {
+        order.push('metadata:bind');
+        metadataListeners.add(listener);
+      }),
+      off: vi.fn((_eventName: 'metadata-updated', listener: () => void) => {
+        order.push('metadata:unbind');
+        metadataListeners.delete(listener);
+      }),
+      subscribeExecutionRunActivitySnapshots: vi.fn(
+        (listener: (activeCount: number) => void) => {
+          order.push('execution:bind');
+          executionListeners.add(listener);
+          listener(2);
+          return () => {
+            order.push('execution:unbind');
+            executionListeners.delete(listener);
+          };
+        },
+      ),
+      sendSessionEvent: vi.fn(() => {
+        order.push('delivery');
+      }),
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0];
+
+    const attach = deferred.attach(real, {
+      beforeBufferedDrain: async () => {
+        order.push('prepare:start');
+        for (const listener of metadataListeners) listener();
+        await preparationGate.promise;
+        order.push('prepare:end');
+      },
+    });
+    await vi.waitFor(() => {
+      expect(order).toContain('prepare:start');
+    });
+    expect(order).toEqual([
+      'execution:0',
+      'metadata:bind',
+      'execution:bind',
+      'execution:2',
+      'prepare:start',
+      'metadata',
+    ]);
+    expect(real.sendSessionEvent).not.toHaveBeenCalled();
+
+    preparationGate.resolve(undefined);
+    await attach;
+    expect(order).toContain('prepare:end');
+    expect(order.indexOf('delivery')).toBeGreaterThan(
+      order.indexOf('prepare:end'),
+    );
+
+    observerPort.off('metadata-updated', metadataListener);
+    unsubscribeExecution();
+    expect(metadataListeners.size).toBe(0);
+    expect(executionListeners.size).toBe(0);
+  });
+
+  it.each([
+    {
+      missingSupport: 'metadata listener binding',
+      retainConsumer: (deferred: DeferredApiSessionClient) => {
+        deferred.on('metadata-updated', () => undefined);
+      },
+      observerMethods: () => ({
+        off: vi.fn(),
+      }),
+    },
+    {
+      missingSupport: 'metadata listener detachment',
+      retainConsumer: (deferred: DeferredApiSessionClient) => {
+        deferred.on('metadata-updated', () => undefined);
+      },
+      observerMethods: () => ({
+        on: vi.fn(),
+      }),
+    },
+    {
+      missingSupport: 'execution activity snapshots',
+      retainConsumer: (deferred: DeferredApiSessionClient) => {
+        deferred.subscribeExecutionRunActivitySnapshots(() => undefined);
+      },
+      observerMethods: () => ({}),
+    },
+  ])(
+    'fails attach closed when retained consumers lack $missingSupport support',
+    async ({ retainConsumer, observerMethods }) => {
+      const deferred = new DeferredApiSessionClient({
+        placeholderSessionId: 'PID-1',
+        limits: { maxEntries: 10, maxBytes: 10_000 },
+      });
+      retainConsumer(deferred);
+      deferred.sendSessionEvent({ type: 'ready' });
+
+      const sendSessionEvent = vi.fn();
+      const beforeBufferedDrain = vi.fn();
+      await expect(
+        deferred.attach({
+          sessionId: 'sess_1',
+          rpcHandlerManager: {
+            registerHandler: vi.fn(),
+            invokeLocal: vi.fn(async () => ({})),
+          },
+          sendSessionEvent,
+          ...observerMethods(),
+        } as unknown as Parameters<DeferredApiSessionClient['attach']>[0], {
+          beforeBufferedDrain,
+        }),
+      ).rejects.toThrow();
+
+      expect(beforeBufferedDrain).not.toHaveBeenCalled();
+      expect(sendSessionEvent).not.toHaveBeenCalled();
+      expect(deferred.sessionId).toBe('PID-1');
+    },
+  );
+
+  it('fails attach closed without draining buffered delivery when preparation rejects', async () => {
+    const deferred = new DeferredApiSessionClient({
+      placeholderSessionId: 'PID-1',
+      limits: { maxEntries: 10, maxBytes: 10_000 },
+    });
+    const sendSessionEvent = vi.fn();
+    const real = {
+      sessionId: 'sess_1',
+      rpcHandlerManager: {
+        registerHandler: vi.fn(),
+        invokeLocal: vi.fn(async () => ({})),
+      },
+      sendSessionEvent,
+    } as unknown as Parameters<DeferredApiSessionClient['attach']>[0];
+    deferred.sendSessionEvent({ type: 'ready' });
+
+    await expect(
+      (
+        deferred.attach as unknown as (
+          target: Parameters<DeferredApiSessionClient['attach']>[0],
+          options: Readonly<{
+            beforeBufferedDrain(target: Parameters<DeferredApiSessionClient['attach']>[0]): Promise<void>;
+          }>,
+        ) => Promise<void>
+      )(real, {
+        beforeBufferedDrain: async () => {
+          throw new Error('required snapshot refresh failed');
+        },
+      }),
+    ).rejects.toThrow('required snapshot refresh failed');
+
+    expect(sendSessionEvent).not.toHaveBeenCalled();
   });
 
   it('resolves updateMetadata promises after attach flush', async () => {

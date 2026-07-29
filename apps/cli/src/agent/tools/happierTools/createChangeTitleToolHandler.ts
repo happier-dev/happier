@@ -9,13 +9,23 @@ type ActionExecutorLike = Readonly<{
   execute: (
     actionId: ActionId,
     input: unknown,
-    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' | 'cli' | 'session_agent' }>,
+    ctx: Readonly<{ defaultSessionId: string; surface: 'mcp' | 'cli' | 'agent' }>,
   ) => Promise<ActionExecutorResult>;
 }>;
 
+function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Readonly<Record<string, unknown>>
+    : null;
+}
+
+function readNonEmptyString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 export function createChangeTitleToolHandler(params: Readonly<{
   executor: ActionExecutorLike;
-  surface: 'mcp' | 'cli' | 'session_agent';
+  surface: 'mcp' | 'cli' | 'agent';
   afterCommit?: (args: Readonly<{ sessionId: string; title: string }>) => Promise<void> | void;
 }>): (sessionId: string, title: string) => Promise<unknown> {
   return async (sessionId: string, title: string) => {
@@ -34,20 +44,16 @@ export function createChangeTitleToolHandler(params: Readonly<{
       return { success: false, error: res.error };
     }
 
-    if (res.result && typeof res.result === 'object') {
-      if ((res.result as any).kind === 'approval_request_created') {
+    const result = readRecord(res.result);
+    if (result) {
+      if (result.kind === 'approval_request_created') {
         return res.result;
       }
-      if ((res.result as any).ok === false) {
-        const error = typeof (res.result as any).error === 'string' && (res.result as any).error.trim().length > 0
-          ? (res.result as any).error
-          : typeof (res.result as any).errorCode === 'string' && (res.result as any).errorCode.trim().length > 0
-            ? (res.result as any).errorCode
-            : 'action_failed';
+      if (result.ok === false) {
+        const error = readNonEmptyString(result.error)
+          ?? readNonEmptyString(result.errorCode)
+          ?? 'action_failed';
         return { success: false, error };
-      }
-      if ((res.result as any).metadataUpdated === true) {
-        return { success: true, title };
       }
     }
 

@@ -1,25 +1,13 @@
 import type { ManagedConnectionSupervisor } from '@happier-dev/connection-supervisor';
-import {
-    SessionCatchUpAuthorizationV1Schema,
-    type SessionCatchUpAuthorizationV1,
-} from '@happier-dev/protocol';
-
 import { fetchChanges } from '../changes';
 import { serializeAxiosErrorForLog } from '../client/serializeAxiosErrorForLog';
 import { handleRequestAuthenticationFailure } from '@/api/connection/requestSupervision/reportRequestOutcomeToSupervisor';
 import { readKnownPendingQueueState, type KnownPendingQueueState } from './pendingQueueState';
 import type { SessionSnapshotRefreshReason } from './sessionSnapshotRefreshReason';
-
-export type SessionCatchUpAuthorization = SessionCatchUpAuthorizationV1;
-
-export function readSessionCatchUpAuthorization(value: unknown): SessionCatchUpAuthorization | null {
-    const parsed = SessionCatchUpAuthorizationV1Schema.safeParse(value);
-    return parsed.success ? parsed.data : null;
-}
+import { readAccountSettingsVersionFromHint } from '@/settings/accountSettings/accountSettingsVersion';
 
 export type SessionCatchUpRequest = Readonly<{
     afterSeq: number;
-    authorization: SessionCatchUpAuthorization;
 }>;
 
 export function isV2ChangesSyncEnabled(flagValue: string | undefined): boolean {
@@ -46,14 +34,12 @@ function readSessionMessageChangeHint(hint: unknown): { seq: number } | null {
     return { seq };
 }
 
-function snapshotReasonForChangesFallback(reason: 'connect' | 'reconnect' | 'stale-safety'): SessionSnapshotRefreshReason {
-    if (reason === 'reconnect') return 'reconnect';
-    if (reason === 'connect') return 'connect';
-    return 'degraded-socket';
+function snapshotReasonForChangesFallback(reason: 'connect' | 'reconnect'): SessionSnapshotRefreshReason {
+    return reason;
 }
 
 export async function runSessionChangesSyncOnConnect(params: {
-    reason: 'connect' | 'reconnect' | 'stale-safety';
+    reason: 'connect' | 'reconnect';
     token: string;
     sessionId: string;
     lastObservedMessageSeq: number;
@@ -61,8 +47,9 @@ export async function runSessionChangesSyncOnConnect(params: {
     readChangesCursor: (accountId: string) => Promise<number>;
     writeChangesCursor: (accountId: string, cursor: number) => Promise<void>;
     catchUpSessionMessages: (request: SessionCatchUpRequest) => Promise<void>;
-    syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<void>;
+    syncSessionSnapshotFromServer: (opts: { reason: SessionSnapshotRefreshReason }) => Promise<boolean>;
     applyPendingQueueState?: ((state: KnownPendingQueueState) => void) | null;
+    refreshAccountSettingsForMinimumVersion?: (settingsVersion: number | null) => Promise<void>;
     connectionSupervisor?: ManagedConnectionSupervisor | null;
     onDebug: (message: string, data?: unknown) => void;
 }): Promise<void> {
@@ -73,20 +60,24 @@ export async function runSessionChangesSyncOnConnect(params: {
     const after = await params.readChangesCursor(accountId);
     const result = await fetchChanges({ token: params.token, after, limit: CHANGES_PAGE_LIMIT });
     if (result.status === 'cursor-gone') {
-        await params.writeChangesCursor(accountId, result.currentCursor);
+        let transcriptCatchUpSucceeded = true;
         // If the server indicates the cursor is invalid (future cursor or pruned floor),
         // force a snapshot rebuild so we don't miss deletion signals.
         if (params.reason === 'reconnect') {
             try {
                 await params.catchUpSessionMessages({
                     afterSeq: params.lastObservedMessageSeq,
-                    authorization: 'reconnect_watermark',
                 });
             } catch (error) {
+                transcriptCatchUpSucceeded = false;
                 reportReconnectCatchUpFailure(params, error);
             }
         }
-        void params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+        await params.refreshAccountSettingsForMinimumVersion?.(null);
+        const snapshotSucceeded = await params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+        if (transcriptCatchUpSucceeded && snapshotSucceeded) {
+            await params.writeChangesCursor(accountId, result.currentCursor);
+        }
         return;
     }
     if (result.status !== 'ok') {
@@ -104,20 +95,35 @@ export async function runSessionChangesSyncOnConnect(params: {
             try {
                 await params.catchUpSessionMessages({
                     afterSeq: params.lastObservedMessageSeq,
-                    authorization: 'reconnect_watermark',
                 });
             } catch (error) {
                 reportReconnectCatchUpFailure(params, error);
             }
-            void params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+            await params.refreshAccountSettingsForMinimumVersion?.(null);
+            await params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
         }
         return;
     }
 
     const changes = result.response.changes;
     const nextCursor = result.response.nextCursor;
+    const accountSettingsVersions = changes
+        .filter((change) => change.kind === 'account' && change.entityId === 'self')
+        .map((change) => readAccountSettingsVersionFromHint(change.hint))
+        .filter((version): version is number => version !== null);
+    const highestAccountSettingsVersion = accountSettingsVersions.length > 0
+        ? Math.max(...accountSettingsVersions)
+        : null;
+
+    // Settings convergence precedes Pending publication and cursor acknowledgement.
+    if (highestAccountSettingsVersion !== null) {
+        await params.refreshAccountSettingsForMinimumVersion?.(highestAccountSettingsVersion);
+    } else if (params.reason === 'reconnect' || changes.length >= CHANGES_PAGE_LIMIT) {
+        await params.refreshAccountSettingsForMinimumVersion?.(null);
+    }
 
     let transcriptCatchUpFailed = false;
+    let snapshotSyncFailed = false;
     const catchUpSessionMessages = async (request: SessionCatchUpRequest): Promise<void> => {
         try {
             await params.catchUpSessionMessages(request);
@@ -158,11 +164,10 @@ export async function runSessionChangesSyncOnConnect(params: {
         if (params.reason === 'reconnect') {
             await catchUpSessionMessages({
                 afterSeq: params.lastObservedMessageSeq,
-                authorization: 'reconnect_watermark',
             });
         }
-        void params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
-        if (!transcriptCatchUpFailed) {
+        const snapshotSucceeded = await params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+        if (!transcriptCatchUpFailed && snapshotSucceeded) {
             await params.writeChangesCursor(accountId, nextCursor);
         }
         return;
@@ -171,23 +176,23 @@ export async function runSessionChangesSyncOnConnect(params: {
     if (hasRelevantSessionChange && params.reason === 'reconnect') {
         await catchUpSessionMessages({
             afterSeq: params.lastObservedMessageSeq,
-            authorization: 'reconnect_watermark',
         });
-        void params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+        const snapshotSucceeded = await params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+        snapshotSyncFailed = !snapshotSucceeded;
     }
 
     if (shouldCatchUpSessionMessages && params.reason !== 'reconnect') {
         await catchUpSessionMessages({
             afterSeq: params.lastObservedMessageSeq,
-            authorization: 'reconnect_watermark',
         });
     }
 
     if (shouldSyncSnapshotFallback) {
-        void params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+        const snapshotSucceeded = await params.syncSessionSnapshotFromServer({ reason: snapshotReasonForChangesFallback(params.reason) });
+        snapshotSyncFailed = snapshotSyncFailed || !snapshotSucceeded;
     }
 
-    if (!transcriptCatchUpFailed) {
+    if (!transcriptCatchUpFailed && !snapshotSyncFailed) {
         await params.writeChangesCursor(accountId, nextCursor);
     }
 }

@@ -1,8 +1,6 @@
 import { getResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import {
   ConnectedServiceIdSchema,
-  ConnectedAccountDescriptorSchema,
-  getConnectedAccountDescriptorsForTarget,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
@@ -36,30 +34,19 @@ export function resolveConnectTargetServiceIds(targetId: string): ConnectedServi
 
 export function resolveConnectTargetServiceIdsFromRegistry(
   targetId: string,
-  registry: Pick<ResolvedContributionRegistry, 'catalogEntriesById' | 'providerDefinitionsById' | 'connectedAccountDescriptors'>,
+  registry: Pick<ResolvedContributionRegistry, 'agentDefinitionsById'>,
 ): ConnectedServiceId[] {
   const normalized = String(targetId ?? '').trim().toLowerCase();
   if (!normalized) return [];
 
-  const pluginDescriptorServiceIds = (registry.connectedAccountDescriptors ?? [])
-    .map((contribution) => ConnectedAccountDescriptorSchema.safeParse(contribution.definition))
-    .filter((result): result is Extract<typeof result, { success: true }> => result.success)
-    .flatMap((result) =>
-      result.data.connectModes.some((mode) => mode.targetId.toLowerCase() === normalized)
-        ? [result.data.id]
-        : [],
-    );
-  const descriptorServiceIds = [
-    ...getConnectedAccountDescriptorsForTarget(normalized).map((descriptor) => descriptor.id),
-    ...pluginDescriptorServiceIds,
-  ];
-  const catalogEntry = registry.catalogEntriesById[normalized];
-  if (!catalogEntry?.getCloudConnectTarget) return descriptorServiceIds;
+  const agentContribution = registry.agentDefinitionsById.get(normalized);
+  if (!agentContribution) return [];
 
-  const providerContribution = registry.providerDefinitionsById.get(normalized);
-  if (!providerContribution) return descriptorServiceIds;
-
-  const supported = readSupportedServiceIdsFromProviderDefinition(providerContribution.definition);
-  const providerServiceIds = supported.map((serviceId) => ConnectedServiceIdSchema.parse(serviceId));
-  return Array.from(new Set([...descriptorServiceIds, ...providerServiceIds]));
+  const supported = readSupportedServiceIdsFromProviderDefinition(
+    agentContribution.definition,
+  );
+  return Array.from(new Set(supported.flatMap((serviceId) => {
+    const parsed = ConnectedServiceIdSchema.safeParse(serviceId);
+    return parsed.success ? [parsed.data] : [];
+  })));
 }

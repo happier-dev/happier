@@ -4,6 +4,7 @@ import {
   ReviewAssumptionSchema,
   ReviewFindingSchema,
   ReviewQuestionSchema,
+  ReviewCommentProposalsV1Schema,
   type ReviewFinding,
 } from '@happier-dev/protocol';
 
@@ -42,6 +43,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
   const updatedFindingsRaw = parsedRecord ? parsedRecord.updatedFindings : null;
   const questionsRaw = parsedRecord ? parsedRecord.questions : null;
   const assumptionsRaw = parsedRecord ? parsedRecord.assumptions : null;
+  const proposedCommentsRaw = parsedRecord ? parsedRecord.proposedComments : undefined;
 
   const followUpIntent = ReviewFollowUpIntentInputSchema.safeParse(params.intentInput);
   if (followUpIntent.success) {
@@ -176,6 +178,22 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
       return parsedAssumption.success ? [parsedAssumption.data] : [];
     })
     : [];
+  const proposedComments = typeof proposedCommentsRaw === 'undefined'
+    ? undefined
+    : ReviewCommentProposalsV1Schema.safeParse(proposedCommentsRaw);
+  if (proposedComments && !proposedComments.success) {
+    const summary = 'Invalid review output (expected strict JSON).';
+    return {
+      status: 'failed',
+      summary,
+      toolResultOutput: {
+        status: 'failed', summary, runId: params.runId, callId: params.callId,
+        sidechainId: params.sidechainId, backendId: params.backendId, intent: 'review',
+        startedAtMs: params.startedAtMs, finishedAtMs: params.finishedAtMs,
+        error: { code: 'invalid_output' },
+      },
+    };
+  }
 
   const findingsPayload = buildReviewFindingsV2Payload({
     runId: params.runId,
@@ -188,6 +206,7 @@ export function normalizeStrictJsonReviewOutput(params: Readonly<{
     findings,
     questions,
     assumptions,
+    ...(proposedComments?.success ? { proposedComments: proposedComments.data } : {}),
     generatedAtMs: params.finishedAtMs,
   });
 

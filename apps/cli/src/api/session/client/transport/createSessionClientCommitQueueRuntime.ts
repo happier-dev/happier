@@ -1,12 +1,10 @@
 import { logger } from '@/ui/logger';
-import { UnsupportedTranscriptLookupError } from '../lifecycle/createSessionClientRecoveryRuntime';
 
 import { encodeBase64, encrypt } from '../../../encryption';
 import { MessageAckResponseSchema, type ClientToServerEvents, type ServerToClientEvents } from '../../../types';
 import type { Socket } from 'socket.io-client';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
-import { deliverTranscriptMessageMutation } from './mutations/deliverTranscriptMessageMutation';
-import { createTranscriptMessageAppendMutation } from './mutations/sessionClientDurableMutationTypes';
+import { deliverRequiredDirectSessionMessageViaHttp } from './deliverRequiredDirectSessionMessageViaHttp';
 
 type PlainOrEncryptedPayload = string | { t: 'plain'; v: unknown };
 type SessionMessageRole = 'user' | 'agent' | 'event' | 'unknown';
@@ -18,6 +16,7 @@ type QueuedDisconnectedSessionMessage = Readonly<{
     sidechainId: string | null;
     messageRole: SessionMessageRole;
     sessionEventType?: SessionEventType;
+    retryToken?: CommitRetryToken;
 }>;
 
 type CommitSessionMessageParams = Readonly<{
@@ -30,6 +29,15 @@ type CommitSessionMessageParams = Readonly<{
     markAsUserMessage?: boolean;
     refreshAgentQueueEchoSuppression?: boolean;
 }>;
+
+type CommitRetryToken = Readonly<{ localId: string; generation: number }>;
+type CommitRetryRecord = {
+    generation: number;
+    params: CommitSessionMessageParams;
+    attempts: number;
+    timer: ReturnType<typeof setTimeout> | null;
+    timerEpoch: number;
+};
 
 export class DefinitiveSessionMessageCommitError extends Error {
     readonly definitiveSessionMessageCommitFailure = true;
@@ -87,14 +95,14 @@ export function createSessionClientCommitQueueRuntime(
         hasPendingMaterializedLocalId: (localId: string) => boolean;
         markCommittedLocalIdAwaitingEcho: (localId: string) => void;
         deleteMaterializedLocalId: (localId: string) => void;
-        scheduleMaterializationRecovery: (localId: string) => void;
-        recoverMaterializedLocalId: (localId: string, opts?: { maxWaitMs?: number }) => Promise<boolean>;
         observeCommittedAck: (params: { seq: number; localId?: string | null; markAsUserMessage?: boolean; refreshAgentQueueEchoSuppression?: boolean }) => void;
         requestReconnect?: (localId: string) => void;
     }>,
 ): SessionClientCommitQueueRuntime {
     const queuedDisconnectedSessionMessages = new Map<string, QueuedDisconnectedSessionMessage>();
-    const pendingCommitRetryAttemptsByLocalId = new Map<string, number>();
+    const commitRetryByLocalId = new Map<string, CommitRetryRecord>();
+    let nextRetryGeneration = 1;
+    let retryDisposed = false;
     let messageCommitQueueTail: Promise<unknown> = Promise.resolve();
 
     const emitSessionMessageWithAck = async (
@@ -143,73 +151,121 @@ export function createSessionClientCommitQueueRuntime(
         return queued;
     };
 
-    const scheduleCommitRetry = (params: QueuedDisconnectedSessionMessage): void => {
-        const localId = params.localId;
-        if (!localId) return;
-        if (!deps.hasPendingMaterializedLocalId(localId)) return;
+    const readRetryRecord = (token: CommitRetryToken): CommitRetryRecord | null => {
+        const record = commitRetryByLocalId.get(token.localId);
+        return record?.generation === token.generation ? record : null;
+    };
 
-        const current = pendingCommitRetryAttemptsByLocalId.get(localId) ?? 0;
-        const next = current + 1;
-        if (next > 3) {
+    const clearRetryTimer = (record: CommitRetryRecord): void => {
+        if (record.timer !== null) clearTimeout(record.timer);
+        record.timer = null;
+        record.timerEpoch += 1;
+    };
+
+    const beginRetryIntent = (params: CommitSessionMessageParams): CommitRetryToken => {
+        const previous = commitRetryByLocalId.get(params.localId);
+        if (previous) clearRetryTimer(previous);
+        const generation = nextRetryGeneration++;
+        commitRetryByLocalId.set(params.localId, {
+            generation,
+            params,
+            attempts: 0,
+            timer: null,
+            timerEpoch: 0,
+        });
+        return { localId: params.localId, generation };
+    };
+
+    const completeRetryIntent = (token: CommitRetryToken): boolean => {
+        const record = readRetryRecord(token);
+        if (!record) return false;
+        clearRetryTimer(record);
+        commitRetryByLocalId.delete(token.localId);
+        return true;
+    };
+
+    const isQueuedRetryIntent = (token: CommitRetryToken): boolean => {
+        const queued = queuedDisconnectedSessionMessages.get(token.localId);
+        return queued?.retryToken?.generation === token.generation;
+    };
+
+    let commitSessionMessageAttempt: (params: CommitSessionMessageParams, token: CommitRetryToken) => Promise<void>;
+
+    const scheduleCommitRetry = (token: CommitRetryToken): void => {
+        if (retryDisposed) return;
+        const record = readRetryRecord(token);
+        if (!record) return;
+        if (!deps.hasPendingMaterializedLocalId(token.localId)) {
+            completeRetryIntent(token);
             return;
         }
-        pendingCommitRetryAttemptsByLocalId.set(localId, next);
+        if (record.attempts >= 3) {
+            completeRetryIntent(token);
+            return;
+        }
 
-        const delayMs = 1_000 * next;
+        clearRetryTimer(record);
+        record.attempts += 1;
+        const delayMs = 1_000 * record.attempts;
+        const timerEpoch = record.timerEpoch + 1;
+        record.timerEpoch = timerEpoch;
         const timer = setTimeout(() => {
-            if (!deps.hasPendingMaterializedLocalId(localId)) {
-                pendingCommitRetryAttemptsByLocalId.delete(localId);
+            const current = readRetryRecord(token);
+            if (!current || current.timerEpoch !== timerEpoch) return;
+            current.timer = null;
+            if (!deps.hasPendingMaterializedLocalId(token.localId)) {
+                completeRetryIntent(token);
                 return;
             }
-            void enqueueMessageCommit(() =>
-                commitSessionMessage({
-                    message: params.message,
-                    localId,
-                    sidechainId: params.sidechainId,
-                    messageRole: params.messageRole,
-                    sessionEventType: params.sessionEventType,
-                    requireCommit: false,
-                }),
-            ).catch(() => {
-                // Best-effort retry only.
+            void enqueueMessageCommit(async () => {
+                const latest = readRetryRecord(token);
+                if (!latest) return;
+                try {
+                    await commitSessionMessageAttempt(latest.params, token);
+                } finally {
+                    const afterAttempt = readRetryRecord(token);
+                    if (afterAttempt?.timer === null && !isQueuedRetryIntent(token)) {
+                        completeRetryIntent(token);
+                    }
+                }
+            }).catch(() => {
+                // Best-effort retry only; the matching current record retains its bounded budget.
             });
         }, delayMs);
         timer.unref?.();
+        record.timer = timer;
     };
 
     const tryRequiredCommitFallback = async (
         params: CommitSessionMessageParams,
+        token: CommitRetryToken,
     ): Promise<boolean> => {
-        const result = await deliverTranscriptMessageMutation({
+        const ack = await deliverRequiredDirectSessionMessageViaHttp({
             token: deps.token,
-            socket: null,
-            mutation: createTranscriptMessageAppendMutation({
-                sessionId: deps.sessionId,
-                localId: params.localId,
-                content: params.message,
-                sidechainId: params.sidechainId,
-                ...(params.messageRole ? { messageRole: params.messageRole } : {}),
-                ...(params.sessionEventType ? { sessionEventType: params.sessionEventType } : {}),
-            }),
+            sessionId: deps.sessionId,
+            localId: params.localId,
+            message: params.message,
+            sidechainId: params.sidechainId,
+            ...(params.messageRole ? { messageRole: params.messageRole } : {}),
+            ...(params.sessionEventType ? { sessionEventType: params.sessionEventType } : {}),
         });
-        if (!result.delivered || !result.ack) {
-            return false;
-        }
-        pendingCommitRetryAttemptsByLocalId.delete(params.localId);
+        if (!ack) return false;
+        completeRetryIntent(token);
         deps.markCommittedLocalIdAwaitingEcho(params.localId);
         deps.observeCommittedAck({
-            seq: result.ack.seq,
-            localId: result.ack.localId ?? params.localId,
+            seq: ack.seq,
+            localId: ack.localId ?? params.localId,
             markAsUserMessage: params.markAsUserMessage,
             refreshAgentQueueEchoSuppression: params.refreshAgentQueueEchoSuppression,
         });
         return true;
     };
 
-    const commitExternalSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
+    const commitExternalSessionMessage = async (params: CommitSessionMessageParams, token: CommitRetryToken): Promise<void> => {
         const localId = params.localId;
         if (!deps.getSocket().connected) {
             if (params.requireCommit) {
+                completeRetryIntent(token);
                 throw new Error('Socket not connected');
             }
             queueSessionMessageUntilReconnect({
@@ -218,6 +274,7 @@ export function createSessionClientCommitQueueRuntime(
                 sidechainId: params.sidechainId,
                 messageRole: params.messageRole,
                 sessionEventType: params.sessionEventType,
+                retryToken: token,
             });
             return;
         }
@@ -235,7 +292,7 @@ export function createSessionClientCommitQueueRuntime(
         });
 
         if (ack && ack.ok === true) {
-            pendingCommitRetryAttemptsByLocalId.delete(localId);
+            completeRetryIntent(token);
             deps.markCommittedLocalIdAwaitingEcho(localId);
             deps.observeCommittedAck({
                 seq: ack.seq,
@@ -247,7 +304,7 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (ack && ack.ok === false) {
-            pendingCommitRetryAttemptsByLocalId.delete(localId);
+            completeRetryIntent(token);
             if (!params.requireCommit) {
                 deps.deleteMaterializedLocalId(localId);
             }
@@ -255,26 +312,22 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (!params.requireCommit) {
-            scheduleCommitRetry({
-                message: params.message,
-                localId,
-                sidechainId: params.sidechainId,
-                messageRole: params.messageRole,
-                sessionEventType: params.sessionEventType,
-            });
+            scheduleCommitRetry(token);
             return;
         }
 
+        completeRetryIntent(token);
         throw new Error('Message send not confirmed');
     };
 
-    const commitPersistedSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
+    const commitPersistedSessionMessage = async (params: CommitSessionMessageParams, token: CommitRetryToken): Promise<void> => {
         const localId = params.localId;
         if (!deps.getSocket().connected) {
             if (params.requireCommit) {
-                if (await tryRequiredCommitFallback(params)) {
+                if (await tryRequiredCommitFallback(params, token)) {
                     return;
                 }
+                completeRetryIntent(token);
                 throw new Error('Socket not connected');
             }
             queueSessionMessageUntilReconnect({
@@ -283,6 +336,7 @@ export function createSessionClientCommitQueueRuntime(
                 sidechainId: params.sidechainId,
                 messageRole: params.messageRole,
                 sessionEventType: params.sessionEventType,
+                retryToken: token,
             });
             return;
         }
@@ -297,7 +351,7 @@ export function createSessionClientCommitQueueRuntime(
         });
 
         if (ack && ack.ok === true) {
-            pendingCommitRetryAttemptsByLocalId.delete(localId);
+            completeRetryIntent(token);
             deps.markCommittedLocalIdAwaitingEcho(localId);
             deps.observeCommittedAck({
                 seq: ack.seq,
@@ -309,7 +363,7 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (ack && ack.ok === false) {
-            pendingCommitRetryAttemptsByLocalId.delete(localId);
+            completeRetryIntent(token);
             deps.deleteMaterializedLocalId(localId);
             if (params.requireCommit) {
                 throw new DefinitiveSessionMessageCommitError(ack.error);
@@ -318,44 +372,16 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (params.requireCommit) {
-            if (await tryRequiredCommitFallback(params)) {
+            if (await tryRequiredCommitFallback(params, token)) {
                 return;
             }
-            let recovered = false;
-            try {
-                recovered = await deps.recoverMaterializedLocalId(localId, { maxWaitMs: 12_000 });
-            } catch (error) {
-                if (error instanceof UnsupportedTranscriptLookupError) {
-                    scheduleCommitRetry({
-                        message: params.message,
-                        localId,
-                        sidechainId: params.sidechainId,
-                        messageRole: params.messageRole,
-                        sessionEventType: params.sessionEventType,
-                    });
-                    throw new Error(
-                        'Message commit confirmation unsupported by server (ACK timed out and transcript lookup route is unavailable)',
-                    );
-                }
-                throw error;
-            }
-            if (!recovered) {
-                throw new Error('Message commit not confirmed (ACK timed out and transcript recovery failed)');
-            }
-            return;
+            throw new Error('Message commit not confirmed (ACK timed out)');
         }
 
-        deps.scheduleMaterializationRecovery(localId);
-        scheduleCommitRetry({
-            message: params.message,
-            localId,
-            sidechainId: params.sidechainId,
-            messageRole: params.messageRole,
-            sessionEventType: params.sessionEventType,
-        });
+        scheduleCommitRetry(token);
     };
 
-    const commitSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
+    commitSessionMessageAttempt = async (params: CommitSessionMessageParams, token: CommitRetryToken): Promise<void> => {
         const localId = params.localId;
         if (localId.length === 0) {
             if (params.requireCommit) {
@@ -365,11 +391,32 @@ export function createSessionClientCommitQueueRuntime(
         }
 
         if (deps.transcriptStorage === 'direct') {
-            await commitExternalSessionMessage(params);
+            await commitExternalSessionMessage(params, token);
             return;
         }
 
-        await commitPersistedSessionMessage(params);
+        await commitPersistedSessionMessage(params, token);
+    };
+
+    const commitSessionMessage = async (params: CommitSessionMessageParams): Promise<void> => {
+        if (params.localId.length === 0) {
+            if (params.requireCommit) throw new Error('localId is required');
+            return;
+        }
+        if (retryDisposed) {
+            if (params.requireCommit) throw new Error('Session message commit runtime is disposed');
+            return;
+        }
+        const token = beginRetryIntent(params);
+        try {
+            await commitSessionMessageAttempt(params, token);
+        } catch (error) {
+            const current = readRetryRecord(token);
+            if (current?.timer === null && !isQueuedRetryIntent(token)) completeRetryIntent(token);
+            throw error;
+        }
+        const current = readRetryRecord(token);
+        if (current?.timer === null && !isQueuedRetryIntent(token)) completeRetryIntent(token);
     };
 
     const flushQueuedSessionMessagesOnReconnect = async (): Promise<void> => {
@@ -380,16 +427,30 @@ export function createSessionClientCommitQueueRuntime(
         const queued = [...queuedDisconnectedSessionMessages.values()];
         queuedDisconnectedSessionMessages.clear();
         for (const params of queued) {
-            await enqueueMessageCommit(() =>
-                commitSessionMessage({
+            const retryToken = params.retryToken;
+            if (retryToken) {
+                const current = readRetryRecord(retryToken);
+                if (!current) continue;
+                await enqueueMessageCommit(async () => {
+                    try {
+                        await commitSessionMessageAttempt(current.params, retryToken);
+                    } finally {
+                        const afterAttempt = readRetryRecord(retryToken);
+                        if (afterAttempt?.timer === null && !isQueuedRetryIntent(retryToken)) {
+                            completeRetryIntent(retryToken);
+                        }
+                    }
+                });
+                continue;
+            }
+            await enqueueMessageCommit(() => commitSessionMessage({
                     message: params.message,
                     localId: params.localId,
                     sidechainId: params.sidechainId,
                     messageRole: params.messageRole,
                     sessionEventType: params.sessionEventType,
                     requireCommit: false,
-                }),
-            );
+                }));
         }
     };
 
@@ -434,7 +495,9 @@ export function createSessionClientCommitQueueRuntime(
 
         clearState() {
             queuedDisconnectedSessionMessages.clear();
-            pendingCommitRetryAttemptsByLocalId.clear();
+            retryDisposed = true;
+            for (const record of commitRetryByLocalId.values()) clearRetryTimer(record);
+            commitRetryByLocalId.clear();
         },
     };
 }

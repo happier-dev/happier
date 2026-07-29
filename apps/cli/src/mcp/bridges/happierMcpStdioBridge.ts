@@ -67,14 +67,21 @@ async function main() {
     version: '1.0.0',
   });
 
+  const remoteToolCatalog = await (await ensureHttpClient()).listTools();
   registerHappierBridgeTools(server as any, {
-    callHttpTool: async (name, args) => {
+    tools: remoteToolCatalog.tools,
+    callHttpTool: async (name, args, options) => {
       const client = await ensureHttpClient();
-      return await callMcpToolWithResolvedTimeout({ client, toolName: name, args });
+      return await callMcpToolWithResolvedTimeout({
+        client,
+        toolName: name,
+        args,
+        ...(options?.signal === undefined ? {} : { signal: options.signal }),
+      });
     },
   });
   registerHappierMcpResources(server as any, {
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'session_agent' }),
+    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'agent' }),
   });
 
   // Start STDIO transport

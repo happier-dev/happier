@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -135,22 +136,79 @@ function stripDeferredVoiceInferenceDepsIfArchived(pkgJson, { packageRoot }) {
   }
 
   const deps = pkgJson?.dependencies && typeof pkgJson.dependencies === 'object' ? { ...pkgJson.dependencies } : null;
-  if (!deps) {
+  const optionalDeps = pkgJson?.optionalDependencies && typeof pkgJson.optionalDependencies === 'object'
+    ? { ...pkgJson.optionalDependencies }
+    : null;
+  if (!deps && !optionalDeps) {
     return pkgJson;
   }
 
   for (const packageName of config.deferredRuntimePackages) {
-    delete deps[packageName];
+    if (deps) delete deps[packageName];
+    if (optionalDeps) delete optionalDeps[packageName];
   }
 
   return {
     ...pkgJson,
-    dependencies: deps,
+    ...(deps ? { dependencies: deps } : {}),
+    ...(optionalDeps ? { optionalDependencies: optionalDeps } : {}),
   };
 }
 
+function readErrorCode(error) {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return '';
+  }
+  return typeof error.code === 'string' ? error.code : '';
+}
+
+function createDestinationLocalPath(tarballPath, kind) {
+  return path.join(
+    path.dirname(tarballPath),
+    `.${path.basename(tarballPath)}.postpack-${kind}-${process.pid}-${randomUUID()}.tmp`,
+  );
+}
+
+function replacePackedTarball(stagedTarballPath, tarballPath) {
+  try {
+    fs.renameSync(stagedTarballPath, tarballPath);
+    return;
+  } catch (error) {
+    const code = readErrorCode(error);
+    if (code !== 'EEXIST' && code !== 'EPERM') {
+      throw error;
+    }
+  }
+
+  const backupTarballPath = createDestinationLocalPath(tarballPath, 'backup');
+  fs.renameSync(tarballPath, backupTarballPath);
+  try {
+    fs.renameSync(stagedTarballPath, tarballPath);
+  } catch (error) {
+    try {
+      fs.renameSync(backupTarballPath, tarballPath);
+    } catch (restoreError) {
+      throw new AggregateError(
+        [error, restoreError],
+        `[postpack] failed to promote patched tarball and restore previous destination: ${tarballPath}`,
+      );
+    }
+    throw error;
+  }
+
+  fs.rmSync(backupTarballPath, { force: true });
+}
+
 export async function patchPackedTarballForBun(options = {}) {
-  const tarballPath = String(options.tarballPath ?? '').trim() || resolveTarballPathFromEnv(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  if (String(env?.npm_config_dry_run ?? '').trim().toLowerCase() === 'true') {
+    return {
+      skipped: true,
+      reason: 'npm-pack-dry-run',
+    };
+  }
+
+  const tarballPath = String(options.tarballPath ?? '').trim() || resolveTarballPathFromEnv(env);
   if (!tarballPath) {
     throw new Error('[postpack] could not resolve packed tarball path (missing npm env?)');
   }
@@ -161,7 +219,7 @@ export async function patchPackedTarballForBun(options = {}) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-cli-postpack-'));
   const extractedRoot = path.join(tmpDir, 'package');
   const pkgJsonPath = path.join(extractedRoot, 'package.json');
-  const outTarballPath = path.join(tmpDir, `patched-${path.basename(tarballPath)}`);
+  const stagedTarballPath = createDestinationLocalPath(tarballPath, 'staging');
 
   try {
     await tar.x({ file: tarballPath, cwd: tmpDir, strict: true });
@@ -179,11 +237,16 @@ export async function patchPackedTarballForBun(options = {}) {
 
     fs.writeFileSync(pkgJsonPath, `${JSON.stringify(patched, null, 2)}\n`, 'utf8');
 
-    await tar.c({ gzip: true, file: outTarballPath, cwd: tmpDir, portable: true }, ['package']);
-    fs.renameSync(outTarballPath, tarballPath);
+    await tar.c({ gzip: true, file: stagedTarballPath, cwd: tmpDir, portable: true }, ['package']);
+    replacePackedTarball(stagedTarballPath, tarballPath);
 
     return { tarballPath };
   } finally {
+    try {
+      fs.rmSync(stagedTarballPath, { force: true });
+    } catch {
+      // ignore
+    }
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5 });
     } catch {

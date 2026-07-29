@@ -56,11 +56,6 @@ function normalizeServePath(value: string | undefined): string {
   return prefixed.replace(/\/+$/, '') || '/';
 }
 
-export function isLoopbackTransferBindHost(bindHost: string): boolean {
-  const normalizedBindHost = bindHost.trim().toLowerCase();
-  return normalizedBindHost === '127.0.0.1' || normalizedBindHost === '::1' || normalizedBindHost === 'localhost';
-}
-
 export function resolveDirectPeerFeatureEnabled(): boolean {
   return parseBooleanEnv(process.env.HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED, true);
 }
@@ -70,34 +65,10 @@ export function resolveDirectPeerServerEnabled(): boolean {
     && parseBooleanEnv(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED, true);
 }
 
-export function resolveDirectPeerAdvertisedHosts(networkInterfacesFn: typeof networkInterfaces = networkInterfaces): string[] {
-  const configuredHosts = String(process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_ADVERTISED_HOSTS ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .filter((value) => value.length > 0);
-
-  if (configuredHosts.length > 0) {
-    return Array.from(new Set(configuredHosts));
-  }
-
-  const bindHost = resolveDirectPeerTransferBindHost();
-  if (isLoopbackTransferBindHost(bindHost)) {
-    return ['127.0.0.1'];
-  }
-
-  const hosts = new Set<string>();
-  for (const entries of Object.values(networkInterfacesFn())) {
-    for (const entry of entries ?? []) {
-      if (!entry || entry.internal) continue;
-      const family = String(entry.family);
-      if (family !== 'IPv4' && family !== 'IPv6') continue;
-      const address = typeof entry.address === 'string' ? entry.address.trim() : '';
-      if (!address) continue;
-      if (family === 'IPv6' && address.includes('%')) continue;
-      hosts.add(address);
-    }
-  }
-  return Array.from(hosts);
+export function resolveDirectPeerAdvertisedHosts(_networkInterfacesFn: typeof networkInterfaces = networkInterfaces): string[] {
+  // Plain HTTP transfer is loopback-only. Legacy LAN advertisement inputs remain accepted by
+  // callers but cannot alter the current listener/advertisement posture.
+  return [DEFAULT_DIRECT_PEER_BIND_HOST];
 }
 
 export function resolveDirectPeerTransferTtlMs(): number {
@@ -170,8 +141,9 @@ export function resolveDirectPeerTransferPublishedTransferRegistryMaxEntries(): 
   );
 }
 
-export function resolveDirectPeerTransferBindHost(): string {
-  return process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_HOST ?? DEFAULT_DIRECT_PEER_BIND_HOST;
+export function resolveDirectPeerTransferBindHost(_configuredHost?: string): string {
+  // Keep one exact loopback upstream so Tailscale Serve and the HTTP listener cannot diverge.
+  return DEFAULT_DIRECT_PEER_BIND_HOST;
 }
 
 export function resolveTransferTailscaleServeEnabled(): boolean {

@@ -1,0 +1,170 @@
+{
+  "schemaVersion": 2,
+  "id": "dev.happier.fixture.voice.zipformer",
+  "version": "0.1.0",
+  "displayName": "Happier Zipformer Voice Fixture",
+  "description": "Installed-plugin fixture for the public Voice model-pack vertical.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "model-assets",
+        "capability": "network",
+        "scope": {
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://github.com"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://release-assets.githubusercontent.com"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://www.apache.org"
+            }
+          ]
+        },
+        "reason": "Download the declared Zipformer model and inspect its provenance and license."
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "voiceModelPacks": [
+      {
+        "id": "zipformer-en-20m",
+        "schemaVersion": 1,
+        "executionHosts": [
+          "daemon"
+        ],
+        "manifest": {
+          "schemaVersion": 1,
+          "kind": "stt_sherpa",
+          "model": "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17",
+          "version": "2023.2.17",
+          "runtime": {
+            "family": "sherpa_zipformer_streaming",
+            "artifacts": {
+              "encoder": {
+                "type": "file",
+                "path": "encoder.onnx"
+              },
+              "decoder": {
+                "type": "file",
+                "path": "decoder.onnx"
+              },
+              "joiner": {
+                "type": "file",
+                "path": "joiner.onnx"
+              },
+              "tokens": {
+                "type": "file",
+                "path": "tokens.txt"
+              }
+            },
+            "abiVersion": 1,
+            "minHostVersion": "0.2.10",
+            "platforms": [
+              "linux"
+            ],
+            "architectures": [
+              "x64"
+            ]
+          },
+          "provenance": {
+            "source": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17.tar.bz2",
+            "publisher": "k2-fsa"
+          },
+          "license": {
+            "id": "Apache-2.0",
+            "title": "Apache License 2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0",
+            "requiresAcceptance": false
+          },
+          "supportArtifacts": [
+            {
+              "type": "file",
+              "kind": "license",
+              "path": "LICENSES/Apache-2.0.txt"
+            },
+            {
+              "type": "file",
+              "kind": "license",
+              "path": "LICENSES/GPL-3.0.txt"
+            },
+            {
+              "type": "file",
+              "kind": "provenance",
+              "path": "LICENSES/README.txt"
+            },
+            {
+              "type": "file",
+              "kind": "notice",
+              "path": "THIRD_PARTY_NOTICES.txt"
+            }
+          ],
+          "files": [
+            {
+              "path": "LICENSES/Apache-2.0.txt",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__LICENSES__Apache-2.0.txt?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "sizeBytes": 11358
+            },
+            {
+              "path": "LICENSES/GPL-3.0.txt",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__LICENSES__GPL-3.0.txt?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "3972dc9744f6499f0f9b2dbf76696f2ae7ad8af9b23dde66d6af86c9dfb36986",
+              "sizeBytes": 35149
+            },
+            {
+              "path": "LICENSES/README.txt",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__LICENSES__README.txt?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "e42736cc49ebd8b46024e98ce9fdf8bf47dbcf299d7b6f058ff242524463ed05",
+              "sizeBytes": 201
+            },
+            {
+              "path": "THIRD_PARTY_NOTICES.txt",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__THIRD_PARTY_NOTICES.txt?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "ee19274210b72c649e4ad5ecf9260c727a36a0b7d4331945378ca97aa5eafce0",
+              "sizeBytes": 422
+            },
+            {
+              "path": "decoder.onnx",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__decoder.onnx?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "21e2a2acd961b3ac72f55be2f10f1a285e1b0b0ba010d7c0b6eab141411b163c",
+              "sizeBytes": 539499
+            },
+            {
+              "path": "encoder.onnx",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__encoder.onnx?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "3810755ce7c3ab26b42a8bcf39d191308fa27fb0f53358823ba46141d03b7eb3",
+              "sizeBytes": 42845182
+            },
+            {
+              "path": "joiner.onnx",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__joiner.onnx?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "e085d73b593cf9b0707f370dbd656d58327d3fe36d80d849202ef81df02cb01e",
+              "sizeBytes": 259572
+            },
+            {
+              "path": "tokens.txt",
+              "url": "https://github.com/happier-dev/happier-assets/releases/download/model-packs/sherpa-onnx-streaming-zipformer-en-20M-2023-02-17__tokens.txt?v=2026-02-15T18%3A03%3A58.021Z",
+              "sha256": "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb",
+              "sizeBytes": 5048
+            }
+          ]
+        }
+      }
+    ]
+  }
+}

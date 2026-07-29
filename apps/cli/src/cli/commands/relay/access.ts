@@ -6,7 +6,7 @@ import { wantsJson, printJsonEnvelope } from "@/cli/output/jsonEnvelope";
 import { buildSshCommand, safeBashSingleQuote, type SshAuth } from '@/capabilities/systemTasks/ssh/sshTransport';
 import { isInteractiveTerminal, promptInput } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
-import { resolveHappyHomeDirFromEnvironment } from "@happier-dev/cli-common/providers";
+import { resolveHappyHomeDirFromEnvironment } from "@happier-dev/cli-common/agents";
 import { definitionList, ok, renderHelpPage, sectionTitle, warn } from "@happier-dev/cli-common/output";
 import { getRelayAccessProvider, relayAccessProviderIds, normalizeRelayAccessCanonicalPublicServerUrl } from "@happier-dev/cli-common/relayAccess";
 import type { RelayAccessConfig, RelayAccessExecutionContext, RelayAccessProviderId } from "@happier-dev/cli-common/relayAccess";
@@ -23,7 +23,7 @@ type RelayAccessJsonResult = Readonly<{
     state: string;
 }>;
 
-function showRelayAccessHelp(): void {
+export function showRelayAccessHelp(): void {
     console.log(renderHelpPage({
         title: 'happier relay access',
         subtitle: 'Relay share URL configuration',

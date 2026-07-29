@@ -11,7 +11,7 @@ import {
 } from '@/daemon/service/discoverInstalledDaemonServiceEntries';
 import { type DaemonStartupSource, isDaemonStartupSourceServiceManaged } from '@/daemon/ownership/daemonOwnershipMetadata';
 import { resolveHappierHomeDirComparableKey } from '@/daemon/ownership/happierHomeDirComparableKey';
-import { resolveDaemonServicePaths, type DaemonServiceCliRuntime, type DaemonServiceListEntry } from '@/daemon/service/cli';
+import { resolveDaemonServicePaths, type DaemonServiceCliRuntime, type DaemonServiceListEntry } from '@/daemon/service/paths';
 import type { DaemonServiceMode } from '@/daemon/service/plan';
 
 function resolveDiscoveryModes(platform: DaemonServiceCliRuntime['platform']): readonly DaemonServiceMode[] {
@@ -56,28 +56,6 @@ type SettingsServerSnapshot = Readonly<{
 
 function isSettingsServerSnapshot(value: unknown): value is SettingsServerSnapshot {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function parseInstalledServiceEnvValue(
-  entry: Pick<InstalledDaemonServiceEntry, 'platform' | 'path'>,
-  key: string,
-): string | null {
-  let contents = '';
-  try {
-    contents = readFileSync(entry.path, 'utf8');
-  } catch {
-    return null;
-  }
-
-  const match =
-    entry.platform === 'linux'
-      ? new RegExp(`Environment=${key}=([^\\n\\r]+)`, 'i').exec(contents)
-      : entry.platform === 'darwin'
-        ? new RegExp(`<key>${key}</key>\\s*<string>([^<]+)</string>`, 'i').exec(contents)
-        : new RegExp(`\\$env:${key}\\s*=\\s*['"]([^'"]+)['"]`, 'i').exec(contents);
-
-  const value = String(match?.[1] ?? '').trim();
-  return value || null;
 }
 
 function normalizeSettingsSnapshot(value: unknown): SettingsSnapshot | null {
@@ -152,8 +130,19 @@ async function resolveDefaultFollowingRelayMatch(
 }
 
 function resolveInstalledServiceHomeDir(entry: InstalledDaemonServiceEntry): string | null {
-  return parseInstalledServiceEnvValue(entry, 'HAPPIER_HOME_DIR')
-    ?? parseInstalledServiceEnvValue(entry, 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR');
+  const discoveredHomeDir = String(entry.happierHomeDir ?? '').trim();
+  if (discoveredHomeDir) {
+    return discoveredHomeDir;
+  }
+  return readInstalledDaemonServiceEnvValue({
+    platform: entry.platform,
+    path: entry.path,
+    key: 'HAPPIER_HOME_DIR',
+  }) ?? readInstalledDaemonServiceEnvValue({
+    platform: entry.platform,
+    path: entry.path,
+    key: 'HAPPIER_DAEMON_SERVICE_HAPPIER_HOME_DIR',
+  });
 }
 
 async function resolveDefaultFollowingRelayMatchForInstalledService(
@@ -167,7 +156,10 @@ async function resolveDefaultFollowingRelayMatchForInstalledService(
 
   const serviceSettings = readSettingsSnapshotForHomeDir(serviceHomeDir);
   if (!serviceSettings) {
-    return resolveHappierHomeDirComparableKey(serviceHomeDir) === resolveHappierHomeDirComparableKey(runtime.happierHomeDir)
+    return (
+      resolveHappierHomeDirComparableKey(serviceHomeDir, runtime.platform)
+      === resolveHappierHomeDirComparableKey(runtime.happierHomeDir, runtime.platform)
+    )
       ? await resolveDefaultFollowingRelayMatch(runtime)
       : false;
   }
@@ -277,11 +269,17 @@ export function hasInstalledBackgroundServiceConflictForCurrentInstallation(para
   services: readonly DaemonServiceListEntry[];
   runtime: DaemonServiceCliRuntime;
 }>): boolean {
-  const runtimeHomeComparableKey = resolveHappierHomeDirComparableKey(params.runtime.happierHomeDir);
+  const runtimeHomeComparableKey = resolveHappierHomeDirComparableKey(
+    params.runtime.happierHomeDir,
+    params.runtime.platform,
+  );
   for (const service of params.services) {
     const declaredServiceHome = String(service.happierHomeDir ?? '').trim();
     if (declaredServiceHome) {
-      const declaredComparableKey = resolveHappierHomeDirComparableKey(declaredServiceHome);
+      const declaredComparableKey = resolveHappierHomeDirComparableKey(
+        declaredServiceHome,
+        params.runtime.platform,
+      );
       if (declaredComparableKey && declaredComparableKey === runtimeHomeComparableKey) {
         return true;
       }
@@ -297,7 +295,10 @@ export function hasInstalledBackgroundServiceConflictForCurrentInstallation(para
       key: 'HAPPIER_HOME_DIR',
     });
     if (configuredServiceHome) {
-      const configuredComparableKey = resolveHappierHomeDirComparableKey(configuredServiceHome);
+      const configuredComparableKey = resolveHappierHomeDirComparableKey(
+        configuredServiceHome,
+        params.runtime.platform,
+      );
       if (configuredComparableKey && configuredComparableKey === runtimeHomeComparableKey) {
         return true;
       }

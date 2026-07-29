@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { shouldReuseCliDistSnapshot } from './shouldReuseCliDistSnapshot.js';
+import cliDistBuildManifest from '../../cliDistBuildManifest.cjs';
 
 const tempDirs: string[] = [];
 
@@ -42,7 +43,7 @@ describe('shouldReuseCliDistSnapshot', () => {
     })).resolves.toBe(false);
   });
 
-  it('returns true when the cli dist entrypoint is at least as new as every tracked input', async () => {
+  it('keeps legacy mtime-only reuse for non-candidate callers even when the dist manifest identifies another source closure', async () => {
     const rootDir = await createTempDir();
     const older = new Date('2026-04-13T18:00:00.000Z');
     const newer = new Date('2026-04-13T18:05:00.000Z');
@@ -53,6 +54,9 @@ describe('shouldReuseCliDistSnapshot', () => {
     await writeTimedFile(cliSourceFile, 'export default "src";\n', older);
     await writeTimedFile(workspaceDistFile, 'export default "workspace";\n', older);
     await writeTimedFile(distEntrypointPath, 'export default "cli";\n', newer);
+    cliDistBuildManifest.writeCliDistBuildManifest(distEntrypointPath, {
+      inputFingerprint: 'a'.repeat(64),
+    });
 
     await expect(shouldReuseCliDistSnapshot({
       distEntrypointPath,
@@ -61,5 +65,31 @@ describe('shouldReuseCliDistSnapshot', () => {
         join(rootDir, 'packages', 'cli-common', 'dist'),
       ],
     })).resolves.toBe(true);
+  });
+
+  it('reuses only the exact dist closure whose manifest binds the candidate-verified input fingerprint', async () => {
+    const rootDir = await createTempDir();
+    const older = new Date('2026-04-13T18:00:00.000Z');
+    const newer = new Date('2026-04-13T18:05:00.000Z');
+    const distEntrypointPath = join(rootDir, 'apps', 'cli', 'dist', 'index.mjs');
+    const cliSourceFile = join(rootDir, 'apps', 'cli', 'src', 'index.ts');
+    const inputFingerprint = 'a'.repeat(64);
+
+    await writeTimedFile(cliSourceFile, 'export default "src";\n', newer);
+    await writeTimedFile(distEntrypointPath, 'export default "cli";\n', older);
+    cliDistBuildManifest.writeCliDistBuildManifest(distEntrypointPath, {
+      inputFingerprint,
+    });
+
+    await expect(shouldReuseCliDistSnapshot({
+      distEntrypointPath,
+      inputPaths: [join(rootDir, 'apps', 'cli', 'src')],
+      requiredInputFingerprint: inputFingerprint,
+    })).resolves.toBe(true);
+    await expect(shouldReuseCliDistSnapshot({
+      distEntrypointPath,
+      inputPaths: [join(rootDir, 'apps', 'cli', 'src')],
+      requiredInputFingerprint: 'b'.repeat(64),
+    })).resolves.toBe(false);
   });
 });

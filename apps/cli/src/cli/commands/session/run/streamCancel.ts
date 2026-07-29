@@ -4,6 +4,7 @@ import type { Credentials } from '@/persistence';
 import { ExecutionRunTurnStreamCancelRequestSchema } from '@happier-dev/protocol';
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { SESSION_HELP_LINES } from '@/cli/commands/session/shared/sessionCommandUsage';
 import { cancelExecutionRunStream } from '@/session/services/executionRuns';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 
@@ -17,7 +18,7 @@ export async function cmdSessionRunStreamCancel(
   const streamId = String(argv[4] ?? '').trim();
 
   if (!idOrPrefix || !runId || !streamId) {
-    throw new Error('Usage: happier session run stream-cancel <session-id-or-prefix> <run-id> <stream-id> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.runStreamCancel}`);
   }
 
   const credentials = await deps.readCredentialsFn();

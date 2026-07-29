@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
-import { resolvePackagedRuntimeEntrypoint } from './resolvePackagedRuntimeEntrypoint';
+import {
+    resolveAuthoritativePackagedRuntimeProjectRoot,
+    resolvePackagedRuntimeEntrypoint,
+} from './resolvePackagedRuntimeEntrypoint';
 
 const {
   readDefaultManagedReleaseChannelSyncMock,
@@ -45,9 +51,13 @@ vi.mock('@happier-dev/cli-common/firstPartyRuntime', async (importOriginal) => {
     };
 });
 
-vi.mock('@/projectPath', () => ({
-    projectPath: () => '/repo',
-}));
+vi.mock('@/projectPath', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/projectPath')>();
+    return {
+        ...actual,
+        projectPath: () => '/repo',
+    };
+});
 
 describe('resolvePackagedRuntimeEntrypoint', () => {
     const originalExecPath = process.execPath;
@@ -75,6 +85,144 @@ describe('resolvePackagedRuntimeEntrypoint', () => {
             configurable: true,
         });
         process.argv = [...originalArgv];
+    });
+
+    it.each([
+        'file:///repo/apps/cli/src/packagedRuntime/runtimeOwner.ts',
+        'file:///repo/apps/cli/dist/packagedRuntime/runtimeOwner.js',
+    ])('classifies a direct source %s module before any managed-installed fallback', (moduleUrl) => {
+        vi.mocked(existsSync).mockImplementation((pathLike) => {
+            const path = String(pathLike);
+            return path === '/repo/apps/cli/src'
+                || path === '/Users/test/.happier/cli-dev/current/package-dist/index.mjs';
+        });
+
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl,
+            currentExecPath: '/usr/local/bin/node',
+            argv: ['/usr/local/bin/node', '/usr/local/bin/vitest'],
+        })).toEqual({
+            root: '/repo/apps/cli',
+            provenance: 'source-module',
+        });
+    });
+
+    it('classifies a dist module without a source owner as packaged authority', () => {
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///runtime/node_modules/@happier-dev/cli/dist/runtimeOwner.js',
+            currentExecPath: '/usr/local/bin/node',
+            argv: ['/usr/local/bin/node', '/runtime/node_modules/@happier-dev/cli/bin/happier.mjs'],
+        })).toEqual({
+            root: '/runtime/node_modules/@happier-dev/cli',
+            provenance: 'packaged-module',
+        });
+    });
+
+    it.each([
+        ['direct', '.runner-snapshots'],
+        ['legacy-dist', join('dist', '.runner-snapshots')],
+    ])('maps a %s source runner snapshot to its exact backing project root', (_label, snapshotDir) => {
+        const sourceRoot = mkdtempSync(join(tmpdir(), 'happier-runtime-source-snapshot-'));
+        mkdirSync(join(sourceRoot, 'src'), { recursive: true });
+        writeFileSync(join(sourceRoot, 'package.json'), JSON.stringify({ name: '@happier-dev/cli' }), 'utf8');
+        const snapshotRoot = join(sourceRoot, snapshotDir, '0123456789abcdef');
+        try {
+            expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+                moduleUrl: pathToFileURL(join(snapshotRoot, 'chunk.js')).href,
+                currentExecPath: '/usr/local/bin/node',
+                argv: ['/usr/local/bin/node', join(snapshotRoot, 'index.mjs')],
+                processEnv: { HAPPIER_STACK_CLI_ROOT_DIR: sourceRoot },
+            })).toEqual({
+                root: sourceRoot,
+                provenance: 'source-snapshot',
+            });
+        } finally {
+            rmSync(sourceRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('does not classify an env-matched snapshot as source without the CLI source owner', () => {
+        const runtimeRoot = mkdtempSync(join(tmpdir(), 'happier-runtime-packaged-snapshot-'));
+        const snapshotRoot = join(runtimeRoot, '.runner-snapshots', '0123456789abcdef');
+        try {
+            expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+                moduleUrl: pathToFileURL(join(snapshotRoot, 'chunk.js')).href,
+                currentExecPath: '/usr/local/bin/node',
+                argv: ['/usr/local/bin/node', join(snapshotRoot, 'index.mjs')],
+                processEnv: { HAPPIER_STACK_CLI_ROOT_DIR: runtimeRoot },
+            })).toEqual({
+                root: runtimeRoot,
+                provenance: 'packaged-snapshot',
+            });
+        } finally {
+            rmSync(runtimeRoot, { recursive: true, force: true });
+        }
+    });
+
+    it('does not classify a snapshot as source merely because its backing root contains src', () => {
+        vi.mocked(existsSync).mockImplementation((pathLike) => String(pathLike) === '/runtime/current/src');
+
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///runtime/current/.runner-snapshots/0123456789abcdef/chunk.js',
+            currentExecPath: '/usr/local/bin/node',
+            argv: ['/usr/local/bin/node', '/runtime/current/.runner-snapshots/0123456789abcdef/index.mjs'],
+            processEnv: {},
+        })).toEqual({
+            root: '/runtime/current',
+            provenance: 'packaged-snapshot',
+        });
+    });
+
+    it('classifies an exact package-dist module as packaged authority', () => {
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///runtime/current/package-dist/chunk.js',
+            currentExecPath: '/usr/local/bin/node',
+            argv: ['/usr/local/bin/node', '/runtime/current/package-dist/index.mjs'],
+        })).toEqual({
+            root: '/runtime/current',
+            provenance: 'packaged-module',
+        });
+    });
+
+    it('keeps package-dist authoritative when an install ancestor is named src', () => {
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///workspace/src/npm/node_modules/@happier-dev/cli/package-dist/chunk.js',
+            currentExecPath: '/usr/local/bin/node',
+            argv: [
+                '/usr/local/bin/node',
+                '/workspace/src/npm/node_modules/@happier-dev/cli/package-dist/index.mjs',
+            ],
+        })).toEqual({
+            root: '/workspace/src/npm/node_modules/@happier-dev/cli',
+            provenance: 'packaged-module',
+        });
+    });
+
+    it('keeps the exact launched payload authoritative instead of accepting another installed channel', () => {
+        vi.mocked(existsSync).mockImplementation((pathLike) => (
+            String(pathLike) === '/Users/test/.happier/cli-dev/current/package-dist/index.mjs'
+        ));
+
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///$bunfs/root/chunk.js',
+            currentExecPath: '/usr/local/bin/node',
+            argv: ['/usr/local/bin/node', '/runtime/active/package-dist/index.mjs'],
+        })).toEqual({
+            root: '/runtime/active',
+            provenance: 'packaged-launch',
+        });
+    });
+
+    it('returns no authority for an embedded-only launch instead of sweeping installed channels', () => {
+        vi.mocked(existsSync).mockImplementation((pathLike) => (
+            String(pathLike) === '/Users/test/.happier/cli-dev/current/package-dist/index.mjs'
+        ));
+
+        expect(resolveAuthoritativePackagedRuntimeProjectRoot({
+            moduleUrl: 'file:///$bunfs/root/chunk.js',
+            currentExecPath: '/$bunfs/root/happier',
+            argv: ['/$bunfs/root/happier'],
+        })).toBeNull();
     });
 
     it('prefers package-dist next to a self-contained cli executable when available', () => {

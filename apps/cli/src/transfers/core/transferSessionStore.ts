@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { chmod, mkdir, open, rm, stat } from 'fs/promises';
+import { chmod, mkdir, open, readdir, rm, stat } from 'fs/promises';
 import { tmpdir } from 'os';
 import { dirname, join } from 'path';
 
@@ -22,6 +22,7 @@ type UploadSession = {
   recipientPublicKeyBase64?: string;
   hash: ReturnType<typeof import('crypto').createHash>;
   file: Awaited<ReturnType<typeof open>>;
+  activeOperationCount: number;
 };
 
 type DownloadSession = {
@@ -35,6 +36,7 @@ type DownloadSession = {
   expiresAt: number;
   recipientPublicKeyBase64?: string;
   file: Awaited<ReturnType<typeof open>>;
+  activeOperationCount: number;
 };
 
 export type TransferSessionStoreDeps = Readonly<{
@@ -45,8 +47,12 @@ export type TransferSessionStoreDeps = Readonly<{
 export class TransferSessionStore {
   private readonly uploads = new Map<string, UploadSession>();
   private readonly downloads = new Map<string, DownloadSession>();
+  private readonly baseTempRoot: string;
   private readonly tempRoot: string;
   private readonly ttlMs: number;
+  private disposed = false;
+  private disposePromise: Promise<void> | null = null;
+  private abandonedRootSweepPromise: Promise<void> | null = null;
 
   constructor(deps: TransferSessionStoreDeps) {
     this.ttlMs = Math.max(1000, Math.floor(deps.ttlMs));
@@ -54,10 +60,20 @@ export class TransferSessionStore {
       ? deps.tempRoot.trim()
       : null;
     const baseTempRoot = overrideTempRoot ?? join(tmpdir(), 'happier', 'file-transfers');
-    this.tempRoot = join(baseTempRoot, randomUUID());
+    this.baseTempRoot = baseTempRoot;
+    this.tempRoot = join(baseTempRoot, `${process.pid}-${randomUUID()}`);
+  }
+
+  private assertOpen(): void {
+    if (this.disposed) {
+      throw new Error('Transfer session store is disposed');
+    }
   }
 
   async ensureTempRoot(): Promise<void> {
+    this.assertOpen();
+    this.abandonedRootSweepPromise ??= this.removeDeadProcessRootsBestEffort();
+    await this.abandonedRootSweepPromise;
     await mkdir(this.tempRoot, { recursive: true, mode: 0o700 });
     if (process.platform !== 'win32') {
       // Best effort: keep transfer temp dirs private. Parent traversal also matters, but this is a useful default.
@@ -65,22 +81,82 @@ export class TransferSessionStore {
     }
   }
 
+  private async removeDeadProcessRootsBestEffort(): Promise<void> {
+    const entries = await readdir(this.baseTempRoot, { withFileTypes: true }).catch(() => []);
+    await Promise.all(entries.map(async (entry) => {
+      if (!entry.isDirectory()) return;
+      const match = /^(?<pid>[1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.exec(entry.name);
+      const ownerPid = Number(match?.groups?.pid ?? Number.NaN);
+      if (!Number.isSafeInteger(ownerPid) || ownerPid <= 0 || this.isProcessAlive(ownerPid)) {
+        // Unowned legacy roots and roots belonging to a possibly-live process are preserved.
+        return;
+      }
+      await rm(join(this.baseTempRoot, entry.name), { recursive: true, force: true }).catch(() => undefined);
+    }));
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      return !(error && typeof error === 'object' && 'code' in error && error.code === 'ESRCH');
+    }
+  }
+
+  private beginSessionOperation<TSession extends { activeOperationCount: number }>(
+    session: TSession | undefined,
+  ): Readonly<{ session: TSession; release(): void }> | null {
+    if (!session) return null;
+    session.activeOperationCount += 1;
+    let released = false;
+    return {
+      session,
+      release: () => {
+        if (released) return;
+        released = true;
+        session.activeOperationCount -= 1;
+      },
+    };
+  }
+
   cleanupExpiredBestEffort(now = Date.now()): void {
+    if (this.disposed) return;
+
     for (const [uploadId, session] of this.uploads) {
-      if (session.expiresAt > now) continue;
+      if (session.expiresAt > now || session.activeOperationCount > 0) continue;
       this.uploads.delete(uploadId);
       session.file.close().catch(() => undefined);
       rm(session.tempPath, { force: true }).catch(() => undefined);
     }
 
     for (const [downloadId, session] of this.downloads) {
-      if (session.expiresAt > now) continue;
+      if (session.expiresAt > now || session.activeOperationCount > 0) continue;
       this.downloads.delete(downloadId);
       session.file.close().catch(() => undefined);
       if (session.deleteFileOnClose) {
         rm(session.filePath, { force: true }).catch(() => undefined);
       }
     }
+  }
+
+  getNextExpiryAt(): number | null {
+    if (this.disposed) return null;
+
+    let nextExpiryAt: number | null = null;
+    for (const session of this.uploads.values()) {
+      if (session.activeOperationCount > 0) continue;
+      nextExpiryAt = nextExpiryAt === null
+        ? session.expiresAt
+        : Math.min(nextExpiryAt, session.expiresAt);
+    }
+    for (const session of this.downloads.values()) {
+      if (session.activeOperationCount > 0) continue;
+      nextExpiryAt = nextExpiryAt === null
+        ? session.expiresAt
+        : Math.min(nextExpiryAt, session.expiresAt);
+    }
+    return nextExpiryAt;
   }
 
   async createUploadSession(input: Readonly<{
@@ -95,6 +171,7 @@ export class TransferSessionStore {
     recipientPublicKeyBase64?: string;
     hash: UploadSession['hash'];
   }>): Promise<UploadSession> {
+    this.assertOpen();
     await this.ensureTempRoot();
     const uploadId = randomUUID();
     const tempPath = join(this.tempRoot, `${uploadId}.upload`);
@@ -117,6 +194,7 @@ export class TransferSessionStore {
       recipientPublicKeyBase64: input.recipientPublicKeyBase64,
       hash: input.hash,
       file,
+      activeOperationCount: 0,
     };
     this.uploads.set(uploadId, session);
     return session;
@@ -124,6 +202,12 @@ export class TransferSessionStore {
 
   getUploadSession(uploadId: string): UploadSession | null {
     return this.uploads.get(uploadId) ?? null;
+  }
+
+  beginUploadSessionOperation(
+    uploadId: string,
+  ): Readonly<{ session: UploadSession; release(): void }> | null {
+    return this.beginSessionOperation(this.uploads.get(uploadId));
   }
 
   countUploadSessions(): number {
@@ -165,6 +249,7 @@ export class TransferSessionStore {
     chunkSizeBytes: number;
     recipientPublicKeyBase64?: string;
   }>): Promise<DownloadSession> {
+    this.assertOpen();
     const stats = await stat(input.filePath);
     const downloadId = randomUUID();
     const file = await open(input.filePath, 'r');
@@ -179,6 +264,7 @@ export class TransferSessionStore {
       expiresAt: Date.now() + this.ttlMs,
       recipientPublicKeyBase64: input.recipientPublicKeyBase64,
       file,
+      activeOperationCount: 0,
     };
     this.downloads.set(downloadId, session);
     return session;
@@ -186,6 +272,16 @@ export class TransferSessionStore {
 
   getDownloadSession(downloadId: string): DownloadSession | null {
     return this.downloads.get(downloadId) ?? null;
+  }
+
+  beginDownloadSessionOperation(
+    downloadId: string,
+  ): Readonly<{ session: DownloadSession; release(): void }> | null {
+    return this.beginSessionOperation(this.downloads.get(downloadId));
+  }
+
+  listDownloadSessionIds(): readonly string[] {
+    return [...this.downloads.keys()];
   }
 
   refreshDownloadExpiry(downloadId: string): void {
@@ -203,5 +299,35 @@ export class TransferSessionStore {
     if (session.deleteFileOnClose) {
       await rm(session.filePath, { force: true }).catch(() => undefined);
     }
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposePromise) {
+      return await this.disposePromise;
+    }
+
+    this.disposed = true;
+    const uploads = [...this.uploads.values()];
+    const downloads = [...this.downloads.values()];
+    this.uploads.clear();
+    this.downloads.clear();
+
+    this.disposePromise = (async () => {
+      await Promise.all([
+        ...uploads.map(async (session) => {
+          await session.file.close().catch(() => undefined);
+          await rm(session.tempPath, { force: true }).catch(() => undefined);
+        }),
+        ...downloads.map(async (session) => {
+          await session.file.close().catch(() => undefined);
+          if (session.deleteFileOnClose) {
+            await rm(session.filePath, { force: true }).catch(() => undefined);
+          }
+        }),
+      ]);
+      await rm(this.tempRoot, { recursive: true, force: true }).catch(() => undefined);
+    })();
+
+    return await this.disposePromise;
   }
 }

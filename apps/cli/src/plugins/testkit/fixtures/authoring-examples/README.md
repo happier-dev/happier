@@ -1,36 +1,37 @@
-# Plugin authoring examples
+# Internal Plugin Platform regression fixtures
 
-These example packages document the **current** plugin contract used by the CLI runtime.
+The packages in this directory are CLI/runtime regression inputs. They preserve
+older and edge-case shapes needed by internal tests and are **not canonical
+external authoring templates**. In particular, do not copy their entrypoint,
+handler-reference, or older development conventions into a new plugin.
 
-All examples in this folder are **V2-only** (`schemaVersion: 2`). No V1/compat authoring fixtures remain.
-
-Plugin package topology is **domain-organized**:
-
-- `agent/` is the executable-agent domain (daemon entrypoints, runtime adapters, hook handlers)
-- `ui/` is the UI domain (resources and host-rendered descriptor assets)
-
-Notes:
-
-- Executable code runs through `entrypoints.main` and optional `entrypoints.dev`.
-- Local development is `happier plugins install --dev /abs/path`; the dev watcher reloads trusted local plugins after edits and rolls back to the last known good version on load failure.
-
-Examples:
-
-- `action-plugin`: declarative action routed to daemon code
-- `lifecycle-hook-plugin`: declarative lifecycle hook handler
-- `agent-runtime-plugin`: declarative agent-runtime package with daemon runtime adapter handlers
-- `ui-descriptor-plugin`: activation-time resource + host-rendered UI descriptor registration
-- `reload-helper-plugin`: activation-time action registration plus `onDispose(...)` for the explicit reload loop
-- `bundled-first-party`: bundled first-party agent-runtime example with domain topology
-- `external-declarative-ui`: external declarative UI descriptor + resource example (no executable entrypoint)
-
-Local authoring loop:
+Create the current minimal external package with:
 
 ```bash
-happier plugins install --dev /absolute/path/to/apps/cli/src/plugins/testkit/fixtures/authoring-examples/action-plugin
-happier plugins show examples.action-plugin
-happier plugins reload examples.action-plugin
+happier plugins create my-plugin --id com.example.my-plugin
+cd my-plugin
+happier plugins dev
+happier plugins author build .
+happier plugins test .
+happier plugins pack .
 ```
 
-- Remote archive and marketplace installs exist, but executable daemon loading still fails closed for `prompt`/`untrusted` sources.
-- For agent-runtime coverage beyond the minimal examples here, also see `../sample-package/`.
+Focused typecheck diagnostics remain available through
+`happier plugins author typecheck .`.
+
+The canonical external source of truth is the generated
+`.happier-plugin/plugin.json`. It is cold JSON with current daemon and
+development entrypoints and manifest-declared contribution ids. Executable
+binding happens through a named `activate(api: PluginApi)` export.
+
+For UI templates, use the supported scaffold command:
+
+```bash
+happier plugins scaffold ./my-plugin \
+  --id com.example.my-plugin \
+  --name "My plugin" \
+  --ui reactNative
+```
+
+Use `--ui hostedWeb` for an isolated web surface. Canonical author guidance is
+in `apps/docs/content/docs/plugins/` and `packages/plugin-sdk/README.md`.

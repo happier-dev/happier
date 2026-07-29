@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { HookEventEnvelopeV1 } from '@happier-dev/protocol';
 
-import type { ResolvedHookRegistration } from '@/plugins/projection/registry/types';
+import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/registry/types';
 import { matchesHookRegistrationFilters } from './matchesHookRegistrationFilters';
 
 function createEnvelope(overrides: Partial<HookEventEnvelopeV1> = {}): HookEventEnvelopeV1 {
@@ -19,7 +19,7 @@ function createEnvelope(overrides: Partial<HookEventEnvelopeV1> = {}): HookEvent
 
 function createRegistration(
   filters?: Readonly<Record<string, unknown>>,
-): ResolvedHookRegistration {
+): ResolvedActivatedHookRegistration {
   return {
     provenance: 'external',
     source: { kind: 'path' },
@@ -33,14 +33,10 @@ function createRegistration(
       id: 'session.spawned',
       category: 'lifecycle',
       scope: 'session',
-      ...(filters ? { filters } : {}),
+    ...(filters ? { filters } : {}),
       executionKind: 'observe',
-      handler: {
-        target: 'plugin',
-        exportName: 'handleSessionSpawned',
-      },
     },
-  } as ResolvedHookRegistration;
+  } as unknown as ResolvedActivatedHookRegistration;
 }
 
 describe('matchesHookRegistrationFilters', () => {

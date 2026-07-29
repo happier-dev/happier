@@ -6,18 +6,42 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
 
 import { findAllHappyProcesses, type HappyProcessInfo } from '@/daemon/doctor';
+import {
+  normalizeProcessCommandPathValue,
+  processCommandContainsPathFragment,
+} from '@/subprocess/processCommandPathMatch';
 
 const TERMINATABLE_PROCESS_TYPES = new Set([
   'daemon',
   'dev-daemon',
-  'daemon-spawned-session',
-  'dev-daemon-spawned',
   'daemon-version-check',
   'dev-daemon-version-check',
 ] as const);
 
-function normalizeProcessCommand(value: string): string {
-  return String(value ?? '').trim().replaceAll('\\', '/').toLowerCase();
+const DEFAULT_PAYLOAD_OWNER_STOP_TIMEOUT_MS = 30_000;
+
+function readPositiveIntFromEnv(value: string | undefined, fallback: number): number {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
+function resolvePayloadOwnerStopTimeoutMs(processEnv: NodeJS.ProcessEnv): number {
+  return readPositiveIntFromEnv(
+    processEnv.HAPPIER_INSTALLER_PRE_INSTALL_COMMAND_TIMEOUT_MS,
+    DEFAULT_PAYLOAD_OWNER_STOP_TIMEOUT_MS,
+  );
+}
+
+function shouldSkipInstalledCliStopCommands(processEnv: NodeJS.ProcessEnv): boolean {
+  const raw = String(processEnv.HAPPIER_CLI_SKIP_PAYLOAD_OWNER_STOP_COMMANDS ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes';
 }
 
 function resolveManagedCliInvoker(paths: Readonly<{
@@ -49,8 +73,8 @@ function isManagedPayloadOwnerProcess(params: Readonly<{
   if (!TERMINATABLE_PROCESS_TYPES.has(params.processInfo.type as (typeof TERMINATABLE_PROCESS_TYPES extends Set<infer T> ? T : never))) {
     return false;
   }
-  const normalizedCommand = normalizeProcessCommand(params.processInfo.command);
-  return params.matchNeedles.some((needle) => normalizedCommand.includes(needle));
+  const normalizedCommand = normalizeProcessCommandPathValue(params.processInfo.command);
+  return params.matchNeedles.some((needle) => processCommandContainsPathFragment(normalizedCommand, needle));
 }
 
 export async function quiesceInstalledCliWindowsPayloadOwners(params: Readonly<{
@@ -68,15 +92,17 @@ export async function quiesceInstalledCliWindowsPayloadOwners(params: Readonly<{
     processEnv,
   });
   const invoker = resolveManagedCliInvoker(installedPaths);
+  const stopTimeoutMs = resolvePayloadOwnerStopTimeoutMs(processEnv);
 
-  if (invoker) {
+  if (invoker && !shouldSkipInstalledCliStopCommands(processEnv)) {
     for (const args of [
-      ['service', 'stop', '--json'],
-      ['daemon', 'stop', '--all', '--kill-sessions', '--json'],
+      ['service', 'stop', '--transfer-managed-local-services', '--json'],
+      ['daemon', 'stop', '--all', '--transfer-managed-local-services', '--json'],
     ] as const) {
       spawn.sync(invoker, [...args], {
         env: processEnv,
         stdio: 'ignore',
+        timeout: stopTimeoutMs,
         windowsHide: true,
       });
     }
@@ -96,7 +122,7 @@ export async function quiesceInstalledCliWindowsPayloadOwners(params: Readonly<{
     ...installedPaths.shimPaths,
   ]
     .filter((value): value is string => Boolean(value))
-    .map((value) => normalizeProcessCommand(value));
+    .map((value) => normalizeProcessCommandPathValue(value));
 
   const matchingProcesses = (await findAllHappyProcesses())
     .filter((processInfo) => processInfo.pid !== process.pid)
@@ -106,7 +132,9 @@ export async function quiesceInstalledCliWindowsPayloadOwners(params: Readonly<{
     }));
 
   for (const processInfo of matchingProcesses) {
-    spawn.sync('taskkill', ['/F', '/T', '/PID', String(processInfo.pid)], {
+    // Do not use `/T`: the daemon's Agent/session-runner and managed-runtime
+    // descendants must survive for the new CLI payload to adopt them.
+    spawn.sync('taskkill', ['/F', '/PID', String(processInfo.pid)], {
       stdio: 'ignore',
       windowsHide: true,
     });

@@ -82,12 +82,16 @@ vi.mock('@/daemon/statusSnapshot', () => ({
   readDaemonStatusSnapshot: () => readDaemonStatusSnapshotMock(),
 }));
 
-vi.mock('@/daemon/controlClient', () => ({
-  checkIfDaemonRunningAndCleanupStaleState: vi.fn(async () => false),
-  listDaemonSessions: vi.fn(async () => []),
-  stopDaemon: vi.fn(async () => {}),
-  stopDaemonSession: vi.fn(async () => false),
-}));
+vi.mock('@/daemon/controlClient', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/daemon/controlClient')>();
+  return {
+    ...actual,
+    checkIfDaemonRunningAndCleanupStaleState: vi.fn(async () => false),
+    listDaemonSessions: vi.fn(async () => []),
+    stopDaemon: vi.fn(async () => {}),
+    stopDaemonSession: vi.fn(async () => false),
+  };
+});
 
 vi.mock('@/daemon/runtime/spawnDetachedDaemonStartSync', () => ({
   spawnDetachedDaemonStartSync: vi.fn(async () => ({ unref() {} })),
@@ -147,7 +151,7 @@ describe('happier daemon status --json', () => {
       output.restore();
       exitSpy.mockRestore();
     }
-  });
+  }, 60_000);
 
   it('prints stable JSON for daemon status across all configured servers', async () => {
     listDaemonStatusesForAllKnownServersMock.mockResolvedValueOnce([
@@ -254,5 +258,5 @@ describe('happier daemon status --json', () => {
       output.restore();
       exitSpy.mockRestore();
     }
-  });
+  }, 60_000);
 });

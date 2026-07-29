@@ -1,14 +1,28 @@
 import {
+  BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
   ConnectedServiceUsageSourceV1Schema,
   ProviderAccountUsageRecordIdSchema,
   ProviderAccountUsageSnapshotV1Schema,
+  projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1,
   sealProviderAccountUsageSnapshotCiphertext,
   type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageRecordId,
   type ProviderAccountUsageSnapshotV1,
+  type SealedConnectedServiceQuotaSnapshotV1,
   type SealedProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
+import {
+  sealLegacyConnectedServiceQuotaSnapshotCompatibilityCiphertext,
+} from '@happier-dev/protocol/host/legacyConnectedServiceQuotaCompatibility';
 
+import {
+  QualifiedConnectedAccountCompatibilityError,
+  resolveProviderAccountUsageWriteTransport,
+} from '@/api/client/qualifiedConnectedAccountApi';
+import type {
+  SessionSyncPendingInputServerContractResult,
+} from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { Credentials } from '@/persistence';
 import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/createConnectedServiceQuotaPersistenceScheduler';
 import {
@@ -25,6 +39,12 @@ const DEFAULT_PROVIDER_ACCOUNT_USAGE_PERSISTENCE_MIN_FRESHNESS_MS = 60_000;
 
 type AccountUsageApi = Readonly<{
   getAccountEncryptionMode: () => Promise<'plain' | 'e2ee' | 'unknown'>;
+  getServerFeaturesSnapshot: (
+    options?: Readonly<{ refresh?: boolean }>,
+  ) => Promise<CliServerFeaturesSnapshot | undefined>;
+  getProviderAccountUsageWriteRouteAvailability: (args: Readonly<{
+    recordId: ProviderAccountUsageRecordId;
+  }>) => Promise<'available' | 'absent' | 'indeterminate'>;
   registerProviderAccountUsageSnapshotPlain?: (args: Readonly<{
     recordId: ProviderAccountUsageRecordId;
     source?: ConnectedServiceUsageSourceV1;
@@ -41,6 +61,7 @@ type AccountUsageApi = Readonly<{
     recordKey: ProviderAccountUsageSnapshotV1['recordKey'];
     source?: ConnectedServiceUsageSourceV1;
     sealed: SealedProviderAccountUsageSnapshotV1;
+    legacyQuotaCompatibility?: SealedConnectedServiceQuotaSnapshotV1;
     metadata: {
       fetchedAt: number;
       staleAfterMs: number;
@@ -65,7 +86,7 @@ export type ProviderAccountUsagePersistenceScheduler = Readonly<{
     options?: Readonly<{ source?: ConnectedServiceUsageSourceV1; sources?: readonly ConnectedServiceUsageSourceV1[] }>,
   ): Promise<
     | Readonly<{ status: 'enqueued'; enqueue: 'accepted' | 'coalesced' }>
-    | Readonly<{ status: 'suppressed'; reason: string }>
+    | Readonly<{ status: 'already_persisted'; reason: string }>
   >;
   flush(timeoutMs: number): Promise<void>;
   dispose(): void;
@@ -140,6 +161,8 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
   serverScope?: string;
   accountScope?: string;
   minFreshnessMs?: number;
+  resolveServerContract?: () =>
+    SessionSyncPendingInputServerContractResult | null;
 }>): ProviderAccountUsagePersistenceScheduler {
   const fingerprintKey = resolveFingerprintKey(params);
   const minFreshnessMs = Math.max(
@@ -149,8 +172,24 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
   const stateByPersistenceKey = new Map<string, QuotaPersistenceMaterialState>();
 
   async function persistPayload(_key: string, payload: ProviderAccountUsagePersistencePayload): Promise<void> {
+    const serverFeatures = await params.api.getServerFeaturesSnapshot({
+      refresh: true,
+    });
+    const providerAccountUsageRoute =
+      await params.api.getProviderAccountUsageWriteRouteAvailability({
+        recordId: payload.recordId,
+      });
+    const transport = resolveProviderAccountUsageWriteTransport({
+      snapshot: serverFeatures,
+      serverContract: params.resolveServerContract?.() ?? null,
+      providerAccountUsageRoute,
+      ...(payload.source ? { source: payload.source } : {}),
+    });
     const accountMode = await params.api.getAccountEncryptionMode();
-    if (accountMode === 'plain' && params.api.registerProviderAccountUsageSnapshotPlain) {
+    if (accountMode === 'plain') {
+      if (!params.api.registerProviderAccountUsageSnapshotPlain) {
+        throw new Error('Provider account usage plaintext persistence route unavailable');
+      }
       await params.api.registerProviderAccountUsageSnapshotPlain({
         recordId: payload.recordId,
         ...(payload.source ? { source: payload.source } : {}),
@@ -165,7 +204,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       stateByPersistenceKey.set(_key, payload.materialState);
       return;
     }
-    if (accountMode !== 'e2ee' || !params.api.registerProviderAccountUsageSnapshotSealed) {
+    if (accountMode !== 'e2ee') {
       throw new Error('Provider account usage persistence route unavailable for account mode');
     }
     if (!params.credentials || !params.randomBytes) {
@@ -176,16 +215,49 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       encryption.type === 'legacy'
         ? ({ type: 'legacy' as const, secret: encryption.secret })
         : ({ type: 'dataKey' as const, machineKey: encryption.machineKey });
+    if (!params.api.registerProviderAccountUsageSnapshotSealed) {
+      throw new Error('Provider account usage sealed persistence route unavailable');
+    }
     const ciphertext = sealProviderAccountUsageSnapshotCiphertext({
       material,
       payload: payload.snapshot,
       randomBytes: params.randomBytes,
     });
+    const legacyQuotaCompatibility = (() => {
+      if (!transport.legacyQuotaCompatibility) return undefined;
+      if (payload.source?.bindingKind !== 'profile') return undefined;
+      const compatibility =
+        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
+          payload.source.serviceId
+        ];
+      if (
+        compatibility?.exactV0_2_1ReaderQuotaProjection
+        !== true
+      ) {
+        return undefined;
+      }
+      const quotaSnapshot =
+        projectProviderAccountUsageSnapshotToConnectedServiceQuotaSnapshotV1({
+          snapshot: payload.snapshot,
+          source: payload.source,
+        });
+      if (!quotaSnapshot) return undefined;
+      return {
+        format: 'account_scoped_v1' as const,
+        ciphertext:
+          sealLegacyConnectedServiceQuotaSnapshotCompatibilityCiphertext({
+            material,
+            payload: quotaSnapshot,
+            randomBytes: params.randomBytes!,
+          }),
+      };
+    })();
     await params.api.registerProviderAccountUsageSnapshotSealed({
       recordId: payload.recordId,
       recordKey: payload.snapshot.recordKey,
       ...(payload.source ? { source: payload.source } : {}),
       sealed: { format: 'account_scoped_v1', ciphertext },
+      ...(legacyQuotaCompatibility ? { legacyQuotaCompatibility } : {}),
       metadata: {
         fetchedAt: payload.snapshot.fetchedAtMs,
         staleAfterMs: payload.snapshot.staleAfterMs,
@@ -204,6 +276,10 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
     maxKeyAgeMs: 60 * 60_000,
     maxPendingPayloadAgeMs: 10 * 60_000,
     now: params.now,
+    shouldRetry: (error) =>
+      !(error instanceof QualifiedConnectedAccountCompatibilityError),
+    shouldPauseAfterFailure: (error) =>
+      !(error instanceof QualifiedConnectedAccountCompatibilityError),
   });
 
   return {
@@ -242,10 +318,12 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
         });
         if (enqueue.type === 'accepted') accepted = true;
         if (enqueue.type === 'coalesced') coalesced = true;
-        if (enqueue.type === 'suppressed') lastSuppressionReason = enqueue.reason;
+        if (enqueue.type === 'suppressed') {
+          throw new Error(`provider_account_usage_persistence_${enqueue.reason}`);
+        }
       }
       if (accepted || coalesced) return { status: 'enqueued', enqueue: accepted ? 'accepted' : 'coalesced' };
-      return { status: 'suppressed', reason: lastSuppressionReason };
+      return { status: 'already_persisted', reason: lastSuppressionReason };
     },
     flush: async (timeoutMs) => {
       await scheduler.flushAll(timeoutMs);

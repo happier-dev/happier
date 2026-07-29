@@ -186,6 +186,14 @@ describe('AcpBackend permission deny cleanup', () => {
     await withTempDir('happier-acp-perm-deny-', async (dir) => {
       const scriptPath = writeFakePermissionAgentScript({ dir });
       let backendForCleanup: AcpBackend | undefined;
+      let resolvePermissionDecision!: () => void;
+      const permissionDecision = new Promise<void>((resolve) => {
+        resolvePermissionDecision = resolve;
+      });
+      let notifyPermissionRequested!: () => void;
+      const permissionRequested = new Promise<void>((resolve) => {
+        notifyPermissionRequested = resolve;
+      });
 
       try {
         const backend = new AcpBackend({
@@ -194,7 +202,11 @@ describe('AcpBackend permission deny cleanup', () => {
           command: process.execPath,
           args: [scriptPath],
           permissionHandler: {
-            handleToolCall: async () => ({ decision: 'denied' }),
+            handleToolCall: async () => {
+              notifyPermissionRequested();
+              await permissionDecision;
+              return { decision: 'denied' };
+            },
           },
           transportHandler: createAcpTestTransportHandler({
             initTimeoutMs: 1_000,
@@ -205,8 +217,18 @@ describe('AcpBackend permission deny cleanup', () => {
 
         const started = await backend.startSession();
         await backend.sendPrompt(started.sessionId, 'please run bash with permission');
+        const completion = backend.waitForResponseComplete(250);
+        let completionState: 'pending' | 'resolved' | 'rejected' = 'pending';
+        void completion.then(
+          () => { completionState = 'resolved'; },
+          () => { completionState = 'rejected'; },
+        );
+        await permissionRequested;
+        await Promise.resolve();
+        expect(completionState).toBe('pending');
+        resolvePermissionDecision();
 
-        await expect(backend.waitForResponseComplete(250)).rejects.toMatchObject({ name: 'AbortError' });
+        await expect(completion).rejects.toMatchObject({ name: 'AbortError' });
       } finally {
         await backendForCleanup?.dispose().catch(() => {});
       }

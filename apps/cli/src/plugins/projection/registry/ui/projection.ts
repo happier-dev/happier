@@ -1,32 +1,23 @@
 import { createHash } from 'node:crypto';
+import { posix } from 'node:path';
 
-import type { PluginUiArtifactTrustRootV1 } from '@happier-dev/protocol';
 import {
     isRenderableHostRendererId,
+    PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_SURFACE_REGISTRY,
+    PluginHostedWebSecurityPolicyV1Schema,
+    type PluginUiArtifactsManifestEntryV1,
     type PluginSurfaceRuntimeModeV1,
 } from '@happier-dev/protocol/plugins/ui';
 
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import {
-    validateInstalledEmbeddedWebBundleArtifact,
-    type EmbeddedWebBundleHostRuntime,
-} from '@/plugins/install/ui/embeddedWebBundles';
-import {
-    resolvePluginUiArtifactVerifiedSignatureTrust,
-    type PluginUiArtifactExecutionTrust,
-} from '@/plugins/install/ui/artifactSigning';
-import { resolveTrustedSourceReason } from '@/plugins/install/ui/trustedSource';
-import type {
-    ReactNativeBundleHostRuntime,
+    deriveReactNativeBundleRuntimeCacheKey,
+    deriveReactNativeNativeCapabilitiesDigest,
+    type ReactNativeBundleCacheIdentity,
+    type ReactNativeBundleHostRuntime,
 } from '@/plugins/install/ui/reactNativeBundles';
-import {
-    createPluginUiArtifactRevocationState,
-    mergePluginUiArtifactRevocationStates,
-} from '@/plugins/install/ui/revocation';
-import type { PluginUiArtifactRevocationState } from '@/plugins/install/ui/revocation';
 import type {
-    ResolvedEmbeddedWebBundleContribution,
     ResolvedContributionRegistry,
     ResolvedHostedWebContribution,
     ResolvedReactNativeBundleContribution,
@@ -34,7 +25,10 @@ import type {
     ResolvedStructuredMessageContribution,
     ResolvedSurfacePlacementContribution,
     ResolvedUiArtifactContribution,
+    ResolvedUiRendererV2Contribution,
+    ResolvedUiTranslationBundleV2Contribution,
     ResolvedUiTranslationsContribution,
+    ResolvedUiViewV2Contribution,
 } from '../types';
 import { resolveHostedWebRuntimeBinding } from './hostedWebBuild';
 import {
@@ -45,6 +39,11 @@ import {
     projectStructuredMessages,
     type StructuredMessageProjectionHostRuntimeContext,
 } from './structuredMessages';
+import {
+    collectResolvedGeneratedReactNativeArtifactOwners,
+    findGeneratedReactNativeArtifactEntry,
+} from './generatedUiArtifactOwners';
+import type { StablePluginDeclarativeModel } from '@/plugins/runtime/invocation/services/declarativeModel';
 
 type PluginUiProjectedEntry = Readonly<Record<string, unknown> & {
     id: string;
@@ -60,10 +59,6 @@ export type ReactNativeBundleProjectionHostRuntimeContext = Readonly<{
     devHotReloadEnabled?: boolean;
     loaderBackendAvailable?: boolean;
     loaderBackendDiagnostics?: readonly string[];
-    revocationState?: PluginUiArtifactRevocationState;
-    trustRoots?: readonly PluginUiArtifactTrustRootV1[];
-    trustState?: 'full' | 'limited' | 'denied' | 'unknown';
-    executionTrustByArtifactDigest?: Readonly<Record<string, PluginUiArtifactExecutionTrust | undefined>>;
     crashDisabledContributionIds?: readonly string[];
     crashDisabledByContributionId?: Readonly<Record<string, boolean>>;
     hostRuntime?: Partial<ReactNativeBundleHostRuntime>;
@@ -73,25 +68,14 @@ export type HostedWebProjectionHostRuntimeContext = Readonly<{
     featureEnabled?: boolean;
 }>;
 
-export type EmbeddedWebBundleProjectionHostRuntimeContext = Readonly<{
-    featureEnabled?: boolean;
-    loaderBackendAvailable?: boolean;
-    revocationState?: PluginUiArtifactRevocationState;
-    trustState?: 'full' | 'limited' | 'denied' | 'unknown';
-    trustRoots?: readonly PluginUiArtifactTrustRootV1[];
-    crashDisabledContributionIds?: readonly string[];
-    crashDisabledByContributionId?: Readonly<Record<string, boolean>>;
-    csp?: Readonly<{
-        supportsSameOriginModuleUrl: boolean;
-        allowsBlobModuleImport: boolean;
-    }>;
-    hostRuntime?: Partial<EmbeddedWebBundleHostRuntime>;
+export type DeclarativeProjectionHostRuntimeContext = Readonly<{
+    modelsByRendererKey?: Readonly<Record<string, StablePluginDeclarativeModel | undefined>>;
 }>;
 
 export type PluginUiProjectionHostRuntimeContext = Readonly<{
     hostedWeb?: HostedWebProjectionHostRuntimeContext;
+    declarative?: DeclarativeProjectionHostRuntimeContext;
     reactNativeBundles?: ReactNativeBundleProjectionHostRuntimeContext;
-    embeddedWebBundles?: EmbeddedWebBundleProjectionHostRuntimeContext;
     structuredMessages?: StructuredMessageProjectionHostRuntimeContext;
 }>;
 
@@ -131,9 +115,50 @@ function projectTranslations(
     registry: ResolvedContributionRegistry,
     entriesById: Record<string, PluginUiProjectedEntry>,
 ): void {
+    const v2ByPluginId = new Map<string, ResolvedUiTranslationBundleV2Contribution[]>();
+    const sortedV2 = [...(registry.uiTranslationsV2 ?? [])].sort((left, right) => {
+        const leftPluginId = readPluginId(left) ?? '';
+        const rightPluginId = readPluginId(right) ?? '';
+        if (leftPluginId !== rightPluginId) return leftPluginId.localeCompare(rightPluginId);
+        if (left.definition.locale !== right.definition.locale) {
+            return left.definition.locale.localeCompare(right.definition.locale);
+        }
+        const leftOwner = `${left.manifestPath ?? ''}\0${left.manifestDigest ?? ''}\0${JSON.stringify(left.definition)}`;
+        const rightOwner = `${right.manifestPath ?? ''}\0${right.manifestDigest ?? ''}\0${JSON.stringify(right.definition)}`;
+        return leftOwner.localeCompare(rightOwner);
+    });
+    for (const contribution of sortedV2) {
+        const pluginId = readPluginId(contribution);
+        if (!pluginId) continue;
+        const contributions = v2ByPluginId.get(pluginId) ?? [];
+        contributions.push(contribution);
+        v2ByPluginId.set(pluginId, contributions);
+    }
+    for (const [pluginId, contributions] of [...v2ByPluginId.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+        const bundles: Record<string, Readonly<Record<string, string>>> = {};
+        const duplicateLocales = new Set<string>();
+        for (const contribution of contributions) {
+            const locale = contribution.definition.locale;
+            if (Object.hasOwn(bundles, locale)) duplicateLocales.add(locale);
+            bundles[locale] = Object.freeze(Object.fromEntries(
+                Object.entries(contribution.definition.messages).sort(([left], [right]) => left.localeCompare(right)),
+            ));
+        }
+        addEntry(entriesById, {
+            id: `translations:${pluginId}`,
+            pluginId,
+            contributionKind: 'translations',
+            locales: Object.freeze(Object.keys(bundles).sort()),
+            bundles: Object.freeze(bundles),
+            ...(duplicateLocales.size > 0
+                ? { diagnostics: Object.freeze(['duplicate_translation_locale']) }
+                : {}),
+        });
+    }
+
     for (const contribution of registry.uiTranslations ?? []) {
         const pluginId = readPluginId(contribution);
-        if (!pluginId) {
+        if (!pluginId || v2ByPluginId.has(pluginId)) {
             continue;
         }
         const id = `translations:${pluginId}`;
@@ -163,21 +188,23 @@ function projectSessionHeaderActions(
             pluginId,
             contributionKind: 'sessionHeaderAction',
             descriptorId: contribution.definition.id,
+            title: contribution.definition.title,
+            description: contribution.definition.description,
             action: contribution.definition.action,
-            display: contribution.definition.display,
-            placement: contribution.definition.placement,
-            visibility: contribution.definition.visibility,
-            enabled: contribution.definition.enabled,
-            badge: contribution.definition.badge,
             order: contribution.definition.order,
-            compatibility: contribution.definition.compatibility,
+            availability: contribution.definition.availability,
+            metadata: contribution.definition.metadata,
         });
     }
 }
 
 function hostedWebRuntimeResult(params: Readonly<{
     state: 'available' | 'fallback';
-    reason: 'available' | 'feature_disabled' | 'hosted_web_static_artifact_missing';
+    reason:
+        | 'available'
+        | 'feature_disabled'
+        | 'hosted_web_static_artifact_missing'
+        | 'hosted_web_url_runtime_unavailable';
     diagnostics: readonly string[];
 }>): Readonly<Record<string, unknown>> {
     return Object.freeze({
@@ -195,10 +222,14 @@ function projectHostedWeb(
     registry: ResolvedContributionRegistry,
     entriesById: Record<string, PluginUiProjectedEntry>,
     hostRuntimeContext?: HostedWebProjectionHostRuntimeContext,
+    v2OwnedContributionKeys: ReadonlySet<string> = new Set(),
 ): void {
     for (const contribution of registry.hostedWeb ?? []) {
         const pluginId = readPluginId(contribution);
         if (!pluginId) {
+            continue;
+        }
+        if (v2OwnedContributionKeys.has(`${pluginId}\0${contribution.definition.id}`)) {
             continue;
         }
         const id = `hostedWeb:${pluginId}:${contribution.definition.id}`;
@@ -242,6 +273,102 @@ function projectHostedWeb(
             fallback: contribution.definition.fallback,
         });
     }
+}
+
+function projectGeneratedHostedWebRenderers(
+    registry: ResolvedContributionRegistry,
+    entriesById: Record<string, PluginUiProjectedEntry>,
+    hostRuntimeContext?: HostedWebProjectionHostRuntimeContext,
+): ReadonlySet<string> {
+    const ownedContributionKeys = new Set<string>();
+    for (const renderer of registry.uiRenderersV2 ?? []) {
+        if (renderer.definition.kind !== 'hostedWeb') continue;
+        const pluginId = renderer.pluginId;
+        const contributionId = renderer.definition.id;
+        ownedContributionKeys.add(`${pluginId}\0${contributionId}`);
+        const source = renderer.definition.source;
+        const candidates = source.kind === 'artifact'
+            ? renderer.generatedUiArtifactsManifest?.entries.filter((entry) => (
+                entry.contributionId === source.artifact
+                && entry.tier === 'hostedWeb'
+                && entry.platform === 'web'
+            )) ?? []
+            : [];
+        const artifact = candidates.length === 1 ? candidates[0]! : null;
+        const assetRootId = artifact ? posix.dirname(artifact.entry) : null;
+        const graphValid = Boolean(
+            artifact
+            && renderer.pluginRootPath
+            && assetRootId
+            && assetRootId !== '.'
+            && artifact.hostUiApiVersion === PLUGIN_UI_HOST_API_VERSION_V1
+            && new Set(artifact.files.map((file) => file.relativePath)).size === artifact.files.length
+            && artifact.files.some((file) => file.relativePath === artifact.entry)
+            && artifact.files.every((file) => file.relativePath.startsWith(`${assetRootId}/`)),
+        );
+        const featureEnabled = hostRuntimeContext?.featureEnabled === true;
+        const failure = source.kind !== 'artifact'
+            ? 'hosted_web_url_runtime_unavailable'
+            : !graphValid
+                ? 'hosted_web_static_artifact_missing'
+                : !featureEnabled
+                    ? 'feature_disabled'
+                    : null;
+        const runtime = failure
+            ? hostedWebRuntimeResult({ state: 'fallback', reason: failure, diagnostics: [failure] })
+            : hostedWebRuntimeResult({ state: 'available', reason: 'available', diagnostics: [] });
+        const requiredHostMethods = renderer.definition.requiredHostMethods ?? [];
+        const allowedMessages = Object.freeze([
+            ...(requiredHostMethods.some((method) => method === 'context' || method === 'watchContext')
+                ? ['ready' as const]
+                : []),
+            ...(requiredHostMethods.includes('executeAction') ? ['requestHostAction' as const] : []),
+            ...(requiredHostMethods.includes('readResource') ? ['requestSessionResource' as const] : []),
+            ...(requiredHostMethods.includes('watchResource')
+                ? ['subscribeResource' as const, 'unsubscribeResource' as const]
+                : []),
+            ...(requiredHostMethods.includes('openSurface') ? ['openSurface' as const] : []),
+            ...(requiredHostMethods.includes('diagnostic') ? ['logDiagnostic' as const] : []),
+            ...(requiredHostMethods.includes('openExternalLink') ? ['openExternal' as const] : []),
+            ...(requiredHostMethods.includes('writeClipboard') ? ['copy' as const] : []),
+        ]);
+        addEntry(entriesById, {
+            id: `hostedWeb:${pluginId}:${contributionId}`,
+            pluginId,
+            pluginVersion: renderer.pluginVersion ?? '0.0.0',
+            contributionKind: 'hostedWeb',
+            contributionId,
+            generatedV2: true,
+            source,
+            service: Object.freeze({
+                kind: 'staticAssets' as const,
+                assetRootId: assetRootId ?? `hosted-web/${contributionId}`,
+            }),
+            ...(artifact && graphValid && featureEnabled
+                ? {
+                    runtimeMode: Object.freeze({
+                        kind: 'installedStaticAssets' as const,
+                        artifactId: source.kind === 'artifact' ? source.artifact : contributionId,
+                        assetRootId,
+                    }),
+                    artifactGraph: artifact,
+                }
+                : {}),
+            entry: Object.freeze({ routeMode: 'pathFallback' as const, path: '/' }),
+            bridge: Object.freeze({ allowedMessages }),
+            sandbox: Object.freeze({
+                scripts: true,
+                sameOrigin: false,
+                popups: false,
+                topNavigation: false,
+                mixedContent: false,
+            }),
+            security: PluginHostedWebSecurityPolicyV1Schema.parse({}),
+            runtimeDiagnostics: runtime.diagnostics,
+            runtime,
+        });
+    }
+    return ownedContributionKeys;
 }
 
 function findReactNativeBundleArtifact(params: Readonly<{
@@ -289,10 +416,8 @@ function toReactNativeExecutableArtifactManifest(
         return undefined;
     }
 
-    const { revokedAt: _revokedAt, ...definition } = artifact.definition;
-    void _revokedAt;
     return Object.freeze({
-        ...definition,
+        ...artifact.definition,
         pluginId,
     });
 }
@@ -326,375 +451,29 @@ function resolveProjectionHostRuntime(params: Readonly<{
     });
 }
 
-function collectRevokedReactNativeBundleDigests(
-    uiArtifacts: readonly ResolvedUiArtifactContribution[],
-): ReadonlySet<string> {
-    const revokedDigests = new Set<string>();
-    for (const artifact of uiArtifacts) {
-        if (
-            artifact.definition.contributionFamily === 'reactNativeBundles'
-            && artifact.definition.artifactKind === 'reactNativeBundle'
-            && artifact.definition.revokedAt
-            && artifact.definition.integrity
-        ) {
-            revokedDigests.add(artifact.definition.integrity.digest);
-        }
-    }
-    return revokedDigests;
-}
-
-function findEmbeddedWebBundleArtifact(params: Readonly<{
-    contribution: ResolvedEmbeddedWebBundleContribution;
-    uiArtifacts: readonly ResolvedUiArtifactContribution[];
-}>): ResolvedUiArtifactContribution | null {
-    const pluginId = readPluginId(params.contribution);
-    if (!pluginId) {
-        return null;
-    }
-
-    const bundle = params.contribution.definition.bundle;
-    const bundleDigest = bundle.integrity?.digest;
-    if (!bundleDigest) {
-        return null;
-    }
-
-    return params.uiArtifacts.find((artifact) => {
-        const artifactDigest = artifact.definition.integrity?.digest;
-        return artifact.pluginId === pluginId
-            && artifact.definition.contributionId === params.contribution.definition.id
-            && artifact.definition.contributionFamily === 'embeddedWebBundles'
-            && artifact.definition.artifactKind === 'embeddedWebBundle'
-            && artifact.definition.platform === bundle.platform
-            && artifact.definition.channel === bundle.channel
-            && artifactDigest !== undefined
-            && artifactDigest === bundleDigest;
-    }) ?? null;
-}
-
-function toEmbeddedWebExecutableArtifactManifest(
-    artifact: ResolvedUiArtifactContribution | null,
-): unknown {
-    const pluginId = artifact ? readPluginId(artifact) : null;
-    if (!artifact || !pluginId) {
-        return undefined;
-    }
-
-    const { revokedAt: _revokedAt, ...definition } = artifact.definition;
-    void _revokedAt;
-    return Object.freeze({
-        ...definition,
-        pluginId,
-    });
-}
-
-function collectRevokedEmbeddedWebBundleDigests(
-    uiArtifacts: readonly ResolvedUiArtifactContribution[],
-): ReadonlySet<string> {
-    const revokedDigests = new Set<string>();
-    for (const artifact of uiArtifacts) {
-        if (
-            artifact.definition.contributionFamily === 'embeddedWebBundles'
-            && artifact.definition.artifactKind === 'embeddedWebBundle'
-            && artifact.definition.revokedAt
-            && artifact.definition.integrity
-        ) {
-            revokedDigests.add(artifact.definition.integrity.digest);
-        }
-    }
-    return revokedDigests;
-}
-
 /**
  * Phase 6.3: classify the contribution's install provenance into the plugin
  * source bucket the dev-hot-reload scope checks against. First-party/bundled are
- * `internal`; a source the user pointed the CLI at locally carries the real
- * grant `trustPolicy:'local_trusted'` → `local`; remote `marketplace`/`package`
- * archives keep `trustPolicy:'prompt'` and classify as `marketplace`. Keying on
- * the granted trust policy (not `source.kind`) is what keeps a REMOTE archive
- * (`kind:'archive'`, `trustPolicy:'prompt'`) out of the `local` bucket.
+ * `internal`; an explicit local path is `local`; remote marketplace/package
+ * sources are `marketplace`. This is development-source classification for the
+ * gated hot-reload affordance, not an executable trust decision.
  */
 function resolveReactNativePluginSource(
     contribution: Readonly<{
         provenance?: string;
         source?: Readonly<{ kind?: string }>;
-        sourceSpec?: Readonly<{ trustPolicy?: string }>;
     }>,
 ): 'local' | 'internal' | 'marketplace' | 'external' {
     if (contribution.provenance === 'first_party' || contribution.source?.kind === 'bundled') {
         return 'internal';
     }
-    if (contribution.sourceSpec?.trustPolicy === 'local_trusted') {
+    if (contribution.source?.kind === 'path') {
         return 'local';
     }
     if (contribution.source?.kind === 'marketplace' || contribution.source?.kind === 'package') {
         return 'marketplace';
     }
     return 'external';
-}
-
-function resolveReactNativeArtifactExecutionTrust(params: Readonly<{
-    artifact: ResolvedUiArtifactContribution | null;
-    hostRuntimeContext?: ReactNativeBundleProjectionHostRuntimeContext;
-    revocationState?: PluginUiArtifactRevocationState;
-}>): PluginUiArtifactExecutionTrust | undefined {
-    const artifact = params.artifact;
-    if (!artifact) {
-        return undefined;
-    }
-    if (!artifact.definition.integrity) {
-        return undefined;
-    }
-
-    const explicitTrust =
-        params.hostRuntimeContext?.executionTrustByArtifactDigest?.[artifact.definition.integrity.digest];
-    if (explicitTrust?.kind === 'trustedSource') {
-        return explicitTrust;
-    }
-
-    if (params.hostRuntimeContext?.trustRoots?.length) {
-        const verifiedTrust = resolvePluginUiArtifactVerifiedSignatureTrust({
-            artifact: toReactNativeExecutableArtifactManifest(artifact),
-            trustRoots: params.hostRuntimeContext.trustRoots,
-            revocationState: params.revocationState,
-        });
-        if (verifiedTrust.ok) {
-            return verifiedTrust.executionTrust;
-        }
-    }
-
-    const sourceReason = resolveTrustedSourceReason(artifact);
-    const trustState = params.hostRuntimeContext?.trustState ?? (sourceReason ? 'full' : 'denied');
-    if (trustState !== 'full') {
-        return undefined;
-    }
-
-    return Object.freeze({
-        kind: 'trustedSource',
-        reason: sourceReason ?? 'host_runtime',
-    });
-}
-
-function resolveEmbeddedWebTrustState(
-    contribution: ResolvedEmbeddedWebBundleContribution,
-): 'full' | 'denied' {
-    // §2.2 / §5.1: install + enable = trust for LOCAL render. First-party,
-    // bundled, explicitly-local-trusted, and local/user-installed (`path` /
-    // `archive`) sources derive full trust without a signature. Remote
-    // (`marketplace` / `package`) sources stay denied here unless the artifact
-    // verifier resolves a signature-backed execution trust through host trust
-    // roots. A host-asserted `trustState:'full'` alone is not executable proof.
-    return resolveTrustedSourceReason(contribution) ? 'full' : 'denied';
-}
-
-function resolveEmbeddedWebArtifactExecutionTrust(params: Readonly<{
-    artifact: ResolvedUiArtifactContribution | null;
-    hostRuntimeContext?: EmbeddedWebBundleProjectionHostRuntimeContext;
-    revocationState?: PluginUiArtifactRevocationState;
-}>): PluginUiArtifactExecutionTrust | undefined {
-    const artifact = params.artifact;
-    if (!artifact?.definition.integrity) {
-        return undefined;
-    }
-    if (params.hostRuntimeContext?.trustRoots?.length) {
-        const verifiedTrust = resolvePluginUiArtifactVerifiedSignatureTrust({
-            artifact: toEmbeddedWebExecutableArtifactManifest(artifact),
-            trustRoots: params.hostRuntimeContext.trustRoots,
-            revocationState: params.revocationState,
-        });
-        if (verifiedTrust.ok) {
-            return verifiedTrust.executionTrust;
-        }
-    }
-
-    const sourceReason = resolveTrustedSourceReason(artifact);
-    if (!sourceReason) {
-        return undefined;
-    }
-    return Object.freeze({
-        kind: 'trustedSource',
-        reason: sourceReason,
-        sourceKind: artifact.source?.kind,
-    });
-}
-
-function resolveEmbeddedWebProjectionHostRuntime(params: Readonly<{
-    contribution: ResolvedEmbeddedWebBundleContribution;
-    artifact: ResolvedUiArtifactContribution | null;
-    generation: number;
-    hostRuntime?: Partial<EmbeddedWebBundleHostRuntime>;
-}>): EmbeddedWebBundleHostRuntime {
-    const artifactCompatibility = params.artifact?.definition.compatibility;
-    const bundleCompatibility = params.contribution.definition.compatibility;
-    const hostRuntime = params.hostRuntime;
-    return Object.freeze({
-        hostAppVersion: hostRuntime?.hostAppVersion ?? artifactCompatibility?.hostAppVersion ?? bundleCompatibility.hostAppVersion,
-        hostUiApiVersion: hostRuntime?.hostUiApiVersion ?? artifactCompatibility?.hostUiApiVersion ?? bundleCompatibility.hostUiApiVersion,
-        reactVersion: hostRuntime?.reactVersion ?? artifactCompatibility?.reactVersion ?? bundleCompatibility.reactVersion,
-        platform: 'web',
-        channel: hostRuntime?.channel ?? params.artifact?.definition.channel ?? params.contribution.definition.bundle.channel,
-        projectionGeneration: hostRuntime?.projectionGeneration ?? params.generation,
-    });
-}
-
-function embeddedWebRuntimeResult(params: Readonly<{
-    state: 'loadable' | 'fallback' | 'blocked' | 'disabled';
-    reason: 'compatible' | 'fallback_required' | 'pinned_loader_mismatch' | 'artifact_revoked' | 'feature_disabled' | 'trust_denied' | 'crash_disabled' | 'channel_policy_denied' | 'runtime_mismatch' | 'csp_unsupported' | 'unknown';
-    diagnostics: readonly string[];
-    fallback?: unknown;
-    cacheKey?: string;
-    cacheIdentity?: unknown;
-    csp?: Readonly<{ supportsSameOriginModuleUrl: boolean; allowsBlobModuleImport: boolean }>;
-}>): Readonly<Record<string, unknown>> {
-    return Object.freeze({
-        state: params.state,
-        diagnostics: Object.freeze([...params.diagnostics]),
-        decision: Object.freeze({
-            state: params.state === 'loadable' ? 'load' : params.state,
-            reason: params.reason,
-            diagnostics: Object.freeze([...params.diagnostics]),
-            ...(params.fallback ? { fallback: params.fallback } : {}),
-        }),
-        ...(params.cacheKey ? { cacheKey: params.cacheKey } : {}),
-        ...(params.cacheIdentity ? { cacheIdentity: params.cacheIdentity } : {}),
-        ...(params.cacheIdentity && params.state === 'loadable'
-            ? {
-                loadPolicy: Object.freeze({
-                    source: 'installedArtifact',
-                    ...(params.csp ? { csp: params.csp } : {}),
-                }),
-            }
-            : {}),
-    });
-}
-
-function projectEmbeddedWebRuntime(params: Readonly<{
-    contribution: ResolvedEmbeddedWebBundleContribution;
-    uiArtifacts: readonly ResolvedUiArtifactContribution[];
-    revokedDigests: ReadonlySet<string>;
-    revocationState: PluginUiArtifactRevocationState;
-    generation: number;
-    hostRuntimeContext?: EmbeddedWebBundleProjectionHostRuntimeContext;
-}>): Readonly<Record<string, unknown>> {
-    const pluginId = readPluginId(params.contribution);
-    const contributionKey = `${pluginId ?? ''}:${params.contribution.definition.id}`;
-    const crashDisabled = params.hostRuntimeContext?.crashDisabledByContributionId?.[contributionKey] === true
-        || params.hostRuntimeContext?.crashDisabledByContributionId?.[params.contribution.definition.id] === true
-        || params.hostRuntimeContext?.crashDisabledContributionIds?.includes(contributionKey) === true
-        || params.hostRuntimeContext?.crashDisabledContributionIds?.includes(params.contribution.definition.id) === true;
-    const fallback = params.contribution.definition.fallback;
-    if (!fallback) {
-        return embeddedWebRuntimeResult({
-            state: 'blocked',
-            reason: 'fallback_required',
-            diagnostics: ['fallback_required'],
-        });
-    }
-    if (params.contribution.definition.entry.mechanism !== 'hostRuntimeFactoryV1') {
-        return embeddedWebRuntimeResult({
-            state: 'blocked',
-            reason: 'pinned_loader_mismatch',
-            diagnostics: ['host_runtime_factory_v1_required'],
-            fallback,
-        });
-    }
-    if (params.hostRuntimeContext?.featureEnabled !== true) {
-        return embeddedWebRuntimeResult({
-            state: 'fallback',
-            reason: 'feature_disabled',
-            diagnostics: ['feature_disabled'],
-            fallback,
-        });
-    }
-
-    const artifact = findEmbeddedWebBundleArtifact({
-        contribution: params.contribution,
-        uiArtifacts: params.uiArtifacts,
-    });
-    const executionTrust = resolveEmbeddedWebArtifactExecutionTrust({
-        artifact,
-        hostRuntimeContext: params.hostRuntimeContext,
-        revocationState: params.revocationState,
-    });
-    const trustState = params.hostRuntimeContext?.trustState ?? resolveEmbeddedWebTrustState(params.contribution);
-    if (trustState !== 'full' && !executionTrust) {
-        return embeddedWebRuntimeResult({
-            state: 'fallback',
-            reason: 'trust_denied',
-            diagnostics: ['full_trust_plugin_required'],
-            fallback,
-        });
-    }
-    if (crashDisabled) {
-        return embeddedWebRuntimeResult({
-            state: 'disabled',
-            reason: 'crash_disabled',
-            diagnostics: ['crash_threshold_reached'],
-            fallback,
-        });
-    }
-
-    const csp = Object.freeze(params.hostRuntimeContext?.csp ?? {
-        supportsSameOriginModuleUrl: false,
-        allowsBlobModuleImport: false,
-    });
-    if (!csp.supportsSameOriginModuleUrl && !csp.allowsBlobModuleImport) {
-        return embeddedWebRuntimeResult({
-            state: 'fallback',
-            reason: 'csp_unsupported',
-            diagnostics: ['csp_unsupported'],
-            fallback,
-        });
-    }
-
-    const validation = validateInstalledEmbeddedWebBundleArtifact({
-        artifact: toEmbeddedWebExecutableArtifactManifest(artifact),
-        expectedPluginId: pluginId ?? '',
-        expectedContributionId: params.contribution.definition.id,
-        hostRuntime: resolveEmbeddedWebProjectionHostRuntime({
-            contribution: params.contribution,
-            artifact,
-            generation: params.generation,
-            hostRuntime: params.hostRuntimeContext?.hostRuntime,
-        }),
-        revokedDigests: params.revokedDigests,
-        revocationState: params.revocationState,
-        executionTrust,
-        signatureTrustRoots: params.hostRuntimeContext?.trustRoots,
-        sourceKind: artifact?.source?.kind,
-    });
-    if (!validation.ok) {
-        const diagnostics = validation.diagnostics ?? [validation.code];
-        return embeddedWebRuntimeResult({
-            state: validation.code === 'artifact_revoked' ? 'blocked' : 'fallback',
-            reason: validation.code === 'artifact_revoked'
-                ? 'artifact_revoked'
-                : validation.code === 'runtime_mismatch'
-                    ? 'runtime_mismatch'
-                    : diagnostics.some((diagnostic) => diagnostic.includes('trust='))
-                        ? 'trust_denied'
-                    : 'unknown',
-            diagnostics,
-            fallback,
-        });
-    }
-    if (params.hostRuntimeContext?.loaderBackendAvailable === false) {
-        return embeddedWebRuntimeResult({
-            state: 'fallback',
-            reason: 'unknown',
-            diagnostics: ['embedded_web_loader_unavailable'],
-            fallback,
-        });
-    }
-
-    return embeddedWebRuntimeResult({
-        state: 'loadable',
-        reason: 'compatible',
-        diagnostics: [],
-        fallback,
-        cacheKey: validation.cacheKey,
-        cacheIdentity: validation.cacheIdentity,
-        csp,
-    });
 }
 
 // NATIVE-PIPELINE / LEDGER DEC-6 follow-up: a logical `reactNative` surface can
@@ -712,7 +491,7 @@ const REACT_NATIVE_BUNDLE_PLATFORM_UNRESOLVED_DIAGNOSTIC = 'react_native_bundle_
 
 function mapReactNativeRuntimeDecisionReason(
     runtime: ReactNativeBundleRuntimeProjection,
-): 'compatible' | 'feature_disabled' | 'runtime_mismatch' | 'missing_native_capability' | 'artifact_revoked' | 'crash_disabled' | 'trust_denied' | 'dev_hot_reload_denied' | 'platform_unavailable' | 'unknown' {
+): 'compatible' | 'feature_disabled' | 'runtime_mismatch' | 'missing_native_capability' | 'crash_disabled' | 'dev_hot_reload_denied' | 'platform_unavailable' | 'unknown' {
     if (runtime.state === 'loadable') {
         return 'compatible';
     }
@@ -730,19 +509,6 @@ function mapReactNativeRuntimeDecisionReason(
     }
     if (runtime.diagnostics.includes('missing_native_capability')) {
         return 'missing_native_capability';
-    }
-    if (runtime.diagnostics.includes('artifact_revoked')) {
-        return 'artifact_revoked';
-    }
-    if (
-        runtime.diagnostics.includes('execution_trust_unverified')
-        || runtime.diagnostics.includes('signature_verification_unavailable')
-        || runtime.diagnostics.includes('signature_required')
-        || runtime.diagnostics.includes('signing_key_required')
-        || runtime.diagnostics.includes('signature_mismatch')
-        || runtime.diagnostics.includes('signing_key_mismatch')
-    ) {
-        return 'trust_denied';
     }
     if (runtime.diagnostics.includes('crash_threshold_reached')) {
         return 'crash_disabled';
@@ -762,8 +528,6 @@ function mapReactNativeRuntimeDecisionState(
 function projectReactNativeRuntime(params: Readonly<{
     contribution: ResolvedReactNativeBundleContribution;
     uiArtifacts: readonly ResolvedUiArtifactContribution[];
-    revokedDigests: ReadonlySet<string>;
-    revocationState: PluginUiArtifactRevocationState;
     generation: number;
     hostRuntimeContext?: ReactNativeBundleProjectionHostRuntimeContext;
     // NATIVE-PIPELINE: true when `params.contribution` is only a REPRESENTATIVE
@@ -806,14 +570,6 @@ function projectReactNativeRuntime(params: Readonly<{
             featureEnabled: params.hostRuntimeContext?.featureEnabled === true,
             loaderBackendAvailable: params.hostRuntimeContext?.loaderBackendAvailable ?? false,
             loaderBackendDiagnostics: params.hostRuntimeContext?.loaderBackendDiagnostics,
-            revokedDigests: params.revokedDigests,
-            revocationState: params.revocationState,
-            executionTrust: resolveReactNativeArtifactExecutionTrust({
-                artifact,
-                hostRuntimeContext: params.hostRuntimeContext,
-                revocationState: params.revocationState,
-            }),
-            signatureTrustRoots: params.hostRuntimeContext?.trustRoots,
             crashDisabled,
             devHotReloadEnabled: params.hostRuntimeContext?.devHotReloadEnabled === true,
             pluginSource: resolveReactNativePluginSource(params.contribution),
@@ -921,16 +677,15 @@ function projectReactNativeBundles(
     entriesById: Record<string, PluginUiProjectedEntry>,
     generation: number,
     hostRuntimeContext?: ReactNativeBundleProjectionHostRuntimeContext,
+    v2OwnedContributionKeys: ReadonlySet<string> = new Set(),
 ): void {
     const uiArtifacts = registry.uiArtifacts ?? [];
-    const revokedDigests = collectRevokedReactNativeBundleDigests(uiArtifacts);
-    const revocationState = mergePluginUiArtifactRevocationStates(
-        createPluginUiArtifactRevocationState({ revokedDigests }),
-        ...(hostRuntimeContext?.revocationState ? [hostRuntimeContext.revocationState] : []),
-    );
     const connectingPlatform = hostRuntimeContext?.hostRuntime?.platform;
     const families = groupReactNativeBundleContributionsByLogicalId(registry.reactNativeBundles ?? []);
     for (const family of families) {
+        if (v2OwnedContributionKeys.has(`${family.pluginId}\0${family.contributionId}`)) {
+            continue;
+        }
         const { contribution, unresolved } = selectReactNativeBundleContributionForConnectingPlatform(
             family,
             connectingPlatform,
@@ -956,8 +711,6 @@ function projectReactNativeBundles(
             runtime: projectReactNativeRuntime({
                 contribution,
                 uiArtifacts,
-                revokedDigests,
-                revocationState,
                 generation,
                 hostRuntimeContext,
                 platformUnresolved: unresolved,
@@ -966,46 +719,163 @@ function projectReactNativeBundles(
     }
 }
 
-function projectEmbeddedWebBundles(
+function generatedReactNativeRuntimeResult(params: Readonly<{
+    state: 'loadable' | 'fallback' | 'blocked';
+    reason: string;
+    diagnostics: readonly string[];
+    cacheIdentity?: ReactNativeBundleCacheIdentity;
+}>): Readonly<Record<string, unknown>> {
+    return Object.freeze({
+        state: params.state,
+        diagnostics: Object.freeze([...params.diagnostics]),
+        decision: Object.freeze({
+            state: params.state === 'loadable' ? 'load' : params.state,
+            reason: params.reason,
+            diagnostics: Object.freeze([...params.diagnostics]),
+        }),
+        ...(params.cacheIdentity
+            ? {
+                cacheKey: deriveReactNativeBundleRuntimeCacheKey(params.cacheIdentity),
+                cacheIdentity: params.cacheIdentity,
+                loadPolicy: Object.freeze({ source: 'installedArtifact' as const }),
+            }
+            : {}),
+    });
+}
+
+function generatedReactNativeCompatibilityFailure(params: Readonly<{
+    entry: PluginUiArtifactsManifestEntryV1;
+    hostRuntime: Partial<ReactNativeBundleHostRuntime> | undefined;
+}>): string | null {
+    const host = params.hostRuntime;
+    if (!host) return 'generated_react_native_host_runtime_unavailable';
+    if (params.entry.hostUiApiVersion !== host.hostUiApiVersion) {
+        return 'generated_react_native_host_api_mismatch';
+    }
+    if (params.entry.compat.react !== host.reactVersion
+        || params.entry.compat.reactNative !== host.reactNativeVersion
+        || (params.entry.compat.expoRuntime ?? '') !== (host.expoRuntimeVersion ?? '')
+        || (params.entry.compat.hermes ?? '') !== (host.hermesVersion ?? '')) {
+        return 'generated_react_native_runtime_mismatch';
+    }
+    return null;
+}
+
+function projectGeneratedReactNativeBundles(
     registry: ResolvedContributionRegistry,
     entriesById: Record<string, PluginUiProjectedEntry>,
     generation: number,
-    hostRuntimeContext?: EmbeddedWebBundleProjectionHostRuntimeContext,
-): void {
-    const uiArtifacts = registry.uiArtifacts ?? [];
-    const revokedDigests = collectRevokedEmbeddedWebBundleDigests(uiArtifacts);
-    const revocationState = mergePluginUiArtifactRevocationStates(
-        createPluginUiArtifactRevocationState({ revokedDigests }),
-        ...(hostRuntimeContext?.revocationState ? [hostRuntimeContext.revocationState] : []),
-    );
-    for (const contribution of registry.embeddedWebBundles ?? []) {
-        const pluginId = readPluginId(contribution);
-        if (!pluginId) {
-            continue;
-        }
-        const id = `embeddedWebBundle:${pluginId}:${contribution.definition.id}`;
+    hostRuntimeContext?: ReactNativeBundleProjectionHostRuntimeContext,
+): ReadonlySet<string> {
+    const ownedContributionKeys = new Set<string>();
+    for (const owner of collectResolvedGeneratedReactNativeArtifactOwners(registry)) {
+        const pluginId = owner.pluginId;
+        const contributionId = owner.contributionId;
+        ownedContributionKeys.add(`${pluginId}\0${contributionId}`);
+
+        const resolved = findGeneratedReactNativeArtifactEntry({
+            owner,
+            platform: hostRuntimeContext?.hostRuntime?.platform,
+        });
+        const compatibilityFailure = resolved.entry
+            ? generatedReactNativeCompatibilityFailure({
+                entry: resolved.entry,
+                hostRuntime: hostRuntimeContext?.hostRuntime,
+            })
+            : null;
+        const failure = resolved.failure ?? compatibilityFailure;
+        const entry = resolved.entry;
+        const featureEnabled = hostRuntimeContext?.featureEnabled === true;
+        const loaderBackendAvailable = hostRuntimeContext?.loaderBackendAvailable === true;
+        const hostRuntime = hostRuntimeContext?.hostRuntime;
+        const cacheIdentity: ReactNativeBundleCacheIdentity | undefined =
+            entry && entry.platform && !failure && featureEnabled && loaderBackendAvailable && hostRuntime
+            ? Object.freeze({
+                pluginId,
+                contributionId,
+                artifactDigest: entry.digest,
+                hostAppVersion: hostRuntime.hostAppVersion ?? '0.0.0',
+                hostUiApiVersion: entry.hostUiApiVersion,
+                reactVersion: entry.compat.react,
+                reactNativeVersion: entry.compat.reactNative ?? '',
+                ...(entry.compat.expoRuntime ? { expoRuntimeVersion: entry.compat.expoRuntime } : {}),
+                ...(entry.compat.hermes ? { hermesVersion: entry.compat.hermes } : {}),
+                platform: entry.platform,
+                channel: hostRuntime.channel ?? 'internal',
+                nativeCapabilitiesDigest: deriveReactNativeNativeCapabilitiesDigest([]),
+                projectionGeneration: hostRuntime.projectionGeneration ?? generation,
+            })
+            : undefined;
+        const runtime = failure
+            ? generatedReactNativeRuntimeResult({
+                state: 'blocked',
+                reason: failure,
+                diagnostics: [failure],
+            })
+            : !featureEnabled
+                ? generatedReactNativeRuntimeResult({
+                    state: 'fallback',
+                    reason: 'feature_disabled',
+                    diagnostics: ['feature_disabled'],
+                })
+                : !loaderBackendAvailable
+                    ? generatedReactNativeRuntimeResult({
+                        state: 'fallback',
+                        reason: 'loader_backend_unavailable',
+                        diagnostics: hostRuntimeContext?.loaderBackendDiagnostics?.length
+                            ? hostRuntimeContext.loaderBackendDiagnostics
+                            : ['loader_backend_unavailable'],
+                    })
+                    : generatedReactNativeRuntimeResult({
+                        state: 'loadable',
+                        reason: 'compatible',
+                        diagnostics: [],
+                        cacheIdentity,
+                    });
+
         addEntry(entriesById, {
-            id,
+            id: `reactNativeBundle:${pluginId}:${contributionId}`,
             pluginId,
-            contributionKind: 'embeddedWebBundle',
-            contributionId: contribution.definition.id,
-            bundle: contribution.definition.bundle,
-            entry: contribution.definition.entry,
-            compatibility: contribution.definition.compatibility,
-            hostApi: contribution.definition.hostApi,
-            fallback: contribution.definition.fallback,
-            display: contribution.definition.display,
-            policy: contribution.definition.policy,
-            runtime: projectEmbeddedWebRuntime({
-                contribution,
-                uiArtifacts,
-                revokedDigests,
-                revocationState,
-                generation,
-                hostRuntimeContext,
+            pluginVersion: owner.pluginVersion ?? '0.0.0',
+            contributionKind: 'reactNativeBundle',
+            contributionId,
+            generatedV2: true,
+            generatedOwnerKind: owner.kind,
+            requiredHostMethods: owner.requiredHostMethods,
+            bundle: Object.freeze({
+                platform: entry?.platform ?? hostRuntimeContext?.hostRuntime?.platform ?? 'web',
+                channel: hostRuntimeContext?.hostRuntime?.channel ?? 'internal',
+                ...(entry ? { integrity: Object.freeze({ digest: entry.digest }) } : {}),
             }),
+            entry: entry?.repack
+                ? Object.freeze({
+                    containerName: entry.repack.containerName,
+                    modulePath: entry.repack.modulePath,
+                    exportName: entry.repack.exportName,
+                })
+                : Object.freeze({ exportName: 'renderSurface' as const }),
+            compatibility: entry
+                ? Object.freeze({
+                    hostUiApiVersion: entry.hostUiApiVersion,
+                    reactVersion: entry.compat.react,
+                    reactNativeVersion: entry.compat.reactNative,
+                    ...(entry.compat.expoRuntime ? { expoRuntimeVersion: entry.compat.expoRuntime } : {}),
+                    ...(entry.compat.hermes ? { hermesVersion: entry.compat.hermes } : {}),
+                    supportedPlatforms: Object.freeze([entry.platform]),
+                    supportedChannels: Object.freeze([hostRuntimeContext?.hostRuntime?.channel ?? 'internal']),
+                    requiredNativeCapabilities: Object.freeze([]),
+                })
+                : undefined,
+            hostApi: Object.freeze({
+                minVersion: entry?.hostUiApiVersion ?? '1.0.0',
+                methods: Object.freeze([...owner.requiredHostMethods]),
+            }),
+            fallback: Object.freeze({ kind: 'unavailable' as const }),
+            ...(entry ? { artifactGraph: entry } : {}),
+            runtime,
         });
     }
+    return ownedContributionKeys;
 }
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -1034,11 +904,6 @@ function resolveRendererProjectionEntry(params: Readonly<{
     if (params.renderer.kind === 'hostedWeb') {
         return params.entriesById[contributionId]
             ?? params.entriesById[`hostedWeb:${params.pluginId}:${contributionId}`]
-            ?? null;
-    }
-    if (params.renderer.kind === 'embeddedWeb') {
-        return params.entriesById[contributionId]
-            ?? params.entriesById[`embeddedWebBundle:${params.pluginId}:${contributionId}`]
             ?? null;
     }
     if (params.renderer.kind === 'reactNative') {
@@ -1077,6 +942,18 @@ function projectSurfaceAvailability(params: Readonly<{
             state: 'fallback',
             reason: 'host_renderer_unavailable',
             diagnostics: Object.freeze(['host_renderer_unavailable']),
+        });
+    }
+
+    if (params.renderer.kind === 'declarative') {
+        // Source-authored declarative nodes are not an evaluated runtime model:
+        // action enabled/currentness and settings values remain daemon-owned.
+        // Project the bounded renderer shape for the host, but keep the surface
+        // inert until the canonical stable declarative model is supplied.
+        return Object.freeze({
+            state: 'fallback',
+            reason: 'declarative_model_unavailable',
+            diagnostics: Object.freeze(['declarative_model_unavailable']),
         });
     }
 
@@ -1216,8 +1093,6 @@ function resolveRendererProvidedMode(renderer: Readonly<Record<string, unknown>>
             return 'hostedWeb';
         case 'reactNative':
             return 'reactNative';
-        case 'embeddedWeb':
-            return 'embeddedWeb';
         default:
             return null;
     }
@@ -1303,12 +1178,16 @@ function projectSurfacePlacementAvailability(params: Readonly<{
 function projectSurfacePlacements(
     registry: ResolvedContributionRegistry,
     entriesById: Record<string, PluginUiProjectedEntry>,
+    v2OwnedViewKeys: ReadonlySet<string> = new Set(),
 ): void {
     const surfacePlacements = registry.surfacePlacements ?? [];
     const duplicateRightSidebarCollisionKeys = collectDuplicateRightSidebarTabKeys(surfacePlacements);
     for (const contribution of surfacePlacements) {
         const pluginId = readPluginId(contribution);
         if (!pluginId) {
+            continue;
+        }
+        if (v2OwnedViewKeys.has(`${pluginId}\0${contribution.definition.id}`)) {
             continue;
         }
         const rightSidebarCollisionKey = rightSidebarTabCollisionKey(contribution);
@@ -1347,6 +1226,162 @@ function projectSurfacePlacements(
     }
 }
 
+function generatedViewTarget(placement: string): Readonly<Record<string, unknown>> {
+    if (placement.startsWith('session.')) return Object.freeze({ kind: 'session' as const });
+    if (placement.startsWith('workspace.')) return Object.freeze({ kind: 'workspace' as const });
+    if (placement.startsWith('project.')) return Object.freeze({ kind: 'project' as const });
+    if (placement.startsWith('browser.')) {
+        return Object.freeze({ kind: 'browser' as const, browserViewIdPath: '/browserViewId' });
+    }
+    if (placement.startsWith('services.')) return Object.freeze({ kind: 'services' as const });
+    return Object.freeze({ kind: 'app' as const });
+}
+
+function generatedViewDisplay(view: ResolvedUiViewV2Contribution): Readonly<Record<string, unknown>> {
+    const title = view.definition.title;
+    if (typeof title === 'string') {
+        return Object.freeze({
+            titleKey: view.definition.id,
+            developerFallback: title,
+        });
+    }
+    if (title) {
+        return Object.freeze({
+            titleKey: title.key,
+            developerFallback: title.fallback,
+        });
+    }
+    return Object.freeze({
+        titleKey: view.definition.id,
+        developerFallback: view.definition.id,
+    });
+}
+
+function generatedRightSidebarMetadata(placement: string): Readonly<Record<string, unknown>> | undefined {
+    const scope = rightSidebarScopeForPlacement(placement);
+    if (!scope) return undefined;
+    return Object.freeze({
+        scope,
+        section: 'plugin' as const,
+        lifecycle: Object.freeze({
+            retention: 'unmountOnDisable' as const,
+            unmountOnGenerationChange: true,
+        }),
+        disabledPolicy: 'hide' as const,
+        collisionPolicy: 'reject' as const,
+    });
+}
+
+function projectGeneratedUiViews(
+    registry: ResolvedContributionRegistry,
+    entriesById: Record<string, PluginUiProjectedEntry>,
+    declarativeHostRuntime?: DeclarativeProjectionHostRuntimeContext,
+): ReadonlySet<string> {
+    const renderersByKey = new Map<string, ResolvedUiRendererV2Contribution>();
+    for (const renderer of registry.uiRenderersV2 ?? []) {
+        renderersByKey.set(`${renderer.pluginId}\0${renderer.definition.id}`, renderer);
+    }
+    const ownedViewKeys = new Set<string>();
+    for (const view of registry.uiViewsV2 ?? []) {
+        const renderer = renderersByKey.get(`${view.pluginId}\0${view.definition.renderer}`);
+        if (!renderer) continue;
+        const pluginId = view.pluginId;
+        const descriptorId = view.definition.id;
+        ownedViewKeys.add(`${pluginId}\0${descriptorId}`);
+        const target = generatedViewTarget(view.definition.placement);
+        const requiredHostMethods = Object.freeze([...(renderer.definition.requiredHostMethods ?? [])]);
+        const declarativeModel = renderer.definition.kind === 'declarative'
+            ? declarativeHostRuntime?.modelsByRendererKey?.[`${pluginId}\0${renderer.definition.id}`]
+            : undefined;
+        const rendererRef = renderer.definition.kind === 'reactNative'
+            ? Object.freeze({
+                kind: 'reactNative' as const,
+                contributionId: renderer.definition.id,
+            })
+            : renderer.definition.kind === 'hostedWeb'
+                ? Object.freeze({
+                    kind: 'hostedWeb' as const,
+                    contributionId: renderer.definition.id,
+                    source: renderer.definition.source,
+                    requiredHostMethods,
+                })
+                : Object.freeze({
+                    kind: 'declarative' as const,
+                    contributionId: renderer.definition.id,
+                    ...(declarativeModel ? { model: declarativeModel } : {}),
+                });
+        const registryRendererRef = renderer.definition.kind === 'hostedWeb'
+            ? Object.freeze({
+                kind: 'hostedWeb' as const,
+                contributionId: renderer.definition.id,
+            })
+            : rendererRef;
+        const display = generatedViewDisplay(view);
+        const rightSidebar = generatedRightSidebarMetadata(view.definition.placement);
+        const definition = Object.freeze({
+            id: descriptorId,
+            placement: view.definition.placement,
+            target,
+            renderer: rendererRef,
+            display,
+            actions: Object.freeze([]),
+            hostActions: Object.freeze([]),
+            ...(rightSidebar ? { rightSidebar } : {}),
+        });
+        const rightSidebarCollisionKey = rightSidebar
+            ? `${rightSidebarScopeForPlacement(view.definition.placement)}:${pluginId}:${descriptorId}`
+            : null;
+        addEntry(entriesById, {
+            id: `surfacePlacement:${pluginId}:${descriptorId}`,
+            pluginId,
+            pluginVersion: view.pluginVersion ?? renderer.pluginVersion ?? '0.0.0',
+            contributionKind: 'surfacePlacement',
+            descriptorId,
+            generatedV2: true,
+            placement: view.definition.placement,
+            target,
+            renderer: rendererRef,
+            display,
+            actions: Object.freeze([]),
+            hostActions: Object.freeze([]),
+            fallbackRenderers: view.definition.fallbackRenderers,
+            ...(rightSidebar ? { rightSidebar } : {}),
+            availability: renderer.definition.kind === 'declarative'
+                ? declarativeModel?.visible === true
+                    ? Object.freeze({
+                        state: 'available' as const,
+                        reason: 'available',
+                        diagnostics: Object.freeze([]),
+                    })
+                    : Object.freeze({
+                        state: 'fallback' as const,
+                        reason: declarativeModel?.visible === false
+                            ? 'declarative_model_hidden'
+                            : 'declarative_model_unavailable',
+                        diagnostics: Object.freeze([
+                            declarativeModel?.visible === false
+                                ? 'declarative_model_hidden'
+                                : 'declarative_model_unavailable',
+                        ]),
+                    })
+                : projectSurfacePlacementAvailability({
+                    pluginId,
+                    placement: view.definition.placement,
+                    descriptorId,
+                    definition: registryRendererRef === rendererRef
+                        ? definition
+                        : Object.freeze({ ...definition, renderer: registryRendererRef }),
+                    rightSidebar,
+                    rightSidebarCollisionKey,
+                    duplicateRightSidebarCollisionKeys: new Set(),
+                    renderer: registryRendererRef,
+                    entriesById,
+                }),
+        });
+    }
+    return ownedViewKeys;
+}
+
 function projectUiArtifacts(
     registry: ResolvedContributionRegistry,
     entriesById: Record<string, PluginUiProjectedEntry>,
@@ -1374,7 +1409,6 @@ function projectUiArtifacts(
             assetPath: contribution.definition.assetPath,
             url: contribution.definition.url,
             cacheKey: contribution.definition.cacheKey,
-            revokedAt: contribution.definition.revokedAt,
         });
     }
 }
@@ -1384,12 +1418,11 @@ function addDigestEntries(
     entriesById: Record<string, PluginUiProjectedEntry>,
 ): void {
     const byPluginId = new Map<string, {
-        translations: ResolvedUiTranslationsContribution[];
+        translations: Array<ResolvedUiTranslationsContribution | ResolvedUiTranslationBundleV2Contribution>;
         structuredMessages: ResolvedStructuredMessageContribution[];
         sessionHeaderActions: ResolvedSessionHeaderActionContribution[];
         surfacePlacements: ResolvedSurfacePlacementContribution[];
         hostedWeb: ResolvedHostedWebContribution[];
-        embeddedWebBundles: ResolvedEmbeddedWebBundleContribution[];
         reactNativeBundles: ResolvedReactNativeBundleContribution[];
         uiArtifacts: ResolvedUiArtifactContribution[];
     }>();
@@ -1405,7 +1438,6 @@ function addDigestEntries(
             sessionHeaderActions: [],
             surfacePlacements: [],
             hostedWeb: [],
-            embeddedWebBundles: [],
             reactNativeBundles: [],
             uiArtifacts: [],
         };
@@ -1413,9 +1445,19 @@ function addDigestEntries(
         return created;
     }
 
+    const v2TranslationPluginIds = new Set<string>();
+    for (const contribution of registry.uiTranslationsV2 ?? []) {
+        const pluginId = readPluginId(contribution);
+        if (pluginId) {
+            v2TranslationPluginIds.add(pluginId);
+            bucket(pluginId).translations.push(contribution);
+        }
+    }
     for (const contribution of registry.uiTranslations ?? []) {
         const pluginId = readPluginId(contribution);
-        if (pluginId) bucket(pluginId).translations.push(contribution);
+        if (pluginId && !v2TranslationPluginIds.has(pluginId)) {
+            bucket(pluginId).translations.push(contribution);
+        }
     }
     for (const contribution of registry.structuredMessages ?? []) {
         const pluginId = readPluginId(contribution);
@@ -1432,10 +1474,6 @@ function addDigestEntries(
     for (const contribution of registry.hostedWeb ?? []) {
         const pluginId = readPluginId(contribution);
         if (pluginId) bucket(pluginId).hostedWeb.push(contribution);
-    }
-    for (const contribution of registry.embeddedWebBundles ?? []) {
-        const pluginId = readPluginId(contribution);
-        if (pluginId) bucket(pluginId).embeddedWebBundles.push(contribution);
     }
     for (const contribution of registry.reactNativeBundles ?? []) {
         const pluginId = readPluginId(contribution);
@@ -1471,10 +1509,27 @@ export const pluginUiProjectionFamily = definePluginProjectionFamilyV2({
         projectTranslations(registry, entriesById);
         projectStructuredMessages(registry, entriesById, hostRuntime?.structuredMessages);
         projectSessionHeaderActions(registry, entriesById);
-        projectHostedWeb(registry, entriesById, hostRuntime?.hostedWeb);
-        projectEmbeddedWebBundles(registry, entriesById, generation, hostRuntime?.embeddedWebBundles);
-        projectReactNativeBundles(registry, entriesById, generation, hostRuntime?.reactNativeBundles);
-        projectSurfacePlacements(registry, entriesById);
+        const v2OwnedHostedWebContributionKeys = projectGeneratedHostedWebRenderers(
+            registry,
+            entriesById,
+            hostRuntime?.hostedWeb,
+        );
+        projectHostedWeb(registry, entriesById, hostRuntime?.hostedWeb, v2OwnedHostedWebContributionKeys);
+        const v2OwnedReactNativeContributionKeys = projectGeneratedReactNativeBundles(
+            registry,
+            entriesById,
+            generation,
+            hostRuntime?.reactNativeBundles,
+        );
+        projectReactNativeBundles(
+            registry,
+            entriesById,
+            generation,
+            hostRuntime?.reactNativeBundles,
+            v2OwnedReactNativeContributionKeys,
+        );
+        const v2OwnedViewKeys = projectGeneratedUiViews(registry, entriesById, hostRuntime?.declarative);
+        projectSurfacePlacements(registry, entriesById, v2OwnedViewKeys);
         projectUiArtifacts(registry, entriesById);
         addDigestEntries(registry, entriesById);
 

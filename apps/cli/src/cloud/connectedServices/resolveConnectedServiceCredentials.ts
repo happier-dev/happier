@@ -6,13 +6,21 @@
  */
 
 import {
-  ConnectedServiceCredentialRecordV1Schema,
+  ConnectedServiceCredentialBindingMismatchError,
+  assertConnectedServiceCredentialRecordBinding,
   openConnectedServiceCredentialCiphertext,
+  parseBuiltInLegacyConnectedServiceCredentialRecordV1,
   type ConnectedServiceCredentialRecordV1,
+  type ConnectedServiceCredentialRevisionBoundaryV1,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
 
-import type { ApiClient } from '@/api/api';
+export {
+  ConnectedServiceCredentialBindingMismatchError,
+  assertConnectedServiceCredentialRecordBinding,
+} from '@happier-dev/protocol';
+
+import type { ConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import type { Credentials } from '@/persistence';
 import { resolveConnectedServiceAccountMode } from './resolveConnectedServiceAccountMode';
 
@@ -21,40 +29,71 @@ type ConnectedServiceCredentialBinding = Readonly<{
   profileId: string;
 }>;
 
+type ConnectedServiceCredentialResolutionApi = Pick<
+  ConnectedServiceCredentialApi,
+  'getAccountEncryptionMode' | 'getConnectedServiceCredentialPlain' | 'getConnectedServiceCredentialSealed'
+>;
+
+export type ConnectedServiceCredentialResolution = Readonly<{
+  record: ConnectedServiceCredentialRecordV1;
+}> & ConnectedServiceCredentialRevisionBoundaryV1;
+
+export class ConnectedServiceCredentialResolutionError extends Error {
+  readonly name = 'ConnectedServiceCredentialResolutionError';
+  readonly kind = 'missing_credential' as const;
+  readonly serviceId: ConnectedServiceId;
+  readonly profileId: string;
+
+  constructor(binding: ConnectedServiceCredentialBinding & Readonly<{ kind?: 'missing_credential' }>) {
+    super(`Missing connected service credential (${binding.serviceId}/${binding.profileId})`);
+    this.serviceId = binding.serviceId;
+    this.profileId = binding.profileId;
+  }
+}
+
 function parseCredentialRecord(params: Readonly<{
   value: unknown;
   serviceId: ConnectedServiceId;
   profileId: string;
 }>): ConnectedServiceCredentialRecordV1 {
-  const parsed = ConnectedServiceCredentialRecordV1Schema.safeParse(params.value);
-  if (!parsed.success) {
+  let record: ConnectedServiceCredentialRecordV1;
+  try {
+    record =
+      parseBuiltInLegacyConnectedServiceCredentialRecordV1(params.value);
+  } catch {
     throw new Error(`Invalid connected service credential payload (${params.serviceId}/${params.profileId})`);
   }
-  return parsed.data;
+  return assertConnectedServiceCredentialRecordBinding({
+    binding: { serviceId: params.serviceId, profileId: params.profileId },
+    record,
+  });
 }
 
 async function resolvePlainConnectedServiceCredential(params: Readonly<{
-  api: ApiClient;
+  api: ConnectedServiceCredentialResolutionApi;
   binding: ConnectedServiceCredentialBinding;
-}>): Promise<ConnectedServiceCredentialRecordV1 | null> {
+}>): Promise<ConnectedServiceCredentialResolution | null> {
   if (typeof params.api.getConnectedServiceCredentialPlain !== 'function') return null;
   const plain = await params.api.getConnectedServiceCredentialPlain({
     serviceId: params.binding.serviceId,
     profileId: params.binding.profileId,
   });
   if (!plain || plain.content.t !== 'plain') return null;
-  return parseCredentialRecord({
-    value: plain.content.v,
-    serviceId: params.binding.serviceId,
-    profileId: params.binding.profileId,
-  });
+  const record = parseCredentialRecord({
+      value: plain.content.v,
+      serviceId: params.binding.serviceId,
+      profileId: params.binding.profileId,
+    });
+  return plain.revisionSemantics === 'revisioned'
+    ? { record, revisionSemantics: 'revisioned', credentialRevision: plain.credentialRevision }
+    : { record, revisionSemantics: 'legacy_unfenced', credentialRevision: null };
 }
 
 async function resolveSealedConnectedServiceCredential(params: Readonly<{
   credentials: Credentials;
-  api: ApiClient;
+  api: ConnectedServiceCredentialResolutionApi;
   binding: ConnectedServiceCredentialBinding;
-}>): Promise<ConnectedServiceCredentialRecordV1 | null> {
+}>): Promise<ConnectedServiceCredentialResolution | null> {
   const sealed = await params.api.getConnectedServiceCredentialSealed({
     serviceId: params.binding.serviceId,
     profileId: params.binding.profileId,
@@ -72,52 +111,65 @@ async function resolveSealedConnectedServiceCredential(params: Readonly<{
     throw new Error(`Failed to decrypt connected service credential (${params.binding.serviceId}/${params.binding.profileId})`);
   }
 
-  return parseCredentialRecord({
-    value: opened.value,
-    serviceId: params.binding.serviceId,
-    profileId: params.binding.profileId,
-  });
+  const record = parseCredentialRecord({
+      value: opened.value,
+      serviceId: params.binding.serviceId,
+      profileId: params.binding.profileId,
+    });
+  return sealed.revisionSemantics === 'revisioned'
+    ? { record, revisionSemantics: 'revisioned', credentialRevision: sealed.credentialRevision }
+    : { record, revisionSemantics: 'legacy_unfenced', credentialRevision: null };
 }
 
-export async function resolveConnectedServiceCredentials(params: Readonly<{
+export async function resolveConnectedServiceCredentialResolutions(params: Readonly<{
   credentials: Credentials;
-  api: ApiClient;
+  api: ConnectedServiceCredentialResolutionApi;
   bindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
-}>): Promise<Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>> {
-  const out = new Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>();
+}>): Promise<Map<ConnectedServiceId, ConnectedServiceCredentialResolution>> {
+  const out = new Map<ConnectedServiceId, ConnectedServiceCredentialResolution>();
   const accountMode = await resolveConnectedServiceAccountMode(params.api);
 
   for (const binding of params.bindings) {
     if (accountMode !== 'e2ee') {
-      let plainRecord: ConnectedServiceCredentialRecordV1 | null = null;
+      let plainResolution: ConnectedServiceCredentialResolution | null = null;
       try {
-        plainRecord = await resolvePlainConnectedServiceCredential({
+        plainResolution = await resolvePlainConnectedServiceCredential({
           api: params.api,
           binding,
         });
       } catch (error) {
+        if (error instanceof ConnectedServiceCredentialBindingMismatchError) throw error;
         if (accountMode !== 'unknown') throw error;
       }
-      if (plainRecord) {
-        out.set(binding.serviceId, plainRecord);
+      if (plainResolution) {
+        out.set(binding.serviceId, plainResolution);
         continue;
       }
       if (accountMode === 'plain') {
-        throw new Error(`Missing connected service credential (${binding.serviceId}/${binding.profileId})`);
+        throw new ConnectedServiceCredentialResolutionError(binding);
       }
     }
 
-    const record = await resolveSealedConnectedServiceCredential({
+    const resolution = await resolveSealedConnectedServiceCredential({
         credentials: params.credentials,
         api: params.api,
         binding,
       });
-    if (!record) {
-      throw new Error(`Missing connected service credential (${binding.serviceId}/${binding.profileId})`);
+    if (!resolution) {
+      throw new ConnectedServiceCredentialResolutionError(binding);
     }
 
-    out.set(binding.serviceId, record);
+    out.set(binding.serviceId, resolution);
   }
 
   return out;
+}
+
+export async function resolveConnectedServiceCredentials(params: Readonly<{
+  credentials: Credentials;
+  api: ConnectedServiceCredentialResolutionApi;
+  bindings: ReadonlyArray<{ serviceId: ConnectedServiceId; profileId: string }>;
+}>): Promise<Map<ConnectedServiceId, ConnectedServiceCredentialRecordV1>> {
+  const resolutions = await resolveConnectedServiceCredentialResolutions(params);
+  return new Map([...resolutions].map(([serviceId, resolution]) => [serviceId, resolution.record]));
 }

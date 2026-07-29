@@ -2,15 +2,6 @@ import { joinPathForPathShape } from '../path/pathShape.js';
 import type { FirstPartyInstallLayout } from './installLayout.js';
 import { readInstalledVersionMarkersSync } from './versionMarkers.js';
 
-function isSafeVersionMarkerSegment(value: string): boolean {
-  return value.length > 0
-    && value !== '.'
-    && value !== '..'
-    && !value.includes('/')
-    && !value.includes('\\')
-    && !value.includes('\0');
-}
-
 /**
  * Resolve a path that points at the **same logical location** as
  * `layout.currentPath` but bypasses the `<installRoot>/current` junction.
@@ -44,7 +35,7 @@ function isSafeVersionMarkerSegment(value: string): boolean {
  */
 export function resolveJunctionFreeCurrentPath(layout: FirstPartyInstallLayout): string | null {
   const markers = readInstalledVersionMarkersSync(layout);
-  if (markers.currentVersionId && isSafeVersionMarkerSegment(markers.currentVersionId)) {
+  if (markers.currentVersionId) {
     return joinPathForPathShape(layout.versionsDir, markers.currentVersionId);
   }
   return layout.currentPath || null;

@@ -139,6 +139,41 @@ function buildDiffFromToolUseDiff(toolUseDiff: UnknownRecord): string | null {
     return [`--- a/${path}`, `+++ b/${path}`, ...hunks].join('\n');
 }
 
+function buildDiffFromSearchReplaceEditsApplied(editsApplied: UnknownRecord): string | null {
+    const path = firstNonEmptyString(
+        editsApplied.absolute_path,
+        editsApplied.file_path,
+        editsApplied.path,
+    ) ?? 'unknown-file';
+    const details = asRecord(editsApplied.edits)?.details;
+    if (!Array.isArray(details)) return null;
+
+    const hunks = details
+        .map((detail) => asRecord(detail))
+        .filter((detail): detail is UnknownRecord => !!detail)
+        .map((detail) => {
+            const beforeText = typeof detail.old_string === 'string' ? detail.old_string : null;
+            const afterText = typeof detail.new_string === 'string' ? detail.new_string : null;
+            if (beforeText === null || afterText === null || (beforeText.length === 0 && afterText.length === 0)) {
+                return null;
+            }
+            const oneBasedLine = typeof detail.old_line === 'number'
+                ? detail.old_line
+                : typeof detail.new_line === 'number'
+                    ? detail.new_line
+                    : 1;
+            return diffHunkFromTexts({
+                beforeText,
+                afterText,
+                lineStart: Math.max(0, Math.floor(oneBasedLine) - 1),
+            });
+        })
+        .filter((hunk): hunk is string => typeof hunk === 'string' && hunk.length > 0);
+
+    if (hunks.length === 0) return null;
+    return [`--- a/${path}`, `+++ b/${path}`, ...hunks].join('\n');
+}
+
 function enrichEditResultWithDiffMetadata(record: UnknownRecord): void {
     const metadata = ensureMetadata(record);
     const existingDiff = firstNonEmptyString(metadata.diff);
@@ -162,6 +197,15 @@ function enrichEditResultWithDiffMetadata(record: UnknownRecord): void {
     const fileDiff = metadataFileDiff ?? nestedOutputFileDiff ?? parsedNestedOutputFileDiff;
     if (fileDiff) {
         const diff = buildDiffFromFileDiff(fileDiff);
+        if (diff) {
+            metadata.diff = diff;
+            return;
+        }
+    }
+
+    const searchReplaceEditsApplied = asRecord(record.EditsApplied);
+    if (searchReplaceEditsApplied) {
+        const diff = buildDiffFromSearchReplaceEditsApplied(searchReplaceEditsApplied);
         if (diff) {
             metadata.diff = diff;
             return;

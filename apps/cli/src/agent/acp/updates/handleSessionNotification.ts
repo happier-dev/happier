@@ -1,9 +1,9 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
 
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { TransportHandler } from '@/agent/transport';
 import { logger } from '@/ui/logger';
-import { buildTokenCountAgentMessageFromUsageObservation } from '@/usage/usageObservation';
+import { buildTokenCountAgentMessageFromUsageObservation } from '@/usage/legacy/legacyUsageTransport';
 import type { AcpReplayCapture } from '../history/acpReplayCapture';
 import type {
   HandlerContext,
@@ -43,7 +43,7 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-export function handleAcpSessionNotification(params: Readonly<{
+export async function handleAcpSessionNotification(params: Readonly<{
   notification: SessionNotification;
   agentName: string;
   transport: TransportHandler;
@@ -52,8 +52,13 @@ export function handleAcpSessionNotification(params: Readonly<{
   waitingForResponse: boolean;
   onResponseTrafficObserved: () => void;
   onAssistantMessageObserved: () => void;
+  prepareToolUpdate?: (
+    update: SessionUpdate,
+    context: Readonly<{ toolCallCountSincePrompt: number }>,
+  ) => Promise<SessionUpdate>;
   createHandlerContext: () => HandlerContext;
   setToolCallCountSincePrompt: (count: number) => void;
+  getToolCallCountSincePrompt?: () => number;
   emit: (message: AgentMessage) => void;
   sessionModeState: SessionModeState | null;
   setSessionModeState: (state: SessionModeState) => void;
@@ -61,7 +66,7 @@ export function handleAcpSessionNotification(params: Readonly<{
   setSessionModelState: (state: SessionModelState) => void;
   sessionConfigOptionsState: ReadonlyArray<SessionConfigOption> | null;
   setSessionConfigOptionsState: (state: ReadonlyArray<SessionConfigOption>) => void;
-}>): void {
+}>): Promise<void> {
   const raw = asRecord(params.notification) ?? {};
   const updateCandidates: unknown[] = [];
   let sessionModeState = params.sessionModeState;
@@ -118,7 +123,13 @@ export function handleAcpSessionNotification(params: Readonly<{
     params.onResponseTrafficObserved();
   }
 
-  const handleOneUpdate = (update: SessionUpdate): void => {
+  const handleOneUpdate = (rawUpdate: SessionUpdate): void => {
+    const rawSessionUpdateType = typeof rawUpdate.sessionUpdate === 'string'
+      ? rawUpdate.sessionUpdate
+      : undefined;
+    const update = rawSessionUpdateType === 'tool_call' || rawSessionUpdateType === 'tool_call_update'
+      ? params.transport.sanitizeToolUpdateContent?.(rawUpdate) ?? rawUpdate
+      : rawUpdate;
     const sessionUpdateType = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : undefined;
     params.sessionUpdateShapeLogger?.log?.(
       `inbound:${params.agentName}:${sessionUpdateType ?? 'unknown'}`,
@@ -196,7 +207,10 @@ export function handleAcpSessionNotification(params: Readonly<{
     }
 
     if (sessionUpdateType === 'tool_call') {
-      handleToolCall(update, ctx);
+      const result = handleToolCall(update, ctx);
+      if (result.toolCallCountSincePrompt !== undefined) {
+        params.setToolCallCountSincePrompt(result.toolCallCountSincePrompt);
+      }
       return;
     }
 
@@ -330,6 +344,15 @@ export function handleAcpSessionNotification(params: Readonly<{
     if (shouldSkipLegacyMessageChunkMirror(update, mirroredStructuredChunkTexts)) {
       continue;
     }
-    handleOneUpdate(update);
+    const sessionUpdateType = typeof update.sessionUpdate === 'string'
+      ? update.sessionUpdate
+      : undefined;
+    const prepared = params.prepareToolUpdate
+      && (sessionUpdateType === 'tool_call' || sessionUpdateType === 'tool_call_update')
+      ? await params.prepareToolUpdate(update, {
+          toolCallCountSincePrompt: (params.getToolCallCountSincePrompt?.() ?? 0) + 1,
+        })
+      : update;
+    handleOneUpdate(prepared);
   }
 }

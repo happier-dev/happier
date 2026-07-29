@@ -1,0 +1,170 @@
+import {
+  getAgentResumeConfig,
+  isAgentId,
+  readProviderSessionIdSessionState,
+  resolveAgentIdFromSessionMetadata,
+} from '@happier-dev/agents';
+import {
+  ExternalSessionsAgentIdSchema,
+  readLinkedExternalSessionV1FromMetadata,
+  type ExternalSessionsAgentId,
+  type SessionMetadata,
+} from '@happier-dev/protocol';
+
+import { listSessionMarkers, type DaemonSessionMarker } from '@/daemon/sessionRegistry';
+import {
+  hasConnectedServiceBindings,
+  mergeConnectedServiceRuntimeSnapshots,
+  readConnectedServiceRuntimeSnapshot,
+  type ConnectedServiceRuntimeSnapshot,
+} from './connectedServiceRuntimeSnapshot';
+import { uniqueSnapshotKey } from '@/api/session/external/linking/connectedServiceRuntimeSnapshotKey';
+
+function readRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  if (value === null) return null;
+  const normalized = String(value ?? '').trim();
+  return normalized ? normalized : null;
+}
+
+function normalizeExternalSessionsAgentId(value: unknown): ExternalSessionsAgentId | null {
+  const normalized = normalizeNullableString(value);
+  if (!normalized) return null;
+  const parsed = ExternalSessionsAgentIdSchema.safeParse(normalized);
+  return parsed.success ? parsed.data : null;
+}
+
+function resolveMetadataProviderId(value: unknown): ExternalSessionsAgentId | null {
+  return normalizeExternalSessionsAgentId(resolveAgentIdFromSessionMetadata(value));
+}
+
+function resolveMarkerProviderId(marker: DaemonSessionMarker): ExternalSessionsAgentId | null {
+  const metadataProviderId = resolveMetadataProviderId(marker.metadata);
+  if (metadataProviderId) return metadataProviderId;
+
+  const markerFlavorProviderId = normalizeExternalSessionsAgentId(marker.flavor);
+  if (markerFlavorProviderId) return markerFlavorProviderId;
+
+  const respawnProviderId = resolveMetadataProviderId(marker.respawn);
+  if (respawnProviderId) return respawnProviderId;
+
+  const respawn = readRecord(marker.respawn);
+  const backendTarget = readRecord(respawn?.backendTarget);
+  return normalizeExternalSessionsAgentId(backendTarget?.backendId)
+    ?? normalizeExternalSessionsAgentId(backendTarget?.agentId);
+}
+
+function readProviderResumeFieldSessionId(
+  metadata: Readonly<Record<string, unknown>>,
+  agentId: ExternalSessionsAgentId,
+): string | null {
+  if (!isAgentId(agentId)) return null;
+  const resume = getAgentResumeConfig(agentId);
+  const field = 'vendorResumeIdField' in resume ? resume.vendorResumeIdField ?? null : null;
+  return field ? normalizeNullableString(metadata[field]) : null;
+}
+
+function readExternalSessionRemoteSessionId(
+  metadata: Readonly<Record<string, unknown>>,
+  agentId: ExternalSessionsAgentId,
+): string | null {
+  const externalSession = readLinkedExternalSessionV1FromMetadata(metadata);
+  if (externalSession?.agentId !== agentId) return null;
+  return normalizeNullableString(externalSession.remoteSessionId);
+}
+
+function readProviderSessionIdForProvider(value: unknown, agentId: ExternalSessionsAgentId): string | null {
+  const metadata = readRecord(value);
+  if (!metadata) return null;
+
+  const externalSessionRemoteSessionId = readExternalSessionRemoteSessionId(metadata, agentId);
+  if (externalSessionRemoteSessionId) return externalSessionRemoteSessionId;
+
+  const stateValue = readProviderSessionIdSessionState(metadata as SessionMetadata).value;
+  if (stateValue && resolveMetadataProviderId(metadata) === agentId) {
+    return stateValue;
+  }
+
+  return readProviderResumeFieldSessionId(metadata, agentId);
+}
+
+function resolveMarkerRemoteSessionId(
+  marker: DaemonSessionMarker,
+  agentId: ExternalSessionsAgentId,
+): string | null {
+  const respawn = readRecord(marker.respawn);
+  return normalizeNullableString(respawn?.resume)
+    ?? readProviderSessionIdForProvider(marker.metadata, agentId)
+    ?? readProviderSessionIdForProvider(marker.respawn, agentId);
+}
+
+function markerMatchesExternalSession(
+  marker: DaemonSessionMarker,
+  agentId: ExternalSessionsAgentId,
+  remoteSessionId: string,
+): boolean {
+  return resolveMarkerProviderId(marker) === agentId
+    && resolveMarkerRemoteSessionId(marker, agentId) === remoteSessionId;
+}
+
+function normalizeDirectoryKey(value: unknown): string | null {
+  const normalized = normalizeNullableString(value);
+  if (!normalized) return null;
+  const slashed = normalized.replaceAll('\\', '/').replace(/\/+$/, '');
+  return /^[a-zA-Z]:\//.test(slashed) ? slashed.toLowerCase() : slashed;
+}
+
+function resolveMarkerDirectoryKeys(marker: DaemonSessionMarker): ReadonlySet<string> {
+  const metadata = readRecord(marker.metadata);
+  const respawn = readRecord(marker.respawn);
+  return new Set(
+    [
+      normalizeDirectoryKey(marker.cwd),
+      normalizeDirectoryKey(metadata?.path),
+      normalizeDirectoryKey(respawn?.directory),
+    ].filter((value): value is string => Boolean(value)),
+  );
+}
+
+function resolveMarkerConnectedServiceRuntimeSnapshot(marker: DaemonSessionMarker): ConnectedServiceRuntimeSnapshot {
+  return mergeConnectedServiceRuntimeSnapshots(
+    readConnectedServiceRuntimeSnapshot(marker.respawn),
+    readConnectedServiceRuntimeSnapshot(marker.metadata),
+  );
+}
+
+export async function resolveConnectedServiceRuntimeSnapshotForExternalSession(params: Readonly<{
+  agentId: ExternalSessionsAgentId;
+  remoteSessionId: string;
+  directoryHint?: string | null;
+}>): Promise<ConnectedServiceRuntimeSnapshot> {
+  const markers = await listSessionMarkers().catch(() => [] as DaemonSessionMarker[]);
+  const markersWithSnapshots = markers
+    .map((marker) => ({
+      marker,
+      snapshot: resolveMarkerConnectedServiceRuntimeSnapshot(marker),
+    }))
+    .filter((entry) => hasConnectedServiceBindings(entry.snapshot));
+
+  const exactRemoteMatch = markersWithSnapshots
+    .filter((entry) => markerMatchesExternalSession(entry.marker, params.agentId, params.remoteSessionId))
+    .sort((left, right) => right.marker.updatedAt - left.marker.updatedAt)[0];
+  if (exactRemoteMatch) return exactRemoteMatch.snapshot;
+
+  const directoryKey = normalizeDirectoryKey(params.directoryHint);
+  if (!directoryKey) return {};
+
+  const contextualMatches = markersWithSnapshots
+    .filter((entry) => resolveMarkerProviderId(entry.marker) === params.agentId)
+    .filter((entry) => resolveMarkerDirectoryKeys(entry.marker).has(directoryKey))
+    .sort((left, right) => right.marker.updatedAt - left.marker.updatedAt);
+
+  const uniqueSnapshots = new Map<string, ConnectedServiceRuntimeSnapshot>();
+  for (const match of contextualMatches) {
+    uniqueSnapshots.set(uniqueSnapshotKey(match.snapshot), match.snapshot);
+  }
+  return uniqueSnapshots.size === 1 ? [...uniqueSnapshots.values()][0] ?? {} : {};
+}

@@ -6,11 +6,12 @@ vi.mock('@/ui/logger', () => {
 
 import { logger } from '@/ui/logger';
 
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { TransportHandler } from '@/agent/transport';
 
 import { handleAgentMessageChunk, handleAgentThoughtChunk } from '../messages';
 import type { HandlerContext } from '../types';
+import { createLegacyHandlerContextFixture } from '../../__tests__/legacyToolRuntimeFixture';
 
 function createHandlerContext(options?: Readonly<{
   transport?: Partial<TransportHandler>;
@@ -29,23 +30,14 @@ function createHandlerContext(options?: Readonly<{
     ...(options?.transport ?? {}),
   };
 
-  const ctx: HandlerContext = {
+  const base = createLegacyHandlerContextFixture({
     transport,
-    activeToolCalls: new Set<string>(),
-    finalizedToolCalls: new Set<string>(),
-    toolCallLifecycleStates: new Map(),
-    toolCallStartTimes: new Map<string, number>(),
-    toolCallTimeouts: new Map<string, NodeJS.Timeout>(),
-    toolCallIdToNameMap: new Map<string, string>(),
-    toolCallIdToInputMap: new Map<string, Record<string, unknown>>(),
-    idleTimeout: null,
-    toolCallCountSincePrompt: options?.toolCallCountSincePrompt ?? 0,
     emit: (msg) => emitted.push(msg),
-    emitIdleStatus: () => {},
-    clearIdleTimeout: () => {},
-    setIdleTimeout: (_callback, ms) => {
-      idleTimeoutMs.current = ms;
-    },
+    toolCallCountSincePrompt: options?.toolCallCountSincePrompt,
+  });
+  const ctx: HandlerContext = {
+    ...base,
+    setIdleTimeout: (_callback, ms) => { idleTimeoutMs.current = ms; },
   };
 
   return { ctx, emitted, idleTimeoutMs };
@@ -119,7 +111,7 @@ describe('ACP update message handlers', () => {
             },
             origin: {
               source: 'acp-content',
-              providerEventId: expect.any(String),
+              agentEventId: expect.any(String),
             },
           },
         ],
@@ -159,7 +151,7 @@ describe('ACP update message handlers', () => {
             },
             origin: {
               source: 'acp-content',
-              providerEventId: expect.any(String),
+              agentEventId: expect.any(String),
             },
           },
         ],

@@ -1,7 +1,10 @@
+import { EventEmitter } from 'node:events';
+
 import type { AcpRuntimeSessionClient } from '@/agent/acp/sessionClient';
+import { createRpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
-import type { Metadata, PermissionMode, Session } from '@/api/types';
+import type { AgentState, Metadata, PermissionMode, Session } from '@/api/types';
 import type { V2SessionListResponse, V2SessionRecord } from '@happier-dev/protocol';
 
 import { createTestMetadata } from './sessionMetadata';
@@ -15,6 +18,7 @@ export type MutableApiSessionClientFixture<TMetadata extends Record<string, unkn
     getMetadataSnapshot: () => TMetadata | null;
     __setMetadata: (next: TMetadata | null) => void;
     __getMetadata: () => TMetadata | null;
+    __getAgentState: () => AgentState;
 };
 
 export function createMockSession(overrides: RecordLike = {}) {
@@ -136,22 +140,40 @@ export function createApiSessionClientFixture(options?: {
 }
 
 export function createMutableApiSessionClientFixture<TMetadata extends Record<string, unknown> = Metadata>(options?: {
+    sessionId?: string;
     metadata?: TMetadata | null;
     metadataPermissionMode?: PermissionMode;
+    agentState?: AgentState;
     overrides?: Partial<ApiSessionClient>;
 }): MutableApiSessionClientFixture<TMetadata> {
+    const sessionId = options?.sessionId ?? 'test-session-id';
     let metadata = options?.metadata
         ?? ((options?.metadataPermissionMode
             ? createTestMetadata({ permissionMode: options.metadataPermissionMode })
             : null) as TMetadata | null);
+    let agentState = options?.agentState ?? {};
+    const events = new EventEmitter();
+    const rpcHandlerManager = createRpcHandlerManager({
+        scopePrefix: sessionId,
+        encryptionKey: new Uint8Array(32),
+        encryptionVariant: 'dataKey',
+        encryptionMode: 'plain',
+        logger: () => {},
+    });
 
     const fixture = {
+        sessionId,
+        rpcHandlerManager,
         keepAlive() {},
         sendAgentMessage() {},
         async sendAgentMessageCommitted() {},
         async sendUserTextMessageCommitted() {},
         updateMetadata(updater: (current: TMetadata | null) => TMetadata | null) {
             metadata = updater(metadata);
+            events.emit('metadata-updated');
+        },
+        updateAgentState(updater: (current: AgentState) => AgentState) {
+            agentState = updater(agentState);
         },
         async fetchRecentTranscriptTextItemsForAcpImport() {
             return [];
@@ -169,14 +191,25 @@ export function createMutableApiSessionClientFixture<TMetadata extends Record<st
             return false;
         },
         async refreshSessionSnapshotFromServerBestEffort() {},
+        observeProviderInputSettlement() {},
+        confirmUserMessageLocallyConsumed() {},
         getMetadataSnapshot() {
             return metadata;
+        },
+        on(event: string, listener: (...args: unknown[]) => void) {
+            return events.on(event, listener);
+        },
+        off(event: string, listener: (...args: unknown[]) => void) {
+            return events.off(event, listener);
         },
         __setMetadata(next: TMetadata | null) {
             metadata = next;
         },
         __getMetadata() {
             return metadata;
+        },
+        __getAgentState() {
+            return agentState;
         },
         ...options?.overrides,
     };

@@ -140,6 +140,45 @@ describe('invokeAgentCliInstall', () => {
     );
   });
 
+  it('forces explicit managed updates past installed-runtime preflight', async () => {
+    const installAgentCli = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>().mockResolvedValue({
+      ok: true,
+      alreadyInstalled: false,
+      logPath: null,
+      plan: {
+        agentId: 'codex',
+        title: 'OpenAI Codex CLI',
+        binaries: ['codex'],
+        platform: 'linux',
+        docsUrl: 'https://github.com/openai/codex',
+        commands: [],
+        requiresAdmin: false,
+        installMode: 'github_release_binary',
+        managedInstall: {
+          kind: 'github_release_binary',
+          githubRepo: 'openai/codex',
+          binaryName: 'codex',
+        },
+      },
+    });
+
+    await invokeAgentCliInstall({
+      agentId: 'codex',
+      nodePlatform: 'linux',
+      params: { intent: 'update', skipIfInstalled: true },
+      installAgentCli,
+    });
+
+    expect(installAgentCli).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: 'codex',
+        intent: 'update',
+        skipIfInstalled: false,
+        allowVendorRecipeExecution: true,
+      }),
+    );
+  });
+
   it('passes allowVendorRecipeExecution through when explicitly set', async () => {
     const installAgentCli = vi.fn<(...args: any[]) => Promise<InstallAgentCliResult>>().mockResolvedValue({
       ok: true,

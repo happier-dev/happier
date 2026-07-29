@@ -1,7 +1,7 @@
 import fs from 'fs/promises';
 
-import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
-import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
 
 export type EnsureSessionDirectoryResult =
   | { ok: true; directoryCreated: boolean }

@@ -1,19 +1,35 @@
 import type { ApiMachineClient } from '@/api/apiMachine';
-import type { SpawnSessionResult } from '@/rpc/handlers/registerSessionHandlers';
+import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
+import type { TrackedSession } from '../types';
 
 type SpawnResultResolver = (result: SpawnSessionResult) => void;
+type PendingRpcDrainApiMachine = Pick<ApiMachineClient, 'awaitPendingRpcRequests'>;
 
 export type CreateBeforeShutdownDrainParams = Readonly<{
     pidToAwaiter: Map<number, unknown>;
     pidToSpawnResultResolver: Map<number, SpawnResultResolver>;
     pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
+    pidToTrackedSession?: Map<number, TrackedSession>;
     shutdownSpawnDrainGraceMs: number;
     shutdownSpawnDrainPollMs: number;
-    getApiMachineForSessions: () => ApiMachineClient | null;
+    getApiMachineForSessions: () => PendingRpcDrainApiMachine | null;
     buildUnexpectedSpawnResult: (errorMessage: string) => SpawnSessionResult;
+    buildIncompleteRetirementResult?: () => SpawnSessionResult;
     drainBackgroundServerWork?: () => Promise<void>;
+    disposePluginRuntimeRegistry?: () => Promise<void>;
 }>;
+
+async function disposePluginRuntimeRegistryBestEffort(params: CreateBeforeShutdownDrainParams): Promise<void> {
+    if (!params.disposePluginRuntimeRegistry) {
+        return;
+    }
+    try {
+        await params.disposePluginRuntimeRegistry();
+    } catch (error) {
+        logger.warn('[DAEMON RUN] Plugin runtime registry disposal failed during shutdown (best-effort)', error);
+    }
+}
 
 export function createBeforeShutdownDrain(
     params: CreateBeforeShutdownDrainParams,
@@ -33,7 +49,10 @@ export function createBeforeShutdownDrain(
 
             const initialInFlightSpawns = params.pidToAwaiter.size;
             const hasPendingRpcRequests = params.getApiMachineForSessions() !== null;
-            if (initialInFlightSpawns === 0 && !hasPendingRpcRequests) return;
+            if (initialInFlightSpawns === 0 && !hasPendingRpcRequests) {
+                await disposePluginRuntimeRegistryBestEffort(params);
+                return;
+            }
 
             logger.debug('[DAEMON RUN] Shutdown requested with in-flight work; deferring shutdown', {
                 inFlightSpawns: initialInFlightSpawns,
@@ -62,8 +81,42 @@ export function createBeforeShutdownDrain(
                     clearTimeout(timeout);
                 }
 
-                for (const resolveSpawnResult of params.pidToSpawnResultResolver.values()) {
-                    resolveSpawnResult(params.buildUnexpectedSpawnResult(errorMessage));
+                for (
+                    const [awaiterPid, resolveSpawnResult]
+                    of params.pidToSpawnResultResolver.entries()
+                ) {
+                    const tracked =
+                        params.pidToTrackedSession?.get(awaiterPid)
+                        ?? Array.from(
+                            params.pidToTrackedSession?.values()
+                            ?? [],
+                        ).find(
+                            (candidate) =>
+                                candidate.spawnStartupAwaiterPid
+                                === awaiterPid,
+                        );
+                    let retirementIncomplete = false;
+                    const cancel =
+                        tracked?.cancelStartupLaunchBeforeAck;
+                    if (cancel) {
+                        try {
+                            retirementIncomplete =
+                                (await cancel()).status
+                                !== 'stopped';
+                        } catch {
+                            retirementIncomplete = true;
+                        }
+                    }
+                    resolveSpawnResult(
+                        retirementIncomplete
+                        && params.buildIncompleteRetirementResult
+                            ? params
+                                .buildIncompleteRetirementResult()
+                            : params
+                                .buildUnexpectedSpawnResult(
+                                    errorMessage,
+                                ),
+                    );
                 }
 
                 params.pidToAwaiter.clear();
@@ -72,12 +125,16 @@ export function createBeforeShutdownDrain(
             }
 
             const apiMachineForSessions = params.getApiMachineForSessions();
-            if (!apiMachineForSessions) return;
+            if (!apiMachineForSessions) {
+                await disposePluginRuntimeRegistryBestEffort(params);
+                return;
+            }
 
             const elapsedMs = Date.now() - start;
             const remainingRpcGraceMs = Math.max(0, params.shutdownSpawnDrainGraceMs - elapsedMs);
             if (remainingRpcGraceMs === 0) {
                 logger.warn('[DAEMON RUN] No shutdown grace budget left to drain pending RPC requests');
+                await disposePluginRuntimeRegistryBestEffort(params);
                 return;
             }
 
@@ -104,6 +161,7 @@ export function createBeforeShutdownDrain(
             if (rpcRequestsDrained) {
                 logger.debug('[DAEMON RUN] Pending RPC requests drained; proceeding with shutdown');
             }
+            await disposePluginRuntimeRegistryBestEffort(params);
         })();
         return await beforeShutdownOnce;
     };

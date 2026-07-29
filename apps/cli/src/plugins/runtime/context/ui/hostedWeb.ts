@@ -1,7 +1,7 @@
 import type {
-    LocalServicesRuntimeServiceV1,
-    LocalServiceRuntimeSnapshotV1,
-} from '@happier-dev/plugin-sdk';
+    PluginLocalServicesService,
+    PluginLocalServiceRuntimeSnapshot,
+} from '../localServices';
 import type { PluginHostedWebRuntimeModeV1 } from '@happier-dev/protocol/plugins/ui';
 
 export type HostedWebRuntimeEndpointResolution =
@@ -28,7 +28,7 @@ export type HostedWebRegisteredEndpointPreviewResolver = Readonly<{
     ): Promise<HostedWebRuntimeEndpointPreview | null> | HostedWebRuntimeEndpointPreview | null;
 }>;
 
-function normalizeDiagnostics(snapshot: LocalServiceRuntimeSnapshotV1): readonly string[] {
+function normalizeDiagnostics(snapshot: PluginLocalServiceRuntimeSnapshot): readonly string[] {
     return snapshot.diagnostics
         .map((diagnostic) => diagnostic.code)
         .filter((code) => code.trim().length > 0);
@@ -58,7 +58,7 @@ function resolveReadyPreview(params: Readonly<{
     return null;
 }
 
-function classifyManagedSnapshot(snapshot: LocalServiceRuntimeSnapshotV1): HostedWebRuntimeEndpointResolution {
+function classifyManagedSnapshot(snapshot: PluginLocalServiceRuntimeSnapshot): HostedWebRuntimeEndpointResolution {
     const diagnostics = normalizeDiagnostics(snapshot);
     if (snapshot.phase === 'starting' || snapshot.phase === 'detecting' || snapshot.phase === 'stopped') {
         return Object.freeze({
@@ -98,7 +98,7 @@ export async function resolveHostedWebRuntimeEndpoint(input: Readonly<{
     runtimeMode: PluginHostedWebRuntimeModeV1;
     preview?: HostedWebRuntimeEndpointPreview | null;
     registeredEndpointPreview?: HostedWebRegisteredEndpointPreviewResolver | null;
-    localServices?: LocalServicesRuntimeServiceV1 | null;
+    localServices?: PluginLocalServicesService | null;
     nowMs?: () => number;
 }>): Promise<HostedWebRuntimeEndpointResolution> {
     const nowMs = input.nowMs?.() ?? Date.now();

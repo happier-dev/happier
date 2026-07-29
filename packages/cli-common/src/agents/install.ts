@@ -20,6 +20,7 @@ export type AgentCliInstallCommand = Readonly<{
 }>;
 
 export type AgentCliInstallMode = 'vendor_recipe' | 'managed_package' | 'github_release_binary';
+export type AgentCliInstallIntent = 'install' | 'update';
 
 export type AgentCliInstallPlan = Readonly<{
   agentId: string;
@@ -48,7 +49,8 @@ export type InstallAgentCliResult =
         | 'command-exec-failed'
         | 'command-timed-out'
         | 'command-failed'
-        | 'managed-runtime-unavailable';
+        | 'managed-runtime-unavailable'
+        | 'update-not-available';
       errorMessage: string;
       plan: AgentCliInstallPlan | null;
       logPath: string | null;
@@ -166,6 +168,7 @@ export async function installAgentCliForRuntime(params: Readonly<{
   logDir?: string | null;
   dryRun?: boolean;
   skipIfInstalled?: boolean;
+  intent?: AgentCliInstallIntent;
   allowVendorRecipeExecution?: boolean;
   deps?: InstallAgentCliDeps;
 }>): Promise<InstallAgentCliResult> {
@@ -174,6 +177,18 @@ export async function installAgentCliForRuntime(params: Readonly<{
   const deps = params.deps ?? {};
 
   const planned = planAgentCliInstallForRuntime({ runtimeSpec, platform: params.platform });
+  if (
+    params.intent === 'update'
+    && (!planned.ok || planned.plan.managedInstall === null)
+  ) {
+    return {
+      ok: false,
+      errorCode: 'update-not-available',
+      errorMessage: `No managed update is available for ${runtimeSpec.id} on ${params.platform}.`,
+      plan: planned.ok ? planned.plan : null,
+      logPath: null,
+    };
+  }
   if (!planned.ok) {
     if (params.skipIfInstalled !== false) {
       const installedOnlyPlan = createInstalledOnlyAgentCliInstallPlan({
@@ -186,6 +201,7 @@ export async function installAgentCliForRuntime(params: Readonly<{
         env,
         dryRun: params.dryRun,
         skipIfInstalled: params.skipIfInstalled,
+        intent: params.intent,
         allowVendorRecipeExecution: params.allowVendorRecipeExecution,
       });
       if (
@@ -206,6 +222,7 @@ export async function installAgentCliForRuntime(params: Readonly<{
     logDir: params.logDir,
     dryRun: params.dryRun,
     skipIfInstalled: params.skipIfInstalled,
+    intent: params.intent,
     allowVendorRecipeExecution: params.allowVendorRecipeExecution,
     deps,
   });
@@ -218,6 +235,7 @@ export async function installAgentCli(params: Readonly<{
   logDir?: string | null;
   dryRun?: boolean;
   skipIfInstalled?: boolean;
+  intent?: AgentCliInstallIntent;
   allowVendorRecipeExecution?: boolean;
   deps?: InstallAgentCliDeps;
 }>): Promise<InstallAgentCliResult> {
@@ -228,6 +246,7 @@ export async function installAgentCli(params: Readonly<{
     logDir: params.logDir,
     dryRun: params.dryRun,
     skipIfInstalled: params.skipIfInstalled,
+    intent: params.intent,
     allowVendorRecipeExecution: params.allowVendorRecipeExecution,
     deps: params.deps,
   });

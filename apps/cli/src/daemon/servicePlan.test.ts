@@ -16,6 +16,7 @@ describe('daemon service install plan', () => {
       platform: 'darwin',
       channel: 'stable',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       uid: 501,
       userHomeDir: '/Users/test',
       happierHomeDir: '/Users/test/.happier',
@@ -57,6 +58,7 @@ describe('daemon service install plan', () => {
       platform: 'darwin',
       channel: 'stable',
       instanceId: 'company',
+      activeServerId: 'company',
       uid: 501,
       userHomeDir: '/Users/test',
       happierHomeDir: '/Users/test/.happier',
@@ -81,6 +83,7 @@ describe('daemon service install plan', () => {
       platform: 'darwin',
       channel: 'preview',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       uid: 501,
       userHomeDir: '/Users/test',
       happierHomeDir: '/Users/test/.happier',
@@ -95,6 +98,29 @@ describe('daemon service install plan', () => {
     expect(plan.files[0]?.path).toBe('/Users/test/Library/LaunchAgents/com.happier.cli.daemon.preview.cloud.plist');
     expect(plan.files[0]?.content).toContain('<key>HAPPIER_PUBLIC_RELEASE_CHANNEL</key>');
     expect(plan.files[0]?.content).toContain('<string>preview</string>');
+  });
+
+  it('keeps raw pinned service instance ids in service names while using explicit safe active server ids', () => {
+    const rawServiceInstanceId = 'team/acme prod';
+    const plan = planDaemonServiceInstall({
+      platform: 'darwin',
+      channel: 'stable',
+      instanceId: rawServiceInstanceId,
+      activeServerId: 'team-acme-prod',
+      uid: 501,
+      userHomeDir: '/Users/test',
+      happierHomeDir: '/Users/test/.happier',
+      serverUrl: 'https://api.happier.dev/team/acme',
+      webappUrl: 'https://app.happier.dev/team/acme',
+      publicServerUrl: 'https://api.happier.dev/team/acme',
+      nodePath: '/opt/homebrew/bin/node',
+      entryPath: '/usr/local/lib/node_modules/@happier-dev/cli/dist/index.mjs',
+    });
+
+    expect(plan.files[0]?.path).toBe('/Users/test/Library/LaunchAgents/com.happier.cli.daemon.team_acme_prod.plist');
+    expect(plan.files[0]?.content).toContain('<string>com.happier.cli.daemon.team_acme_prod</string>');
+    expect(plan.files[0]?.content).toContain('<key>HAPPIER_ACTIVE_SERVER_ID</key>');
+    expect(plan.files[0]?.content).toContain('<string>team-acme-prod</string>');
   });
 
   it('plans darwin restart with kickstart-only when requested', () => {
@@ -125,6 +151,7 @@ describe('daemon service install plan', () => {
       mode: 'user',
       channel: 'stable',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
       serverUrl: 'https://api.happier.dev',
@@ -191,6 +218,7 @@ describe('daemon service install plan', () => {
       mode: 'user',
       channel: 'publicdev',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
       serverUrl: 'https://api.happier.dev',
@@ -213,6 +241,7 @@ describe('daemon service install plan', () => {
       channel: 'stable',
       systemUser: 'happier',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       userHomeDir: '/home/happier',
       happierHomeDir: '/home/happier/.happier',
       serverUrl: 'http://127.0.0.1:3005',
@@ -248,6 +277,7 @@ describe('daemon service install plan', () => {
         platform: 'linux',
         mode: 'system',
         instanceId: 'cloud',
+        activeServerId: 'cloud',
         userHomeDir: '/home/happier',
         happierHomeDir: '/home/happier/.happier',
         serverUrl: 'http://127.0.0.1:3005',
@@ -264,6 +294,7 @@ describe('daemon service install plan', () => {
       platform: 'linux',
       mode: 'user',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
       serverUrl: 'https://api.happier.dev',
@@ -283,6 +314,7 @@ describe('daemon service install plan', () => {
       mode: 'user',
       channel: 'stable',
       instanceId: 'company',
+      activeServerId: 'company',
       userHomeDir: '/home/test',
       happierHomeDir: '/home/test/.happier',
       nodePath: '/usr/bin/node',
@@ -301,6 +333,7 @@ describe('daemon service install plan', () => {
       platform: 'win32',
       channel: 'stable',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       userHomeDir: 'C:\\\\Users\\\\test',
       happierHomeDir: 'C:\\\\Users\\\\test\\\\.happier',
       serverUrl: 'https://api.happier.dev',
@@ -326,6 +359,7 @@ describe('daemon service install plan', () => {
       platform: 'win32',
       channel: 'publicdev',
       instanceId: 'cloud',
+      activeServerId: 'cloud',
       userHomeDir: 'C:\\\\Users\\\\test',
       happierHomeDir: 'C:\\\\Users\\\\test\\\\.happier',
       serverUrl: 'https://api.happier.dev',

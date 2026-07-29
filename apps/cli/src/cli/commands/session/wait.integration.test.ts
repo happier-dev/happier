@@ -255,7 +255,7 @@ describe('happier session wait (integration)', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'claude',
+              agentId: 'claude',
               data: { type: 'task_started', id: 'task_wait_1' },
             },
           },
@@ -296,7 +296,7 @@ describe('happier session wait (integration)', () => {
                   role: 'agent',
                   content: {
                     type: 'acp',
-                    provider: 'claude',
+                    agentId: 'claude',
                     data: { type: 'task_complete', id: 'task_wait_1' },
                   },
                 },
@@ -516,7 +516,7 @@ describe('happier session wait (integration)', () => {
                   role: 'agent',
                   content: {
                     type: 'acp',
-                    provider: 'claude',
+                    agentId: 'claude',
                     data: { type: 'task_complete', id: 'task_wait_race_1' },
                   },
                 },
@@ -570,7 +570,7 @@ describe('happier session wait (integration)', () => {
               role: 'agent',
               content: {
                 type: 'acp',
-                provider: 'claude',
+                agentId: 'claude',
                 data: { type: 'task_started', id: 'task_wait_race_1' },
               },
             },
@@ -623,7 +623,7 @@ describe('happier session wait (integration)', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'claude',
+              agentId: 'claude',
               data: { type: 'task_started', id: 'task_old' },
             },
           },
@@ -651,7 +651,7 @@ describe('happier session wait (integration)', () => {
             role: 'agent',
             content: {
               type: 'acp',
-              provider: 'claude',
+              agentId: 'claude',
               data: { type: 'task_complete', id: 'task_old' },
             },
           },
@@ -680,7 +680,7 @@ describe('happier session wait (integration)', () => {
                   role: 'agent',
                   content: {
                     type: 'acp',
-                    provider: 'claude',
+                    agentId: 'claude',
                     data: { type: 'task_started', id: 'task_followup' },
                   },
                 },
@@ -709,7 +709,7 @@ describe('happier session wait (integration)', () => {
                   role: 'agent',
                   content: {
                     type: 'acp',
-                    provider: 'claude',
+                    agentId: 'claude',
                     data: { type: 'task_complete', id: 'task_followup' },
                   },
                 },

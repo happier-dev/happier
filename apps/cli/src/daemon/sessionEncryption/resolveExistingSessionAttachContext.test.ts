@@ -12,7 +12,12 @@ vi.mock('@/session/transport/http/sessionsHttp', () => ({
   fetchSessionByIdCompat: vi.fn(async () => null),
 }));
 
+vi.mock('@/api/session/external/linking/qualifiedLinkIdentityRegistry', () => ({
+  resolveCurrentExternalSessionAgentIdentity: vi.fn(async () => null),
+}));
+
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
+import { resolveCurrentExternalSessionAgentIdentity } from '@/api/session/external/linking/qualifiedLinkIdentityRegistry';
 
 import type { Credentials } from '@/persistence';
 import { resolveExistingSessionAttachContext } from './resolveExistingSessionAttachContext';
@@ -32,6 +37,7 @@ function deterministicRandomBytesFactory(): (length: number) => Uint8Array {
 describe('resolveExistingSessionAttachContext', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    vi.mocked(resolveCurrentExternalSessionAgentIdentity).mockResolvedValue(null);
   });
 
   it('returns a missing-session-id failure (and does not fetch) when sessionId is blank', async () => {
@@ -84,6 +90,45 @@ describe('resolveExistingSessionAttachContext', () => {
     });
   });
 
+  it.each([
+    ['missing', null],
+    ['malformed', 'not-an-account-owner-envelope'],
+  ] as const)(
+    'fails closed when split-layout owner metadata is %s before deriving resume authority',
+    async (_caseName, ownerMetadata) => {
+      const credentials: Credentials = {
+        token: 't',
+        encryption: {
+          type: 'dataKey',
+          publicKey: new Uint8Array(32).fill(1),
+          machineKey: new Uint8Array(32).fill(2),
+        },
+      };
+      vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+        createSessionRecordFixture({
+          id: 'sess_split_invalid_owner',
+          encryptionMode: 'plain',
+          metadataLayoutVersion: 1,
+          metadata: JSON.stringify({
+            v: 1,
+            summary: { text: 'Recipient-safe title', updatedAt: 10 },
+          }),
+          ownerMetadata,
+          agentState: JSON.stringify({}),
+          dataEncryptionKey: null,
+        } as any),
+      );
+
+      const out = await resolveExistingSessionAttachContext({
+        token: 't',
+        sessionId: 'sess_split_invalid_owner',
+        credentials,
+      });
+
+      expect(out).toEqual({ ok: false, reason: 'invalidOwnerMetadata' });
+    },
+  );
+
   it('limits concurrent session-detail reads during existing-session reattach bursts', async () => {
     let active = 0;
     let maxActive = 0;
@@ -114,18 +159,114 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(maxActive).toBeLessThanOrEqual(4);
   });
 
-  it('prefers the direct-session provider id when the stored metadata has no top-level flavor', async () => {
+  it.each([
+    {
+      name: 'missing current Agent identity',
+      qualifiedIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'happier.agent.antigravity',
+          localId: 'antigravity',
+        },
+        source: {
+          kind: 'antigravityCliPrint',
+          contractVersion: 1,
+        },
+      },
+      currentAgent: null,
+    },
+    {
+      name: 'missing qualified identity',
+      qualifiedIdentity: undefined,
+      currentAgent: {
+        identity: {
+          pluginId: 'happier.agent.antigravity',
+          localId: 'antigravity',
+        },
+        sourceKinds: ['antigravityCliPrint'],
+      },
+    },
+    {
+      name: 'replaced current source contract',
+      qualifiedIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'happier.agent.antigravity',
+          localId: 'antigravity',
+        },
+        source: {
+          kind: 'antigravityCliPrint',
+          contractVersion: 1,
+        },
+      },
+      currentAgent: {
+        identity: {
+          pluginId: 'happier.agent.antigravity',
+          localId: 'antigravity',
+        },
+        sourceKinds: ['someOtherSource'],
+      },
+    },
+    {
+      name: 'replaced current Agent identity',
+      qualifiedIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'happier.agent.antigravity',
+          localId: 'antigravity',
+        },
+        source: {
+          kind: 'antigravityCliPrint',
+          contractVersion: 1,
+        },
+      },
+      currentAgent: {
+        identity: {
+          pluginId: 'replacement.agent.antigravity',
+          localId: 'antigravity',
+        },
+        sourceKinds: ['antigravityCliPrint'],
+      },
+    },
+    {
+      name: 'malformed qualified identity',
+      qualifiedIdentity: {
+        v: 1,
+        agent: {
+          pluginId: 'happier.agent.antigravity',
+        },
+        source: {
+          kind: 'antigravityCliPrint',
+          contractVersion: 1,
+        },
+      },
+      currentAgent: {
+        identity: {
+          pluginId: 'happier.agent.antigravity',
+          localId: 'antigravity',
+        },
+        sourceKinds: ['antigravityCliPrint'],
+      },
+    },
+  ])('fails attach admission for a linked session with $name', async ({ qualifiedIdentity, currentAgent }) => {
+    vi.mocked(resolveCurrentExternalSessionAgentIdentity).mockResolvedValueOnce(currentAgent);
     vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
       createSessionRecordFixture({
-        id: 'sess_direct_claude',
+        id: 'sess_linked_antigravity_invalid',
         encryptionMode: 'plain',
         metadata: JSON.stringify({
           externalSessionV1: {
             v: 1,
-            providerId: 'claude',
-            remoteSessionId: 'sess-direct-1',
+            agentId: 'antigravity',
+            machineId: 'machine-1',
+            remoteSessionId: 'conversation-1',
+            source: {
+              kind: 'antigravityCliPrint',
+              brainDir: '/tmp/antigravity-brain',
+            },
+            ...(qualifiedIdentity ? { qualifiedIdentity } : {}),
           },
-          claudeSessionId: 'sess-direct-1',
+          antigravitySessionId: 'conversation-1',
         }),
         dataEncryptionKey: null,
       }),
@@ -133,7 +274,56 @@ describe('resolveExistingSessionAttachContext', () => {
 
     const out = await resolveExistingSessionAttachContext({
       token: 't',
-      sessionId: 'sess_direct_claude',
+      sessionId: 'sess_linked_antigravity_invalid',
+      credentials: null,
+    });
+
+    expect(out).toEqual({ ok: false, reason: 'linkedResumeIdentityUnavailable' });
+  });
+
+  it('admits an exact-current qualified linked identity and derives its vendor resume id', async () => {
+    vi.mocked(resolveCurrentExternalSessionAgentIdentity).mockResolvedValueOnce({
+      identity: {
+        pluginId: 'happier.agent.antigravity',
+        localId: 'antigravity',
+      },
+      sourceKinds: ['antigravityCliPrint'],
+    });
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_linked_antigravity_current',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          externalSessionV1: {
+            v: 1,
+            agentId: 'antigravity',
+            machineId: 'machine-1',
+            remoteSessionId: 'conversation-1',
+            source: {
+              kind: 'antigravityCliPrint',
+              brainDir: '/tmp/antigravity-brain',
+            },
+            qualifiedIdentity: {
+              v: 1,
+              agent: {
+                pluginId: 'happier.agent.antigravity',
+                localId: 'antigravity',
+              },
+              source: {
+                kind: 'antigravityCliPrint',
+                contractVersion: 1,
+              },
+            },
+          },
+          antigravitySessionId: 'conversation-1',
+        }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    const out = await resolveExistingSessionAttachContext({
+      token: 't',
+      sessionId: 'sess_linked_antigravity_current',
       credentials: null,
     });
 
@@ -147,19 +337,72 @@ describe('resolveExistingSessionAttachContext', () => {
           metadata: {
             externalSessionV1: {
               v: 1,
-              providerId: 'claude',
-              remoteSessionId: 'sess-direct-1',
+              agentId: 'antigravity',
+              machineId: 'machine-1',
+              remoteSessionId: 'conversation-1',
+              source: {
+                kind: 'antigravityCliPrint',
+                brainDir: '/tmp/antigravity-brain',
+              },
+              qualifiedIdentity: {
+                v: 1,
+                agent: {
+                  pluginId: 'happier.agent.antigravity',
+                  localId: 'antigravity',
+                },
+                source: {
+                  kind: 'antigravityCliPrint',
+                  contractVersion: 1,
+                },
+              },
             },
-            claudeSessionId: 'sess-direct-1',
+            antigravitySessionId: 'conversation-1',
           },
           metadataVersion: 1,
           agentState: null,
           agentStateVersion: 0,
         },
       },
-      vendorResumeId: 'sess-direct-1',
-      backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+      vendorResumeId: 'conversation-1',
+      linkedVendorResumeId: 'conversation-1',
+      backendTarget: { kind: 'builtInAgent', agentId: 'antigravity' },
     });
+  });
+
+  it('preserves released directSessionV1 resume without current qualified identity resolution', async () => {
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
+      createSessionRecordFixture({
+        id: 'sess_released_direct_antigravity',
+        encryptionMode: 'plain',
+        metadata: JSON.stringify({
+          directSessionV1: {
+            v: 1,
+            providerId: 'antigravity',
+            machineId: 'machine-1',
+            remoteSessionId: 'conversation-1',
+            source: {
+              kind: 'antigravityCliPrint',
+              brainDir: '/tmp/antigravity-brain',
+            },
+          },
+          antigravitySessionId: 'conversation-1',
+        }),
+        dataEncryptionKey: null,
+      }),
+    );
+
+    const out = await resolveExistingSessionAttachContext({
+      token: 't',
+      sessionId: 'sess_released_direct_antigravity',
+      credentials: null,
+    });
+
+    expect(out).toMatchObject({
+      ok: true,
+      vendorResumeId: 'conversation-1',
+      backendTarget: { kind: 'builtInAgent', agentId: 'antigravity' },
+    });
+    expect(vi.mocked(resolveCurrentExternalSessionAgentIdentity)).not.toHaveBeenCalled();
   });
 
   it('returns the configured ACP backend target from stored session metadata', async () => {
@@ -313,47 +556,4 @@ describe('resolveExistingSessionAttachContext', () => {
     expect(out).toEqual({ ok: false, reason: 'fetchFailed' });
   });
 
-  it('clamps the synthesized attach cursor to the delivered watermark and exposes it on the context', async () => {
-    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
-      createSessionRecordFixture({
-        id: 'sess_owed',
-        seq: 42,
-        encryptionMode: 'plain',
-        metadata: JSON.stringify({
-          flavor: 'codex',
-          path: '/tmp',
-          codexSessionId: 'vendor-owed-1',
-          deliveredUserMessageSeqV1: 5,
-        }),
-        dataEncryptionKey: null,
-      }),
-    );
-
-    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_owed', credentials: null });
-
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    // session.seq=42 but only seq<=5 was ever delivered to the runner: rows 6..42 are owed.
-    expect(out.attachPayload.lastObservedMessageSeq).toBe(5);
-    expect(out.deliveredUserMessageSeq).toBe(5);
-  });
-
-  it('keeps the raw session seq cursor and a null watermark for legacy sessions', async () => {
-    vi.mocked(fetchSessionByIdCompat).mockResolvedValueOnce(
-      createSessionRecordFixture({
-        id: 'sess_legacy',
-        seq: 42,
-        encryptionMode: 'plain',
-        metadata: JSON.stringify({ flavor: 'codex', path: '/tmp', codexSessionId: 'vendor-legacy-1' }),
-        dataEncryptionKey: null,
-      }),
-    );
-
-    const out = await resolveExistingSessionAttachContext({ token: 't', sessionId: 'sess_legacy', credentials: null });
-
-    expect(out.ok).toBe(true);
-    if (!out.ok) return;
-    expect(out.attachPayload.lastObservedMessageSeq).toBe(42);
-    expect(out.deliveredUserMessageSeq).toBeNull();
-  });
 });

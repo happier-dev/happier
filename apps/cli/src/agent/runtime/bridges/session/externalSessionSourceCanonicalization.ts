@@ -9,9 +9,12 @@ import {
   type SessionRuntimeIdentityFallbackResult,
 } from '@/agent/runtime/identity';
 import type {
-  ExternalSessionLinkIdentity,
   ExternalSessionExecutionSurface,
+  ExternalSessionLinkIdentity,
 } from '@/session/external/providerOps';
+import {
+  resolveExternalSessionLinkIdentityFromSurface,
+} from '@/session/external/resolveExternalSessionLinkIdentity';
 import { resolveBackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 
 export type CanonicalizedExternalSessionSourceResult = Readonly<{
@@ -41,19 +44,7 @@ export async function resolveExternalSessionLinkIdentity(params: Readonly<{
 }>, deps: ExternalSessionCanonicalizationDeps = {}): Promise<ExternalSessionLinkIdentity> {
   const resolveOps = deps.resolveExternalSessionProviderOps ?? resolveExternalSessionProviderOps;
   const providerOps = await resolveOps(params.agentId);
-  if (!providerOps?.resolveLinkIdentity) {
-    return {
-      remoteSessionId: params.remoteSessionId,
-      source: params.source,
-      runtimeDescriptor: params.runtimeDescriptor ?? null,
-    };
-  }
-  return await providerOps.resolveLinkIdentity({
-    remoteSessionId: params.remoteSessionId,
-    source: params.source,
-    runtimeDescriptor: params.runtimeDescriptor ?? null,
-    ...(params.metadata ? { metadata: params.metadata } : {}),
-  });
+  return await resolveExternalSessionLinkIdentityFromSurface(params, providerOps);
 }
 
 export async function canonicalizeLinkedExternalSessionSource(params: Readonly<{

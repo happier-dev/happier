@@ -6,7 +6,7 @@
  *
  * Uses the official @agentclientprotocol/sdk from Zed Industries.
  *
- * For agent-specific backends, use the provider ACP backends (e.g. `@/backends/gemini/acp/backend`).
+ * For agent-specific backends, use catalog/plugin-owned ACP backend definitions.
  */
 
 // Core ACP backend
@@ -22,8 +22,6 @@ export {
   DEFAULT_TOOL_CALL_TIMEOUT_MS,
   parseArgsFromContent,
   extractErrorDetail,
-  formatDuration,
-  formatDurationMinutes,
   handleAgentMessageChunk,
   handleAgentThoughtChunk,
   handleToolCallUpdate,
@@ -36,7 +34,6 @@ export {
 export { createAcpBackend, type CreateAcpBackendOptions } from './createAcpBackend';
 
 // Catalog-driven ACP backend creation
-export * from './createCatalogAcpBackend';
 
 // Legacy aliases for backwards compatibility
 export { AcpBackend as AcpSdkBackend } from './AcpBackend';

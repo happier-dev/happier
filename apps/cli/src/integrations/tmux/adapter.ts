@@ -152,6 +152,7 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
         windowName: opts.sessionName,
         cwd: opts.workingDirectory,
         unsetEnvKeys: opts.unsetEnvKeys,
+        requireNewSession: true,
       }, { ...opts.spawnEnv });
       if (!result.success) {
         throw new Error(result.error ?? 'Failed to create tmux terminal host');
@@ -301,7 +302,20 @@ export function createTmuxTerminalHostAdapter(params?: Readonly<{
       });
     },
     async dispose(handle): Promise<void> {
-      await tmux.killWindow(targetFromHandle(handle));
+      if (handle.attachMetadata.topology === 'exclusive') {
+        const result = await tmux.executeTmuxCommand(['kill-session'], handle.sessionName);
+        if (!result || result.returncode !== 0) {
+          throw new Error(`Failed to destroy owned tmux session ${handle.sessionName}`);
+        }
+        return;
+      }
+      if (!handle.paneId?.trim()) {
+        throw new Error('Cannot destroy shared tmux terminal host without its owned window id');
+      }
+      const removed = await tmux.killWindow(targetFromHandle(handle));
+      if (!removed) {
+        throw new Error(`Failed to destroy owned tmux window ${targetFromHandle(handle)}`);
+      }
     },
   };
 }

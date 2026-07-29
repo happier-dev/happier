@@ -9,6 +9,100 @@ import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHa
 import { createBasicSessionClient } from '@/testkit/backends/sessionFixtures';
 
 describe('createAcpRuntime (native lower-operation surface)', () => {
+  it('keeps a fresh configured ACP backend lazy until the first prompt', async () => {
+    const startSession = vi.fn(async () => ({ sessionId: 'fresh-session' }));
+    const sendPrompt = vi.fn(async () => undefined);
+    const ensureBackend = vi.fn(async () => createFakeAcpRuntimeBackend({
+      startSession,
+      sendPrompt,
+    }));
+    const runtime = createAcpRuntime({
+      provider: 'account-configured-acp',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend,
+      sessionOpenIntent: { kind: 'create' },
+    });
+
+    expect(ensureBackend).not.toHaveBeenCalled();
+    await runtime.sendTurnPrompt('hello');
+
+    expect(ensureBackend).toHaveBeenCalledOnce();
+    expect(startSession).toHaveBeenCalledOnce();
+    expect(sendPrompt).toHaveBeenCalledWith('fresh-session', 'hello');
+  });
+
+  it('loads a configured ACP resume intent strictly without falling back to create', async () => {
+    const startSession = vi.fn(async () => ({ sessionId: 'unexpected-fresh-session' }));
+    const loadSession = vi.fn(async () => {
+      throw new Error('configured resume failed');
+    });
+    const backend = createFakeAcpRuntimeBackend({ startSession });
+    backend.loadSession = loadSession;
+    const runtime = createAcpRuntime({
+      provider: 'account-configured-acp',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+      sessionOpenIntent: {
+        kind: 'resume',
+        providerSessionId: 'configured-session-1',
+        importHistory: false,
+      },
+    });
+
+    await expect(runtime.sendTurnPrompt('hello')).rejects.toThrow('configured resume failed');
+    expect(loadSession).toHaveBeenCalledWith('configured-session-1');
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
+  it('uses the reset successor intent on the next prompt with a new backend', async () => {
+    const firstBackend = createFakeAcpRuntimeBackend({ sessionId: 'resumed-session' });
+    firstBackend.loadSession = vi.fn(async () => ({ sessionId: 'resumed-session' }));
+    const secondStartSession = vi.fn(async () => ({ sessionId: 'fresh-successor' }));
+    const secondSendPrompt = vi.fn(async () => undefined);
+    const secondBackend = createFakeAcpRuntimeBackend({
+      startSession: secondStartSession,
+      sendPrompt: secondSendPrompt,
+    });
+    const ensureBackend = vi.fn()
+      .mockResolvedValueOnce(firstBackend)
+      .mockResolvedValueOnce(secondBackend);
+    const runtime = createAcpRuntime({
+      provider: 'account-configured-acp',
+      directory: '/tmp',
+      session: createBasicSessionClient(),
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend,
+      sessionOpenIntent: {
+        kind: 'resume',
+        providerSessionId: 'configured-session-1',
+        importHistory: false,
+      },
+    });
+
+    await runtime.sendTurnPrompt('before reset');
+    await runtime.resetOrDisposeRuntime(undefined, { kind: 'create' });
+    expect(ensureBackend).toHaveBeenCalledOnce();
+
+    await runtime.sendTurnPrompt('after reset');
+
+    expect(ensureBackend).toHaveBeenCalledTimes(2);
+    expect(secondStartSession).toHaveBeenCalledOnce();
+    expect(secondSendPrompt).toHaveBeenCalledWith('fresh-successor', 'after reset');
+  });
+
   it('implements RuntimeTurnOperations directly on the ACP runtime leaf', async () => {
     const startSession = vi.fn(async () => ({ sessionId: 'acp-session-1' }));
     const sendPrompt = vi.fn(async () => undefined);
@@ -44,7 +138,7 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
       throw new Error('Expected ACP runtime to satisfy RuntimeTurnOperations');
     }
 
-    await runtime.startOrLoadSession();
+    expect(runtime).not.toHaveProperty('startOrLoadSession');
     runtime.beginTurnLifecycle();
     await runtime.sendTurnPrompt('hello');
     await runtime.updateSessionRuntimeConfig({
@@ -92,7 +186,7 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
       messages.push(message);
     });
 
-    await runtime.startOrLoadSession();
+    await runtime.sendTurnPrompt('session setup');
     if (!backend) {
       throw new Error('Expected ACP runtime backend to be initialized');
     }
@@ -109,21 +203,61 @@ describe('createAcpRuntime (native lower-operation surface)', () => {
     expect(turnStart).toEqual(expect.objectContaining({
       kind: 'turn-start',
       turnId: expect.any(String),
-      providerTurnId: expect.any(String),
+      agentTurnId: expect.any(String),
     }));
     expect(turnComplete).toEqual(expect.objectContaining({
       kind: 'turn-complete',
       turnId: turnStart?.turnId,
-      providerTurnId: turnStart?.providerTurnId,
+      agentTurnId: turnStart?.agentTurnId,
     }));
-    expect(turnStart?.turnId).not.toBe(turnStart?.providerTurnId);
+    expect(turnStart?.turnId).not.toBe(turnStart?.agentTurnId);
     expect(sendAgentMessage).toHaveBeenCalledWith('gemini', {
       type: 'task_started',
-      id: turnStart?.providerTurnId,
+      id: turnStart?.agentTurnId,
     });
     expect(sendAgentMessage).toHaveBeenCalledWith('gemini', {
       type: 'task_complete',
-      id: turnStart?.providerTurnId,
+      id: turnStart?.agentTurnId,
     });
+  });
+
+  it('uses the transcript provider for session-visible ACP messages when it differs from the runtime owner', async () => {
+    const backend = createFakeAcpRuntimeBackend({
+      sessionId: 'acp-session-1',
+      waitForResponseComplete: vi.fn(async () => ({ kind: 'completed', stopReason: 'end_turn' } as const)),
+    });
+    const sendAgentMessage = vi.fn();
+    const session = {
+      ...createBasicSessionClient(),
+      sendAgentMessage,
+    };
+    const runtime = createAcpRuntime({
+      provider: 'acme.plugin-backed-acp.backend',
+      transcriptProvider: 'acp:acme.plugin-backed-acp.backend',
+      directory: '/tmp',
+      session,
+      messageBuffer: new MessageBuffer(),
+      mcpServers: {},
+      permissionHandler: createApprovedPermissionHandler(),
+      onThinkingChange: () => {},
+      ensureBackend: async () => backend,
+    });
+
+    await runtime.sendTurnPrompt('session setup');
+    runtime.beginTurnLifecycle();
+    backend.emit({ type: 'status', status: 'running' });
+    backend.emit({ type: 'model-output', fullText: 'configured response' });
+    await runtime.sendTurnPrompt('hello');
+    await runtime.waitForTurnCompletion();
+
+    expect(sendAgentMessage).toHaveBeenCalledWith('acp:acme.plugin-backed-acp.backend', {
+      type: 'task_started',
+      id: expect.any(String),
+    });
+    expect(sendAgentMessage).toHaveBeenCalledWith('acp:acme.plugin-backed-acp.backend', {
+      type: 'task_complete',
+      id: expect.any(String),
+    });
+    expect(sendAgentMessage).not.toHaveBeenCalledWith('acme.plugin-backed-acp.backend', expect.anything());
   });
 });

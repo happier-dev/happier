@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { TransportHandler } from '@/agent/transport';
 
 import { handleThinkingUpdate } from '../events';
 import type { HandlerContext } from '../types';
+import { createLegacyHandlerContextFixture } from '../../__tests__/legacyToolRuntimeFixture';
 
 function createHandlerContext(): Readonly<{
   ctx: HandlerContext;
@@ -17,22 +18,7 @@ function createHandlerContext(): Readonly<{
     getToolPatterns: () => [],
   };
 
-  const ctx: HandlerContext = {
-    transport,
-    activeToolCalls: new Set<string>(),
-    finalizedToolCalls: new Set<string>(),
-    toolCallLifecycleStates: new Map(),
-    toolCallStartTimes: new Map<string, number>(),
-    toolCallTimeouts: new Map<string, NodeJS.Timeout>(),
-    toolCallIdToNameMap: new Map<string, string>(),
-    toolCallIdToInputMap: new Map<string, Record<string, unknown>>(),
-    idleTimeout: null,
-    toolCallCountSincePrompt: 0,
-    emit: (msg) => emitted.push(msg),
-    emitIdleStatus: () => {},
-    clearIdleTimeout: () => {},
-    setIdleTimeout: () => {},
-  };
+  const ctx = createLegacyHandlerContextFixture({ transport, emit: (msg) => emitted.push(msg) });
 
   return { ctx, emitted };
 }

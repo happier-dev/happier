@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   evaluatePredictiveSoftSwitchLiveSessionRequirement,
   evaluatePredictiveSoftSwitchPolicy,
+  runtimeAuthApplyRequiresLiveIdentityProbe,
 } from './predictiveSoftSwitchPolicy';
 
 const VALID_CODEX_RUNTIME_AUTH_APPLY = {
@@ -18,6 +19,18 @@ const VALID_CODEX_RUNTIME_AUTH_APPLY = {
 } as const;
 
 describe('evaluatePredictiveSoftSwitchPolicy', () => {
+  it('requires live identity only when the runtime auth capability owns exact identity', () => {
+    expect(runtimeAuthApplyRequiresLiveIdentityProbe(VALID_CODEX_RUNTIME_AUTH_APPLY)).toBe(true);
+    expect(runtimeAuthApplyRequiresLiveIdentityProbe({
+      directLiveHotAuth: {
+        ...VALID_CODEX_RUNTIME_AUTH_APPLY.directLiveHotAuth,
+        requiresExactRuntimeIdentity: false,
+      },
+    })).toBe(false);
+    expect(runtimeAuthApplyRequiresLiveIdentityProbe(null)).toBe(true);
+    expect(runtimeAuthApplyRequiresLiveIdentityProbe({ directLiveHotAuth: 'unsupported' })).toBe(true);
+  });
+
   it('suppresses predictive soft-threshold switching for restart-only providers', () => {
     expect(evaluatePredictiveSoftSwitchPolicy({
       reason: 'soft_threshold',

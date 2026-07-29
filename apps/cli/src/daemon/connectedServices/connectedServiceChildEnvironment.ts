@@ -3,6 +3,7 @@ import {
   type ConnectedServiceBindingSelectionV1,
   type ConnectedServiceId,
   type ConnectedServiceProfileId,
+  type ConnectedServiceCredentialRevisionV1,
 } from '@happier-dev/protocol';
 
 import type { ConnectedServiceResolvedSelection } from './materialization/materializer';
@@ -18,6 +19,7 @@ type SerializedConnectedServiceSelection =
       kind: 'profile';
       serviceId: ConnectedServiceId;
       profileId: string;
+      credentialRevision?: ConnectedServiceCredentialRevisionV1;
     }>
   | Readonly<{
       kind: 'group';
@@ -27,6 +29,7 @@ type SerializedConnectedServiceSelection =
       fallbackProfileId: string;
       generation: number;
       policy: unknown;
+      credentialRevision?: ConnectedServiceCredentialRevisionV1;
     }>;
 
 export type ConnectedServiceChildSelection = SerializedConnectedServiceSelection;
@@ -42,12 +45,15 @@ export type ConnectedServiceRuntimeAuthMetadataSession = Readonly<{
   getMetadataSnapshot?: () => unknown;
 }>;
 
-function serializeSelection(selection: ConnectedServiceResolvedSelection): SerializedConnectedServiceSelection {
+function serializeSelection(
+  selection: ConnectedServiceResolvedSelection | ConnectedServiceChildSelection,
+): SerializedConnectedServiceSelection {
   if (selection.kind === 'profile') {
     return {
       kind: 'profile',
       serviceId: selection.serviceId,
       profileId: selection.profileId,
+      credentialRevision: selection.credentialRevision,
     };
   }
   return {
@@ -58,6 +64,7 @@ function serializeSelection(selection: ConnectedServiceResolvedSelection): Seria
     fallbackProfileId: selection.fallbackProfileId,
     generation: selection.generation,
     policy: selection.policy,
+    credentialRevision: selection.credentialRevision,
   };
 }
 
@@ -79,10 +86,16 @@ function parseSelection(value: unknown): SerializedConnectedServiceSelection | n
   if (!isRecord(value)) return null;
   const kind = value.kind;
   const serviceId = readTrimmedString(value.serviceId) as ConnectedServiceId;
+  const credentialRevision = readTrimmedString(value.credentialRevision) as ConnectedServiceCredentialRevisionV1;
   if (!serviceId) return null;
   if (kind === 'profile') {
     const profileId = readTrimmedString(value.profileId);
-    return profileId ? { kind, serviceId, profileId } : null;
+    return profileId ? {
+      kind,
+      serviceId,
+      profileId,
+      ...(credentialRevision ? { credentialRevision } : {}),
+    } : null;
   }
   if (kind !== 'group') return null;
   const groupId = readTrimmedString(value.groupId);
@@ -100,7 +113,15 @@ function parseSelection(value: unknown): SerializedConnectedServiceSelection | n
     fallbackProfileId,
     generation,
     policy: value.policy ?? null,
+    ...(credentialRevision ? { credentialRevision } : {}),
   };
+}
+
+export function serializeConnectedServiceChildSelectionValues(
+  selections: Iterable<ConnectedServiceChildSelection>,
+): string | null {
+  const serialized = Array.from(selections, serializeSelection);
+  return serialized.length > 0 ? JSON.stringify(serialized) : null;
 }
 
 export function serializeConnectedServiceChildSelections(

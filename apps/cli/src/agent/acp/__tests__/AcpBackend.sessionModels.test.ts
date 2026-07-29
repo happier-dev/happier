@@ -31,6 +31,7 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
         if (!req || typeof req !== 'object') continue;
         const id = req.id;
         const method = req.method;
+        const params = req.params;
         if (id === undefined || id === null || typeof method !== 'string') continue;
 
         if (method === 'initialize') {
@@ -79,7 +80,39 @@ function writeFakeAcpAgentScript(params: { dir: string }): string {
         }
 
         if (method === 'session/set_model') {
-          ok(id, {});
+          if (params && params.modelId === 'reject') {
+            send({ jsonrpc: '2.0', id, error: { code: -32000, message: 'model rejected' } });
+            continue;
+          }
+          if (params && params.modelId === 'no-state') {
+            ok(id, {});
+            continue;
+          }
+          if (params && params.modelId === 'wrong-state') {
+            ok(id, {
+              models: {
+                currentModelId: 'model-a',
+                availableModels: [
+                  { id: 'model-a', name: 'Model A' },
+                  { id: 'model-b', name: 'Model B', description: 'Accurate' },
+                ],
+              },
+            });
+            continue;
+          }
+          if (params && params._meta && params._meta.reasoningEffort) {
+            ok(id, { _meta: { model: { Ok: params.modelId } } });
+            continue;
+          }
+          ok(id, {
+            models: {
+              currentModelId: params.modelId,
+              availableModels: [
+                { id: 'model-a', name: 'Model A' },
+                { id: 'model-b', name: 'Model B', description: 'Accurate' },
+              ],
+            },
+          });
           continue;
         }
 
@@ -158,7 +191,7 @@ describe('AcpBackend session models', () => {
         const after = (backend as any).getSessionModelState?.();
         expect(after?.currentModelId).toBe('model-b');
 
-        expect(events.some((e) => e.type === 'event' && e.name === 'current_model_update')).toBe(true);
+        expect(events.filter((e) => e.type === 'event' && e.name === 'session_models_state')).toHaveLength(2);
       } finally {
         try {
           await backend?.dispose();
@@ -190,6 +223,138 @@ describe('AcpBackend session models', () => {
         try {
           await backend?.dispose();
         } catch {}
+      }
+    });
+  });
+
+  it('does not publish or mutate the current model when the provider rejects the change', async () => {
+    await withTempDir('happier-acp-model-rejected-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir })],
+      });
+      const events: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event') events.push(message);
+      });
+      try {
+        const started = await backend.startSession();
+        const updatesBefore = events.filter((event) => (
+          event.type === 'event' && event.name === 'current_model_update'
+        )).length;
+
+        await expect(backend.setSessionModel(started.sessionId, 'reject')).rejects.toThrow(/model rejected/i);
+
+        expect(backend.getSessionModelState()?.currentModelId).toBe('model-a');
+        expect(events.filter((event) => (
+          event.type === 'event' && event.name === 'current_model_update'
+        ))).toHaveLength(updatesBefore);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
+  it('does not report model application success without provider-returned model state', async () => {
+    await withTempDir('happier-acp-model-no-state-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir })],
+      });
+      const events: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event') events.push(message);
+      });
+      try {
+        const started = await backend.startSession();
+        const before = backend.getSessionModelState();
+        const updatesBefore = events.filter((event) => (
+          event.type === 'event' && event.name === 'session_models_state'
+        )).length;
+
+        await expect(backend.setSessionModel(started.sessionId, 'no-state'))
+          .rejects.toThrow(/did not return model state/i);
+
+        expect(backend.getSessionModelState()).toEqual(before);
+        expect(events.filter((event) => (
+          event.type === 'event' && event.name === 'session_models_state'
+        ))).toHaveLength(updatesBefore);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
+  it('uses a provider response projector only after an exact acknowledgement without standard model state', async () => {
+    await withTempDir('happier-acp-model-projected-ack-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir })],
+        projectSetModelResponse: ({ response, requestedModelId, requestMeta, targetModel }) => {
+          const acknowledged = (response as { _meta?: { model?: { Ok?: unknown } } })?._meta?.model?.Ok;
+          if (acknowledged !== requestedModelId || requestMeta?.reasoningEffort !== 'high') return null;
+          return {
+            ...targetModel,
+            modelOptions: targetModel.modelOptions?.map((option) => option.id === 'reasoning_effort'
+              ? { ...option, currentValue: 'high' }
+              : option),
+          };
+        },
+      });
+      const events: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event') events.push(message);
+      });
+      try {
+        const started = await backend.startSession();
+        await backend.setSessionModel(started.sessionId, 'model-a', { reasoningEffort: 'high' });
+
+        const state = backend.getSessionModelState();
+        expect(state?.currentModelId).toBe('model-a');
+        expect(state?.availableModels[0]?.modelOptions?.[0]?.currentValue).toBe('high');
+        expect(events.filter((event) => (
+          event.type === 'event' && event.name === 'session_models_state'
+        ))).toHaveLength(2);
+      } finally {
+        await backend.dispose();
+      }
+    });
+  });
+
+  it('does not report model application success when the provider returns a different current model', async () => {
+    await withTempDir('happier-acp-model-wrong-state-', async (dir) => {
+      const backend = new AcpBackend({
+        agentName: 'test',
+        cwd: dir,
+        command: process.execPath,
+        args: [writeFakeAcpAgentScript({ dir })],
+      });
+      const events: AgentMessage[] = [];
+      backend.onMessage((message) => {
+        if (message.type === 'event') events.push(message);
+      });
+      try {
+        const started = await backend.startSession();
+        const before = backend.getSessionModelState();
+        const updatesBefore = events.filter((event) => (
+          event.type === 'event' && event.name === 'session_models_state'
+        )).length;
+
+        await expect(backend.setSessionModel(started.sessionId, 'wrong-state'))
+          .rejects.toThrow(/different current model/i);
+
+        expect(backend.getSessionModelState()).toEqual(before);
+        expect(events.filter((event) => (
+          event.type === 'event' && event.name === 'session_models_state'
+        ))).toHaveLength(updatesBefore);
+      } finally {
+        await backend.dispose();
       }
     });
   });

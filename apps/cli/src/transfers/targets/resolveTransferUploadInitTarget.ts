@@ -11,10 +11,14 @@ import {
   type AttachmentVcsIgnoreStrategy,
 } from './resolveAttachmentTransferTarget';
 import { resolvePromptAssetUploadTarget } from './resolvePromptAssetUploadTarget';
-import { resolveWorkspaceFileUploadTarget } from './resolveWorkspaceFileUploadTarget';
+import {
+  resolveWorkspaceFileUploadTarget,
+  type WorkspaceFinalizeFileOperationsFactory,
+} from './resolveWorkspaceFileUploadTarget';
 import type { UploadTransferTarget } from './uploadTransferTarget';
 import type { PromptAssetAdapter } from '@/prompts/assets/types';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import type { TransferLifecycleDiagnosticContext } from '../rpc/transferLifecycleDiagnostics';
 
 type WorkspaceLikeTransferUploadTarget = Extract<
   ReturnType<typeof resolveWorkspaceFileUploadTarget>,
@@ -75,7 +79,7 @@ export type ResolveTransferUploadInitTargetResult =
       success: true;
       target: ResolvedTransferUploadTarget;
       sha256Expected?: string;
-      logContext?: Readonly<Record<string, unknown>>;
+      diagnosticContext: TransferLifecycleDiagnosticContext;
     }>
   | Readonly<{
       success: false;
@@ -86,7 +90,7 @@ type ResolveTransferUploadInitTargetSuccess<TTarget extends ResolvedTransferUplo
   success: true;
   target: TTarget;
   sha256Expected?: string;
-  logContext?: Readonly<Record<string, unknown>>;
+  diagnosticContext: TransferLifecycleDiagnosticContext;
 }>;
 
 type ResolveTransferUploadInitTargetFailure = Readonly<{
@@ -103,6 +107,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
   promptAssetUpload: TransferUploadInitPromptAssetDeps;
+  finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): Promise<ResolveTransferUploadInitTargetSuccess<PromptAssetTransferUploadTarget> | ResolveTransferUploadInitTargetFailure>;
 
 export function resolveTransferUploadInitTarget(params: Readonly<{
@@ -114,6 +119,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
+  finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): Promise<ResolveTransferUploadInitTargetSuccess<WorkspaceLikeTransferUploadTarget> | ResolveTransferUploadInitTargetFailure>;
 
 export function resolveTransferUploadInitTarget(params: Readonly<{
@@ -125,6 +131,7 @@ export function resolveTransferUploadInitTarget(params: Readonly<{
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
+  finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
 }>): Promise<ResolveTransferUploadInitTargetResult>;
 
 export async function resolveTransferUploadInitTarget(params: Readonly<{
@@ -136,6 +143,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
   sessionRpcTransferMaxBytes?: number | null;
   attachmentUpload?: TransferUploadInitAttachmentDeps;
   promptAssetUpload?: TransferUploadInitPromptAssetDeps;
+  finalizeFileOperations?: WorkspaceFinalizeFileOperationsFactory;
   }>): Promise<ResolveTransferUploadInitTargetResult> {
   if (params.request.t === 'prompt_asset_upload_v1') {
     if (!params.promptAssetUpload) {
@@ -151,8 +159,8 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
     return {
       success: true,
       target: target.target,
-      logContext: {
-        transferKind: 'prompt_asset_upload',
+      diagnosticContext: {
+        transferKind: 'prompt_asset',
       },
     };
   }
@@ -204,6 +212,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
       overwrite: false,
       additionalAllowedWriteDirs: resolvedTarget.target.additionalAllowedWriteDirs,
       sessionRpcTransferMaxBytes: params.sessionRpcTransferMaxBytes ?? null,
+      finalizeFileOperations: params.finalizeFileOperations,
     });
     if (!target.success) {
       return { success: false, error: target.error };
@@ -224,9 +233,9 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
     return {
       success: true,
       target: target.target,
-      logContext: {
-        path,
-        uploadLocation: config.uploadLocation,
+      diagnosticContext: {
+        transferKind: 'session_attachment',
+        destinationClass: config.uploadLocation,
       },
     };
   }
@@ -240,6 +249,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
     overwrite: fileRequest.overwrite,
     additionalAllowedWriteDirs: params.additionalAllowedWriteDirs,
     sessionRpcTransferMaxBytes: params.sessionRpcTransferMaxBytes ?? null,
+    finalizeFileOperations: params.finalizeFileOperations,
   });
   if (!target.success) {
     return target;
@@ -251,8 +261,8 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
     success: true,
     target: target.target,
     sha256Expected,
-    logContext: {
-      path: fileRequest.path,
+    diagnosticContext: {
+      transferKind: 'session_file',
     },
   };
 }

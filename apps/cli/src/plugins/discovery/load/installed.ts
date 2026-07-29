@@ -1,17 +1,22 @@
 import { resolve } from 'node:path';
 
 import type { PluginSourceSpecV1 } from '@happier-dev/protocol';
+import type { PluginUiArtifactsManifestV1 } from '@happier-dev/protocol/plugins/ui';
 
-import { createPluginStateStore, type PluginStateSourceRecord } from '@/plugins/store/state';
+import type { PluginStateFileV1, PluginStateSourceRecord } from '@/plugins/store/state';
+import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { PLUGIN_MANIFEST_RELATIVE_PATH } from '@/plugins/store/paths';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
-import { resolvePluginDaemonEntryPath } from '@/plugins/manifest/daemonEntry';
+import {
+  resolvePluginDaemonEntryPath,
+  shouldResolvePluginDevelopmentEntrypoint,
+} from '@/plugins/manifest/daemonEntry';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
-import { isTrustPolicyLocallyTrusted } from '@/plugins/install/ui/trustedSource';
 import {
   resolveLocalPathPluginSource,
   type ResolvedLocalPathPluginSourceSuccess,
 } from '@/plugins/discovery/sources/localPath';
+import { readGeneratedPluginUiArtifactsManifest } from '@/plugins/install/ui/generatedArtifacts';
 
 export type LoadedPlugin = Readonly<{
   pluginId: string;
@@ -20,6 +25,7 @@ export type LoadedPlugin = Readonly<{
   manifestDigest: string;
   daemonEntryPath: string | null;
   devDaemonEntryPath: string | null;
+  generatedUiArtifactsManifest?: PluginUiArtifactsManifestV1;
   manifest: CanonicalPluginManifest;
   sourceSpec: PluginSourceSpecV1;
 }>;
@@ -45,18 +51,7 @@ function mergeLoadedPluginSourceSpec(params: Readonly<{
   };
 }
 
-function shouldResolveDevEntrypoint(record: Readonly<{
-  source: PluginStateSourceRecord;
-  install: Readonly<{ mode: string }>;
-}>): boolean {
-  return record.source.kind === 'path'
-    && record.install.mode === 'link'
-    && isTrustPolicyLocallyTrusted(record.source.trustPolicy);
-}
-
-export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: string }>): Promise<LoadInstalledPluginsResult> {
-  const stateStore = createPluginStateStore({ happyHomeDir: params?.happyHomeDir });
-  const state = await stateStore.read();
+export async function loadPluginsFromState(state: PluginStateFileV1): Promise<LoadInstalledPluginsResult> {
   const loadedPlugins: LoadedPlugin[] = [];
   const diagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
   const loadedByManifestId = new Map<string, {
@@ -152,12 +147,15 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
     const daemonEntryResolution = await resolvePluginDaemonEntryPath({
       pluginRootPath: resolvedSource.pluginRootPath,
       manifest: resolvedSource.manifest,
-      resolveDevEntrypoint: shouldResolveDevEntrypoint(record),
+      resolveDevEntrypoint: shouldResolvePluginDevelopmentEntrypoint(record),
     });
     if (!daemonEntryResolution.ok) {
       diagnosticsByPluginId[pluginId] = [daemonEntryResolution.diagnostic];
       continue;
     }
+    const generatedUiArtifactsManifest = await readGeneratedPluginUiArtifactsManifest(
+      resolvedSource.pluginRootPath,
+    );
 
     const loadedPlugin: LoadedPlugin = {
       pluginId,
@@ -166,6 +164,7 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
       manifestDigest: resolvedSource.manifestDigest,
       daemonEntryPath: daemonEntryResolution.daemonEntryPath,
       devDaemonEntryPath: daemonEntryResolution.devDaemonEntryPath,
+      ...(generatedUiArtifactsManifest ? { generatedUiArtifactsManifest } : {}),
       manifest: resolvedSource.manifest,
       sourceSpec: mergeLoadedPluginSourceSpec({
         recordSource: record.source,
@@ -185,4 +184,9 @@ export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: st
     loadedPlugins: Object.freeze(loadedPlugins),
     diagnosticsByPluginId: Object.freeze(diagnosticsByPluginId),
   };
+}
+
+export async function loadInstalledPlugins(params?: Readonly<{ happyHomeDir?: string }>): Promise<LoadInstalledPluginsResult> {
+  const stateStore = createPluginRegistryStateStore({ happyHomeDir: params?.happyHomeDir });
+  return await loadPluginsFromState(await stateStore.read());
 }

@@ -1,0 +1,15 @@
+export const CLI_RUNTIME_SIDECAR_ENTRIES = [
+  ['childProcessOptions.cjs'],
+  ['claude_version_utils.cjs'],
+  ['claude_local_launcher.cjs'],
+  ['claude_remote_launcher.cjs'],
+  ['session_hook_forwarder.cjs'],
+  ['permission_hook_forwarder.cjs'],
+  ['ripgrep_launcher.cjs'],
+  ['ripgrep_runtime_paths.cjs'],
+  ['statusline_forwarder.cjs'],
+  ['terminal_launch_spec_runner.cjs'],
+  ['node_pty_relay.cjs'],
+  ['runtime'],
+  ['shims'],
+] as const;

@@ -17,13 +17,22 @@ async function materializePlugin(rootDir: string): Promise<void> {
       id: 'acme.install-preview',
       version: '1.2.3',
       displayName: 'Acme Install Preview',
-      permissions: {
+      hostAccess: {
         required: [
-          { capability: 'network' },
-          { capability: 'filesystem.read', scope: 'workspace' },
+          {
+            id: 'network', capability: 'network', reason: 'Call the fixture API.',
+            scope: { targets: [{ kind: 'fixedOrigin', origin: 'https://example.test' }], methods: ['GET'] },
+          },
+          {
+            id: 'workspace', capability: 'filesystem', reason: 'Read the workspace.',
+            scope: { locations: [{ root: 'workspace' }], access: ['read'] },
+          },
         ],
         optional: [
-          { capability: 'process.spawn' },
+          {
+            id: 'synced-storage', capability: 'storage.synced', reason: 'Synchronize state when selected.',
+            scope: { enabled: true },
+          },
         ],
       },
     }), null, 2),
@@ -82,8 +91,8 @@ describe('buildPluginInstallApprovalPreview', () => {
             manifestDigest: expect.stringMatching(/^sha256:/),
           }),
           permissions: {
-            required: ['network', 'filesystem.read:workspace'],
-            optional: ['process.spawn'],
+            required: ['network:https://example.test', 'filesystem.read:*'],
+            optional: ['storage.synced'],
           },
         }),
       }));

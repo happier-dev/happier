@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { AgentBackend, AgentId, AgentMessageHandler, SessionId } from '@/agent/core/AgentBackend';
+import type { PermissionIntent } from '@happier-dev/agents';
+import type { CatalogAgentId as AgentId } from '@/agent/catalog/ids';
 import type { ExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/executionRunHostRuntime';
-import { createExecutionRunHostRuntimeFromAgentBackend } from '@/agent/runtime/bridges/executionRun/testkit';
-import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs } from './voiceAgentTypes';
+import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/executionRun/testkit';
+import type { BackendFactory, ResolveVoiceSystemAppendBlocksArgs, VoiceAgentTurnStreamEvent } from './voiceAgentTypes';
+import { VoiceAgentError, VoiceAgentManager } from './VoiceAgentManager';
 
-function asExecutionRunHostRuntime<T extends AgentBackend>(backend: T): T & ExecutionRunHostRuntime {
-  return Object.assign({}, backend, createExecutionRunHostRuntimeFromAgentBackend(backend));
-}
+type VoiceTestRuntime<T extends object = object> = ExecutionRunHostRuntime & T;
 
 async function readVoiceAgentTurnStreamUntilDone(args: Readonly<{
   manager: {
@@ -18,7 +18,7 @@ async function readVoiceAgentTurnStreamUntilDone(args: Readonly<{
       maxEvents?: number;
     }>) => Promise<{
       streamId: string;
-      events: Array<{ t: string } & Record<string, unknown>>;
+      events: VoiceAgentTurnStreamEvent[];
       nextCursor: number;
       done: boolean;
     }>;
@@ -27,8 +27,8 @@ async function readVoiceAgentTurnStreamUntilDone(args: Readonly<{
   streamId: string;
   maxEvents?: number;
   maxReads?: number;
-}>): Promise<Array<{ t: string } & Record<string, unknown>>> {
-  const events: Array<{ t: string } & Record<string, unknown>> = [];
+}>): Promise<VoiceAgentTurnStreamEvent[]> {
+  const events: VoiceAgentTurnStreamEvent[] = [];
   let cursor = 0;
 
   for (let i = 0; i < (args.maxReads ?? 8); i += 1) {
@@ -49,126 +49,104 @@ async function readVoiceAgentTurnStreamUntilDone(args: Readonly<{
   return events;
 }
 
-function createDeterministicBackend(label: string): AgentBackend & ExecutionRunHostRuntime & { getSeenPrompts(): string[] } {
+function createDeterministicBackend(label: string): VoiceTestRuntime<{ getSeenPrompts(): string[] }> {
   const seenPrompts: string[] = [];
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = `s-${label}`;
+  const sessionId = `s-${label}`;
 
-  return asExecutionRunHostRuntime({
-    getSeenPrompts: () => [...seenPrompts],
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt(_sid, prompt) {
+    onSendPrompt(_sid, prompt) {
       seenPrompts.push(prompt);
-      handler?.({ type: 'model-output', fullText: `${label}:${prompt}` });
-      handler?.({ type: 'status', status: 'idle' });
+      runtime.emitMessage({ type: 'model-output', fullText: `${label}:${prompt}` });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
     },
-    async cancel() {},
-    async dispose() {},
+  });
+  return Object.assign({}, runtime, {
+    getSeenPrompts: () => [...seenPrompts],
   });
 }
 
-function createDeltaOnlyBackend(label: string): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = `s-${label}`;
+function createDeltaOnlyBackend(label: string): ExecutionRunHostRuntime {
+  const sessionId = `s-${label}`;
   let n = 0;
 
-  return asExecutionRunHostRuntime({
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt(_sid, _prompt) {
+    onSendPrompt() {
       n += 1;
-      handler?.({ type: 'model-output', textDelta: `${label}:${n}` });
-      handler?.({ type: 'status', status: 'idle' });
+      runtime.emitMessage({ type: 'model-output', textDelta: `${label}:${n}` });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
     },
-    async cancel() {},
-    async dispose() {},
   });
+  return runtime;
 }
 
-function createBlockingBackend(label: string, opts: Readonly<{ waitForSendPrompt: () => Promise<void> }>): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = `s-${label}`;
+function createBlockingBackend(label: string, opts: Readonly<{ waitForSendPrompt: () => Promise<void> }>): ExecutionRunHostRuntime {
+  const sessionId = `s-${label}`;
 
-  return asExecutionRunHostRuntime({
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt(_sid, prompt) {
-      handler?.({ type: 'model-output', textDelta: `${label}:${prompt}` });
+    async onSendPrompt(_sid, prompt) {
+      runtime.emitMessage({ type: 'model-output', textDelta: `${label}:${prompt}` });
       await opts.waitForSendPrompt();
-      handler?.({ type: 'status', status: 'idle' });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
     },
-    async cancel() {},
-    async dispose() {},
   });
+  return runtime;
 }
 
-function createMultiDeltaBackend(label: string, deltas: string[]): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = `s-${label}`;
+function createMultiDeltaBackend(label: string, deltas: string[]): ExecutionRunHostRuntime {
+  const sessionId = `s-${label}`;
 
-  return asExecutionRunHostRuntime({
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt() {
+    onSendPrompt() {
       for (const textDelta of deltas) {
-        handler?.({ type: 'model-output', textDelta });
+        runtime.emitMessage({ type: 'model-output', textDelta });
       }
-      handler?.({ type: 'status', status: 'idle' });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
     },
-    async cancel() {},
-    async dispose() {},
   });
+  return runtime;
 }
 
 function createDelayedCompletionBackend(
   label: string,
-): AgentBackend & ExecutionRunHostRuntime & { completeCurrentResponse: () => void } {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = `s-${label}`;
+): VoiceTestRuntime<{ completeCurrentResponse: () => void }> {
+  const sessionId = `s-${label}`;
   let lastPrompt = '';
   let resolveCurrent: (() => void) | null = null;
   let currentResponseDone: Promise<void> | null = null;
   let pendingComplete = false;
 
-  return asExecutionRunHostRuntime({
-    completeCurrentResponse() {
-      pendingComplete = true;
-      resolveCurrent?.();
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    onMessage(h) {
-      handler = h;
-    },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt(_sid, prompt) {
+    onSendPrompt(_sid, prompt) {
       lastPrompt = prompt;
       currentResponseDone = new Promise<void>((resolve) => {
         resolveCurrent = () => {
-          handler?.({ type: 'model-output', fullText: `${label}:${lastPrompt}` });
-          handler?.({ type: 'status', status: 'idle' });
+          runtime.emitMessage({ type: 'model-output', fullText: `${label}:${lastPrompt}` });
+          runtime.emitMessage({ type: 'status', status: 'idle' });
           resolve();
         };
       });
@@ -177,155 +155,192 @@ function createDelayedCompletionBackend(
         resolveCurrent?.();
       }
     },
-    async waitForResponseComplete() {
+    async onWaitForTurnCompletion() {
       if (!currentResponseDone) return;
       await currentResponseDone;
       resolveCurrent = null;
       currentResponseDone = null;
     },
-    async cancel() {},
-    async dispose() {},
+  });
+  return Object.assign({}, runtime, {
+    completeCurrentResponse() {
+      pendingComplete = true;
+      resolveCurrent?.();
+    },
   });
 }
 
 function createCancelableBlockingBackend(
   label: string,
-): AgentBackend & ExecutionRunHostRuntime & { wasCancelled: () => boolean } {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = `s-${label}`;
+): VoiceTestRuntime<{ wasCancelled: () => boolean }> {
+  const sessionId = `s-${label}`;
   let resolveCurrent: (() => void) | null = null;
   let cancelled = false;
 
-  return asExecutionRunHostRuntime({
-    wasCancelled: () => cancelled,
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt(_sid, prompt) {
-      handler?.({ type: 'model-output', textDelta: `${label}:${prompt}` });
+    async onSendPrompt(_sid, prompt) {
+      runtime.emitMessage({ type: 'model-output', textDelta: `${label}:${prompt}` });
       await new Promise<void>((resolve) => {
         resolveCurrent = resolve;
       });
-      handler?.({ type: 'status', status: 'idle' });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
     },
-    async cancel() {
+    onCancel() {
       cancelled = true;
       resolveCurrent?.();
       resolveCurrent = null;
     },
-    async dispose() {},
+  });
+  return Object.assign({}, runtime, {
+    wasCancelled: () => cancelled,
   });
 }
 
-function createStaticResponseBackend(label: string, responseText: string): AgentBackend & ExecutionRunHostRuntime {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = `s-${label}`;
+function createLateResolvingCancellationBackend(
+  responseText: string,
+): VoiceTestRuntime<{ wasCancelled: () => boolean }> {
+  let releasePrompt: (() => void) | null = null;
+  let cancelled = false;
 
-  return asExecutionRunHostRuntime({
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId: 's-late-cancel',
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
+    async onSendPrompt() {
+      await new Promise<void>((resolve) => {
+        releasePrompt = resolve;
+      });
     },
-    async sendPrompt() {
-      handler?.({ type: 'model-output', fullText: responseText });
-      handler?.({ type: 'status', status: 'idle' });
+    onCancel() {
+      cancelled = true;
+      // Model output arriving as cancellation resolves is the race W0.6 must
+      // make terminal: it must not become a delta, action, history, or commit input.
+      runtime.emitMessage({ type: 'model-output', fullText: responseText });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
+      releasePrompt?.();
+      releasePrompt = null;
     },
-    async cancel() {},
-    async dispose() {},
+  });
+
+  return Object.assign({}, runtime, {
+    wasCancelled: () => cancelled,
   });
 }
 
-function createPromptCaptureBackend(sequence: Array<{ responseText: string }>): AgentBackend & ExecutionRunHostRuntime & { prompts: string[] } {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 's-capture' as SessionId;
+function createPostDetachOutputBackend(cancelledText: string): ExecutionRunHostRuntime {
+  let releasePrompt: (() => void) | null = null;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId: 's-post-detach-cancel',
+    async onSendPrompt(_sessionId, prompt) {
+      if (prompt.includes('cancel this turn')) {
+        await new Promise<void>((resolve) => {
+          releasePrompt = resolve;
+        });
+        runtime.emitMessage({ type: 'status', status: 'idle' });
+        return;
+      }
+      runtime.emitMessage({ type: 'model-output', fullText: cancelledText });
+    },
+    onCancel() {
+      releasePrompt?.();
+      releasePrompt = null;
+    },
+  });
+  return runtime;
+}
+
+function createStaticResponseBackend(label: string, responseText: string): ExecutionRunHostRuntime {
+  const sessionId = `s-${label}`;
+
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
+    },
+    onSendPrompt() {
+      runtime.emitMessage({ type: 'model-output', fullText: responseText });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
+    },
+  });
+  return runtime;
+}
+
+function createPromptCaptureBackend(sequence: Array<{ responseText: string }>): VoiceTestRuntime<{ prompts: string[] }> {
+  const sessionId = 's-capture';
   const prompts: string[] = [];
   let idx = 0;
 
-  return asExecutionRunHostRuntime({
-    prompts,
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt(_sid, prompt) {
+    onSendPrompt(_sid, prompt) {
       prompts.push(prompt);
       const next = sequence[Math.min(idx, sequence.length - 1)];
       idx += 1;
-      handler?.({ type: 'model-output', fullText: next?.responseText ?? '' });
-      handler?.({ type: 'status', status: 'idle' });
+      runtime.emitMessage({ type: 'model-output', fullText: next?.responseText ?? '' });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
     },
-    async cancel() {},
-    async dispose() {},
   });
+  return Object.assign({}, runtime, { prompts });
 }
 
-function createBootstrapTimeoutBackend(): AgentBackend & ExecutionRunHostRuntime & { prompts: string[]; seenTimeouts: number[] } {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 's-bootstrap-timeout' as SessionId;
+function createBootstrapTimeoutBackend(): VoiceTestRuntime<{ prompts: string[]; seenTimeouts: number[] }> {
+  const sessionId = 's-bootstrap-timeout';
   const prompts: string[] = [];
   const seenTimeouts: number[] = [];
 
-  return asExecutionRunHostRuntime({
-    prompts,
-    seenTimeouts,
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
-    },
-    async sendPrompt(_sid, prompt) {
+    onSendPrompt(_sid, prompt) {
       prompts.push(prompt);
     },
-    async waitForResponseComplete(timeoutMs) {
+    onWaitForTurnCompletion(timeoutMs) {
       seenTimeouts.push(timeoutMs ?? -1);
       throw new Error(`bootstrap timeout ${String(timeoutMs ?? 'default')}`);
     },
-    async cancel() {},
-    async dispose() {},
   });
+  return Object.assign({}, runtime, { prompts, seenTimeouts });
 }
 
-function createResponseTimeoutCaptureBackend(responseText = 'ok'): AgentBackend & ExecutionRunHostRuntime & { seenTimeouts: number[] } {
-  let handler: AgentMessageHandler | null = null;
-  const sessionId: SessionId = 's-response-timeout-capture' as SessionId;
+function createResponseTimeoutCaptureBackend(responseText = 'ok'): VoiceTestRuntime<{ seenTimeouts: number[] }> {
+  const sessionId = 's-response-timeout-capture';
   const seenTimeouts: number[] = [];
 
-  return asExecutionRunHostRuntime({
-    seenTimeouts,
-    onMessage(h) {
-      handler = h;
+  let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+  runtime = createTestExecutionRunHostRuntime({
+    sessionId,
+    onProvisionSession() {
+      runtime.emitMessage({ type: 'status', status: 'running' });
     },
-    async startSession() {
-      handler?.({ type: 'status', status: 'running' });
-      return { sessionId };
+    onSendPrompt() {
+      runtime.emitMessage({ type: 'model-output', fullText: responseText });
+      runtime.emitMessage({ type: 'status', status: 'idle' });
     },
-    async sendPrompt() {
-      handler?.({ type: 'model-output', fullText: responseText });
-      handler?.({ type: 'status', status: 'idle' });
-    },
-    async waitForResponseComplete(timeoutMs) {
+    onWaitForTurnCompletion(timeoutMs) {
       seenTimeouts.push(typeof timeoutMs === 'number' ? timeoutMs : -1);
     },
-    async cancel() {},
-    async dispose() {},
   });
+  return Object.assign({}, runtime, { seenTimeouts });
 }
 
 describe('VoiceAgentManager', () => {
   it('clears the reaper interval when disposed', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
       const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval');
     try {
@@ -341,7 +356,6 @@ describe('VoiceAgentManager', () => {
   }, 15_000);
 
   it('rejects start calls after dispose without creating new backends', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const createBackend = vi.fn(() => createDeterministicBackend('backend'));
     const manager = new VoiceAgentManager({ createBackend });
@@ -353,7 +367,7 @@ describe('VoiceAgentManager', () => {
         agentId: 'claude',
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 60,
         initialContext: 'CTX',
       }),
@@ -363,15 +377,11 @@ describe('VoiceAgentManager', () => {
   }, 15_000);
 
   it('surfaces commit backend factory errors without disposing the chat backend', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatDispose = vi.fn(async () => {});
-    const chatBackend = asExecutionRunHostRuntime({
-      onMessage: () => {},
-      startSession: async () => ({ sessionId: 's-chat' }),
-      sendPrompt: async () => {},
-      cancel: async () => {},
-      dispose: chatDispose,
+    const chatBackend = createTestExecutionRunHostRuntime({
+      sessionId: 's-chat',
+      onDispose: chatDispose,
     });
 
     const createBackend: BackendFactory = ({ modelId }) => {
@@ -387,7 +397,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -399,8 +409,36 @@ describe('VoiceAgentManager', () => {
     expect(chatDispose).toHaveBeenCalledTimes(0);
   });
 
+  it('forwards the connected-services selection to the backend factory (R3-2 fail-closed: no silent native)', async () => {
+
+    const capturedOpts: Array<{ connectedServices?: unknown }> = [];
+    const createBackend: BackendFactory = (opts) => {
+      capturedOpts.push(opts);
+      return createDeterministicBackend('backend');
+    };
+    const manager = new VoiceAgentManager({ createBackend });
+
+    const connectedServices = {
+      v: 1 as const,
+      bindingsByServiceId: {
+        'openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'work' },
+      },
+    };
+
+    await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+      connectedServices,
+    });
+
+    expect(capturedOpts[0]).toMatchObject({ connectedServices });
+  });
+
   it('passes through VoiceAgentError codes thrown by the backend factory', async () => {
-    const { VoiceAgentError, VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const createBackend: BackendFactory = () => {
       throw new VoiceAgentError('VOICE_AGENT_UNSUPPORTED', 'voice agent not supported');
@@ -413,20 +451,50 @@ describe('VoiceAgentManager', () => {
         agentId: 'claude',
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 60,
         initialContext: 'CTX',
       }),
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_UNSUPPORTED' });
   });
 
+  it('removes the voice-agent registry entry when READY bootstrap fails', async () => {
+
+    const dispose = vi.fn(async () => {});
+    const backend = createTestExecutionRunHostRuntime({
+      sessionId: 's-bootstrap-fail',
+      onDispose: dispose,
+      onProvisionSession() {
+        backend.emitMessage({ type: 'status', status: 'running' });
+      },
+      onSendPrompt() {
+        backend.emitMessage({ type: 'model-output', fullText: 'NOT_READY' });
+        backend.emitMessage({ type: 'status', status: 'idle' });
+      },
+    });
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+
+    await expect(manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+      bootstrapMode: 'ready_handshake',
+      voiceAgentId: 'voice-agent-bootstrap-fail',
+    })).rejects.toMatchObject({ code: 'VOICE_AGENT_START_FAILED' });
+
+    expect(dispose).toHaveBeenCalledTimes(1);
+    expect(manager.getResumeHandle('voice-agent-bootstrap-fail')).toBeNull();
+  });
+
   it('passes agentId, model ids, permission policy, and voice_agent start intent to the backend factory', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const seen: Array<{
       agentId: AgentId;
       modelId: string;
-      permissionPolicy: 'no_tools' | 'read_only';
+      permissionIntent: PermissionIntent;
       start?: { intent: 'voice_agent' };
     }> = [];
     const backend = createDeterministicBackend('chat');
@@ -434,7 +502,7 @@ describe('VoiceAgentManager', () => {
       seen.push({
         agentId: opts.agentId,
         modelId: opts.modelId,
-        permissionPolicy: opts.permissionPolicy,
+        permissionIntent: opts.permissionIntent,
         start: opts.start,
       });
       return backend;
@@ -445,7 +513,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -453,20 +521,19 @@ describe('VoiceAgentManager', () => {
     expect(seen).toEqual([{
       agentId: 'claude',
       modelId: 'chat-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       start: { intent: 'voice_agent' },
     }]);
 
     await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
 
     expect(seen).toEqual([
-      { agentId: 'claude', modelId: 'chat-model', permissionPolicy: 'read_only', start: { intent: 'voice_agent' } },
-      { agentId: 'claude', modelId: 'commit-model', permissionPolicy: 'read_only', start: { intent: 'voice_agent' } },
+      { agentId: 'claude', modelId: 'chat-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
+      { agentId: 'claude', modelId: 'commit-model', permissionIntent: 'read-only', start: { intent: 'voice_agent' } },
     ]);
   });
 
   it('uses a more detailed prompt when verbosity is balanced', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDeterministicBackend('chat');
     const commitBackend = createDeterministicBackend('commit');
@@ -482,7 +549,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
       verbosity: 'balanced',
@@ -494,7 +561,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('keeps multi-turn history and uses the commit backend separately', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDeterministicBackend('chat');
     const commitBackend = createDeterministicBackend('commit');
@@ -513,7 +579,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -536,7 +602,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('normalizes sendSessionMessage preambles when extracting voice tool actions from the assistant response text', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createStaticResponseBackend(
       'chat',
@@ -560,7 +625,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -571,7 +636,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('clears delta-only output buffers between operations', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDeltaOnlyBackend('chat');
     const commitBackend = createDeltaOnlyBackend('commit');
@@ -587,7 +651,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -606,7 +670,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('waits for backend response completion before returning chat output', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDelayedCompletionBackend('chat');
     const commitBackend = createDeterministicBackend('commit');
@@ -621,7 +684,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -641,7 +704,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('waits for backend response completion before returning commit output', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDeterministicBackend('chat');
     const commitBackend = createDelayedCompletionBackend('commit');
@@ -656,7 +718,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -676,7 +738,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('waits for in-flight operations to finish before stopping', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const deferred: { resolve: () => void } = { resolve: () => {} };
     let resolveWasSet = false;
@@ -700,7 +761,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -722,22 +783,21 @@ describe('VoiceAgentManager', () => {
   });
 
   it('cancels an active turn stream before stopping', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createCancelableBlockingBackend('chat');
     const commitBackend = createDeterministicBackend('commit');
 
-    const createBackend: BackendFactory = ({ modelId }) => {
+    const createBackend = vi.fn<BackendFactory>(({ modelId }) => {
       if (modelId === 'commit-model') return commitBackend;
       return chatBackend;
-    };
+    });
 
     const manager = new VoiceAgentManager({ createBackend });
     const started = await manager.start({
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -746,10 +806,481 @@ describe('VoiceAgentManager', () => {
 
     await expect(manager.stop({ voiceAgentId: started.voiceAgentId })).resolves.toEqual({ ok: true });
     expect(chatBackend.wasCancelled()).toBe(true);
+    expect(createBackend).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats late backend completion after cancellation as terminal without done, deltas, actions, or history', async () => {
+
+    const cancelledUserText = 'do not commit this cancelled request';
+    const cancelledAssistantText =
+      'late text <voice_actions>{"actions":[{"t":"sendSessionMessage","args":{"message":"must not run"}}]}</voice_actions>';
+    const chatBackend = createLateResolvingCancellationBackend(cancelledAssistantText);
+    const replacementBackend = createStaticResponseBackend('replacement-after-cancel', 'clean');
+    const commitBackend = createDeterministicBackend('commit');
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(chatBackend)
+      .mockReturnValueOnce(replacementBackend)
+      .mockReturnValueOnce(commitBackend);
+
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      userText: cancelledUserText,
+    });
+
+    const cancelPromise = manager.cancelTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+    });
+    const cancelledRead = await manager.readTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+      cursor: 0,
+    });
+    await cancelPromise;
+
+    expect(chatBackend.wasCancelled()).toBe(true);
+    expect(cancelledRead.done).toBe(true);
+    expect(cancelledRead.events).toEqual([{
+      t: 'voice_output',
+      output: { v: 1, kind: 'turn_cancelled', turnId: stream.streamId, seq: 0 },
+    }]);
+    expect(cancelledRead.events.some((event) => event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(false);
+    expect(cancelledRead.events.some((event) => event.t === 'voice_output' && event.output.kind === 'speech_segment')).toBe(false);
+
+    await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
+    const commitPrompt = commitBackend.getSeenPrompts().at(-1) ?? '';
+    expect(commitPrompt).not.toContain(cancelledUserText);
+    expect(commitPrompt).not.toContain(cancelledAssistantText);
+    expect(commitPrompt).not.toContain('must not run');
+  });
+
+  it('ignores provider output emitted after a cancelled stream has detached', async () => {
+    const cancelledText = 'POST DETACH CANCELLED OUTPUT';
+    const cancelledBackend = createPostDetachOutputBackend(cancelledText);
+    const replacementBackend = createStaticResponseBackend('replacement', 'clean next response');
+    const createBackend = vi.fn()
+      .mockReturnValueOnce(cancelledBackend)
+      .mockReturnValueOnce(replacementBackend);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      userText: 'cancel this turn',
+    });
+
+    await manager.cancelTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+    const next = await manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'next turn' });
+
+    expect(createBackend).toHaveBeenCalledTimes(2);
+    expect(next.assistantText).toBe('clean next response');
+    expect(next.assistantText).not.toContain(cancelledText);
+    const commit = await manager.commit({ voiceAgentId: started.voiceAgentId, maxChars: 10_000 });
+    expect(commit.commitText).not.toContain(cancelledText);
+  });
+
+  it('retires the complete voice agent cleanly when cancelled-backend replacement creation fails', async () => {
+    let chatDisposeCount = 0;
+    const chatBase = createCancelableBlockingBackend('chat');
+    const chatBackend = Object.assign({}, chatBase, {
+      async dispose() {
+        chatDisposeCount += 1;
+        await chatBase.dispose();
+      },
+    });
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(chatBackend)
+      .mockImplementationOnce(() => { throw new Error('replacement factory failed'); });
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel' });
+
+    await expect(manager.cancelTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+    })).resolves.toEqual({ ok: true });
+    await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'next' })).rejects.toMatchObject({
+      code: 'VOICE_AGENT_NOT_FOUND',
+    });
+    expect(chatDisposeCount).toBe(1);
+  });
+
+  it('makes backend replacement exclusive and never resumes the cancelled provider session', async () => {
+    const replacementDeferred: { resolve: () => void } = { resolve: () => {} };
+    const replacementBarrier = new Promise<void>((resolve) => { replacementDeferred.resolve = resolve; });
+    const provisionArgs: unknown[] = [];
+    const cancelledBackend = createCancelableBlockingBackend('chat');
+    const replacementBackend = createTestExecutionRunHostRuntime({
+      sessionId: 's-replacement',
+      async onProvisionSession(opts) {
+        provisionArgs.push(opts);
+        await replacementBarrier;
+      },
+      onSendPrompt() {
+        replacementBackend.emitMessage({ type: 'model-output', fullText: 'replacement reply' });
+        replacementBackend.emitMessage({ type: 'status', status: 'idle' });
+      },
+    });
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(cancelledBackend)
+      .mockReturnValueOnce(replacementBackend);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel' });
+    const cancelling = manager.cancelTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'too early' })).rejects.toMatchObject({
+      code: 'VOICE_AGENT_BUSY',
+    });
+    await expect(manager.commit({ voiceAgentId: started.voiceAgentId })).rejects.toMatchObject({
+      code: 'VOICE_AGENT_BUSY',
+    });
+    const secondCancellation = manager.cancelTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+    });
+    replacementDeferred.resolve();
+    await expect(Promise.all([cancelling, secondCancellation])).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(provisionArgs).toEqual([undefined]);
+    await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'next' })).resolves.toMatchObject({
+      assistantText: 'replacement reply',
+    });
+  });
+
+  it('disposes chat, isolated commit, and failed replacement backends exactly once when replacement provisioning fails', async () => {
+    const disposed = { chat: 0, commit: 0, replacement: 0 };
+    const chatBase = createCancelableBlockingBackend('chat');
+    const chatBackend = Object.assign({}, chatBase, {
+      async dispose() {
+        disposed.chat += 1;
+        await chatBase.dispose();
+      },
+    });
+    const commitBase = createDeterministicBackend('commit');
+    const commitBackend = Object.assign({}, commitBase, {
+      async dispose() {
+        disposed.commit += 1;
+        await commitBase.dispose();
+      },
+    });
+    const replacementBackend = createTestExecutionRunHostRuntime({
+      sessionId: 's-failed-replacement',
+      onProvisionSession() { throw new Error('replacement provision failed'); },
+      onDispose() { disposed.replacement += 1; },
+    });
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(chatBackend)
+      .mockReturnValueOnce(commitBackend)
+      .mockReturnValueOnce(replacementBackend);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'commit-model',
+      commitIsolation: true,
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    await manager.commit({ voiceAgentId: started.voiceAgentId });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel' });
+
+    await expect(manager.cancelTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+    })).resolves.toEqual({ ok: true });
+    expect(disposed).toEqual({ chat: 1, commit: 1, replacement: 1 });
+    await manager.dispose();
+    expect(disposed).toEqual({ chat: 1, commit: 1, replacement: 1 });
+  });
+
+  it('retires both generations exactly once when replacement subscription construction throws', async () => {
+    const disposed = { old: 0, replacement: 0 };
+    const oldBase = createCancelableBlockingBackend('old-subscribe-throw');
+    const oldBackend = Object.assign({}, oldBase, {
+      async dispose() {
+        disposed.old += 1;
+        await oldBase.dispose();
+      },
+    });
+    const replacementBase = createTestExecutionRunHostRuntime({
+      sessionId: 's-replacement-subscribe-throw',
+      onDispose() { disposed.replacement += 1; },
+    });
+    const replacementBackend = Object.assign({}, replacementBase, {
+      subscribeMessages() {
+        throw new Error('replacement subscribe failed');
+      },
+    });
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(oldBackend)
+      .mockReturnValueOnce(replacementBackend);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel' });
+
+    await expect(manager.cancelTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+    })).resolves.toEqual({ ok: true });
+    await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'next' })).rejects.toMatchObject({
+      code: 'VOICE_AGENT_NOT_FOUND',
+    });
+    expect(disposed).toEqual({ old: 1, replacement: 1 });
+    await manager.dispose();
+    expect(disposed).toEqual({ old: 1, replacement: 1 });
+  });
+
+  it('contains a throwing old subscription disposer and still installs and retires the replacement once', async () => {
+    const disposed = { old: 0, replacement: 0 };
+    const oldBase = createCancelableBlockingBackend('old-unsubscribe-throw');
+    const oldBackend = Object.assign({}, oldBase, {
+      subscribeMessages(handler: Parameters<ExecutionRunHostRuntime['subscribeMessages']>[0]) {
+        const unsubscribe = oldBase.subscribeMessages(handler);
+        return () => {
+          unsubscribe();
+          throw new Error('old unsubscribe failed');
+        };
+      },
+      async dispose() {
+        disposed.old += 1;
+        await oldBase.dispose();
+      },
+    });
+    let replacementBackend: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    replacementBackend = createTestExecutionRunHostRuntime({
+      sessionId: 's-replacement-after-unsubscribe-throw',
+      onSendPrompt() {
+        replacementBackend.emitMessage({ type: 'model-output', fullText: 'replacement survived' });
+        replacementBackend.emitMessage({ type: 'status', status: 'idle' });
+      },
+      onDispose() { disposed.replacement += 1; },
+    });
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(oldBackend)
+      .mockReturnValueOnce(replacementBackend);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel' });
+
+    await expect(manager.cancelTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+    })).resolves.toEqual({ ok: true });
+    await expect(manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'next' })).resolves.toMatchObject({
+      assistantText: 'replacement survived',
+    });
+    expect(disposed).toEqual({ old: 1, replacement: 0 });
+    await manager.dispose();
+    expect(disposed).toEqual({ old: 1, replacement: 1 });
+  });
+
+  it('contains a throwing replacement subscription disposer during stop', async () => {
+    const disposed = { old: 0, replacement: 0 };
+    const oldBase = createCancelableBlockingBackend('old-replacement-unsubscribe-throw');
+    const oldBackend = Object.assign({}, oldBase, {
+      async dispose() {
+        disposed.old += 1;
+        await oldBase.dispose();
+      },
+    });
+    const replacementBase = createTestExecutionRunHostRuntime({
+      sessionId: 's-replacement-unsubscribe-throw',
+      onDispose() { disposed.replacement += 1; },
+    });
+    const replacementBackend = Object.assign({}, replacementBase, {
+      subscribeMessages(handler: Parameters<ExecutionRunHostRuntime['subscribeMessages']>[0]) {
+        const unsubscribe = replacementBase.subscribeMessages(handler);
+        return () => {
+          unsubscribe();
+          throw new Error('replacement unsubscribe failed');
+        };
+      },
+    });
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(oldBackend)
+      .mockReturnValueOnce(replacementBackend);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel' });
+    await manager.cancelTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+
+    await expect(manager.stop({ voiceAgentId: started.voiceAgentId })).resolves.toEqual({ ok: true });
+    expect(disposed).toEqual({ old: 1, replacement: 1 });
+    await manager.dispose();
+    expect(disposed).toEqual({ old: 1, replacement: 1 });
+  });
+
+  it('lets stop own teardown during an in-progress replacement without double-disposing either generation', async () => {
+    const replacementDeferred: { resolve: () => void } = { resolve: () => {} };
+    const replacementBarrier = new Promise<void>((resolve) => { replacementDeferred.resolve = resolve; });
+    const disposed = { old: 0, replacement: 0 };
+    const oldBase = createCancelableBlockingBackend('old');
+    const oldBackend = Object.assign({}, oldBase, {
+      async dispose() {
+        disposed.old += 1;
+        await oldBase.dispose();
+      },
+    });
+    const replacementBackend = createTestExecutionRunHostRuntime({
+      sessionId: 's-stop-replacement',
+      async onProvisionSession() { await replacementBarrier; },
+      onDispose() { disposed.replacement += 1; },
+    });
+    const createBackend = vi.fn<BackendFactory>()
+      .mockReturnValueOnce(oldBackend)
+      .mockReturnValueOnce(replacementBackend);
+    const manager = new VoiceAgentManager({ createBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'cancel' });
+    const cancelling = manager.cancelTurnStream({ voiceAgentId: started.voiceAgentId, streamId: stream.streamId });
+    await Promise.resolve();
+    await Promise.resolve();
+    const stopping = manager.stop({ voiceAgentId: started.voiceAgentId });
+
+    replacementDeferred.resolve();
+    await expect(Promise.all([cancelling, stopping])).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(disposed).toEqual({ old: 1, replacement: 1 });
+    await manager.dispose();
+    expect(disposed).toEqual({ old: 1, replacement: 1 });
+  });
+
+  it('does not suppress same-backend commit output while a naturally completed stream awaits its final read', async () => {
+
+    const backend = createDeltaOnlyBackend('chat');
+    const manager = new VoiceAgentManager({ createBackend: () => backend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      commitIsolation: false,
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+
+    const stream = await manager.startTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      userText: 'first turn',
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const partialRead = await manager.readTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+      cursor: 0,
+      maxEvents: 1,
+    });
+    expect(partialRead.done).toBe(false);
+    expect(partialRead.events).toEqual([{
+      t: 'voice_output',
+      output: {
+        v: 1,
+        kind: 'speech_segment',
+        turnId: stream.streamId,
+        seq: 0,
+        segmentId: `${stream.streamId}:segment:0`,
+        text: 'chat:1',
+      },
+    }]);
+
+    const committed = await manager.commit({ voiceAgentId: started.voiceAgentId });
+    expect(committed.commitText).toBe('chat:2');
+  });
+
+  it('lets stop retire a naturally completed unread stream without reclassifying it as a cancellation', async () => {
+    let disposed = 0;
+    let runtime: ReturnType<typeof createTestExecutionRunHostRuntime>;
+    runtime = createTestExecutionRunHostRuntime({
+      sessionId: 'completed-unread-stop',
+      onSendPrompt() {
+        runtime.emitMessage({ type: 'model-output', fullText: 'completed response' });
+        runtime.emitMessage({ type: 'status', status: 'idle' });
+      },
+      onDispose() {
+        disposed += 1;
+      },
+    });
+    const manager = new VoiceAgentManager({ createRuntime: () => runtime });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    await manager.startTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      userText: 'completed before stop',
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    await expect(manager.stop({ voiceAgentId: started.voiceAgentId })).resolves.toEqual({ ok: true });
+    expect(disposed).toBe(1);
+    await manager.dispose();
+    expect(disposed).toBe(1);
   });
 
   it('removes voice agents from the registry before awaiting in-flight stop, preventing new operations from starting', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const deferred: { resolve: () => void } = { resolve: () => {} };
     const waitForSendPrompt = () => new Promise<void>((r) => {
@@ -769,7 +1300,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -787,18 +1318,12 @@ describe('VoiceAgentManager', () => {
   });
 
   it('treats a NaN idleTtlSeconds as the minimum TTL so idle voice agents can be reaped', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     let nowMs = 0;
     let disposedCount = 0;
-    const createBackend: BackendFactory = ({ modelId }) => asExecutionRunHostRuntime({
-      onMessage() {},
-      async startSession() {
-        return { sessionId: `s-${modelId}` };
-      },
-      async sendPrompt() {},
-      async cancel() {},
-      async dispose() {
+    const createBackend: BackendFactory = ({ modelId }) => createTestExecutionRunHostRuntime({
+      sessionId: `s-${modelId}`,
+      onDispose() {
         disposedCount += 1;
       },
     });
@@ -815,7 +1340,7 @@ describe('VoiceAgentManager', () => {
         agentId: 'claude',
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: Number.NaN,
         initialContext: 'CTX',
       });
@@ -835,18 +1360,12 @@ describe('VoiceAgentManager', () => {
   });
 
   it('caps idleTtlSeconds at the extended maximum so persistent voice agents can stay warm', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     let nowMs = 0;
     let disposedCount = 0;
-    const createBackend: BackendFactory = ({ modelId }) => asExecutionRunHostRuntime({
-      onMessage() {},
-      async startSession() {
-        return { sessionId: `s-${modelId}` };
-      },
-      async sendPrompt() {},
-      async cancel() {},
-      async dispose() {
+    const createBackend: BackendFactory = ({ modelId }) => createTestExecutionRunHostRuntime({
+      sessionId: `s-${modelId}`,
+      onDispose() {
         disposedCount += 1;
       },
     });
@@ -863,7 +1382,7 @@ describe('VoiceAgentManager', () => {
         agentId: 'claude',
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         // Request an absurd TTL; the manager should cap it to the extended maximum (6h).
         idleTtlSeconds: 999_999,
         initialContext: 'CTX',
@@ -888,7 +1407,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('caps stored conversation history so prompts do not grow without bound', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDeterministicBackend('chat');
     const commitBackend = createDeterministicBackend('commit');
@@ -903,7 +1421,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -921,7 +1439,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('streams turn output through read cursors and closes stream when consumed', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDeltaOnlyBackend('chat');
     const commitBackend = createDeterministicBackend('commit');
@@ -936,7 +1453,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -948,8 +1465,8 @@ describe('VoiceAgentManager', () => {
       streamId: stream.streamId,
       maxEvents: 32,
     });
-    expect(events.some((event) => event.t === 'delta')).toBe(true);
-    expect(events.some((event) => event.t === 'done')).toBe(true);
+    expect(events.some((event) => event.t === 'voice_output' && event.output?.kind === 'speech_segment')).toBe(true);
+    expect(events.some((event) => event.t === 'voice_output' && event.output?.kind === 'turn_final')).toBe(true);
 
     await expect(
       manager.readTurnStream({
@@ -960,8 +1477,36 @@ describe('VoiceAgentManager', () => {
     ).rejects.toMatchObject({ code: 'VOICE_AGENT_NOT_FOUND' });
   });
 
+  it('rejects a cursor beyond produced events without evicting the stream or skipping its final event', async () => {
+    const chatBackend = createDeltaOnlyBackend('cursor-ahead');
+    const manager = new VoiceAgentManager({ createBackend: () => chatBackend });
+    const started = await manager.start({
+      agentId: 'claude',
+      chatModelId: 'chat-model',
+      commitModelId: 'chat-model',
+      permissionIntent: 'read-only',
+      idleTtlSeconds: 60,
+      initialContext: 'CTX',
+    });
+    const stream = await manager.startTurnStream({ voiceAgentId: started.voiceAgentId, userText: 'hello' });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    await expect(manager.readTurnStream({
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+      cursor: 999,
+    })).rejects.toMatchObject({ code: 'VOICE_AGENT_INVALID_CURSOR' });
+
+    const events = await readVoiceAgentTurnStreamUntilDone({
+      manager,
+      voiceAgentId: started.voiceAgentId,
+      streamId: stream.streamId,
+      maxEvents: 1,
+    });
+    expect(events.some((event) => event.t === 'voice_output' && event.output.kind === 'turn_final')).toBe(true);
+  });
+
   it('filters voice action blocks out of streamed deltas and normalizes sendSessionMessage preambles', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const actionJson = JSON.stringify({ actions: [{ t: 'sendSessionMessage', args: { message: 'Do X.' } }] });
     const chatBackend = createMultiDeltaBackend('chat', [
@@ -982,7 +1527,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -995,17 +1540,20 @@ describe('VoiceAgentManager', () => {
       maxEvents: 64,
     });
 
-    const deltaText = events.filter((e) => e.t === 'delta').map((e) => (e as any).textDelta).join('');
+    const deltaText = events
+      .filter((e) => e.t === 'voice_output' && (e as any).output?.kind === 'speech_segment')
+      .map((e) => (e as any).output.text)
+      .join('');
     expect(deltaText).toContain('Hello.');
     expect(deltaText).not.toContain('<voice_actions>');
 
-    const done = events.find((e) => e.t === 'done') as any;
-    expect(done.assistantText).toBe('I sent that to the coding assistant and am waiting for its update.');
-    expect(done.actions?.[0]?.t).toBe('sendSessionMessage');
+    const final = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'turn_final') as any;
+    const effect = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'side_effect') as any;
+    expect(final.output.text).toBe('I sent that to the coding assistant and am waiting for its update.');
+    expect(effect.output.action.t).toBe('sendSessionMessage');
   });
 
   it('extracts inline canonical voice action blocks from streamed assistant text', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createMultiDeltaBackend('chat', [
       'Calling the teleport action for that session now. <voice_actions> {"actions":[{"t":"ui.voice_agent.teleport","args":{"sessionId":"s1"}}]} </voice_actions>',
@@ -1022,7 +1570,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -1035,17 +1583,20 @@ describe('VoiceAgentManager', () => {
       maxEvents: 64,
     });
 
-    const deltaText = events.filter((e) => e.t === 'delta').map((e) => (e as any).textDelta).join('');
+    const deltaText = events
+      .filter((e) => e.t === 'voice_output' && (e as any).output?.kind === 'speech_segment')
+      .map((e) => (e as any).output.text)
+      .join('');
     expect(deltaText).toContain('Calling the teleport action for that session now.');
     expect(deltaText).not.toContain('<voice_actions>');
 
-    const done = events.find((e) => e.t === 'done') as any;
-    expect(done.assistantText).toBe('Calling the teleport action for that session now.');
-    expect(done.actions).toEqual([{ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } }]);
+    const final = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'turn_final') as any;
+    const effect = events.find((e) => e.t === 'voice_output' && (e as any).output?.kind === 'side_effect') as any;
+    expect(final.output.text).toBe('Calling the teleport action for that session now.');
+    expect(effect.output.action).toEqual({ t: 'teleportVoiceAgentToSessionRoot', args: { sessionId: 's1' } });
   });
 
   it('rejects a second stream start while a stream turn is still in-flight', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const chatBackend = createDelayedCompletionBackend('chat');
     const commitBackend = createDeterministicBackend('commit');
@@ -1060,7 +1611,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });
@@ -1089,7 +1640,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('bootstraps new sessions with a READY handshake when bootstrapMode is enabled', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createPromptCaptureBackend([
       { responseText: 'READY' },
@@ -1102,7 +1652,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
       bootstrapMode: 'ready_handshake',
@@ -1119,7 +1669,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('can defer initial context until the first user turn while still prewarming with READY', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createPromptCaptureBackend([
       { responseText: 'READY' },
@@ -1131,7 +1680,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
       bootstrapMode: 'ready_handshake',
@@ -1148,7 +1697,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('uses the provided bootstrap timeout for READY handshakes', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createBootstrapTimeoutBackend();
     const manager = new VoiceAgentManager({ createBackend: () => backend });
@@ -1158,7 +1706,7 @@ describe('VoiceAgentManager', () => {
         agentId: 'codex',
         chatModelId: 'chat-model',
         commitModelId: 'commit-model',
-        permissionPolicy: 'read_only',
+        permissionIntent: 'read-only',
         idleTtlSeconds: 60,
         initialContext: 'CTX',
         bootstrapMode: 'ready_handshake',
@@ -1171,7 +1719,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('can bootstrap a new session with a welcome message before the first user turn', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createPromptCaptureBackend([
       { responseText: 'Hello! What are we working on today?' },
@@ -1184,7 +1731,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     } as any);
@@ -1201,7 +1748,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('reuses the chat backend for commits when commitIsolation is false and commitModelId matches chatModelId', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createPromptCaptureBackend([
       { responseText: 'reply' },
@@ -1215,7 +1761,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'chat-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
       commitIsolation: false,
@@ -1231,7 +1777,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('uses disabledActionIds when building seeded voice prompts', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createPromptCaptureBackend([{ responseText: 'ok' }]);
     const createBackend: BackendFactory = () => backend;
@@ -1241,7 +1786,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
       disabledActionIds: ['review.start'],
@@ -1254,7 +1799,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('resolves and forwards voice prompt stack blocks into the READY bootstrap prompt', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createPromptCaptureBackend([
       { responseText: 'READY' },
@@ -1275,7 +1819,7 @@ describe('VoiceAgentManager', () => {
       contextSessionId: 'session-1',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
       bootstrapMode: 'ready_handshake',
@@ -1286,7 +1830,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('resolves and forwards voice prompt stack blocks into the first seeded turn when bootstrap is skipped', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createPromptCaptureBackend([{ responseText: 'ok' }]);
     const manager = new VoiceAgentManager({
@@ -1298,7 +1841,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     } as any);
@@ -1309,7 +1852,6 @@ describe('VoiceAgentManager', () => {
   });
 
   it('passes an explicit bounded timeout to non-bootstrap voice waits', async () => {
-    const { VoiceAgentManager } = await import('./VoiceAgentManager');
 
     const backend = createResponseTimeoutCaptureBackend('ok');
     const manager = new VoiceAgentManager({
@@ -1321,7 +1863,7 @@ describe('VoiceAgentManager', () => {
       agentId: 'claude',
       chatModelId: 'chat-model',
       commitModelId: 'commit-model',
-      permissionPolicy: 'read_only',
+      permissionIntent: 'read-only',
       idleTtlSeconds: 60,
       initialContext: 'CTX',
     });

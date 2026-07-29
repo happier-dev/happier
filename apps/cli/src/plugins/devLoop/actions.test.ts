@@ -2,14 +2,27 @@ import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createPluginStateStore } from '@/plugins/store/state';
-import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
 import { executePluginDevLoopAction } from './actions';
+
+const daemonControl = vi.hoisted(() => ({
+  request: vi.fn(),
+  decide: vi.fn(),
+  ensure: vi.fn(async () => {}),
+}));
+
+vi.mock('@/daemon/controlClient', () => ({
+  requestDaemonPluginChange: daemonControl.request,
+  decideDaemonPluginChange: daemonControl.decide,
+}));
+
+vi.mock('@/daemon/ensureDaemon', () => ({
+  ensureDaemonRunningForSessionCommand: daemonControl.ensure,
+}));
 
 async function materializeDevPlugin(rootDir: string, pluginId = 'acme.dev-loop'): Promise<void> {
   await mkdir(join(rootDir, '.happier-plugin'), { recursive: true });
@@ -18,20 +31,30 @@ async function materializeDevPlugin(rootDir: string, pluginId = 'acme.dev-loop')
   await writeFile(join(rootDir, 'src', 'daemon.ts'), 'export function activate() {}\n', 'utf8');
   await writeFile(
     join(rootDir, '.happier-plugin', 'plugin.json'),
-    JSON.stringify(createPluginManifestV2Fixture({
+    JSON.stringify({
+      schemaVersion: 2,
       id: pluginId,
+      version: '1.0.0',
       displayName: 'Acme Dev Loop',
       description: 'Dev-loop action fixture',
+      engines: { happier: '^0.2.0' }, runtime: { apiVersion: 1 },
       entrypoints: {
-        main: './daemon.mjs',
-        dev: './src/daemon.ts',
+        daemon: './daemon.mjs',
+        development: './src/daemon.ts',
       },
-    }), null, 2),
+      contributes: {},
+    }, null, 2),
     'utf8',
   );
 }
 
 describe('executePluginDevLoopAction', () => {
+  beforeEach(() => {
+    daemonControl.request.mockReset();
+    daemonControl.decide.mockReset();
+    daemonControl.ensure.mockClear();
+  });
+
   it('rejects remote archive locators before the installer can fetch network content', async () => {
     const home = await createTempDir('happier-plugin-dev-loop-action-');
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
@@ -65,7 +88,7 @@ describe('executePluginDevLoopAction', () => {
     }
   });
 
-  it('installs a local dev plugin and lists structured diagnostics', async () => {
+  it('previews a local development plugin without executing or trusting it', async () => {
     const home = await createTempDir('happier-plugin-dev-loop-action-');
     const workspaceRoot = await createTempDir('happier-plugin-dev-loop-workspace-');
     const pluginRoot = await createTempDir('happier-plugin-dev-loop-source-', workspaceRoot);
@@ -77,6 +100,7 @@ describe('executePluginDevLoopAction', () => {
         input: {
           path: pluginRoot,
           dev: true,
+          dryRun: true,
         },
         happyHomeDir: home,
         workspaceRoot,
@@ -94,28 +118,38 @@ describe('executePluginDevLoopAction', () => {
         },
       });
 
-      const list = await executePluginDevLoopAction({
-        actionId: 'plugins.list',
-        input: {},
+      expect(daemonControl.request).not.toHaveBeenCalled();
+      expect((await createPluginStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
+    } finally {
+      await removeTempDir(workspaceRoot);
+      await removeTempDir(home);
+    }
+  });
+
+  it('does not start an opaque Install and trust review the ActionSpec consumer cannot decide', async () => {
+    const home = await createTempDir('happier-plugin-dev-loop-action-');
+    const workspaceRoot = await createTempDir('happier-plugin-dev-loop-workspace-');
+    const pluginRoot = await createTempDir('happier-plugin-dev-loop-source-', workspaceRoot);
+    await materializeDevPlugin(pluginRoot);
+
+    try {
+      const install = await executePluginDevLoopAction({
+        actionId: 'plugins.install',
+        input: { path: pluginRoot, dev: true },
         happyHomeDir: home,
+        workspaceRoot,
       });
 
-      expect(list).toMatchObject({
-        ok: true,
-        kind: 'plugins_list',
-        plugins: [
-          {
-            id: 'acme.dev-loop',
-            version: '1.0.0',
-            state: 'enabled',
-            sourceKind: 'path',
-            diagnostics: [],
-          },
-        ],
+      expect(install).toMatchObject({
+        ok: false,
+        kind: 'plugins_install',
+        diagnostics: [{
+          code: 'plugin_install_review_unavailable',
+          message: expect.stringMatching(/CLI.*Install.*Trust/i),
+        }],
       });
-
-      const state = await createPluginStateStore({ happyHomeDir: home }).read();
-      expect(state.plugins['acme.dev-loop']?.source.devWatch).toBe(true);
+      expect(daemonControl.request).not.toHaveBeenCalled();
+      expect(daemonControl.decide).not.toHaveBeenCalled();
     } finally {
       await removeTempDir(workspaceRoot);
       await removeTempDir(home);
@@ -134,6 +168,7 @@ describe('executePluginDevLoopAction', () => {
         input: {
           path: pluginRoot,
           dev: true,
+          dryRun: true,
         },
         happyHomeDir: home,
         workspaceRoot,
@@ -151,9 +186,8 @@ describe('executePluginDevLoopAction', () => {
         },
       });
 
-      const state = await createPluginStateStore({ happyHomeDir: home }).read();
-      expect(state.plugins['acme.dev-loop-outside']?.source.trustPolicy).toBe('prompt');
-      expect(state.plugins['acme.dev-loop-outside']?.source).not.toHaveProperty('devWatch');
+      expect(daemonControl.request).not.toHaveBeenCalled();
+      expect((await createPluginStateStore({ happyHomeDir: home }).read()).plugins).toEqual({});
     } finally {
       await removeTempDir(pluginRoot);
       await removeTempDir(workspaceRoot);
@@ -199,37 +233,37 @@ describe('executePluginDevLoopAction', () => {
     }
   });
 
-  it('uninstalls an installed plugin through the catalog owner and returns reload diagnostics', async () => {
+  it('uninstalls through the canonical daemon change without a second reload', async () => {
     const home = await createTempDir('happier-plugin-dev-loop-action-');
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-dev-loop-source-'));
     await materializeDevPlugin(pluginRoot);
-    const reloadCalls: Array<Parameters<PluginReloadController['reload']>[0]> = [];
-    const reload: PluginReloadController['reload'] = async (params) => {
-      reloadCalls.push(params);
-      return {
-        ok: true as const,
-        generation: 2,
-        attemptedGeneration: 2,
-        requestedPluginIds: ['acme.dev-loop'],
-        changedPluginIds: ['acme.dev-loop'],
-        affectedPluginIds: ['acme.dev-loop'],
-        activeGenerationId: 'reload:2',
-        registryStatus: 'active' as const,
-        diagnostics: [],
-        diagnosticsByPluginId: {},
-        registry: {} as never,
-      };
-    };
-
     try {
-      await executePluginDevLoopAction({
-        actionId: 'plugins.install',
-        input: {
-          path: pluginRoot,
-          dev: true,
+      await createPluginStateStore({ happyHomeDir: home }).write({
+        t: 'happier_plugin_state_v1',
+        schemaVersion: 1,
+        plugins: {
+          'acme.dev-loop': {
+            source: {
+              kind: 'path',
+              locator: pluginRoot,
+              resolvedPath: pluginRoot,
+              manifestPath: join(pluginRoot, '.happier-plugin', 'plugin.json'),
+              trustPolicy: 'prompt',
+              installPolicy: 'link',
+              devWatch: true,
+            },
+            compatibility: { status: 'compatible', diagnostics: [] },
+            install: { mode: 'link', manifestVersion: '1.0.0' },
+            state: { enabled: true },
+          },
         },
-        happyHomeDir: home,
-        workspaceRoot: pluginRoot,
+      });
+      daemonControl.request.mockResolvedValue({
+        kind: 'committed',
+        pluginId: 'acme.dev-loop',
+        desiredGeneration: null,
+        appliedGeneration: null,
+        pendingSurfaces: [],
       });
 
       const result = await executePluginDevLoopAction({
@@ -238,7 +272,6 @@ describe('executePluginDevLoopAction', () => {
           pluginId: 'acme.dev-loop',
         },
         happyHomeDir: home,
-        reload,
       });
 
       expect(result).toMatchObject({
@@ -251,15 +284,12 @@ describe('executePluginDevLoopAction', () => {
             devWatch: true,
           },
         },
-        reload: {
-          registryStatus: 'active',
-          affectedPluginIds: ['acme.dev-loop'],
-          diagnostics: [],
-        },
       });
-      expect(reloadCalls).toEqual([{ pluginId: 'acme.dev-loop' }]);
-      const state = await createPluginStateStore({ happyHomeDir: home }).read();
-      expect(state.plugins['acme.dev-loop']).toBeUndefined();
+      expect(result).not.toHaveProperty('reload');
+      expect(daemonControl.request).toHaveBeenCalledWith({
+        kind: 'uninstall',
+        pluginId: 'acme.dev-loop',
+      });
     } finally {
       await removeTempDir(home);
     }
@@ -267,14 +297,11 @@ describe('executePluginDevLoopAction', () => {
 
   it('returns structured diagnostics when uninstall is missing a plugin id or target', async () => {
     const home = await createTempDir('happier-plugin-dev-loop-action-');
-    const reload = vi.fn<PluginReloadController['reload']>();
-
     try {
       await expect(executePluginDevLoopAction({
         actionId: 'plugins.uninstall' as any,
         input: {},
         happyHomeDir: home,
-        reload,
       })).resolves.toMatchObject({
         ok: false,
         kind: 'plugins_uninstall',
@@ -292,7 +319,6 @@ describe('executePluginDevLoopAction', () => {
           pluginId: 'acme.missing',
         },
         happyHomeDir: home,
-        reload,
       })).resolves.toMatchObject({
         ok: false,
         kind: 'plugins_uninstall',
@@ -303,56 +329,56 @@ describe('executePluginDevLoopAction', () => {
           },
         ],
       });
-      expect(reload).not.toHaveBeenCalled();
+      expect(daemonControl.request).not.toHaveBeenCalled();
     } finally {
       await removeTempDir(home);
     }
   });
 
-  it('returns structured reload diagnostics from the reload controller', async () => {
-    const reloadCalls: Array<Parameters<PluginReloadController['reload']>[0]> = [];
-    const reload: PluginReloadController['reload'] = async (params) => {
-      reloadCalls.push(params);
-      return {
-      ok: false as const,
-      generation: 2,
-      attemptedGeneration: 3,
-      requestedPluginIds: ['acme.broken'],
-      changedPluginIds: [],
-      affectedPluginIds: ['acme.broken'],
-      activeGenerationId: 'reload:2',
-      registryStatus: 'unavailable' as const,
-      diagnostics: [{ code: 'plugin_reload_failed' as const, message: 'syntax error at line 2' }],
-      diagnosticsByPluginId: {
-        'acme.broken': [
-          {
-            code: 'plugin_activation_failed',
-            message: 'syntax error at line 2',
+  it('routes development reload through the daemon change owner without self-approval', async () => {
+    const home = await createTempDir('happier-plugin-dev-loop-action-');
+    const sourceRoot = '/plugins/acme.broken';
+    await createPluginStateStore({ happyHomeDir: home }).write({
+      t: 'happier_plugin_state_v1',
+      schemaVersion: 1,
+      plugins: {
+        'acme.broken': {
+          source: {
+            kind: 'path',
+            locator: sourceRoot,
+            resolvedPath: '/plugins/generations/acme-broken-1',
+            manifestPath: '/plugins/generations/acme-broken-1/.happier-plugin/plugin.json',
+            trustPolicy: 'prompt',
+            installPolicy: 'link',
           },
-        ],
-      },
-      registry: null,
-      };
-    };
-
-    await expect(executePluginDevLoopAction({
-      actionId: 'plugins.reload',
-      input: { pluginId: 'acme.broken' },
-      happyHomeDir: '/tmp/happier-home',
-      reload,
-    })).resolves.toMatchObject({
-      ok: false,
-      kind: 'plugins_reload',
-      diagnostics: [{ code: 'plugin_reload_failed', message: 'syntax error at line 2' }],
-      diagnosticsByPluginId: {
-        'acme.broken': [
-          {
-            code: 'plugin_activation_failed',
-            message: 'syntax error at line 2',
-          },
-        ],
+          compatibility: { status: 'compatible', diagnostics: [] },
+          install: { mode: 'link', manifestVersion: '1.0.0' },
+          state: { enabled: true },
+        },
       },
     });
-    expect(reloadCalls).toEqual([{ pluginId: 'acme.broken' }]);
+    daemonControl.request.mockResolvedValue({
+      kind: 'failed' as const,
+      code: 'plugin_change_failed',
+    });
+
+    try {
+      await expect(executePluginDevLoopAction({
+        actionId: 'plugins.reload',
+        input: { pluginId: 'acme.broken' },
+        happyHomeDir: home,
+      })).resolves.toMatchObject({
+        ok: false,
+        kind: 'plugins_reload',
+        diagnostics: [{ code: 'plugin_change_failed' }],
+      });
+      expect(daemonControl.request).toHaveBeenCalledWith({
+        kind: 'development',
+        pluginId: 'acme.broken',
+        sourceRootPath: sourceRoot,
+      });
+    } finally {
+      await removeTempDir(home);
+    }
   });
 });

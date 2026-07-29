@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DaemonState, Machine, MachineMetadata } from '@/api/types';
+import type { ApiClient } from '@/api/api';
+import { createDeferred } from '../../testkit/async/deferred';
 import { MachineIdConflictError, MachineReplacedError, MachineRevokedError } from './machineRegistrationErrors';
 
 vi.mock('@/ui/logger', () => ({
@@ -553,6 +555,106 @@ describe('ensureMachineRegistered', () => {
       expect(raw.machineIdByServerId.cloud).toBe(calls[1]);
       expect(raw.machineIdByServerIdByAccountId?.cloud?.['acct-a']).toBe(calls[1]);
       expect(raw.machineIdConfirmedByServerByServerId?.cloud).toBeUndefined();
+    } finally {
+      rmSync(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    {
+      name: 'server replacement adoption',
+      createRegistrationError: (machineId: string) => new MachineReplacedError(machineId, 'machine-replacement'),
+    },
+    {
+      name: 'local identity rotation',
+      createRegistrationError: (machineId: string) => new MachineIdConflictError(machineId),
+    },
+  ])('does not start $name after daemon quiescence begins during the first request', async ({
+    createRegistrationError,
+  }) => {
+    vi.useRealTimers();
+
+    const homeDir = mkdtempSync(join(tmpdir(), 'happier-cli-machine-quiescence-'));
+    process.env.HAPPIER_HOME_DIR = homeDir;
+    process.env.HAPPIER_ACTIVE_SERVER_ID = 'cloud';
+
+    try {
+      const machineId = 'machine-current';
+      writeFileSync(
+        join(homeDir, 'settings.json'),
+        JSON.stringify(
+          {
+            schemaVersion: 6,
+            onboardingCompleted: true,
+            activeServerId: 'cloud',
+            servers: {
+              cloud: {
+                id: 'cloud',
+                name: 'cloud',
+                serverUrl: 'https://api.happier.dev',
+                webappUrl: 'https://app.happier.dev',
+                createdAt: 0,
+                updatedAt: 0,
+                lastUsedAt: 0,
+              },
+            },
+            machineIdByServerId: { cloud: machineId },
+            machineIdConfirmedByServerByServerId: { cloud: true },
+            lastChangesCursorByServerIdByAccountId: {},
+          },
+          null,
+          2,
+        ),
+        'utf8',
+      );
+
+      vi.resetModules();
+      const { ensureMachineRegistered } = await import('./ensureMachineRegistered');
+      const firstRequest = createDeferred<Machine>();
+      const metadata = {
+        host: 'host1',
+        platform: 'linux',
+        happyCliVersion: '0.0.0-test',
+        homeDir: '/tmp/home',
+        happyHomeDir: '/tmp/happier',
+        happyLibDir: '/tmp/happier/lib',
+      } satisfies MachineMetadata;
+      const getOrCreateMachine = vi.fn(async (): Promise<Machine> => {
+        if (getOrCreateMachine.mock.calls.length === 1) {
+          return await firstRequest.promise;
+        }
+        return {
+          id: 'unexpected-second-registration',
+          encryptionKey: new Uint8Array(),
+          encryptionVariant: 'legacy',
+          metadata,
+          metadataVersion: 0,
+          daemonState: null,
+          daemonStateVersion: 0,
+        };
+      });
+      const api = { getOrCreateMachine } as Pick<ApiClient, 'getOrCreateMachine'>;
+      let quiescing = false;
+
+      const registration = ensureMachineRegistered({
+        api,
+        machineId,
+        metadata,
+        isShuttingDown: () => quiescing,
+      });
+      await vi.waitFor(() => {
+        expect(getOrCreateMachine).toHaveBeenCalledTimes(1);
+      });
+
+      quiescing = true;
+      firstRequest.reject(createRegistrationError(machineId));
+
+      await expect(registration).rejects.toThrow(/quiesc/i);
+      expect(getOrCreateMachine).toHaveBeenCalledTimes(1);
+      const persisted = JSON.parse(readFileSync(join(homeDir, 'settings.json'), 'utf8')) as {
+        machineIdByServerId?: Record<string, string>;
+      };
+      expect(persisted.machineIdByServerId?.cloud).toBe(machineId);
     } finally {
       rmSync(homeDir, { recursive: true, force: true });
     }

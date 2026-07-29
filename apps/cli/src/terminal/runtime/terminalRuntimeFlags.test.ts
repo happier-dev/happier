@@ -96,6 +96,10 @@ describe('parseAndStripTerminalRuntimeFlags', () => {
       'windows_terminal',
       '--happy-terminal-window-id',
       'happy-session-1',
+      '--happy-terminal-title',
+      'Happier codex spawn-1',
+      '--happy-terminal-launch-correlation',
+      'ab'.repeat(16),
       '--foo',
       'bar',
     ]);
@@ -105,6 +109,7 @@ describe('parseAndStripTerminalRuntimeFlags', () => {
         mode: 'windows_terminal',
         requested: 'windows_terminal',
         windowId: 'happy-session-1',
+        title: 'Happier codex spawn-1',
       },
       argv: ['--foo', 'bar'],
     });

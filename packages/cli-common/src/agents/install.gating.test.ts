@@ -82,6 +82,25 @@ describe('installAgentCli vendor_recipe execution gating', () => {
     }
   });
 
+  it('fails an explicit update truthfully when the Agent has no managed updater', async () => {
+    const platform = resolvePlatformFromNodePlatform(process.platform);
+    expect(platform).not.toBeNull();
+    if (!platform) return;
+
+    const res = await installAgentCli({
+      agentId: 'claude',
+      platform,
+      intent: 'update',
+      dryRun: true,
+      env: { ...process.env, PATH: '' },
+    });
+
+    expect(res.ok).toBe(false);
+    if (res.ok) return;
+    expect(res.errorCode).toBe('update-not-available');
+    expect(res.plan?.installMode).toBe('vendor_recipe');
+  });
+
   it('uses injected spawnSync for managed_package installs (no real processes in tests)', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-gating-home-'));
     const logDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-gating-log-'));
@@ -488,6 +507,41 @@ describe('installAgentCli vendor_recipe execution gating', () => {
     }
   });
 
+  it('does not treat a system-first Codex runtime as already installed for an explicit managed update', async () => {
+    if (process.platform === 'win32') return;
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-update-system-home-'));
+    const binDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-update-system-bin-'));
+    try {
+      const platform = resolvePlatformFromNodePlatform(process.platform);
+      expect(platform).not.toBeNull();
+      if (!platform) return;
+
+      const codexPath = join(binDir, 'codex');
+      await writeFile(codexPath, '#!/bin/sh\nexit 0\n', 'utf8');
+      await chmod(codexPath, 0o755);
+
+      const res = await installAgentCli({
+        agentId: 'codex',
+        platform,
+        intent: 'update',
+        dryRun: true,
+        env: {
+          ...process.env,
+          HAPPIER_HOME_DIR: homeDir,
+          PATH: binDir,
+        },
+      });
+
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.plan.installMode).toBe('github_release_binary');
+      expect(res.alreadyInstalled).toBe(false);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+      await rm(binDir, { recursive: true, force: true });
+    }
+  });
+
   it('installs an absent GitHub-release managed agent through the generic release asset path', async () => {
     const expectedAssetName = expectedOhMyPiReleaseAssetName();
     if (!expectedAssetName) return;
@@ -563,7 +617,11 @@ describe('installAgentCli vendor_recipe execution gating', () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-codex-github-binary-home-'));
     const logDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-install-codex-github-binary-log-'));
     const downloadCalls: Array<Readonly<{ url: string; destinationPath: string; digest?: string | null }>> = [];
-    const extractCalls: Array<Readonly<{ archiveName: string; outputPath: string }>> = [];
+    const extractCalls: Array<Readonly<{
+      archiveName: string;
+      outputPath: string;
+      maxFileBytes?: number;
+    }>> = [];
     try {
       const platform = resolvePlatformFromNodePlatform(process.platform);
       expect(platform).not.toBeNull();
@@ -602,6 +660,7 @@ describe('installAgentCli vendor_recipe execution gating', () => {
             extractCalls.push({
               archiveName: params.archiveName,
               outputPath: params.outputPath,
+              maxFileBytes: params.maxFileBytes,
             });
             await mkdir(dirname(params.outputPath), { recursive: true });
             await writeFile(params.outputPath, '#!/bin/sh\nexit 0\n', 'utf8');
@@ -628,6 +687,7 @@ describe('installAgentCli vendor_recipe execution gating', () => {
             'bin',
             process.platform === 'win32' ? 'codex.exe' : 'codex',
           ),
+          maxFileBytes: 320 * 1024 * 1024,
         },
       ]);
       const installedPath = join(
@@ -643,6 +703,73 @@ describe('installAgentCli vendor_recipe execution gating', () => {
     } finally {
       await rm(homeDir, { recursive: true, force: true });
       await rm(logDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([
+    ['system runtime with no managed install', true],
+    ['current managed runtime', false],
+  ] as const)('updates Codex instead of returning a successful no-op for %s', async (_caseName, useSystemRuntime) => {
+    const expectedAssetName = expectedCodexReleaseAssetName();
+    if (!expectedAssetName || process.platform === 'win32') return;
+
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-update-codex-home-'));
+    const logDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-update-codex-log-'));
+    const binDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-update-codex-bin-'));
+    const downloadCalls: string[] = [];
+    try {
+      const platform = resolvePlatformFromNodePlatform(process.platform);
+      expect(platform).not.toBeNull();
+      if (!platform) return;
+
+      if (useSystemRuntime) {
+        await writeFile(join(binDir, 'codex'), '#!/bin/sh\nexit 0\n', 'utf8');
+        await chmod(join(binDir, 'codex'), 0o755);
+      } else {
+        const managedCodexPath = join(homeDir, 'tools', 'providers', 'codex', 'current', 'bin', 'codex');
+        await mkdir(dirname(managedCodexPath), { recursive: true });
+        await writeFile(managedCodexPath, '#!/bin/sh\nexit 0\n', 'utf8');
+        await chmod(managedCodexPath, 0o755);
+      }
+
+      const res = await installAgentCli({
+        agentId: 'codex',
+        platform,
+        intent: 'update',
+        logDir,
+        env: {
+          ...process.env,
+          HAPPIER_HOME_DIR: homeDir,
+          PATH: useSystemRuntime ? binDir : '',
+        },
+        deps: {
+          fetchGitHubLatestRelease: async () => ({
+            tag_name: 'rust-v0.140.0',
+            assets: [{
+              name: expectedAssetName,
+              browser_download_url: `https://example.test/${expectedAssetName}`,
+              digest: 'sha256:updated',
+            }],
+          }),
+          downloadGitHubReleaseAsset: async (params) => {
+            downloadCalls.push(params.url);
+            await writeFile(params.destinationPath, 'archive-bytes', 'utf8');
+          },
+          extractGitHubReleaseAsset: async (params) => {
+            await mkdir(dirname(params.outputPath), { recursive: true });
+            await writeFile(params.outputPath, '#!/bin/sh\nexit 0\n', 'utf8');
+          },
+        },
+      });
+
+      expect(res.ok).toBe(true);
+      if (!res.ok) return;
+      expect(res.alreadyInstalled).toBe(false);
+      expect(downloadCalls).toEqual([`https://example.test/${expectedAssetName}`]);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+      await rm(logDir, { recursive: true, force: true });
+      await rm(binDir, { recursive: true, force: true });
     }
   });
 

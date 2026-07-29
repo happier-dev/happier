@@ -6,7 +6,10 @@ export function throwIfPluginRuntimeStartBlocked(resolution: EngineAdapterResolu
   }
 
   const blockingDiagnostic = (resolution.diagnostics ?? []).find((diagnostic) =>
-    diagnostic.code === 'engine_plugin_daemon_module_load_failed'
+    (
+      diagnostic.code === 'engine_plugin_daemon_module_load_failed'
+      || diagnostic.code === 'engine_plugin_registry_diagnostic'
+    )
     && (
       diagnostic.detailCode === 'plugin_trust_approval_required'
       || diagnostic.detailCode === 'plugin_untrusted'

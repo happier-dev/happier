@@ -1,5 +1,4 @@
-import type { CatalogAgentId } from '@/backends/types';
-import { CATALOG_AGENT_IDS } from '@/backends/types';
+import { CATALOG_AGENT_IDS, type CatalogAgentId } from '@/agent/catalog/ids';
 import { buildConfiguredAcpBackendSessionMetadata } from '@/agent/acp/catalog/configured/sessionMetadata';
 import type { Credentials } from '@/persistence';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
@@ -38,11 +37,11 @@ function readConfiguredAcpBackendIdFromFlavor(metadata: Record<string, unknown>)
 
 function readConfiguredAcpProviderSessionId(metadata: Record<string, unknown>, backendId: string): string | null {
   const descriptor = readRuntimeDescriptorV1FromMetadata(metadata);
-  const providerId = typeof descriptor?.providerId === 'string' ? descriptor.providerId.trim() : '';
+  const providerId = typeof descriptor?.agentId === 'string' ? descriptor.agentId.trim() : '';
   if (!isLegacyConfiguredBackendVendorSessionCarrier({ providerId, backendId })) {
     return null;
   }
-  const provider = asRecord(descriptor?.provider);
+  const provider = asRecord(descriptor?.agent);
   const providerSessionId = typeof provider?.providerSessionId === 'string' ? provider.providerSessionId.trim() : '';
   return providerSessionId || null;
 }
@@ -57,8 +56,8 @@ function buildConfiguredAcpMetadataOverlay(params: Readonly<{
 export type SessionForkBackendTargetResolution =
   | Readonly<{
       ok: true;
-      providerAgentId: CatalogAgentId;
-      providerHintProviderId: string;
+      catalogAgentId: CatalogAgentId;
+      agentHintAgentId: string;
       backendTargetV2: BackendTargetRefV2;
       backendTarget: BackendTargetRefV1;
       replayFlavor: string;
@@ -67,8 +66,8 @@ export type SessionForkBackendTargetResolution =
     }>
   | Readonly<{
       ok: true;
-      providerAgentId: null;
-      providerHintProviderId: string;
+      catalogAgentId: null;
+      agentHintAgentId: string;
       backendTargetV2: BackendTargetRefV2;
       backendTarget: Readonly<{ kind: 'configuredAcpBackend'; backendId: string }>;
       replayFlavor: string;
@@ -120,8 +119,8 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
       }
       return {
         ok: true,
-        providerAgentId: null,
-        providerHintProviderId: `acp:${candidateConfiguredBackendId}`,
+        catalogAgentId: null,
+        agentHintAgentId: `acp:${candidateConfiguredBackendId}`,
         backendTargetV2: backendTargetRefs.backendTargetV2,
         backendTarget,
         replayFlavor: `acp:${candidateConfiguredBackendId}`,
@@ -151,8 +150,8 @@ export async function resolveSessionForkBackendTarget(params: Readonly<{
 
   return {
     ok: true,
-    providerAgentId: agentRaw,
-    providerHintProviderId: agentRaw,
+    catalogAgentId: agentRaw,
+    agentHintAgentId: agentRaw,
     backendTargetV2: resolveConcreteCompatBackendTargetRefs({ kind: 'builtInAgent', agentId: agentRaw })!.backendTargetV2,
     backendTarget: { kind: 'builtInAgent', agentId: agentRaw },
     replayFlavor: agentRaw,

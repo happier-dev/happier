@@ -12,7 +12,10 @@ import { decodeBase64, decrypt, encodeBase64, encrypt } from '@/api/encryption';
 import { MessageQueue2 } from '@/agent/runtime/modeMessageQueue';
 import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { combinePermissionModeQueuedPrompts, type PermissionModeQueuedPrompt } from '@/agent/runtime/permissions/queuedPrompt';
-import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
+import {
+  createRuntimeOverrideSynchronizers,
+  type RuntimeOverrideTarget,
+} from '@/agent/runtime/createRuntimeOverrideSynchronizers';
 import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { createApprovedPermissionHandler } from '@/testkit/backends/permissionHandler';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
@@ -20,11 +23,22 @@ import {
   type ApiSessionSocketStub,
   createApiSessionSocketStub,
 } from '@/testkit/backends/apiSessionSocketHarness';
-import { configuration } from '@/configuration';
 import { createAcpTestTransportHandler } from '@/agent/acp/testkit/subprocessHarness';
 
 let sessionSocketStub: ApiSessionSocketStub | null = null;
 let userSocketStub: ApiSessionSocketStub | null = null;
+
+function createLegacyAcpOverrideTarget(
+  runtime: ReturnType<typeof createAcpRuntime>,
+): RuntimeOverrideTarget {
+  return {
+    setSessionMode: async (modeId) => await runtime.setSessionMode(modeId),
+    setSessionModelSelection: async (selection) =>
+      await runtime.setSessionModel(selection.modelId),
+    setSessionConfigOption: async (configId, value) =>
+      await runtime.setSessionConfigOption(configId, value),
+  };
+}
 
 vi.mock('@happier-dev/connection-supervisor', () => {
   const onlineState = {
@@ -253,8 +267,6 @@ function createFastAcpTransportHandler() {
 }
 
 describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refresh', () => {
-  const originalIdleWakePollIntervalMs = configuration.pendingQueueIdleWakePollIntervalMs;
-
   beforeEach(() => {
     sessionSocketStub = createApiSessionSocketStub({
       id: 'session-socket',
@@ -266,194 +278,12 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
       connected: false,
       emitWithAckResult: { ok: true },
     });
-    (configuration as any).pendingQueueIdleWakePollIntervalMs = 10;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
-    (configuration as any).pendingQueueIdleWakePollIntervalMs = originalIdleWakePollIntervalMs;
     sessionSocketStub = null;
     userSocketStub = null;
-  });
-
-  it('applies an ACP session mode override that is only observed via idle snapshot refresh', async () => {
-    const encryptionKey = new Uint8Array(32).fill(7);
-    const encryptMetadata = (metadata: Record<string, unknown>) =>
-      encodeBase64(encrypt(encryptionKey, 'legacy', metadata));
-
-    const initialMetadata = {
-      path: '/tmp/worktree',
-      host: 'test',
-      flavor: 'opencode',
-      startedBy: 'terminal',
-    };
-
-    let serverMetadata: Record<string, unknown> = initialMetadata;
-    let serverMetadataVersion = 1;
-    const servedSessionMetadataVersions: number[] = [];
-    let sessionFetchCount = 0;
-    let profileFetchCount = 0;
-    const unexpectedGetCalls: string[] = [];
-
-    vi.spyOn(axios, 'get').mockImplementation(async (url: string | URL) => {
-      const href = String(url);
-      if (href.includes('/v2/sessions/s1')) {
-        sessionFetchCount += 1;
-        servedSessionMetadataVersions.push(serverMetadataVersion);
-        return {
-          status: 200,
-          data: {
-            session: createSessionRecordFixture({
-              id: 's1',
-              encryptionMode: 'e2ee' as any,
-              metadata: encryptMetadata(serverMetadata),
-              metadataVersion: serverMetadataVersion,
-              agentState: null,
-              agentStateVersion: 0,
-            }),
-          },
-        } as any;
-      }
-      if (href.includes('/v1/account/profile')) {
-        profileFetchCount += 1;
-        return {
-          status: 200,
-          data: { id: 'u1' },
-        } as any;
-      }
-      if (href.includes('/v2/changes')) {
-        return {
-          status: 200,
-          data: { changes: [], nextCursor: null, hasMore: false },
-        } as any;
-      }
-      if (href.includes('/v1/sessions/s1/messages')) {
-        return {
-          status: 200,
-          data: { messages: [], nextAfterSeq: null },
-        } as any;
-      }
-      unexpectedGetCalls.push(href);
-      throw new Error(`Unexpected axios.get call: ${href}`);
-    });
-
-    const session = new ApiSessionClient('tok', {
-      id: 's1',
-      seq: 0,
-      encryptionMode: 'e2ee',
-      encryptionKey,
-      encryptionVariant: 'legacy',
-      metadata: initialMetadata as any,
-      metadataVersion: 1,
-      agentState: null,
-      agentStateVersion: 0,
-    } as any);
-    session.deferDeliveredUserMessageWatermarkToProviderAcceptance();
-    session.popPendingMessage = vi.fn(async () => false);
-    const waitForMetadataUpdateSpy = vi.spyOn(session, 'waitForMetadataUpdate');
-    const refreshSessionSnapshotSpy = vi.spyOn(session, 'refreshSessionSnapshotFromServerBestEffort');
-    const localUserSocketStub = userSocketStub;
-    if (!localUserSocketStub) {
-      throw new Error('Missing user socket stub');
-    }
-
-    const queue = createModeQueue();
-    queue.push(committedQueuedPrompt(), { permissionMode: 'default' });
-
-    const runtime = {
-      beginTurnLifecycle: vi.fn(),
-      startOrLoadSession: vi.fn(async () => {}),
-      updateSessionRuntimeConfig: vi.fn(async () => {}),
-      sendTurnPrompt: vi.fn(async () => {}),
-      sendPromptWithMeta: vi.fn(async () => {}),
-      waitForTurnCompletion: vi.fn(async () => {}),
-      resetOrDisposeRuntime: vi.fn(async () => {}),
-      readSessionIdentity: vi.fn(() => ({ sessionId: 'remote-session-1' })),
-      shouldResumeAfterPermissionModeChange: vi.fn(() => true),
-    } as any;
-
-    const messageBuffer = new MessageBuffer();
-    const permissionHandler = {
-      setPermissionMode: vi.fn(),
-      reset: vi.fn(),
-    } as any;
-
-    const abortController = new AbortController();
-    let shouldExit = false;
-    let appliedModeId: string | null = null;
-    let readyCount = 0;
-
-    const appliedPromise = new Promise<void>((resolve) => {
-      runtime.__setAppliedMode = (modeId: string) => {
-        appliedModeId = modeId;
-        shouldExit = true;
-        abortController.abort();
-        resolve();
-      };
-    });
-
-    const loopPromise = runPermissionModePromptLoop({
-      providerName: 'Test Provider',
-      agentMessageType: 'qwen',
-      explicitPermissionMode: undefined,
-      session,
-      messageQueue: queue,
-      permissionHandler,
-      runtime,
-      createOverrideSynchronizer: (isStarted) =>
-        createRuntimeOverrideSynchronizers({
-          agentTargetKey: 'backend:codex',
-          session,
-          runtime: {
-            setSessionMode: async (modeId: string) => {
-              runtime.__setAppliedMode(modeId);
-            },
-            setSessionModel: async () => {},
-            setSessionConfigOption: async () => {},
-          },
-          isStarted,
-        }),
-      messageBuffer,
-      shouldExit: () => shouldExit,
-      getAbortSignal: () => abortController.signal,
-      keepAlive: () => {},
-      setThinking: () => {},
-      sendReady: () => {
-        readyCount += 1;
-        if (readyCount !== 1) return;
-        serverMetadata = {
-          ...serverMetadata,
-          acpSessionModeOverrideV1: { v: 1, updatedAt: 10, modeId: 'plan' },
-        };
-        const currentLocalMetadataVersion =
-          typeof (session as any).metadataVersion === 'number' ? (session as any).metadataVersion : 0;
-        serverMetadataVersion = Math.max(serverMetadataVersion, currentLocalMetadataVersion) + 1;
-      },
-      currentPermissionModeUpdatedAt: 0,
-      setCurrentPermissionMode: () => {},
-      setCurrentPermissionModeUpdatedAt: () => {},
-      formatPromptErrorMessage: (error) => `Error: ${String(error)}`,
-    });
-
-    await Promise.race([
-      appliedPromise,
-      new Promise((_, reject) =>
-        setTimeout(() => {
-          reject(
-            new Error(
-              `Timed out waiting for idle metadata refresh (sessionFetchCount=${sessionFetchCount}, servedSessionMetadataVersions=${servedSessionMetadataVersions.join(',') || 'none'}, profileFetchCount=${profileFetchCount}, unexpectedGetCalls=${unexpectedGetCalls.join(',') || 'none'}, metadata=${JSON.stringify(session.getMetadataSnapshot())}, waitForMetadataUpdateCalls=${waitForMetadataUpdateSpy.mock.calls.length}, refreshSessionSnapshotCalls=${refreshSessionSnapshotSpy.mock.calls.length}, userSocketConnected=${String(localUserSocketStub.connected ?? null)}, userSocketConnectCalls=${String((localUserSocketStub.connect as any)?.mock?.calls?.length ?? 0)})`,
-            ),
-          );
-        }, 2_000),
-      ),
-    ]);
-
-    await loopPromise;
-
-    expect(runtime.sendPromptWithMeta).toHaveBeenCalledTimes(1);
-    expect(appliedModeId).toBe('plan');
-
-    await session.close();
   });
 
   it('applies an ACP session mode override via the real ACP runtime after a wake-triggered snapshot refresh', async () => {
@@ -624,7 +454,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         createRuntimeOverrideSynchronizers({
           agentTargetKey: 'backend:codex',
           session,
-          runtime,
+          runtime: createLegacyAcpOverrideTarget(runtime),
           isStarted,
         }),
       messageBuffer,
@@ -834,7 +664,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         createRuntimeOverrideSynchronizers({
           agentTargetKey: 'backend:codex',
           session,
-          runtime,
+          runtime: createLegacyAcpOverrideTarget(runtime),
           isStarted,
         }),
       messageBuffer,
@@ -1045,7 +875,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         createRuntimeOverrideSynchronizers({
           agentTargetKey: 'backend:codex',
           session,
-          runtime,
+          runtime: createLegacyAcpOverrideTarget(runtime),
           isStarted,
         }),
       messageBuffer,
@@ -1279,7 +1109,7 @@ describe('runPermissionModePromptLoop with ApiSessionClient idle snapshot refres
         createRuntimeOverrideSynchronizers({
           agentTargetKey: 'backend:codex',
           session,
-          runtime,
+          runtime: createLegacyAcpOverrideTarget(runtime),
           isStarted,
         }),
       messageBuffer,

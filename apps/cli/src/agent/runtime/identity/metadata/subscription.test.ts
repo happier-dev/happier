@@ -23,7 +23,7 @@ function createRuntimePublicationMetadata(
   };
 }
 
-function createHarness() {
+function createHarness(options?: Readonly<{ providerSessionId?: string | null }>) {
   let runtimeHandler: RuntimeTurnMessageHandler | null = null;
 
   const session = {
@@ -39,6 +39,7 @@ function createHarness() {
     > => ({ ok: true, version: 1 })),
   };
   const runtime = {
+    readSessionIdentity: vi.fn(() => ({ sessionId: options?.providerSessionId ?? null })),
     subscribeRuntimeEvents: vi.fn((handler: RuntimeTurnMessageHandler) => {
       runtimeHandler = handler;
       return () => {
@@ -60,6 +61,28 @@ function createHarness() {
 }
 
 describe('subscribeSessionRuntimePublicationToMetadata', () => {
+  it('publishes the runtime provider session identity through the declared vendor metadata field', () => {
+    const harness = createHarness({ providerSessionId: 'grok-provider-session-1' });
+    subscribeSessionRuntimePublicationToMetadata({
+      session: harness.session,
+      sessionState: harness.sessionState,
+      runtime: harness.runtime as never,
+      providerSessionMetadataKey: 'grokSessionId',
+    });
+
+    expect(harness.sessionState.writeHappierField).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      fieldId: 'identity.providerSessionId',
+      value: {
+        metadataKey: 'grokSessionId',
+        value: 'grok-provider-session-1',
+      },
+      reason: 'reconciliation',
+      metadataReason: 'runtime-provider-session-id',
+      mirrorToProvider: false,
+    });
+  });
+
   it('normalizes runtime publication events before writing metadata and dedupes equal facets', () => {
     const harness = createHarness();
     const unsubscribe = subscribeSessionRuntimePublicationToMetadata({

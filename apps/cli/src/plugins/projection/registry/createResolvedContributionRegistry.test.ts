@@ -5,10 +5,8 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import {
-  AGENT_PROVIDER_IDS,
   AGENT_IDS,
-  getAllBackendDefinitionContracts,
-  getAllProviderDefinitionContracts,
+  getAllAgentDefinitionContracts,
 } from '@happier-dev/agents';
 
 import {
@@ -17,9 +15,13 @@ import {
   primeResolvedContributionRegistry,
   resolveMergedContributionRegistry,
 } from './createResolvedContributionRegistry';
-import { createPluginStateStore } from '@/plugins/store/state';
+import {
+  PluginContributesV2Schema,
+  createPluginContributionIdentity,
+} from '@happier-dev/protocol';
+import { createPluginStateStore } from '@/plugins/store/state.testkit';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import type { ResolvedHookRegistration, ResolvedReactNativeBundleContribution } from './types';
+import type { ResolvedActivatedHookRegistration, ResolvedReactNativeBundleContribution } from './types';
 
 async function writeInstalledSettingsPlugin(params: Readonly<{
   happyHomeDir: string;
@@ -35,20 +37,18 @@ async function writeInstalledSettingsPlugin(params: Readonly<{
       id: params.pluginId,
       displayName: 'Acme Settings Merge',
       description: 'Settings merge fixture',
-      uses: ['settings'],
       contributes: {
         settings: [
           {
             id: params.settingsId,
+            title: 'Acme settings',
+            target: { kind: 'plugin' },
+            scope: 'local',
             fields: [
               {
                 id: 'endpoint',
-                kind: 'settings.field',
-                version: '1.0.0',
-                valueSchema: { type: 'string' },
-                control: 'text',
-                displayKey: 'plugins.acmeSettingsMerge.endpoint.label',
-                clearWhenEmpty: 'persist',
+                title: 'Endpoint',
+                schema: { type: 'string' },
               },
             ],
           },
@@ -90,12 +90,96 @@ async function writeInstalledSettingsPlugin(params: Readonly<{
 }
 
 describe('getResolvedContributionRegistry', () => {
-  it('indexes built-in agent, backend, and catalog entries through one resolved registry', () => {
-    const registry = getResolvedContributionRegistry();
-    const backendDefinitionIds = getAllBackendDefinitionContracts().map((entry) => entry.id).slice().sort();
-    const agentDefinitionIds = getAllProviderDefinitionContracts().map((entry) => entry.id).slice().sort();
+  it('does not project the retired static backend surface-handler registry', () => {
+    const registry = createResolvedContributionRegistry({});
 
-    expect(Object.keys(registry.catalogEntriesById).slice().sort()).toEqual([...AGENT_PROVIDER_IDS].slice().sort());
+    expect(registry).not.toHaveProperty('surfaceHandlersByBackendId');
+  });
+
+  it('preserves declarative voice model packs through the resolved registry', () => {
+    const voiceModelPack = PluginContributesV2Schema.parse({ voiceModelPacks: [{
+      id: 'english-small', schemaVersion: 1, executionHosts: ['daemon'],
+      manifest: {
+        schemaVersion: 1, kind: 'stt_sherpa', model: 'english-small', version: '1.0.0',
+        runtime: {
+          family: 'sherpa_zipformer_streaming',
+          artifacts: {
+            encoder: { type: 'file', path: 'encoder.onnx' }, decoder: { type: 'file', path: 'decoder.onnx' },
+            joiner: { type: 'file', path: 'joiner.onnx' }, tokens: { type: 'file', path: 'tokens.txt' },
+          },
+          abiVersion: 1, minHostVersion: '1.0.0', platforms: ['darwin'], architectures: ['arm64'],
+        },
+        provenance: { source: 'https://models.example.test/english-small', publisher: 'Acme' },
+        license: { id: 'Apache-2.0', title: 'Apache License 2.0', url: 'https://models.example.test/license', requiresAcceptance: false },
+        files: ['encoder.onnx', 'decoder.onnx', 'joiner.onnx', 'tokens.txt'].map((path, index) => ({
+          path, url: `https://models.example.test/english-small/${path}`, sha256: String(index + 1).repeat(64), sizeBytes: 4,
+        })),
+      },
+    }] }).voiceModelPacks[0]!;
+    const common = {
+      provenance: 'external' as const,
+      source: { kind: 'path' as const },
+      pluginId: 'com.acme.voice',
+      manifestPath: '/plugins/com.acme.voice/plugin.json',
+      manifestDigest: 'sha256:voice',
+      daemonEntryPath: '/plugins/com.acme.voice/daemon.js',
+    };
+    const registry = createResolvedContributionRegistry({
+      agents: [],       voiceModelPacks: [{ ...common, identity: createPluginContributionIdentity({ pluginId: common.pluginId, localId: voiceModelPack.id }), definition: voiceModelPack }],
+    });
+
+    expect(registry.voiceModelPacks).toHaveLength(1);
+    expect(registry.voiceProviders).toEqual([]);
+  });
+  it('indexes provider contributions by qualified contribution identity without colliding local ids', () => {
+    const providerDefinition = {
+      v: 1 as const,
+      id: 'gateway',
+      name: 'Gateway',
+      kind: 'cloud' as const,
+      endpointTemplates: [{
+        id: 'responses',
+        protocol: 'openai-responses' as const,
+        baseUrl: 'https://gateway.example/v1',
+        capabilities: {
+          streaming: 'unknown' as const,
+          toolRoundTrips: 'unknown' as const,
+          statefulResponses: 'unknown' as const,
+          reasoningControls: 'unknown' as const,
+        },
+      }],
+      catalog: { source: 'manual' as const, manualModelPolicy: 'allowed' as const },
+    };
+    const provider = (pluginId: string) => ({
+      provenance: 'external' as const,
+      source: { kind: 'path' as const },
+      pluginId,
+      manifestPath: `/plugins/${pluginId}/plugin.json`,
+      manifestDigest: `sha256:${pluginId}`,
+      daemonEntryPath: null,
+      identity: {
+        pluginId,
+        localId: 'gateway',
+      },
+      definition: providerDefinition,
+    });
+    const registry = createResolvedContributionRegistry({
+      agents: [],
+            providers: [provider('acme.one'), provider('acme.two')],
+    });
+
+    expect(registry.providers).toHaveLength(2);
+    expect([...registry.providersByContributionKey!.keys()]).toEqual([
+      'acme.one/gateway',
+      'acme.two/gateway',
+    ]);
+  });
+
+  it('indexes built-in Agents and catalog entries without a parallel runtime index', () => {
+    const registry = getResolvedContributionRegistry();
+    const agentDefinitionIds = getAllAgentDefinitionContracts().map((entry) => entry.id).slice().sort();
+
+    expect(Object.keys(registry.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
     expect(registry.agents.map((entry) => entry.definition.id).slice().sort()).toEqual(agentDefinitionIds);
 
     for (const agentId of AGENT_IDS) {
@@ -109,18 +193,9 @@ describe('getResolvedContributionRegistry', () => {
       expect(registry.catalogEntriesById[agentId]?.id).toBe(agentId);
     }
 
-    for (const backendId of backendDefinitionIds) {
-      expect(registry.agentRuntimeDefinitionsById.get(backendId)?.id).toBe(backendId);
-      expect(registry.agentRuntimeDefinitionsById.get(backendId)?.definition).toEqual(
-        expect.objectContaining({
-          kindVersion: 1,
-          id: backendId,
-          agentId: backendId,
-        }),
-      );
-    }
-
-    expect(registry.agentRuntimeDefinitionsById.get('codex')).not.toHaveProperty('getRuntimeCore');
+    expect(registry).not.toHaveProperty('agentRuntimes');
+    expect(registry).not.toHaveProperty('agentRuntimeDefinitionsById');
+    expect(registry.agentDefinitionsById.get('codex')).not.toHaveProperty('getRuntimeCore');
   });
 
   it('exposes AI-agent definition index with agent vocabulary only', () => {
@@ -132,13 +207,13 @@ describe('getResolvedContributionRegistry', () => {
 
   it('keeps the built-in snapshot isolated after priming merged contributes', async () => {
     const builtInRegistry = getResolvedContributionRegistry();
-    expect(Object.keys(builtInRegistry.catalogEntriesById).slice().sort()).toEqual([...AGENT_PROVIDER_IDS].slice().sort());
+    expect(Object.keys(builtInRegistry.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
 
     const mergedRegistry = await primeResolvedContributionRegistry({ happyHomeDir: 'prime-isolated-home' });
     expect(mergedRegistry.catalogEntriesById.codex?.id).toBe('codex');
 
     const builtInAfterPrime = getResolvedContributionRegistry();
-    expect(Object.keys(builtInAfterPrime.catalogEntriesById).slice().sort()).toEqual([...AGENT_PROVIDER_IDS].slice().sort());
+    expect(Object.keys(builtInAfterPrime.catalogEntriesById).slice().sort()).toEqual([...AGENT_IDS].slice().sort());
     expect(builtInAfterPrime.catalogEntriesById['acme.ohmypi']).toBeUndefined();
   });
 
@@ -156,8 +231,7 @@ describe('getResolvedContributionRegistry', () => {
           },
         },
       ]),
-      agentRuntimes: Object.freeze([]),
-      actions: Object.freeze([
+            actions: Object.freeze([
         {
           provenance: 'external',
           source: { kind: 'path' },
@@ -167,10 +241,11 @@ describe('getResolvedContributionRegistry', () => {
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             kindVersion: 1,
-            id: 'beta.review.start',
+            id: 'review-start',
             title: 'Beta Review',
             description: null,
             safety: 'safe',
+            dangerLevel: 'safe',
             placements: [],
             slash: null,
             bindings: null,
@@ -197,10 +272,11 @@ describe('getResolvedContributionRegistry', () => {
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             kindVersion: 1,
-            id: 'alpha.review.start',
+            id: 'review-start',
             title: 'Alpha Review',
             description: null,
             safety: 'safe',
+            dangerLevel: 'safe',
             placements: [],
             slash: null,
             bindings: null,
@@ -230,8 +306,9 @@ describe('getResolvedContributionRegistry', () => {
           definition: {
             id: 'beta.plugin/review/ready',
             localId: 'review/ready',
+            kind: 'event',
+            title: 'Review ready',
             payloadSchema: {},
-            deprecated: false,
           },
         },
         {
@@ -244,8 +321,9 @@ describe('getResolvedContributionRegistry', () => {
           definition: {
             id: 'alpha.plugin/review/ready',
             localId: 'review/ready',
+            kind: 'event',
+            title: 'Review ready',
             payloadSchema: {},
-            deprecated: false,
           },
         },
       ]),
@@ -259,8 +337,8 @@ describe('getResolvedContributionRegistry', () => {
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             id: 'beta.policy',
-            order: 20,
-            targets: [{ scope: 'plugin-fetch' }],
+            priority: 20,
+            origins: ['https://beta.example.test'],
           },
         },
         {
@@ -272,8 +350,8 @@ describe('getResolvedContributionRegistry', () => {
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             id: 'alpha.policy',
-            order: 10,
-            targets: [{ scope: 'plugin-fetch' }],
+            priority: 10,
+            origins: ['https://alpha.example.test'],
           },
         },
       ]),
@@ -284,11 +362,11 @@ describe('getResolvedContributionRegistry', () => {
       generationId: string;
     }>;
 
-    expect(registry.actions.map((action) => action.definition.id)).toEqual([
-      'alpha.review.start',
-      'beta.review.start',
+    expect(registry.actions.map((action) => [action.pluginId, action.definition.id])).toEqual([
+      ['alpha.plugin', 'review-start'],
+      ['beta.plugin', 'review-start'],
     ]);
-    expect(actionIndexedRegistry.actionsById.get('alpha.review.start')).toMatchObject({
+    expect(actionIndexedRegistry.actionsById.get('alpha.plugin/review-start')).toMatchObject({
       pluginId: 'alpha.plugin',
     });
     expect(registry.events?.map((event) => event.definition.id)).toEqual([
@@ -310,8 +388,7 @@ describe('getResolvedContributionRegistry', () => {
   it('indexes event contributes by canonical plugin-qualified id when local ids match', () => {
     const registry = createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      events: Object.freeze([
+            events: Object.freeze([
         {
           provenance: 'external',
           source: { kind: 'path' },
@@ -322,8 +399,9 @@ describe('getResolvedContributionRegistry', () => {
           definition: {
             id: 'task/complete',
             localId: 'task/complete',
+            kind: 'event',
+            title: 'Task complete',
             payloadSchema: {},
-            deprecated: false,
           },
         },
         {
@@ -336,8 +414,9 @@ describe('getResolvedContributionRegistry', () => {
           definition: {
             id: 'task/complete',
             localId: 'task/complete',
+            kind: 'event',
+            title: 'Task complete',
             payloadSchema: {},
-            deprecated: false,
           },
         },
       ]),
@@ -354,8 +433,7 @@ describe('getResolvedContributionRegistry', () => {
   it('builds registry identity for development RN dev-hot-reload artifacts without immutable digests', () => {
     const registry = createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      reactNativeBundles: Object.freeze([
+            reactNativeBundles: Object.freeze([
         {
           provenance: 'external',
           source: { kind: 'path' },
@@ -483,8 +561,7 @@ describe('getResolvedContributionRegistry', () => {
   it('allows two reactNativeBundles contributions sharing one id when their platforms differ', () => {
     const registry = createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      reactNativeBundles: Object.freeze([
+            reactNativeBundles: Object.freeze([
         buildReactNativeBundleContribution('ios'),
         buildReactNativeBundleContribution('web'),
       ]),
@@ -502,8 +579,7 @@ describe('getResolvedContributionRegistry', () => {
   it('rejects two reactNativeBundles contributions sharing one id AND platform', () => {
     expect(() => createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      reactNativeBundles: Object.freeze([
+            reactNativeBundles: Object.freeze([
         buildReactNativeBundleContribution('ios'),
         buildReactNativeBundleContribution('ios'),
       ]),
@@ -513,8 +589,7 @@ describe('getResolvedContributionRegistry', () => {
   it('rejects duplicate event local ids within the same plugin', () => {
     expect(() => createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      events: Object.freeze([
+            events: Object.freeze([
         {
           provenance: 'external',
           source: { kind: 'path' },
@@ -525,8 +600,9 @@ describe('getResolvedContributionRegistry', () => {
           definition: {
             id: 'alpha.plugin/task/complete',
             localId: 'task/complete',
+            kind: 'event',
+            title: 'Task complete',
             payloadSchema: {},
-            deprecated: false,
           },
         },
         {
@@ -539,8 +615,9 @@ describe('getResolvedContributionRegistry', () => {
           definition: {
             id: 'alpha.plugin/task/done',
             localId: 'task/complete',
+            kind: 'event',
+            title: 'Task complete',
             payloadSchema: {},
-            deprecated: false,
           },
         },
       ]),
@@ -550,8 +627,7 @@ describe('getResolvedContributionRegistry', () => {
   it('rejects duplicate settings field ids within a single plugin namespace', () => {
     expect(() => createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      settings: Object.freeze([
+            settings: Object.freeze([
         {
           provenance: 'external',
           source: { kind: 'path' },
@@ -560,22 +636,19 @@ describe('getResolvedContributionRegistry', () => {
           manifestDigest: 'sha256:alpha-one',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
-            id: 'alpha.plugin.settings.one',
+            id: 'settings-one',
+            version: 1,
+            title: 'Settings one',
+            target: { kind: 'plugin' },
+            scope: 'local',
             fields: [
               {
                 id: 'endpoint',
-                kind: 'settings.field',
-                version: '1.0.0',
-	                valueSchema: { type: 'string' },
-	                control: 'text',
-	                displayKey: 'plugins.alpha.endpoint.label',
-	                capabilityGates: [],
-	                permissionGates: [],
-	                redaction: 'none',
-	                hidden: false,
-	                clearWhenEmpty: 'persist',
-	              },
+                title: 'Endpoint',
+                schema: { type: 'string' },
+              },
             ],
+            presentation: { sections: [], subagentSections: [] },
           },
         },
         {
@@ -586,22 +659,19 @@ describe('getResolvedContributionRegistry', () => {
           manifestDigest: 'sha256:alpha-two',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
-            id: 'alpha.plugin.settings.two',
+            id: 'settings-two',
+            version: 1,
+            title: 'Settings two',
+            target: { kind: 'plugin' },
+            scope: 'local',
             fields: [
               {
                 id: 'endpoint',
-                kind: 'settings.field',
-                version: '1.0.0',
-	                valueSchema: { type: 'string' },
-	                control: 'text',
-	                displayKey: 'plugins.alpha.endpoint.label',
-	                capabilityGates: [],
-	                permissionGates: [],
-	                redaction: 'none',
-	                hidden: false,
-	                clearWhenEmpty: 'persist',
-	              },
+                title: 'Endpoint',
+                schema: { type: 'string' },
+              },
             ],
+            presentation: { sections: [], subagentSections: [] },
           },
         },
       ]),
@@ -611,8 +681,7 @@ describe('getResolvedContributionRegistry', () => {
   it('keeps generic settings field ids plugin-local instead of requiring plugin-id prefixes', () => {
     const registry = createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      settings: Object.freeze([
+            settings: Object.freeze([
         {
           provenance: 'external',
           source: { kind: 'path' },
@@ -621,22 +690,19 @@ describe('getResolvedContributionRegistry', () => {
           manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
-            id: 'alpha.plugin.settings',
+            id: 'settings',
+            version: 1,
+            title: 'Settings',
+            target: { kind: 'plugin' },
+            scope: 'local',
             fields: [
               {
                 id: 'endpoint',
-                kind: 'settings.field',
-                version: '1.0.0',
-	                valueSchema: { type: 'string' },
-	                control: 'text',
-	                displayKey: 'plugins.alpha.endpoint.label',
-	                capabilityGates: [],
-	                permissionGates: [],
-	                redaction: 'none',
-	                hidden: false,
-	                clearWhenEmpty: 'persist',
-	              },
+                title: 'Endpoint',
+                schema: { type: 'string' },
+              },
             ],
+            presentation: { sections: [], subagentSections: [] },
           },
         },
         {
@@ -647,29 +713,26 @@ describe('getResolvedContributionRegistry', () => {
           manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
-            id: 'beta.plugin.settings',
+            id: 'settings',
+            version: 1,
+            title: 'Settings',
+            target: { kind: 'plugin' },
+            scope: 'local',
             fields: [
               {
                 id: 'endpoint',
-                kind: 'settings.field',
-                version: '1.0.0',
-	                valueSchema: { type: 'string' },
-	                control: 'text',
-	                displayKey: 'plugins.beta.endpoint.label',
-	                capabilityGates: [],
-	                permissionGates: [],
-	                redaction: 'none',
-	                hidden: false,
-	                clearWhenEmpty: 'persist',
-	              },
+                title: 'Endpoint',
+                schema: { type: 'string' },
+              },
             ],
+            presentation: { sections: [], subagentSections: [] },
           },
         },
       ]),
     });
 
-    expect(registry.settingsById?.get('alpha.plugin.settings')?.definition.fields[0]?.id).toBe('endpoint');
-    expect(registry.settingsById?.get('beta.plugin.settings')?.definition.fields[0]?.id).toBe('endpoint');
+    expect(registry.settingsById?.get('alpha.plugin/settings')?.definition.fields[0]?.id).toBe('endpoint');
+    expect(registry.settingsById?.get('beta.plugin/settings')?.definition.fields[0]?.id).toBe('endpoint');
   });
 
   it('merges installed plugin settings with bundled settings contributions', async () => {
@@ -681,21 +744,21 @@ describe('getResolvedContributionRegistry', () => {
         happyHomeDir,
         pluginRoot,
         pluginId: 'acme.settings.merge',
-        settingsId: 'acme.settings.merge.main',
+        settingsId: 'main',
       });
 
       const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-      expect(registry.settingsById?.get('happier.inspector.settings')?.pluginId).toBe('happier.inspector');
-      expect(registry.settingsById?.get('acme.settings.merge.main')).toMatchObject({
+      expect(registry.settingsById?.get('happier.inspector/settings')?.pluginId).toBe('happier.inspector');
+      expect(registry.settingsById?.get('acme.settings.merge/main')).toMatchObject({
         pluginId: 'acme.settings.merge',
         definition: expect.objectContaining({
-          id: 'acme.settings.merge.main',
+          id: 'main',
         }),
       });
       expect(registry.settings?.map((setting) => setting.definition.id)).toEqual(expect.arrayContaining([
-        'happier.inspector.settings',
-        'acme.settings.merge.main',
+        'settings',
+        'main',
       ]));
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
@@ -703,45 +766,44 @@ describe('getResolvedContributionRegistry', () => {
     }
   });
 
-  it('rejects installed plugin settings ids that collide with bundled settings', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-settings-merge-home-'));
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-settings-merge-plugin-'));
+  it('preserves bundled MCP contribution families through the merged registry', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-mcp-merge-home-'));
 
     try {
-      await writeInstalledSettingsPlugin({
-        happyHomeDir,
-        pluginRoot,
-        pluginId: 'acme.settings.collision',
-        settingsId: 'happier.inspector.settings',
-      });
+      const registry = await resolveMergedContributionRegistry({ happyHomeDir });
 
-      await expect(resolveMergedContributionRegistry({ happyHomeDir }))
-        .rejects
-        .toThrow("Duplicate settings contribution 'happier.inspector.settings'");
+      expect(registry.mcpDiscoveryProviders?.map((entry) => [
+        entry.pluginId,
+        entry.definition.id,
+      ])).toEqual([
+        ['happier.agent.claude', 'config'],
+        ['happier.agent.codex', 'config'],
+        ['happier.agent.opencode', 'config'],
+      ]);
+      expect(registry.mcpServers).toEqual([]);
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
-      await rm(pluginRoot, { recursive: true, force: true });
     }
   });
 
   it('rejects duplicate action ids before they can reach host action surfaces', () => {
     expect(() => createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      actions: Object.freeze([
+            actions: Object.freeze([
         {
           provenance: 'external',
           source: { kind: 'path' },
-          pluginId: 'alpha.plugin',
+          pluginId: 'acme.plugin',
           manifestPath: '/plugins/alpha/plugin.json',
           manifestDigest: 'sha256:alpha',
           daemonEntryPath: '/plugins/alpha/daemon.mjs',
           definition: {
             kindVersion: 1,
-            id: 'acme.review.start',
+            id: 'review-start',
             title: 'Alpha Review',
             description: null,
             safety: 'safe',
+            dangerLevel: 'safe',
             placements: [],
             slash: null,
             bindings: null,
@@ -762,16 +824,17 @@ describe('getResolvedContributionRegistry', () => {
         {
           provenance: 'external',
           source: { kind: 'path' },
-          pluginId: 'beta.plugin',
+          pluginId: 'acme.plugin',
           manifestPath: '/plugins/beta/plugin.json',
           manifestDigest: 'sha256:beta',
           daemonEntryPath: '/plugins/beta/daemon.mjs',
           definition: {
             kindVersion: 1,
-            id: 'acme.review.start',
+            id: 'review-start',
             title: 'Beta Review',
             description: null,
             safety: 'safe',
+            dangerLevel: 'safe',
             placements: [],
             slash: null,
             bindings: null,
@@ -790,7 +853,7 @@ describe('getResolvedContributionRegistry', () => {
           },
         },
       ]),
-    })).toThrow("Duplicate action contribution 'acme.review.start'");
+    })).toThrow("Duplicate action contribution 'acme.plugin/review-start'");
   });
 
   it('indexes tool, command, and lifecycle-handler definitions alongside action contributes', () => {
@@ -807,8 +870,7 @@ describe('getResolvedContributionRegistry', () => {
           },
         },
       ]),
-      agentRuntimes: Object.freeze([]),
-      actions: Object.freeze([]),
+            actions: Object.freeze([]),
       tools: Object.freeze([
         {
           provenance: 'external',
@@ -819,18 +881,15 @@ describe('getResolvedContributionRegistry', () => {
           daemonEntryPath: '/plugins/acme/daemon.mjs',
           definition: {
             kindVersion: 1,
-            id: 'acme.tool',
+            id: 'tool',
             name: 'acme_tool',
             title: 'Acme Tool',
             description: 'Runs the Acme tool',
             safety: 'safe',
-            surfaces: {
-              cli: true,
-              mcp: true,
-              agent: false,
-            },
+            surfaces: ['cli', 'mcp'],
             inputSchema: {},
-            actionId: 'acme.tool',
+            action: 'tool',
+            actionId: 'tool',
           },
         },
       ]),
@@ -844,52 +903,32 @@ describe('getResolvedContributionRegistry', () => {
           daemonEntryPath: '/plugins/acme/daemon.mjs',
           definition: {
             kindVersion: 1,
-            id: 'acme.command',
-            command: 'acme-review',
-            rootHelpLabel: 'happier acme-review',
-            rootHelpDescription: 'Run the Acme review command',
-            allowTmux: false,
-            actionId: 'acme.command',
-          },
-        },
-      ]),
-      lifecycleHandlers: Object.freeze([
-        {
-          provenance: 'external',
-          source: { kind: 'path' },
-          pluginId: 'acme.plugin',
-          manifestPath: '/plugins/acme/plugin.json',
-          manifestDigest: 'sha256:lifecycle',
-          daemonEntryPath: '/plugins/acme/daemon.mjs',
-          definition: {
-            kindVersion: 1,
-            id: 'acme.lifecycle.activated',
-            event: 'activated',
-            priority: 10,
+            id: 'command',
+            title: 'Acme review',
+            description: 'Run the Acme review command',
+            path: ['acme-review'],
+            action: 'command',
+            tmux: 'forbidden',
+            actionId: 'command',
           },
         },
       ]),
     });
 
-    expect(registry.tools?.map((tool) => tool.definition.id)).toEqual(['acme.tool']);
-    expect(registry.commands?.map((command) => command.definition.id)).toEqual(['acme.command']);
-    expect(registry.lifecycleHandlers?.map((handler) => handler.definition.id)).toEqual(['acme.lifecycle.activated']);
-    expect(registry.toolsById?.get('acme.tool')).toMatchObject({
+    expect(registry.tools?.map((tool) => tool.definition.id)).toEqual(['tool']);
+    expect(registry.commands?.map((command) => command.definition.id)).toEqual(['command']);
+    expect(registry.toolsById?.get('acme.plugin/tool')).toMatchObject({
       pluginId: 'acme.plugin',
     });
-    expect(registry.commandsById?.get('acme.command')).toMatchObject({
+    expect(registry.commandsById?.get('acme.plugin/command')).toMatchObject({
       pluginId: 'acme.plugin',
     });
-    expect(registry.lifecycleHandlersById?.get('acme.lifecycle.activated')).toMatchObject({
-      pluginId: 'acme.plugin',
-    });
-    expect(registry.generationId).toContain('tool:external:path:acme.tool:acme_tool:sha256:tool');
-    expect(registry.generationId).toContain('command:external:path:acme.command:acme-review:sha256:command');
-    expect(registry.generationId).toContain('lifecycle:external:path:acme.lifecycle.activated:activated:sha256:lifecycle');
+    expect(registry.generationId).toContain('tool:external:path:acme.plugin:tool:acme_tool:sha256:tool');
+    expect(registry.generationId).toContain('command:external:path:acme.plugin:command:acme-review:sha256:command');
   });
 
-  it('excludes hook registrations that are not backed by the final hook catalog', () => {
-    const validHook: ResolvedHookRegistration = {
+  it('does not admit the retired static hook-registration input', () => {
+    const validHook: ResolvedActivatedHookRegistration = {
       provenance: 'external',
       source: { kind: 'path' },
       pluginId: 'acme.hooks',
@@ -904,17 +943,13 @@ describe('getResolvedContributionRegistry', () => {
       },
       definition: {
         hookApiVersion: 1,
-        id: 'subagent.started',
+        id: 'session.spawned',
         category: 'lifecycle',
         scope: 'session',
         executionKind: 'observe',
-        handler: {
-          target: 'plugin',
-          exportName: 'onSubagentStart',
-        },
       },
     };
-    const staleHook: ResolvedHookRegistration = {
+    const staleHook: ResolvedActivatedHookRegistration = {
       ...validHook,
       definition: {
         ...validHook.definition,
@@ -924,19 +959,62 @@ describe('getResolvedContributionRegistry', () => {
 
     const registry = createResolvedContributionRegistry({
       agents: Object.freeze([]),
-      agentRuntimes: Object.freeze([]),
-      actions: Object.freeze([]),
+            actions: Object.freeze([]),
       resources: Object.freeze([]),
-      uiDescriptors: Object.freeze([]),
       activationTargets: Object.freeze([]),
       hookRegistrations: Object.freeze([validHook, staleHook]),
+    } as unknown as Parameters<typeof createResolvedContributionRegistry>[0]);
+
+    expect(registry).not.toHaveProperty('hookRegistrations');
+    expect(registry.pluginDiagnosticsByPluginId['acme.hooks']).toBeUndefined();
+  });
+
+  it('keys plugin resources by qualified contribution identity', () => {
+    const resource = (pluginId: string) => ({
+      provenance: 'first_party' as const,
+      source: { kind: 'bundled' as const },
+      pluginId,
+      definition: {
+        kindVersion: 1 as const,
+        id: 'review-prompt-resource',
+        type: 'prompt',
+        path: './resources/review-prompt.md',
+      },
     });
 
-    expect(registry.hookRegistrations.map((hook) => hook.definition.id)).toEqual(['subagent.started']);
-    expect(registry.pluginDiagnosticsByPluginId['acme.hooks']).toEqual([
-      expect.objectContaining({
-        code: 'plugin_manifest_semantic_invalid',
-      }),
+    const registry = createResolvedContributionRegistry({
+      resources: [resource('happier.review.coderabbit'), resource('happier.review.deepsec')],
+    });
+
+    expect([...registry.resourcesById!.keys()].sort()).toEqual([
+      'happier.review.coderabbit/review-prompt-resource',
+      'happier.review.deepsec/review-prompt-resource',
     ]);
+  });
+
+  it('orders and keys prompt assets by qualified identity and rejects an active duplicate', () => {
+    const promptAsset = (pluginId: string, priority: number) => ({
+      provenance: 'external' as const,
+      source: { kind: 'path' as const },
+      pluginId,
+      identity: createPluginContributionIdentity({ pluginId, localId: 'instructions' }),
+      manifestPath: `/plugins/${pluginId}/.happier-plugin/plugin.json`,
+      manifestDigest: `sha256:${'a'.repeat(64)}`,
+      daemonEntryPath: null,
+      sourceSpec: { kind: 'path' as const, locator: `/plugins/${pluginId}`, trustPolicy: 'local_trusted' as const, installPolicy: 'link' as const },
+      definition: {
+        id: 'instructions', kind: 'systemPrompt' as const, resource: 'body',
+        target: { kind: 'agent' as const, agent: { pluginId: 'acme.agent', localId: 'worker' } },
+        priority,
+      },
+    });
+    const alpha = promptAsset('acme.alpha', 20);
+    const beta = promptAsset('acme.beta', 10);
+    const registry = createResolvedContributionRegistry({ promptAssets: [alpha, beta] });
+
+    expect((registry.promptAssets ?? []).map((asset) => asset.pluginId)).toEqual(['acme.beta', 'acme.alpha']);
+    expect([...registry.promptAssetsById!.keys()]).toEqual(['acme.beta/instructions', 'acme.alpha/instructions']);
+    expect(() => createResolvedContributionRegistry({ promptAssets: [alpha, alpha] }))
+      .toThrow("Duplicate prompt asset contribution 'acme.alpha/instructions'");
   });
 });

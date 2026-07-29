@@ -88,6 +88,18 @@ describe('resolveSessionHandoffExportMetadata', () => {
             homeDir: '/Users/tester',
             flavor: 'claude',
             claudeSessionId: 'sess-handoff-direct',
+            directSessionV1: {
+                v: 1,
+                providerId: 'claude',
+                machineId: 'machine_target',
+                remoteSessionId: 'sess-handoff-direct',
+                source: {
+                    kind: 'claudeConfig',
+                    configDir: '/tmp/claude-config',
+                    projectId: 'proj-handoff-direct',
+                },
+                linkedAtMs: 1,
+            },
             externalSessionV1: {
                 v: 1,
                 agentId: 'claude',
@@ -174,6 +186,18 @@ describe('resolveSessionHandoffExportMetadata', () => {
             flavor: 'claude',
             portableMetadataVersion: 'v2',
             claudeSessionId: 'sess-handoff-direct',
+            directSessionV1: {
+                v: 1,
+                providerId: 'claude',
+                machineId: 'machine_target',
+                remoteSessionId: 'sess-handoff-direct',
+                source: {
+                    kind: 'claudeConfig',
+                    configDir: '/tmp/claude-config',
+                    projectId: 'proj-handoff-direct',
+                },
+                linkedAtMs: 1,
+            },
             externalSessionV1: {
                 v: 1,
                 agentId: 'claude',
@@ -187,6 +211,127 @@ describe('resolveSessionHandoffExportMetadata', () => {
                 linkedAtMs: 1,
             },
         });
+    });
+
+    it('writes a released linked row forward through the handoff metadata split', () => {
+        const released = {
+            v: 1,
+            providerId: 'claude',
+            machineId: 'machine_target',
+            remoteSessionId: 'sess-released',
+            source: {
+                kind: 'claudeConfig',
+                configDir: '/tmp/claude-config',
+                projectId: 'proj-released',
+            },
+            linkedAtMs: 1,
+        };
+
+        const resolved = resolveSessionHandoffExportMetadata({
+            remoteMetadata: {
+                machineId: 'machine_target',
+                path: '/repo-target',
+                directSessionV1: released,
+            },
+            localMetadata: null,
+        });
+
+        expect(resolved).toMatchObject({
+            directSessionV1: released,
+            externalSessionV1: {
+                v: 1,
+                agentId: 'claude',
+                machineId: 'machine_target',
+                remoteSessionId: 'sess-released',
+                source: released.source,
+                linkData: { projectId: 'proj-released' },
+            },
+        });
+        expect(resolved?.externalSessionV1).not.toHaveProperty('qualifiedIdentity');
+    });
+
+    it('preserves an unavailable plugin identity while deriving only the released rollback row', () => {
+        const qualifiedIdentity = {
+            v: 1 as const,
+            agent: {
+                pluginId: 'com.example.uninstalled-agent',
+                localId: 'assistant',
+            },
+            source: {
+                kind: 'exampleHistory',
+                contractVersion: 1 as const,
+            },
+        };
+
+        const resolved = resolveSessionHandoffExportMetadata({
+            remoteMetadata: {
+                machineId: 'machine_target',
+                path: '/repo-target',
+                externalSessionV1: {
+                    v: 1,
+                    agentId: 'assistant',
+                    machineId: 'machine_target',
+                    remoteSessionId: 'sess-qualified',
+                    source: {
+                        kind: 'exampleHistory',
+                        location: 'opaque-source',
+                    },
+                    qualifiedIdentity,
+                    linkData: {
+                        opaqueIdentity: 'plugin-owned',
+                    },
+                },
+            },
+            localMetadata: null,
+        });
+
+        expect(resolved).toMatchObject({
+            externalSessionV1: {
+                agentId: 'assistant',
+                qualifiedIdentity,
+                linkData: {
+                    opaqueIdentity: 'plugin-owned',
+                },
+            },
+            directSessionV1: {
+                v: 1,
+                providerId: 'assistant',
+                machineId: 'machine_target',
+                remoteSessionId: 'sess-qualified',
+                source: {
+                    kind: 'exampleHistory',
+                    location: 'opaque-source',
+                },
+            },
+        });
+        expect(resolved?.directSessionV1).not.toHaveProperty('qualifiedIdentity');
+        expect(resolved?.directSessionV1).not.toHaveProperty('linkData');
+    });
+
+    it('does not use a released row when the current linked row is present but malformed', () => {
+        const metadata = {
+            machineId: 'machine_target',
+            path: '/repo-target',
+            externalSessionV1: {
+                v: 1,
+                agentId: '',
+                machineId: 'machine_target',
+                remoteSessionId: 'sess-malformed',
+                source: { kind: 'exampleHistory' },
+            },
+            directSessionV1: {
+                v: 1,
+                providerId: 'claude',
+                machineId: 'machine_target',
+                remoteSessionId: 'sess-released',
+                source: { kind: 'claudeConfig', configDir: '/tmp/claude-config' },
+            },
+        };
+
+        expect(resolveSessionHandoffExportMetadata({
+            remoteMetadata: metadata,
+            localMetadata: null,
+        })).toEqual(metadata);
     });
 
     it('preserves remote handoffV1 when preferring local export metadata', () => {

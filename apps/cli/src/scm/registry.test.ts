@@ -27,12 +27,14 @@ const TEST_DECLARED_CAPABILITIES = ScmBackendCapabilitiesSchema.parse({
 });
 
 function backend(input: {
-    id: 'git' | 'sapling';
+    id: string;
+    localId?: string;
     detected: { isRepo: boolean; mode: ScmRepoMode | null; rootPath: string | null };
     modeSelectionScores?: Partial<Record<ScmRepoMode, number>>;
 }): ScmBackend {
     return {
         id: input.id,
+        ...(input.localId ? { localId: input.localId } : {}),
         declaredCapabilities: TEST_DECLARED_CAPABILITIES,
         selection: {
             modeSelectionScores: input.modeSelectionScores ?? {},
@@ -191,6 +193,34 @@ describe('scm backend registry selection', () => {
         expect(selected?.mode).toBe('.git');
     });
 
+    it('honors a unique legacy local-id preference for a qualified plugin backend', async () => {
+        const registry = createScmBackendRegistry([
+            backend({
+                id: 'happier.scm.backend.git/git',
+                localId: 'git',
+                detected: { isRepo: true, mode: '.git', rootPath: '/repo' },
+                modeSelectionScores: { '.git': 200 },
+            }),
+            backend({
+                id: 'happier.scm.backend.sapling/sapling',
+                localId: 'sapling',
+                detected: { isRepo: true, mode: '.git', rootPath: '/repo' },
+                modeSelectionScores: { '.git': 100 },
+            }),
+        ]);
+
+        const selected = await registry.selectBackend({
+            cwd: '/repo',
+            workingDirectory: '/repo',
+            backendPreference: {
+                kind: 'prefer',
+                backendId: 'sapling',
+            },
+        });
+
+        expect(selected?.backend.id).toBe('happier.scm.backend.sapling/sapling');
+    });
+
     it('selects backend for a mode using backend-provided scores (no hardcoded backend ordering)', async () => {
         const registry = createScmBackendRegistry([
             backend({ id: 'git', detected: { isRepo: true, mode: '.git', rootPath: '/repo' }, modeSelectionScores: { '.git': 10 } }),
@@ -237,6 +267,61 @@ describe('scm backend registry selection', () => {
             cwd: '/not-a-repo',
             workingDirectory: '/not-a-repo',
         })).resolves.toBeNull();
+    });
+
+    it('keeps a healthy backend selectable when another plugin detector throws', async () => {
+        const failing = backend({
+            id: 'acme.broken/detector',
+            detected: { isRepo: false, mode: null, rootPath: null },
+        });
+        const healthy = backend({
+            id: 'happier.scm.backend.git/git',
+            localId: 'git',
+            detected: { isRepo: true, mode: '.git', rootPath: '/repo' },
+            modeSelectionScores: { '.git': 200 },
+        });
+        const registry = createScmBackendRegistry([
+            {
+                ...failing,
+                detectRepo: async () => {
+                    throw new Error('packed detector failed');
+                },
+            },
+            healthy,
+        ]);
+
+        await expect(registry.selectBackend({
+            cwd: '/repo',
+            workingDirectory: '/repo',
+        })).resolves.toMatchObject({
+            backend: { id: 'happier.scm.backend.git/git' },
+            detection: { isRepo: true, mode: '.git', rootPath: '/repo' },
+        });
+    });
+
+    it('does not misreport a working path as a non-repository when a detector fails', async () => {
+        const failing = backend({
+            id: 'acme.broken/detector',
+            detected: { isRepo: false, mode: null, rootPath: null },
+        });
+        const registry = createScmBackendRegistry([
+            {
+                ...failing,
+                detectRepo: async () => {
+                    throw new Error('packed detector failed');
+                },
+            },
+            backend({
+                id: 'happier.scm.backend.git/git',
+                localId: 'git',
+                detected: { isRepo: false, mode: null, rootPath: null },
+            }),
+        ]);
+
+        await expect(registry.selectBackend({
+            cwd: '/repo',
+            workingDirectory: '/repo',
+        })).rejects.toThrow('packed detector failed');
     });
 
     it('resolves live availability without mutating static declared support', async () => {

@@ -27,9 +27,14 @@ export function resolveCliSharedDepsBuildLockPath(repoRoot) {
   return resolveWorkspaceBundleLockPath(repoRoot);
 }
 
-function resolveInheritedWorkspaceBundleLockPath(options) {
+function resolveInheritedWorkspaceBundleLockValue(options) {
   const env = options.env ?? process.env;
-  return String(options.heldLockPath ?? env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? '').trim();
+  return String(
+    options.heldLockValue
+      ?? options.heldLockPath
+      ?? env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD
+      ?? '',
+  ).trim();
 }
 
 export function resolveWorkspaceBundleLockModulePath(repoRoot) {
@@ -48,7 +53,7 @@ export async function withOptionalCliSharedDepsBuildLock(fn, options = {}) {
     const lockTimeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? 240_000;
     return await withWorkspaceBundleLock(fn, {
       lockPath: explicitLockPath,
-      heldLockPath: resolveInheritedWorkspaceBundleLockPath(options),
+      heldLockValue: resolveInheritedWorkspaceBundleLockValue(options),
       timeoutMs: lockTimeoutMs,
       pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
       staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? lockTimeoutMs,
@@ -66,7 +71,7 @@ export async function withOptionalCliSharedDepsBuildLock(fn, options = {}) {
   const lockTimeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? 240_000;
   return await mod.withWorkspaceBundleLock(fn, {
     lockPath: String(options.lockPath ?? resolveCliSharedDepsBuildLockPath(repoRoot)),
-    heldLockPath: resolveInheritedWorkspaceBundleLockPath(options),
+    heldLockValue: resolveInheritedWorkspaceBundleLockValue(options),
     timeoutMs: lockTimeoutMs,
     pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
     staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? lockTimeoutMs,
@@ -88,7 +93,7 @@ export function withOptionalCliSharedDepsBuildLockSync(fn, options = {}) {
   const timeoutMs = options.lockTimeoutMs ?? options.timeoutMs ?? 240_000;
   return withWorkspaceBundleLockSync(fn, {
     lockPath,
-    heldLockPath: resolveInheritedWorkspaceBundleLockPath(options),
+    heldLockValue: resolveInheritedWorkspaceBundleLockValue(options),
     timeoutMs,
     pollIntervalMs: options.lockPollIntervalMs ?? options.pollIntervalMs ?? 250,
     staleAfterMs: options.lockStaleAfterMs ?? options.staleAfterMs ?? timeoutMs,

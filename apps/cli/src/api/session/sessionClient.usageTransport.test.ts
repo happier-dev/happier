@@ -117,7 +117,7 @@ describe('ApiSessionClient usage transport', () => {
             expect.stringContaining('/v2/usage-events'),
             expect.objectContaining({
                 sessionId: 'session-1',
-                providerId: 'codex',
+                agentId: 'codex',
             }),
             expect.objectContaining({
                 headers: expect.objectContaining({
@@ -273,7 +273,7 @@ describe('ApiSessionClient usage transport', () => {
         expect(postSpy.mock.calls[0]?.[1]).toEqual(
             expect.objectContaining({
                 sessionId: 'session-1',
-                providerId: 'opencode',
+                agentId: 'opencode',
                 backendMode: 'server',
                 externalKey: 'opencode-message:1',
             }),

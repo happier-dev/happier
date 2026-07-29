@@ -12,6 +12,26 @@ function parsePanePid(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function isExactTmuxTargetAbsent(stderr: string): boolean {
+  const message = stderr.trim();
+  return /^error connecting to .+ \(no such file or directory\)$/i.test(message)
+    || /^no server running on .+$/i.test(message)
+    || /^(?:can't|can not) find (?:session|window|pane): .+$/i.test(message);
+}
+
+function failedProbeLiveness(params: Readonly<{
+  stderr?: string;
+  observedAt: number;
+  targetAbsent: boolean;
+}>): TerminalHostLivenessV1 {
+  return {
+    paneAlive: false,
+    ...(params.targetAbsent ? { paneDead: true } : { probeInconclusive: true }),
+    ...(params.stderr ? { paneScreenDumpError: sanitizeTerminalHostDiagnosticText(params.stderr) } : {}),
+    observedAt: params.observedAt,
+  };
+}
+
 export async function evaluateTmuxPaneLiveness(params: Readonly<{
   executor: TmuxPaneLivenessExecutor;
   target: string;
@@ -26,16 +46,40 @@ export async function evaluateTmuxPaneLiveness(params: Readonly<{
     TMUX_PANE_LIVENESS_FORMAT,
   ]);
 
-  if (!result || result.returncode !== 0 || result.timedOut === true) {
-    return {
-      paneAlive: false,
-      probeInconclusive: true,
-      ...(result?.stderr ? { paneScreenDumpError: sanitizeTerminalHostDiagnosticText(result.stderr) } : {}),
+  if (!result || result.timedOut === true) {
+    return failedProbeLiveness({ observedAt, targetAbsent: false });
+  }
+  if (result.returncode !== 0) {
+    return failedProbeLiveness({
+      stderr: result.stderr,
       observedAt,
-    };
+      targetAbsent: isExactTmuxTargetAbsent(result.stderr),
+    });
   }
 
   const [deadRaw, pidRaw, commandRaw] = result.stdout.trimEnd().split('\t');
+  if (deadRaw !== '0' && deadRaw !== '1') {
+    // `tmux display-message` can return rc=0 with empty format fields for a missing
+    // target. Ask tmux's target resolver before deciding that the exact pane died.
+    const targetProbe = await params.executor(['has-session', '-t', params.target]);
+    if (
+      targetProbe
+      && targetProbe.timedOut !== true
+      && targetProbe.returncode !== 0
+      && isExactTmuxTargetAbsent(targetProbe.stderr)
+    ) {
+      return failedProbeLiveness({
+        stderr: targetProbe.stderr,
+        observedAt,
+        targetAbsent: true,
+      });
+    }
+    return failedProbeLiveness({
+      stderr: targetProbe?.stderr || result.stderr,
+      observedAt,
+      targetAbsent: false,
+    });
+  }
   const paneDead = deadRaw === '1';
   const panePid = parsePanePid(pidRaw);
   return {

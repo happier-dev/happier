@@ -16,15 +16,15 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { AgentState, Metadata, UserMessage } from '@/api/types';
 import type { SessionRuntimeControls } from '@/rpc/handlers/sessionControls';
+import type { ProviderTranscriptDispatchRequest } from '@/api/session/client/transcript/providerDispatch';
 
 type ApiSessionClientStubContract = Pick<
     ApiSessionClient,
     | 'sessionId'
     | 'rpcHandlerManager'
-    | 'sendCodexMessage'
+    | 'sendProviderMessage'
     | 'sendAgentMessage'
     | 'sendAgentMessageCommitted'
-    | 'sendClaudeSessionMessage'
     | 'sendSessionEvent'
     | 'keepAlive'
     | 'getMetadataSnapshot'
@@ -40,8 +40,6 @@ type ApiSessionClientStubContract = Pick<
     | 'discardPendingMessageQueueV2All'
     | 'discardCommittedMessageLocalIds'
     | 'getCommittedUserMessageSeq'
-    | 'waitForCommittedUserMessageSeq'
-    | 'sendSessionDeath'
     | 'setSessionRuntimeControls'
     | 'updateMetadata'
     | 'updateAgentState'
@@ -65,14 +63,15 @@ class OfflineSessionStub extends EventEmitter implements ApiSessionClientStubCon
         });
     }
 
-    sendCodexMessage(_body: unknown): void {}
+    sendProviderMessage(_request: ProviderTranscriptDispatchRequest): void {}
     sendAgentMessage(_provider: ACPProvider, _body: ACPMessageData, _opts?: { localId?: string; meta?: Record<string, unknown> }): void {}
     async sendAgentMessageCommitted(
         _provider: ACPProvider,
         _body: ACPMessageData,
         _opts: { localId: string; meta?: Record<string, unknown> },
-    ): Promise<void> {}
-    sendClaudeSessionMessage(_body: unknown, _meta?: Record<string, unknown>): void {}
+    ): Promise<void> {
+        throw new Error('Offline transcript write was not persisted');
+    }
     sendSessionEvent(
         _event:
             | { type: 'switch'; mode: 'local' | 'remote' }
@@ -97,8 +96,6 @@ class OfflineSessionStub extends EventEmitter implements ApiSessionClientStubCon
     async discardPendingMessageQueueV2All(_opts: { reason: 'switch_to_local' | 'manual' }): Promise<number> { return 0; }
     async discardCommittedMessageLocalIds(_opts: { localIds: string[]; reason: 'switch_to_local' | 'manual' }): Promise<number> { return 0; }
     getCommittedUserMessageSeq(_localId: string): number | null { return null; }
-    async waitForCommittedUserMessageSeq(_localId: string): Promise<number | null> { return null; }
-    sendSessionDeath(): void {}
     setSessionRuntimeControls(_controls: SessionRuntimeControls | null): void {}
     async updateMetadata(_handler: (metadata: Metadata) => Metadata): Promise<void> {}
     async updateAgentState(_handler: (metadata: AgentState) => AgentState): Promise<void> {}

@@ -1,4 +1,7 @@
-import { readConnectedServiceLimitCategoryV1 } from '@happier-dev/protocol';
+import {
+  ConnectedServiceCredentialRevisionV1Schema,
+  readConnectedServiceLimitCategoryV1,
+} from '@happier-dev/protocol';
 
 import {
   ConnectedServiceRuntimeAuthFailureKindSchema,
@@ -151,6 +154,9 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
     : null;
   const failingAccessTokenFingerprint = readNullableSafeProviderString(value.failingAccessTokenFingerprint);
   const groupGeneration = readNullableNonNegativeInteger(value.groupGeneration);
+  const expectedCredentialRevision = ConnectedServiceCredentialRevisionV1Schema.safeParse(
+    value.expectedCredentialRevision,
+  );
   const actionSource = value.action === undefined ? rateLimits?.action : value.action;
   const action = readSafeAction(actionSource);
   const recoveryAction = readRecoveryAction(value.recoveryAction);
@@ -170,6 +176,9 @@ export function sanitizeConnectedServiceRuntimeFailureClassification(
     ...(sourceProviderAccountId && value.sourceAccountLabel !== undefined ? { sourceAccountLabel } : {}),
     ...(failingAccessTokenFingerprint ? { failingAccessTokenFingerprint } : {}),
     ...(groupGeneration === null ? {} : { groupGeneration }),
+    ...(expectedCredentialRevision.success
+      ? { expectedCredentialRevision: expectedCredentialRevision.data }
+      : {}),
     ...(actionSource === undefined ? {} : { action }),
     planType: readNullableSafeProviderString(value.planType),
     ...(connectedServiceRecovery ? { connectedServiceRecovery } : {}),

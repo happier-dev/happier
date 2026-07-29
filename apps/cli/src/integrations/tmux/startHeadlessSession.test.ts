@@ -114,4 +114,13 @@ describe.sequential('startHappyHeadlessInTmux', () => {
     expect(env?.TMUX_PANE).toBeUndefined();
     expect(env?.HAPPY_TEST_FOO).toBe('bar');
   });
+
+  it('suppresses human launch output when the caller owns machine-readable output', async () => {
+    const { startHappyHeadlessInTmux } = await import('./startHeadlessSession');
+
+    await startHappyHeadlessInTmux([], { output: 'silent' });
+
+    expect(output.lines).toEqual([]);
+    expect(mockSpawnInTmux).toHaveBeenCalledOnce();
+  });
 });

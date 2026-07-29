@@ -11,7 +11,7 @@ import { readCredentials, readSettings, type Credentials, type Settings } from '
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
 import { fetchSessionById, fetchSessionsPage, type RawSessionListRow, type RawSessionRecord } from '@/session/transport/http/sessionsHttp';
-import { tryDecryptSessionMetadata } from '@/session/transport/encryption/sessionEncryptionContext';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createAgentAttachStatePublisher } from '@/agent/runtime/mode/switching/createAttachStatePublisher';
 import {
   readTerminalAttachmentInfo,
@@ -61,7 +61,7 @@ type AttachCommandDeps = Readonly<{
     | { ok: true; sessionId: string }
     | { ok: false; code: string; candidates?: string[] }
   >;
-  tryDecryptSessionMetadataFn?: typeof tryDecryptSessionMetadata;
+  tryDecryptSessionOwnerMetadataViewFn?: typeof tryDecryptSessionOwnerMetadataView;
   readTerminalAttachmentInfoFn?: typeof readTerminalAttachmentInfo;
   isTmuxAvailableFn?: typeof isTmuxAvailable;
   runTmuxAttachFn?: (params: {
@@ -244,7 +244,8 @@ async function resolveAttachContext(
   const readCredentialsFn = deps.readCredentialsFn ?? readCredentials;
   const fetchSessionByIdFn = deps.fetchSessionByIdFn ?? fetchSessionById;
   const resolveSessionIdOrPrefixFn = deps.resolveSessionIdOrPrefixFn ?? resolveSessionIdOrPrefix;
-  const tryDecryptSessionMetadataFn = deps.tryDecryptSessionMetadataFn ?? tryDecryptSessionMetadata;
+  const tryDecryptSessionOwnerMetadataViewFn =
+    deps.tryDecryptSessionOwnerMetadataViewFn ?? tryDecryptSessionOwnerMetadataView;
 
   const credentials = await readCredentialsFn();
   if (!credentials) return null;
@@ -257,7 +258,7 @@ async function resolveAttachContext(
   }
   if (!rawSession) return null;
 
-  const metadata = tryDecryptSessionMetadataFn({ credentials, rawSession });
+  const metadata = tryDecryptSessionOwnerMetadataViewFn({ credentials, rawSession });
   const agentId = metadata ? inferAgentIdFromSessionMetadata(metadata) : null;
   return {
     sessionId: rawSession.id,

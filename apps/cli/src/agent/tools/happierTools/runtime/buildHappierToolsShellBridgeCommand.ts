@@ -1,5 +1,8 @@
 import { buildHappyCliSubprocessLaunchSpec } from '@/utils/spawnHappyCLI';
-import { buildPosixShellCommand, buildPosixShellEnvironmentAssignments } from '@/utils/posixShellCommand';
+import {
+  buildPosixShellCommand,
+  buildPosixShellEnvironmentAssignments,
+} from '@happier-dev/agents/process/shellCommand';
 import { resolveHappierToolsShellBridgeContextEnv } from './resolveHappierToolsShellBridgeContextEnv';
 
 /**

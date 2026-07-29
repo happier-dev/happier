@@ -1,6 +1,12 @@
-import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
-import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
-import type { SpawnSessionErrorCode } from '@/rpc/handlers/registerSessionHandlers';
+import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import type { SpawnSessionErrorCode } from '@/session/shared/spawnSessionContract';
+import {
+  SessionEnvOverlayV1Schema,
+  type ProviderErrorV1,
+  type SessionEnvOverlayV1,
+} from '@happier-dev/protocol';
+import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import { expandEnvironmentVariables } from '@/utils/expandEnvVars';
 import { sanitizeEnvVarRecord } from '@/terminal/runtime/envVarSanitization';
@@ -22,31 +28,23 @@ import { resolveConcreteBackendTargetRefV2 } from '@/session/backendTargets/reso
 import { dispatchDaemonSpawnHookEvent } from '@/plugins/runtime/hooks/execution/dispatchDaemonSpawnHookEvent';
 import { HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR } from './spawnExplicitEnvKeysMarker';
 import type { ConnectedServicesMaterializationDiagnostic } from '@/daemon/connectedServices/materialization/materializer';
-
-const DAEMON_OWNED_CHILD_ENV_KEYS = new Set<string>([
-  'HAPPIER_HOME_DIR',
-  'HAPPIER_ACTIVE_SERVER_ID',
-  'HAPPIER_SERVER_URL',
-  'HAPPIER_WEBAPP_URL',
-  'HAPPIER_PUBLIC_SERVER_URL',
-  'HAPPIER_LOCAL_SERVER_URL',
-  'HAPPIER_DAEMON_SERVICE_INSTANCE_ID',
-  'HAPPIER_DAEMON_SERVICE_SERVER_URL',
-]);
-
-function stripDaemonOwnedChildEnvOverrides(input: Record<string, string>): Record<string, string> {
-  const out: Record<string, string> = Object.create(null);
-  for (const [key, value] of Object.entries(input)) {
-    if (DAEMON_OWNED_CHILD_ENV_KEYS.has(key)) continue;
-    out[key] = value;
-  }
-  return out;
-}
+import { buildMissingAgentCliCommandErrorMessage } from '@/packagedRuntime/managedTools/requireAgentCliCommand';
+import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
+import { isAgentId } from '@happier-dev/agents';
+import {
+  isSessionControlEnvKey,
+  stripSessionControlEnvOverrides,
+} from '@/session/runtime/control/sessionControlEnvironment';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { resolveSpawnHookInstallablesRegistry } from './spawnHookInstallablesRegistry';
 
 type ResolveSpawnChildEnvironmentSuccess = {
   ok: true;
   expandedEnvironmentVariables: Record<string, string>;
   extraEnvForChild: Record<string, string>;
+  unsetEnvKeys?: readonly string[];
+  providerEnvKeys?: readonly string[];
+  providerBindingLaunchHandoff?: ProviderBindingLaunchHandoffV1;
   cleanupOnFailure: (() => void) | null;
   cleanupOnExit: (() => void) | null;
   materializationDiagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
@@ -56,6 +54,7 @@ type ResolveSpawnChildEnvironmentFailure = {
   ok: false;
   errorCode: SpawnSessionErrorCode;
   errorMessage: string;
+  providerError?: ProviderErrorV1;
   cleanupOnFailure: (() => void) | null;
   cleanupOnExit: (() => void) | null;
   materializationDiagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
@@ -65,8 +64,42 @@ export type ResolveSpawnChildEnvironmentResult =
   | ResolveSpawnChildEnvironmentSuccess
   | ResolveSpawnChildEnvironmentFailure;
 
+type LateProviderBindingMaterialization =
+  | Readonly<{
+      ok: true;
+      providerEnvironmentOverlay: SessionEnvOverlayV1;
+      providerBindingLaunchHandoff: ProviderBindingLaunchHandoffV1;
+      cleanupOnFailure?: (() => void) | null;
+      cleanupOnExit?: (() => void) | null;
+    }>
+  | Readonly<{
+      ok: false;
+      errorCode: SpawnSessionErrorCode;
+      errorMessage: string;
+      providerError?: ProviderErrorV1;
+    }>;
+
+type ProviderBindingPrerequisiteContext = Readonly<{
+  v: 1;
+  agentTargetKey: string;
+  connectionId: string;
+  modelId: string;
+}>;
+
+function chainCleanupCallbacks(
+  first: (() => void) | null,
+  second: (() => void) | null,
+): (() => void) | null {
+  if (!first) return second;
+  if (!second) return first;
+  return () => {
+    try { first(); } finally { second(); }
+  };
+}
+
 export async function resolveSpawnChildEnvironment(params: {
   happyHomeDir?: string;
+  pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
   options: SpawnSessionOptions;
   profileEnvironmentVariables: Record<string, string>;
   daemonSpawnHooks: DaemonSpawnHooks | null;
@@ -80,6 +113,47 @@ export async function resolveSpawnChildEnvironment(params: {
     cleanupOnExit: (() => void) | null;
     diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
   } | null;
+  providerEnvironmentOverlay?: SessionEnvOverlayV1;
+  materializeProviderBindingAfterHooks?: () => Promise<LateProviderBindingMaterialization>;
+  providerBindingContext?: ProviderBindingPrerequisiteContext;
+  providerBindingPrerequisitesOnly?: boolean;
+  runtimePrerequisitesAlreadyResolved?: boolean;
+}): Promise<ResolveSpawnChildEnvironmentResult> {
+  try {
+    return await resolveSpawnChildEnvironmentImpl(params);
+  } catch (error) {
+    try {
+      params.connectedServiceAuth?.cleanupOnFailure?.();
+    } catch (cleanupError) {
+      params.logWarn(
+        `[DAEMON RUN] Failed to clean connected-service materialization after environment resolution error: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`,
+      );
+    }
+    throw error;
+  }
+}
+
+async function resolveSpawnChildEnvironmentImpl(params: {
+  happyHomeDir?: string;
+  pluginRuntimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
+  options: SpawnSessionOptions;
+  profileEnvironmentVariables: Record<string, string>;
+  daemonSpawnHooks: DaemonSpawnHooks | null;
+  processEnv: NodeJS.ProcessEnv;
+  logDebug: (message: string) => void;
+  logInfo: (message: string) => void;
+  logWarn: (message: string) => void;
+  connectedServiceAuth?: {
+    env: Record<string, string>;
+    cleanupOnFailure: (() => void) | null;
+    cleanupOnExit: (() => void) | null;
+    diagnostics?: readonly ConnectedServicesMaterializationDiagnostic[];
+  } | null;
+  providerEnvironmentOverlay?: SessionEnvOverlayV1;
+  materializeProviderBindingAfterHooks?: () => Promise<LateProviderBindingMaterialization>;
+  providerBindingContext?: ProviderBindingPrerequisiteContext;
+  providerBindingPrerequisitesOnly?: boolean;
+  runtimePrerequisitesAlreadyResolved?: boolean;
 }): Promise<ResolveSpawnChildEnvironmentResult> {
   const connectedCleanupOnFailure = params.connectedServiceAuth?.cleanupOnFailure ?? null;
   const connectedCleanupOnExit = params.connectedServiceAuth?.cleanupOnExit ?? null;
@@ -98,9 +172,14 @@ export async function resolveSpawnChildEnvironment(params: {
       : undefined;
   const spawnHookTimestampMs = () => Date.now();
   const spawnHookBackendId = backendTarget?.backendId;
-  const spawnHookAgentId = backendTarget?.backendId;
   const toolResolutionContext = createDaemonSpawnToolResolutionContext({
     processEnv: params.processEnv,
+    installablesRegistry: () => resolveSpawnHookInstallablesRegistry(
+      params.happyHomeDir,
+      params.pluginRuntimeRegistry
+        ? { contributions: params.pluginRuntimeRegistry.contributes }
+        : {},
+    ),
     logInfo: params.logInfo,
     logWarn: params.logWarn,
   });
@@ -108,10 +187,15 @@ export async function resolveSpawnChildEnvironment(params: {
   let cleanupOnFailure: (() => void) | null = null;
   let cleanupOnExit: (() => void) | null = null;
 
+  let runtimeSelectionEnv: Record<string, string> = {};
+
   function buildRuntimeSelectionPayload() {
     return {
       ...(providerRuntimeSelection ? { providerRuntimeSelection } : {}),
       ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+      ...(params.providerBindingContext ? { providerBinding: params.providerBindingContext } : {}),
+      ...(params.options.directory ? { cwd: params.options.directory, directory: params.options.directory } : {}),
+      ...(Object.keys(runtimeSelectionEnv).length > 0 ? { env: runtimeSelectionEnv } : {}),
     };
   }
 
@@ -132,8 +216,11 @@ export async function resolveSpawnChildEnvironment(params: {
 
     const result = await dispatchDaemonSpawnHookEvent({
       happyHomeDir: params.happyHomeDir,
+      ...(params.pluginRuntimeRegistry
+        ? { runtimeRegistry: params.pluginRuntimeRegistry }
+        : {}),
       event: {
-        eventId: 'backend.resolveRuntimePrerequisites',
+        eventId: 'agent.resolvePrerequisites',
         backendId: backendTarget?.backendId,
         backendTarget: backendTarget ?? undefined,
         machineId: params.options.machineId,
@@ -154,15 +241,13 @@ export async function resolveSpawnChildEnvironment(params: {
     });
 
     const aggregate = result.aggregate;
-    const allowed =
-      aggregate?.executionKind === 'decide'
-        ? aggregate.result !== null
-          && typeof aggregate.result === 'object'
-          && !Array.isArray(aggregate.result)
-          && (aggregate.result as { allowed?: unknown }).allowed === true
-        : true;
+    const denied = aggregate?.executionKind === 'decide'
+      && aggregate.result !== null
+      && typeof aggregate.result === 'object'
+      && !Array.isArray(aggregate.result)
+      && (aggregate.result as { decision?: unknown }).decision === 'deny';
 
-    if (allowed) {
+    if (!denied) {
       return {
         allowed: true,
         errorMessage: null,
@@ -202,15 +287,17 @@ export async function resolveSpawnChildEnvironment(params: {
 
     const result = await dispatchDaemonSpawnHookEvent({
       happyHomeDir: params.happyHomeDir,
+      ...(params.pluginRuntimeRegistry
+        ? { runtimeRegistry: params.pluginRuntimeRegistry }
+        : {}),
       event: {
-        eventId: 'spawn.augmentEnv',
+        eventId: 'agent.spawnEnv.augment',
         backendId: backendTarget?.backendId,
         backendTarget: backendTarget ?? undefined,
         machineId: params.options.machineId,
         cwd: params.options.directory,
         payload: {
           ...(spawnHookBackendId ? { backendId: spawnHookBackendId } : {}),
-          ...(spawnHookAgentId ? { agentId: spawnHookAgentId } : {}),
           timestampMs: spawnHookTimestampMs(),
           cwd: params.options.directory,
           directory: params.options.directory,
@@ -242,11 +329,13 @@ export async function resolveSpawnChildEnvironment(params: {
     cleanupOnFailure = connectedCleanupOnFailure;
     cleanupOnExit = connectedCleanupOnExit;
   }
-  const sanitizedAuthEnv = sanitizeEnvVarRecord(authEnv);
+  const sanitizedAuthEnv = stripSessionControlEnvOverrides(sanitizeEnvVarRecord(authEnv), {
+    allowConnectedServiceMaterializerKeys: true,
+  });
 
   let profileEnv: Record<string, string> = {};
   if (Object.keys(params.profileEnvironmentVariables).length > 0) {
-    profileEnv = stripDaemonOwnedChildEnvOverrides(sanitizeEnvVarRecord(params.profileEnvironmentVariables));
+    profileEnv = stripSessionControlEnvOverrides(sanitizeEnvVarRecord(params.profileEnvironmentVariables));
     params.logInfo(`[DAEMON RUN] Using GUI-provided profile environment variables (${Object.keys(profileEnv).length} vars)`);
     params.logDebug(`[DAEMON RUN] GUI profile env var keys: ${Object.keys(profileEnv).join(', ')}`);
   } else {
@@ -273,6 +362,7 @@ export async function resolveSpawnChildEnvironment(params: {
   );
 
   let extraEnv = { ...expandedProfileEnv, ...expandedAuthEnv };
+  runtimeSelectionEnv = extraEnv;
   params.logDebug(
     `[DAEMON RUN] Final environment variable keys (${Object.keys(extraEnv).length}): ${Object.keys(extraEnv).join(', ')}`,
   );
@@ -292,7 +382,31 @@ export async function resolveSpawnChildEnvironment(params: {
     };
   }
 
-  if (params.daemonSpawnHooks?.resolveRuntimePrerequisites) {
+  if (!params.runtimePrerequisitesAlreadyResolved && (
+    !params.daemonSpawnHooks?.resolveRuntimePrerequisites
+    && backendTarget?.sourceKind === 'built_in'
+    && isAgentId(backendTarget.backendId)
+  )) {
+    const providerCliResolutionEnv = {
+      ...params.processEnv,
+      ...extraEnv,
+      ...(params.happyHomeDir ? { HAPPIER_HOME_DIR: params.happyHomeDir } : {}),
+    };
+    if (resolveAgentCliLaunchSpec(backendTarget.backendId, { processEnv: providerCliResolutionEnv }) === null) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: buildMissingAgentCliCommandErrorMessage(backendTarget.backendId, {
+          processEnv: providerCliResolutionEnv,
+        }),
+        cleanupOnFailure,
+        cleanupOnExit,
+        ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+      };
+    }
+  }
+
+  if (!params.runtimePrerequisitesAlreadyResolved && params.daemonSpawnHooks?.resolveRuntimePrerequisites) {
     const validation = await params.daemonSpawnHooks.resolveRuntimePrerequisites(buildRuntimeSelection());
     if (!validation.ok) {
       return {
@@ -306,12 +420,32 @@ export async function resolveSpawnChildEnvironment(params: {
     }
   }
 
-  const pluginSpawnDecision = await readPluginSpawnDecision();
-  if (!pluginSpawnDecision.allowed) {
+  // Provider launches enter this function once after connection/grant
+  // authorization for their prerequisite pass, then again for final daemon
+  // composition. Run every decision prerequisite in the first pass so direct
+  // launches cannot bypass plugin-owned checks (for example Codex's version
+  // allowlist), and do not execute it a second time during composition.
+  if (params.providerBindingPrerequisitesOnly || !params.runtimePrerequisitesAlreadyResolved) {
+    const pluginSpawnDecision = await readPluginSpawnDecision();
+    if (!pluginSpawnDecision.allowed) {
+      return {
+        ok: false,
+        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: pluginSpawnDecision.errorMessage ?? 'Plugin spawn prerequisite hook denied daemon spawn.',
+        cleanupOnFailure,
+        cleanupOnExit,
+        ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+      };
+    }
+  }
+
+  if (params.providerBindingPrerequisitesOnly) {
     return {
-      ok: false,
-      errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-      errorMessage: pluginSpawnDecision.errorMessage ?? 'Plugin spawn prerequisite hook denied daemon spawn.',
+      ok: true,
+      expandedEnvironmentVariables: extraEnv,
+      extraEnvForChild: {},
+      unsetEnvKeys: [],
+      providerEnvKeys: [],
       cleanupOnFailure,
       cleanupOnExit,
       ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
@@ -321,19 +455,67 @@ export async function resolveSpawnChildEnvironment(params: {
   const extraEnvForChild = { ...extraEnv };
   delete extraEnvForChild.TMUX_SESSION_NAME;
   delete extraEnvForChild.TMUX_TMPDIR;
-  if (explicitEnvKeysForChild.length > 0) {
-    extraEnvForChild[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR] = JSON.stringify(explicitEnvKeysForChild);
-  }
   if (params.daemonSpawnHooks?.augmentEnv) {
     Object.assign(
       extraEnvForChild,
-      params.daemonSpawnHooks.augmentEnv(buildRuntimeSelection()),
+      stripSessionControlEnvOverrides(sanitizeEnvVarRecord(
+        params.daemonSpawnHooks.augmentEnv(buildRuntimeSelection()),
+      )),
     );
   }
   Object.assign(
     extraEnvForChild,
-    await readPluginSpawnEnvAugmentation(),
+    stripSessionControlEnvOverrides(await readPluginSpawnEnvAugmentation()),
   );
+  const lateProviderMaterialization = params.materializeProviderBindingAfterHooks
+    ? await params.materializeProviderBindingAfterHooks()
+    : null;
+  if (lateProviderMaterialization && !lateProviderMaterialization.ok) {
+    return {
+      ok: false,
+      errorCode: lateProviderMaterialization.errorCode,
+      errorMessage: lateProviderMaterialization.errorMessage,
+      ...(lateProviderMaterialization.providerError
+        ? { providerError: lateProviderMaterialization.providerError }
+        : {}),
+      cleanupOnFailure,
+      cleanupOnExit,
+      ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
+    };
+  }
+  cleanupOnFailure = chainCleanupCallbacks(
+    cleanupOnFailure,
+    lateProviderMaterialization?.cleanupOnFailure ?? null,
+  );
+  cleanupOnExit = chainCleanupCallbacks(
+    cleanupOnExit,
+    lateProviderMaterialization?.cleanupOnExit ?? null,
+  );
+  const parsedProviderOverlay = SessionEnvOverlayV1Schema.parse([
+    ...(params.providerEnvironmentOverlay ?? []),
+    ...(lateProviderMaterialization?.providerEnvironmentOverlay ?? []),
+  ]);
+  const providerEnv: Record<string, string> = {};
+  const providerUnsetEnvKeys: string[] = [];
+  for (const entry of parsedProviderOverlay) {
+    if (entry.source !== 'provider') {
+      throw new Error(`Provider environment overlay cannot contain '${entry.source}' operations.`);
+    }
+    if (isSessionControlEnvKey(entry.name)) continue;
+    explicitEnvKeysForChild.push(entry.name);
+    if (entry.value === null) providerUnsetEnvKeys.push(entry.name);
+    else providerEnv[entry.name] = entry.value;
+  }
+  const providerUnsetIdentities = new Set(providerUnsetEnvKeys.map((name) => name.toLowerCase()));
+  for (const key of Object.keys(extraEnvForChild)) {
+    if (providerUnsetIdentities.has(key.toLowerCase())) {
+      delete extraEnvForChild[key];
+    }
+  }
+  Object.assign(extraEnvForChild, providerEnv);
+  if (params.options.profileId !== undefined) {
+    extraEnvForChild.HAPPIER_SESSION_PROFILE_ID = params.options.profileId;
+  }
   if (params.options.transcriptStorage === 'direct') {
     extraEnvForChild.HAPPIER_TRANSCRIPT_STORAGE = 'direct';
   }
@@ -359,11 +541,22 @@ export async function resolveSpawnChildEnvironment(params: {
       connectedServiceMaterializationIdentityJson;
   }
   extraEnvForChild[SESSION_REQUESTED_DIRECTORY_ENV] = params.options.directory;
+  const uniqueExplicitEnvKeysForChild = Array.from(new Set(explicitEnvKeysForChild));
+  if (uniqueExplicitEnvKeysForChild.length > 0) {
+    extraEnvForChild[HAPPIER_SPAWN_EXPLICIT_ENV_KEYS_JSON_ENV_VAR] = JSON.stringify(
+      uniqueExplicitEnvKeysForChild,
+    );
+  }
 
   return {
     ok: true,
     expandedEnvironmentVariables: extraEnv,
     extraEnvForChild,
+    unsetEnvKeys: Object.freeze([...providerUnsetEnvKeys]),
+    providerEnvKeys: Object.freeze(Object.keys(providerEnv).concat(providerUnsetEnvKeys)),
+    ...(lateProviderMaterialization
+      ? { providerBindingLaunchHandoff: lateProviderMaterialization.providerBindingLaunchHandoff }
+      : {}),
     cleanupOnFailure,
     cleanupOnExit,
     ...(materializationDiagnostics ? { materializationDiagnostics } : {}),

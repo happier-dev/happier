@@ -14,7 +14,7 @@ import type {
   StderrResult,
   ToolNameContext,
 } from './TransportHandler';
-import type { AgentMessage } from '@/agent/core';
+import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { filterJsonObjectOrArrayLine } from './utils/jsonStdoutFilter';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol';
 
@@ -226,12 +226,6 @@ export class DefaultTransport implements TransportHandler {
     return update;
   }
 
-  /**
-   * Default: render standard ACP plan updates through the shared TodoWrite checklist.
-   */
-  suppressAcpPlanUpdate(): boolean {
-    return false;
-  }
 }
 
 /**

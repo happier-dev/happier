@@ -1,7 +1,10 @@
 import type { DaemonState } from '@/api/types';
 
 type DaemonApiMachineLike = {
-  updateDaemonState: (updater: (state: DaemonState | null) => DaemonState) => Promise<unknown>;
+  updateDaemonState: (
+    updater: (state: DaemonState | null) => DaemonState,
+    options?: Readonly<{ allowWhileQuiescing?: boolean }>,
+  ) => Promise<unknown>;
   shutdown: () => Promise<void>;
 };
 
@@ -19,7 +22,7 @@ export async function publishShutdownStateBestEffort(params: Readonly<{
       status: 'shutting-down',
       shutdownRequestedAt: Date.now(),
       shutdownSource: params.source,
-    }))
+    }), { allowWhileQuiescing: true })
     .catch((error) => {
       params.warn('[DAEMON RUN] Failed to publish shutdown daemon state before exit', error);
     })

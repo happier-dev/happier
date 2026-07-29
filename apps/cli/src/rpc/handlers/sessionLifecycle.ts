@@ -21,6 +21,7 @@ type SessionLifecycleActionId =
     | 'session.restore'
     | 'session.handoff'
     | 'session.handoff.prepare_target'
+    | 'session.handoff.prepare_target.resume'
     | 'session.handoff.prepare_target_result.get'
     | 'session.handoff.commit'
     | 'session.handoff.abort'

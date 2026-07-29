@@ -2,13 +2,14 @@ import { readFileSync } from 'fs';
 
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonLocallyPersistedState } from '@/persistence';
-import { readDaemonState, writeDaemonState } from '@/persistence';
+import { writeDaemonState } from '@/persistence';
 import { projectPath } from '@/projectPath';
 import { logger } from '@/ui/logger';
 import { gcExecutionRunMarkers } from '@/daemon/executionRunRegistry';
 import { findHappyProcessByPid } from '@/daemon/doctor';
+import { isPidSafeHappySessionProcess } from '@/daemon/pidSafety';
 import { resolveComparableCliVersion } from '@/daemon/resolveComparableCliVersion';
-import { spawnDetachedDaemonStartSync } from '@/daemon/runtime/spawnDetachedDaemonStartSync';
+import { readDaemonRestartVerifyPollMs, readDaemonRestartVerifyTimeoutMs } from '@/daemon/startupWaitDefaults';
 import { configuration } from '@/configuration';
 import {
   gcWorkspaceReplicationCas,
@@ -20,6 +21,14 @@ import { recoverSessionHandoffPrepareTargetJobsAfterRestart } from '@/session/ha
 import type { TrackedSession } from '../types';
 import { cleanupPidSessionResources } from '../sessions/cleanupPidSessionResources';
 import { createOnChildExited } from '../sessions/onChildExited';
+import { requestDaemonSelfRestart } from './requestDaemonSelfRestart';
+
+type RequestDaemonSelfRestart = typeof requestDaemonSelfRestart;
+
+export {
+  DEFAULT_DAEMON_RESTART_VERIFY_POLL_MS,
+  DEFAULT_DAEMON_RESTART_VERIFY_TIMEOUT_MS,
+} from '@/daemon/startupWaitDefaults';
 
 function parsePositiveInt(rawValue: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(rawValue ?? '', 10);
@@ -43,39 +52,24 @@ function isPidAliveBestEffort(pid: number): boolean {
   }
 }
 
-async function waitForReplacementDaemon(params: Readonly<{
-  ownPid: number;
-  expectedCliVersion: string;
-  timeoutMs: number;
-  pollMs: number;
-}>): Promise<boolean> {
-  const { ownPid, expectedCliVersion, timeoutMs, pollMs } = params;
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const daemonState = await readDaemonState();
-    if (
-      daemonState &&
-      daemonState.pid !== ownPid &&
-      daemonState.startedWithCliVersion === expectedCliVersion
-    ) {
-      return true;
-    }
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-  return false;
-}
-
 export function startDaemonHeartbeatLoop(params: Readonly<{
   pidToTrackedSession: Map<number, TrackedSession>;
-  spawnResourceCleanupByPid: Map<number, () => void>;
+  spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
   sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
   getApiMachineForSessions: () => ApiMachineClient | null;
-  onChildExited?: (pid: number, exit: Readonly<{ reason: string; code: number | null; signal: string | null }>) => void;
+  onChildExited?: (
+    pid: number,
+    exit: Readonly<{ reason: string; code: number | null; signal: string | null }>,
+  ) => void | Promise<void>;
+  pidSafetyDependencies?: NonNullable<
+    Parameters<typeof isPidSafeHappySessionProcess>[1]
+  >;
   controlPort: number;
   fileState: DaemonLocallyPersistedState;
   currentCliVersion: string;
   requestShutdown: (source: 'happier-app' | 'happier-cli' | 'os-signal' | 'exception', errorMessage?: string) => void;
   isShuttingDown?: () => boolean;
+  requestSelfRestart?: RequestDaemonSelfRestart;
 }>): NodeJS.Timeout {
   const {
     pidToTrackedSession,
@@ -83,11 +77,12 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     sessionAttachCleanupByPid,
     getApiMachineForSessions,
     onChildExited,
+    pidSafetyDependencies,
     controlPort,
     fileState,
     currentCliVersion,
-    requestShutdown,
     isShuttingDown,
+    requestSelfRestart = requestDaemonSelfRestart,
   } = params;
 
   const onChildExitedForPrune =
@@ -99,14 +94,14 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       getApiMachineForSessions,
     });
 
-  // Every 60 seconds:
+  // Periodically:
   // 1. Prune stale sessions
   // 2. Check if daemon needs update
   // 3. If outdated, restart with latest version
   // 4. Write heartbeat
-  const heartbeatIntervalMs = parsePositiveInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL, 60000);
-  const restartVerifyTimeoutMs = parsePositiveInt(process.env.HAPPIER_DAEMON_RESTART_VERIFY_TIMEOUT_MS, 10000);
-  const restartVerifyPollMs = parsePositiveInt(process.env.HAPPIER_DAEMON_RESTART_VERIFY_POLL_MS, 250);
+  const heartbeatIntervalMs = parsePositiveInt(process.env.HAPPIER_DAEMON_HEARTBEAT_INTERVAL, 30_000);
+  const restartVerifyTimeoutMs = readDaemonRestartVerifyTimeoutMs();
+  const restartVerifyPollMs = readDaemonRestartVerifyPollMs();
   const executionRunTerminalTtlMs = parseNonNegativeInt(
     process.env.HAPPIER_DAEMON_EXECUTION_RUN_TERMINAL_TTL_MS,
     6 * 60 * 60 * 1000,
@@ -149,13 +144,23 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       return sessionHandoffPrepareTargetRecoveryPromise;
     }
     sessionHandoffPrepareTargetRecoveryPromise = (async () => {
+      let retryDeferredRecovery = false;
       try {
-        await recoverSessionHandoffPrepareTargetJobsAfterRestart({
+        const recovery = await recoverSessionHandoffPrepareTargetJobsAfterRestart({
           activeServerDir: configuration.activeServerDir,
           nowMs: Date.now(),
         });
+        retryDeferredRecovery = recovery.deferredByLiveRunnerLease;
       } catch (error) {
+        retryDeferredRecovery = true;
         logger.debug('[DAEMON RUN] Failed to recover session-handoff prepare-target jobs', error);
+      } finally {
+        if (retryDeferredRecovery) {
+          // A replacement daemon can overlap the old runner briefly. Reuse the
+          // existing heartbeat cadence only until startup recovery is no longer
+          // blocked; terminal and explicitly resumable jobs remain passive.
+          sessionHandoffPrepareTargetRecoveryPromise = null;
+        }
       }
     })();
     return sessionHandoffPrepareTargetRecoveryPromise;
@@ -182,15 +187,55 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
 
       await ensureWorkspaceReplicationRecovery();
       await ensureSessionHandoffPrepareTargetRecovery();
+      if (isShuttingDown?.() === true) {
+        return;
+      }
 
       // Prune stale sessions
-      for (const [pid, _] of pidToTrackedSession.entries()) {
+      for (const [pid, tracked] of pidToTrackedSession.entries()) {
         if (!isPidAliveBestEffort(pid)) {
+          if (isShuttingDown?.() === true) {
+            return;
+          }
           // Process is dead, remove from tracking
           logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (process no longer exists)`);
-          onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
+          await onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
           continue;
         }
+        const expectedProcessCommandHash = tracked.processCommandHash;
+        const expectedProcessStartTimeMs = tracked.processStartTimeMs;
+        if (
+          typeof expectedProcessCommandHash !== 'string'
+          || expectedProcessCommandHash.length === 0
+          || expectedProcessStartTimeMs === undefined
+        ) {
+          continue;
+        }
+        const isExactProcessCurrent = await isPidSafeHappySessionProcess({
+          pid,
+          expectedProcessCommandHash,
+          expectedProcessStartTimeMs,
+        }, pidSafetyDependencies).catch(() => false);
+        const currentTracked = pidToTrackedSession.get(pid);
+        if (
+          isExactProcessCurrent
+          || currentTracked !== tracked
+          || currentTracked.processCommandHash !== expectedProcessCommandHash
+          || currentTracked.processStartTimeMs !== expectedProcessStartTimeMs
+        ) {
+          continue;
+        }
+        logger.debug(
+          `[DAEMON RUN] Removing stale session with PID ${pid} (process identity no longer matches)`,
+        );
+        if (isShuttingDown?.() === true) {
+          return;
+        }
+        await onChildExitedForPrune(pid, {
+          reason: 'process-missing',
+          code: null,
+          signal: null,
+        });
       }
 
       try {
@@ -259,50 +304,20 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         readFileSyncImpl: readFileSync,
       });
 
+      if (isShuttingDown?.() === true) {
+        return;
+      }
       if (projectVersion && projectVersion !== currentCliVersion) {
         logger.debug('[DAEMON RUN] Daemon is outdated, triggering self-restart with latest version');
 
-        let spawnStarted = false;
-        try {
-          const spawned = await spawnDetachedDaemonStartSync({
-            startupSource: 'self-restart',
-            env: fileState.runtimeId
-              ? {
-                  ...process.env,
-                  HAPPIER_DAEMON_RUNTIME_ID: fileState.runtimeId,
-                }
-              : process.env,
-          });
-          spawned.unref?.();
-          spawnStarted = true;
-        } catch (error) {
-          logger.debug(
-            '[DAEMON RUN] Failed to spawn new daemon, this is quite likely to happen during integration tests as we are cleaning out dist/ directory',
-            error,
-          );
-        }
-
-        if (spawnStarted) {
-          const replacementConfirmed = await waitForReplacementDaemon({
-            ownPid: process.pid,
-            expectedCliVersion: projectVersion,
-            timeoutMs: restartVerifyTimeoutMs,
-            pollMs: restartVerifyPollMs,
-          });
-          if (replacementConfirmed) {
-            logger.debug('[DAEMON RUN] Replacement daemon confirmed. Exiting outdated daemon process.');
-            process.exit(0);
-          }
-          logger.debug('[DAEMON RUN] Replacement daemon was not confirmed before timeout. Keeping current daemon alive.');
-        }
-      }
-
-      // Before recklessly overwriting the daemon state file, we should check if we are the ones who own it
-      // Race condition is possible, but thats okay for the time being :D
-      const daemonState = await readDaemonState();
-      if (daemonState && daemonState.pid !== process.pid) {
-        logger.debug('[DAEMON RUN] Somehow a different daemon was started without killing us. We should kill ourselves.');
-        requestShutdown('exception', 'A different daemon was started without killing us. We should kill ourselves.');
+        await requestSelfRestart({
+          runtimeId: fileState.runtimeId,
+          expectedCliVersion: projectVersion,
+          ownPid: process.pid,
+          timeoutMs: restartVerifyTimeoutMs,
+          pollMs: restartVerifyPollMs,
+          takeover: true,
+        });
       }
 
       // Heartbeat
@@ -339,7 +354,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
     } finally {
       heartbeatRunning = false;
     }
-  }, heartbeatIntervalMs); // Every 60 seconds in production
+  }, heartbeatIntervalMs);
 
   return intervalHandle;
 }

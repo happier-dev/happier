@@ -178,7 +178,7 @@ export class CodexLikePermissionHandler extends BasePermissionHandler {
       toolName,
       input,
       accountSettings: this.getAccountSettingsSnapshot(),
-      surface: 'session_agent',
+      surface: 'agent',
     }).suppress;
   }
 

@@ -8,6 +8,37 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { registerMachineMcpServersRpcHandlers } from './rpcHandlers.mcpServers';
 
 describe('rpcHandlers.mcpServers (detect)', () => {
+  it('forwards daemon env to provider MCP detection', async () => {
+    const handlers = new Map<string, (raw: unknown) => Promise<unknown>>();
+    const rpcHandlerManager = {
+      registerHandler: (method: string, handler: (raw: unknown) => Promise<unknown>) => {
+        handlers.set(method, handler);
+      },
+    } as any;
+    const env = {
+      HAPPIER_MCP_DISCOVERY_PROVIDER_TIMEOUT_MS: '1234',
+    } as NodeJS.ProcessEnv;
+    let observedEnv: NodeJS.ProcessEnv | undefined;
+
+    registerMachineMcpServersRpcHandlers({
+      rpcHandlerManager,
+      deps: {
+        env,
+        detectProviderMcpServers: async (params) => {
+          observedEnv = params.env;
+          return { servers: [], warnings: [] };
+        },
+      },
+    });
+
+    const handler = handlers.get(RPC_METHODS.DAEMON_MCP_SERVERS_DETECT);
+    expect(handler).toBeTruthy();
+
+    const out = (await handler!({ machineId: 'm1', providers: ['codex'] })) as any;
+    expect(out.ok).toBe(true);
+    expect(observedEnv).toBe(env);
+  });
+
   it('detects Codex MCP servers from CODEX_HOME config.toml without returning secrets', async () => {
     const prevCodexHome = process.env.CODEX_HOME;
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-detect-'));
@@ -44,6 +75,7 @@ describe('rpcHandlers.mcpServers (detect)', () => {
 
       const out = (await handler!({ machineId: 'm1', providers: ['codex'] })) as any;
       expect(out.ok).toBe(true);
+      expect(out.warnings ?? []).toEqual([]);
 
       const servers = Array.isArray(out.servers) ? out.servers : [];
       expect(servers.length).toBeGreaterThan(0);

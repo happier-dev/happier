@@ -116,6 +116,7 @@ export type ScmBackendContext = {
     cwd: string;
     projectKey: string;
     detection: ScmRepoDetection;
+    signal?: AbortSignal;
 };
 
 export type ScmBackendSelection = {
@@ -208,6 +209,8 @@ export type ScmWorkspaceIntegration = Readonly<{
 
 export interface ScmBackend {
     id: ScmBackendId;
+    localId?: ScmBackendId;
+    kind?: string;
     declaredCapabilities?: ScmBackendCapabilities;
     selection: ScmBackendSelection;
     workspaceIntegration?: ScmWorkspaceIntegration;

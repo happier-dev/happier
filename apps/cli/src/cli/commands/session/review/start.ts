@@ -8,6 +8,9 @@ import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { resolveSessionEncryptionContextFromCredentials, resolveSessionStoredContentEncryptionMode } from '@/session/transport/encryption/sessionEncryptionContext';
 import { readFlagValue } from '@/cli/commands/shared/argvFlags';
 import { resolveSessionIdOrPrefix } from '@/session/query/resolveSessionId';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
+import { SESSION_HELP_LINES } from '../shared/sessionCommandUsage';
+import { normalizeSessionStartActionResults } from '../shared/sessionStartActionResults';
 
 function splitCsv(value: string | null): string[] {
   if (!value) return [];
@@ -24,7 +27,7 @@ export async function cmdSessionReviewStart(
   const json = wantsJson(argv);
   const idOrPrefix = String(argv[2] ?? '').trim();
   if (!idOrPrefix) {
-    throw new Error('Usage: happier session review start <session-id-or-prefix> --engines <id1,id2> --instructions <text> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.reviewStart}`);
   }
 
   const enginesRaw = readFlagValue(argv, '--engines') ?? readFlagValue(argv, '--engine');
@@ -37,7 +40,7 @@ export async function cmdSessionReviewStart(
   const permissionMode = readFlagValue(argv, '--permission-mode') ?? undefined;
 
   if (engineIds.length === 0 || !instructions.trim()) {
-    throw new Error('Usage: happier session review start <session-id> --engines <id1,id2> --instructions <text> [--json]');
+    throw new Error(`Usage: ${SESSION_HELP_LINES.reviewStart}`);
   }
 
   const base = (() => {
@@ -63,6 +66,8 @@ export async function cmdSessionReviewStart(
     console.error(chalk.red('Error:'), 'Not authenticated. Run "happier auth login" first.');
     process.exit(1);
   }
+
+  await ensureCliActionPolicySettings(credentials);
 
   const resolved = await resolveSessionIdOrPrefix({ credentials, idOrPrefix });
   if (!resolved.ok) {
@@ -93,17 +98,26 @@ export async function cmdSessionReviewStart(
 
   const executor = createCliActionExecutor({ token: credentials.token, credentials, sessionId, mode, ctx });
   const started = await executor.execute('review.start', input, { defaultSessionId: sessionId });
+  const normalized = normalizeSessionStartActionResults(started);
 
-  if (!started.ok) {
+  if (!normalized.ok) {
     if (json) {
-      printJsonEnvelope({ ok: false, kind: 'session_review_start', error: { code: started.errorCode } });
+      printJsonEnvelope({
+        ok: false,
+        kind: 'session_review_start',
+        error: {
+          code: normalized.errorCode,
+          ...(normalized.errorMessage ? { message: normalized.errorMessage } : {}),
+          ...(normalized.candidates ? { candidates: normalized.candidates } : {}),
+        },
+      });
       return;
     }
-    console.error(chalk.red('Error:'), started.errorCode);
+    console.error(chalk.red('Error:'), normalized.errorMessage ?? normalized.errorCode);
     process.exit(1);
   }
 
-  const results = (started.result as any)?.results ?? [];
+  const results = normalized.results;
 
   if (json) {
     printJsonEnvelope({

@@ -1,7 +1,7 @@
 import type {
   ConnectedServiceCredentialRecordV1,
   ConnectedServiceId,
-  ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1,
+  ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
   ConnectedServiceQuotaSnapshotV1,
 } from '@happier-dev/protocol';
 
@@ -29,6 +29,11 @@ export const STANDARD_OAUTH_TERMINAL_AUTH_PROVIDER_CODES: readonly string[] = Ob
   'missing_refresh_token',
 ]);
 
+export type ConnectedServiceQuotaRecoveryCreditConsumeOutcome = Exclude<
+  ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
+  'unknown_after_timeout'
+>;
+
 export type ConnectedServiceQuotaFetcher = Readonly<{
   serviceId: ConnectedServiceId;
   loadQuota: (params: Readonly<{
@@ -42,7 +47,7 @@ export type ConnectedServiceQuotaFetcher = Readonly<{
     idempotencyKey: string;
     providerCreditId?: string;
     signal: AbortSignal;
-  }>) => Promise<ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1 | void>;
+  }>) => Promise<ConnectedServiceQuotaRecoveryCreditConsumeOutcome>;
   /**
    * Provider-specific `providerCode` values (see `ConnectedServiceQuotaFetchError`) that
    * this provider's quota fetcher can produce and that should be classified as a terminal

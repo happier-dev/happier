@@ -4,6 +4,7 @@ import { AcpBackend } from '../AcpBackend';
 import { defaultTransport } from '../../transport';
 import { logger } from '@/ui/logger';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { LegacyAcpToolRuntime } from '../toolCalls/legacy/runtime';
 
 const envScope = createEnvKeyScope(['HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION']);
 
@@ -18,13 +19,8 @@ describe('AcpBackend session/update max updates guard', () => {
         transport: defaultTransport,
         replayCapture: null,
         sessionUpdateShapeLogger: { log: () => {} },
-        activeToolCalls: new Set<string>(),
-        finalizedToolCalls: new Set<string>(),
-        toolCallLifecycleStates: new Map<string, string>(),
-        toolCallStartTimes: new Map<string, number>(),
-        toolCallTimeouts: new Map<string, any>(),
-        toolCallIdToNameMap: new Map<string, string>(),
-        toolCallIdToInputMap: new Map<string, unknown>(),
+        acpSessionId: 'session-1',
+        turnGeneration: 1,
         idleTimeout: null,
         waitingForResponse: false,
         isCurrentTurnGenerationClosed: () => false,
@@ -34,6 +30,15 @@ describe('AcpBackend session/update max updates guard', () => {
         emit: (msg: any) => emitted.push(msg),
         emitIdleStatus: () => emitted.push({ type: 'status', status: 'idle' }),
       };
+      fakeBackend.toolCalls = new LegacyAcpToolRuntime({
+        sessionId: () => fakeBackend.acpSessionId,
+        turnId: () => `legacy-turn:${fakeBackend.turnGeneration}`,
+        sidechainId: null,
+        emit: fakeBackend.emit,
+        transport: fakeBackend.transport,
+        onBecameActive: () => undefined,
+        onBecameIdle: () => undefined,
+      });
       fakeBackend.createHandlerContext = (AcpBackend as any).prototype.createHandlerContext;
 
       const handleSessionUpdate = (AcpBackend as any).prototype.handleSessionUpdate as (params: any) => void;
@@ -58,13 +63,77 @@ describe('AcpBackend session/update max updates guard', () => {
         ],
       });
 
-      expect(fakeBackend.toolCallIdToNameMap.has('call_1')).toBe(true);
-      expect(fakeBackend.toolCallIdToNameMap.has('call_2')).toBe(false);
+      expect(fakeBackend.toolCalls.readCall('call_1')).not.toBeNull();
+      expect(fakeBackend.toolCalls.readCall('call_2')).toBeNull();
       expect(emitted.filter((m) => m.type === 'tool-call').length).toBe(1);
       expect(warnSpy).toHaveBeenCalledTimes(1);
     } finally {
       envScope.restore();
       warnSpy.mockRestore();
     }
+  });
+
+  it('accepts late provider output only for an exact retained closed-turn tool id', () => {
+    const emitted: any[] = [];
+    const fakeBackend: any = {
+      options: { agentName: 'test' },
+      transport: defaultTransport,
+      replayCapture: null,
+      sessionUpdateShapeLogger: { log: () => {} },
+      acpSessionId: 'session-1',
+      turnGeneration: 1,
+      idleTimeout: null,
+      waitingForResponse: false,
+      isCurrentTurnGenerationClosed: () => true,
+      prePromptResponseUpdateGuard: 'none',
+      dropPromptTurnUpdatesUntilPromptResponse: false,
+      toolCallCountSincePrompt: 0,
+      emit: (msg: any) => emitted.push(msg),
+      emitIdleStatus: () => emitted.push({ type: 'status', status: 'idle' }),
+    };
+    fakeBackend.toolCalls = new LegacyAcpToolRuntime({
+      sessionId: () => fakeBackend.acpSessionId,
+      turnId: () => `legacy-turn:${fakeBackend.turnGeneration}`,
+      sidechainId: null,
+      emit: fakeBackend.emit,
+      transport: fakeBackend.transport,
+      onBecameActive: () => undefined,
+      onBecameIdle: () => undefined,
+    });
+    fakeBackend.createHandlerContext = (AcpBackend as any).prototype.createHandlerContext;
+    fakeBackend.toolCalls.handleRawUpdate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'known',
+      title: 'Known call',
+      status: 'pending',
+    });
+    const callLocalId = emitted.find((message) => message.type === 'tool-call')?.localId;
+    fakeBackend.toolCalls.terminalizeTurn('completed');
+    emitted.length = 0;
+
+    const handleSessionUpdate = (AcpBackend as any).prototype.handleSessionUpdate as (params: any) => void;
+    handleSessionUpdate.call(fakeBackend, {
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'known',
+        status: 'completed',
+        rawOutput: { text: 'late provider output' },
+      },
+    });
+    handleSessionUpdate.call(fakeBackend, {
+      update: {
+        sessionUpdate: 'tool_call_update',
+        toolCallId: 'unknown',
+        status: 'completed',
+        rawOutput: { text: 'must be dropped' },
+      },
+    });
+
+    expect(emitted.filter((message) => message.type === 'tool-result')).toHaveLength(1);
+    expect(emitted.find((message) => message.type === 'tool-call')).toMatchObject({
+      callId: 'known',
+      localId: callLocalId,
+    });
+    expect(fakeBackend.toolCalls.readCall('unknown')).toBeNull();
   });
 });

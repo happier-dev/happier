@@ -4,9 +4,16 @@ import { listActionSpecsForCatalogSurface, serializeActionSpec } from '@happier-
 
 import { wantsJson, printJsonEnvelope } from '@/cli/output/jsonEnvelope';
 import { isActionEnabledByEnv } from '@/settings/actionsSettings';
+import type { Credentials } from '@/persistence';
+import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
 
-export async function cmdSessionActionsList(argv: string[]): Promise<void> {
+export async function cmdSessionActionsList(
+  argv: string[],
+  deps?: Readonly<{ readCredentialsFn?: () => Promise<Credentials | null> }>,
+): Promise<void> {
   const json = wantsJson(argv);
+  const credentials = deps?.readCredentialsFn ? await deps.readCredentialsFn() : null;
+  await ensureCliActionPolicySettings(credentials);
   const availableSpecs = listActionSpecsForCatalogSurface({
     surface: 'cli',
     isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'cli', placement: null }),

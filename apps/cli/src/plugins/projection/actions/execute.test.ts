@@ -1,23 +1,76 @@
-import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { readHookEventEnvelopeV1 } from '@happier-dev/protocol';
 import { describe, expect, it, vi } from 'vitest';
 
 import type {
   ResolvedActionContribution,
+  ResolvedActionDefinition,
   ResolvedCommandContribution,
   ResolvedContributionRegistry,
   ResolvedToolContribution,
 } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
-import { createPluginStateStore } from '@/plugins/store/state';
-import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-
+import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
+import { createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
+import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
+import { createTargetActionInvocationRegistry as createTargetActionInvocationRegistryBase } from '@/plugins/runtime/invocation/targetActionRegistry';
+import type { TargetActionInvocationRegistration } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { executePluginActionIfAvailable } from './execute';
+
+type SafeResolvedActionContribution = Omit<ResolvedActionContribution, 'definition'> & Readonly<{
+  definition: Extract<ResolvedActionDefinition, Readonly<{ dangerLevel: 'safe' }>>;
+}>;
+
+function createTargetActionInvocationRegistry(
+  params: Omit<Parameters<typeof createTargetActionInvocationRegistryBase>[0], 'createServices' | 'resolveHostBinding' | 'resolveAuthorizationFacts'>
+    & Partial<Pick<Parameters<typeof createTargetActionInvocationRegistryBase>[0], 'resolveAuthorizationFacts'>>,
+) {
+  return createTargetActionInvocationRegistryBase({
+    resolveAuthorizationFacts: (action) => ({
+      packageTrust: {
+        packageIdentity: action.qualifiedId,
+        reviewedPackageIdentity: action.qualifiedId,
+      },
+      generation: {
+        targetGeneration: action.generation,
+        desiredGeneration: action.generation,
+        appliedGeneration: action.generation,
+      },
+      resourceSelections: [],
+      scopedGrants: [],
+      operatingSystemAuthorization: [],
+    }),
+    resolveHostBinding: createTargetActionHostBindingResolver(),
+    createServices: createUnavailablePluginServicesFactory(),
+    ...params,
+  });
+}
+
+function createTargetActionRegistration(params: Readonly<{
+  action: ResolvedActionContribution;
+  handler: TargetActionInvocationRegistration['handler'];
+}>): TargetActionInvocationRegistration {
+  return {
+    pluginId: params.action.pluginId ?? '',
+    pluginVersion: '1.0.0',
+    generation: '7',
+    localId: params.action.definition.id,
+    definition: {
+      id: params.action.definition.id,
+      dangerLevel: 'safe',
+      scopes: ['global'],
+      surfaces: Object.entries(params.action.definition.surfaces)
+        .filter(([, enabled]) => enabled === true)
+        .map(([surface]) => surface),
+      ...(params.action.definition.inputSchema ? { inputSchema: params.action.definition.inputSchema } : {}),
+      ...(params.action.definition.outputSchema ? { resultSchema: params.action.definition.outputSchema } : {}),
+    },
+    handler: params.handler,
+  };
+}
 
 async function writeActionDaemon(rootDir: string): Promise<string> {
   await mkdir(rootDir, { recursive: true });
@@ -43,22 +96,6 @@ async function writeActionDaemon(rootDir: string): Promise<string> {
   return daemonEntryPath;
 }
 
-async function writeActionDaemonWithReturn(rootDir: string, returnExpression: string): Promise<string> {
-  await mkdir(rootDir, { recursive: true });
-  const daemonEntryPath = join(rootDir, 'daemon.mjs');
-  await writeFile(
-    daemonEntryPath,
-    [
-      'export async function startReview(request) {',
-      `  return ${returnExpression};`,
-      '}',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-  return daemonEntryPath;
-}
-
 function createRegistry(
   action: ResolvedActionContribution,
   options: Readonly<{
@@ -70,30 +107,28 @@ function createRegistry(
   const tools = options.tools ?? [];
   return {
     generationId: 'registry:test',
+    uiViewsV2: [],
+    uiRenderersV2: [],
+    uiTranslationsV2: [],
     agents: [],
-    agentRuntimes: [],
-    actions: [action],
+        actions: [action],
     commands,
     tools,
     resources: [],
-    uiDescriptors: [],
     activationTargets: [],
-    hookRegistrations: [],
     actionsById: new Map([[action.definition.id, action]]),
     commandsById: new Map(commands.map((command) => [command.definition.id, command])),
     toolsById: new Map(tools.map((tool) => [tool.definition.id, tool])),
-    surfaceHandlersByBackendId: new Map(),
-    catalogEntriesById: {},
+        catalogEntriesById: {},
     agentDefinitionsById: new Map(),
-    agentRuntimeDefinitionsById: new Map(),
-    pluginDiagnosticsByPluginId: {},
+        pluginDiagnosticsByPluginId: {},
   };
 }
 
 function createAction(
   daemonEntryPath: string,
   actionId = 'acme.review.start',
-): ResolvedActionContribution {
+): SafeResolvedActionContribution {
   return {
     provenance: 'external',
     source: { kind: 'path' },
@@ -134,6 +169,10 @@ function createAction(
         properties: {},
         additionalProperties: true,
       },
+      scopes: ['global'],
+      contributionSurfaces: ['cli', 'agent'],
+      placement: 'commandPalette',
+      dangerLevel: 'safe',
       execution: {
         routing: 'daemon',
         handler: {
@@ -160,9 +199,9 @@ function createCommandContribution(
     definition: {
       kindVersion: 1,
       id: commandId,
-      command: 'acme',
-      rootHelpLabel: 'Acme',
-      allowTmux: false,
+      title: 'Acme',
+      path: ['acme'],
+      action: action.definition.id,
       actionId: action.definition.id,
     },
   };
@@ -187,11 +226,8 @@ function createToolContribution(
       title: 'Acme Tool',
       description: 'Runs Acme through a tool contribution',
       safety: action.definition.safety,
-      surfaces: {
-        cli: true,
-        mcp: true,
-        agent: true,
-      },
+      surfaces: ['cli', 'mcp', 'agent'],
+      action: action.definition.id,
       actionId: action.definition.id,
     },
   };
@@ -201,18 +237,9 @@ function createExecutableRegistry(params: Readonly<{
   action: ResolvedActionContribution;
   commands?: readonly ResolvedCommandContribution[];
   tools?: readonly ResolvedToolContribution[];
-  handler?: ResolvedExecutablePluginRuntimeRegistry['actionHandlersByActionId'] extends ReadonlyMap<string, infer Handler> ? Handler : never;
-  activatePluginsByEvent: ResolvedExecutablePluginRuntimeRegistry['activatePluginsByEvent'];
+  targetActionInvocations?: ReturnType<typeof createTargetActionInvocationRegistry>;
+  activateContributionsOnDemand: ResolvedExecutablePluginRuntimeRegistry['activateContributionsOnDemand'];
 }>): ResolvedExecutablePluginRuntimeRegistry {
-  const handler = params.handler ?? (async (request) => ({
-    ok: true,
-    data: {
-      actionId: request.actionId,
-      input: request.input,
-      pluginId: request.pluginId,
-      surface: request.context.surface,
-    },
-  }));
   const contributes = createRegistry(params.action, {
     commands: params.commands,
     tools: params.tools,
@@ -220,426 +247,275 @@ function createExecutableRegistry(params: Readonly<{
 
   return {
     contributes: contributes as ResolvedExecutablePluginRuntimeRegistry['contributes'],
-    actionHandlersByActionId: new Map([[params.action.definition.id, handler]]),
+    generation: 7,
+    targetActionInvocations: params.targetActionInvocations,
     hookHandlersByHookId: new Map(),
-    runtimeCoreHandlersByBackendId: new Map(),
     agentRuntimesByAgentId: new Map(),
     scmHostingProvidersById: new Map(),
     pluginDiagnosticsByPluginId: {},
     activatedPluginIds: new Set(),
-    activatePluginsByEvent: params.activatePluginsByEvent,
+    activateContributionsOnDemand: params.activateContributionsOnDemand,
+    createAgentInvocationServices: () => createUnavailablePluginServices(),
+    resolvePromptAssetBlocks: async () => [],
     readHookEventEnvelopeV1,
+    retireConsumers: () => {},
     dispose: async () => {},
   };
 }
 
-async function writeActivatedActionPluginFixture(params: Readonly<{
-  happyHomeDir: string;
-}>): Promise<Readonly<{
-  actionId: string;
-}>> {
-  const pluginId = 'acme.activated.action.plugin';
-  const actionId = 'acme.activated.review.start';
-  const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-activated-'));
-  const manifestDir = join(pluginRoot, '.happier-plugin');
-  await mkdir(manifestDir, { recursive: true });
-  await writeFile(
-    join(manifestDir, 'plugin.json'),
-    JSON.stringify(
-      createPluginManifestV2Fixture({
-        schemaVersion: 2,
-        id: pluginId,
-        version: '1.0.0',
-        displayName: 'Activated Action Plugin',
-        description: 'Registers an action during daemon activation',
-        engines: {
-          happier: '^0.2.0',
-        },
-        uses: ['actions'],
-        entrypoints: {
-          main: './daemon.mjs',
-        },
-        permissions: {
-          required: [],
-          optional: [],
-        },
-        contributes: {
-          actions: [
-            {
-              id: actionId,
-              title: 'Activated Review Start',
-              description: 'Action from activation-time handler binding',
-              scopes: ['global'],
-              surfaces: ['cli'],
-              placement: 'commandPalette',
-              dangerLevel: 'safe',
-              handler: {
-                target: 'daemon',
-                registrationId: actionId,
-              },
-            },
-          ],
-        },
-      }),
-      null,
-      2,
-    ),
-    'utf8',
-  );
-  await writeFile(
-    join(pluginRoot, 'daemon.mjs'),
-    [
-      'export async function activate(api) {',
-      '  api.registerAction({',
-      `    id: ${JSON.stringify(actionId)},`,
-      '    handler: async (request) => ({',
-      '      ok: true,',
-      '      data: {',
-      '        actionId: request.actionId,',
-      '        pluginId: request.pluginId,',
-      '        surface: request.context.surface,',
-      '        input: request.input,',
-      '      },',
-      '    }),',
-      '  });',
-      '}',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  await stateStore.write({
-    t: 'happier_plugin_state_v1',
-    schemaVersion: 1,
-    plugins: {
-      [pluginId]: {
-        source: {
-          kind: 'path',
-          locator: pluginRoot,
-          trustPolicy: 'local_trusted',
-          installPolicy: 'link',
-          resolvedPath: pluginRoot,
-          manifestPath: join(manifestDir, 'plugin.json'),
-        },
-        compatibility: {
-          status: 'unknown',
-          diagnostics: [],
-        },
-        install: {
-          mode: 'link',
-          manifestVersion: '1.0.0',
-          manifestDigest: null,
-          installedPath: null,
-        },
-        state: {
-          enabled: true,
-        },
-      },
-    },
-  });
-
-  return { actionId };
-}
-
-async function writeManifestActionPluginFixture(params: Readonly<{
-  happyHomeDir: string;
-}>): Promise<Readonly<{
-  actionId: string;
-}>> {
-  const pluginId = 'acme.manifest.action.plugin';
-  const actionId = 'acme.manifest.review.start';
-  const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-manifest-'));
-  const manifestDir = join(pluginRoot, '.happier-plugin');
-  await mkdir(manifestDir, { recursive: true });
-  await writeFile(
-    join(manifestDir, 'plugin.json'),
-    JSON.stringify(
-      createPluginManifestV2Fixture({
-        schemaVersion: 2,
-        id: pluginId,
-        version: '1.0.0',
-        displayName: 'Manifest Action Plugin',
-        description: 'Executes a manifest-declared action from a plugin daemon export',
-        engines: {
-          happier: '^0.2.0',
-        },
-        uses: ['actions'],
-        entrypoints: {
-          main: './daemon.mjs',
-        },
-        permissions: {
-          required: [],
-          optional: [],
-        },
-        contributes: {
-          actions: [
-            {
-              id: actionId,
-              title: 'Manifest Review Start',
-              description: 'Manifest-defined plugin action',
-              scopes: ['global'],
-              surfaces: ['cli'],
-              placement: 'commandPalette',
-              dangerLevel: 'safe',
-              handler: {
-                target: 'daemon',
-                exportName: 'startManifestReview',
-              },
-            },
-          ],
-        },
-      }),
-      null,
-      2,
-    ),
-    'utf8',
-  );
-  await writeFile(
-    join(pluginRoot, 'daemon.mjs'),
-    [
-      'export async function startManifestReview(request) {',
-      '  return {',
-      '    ok: true,',
-      '    data: {',
-      '      actionId: request.actionId,',
-      '      pluginId: request.pluginId,',
-      '      surface: request.context.surface,',
-      '      input: request.input,',
-      '    },',
-      '  };',
-      '}',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  await stateStore.write({
-    t: 'happier_plugin_state_v1',
-    schemaVersion: 1,
-    plugins: {
-      [pluginId]: {
-        source: {
-          kind: 'path',
-          locator: pluginRoot,
-          trustPolicy: 'local_trusted',
-          installPolicy: 'link',
-          resolvedPath: pluginRoot,
-          manifestPath: join(manifestDir, 'plugin.json'),
-        },
-        compatibility: {
-          status: 'unknown',
-          diagnostics: [],
-        },
-        install: {
-          mode: 'link',
-          manifestVersion: '1.0.0',
-          manifestDigest: null,
-          installedPath: null,
-        },
-        state: {
-          enabled: true,
-        },
-      },
-    },
-  });
-
-  return { actionId };
-}
-
-async function writeManifestToolPluginFixture(params: Readonly<{
-  happyHomeDir: string;
-}>): Promise<Readonly<{
-  toolId: string;
-}>> {
-  const pluginId = 'acme.manifest.tool.plugin';
-  const toolId = 'acme.manifest.review.tool';
-  const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-tool-manifest-'));
-  const manifestDir = join(pluginRoot, '.happier-plugin');
-  await mkdir(manifestDir, { recursive: true });
-  await writeFile(
-    join(manifestDir, 'plugin.json'),
-    JSON.stringify(
-      createPluginManifestV2Fixture({
-        schemaVersion: 2,
-        id: pluginId,
-        version: '1.0.0',
-        displayName: 'Manifest Tool Plugin',
-        description: 'Executes a manifest-declared tool from a plugin daemon export',
-        engines: {
-          happier: '^0.2.0',
-        },
-        uses: ['tools'],
-        entrypoints: {
-          main: './daemon.mjs',
-        },
-        permissions: {
-          required: [],
-          optional: [],
-        },
-        contributes: {
-          tools: [
-            {
-              id: toolId,
-              name: 'acme_manifest_review_tool',
-              title: 'Manifest Review Tool',
-              description: 'Manifest-defined plugin tool',
-              safety: 'safe',
-              surfaces: ['cli', 'agent'],
-              inputSchema: {
-                type: 'object',
-                additionalProperties: true,
-              },
-              handler: {
-                target: 'daemon',
-                exportName: 'runManifestTool',
-              },
-            },
-          ],
-        },
-      }),
-      null,
-      2,
-    ),
-    'utf8',
-  );
-  await writeFile(
-    join(pluginRoot, 'daemon.mjs'),
-    [
-      'export async function runManifestTool(request) {',
-      '  return {',
-      '    ok: true,',
-      '    data: {',
-      '      actionId: request.actionId,',
-      '      pluginId: request.pluginId,',
-      '      surface: request.context.surface,',
-      '      input: request.input,',
-      '    },',
-      '  };',
-      '}',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  await stateStore.write({
-    t: 'happier_plugin_state_v1',
-    schemaVersion: 1,
-    plugins: {
-      [pluginId]: {
-        source: {
-          kind: 'path',
-          locator: pluginRoot,
-          trustPolicy: 'local_trusted',
-          installPolicy: 'link',
-          resolvedPath: pluginRoot,
-          manifestPath: join(manifestDir, 'plugin.json'),
-        },
-        compatibility: {
-          status: 'unknown',
-          diagnostics: [],
-        },
-        install: {
-          mode: 'link',
-          manifestVersion: '1.0.0',
-          manifestDigest: null,
-          installedPath: null,
-        },
-        state: {
-          enabled: true,
-        },
-      },
-    },
-  });
-
-  return { toolId };
-}
-
-async function writeActivationMarkerPluginFixture(params: Readonly<{
-  happyHomeDir: string;
-  markerPath: string;
-}>): Promise<void> {
-  const pluginId = 'acme.activation.marker.plugin';
-  const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-marker-'));
-  const manifestDir = join(pluginRoot, '.happier-plugin');
-  await mkdir(manifestDir, { recursive: true });
-  await writeFile(
-    join(manifestDir, 'plugin.json'),
-    JSON.stringify(
-      createPluginManifestV2Fixture({
-        schemaVersion: 2,
-        id: pluginId,
-        version: '1.0.0',
-        displayName: 'Activation Marker Plugin',
-        description: 'Marks activation for plugin action dispatch tests',
-        engines: {
-          happier: '^0.2.0',
-        },
-        uses: ['actions'],
-        entrypoints: {
-          main: './daemon.mjs',
-        },
-        permissions: {
-          required: [],
-          optional: [],
-        },
-        contributes: {},
-      }),
-      null,
-      2,
-    ),
-    'utf8',
-  );
-  await writeFile(
-    join(pluginRoot, 'daemon.mjs'),
-    [
-      'import { writeFileSync } from "node:fs";',
-      'export async function activate() {',
-      `  writeFileSync(${JSON.stringify(params.markerPath)}, "activated\\n", "utf8");`,
-      '}',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-
-  const stateStore = createPluginStateStore({ happyHomeDir: params.happyHomeDir });
-  await stateStore.write({
-    t: 'happier_plugin_state_v1',
-    schemaVersion: 1,
-    plugins: {
-      [pluginId]: {
-        source: {
-          kind: 'path',
-          locator: pluginRoot,
-          trustPolicy: 'local_trusted',
-          installPolicy: 'link',
-          resolvedPath: pluginRoot,
-          manifestPath: join(manifestDir, 'plugin.json'),
-        },
-        compatibility: {
-          status: 'unknown',
-          diagnostics: [],
-        },
-        install: {
-          mode: 'link',
-          manifestVersion: '1.0.0',
-          manifestDigest: null,
-          installedPath: null,
-        },
-        state: {
-          enabled: true,
-        },
-      },
-    },
-  });
-}
-
 describe('executePluginActionIfAvailable', () => {
-  it('executes a daemon-backed plugin action and normalizes the result', async () => {
+  it('executes a first-party plugin action through the same qualified target-action route', async () => {
+    const externalAction = createAction('/unused/daemon.mjs', 'mint-client-auth');
+    const action: ResolvedActionContribution = {
+      ...externalAction,
+      provenance: 'first_party',
+      source: { kind: 'bundled' },
+      definition: {
+        ...externalAction.definition,
+        dangerLevel: 'safe',
+        scopes: ['settings'],
+        surfaces: {
+          ...externalAction.definition.surfaces,
+          cli: false,
+          ui: true,
+        },
+        contributionSurfaces: ['ui'],
+      },
+    };
+    const target = vi.fn(async () => ({ status: 'minted' }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [{
+        pluginId: 'acme.action.plugin',
+        pluginVersion: '1.0.0',
+        generation: '7',
+        localId: 'mint-client-auth',
+        definition: {
+          id: 'mint-client-auth',
+          dangerLevel: 'safe',
+          scopes: ['settings'],
+          surfaces: ['ui'],
+        },
+        handler: target,
+      }],
+    });
+    const baseRegistry = createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      activateContributionsOnDemand: async () => [],
+    });
+    const registry: ResolvedExecutablePluginRuntimeRegistry = {
+      ...baseRegistry,
+      contributes: {
+        ...baseRegistry.contributes,
+        actionsById: new Map([['acme.action.plugin/mint-client-auth', action]]),
+      },
+    };
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry,
+      actionId: 'acme.action.plugin/mint-client-auth',
+      input: {},
+      context: { surface: 'ui' },
+    })).resolves.toEqual({
+      matched: true,
+      result: { ok: true, result: { status: 'minted' } },
+    });
+    expect(target).toHaveBeenCalledTimes(1);
+  });
+
+  it('executes one committed target action invocation', async () => {
+    const action: ResolvedActionContribution = {
+      ...createAction('/unused/daemon.mjs', 'run'),
+      pluginId: 'acme.action.plugin',
+      definition: {
+        ...createAction('/unused/daemon.mjs', 'run').definition,
+        dangerLevel: 'safe',
+        scopes: ['global'],
+        contributionSurfaces: ['cli'],
+      },
+    };
+    const target = vi.fn(async () => ({ executedBy: 'target' }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [{
+        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', generation: '7', localId: 'run',
+        definition: {
+          id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'],
+          resultSchema: { type: 'object', required: ['executedBy'], properties: { executedBy: { const: 'target' } } },
+        },
+        handler: target,
+      }],
+    });
+    const registry = createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      activateContributionsOnDemand: async () => [],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
+    })).resolves.toEqual({ matched: true, result: { ok: true, result: { executedBy: 'target' } } });
+    expect(target).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the committed target failure', async () => {
+    const action: ResolvedActionContribution = {
+      ...createAction('/unused/daemon.mjs', 'run'),
+      definition: {
+        ...createAction('/unused/daemon.mjs', 'run').definition,
+        dangerLevel: 'safe', scopes: ['global'], contributionSurfaces: ['cli'],
+      },
+    };
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [{
+        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', generation: '7', localId: 'run',
+        definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] },
+        handler: async () => { throw new Error('target failed'); },
+      }],
+    });
+    const registry = createExecutableRegistry({ action, targetActionInvocations, activateContributionsOnDemand: async () => [] });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
+    })).resolves.toMatchObject({ matched: true, result: { ok: false, errorCode: 'plugin_action_execution_failed' } });
+  });
+
+  it('returns target result validation failures', async () => {
+    const action: ResolvedActionContribution = {
+      ...createAction('/unused/daemon.mjs', 'run'),
+      definition: {
+        ...createAction('/unused/daemon.mjs', 'run').definition,
+        dangerLevel: 'safe', scopes: ['global'], contributionSurfaces: ['cli'],
+      },
+    };
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [{
+        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', generation: '7', localId: 'run',
+        definition: {
+          id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'],
+          resultSchema: { type: 'object', required: ['owner'], properties: { owner: { const: 'target' } } },
+        },
+        handler: async () => ({ wrong: true }),
+      }],
+    });
+    const registry = createExecutableRegistry({
+      action, targetActionInvocations, activateContributionsOnDemand: async () => [],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
+    })).resolves.toMatchObject({
+      matched: true,
+      result: { ok: false, errorCode: 'plugin_action_result_schema_invalid' },
+    });
+  });
+
+  it('rejects non-JSON plugin action results even when no output schema is declared', async () => {
+    const action = createAction('/unused/daemon.mjs', 'non-json-result');
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    // Deliberately cross the SDK result type to exercise the runtime boundary.
+    const handler = vi.fn(async () => cyclic as never);
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler })],
+    });
+    const registry = createExecutableRegistry({
+      action,
+      targetActionInvocations,
+      activateContributionsOnDemand: async () => [],
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry,
+      actionId: action.definition.id,
+      input: {},
+      context: { surface: 'cli' },
+    })).resolves.toEqual({
+      matched: true,
+      result: {
+        ok: false,
+        errorCode: 'plugin_action_result_schema_invalid',
+        error: 'Plugin action result must be JSON-safe',
+      },
+    });
+  });
+
+  it('fails closed when a declared target action is still unbound', async () => {
+    const action: ResolvedActionContribution = {
+      ...createAction('/unused/daemon.mjs', 'run'),
+      definition: {
+        ...createAction('/unused/daemon.mjs', 'run').definition,
+        dangerLevel: 'safe', scopes: ['global'], contributionSurfaces: ['cli'],
+      },
+    };
+    const activateContributionsOnDemand = vi.fn(async () => []);
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [], expectedActions: [{ pluginId: 'acme.action.plugin', localId: 'run' }],
+    });
+    const registry = createExecutableRegistry({
+      action, targetActionInvocations, activateContributionsOnDemand,
+    });
+
+    await expect(executePluginActionIfAvailable({
+      runtimeRegistry: registry, actionId: 'run', input: {}, context: { surface: 'cli' },
+    })).resolves.toMatchObject({
+      matched: true,
+      result: { ok: false, errorCode: 'plugin_action_handler_missing' },
+    });
+    expect(activateContributionsOnDemand).toHaveBeenCalledWith([{
+      pluginId: 'acme.action.plugin',
+      family: 'actions',
+      localId: 'run',
+    }]);
+  });
+
+  it('requires qualified identity when two target plugins publish the same local action id', async () => {
+    const alpha = { ...createAction('/unused/a.mjs', 'run'), pluginId: 'acme.alpha' };
+    const beta = { ...createAction('/unused/b.mjs', 'run'), pluginId: 'acme.beta' };
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [
+        { pluginId: 'acme.alpha', pluginVersion: '1', generation: '7', localId: 'run', definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] }, handler: async () => ({ owner: 'alpha' }) },
+        { pluginId: 'acme.beta', pluginVersion: '1', generation: '7', localId: 'run', definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] }, handler: async () => ({ owner: 'beta' }) },
+      ],
+    });
+    const base = createExecutableRegistry({ action: alpha, targetActionInvocations, activateContributionsOnDemand: async () => [] });
+    const contributes = {
+      ...base.contributes,
+      actions: [alpha, beta],
+      actionsById: new Map([['acme.alpha/run', alpha], ['acme.beta/run', beta]]),
+    };
+    const runtimeRegistry = { ...base, contributes };
+
+    await expect(executePluginActionIfAvailable({ runtimeRegistry, actionId: 'acme.beta/run', input: {}, context: { surface: 'cli' } }))
+      .resolves.toEqual({ matched: true, result: { ok: true, result: { owner: 'beta' } } });
+    await expect(executePluginActionIfAvailable({ runtimeRegistry, actionId: 'run', input: {}, context: { surface: 'cli' } }))
+      .resolves.toEqual({ matched: false });
+  });
+
+  it('does not turn a globally supplied local action id into authority even when only one plugin matches', async () => {
+    const action = { ...createAction('/unused/a.mjs', 'run'), pluginId: 'acme.alpha' };
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [{
+        pluginId: 'acme.alpha', pluginVersion: '1', generation: '7', localId: 'run',
+        definition: { id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'] },
+        handler: async () => ({ owner: 'alpha' }),
+      }],
+    });
+    const base = createExecutableRegistry({ action, targetActionInvocations, activateContributionsOnDemand: async () => [] });
+    const runtimeRegistry = {
+      ...base,
+      contributes: { ...base.contributes, actionsById: new Map([['acme.alpha/run', action]]) },
+    };
+
+    await expect(executePluginActionIfAvailable({ runtimeRegistry, actionId: 'run', input: {}, context: { surface: 'cli' } }))
+      .resolves.toEqual({ matched: false });
+    await expect(executePluginActionIfAvailable({ runtimeRegistry, actionId: 'acme.alpha/run', input: {}, context: { surface: 'cli' } }))
+      .resolves.toEqual({ matched: true, result: { ok: true, result: { owner: 'alpha' } } });
+  });
+
+  it('does not import a daemon module to resolve an unbound static action export', async () => {
     const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-exec-'));
-    const daemonEntryPath = await writeActionDaemon(pluginRoot);
+    const daemonEntryPath = join(pluginRoot, 'daemon.mjs');
+    await writeFile(daemonEntryPath, 'throw new Error("static action module must not be imported");\n', 'utf8');
     const action = createAction(daemonEntryPath);
 
     const result = await executePluginActionIfAvailable({
@@ -655,27 +531,38 @@ describe('executePluginActionIfAvailable', () => {
     expect(result).toEqual({
       matched: true,
       result: {
-        ok: true,
-        result: {
-          actionId: 'acme.review.start',
-          input: {
-            scope: 'diff',
-          },
-          pluginId: 'acme.action.plugin',
-          surface: 'cli',
-        },
+        ok: false,
+        errorCode: 'plugin_action_handler_missing',
+        error: 'Plugin action is not bound through named activation',
       },
     });
   });
 
-  it('activates an onCommand owner before executing a command-backed action handler', async () => {
+  it('activates the executable action registration behind a command contribution', async () => {
     const action = createAction('/unused/daemon.mjs', 'acme.action.start');
-    const activationEvents: string[] = [];
+    const activationDemands: unknown[] = [];
+    let targetActions: TargetActionInvocationRegistration[] = [];
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: targetActions,
+      expectedActions: [{ pluginId: 'acme.action.plugin', localId: action.definition.id }],
+      readActions: () => targetActions,
+    });
     const registry = createExecutableRegistry({
       action,
       commands: [createCommandContribution(action, 'acme.command.start')],
-      activatePluginsByEvent: async (activationEvent) => {
-        activationEvents.push(activationEvent);
+      targetActionInvocations,
+      activateContributionsOnDemand: async (demands) => {
+        activationDemands.push(...demands);
+        targetActions = [createTargetActionRegistration({
+          action,
+          handler: async (input, context) => ({
+            actionId: action.definition.id,
+            input,
+            pluginId: context.plugin.id,
+            surface: context.surface ?? 'cli',
+          }),
+        })];
+        targetActionInvocations.refresh();
         return [{ pluginId: action.pluginId ?? '', diagnostics: [] }];
       },
     });
@@ -689,7 +576,11 @@ describe('executePluginActionIfAvailable', () => {
       },
     });
 
-    expect(activationEvents).toEqual(['onCommand:acme.command.start']);
+    expect(activationDemands).toEqual([{
+      pluginId: 'acme.action.plugin',
+      family: 'actions',
+      localId: 'acme.action.start',
+    }]);
     expect(result).toEqual({
       matched: true,
       result: {
@@ -706,14 +597,31 @@ describe('executePluginActionIfAvailable', () => {
     });
   });
 
-  it('activates an onTool owner before executing a tool-backed action handler', async () => {
+  it('activates the executable action registration behind a tool contribution', async () => {
     const action = createAction('/unused/daemon.mjs', 'acme.action.inspect');
-    const activationEvents: string[] = [];
+    const activationDemands: unknown[] = [];
+    let targetActions: TargetActionInvocationRegistration[] = [];
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: targetActions,
+      expectedActions: [{ pluginId: 'acme.action.plugin', localId: action.definition.id }],
+      readActions: () => targetActions,
+    });
     const registry = createExecutableRegistry({
       action,
       tools: [createToolContribution(action, 'acme.tool.inspect')],
-      activatePluginsByEvent: async (activationEvent) => {
-        activationEvents.push(activationEvent);
+      targetActionInvocations,
+      activateContributionsOnDemand: async (demands) => {
+        activationDemands.push(...demands);
+        targetActions = [createTargetActionRegistration({
+          action,
+          handler: async (input, context) => ({
+            actionId: action.definition.id,
+            input,
+            pluginId: context.plugin.id,
+            surface: context.surface ?? 'cli',
+          }),
+        })];
+        targetActionInvocations.refresh();
         return [{ pluginId: action.pluginId ?? '', diagnostics: [] }];
       },
     });
@@ -727,7 +635,11 @@ describe('executePluginActionIfAvailable', () => {
       },
     });
 
-    expect(activationEvents).toEqual(['onTool:acme.tool.inspect']);
+    expect(activationDemands).toEqual([{
+      pluginId: 'acme.action.plugin',
+      family: 'actions',
+      localId: 'acme.action.inspect',
+    }]);
     expect(result).toEqual({
       matched: true,
       result: {
@@ -746,11 +658,15 @@ describe('executePluginActionIfAvailable', () => {
 
   it('returns activation diagnostics before invoking an action handler when lazy activation fails', async () => {
     const action = createAction('/unused/daemon.mjs', 'acme.action.fail');
-    const handler = vi.fn(async () => ({ ok: true as const, data: null }));
+    const handler = vi.fn(async () => null);
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [],
+      expectedActions: [{ pluginId: 'acme.action.plugin', localId: action.definition.id }],
+    });
     const registry = createExecutableRegistry({
       action,
-      handler,
-      activatePluginsByEvent: async () => [{
+      targetActionInvocations,
+      activateContributionsOnDemand: async () => [{
         pluginId: action.pluginId ?? '',
         diagnostics: [{
           code: 'plugin_activation_failed',
@@ -779,55 +695,47 @@ describe('executePluginActionIfAvailable', () => {
     });
   });
 
-  it('unwraps public plugin action success envelopes and validates data against resultSchema', async () => {
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-result-schema-'));
-    const daemonEntryPath = await writeActionDaemonWithReturn(
-      pluginRoot,
-      '({ ok: true, data: { summary: "ready" } })',
-    );
-    const action = {
-      ...createAction(daemonEntryPath),
-      definition: {
-        ...createAction(daemonEntryPath).definition,
-        outputSchema: {
-          type: 'object',
-          required: ['summary'],
-          properties: {
-            summary: { type: 'string' },
-          },
-          additionalProperties: false,
-        },
+  it('uses the committed target action generation instead of stale sourceSpec trust metadata', async () => {
+    const trustedAction = createAction('/unused/daemon.mjs', 'acme.action.untrusted');
+    const action: ResolvedActionContribution = {
+      ...trustedAction,
+      sourceSpec: {
+        ...trustedAction.sourceSpec!,
+        kind: 'path',
+        trustPolicy: 'prompt',
       },
     };
+    const handler = vi.fn(async () => ({ ok: true as const, data: null }));
+    const activateContributionsOnDemand = vi.fn(async () => [{ pluginId: action.pluginId ?? '', diagnostics: [] }]);
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler })],
+    });
+    const registry = createExecutableRegistry({ action, targetActionInvocations, activateContributionsOnDemand });
 
     const result = await executePluginActionIfAvailable({
-      registry: createRegistry(action),
-      actionId: 'acme.review.start',
-      input: { scope: 'diff' },
-      context: {
-        surface: 'cli',
-      },
+      runtimeRegistry: registry,
+      actionId: action.definition.id,
+      input: {},
+      context: { surface: 'cli' },
     });
 
+    expect(handler).toHaveBeenCalledOnce();
+    expect(activateContributionsOnDemand).not.toHaveBeenCalled();
     expect(result).toEqual({
       matched: true,
-      result: {
-        ok: true,
-        result: {
-          summary: 'ready',
-        },
-      },
+      result: { ok: true, result: { ok: true, data: null } },
     });
   });
 
   it('fails closed before invoking a plugin action when input does not match inputSchema', async () => {
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-input-schema-invalid-'));
-    const daemonEntryPath = await writeActionDaemon(pluginRoot);
-    const baseAction = createAction(daemonEntryPath);
+    const baseAction = createAction('/unused/daemon.mjs', 'run');
     const action: ResolvedActionContribution = {
       ...baseAction,
       definition: {
         ...baseAction.definition,
+        dangerLevel: 'safe',
+        scopes: ['global'],
+        contributionSurfaces: ['cli'],
         inputSchema: {
           type: 'object',
           required: ['scope'],
@@ -838,10 +746,25 @@ describe('executePluginActionIfAvailable', () => {
         },
       },
     };
+    const handler = vi.fn(async () => ({ ok: true }));
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [{
+        pluginId: 'acme.action.plugin', pluginVersion: '1.0.0', generation: '7', localId: 'run',
+        definition: {
+          id: 'run', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'],
+          inputSchema: action.definition.inputSchema,
+        },
+        handler,
+      }],
+    });
 
     const result = await executePluginActionIfAvailable({
-      registry: createRegistry(action),
-      actionId: 'acme.review.start',
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: 'run',
       input: { scope: 123 },
       context: {
         surface: 'cli',
@@ -856,73 +779,110 @@ describe('executePluginActionIfAvailable', () => {
         error: 'Plugin action input does not match its manifest inputSchema',
       },
     });
+    expect(handler).not.toHaveBeenCalled();
   });
 
-  it('fails closed when a plugin action success payload does not match resultSchema', async () => {
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-result-schema-invalid-'));
-    const daemonEntryPath = await writeActionDaemonWithReturn(
-      pluginRoot,
-      '({ ok: true, data: { summary: 123 } })',
-    );
-    const baseAction = createAction(daemonEntryPath);
+  it('validates null-prototype JSON enum inputs and const results without throwing', async () => {
+    const baseAction = createAction('/unused/daemon.mjs', 'safe-json');
     const action: ResolvedActionContribution = {
       ...baseAction,
       definition: {
         ...baseAction.definition,
-        outputSchema: {
+        inputSchema: {
           type: 'object',
-          required: ['summary'],
+          required: ['selection'],
           properties: {
-            summary: { type: 'string' },
+            selection: {
+              enum: [{ valueOf: 'literal', nested: [{ enabled: true }], amount: 4 }],
+            },
           },
+          additionalProperties: false,
+        },
+        outputSchema: {
+          const: { valueOf: 'result', nested: [{ accepted: true }], amount: 4 },
+        },
+      },
+    };
+    const selection = Object.assign(Object.create(null) as Record<string, unknown>, {
+      amount: 4,
+      nested: [Object.assign(Object.create(null) as Record<string, unknown>, { enabled: true })],
+      valueOf: 'literal',
+    });
+    const data = Object.assign(Object.create(null) as Record<string, unknown>, {
+      nested: [Object.assign(Object.create(null) as Record<string, unknown>, { accepted: true })],
+      valueOf: 'result',
+      amount: 4,
+    });
+    // Deliberately preserve the null prototype to exercise strict JSON normalization.
+    const handler = vi.fn(async () => data as never);
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler })],
+    });
+
+    const result = await executePluginActionIfAvailable({
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { selection },
+      context: { surface: 'cli' },
+    });
+
+    expect(result).toEqual({ matched: true, result: { ok: true, result: data } });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('rejects accessor-backed enum input with a coded result without invoking the accessor', async () => {
+    const baseAction = createAction('/unused/daemon.mjs', 'accessor-json');
+    const action: ResolvedActionContribution = {
+      ...baseAction,
+      definition: {
+        ...baseAction.definition,
+        inputSchema: {
+          type: 'object',
+          required: ['selection'],
+          properties: { selection: { enum: [{ valueOf: 'literal', enabled: true }] } },
           additionalProperties: false,
         },
       },
     };
+    let accessorReads = 0;
+    const selection = { enabled: true } as Record<string, unknown>;
+    Object.defineProperty(selection, 'valueOf', {
+      enumerable: true,
+      get() {
+        accessorReads += 1;
+        throw new Error('accessor must not execute');
+      },
+    });
+    const handler = vi.fn(async () => null);
+    const targetActionInvocations = createTargetActionInvocationRegistry({
+      actions: [createTargetActionRegistration({ action, handler })],
+    });
 
     const result = await executePluginActionIfAvailable({
-      registry: createRegistry(action),
-      actionId: 'acme.review.start',
-      input: { scope: 'diff' },
-      context: {
-        surface: 'cli',
-      },
+      runtimeRegistry: createExecutableRegistry({
+        action,
+        targetActionInvocations,
+        activateContributionsOnDemand: async () => [],
+      }),
+      actionId: action.definition.id,
+      input: { selection },
+      context: { surface: 'cli' },
     });
 
     expect(result).toEqual({
       matched: true,
       result: {
         ok: false,
-        errorCode: 'plugin_action_result_schema_invalid',
-        error: 'Plugin action returned data that does not match its manifest resultSchema',
+        errorCode: 'plugin_action_input_schema_invalid',
+        error: 'Plugin action input does not match its manifest inputSchema',
       },
     });
-  });
-
-  it('normalizes public plugin action failure envelopes without throwing raw errors', async () => {
-    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-action-result-failure-'));
-    const daemonEntryPath = await writeActionDaemonWithReturn(
-      pluginRoot,
-      '({ ok: false, error: { code: "acme_not_ready", message: "Acme is not ready", retryable: true } })',
-    );
-
-    const result = await executePluginActionIfAvailable({
-      registry: createRegistry(createAction(daemonEntryPath)),
-      actionId: 'acme.review.start',
-      input: { scope: 'diff' },
-      context: {
-        surface: 'cli',
-      },
-    });
-
-    expect(result).toEqual({
-      matched: true,
-      result: {
-        ok: false,
-        errorCode: 'acme_not_ready',
-        error: 'Acme is not ready',
-      },
-    });
+    expect(accessorReads).toBe(0);
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it('fails closed when a plugin action is not declared for the requested surface', async () => {
@@ -949,103 +909,8 @@ describe('executePluginActionIfAvailable', () => {
     });
   });
 
-  it('executes activation-time plugin actions from the authoritative runtime registry when resolving from happyHomeDir', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-action-home-'));
-    const { actionId } = await writeActivatedActionPluginFixture({ happyHomeDir });
-
-    const result = await executePluginActionIfAvailable({
-      happyHomeDir,
-      actionId,
-      input: { scope: 'runtime' },
-      context: {
-        defaultSessionId: 'sess-1',
-        surface: 'cli',
-      },
-    });
-
-    expect(result).toEqual({
-      matched: true,
-      result: {
-        ok: true,
-        result: {
-          actionId,
-          input: {
-            scope: 'runtime',
-          },
-          pluginId: 'acme.activated.action.plugin',
-          surface: 'cli',
-        },
-      },
-    });
-  });
-
-  it('executes manifest-declared plugin actions when resolving from happyHomeDir', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-action-manifest-home-'));
-    const { actionId } = await writeManifestActionPluginFixture({ happyHomeDir });
-
-    const result = await executePluginActionIfAvailable({
-      happyHomeDir,
-      actionId,
-      input: { scope: 'manifest' },
-      context: {
-        defaultSessionId: 'sess-1',
-        surface: 'cli',
-      },
-    });
-
-    expect(result).toEqual({
-      matched: true,
-      result: {
-        ok: true,
-        result: {
-          actionId,
-          input: {
-            scope: 'manifest',
-          },
-          pluginId: 'acme.manifest.action.plugin',
-          surface: 'cli',
-        },
-      },
-    });
-  });
-
-  it('executes synthetic actions generated from manifest-declared static tool handlers', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-tool-manifest-home-'));
-    const { toolId } = await writeManifestToolPluginFixture({ happyHomeDir });
-
-    const result = await executePluginActionIfAvailable({
-      happyHomeDir,
-      actionId: toolId,
-      input: { scope: 'manifest-tool' },
-      context: {
-        defaultSessionId: 'sess-1',
-        surface: 'cli',
-      },
-    });
-
-    expect(result).toEqual({
-      matched: true,
-      result: {
-        ok: true,
-        result: {
-          actionId: toolId,
-          input: {
-            scope: 'manifest-tool',
-          },
-          pluginId: 'acme.manifest.tool.plugin',
-          surface: 'cli',
-        },
-      },
-    });
-  });
-
   it('does not activate plugin runtime while checking built-in action ids', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-action-builtin-home-'));
-    const markerPath = join(happyHomeDir, 'activation-marker.txt');
-    await writeActivationMarkerPluginFixture({ happyHomeDir, markerPath });
-
     const result = await executePluginActionIfAvailable({
-      happyHomeDir,
       actionId: 'session.list',
       input: { limit: 2 },
       context: {
@@ -1054,62 +919,17 @@ describe('executePluginActionIfAvailable', () => {
     });
 
     expect(result).toEqual({ matched: false });
-    expect(existsSync(markerPath)).toBe(false);
   });
 
-  it('executes the reload-helper authoring example action after the plugin is installed and reloaded', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-reload-helper-home-'));
-    const pluginRoot = fileURLToPath(new URL('../../testkit/fixtures/authoring-examples/reload-helper-plugin/', import.meta.url));
-    const manifestPath = join(pluginRoot, '.happier-plugin', 'plugin.json');
-    const stateStore = createPluginStateStore({ happyHomeDir });
-
-    await stateStore.write({
-      t: 'happier_plugin_state_v1',
-      schemaVersion: 1,
-      plugins: {
-        'examples.reload-helper-plugin': {
-          source: {
-            kind: 'path',
-            locator: pluginRoot,
-            trustPolicy: 'local_trusted',
-            installPolicy: 'link',
-            resolvedPath: pluginRoot,
-            manifestPath,
-          },
-          compatibility: {
-            status: 'unknown',
-            diagnostics: [],
-          },
-          install: {
-            mode: 'link',
-            manifestVersion: '0.1.0',
-            manifestDigest: null,
-            installedPath: null,
-          },
-          state: {
-            enabled: true,
-          },
-        },
-      },
-    });
-
+  it('does not synthesize a process-local runtime for external action ids', async () => {
     const result = await executePluginActionIfAvailable({
-      happyHomeDir,
-      actionId: 'examples.reload.report',
+      actionId: 'acme.review.start',
       input: {},
       context: {
         surface: 'cli',
       },
     });
 
-    expect(result).toEqual({
-      matched: true,
-      result: {
-        ok: true,
-        result: {
-          activatedAtMs: expect.any(Number),
-        },
-      },
-    });
+    expect(result).toEqual({ matched: false });
   });
 });

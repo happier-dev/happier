@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
 import type { ScmBackendRegistry } from '@/scm/registry';
-import { resolveScmBackendRegistry } from '@/scm/scmBackendCatalog';
+import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
 import { buildWorkspaceManifestEntry, type WorkspaceManifestEntry } from '@/scm/workspace/workspaceExportPackaging/buildWorkspaceManifestEntry';
 import { isIgnorableWorkspaceExportAccessError } from '@/scm/workspace/workspaceExportFallbackEntries';
 
@@ -48,9 +48,14 @@ export async function scanWorkspaceManifest(params: Readonly<{
 }>): Promise<WorkspaceManifest> {
     const workspaceRoot = resolve(params.workspaceRoot);
     const safeFilterPolicy = resolveWorkspaceManifestSafeFilterPolicy(params.safeFilterPolicy);
-    const scmRegistry = safeFilterPolicy.excludeAdministrativePaths
-        ? await resolveScmBackendRegistry(params.scmRegistry)
-        : params.scmRegistry;
+    if (safeFilterPolicy.excludeAdministrativePaths && !params.scmRegistry) {
+        return runWithScmBackendRegistryLease(undefined, async (scmRegistry) =>
+            scanWorkspaceManifest({
+                ...params,
+                scmRegistry,
+            }));
+    }
+    const scmRegistry = params.scmRegistry;
     const pendingDirectories = [workspaceRoot];
     const entries: WorkspaceManifestEntry[] = [];
 
