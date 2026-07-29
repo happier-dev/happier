@@ -8,6 +8,7 @@ type VoiceReadinessCopy = {
   settings_unknown: string;
   settings_needs_migration: string;
   settings_invalid: string;
+  settings_missing_required_setting: string;
   provider_mode_unknown: string;
   server_feature_disabled: string;
   server_feature_installing: string;
@@ -61,6 +62,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'Provider settings could not be checked.',
     settings_needs_migration: 'Review this provider’s updated settings.',
     settings_invalid: 'Review the invalid provider settings.',
+    settings_missing_required_setting: 'Finish the required provider settings before starting Voice.',
     provider_mode_unknown: 'Choose a supported mode for this provider.',
     server_feature_disabled: 'This Voice provider is disabled by the server.',
     server_feature_installing: 'Voice support is being prepared by the server.',
@@ -108,6 +110,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'Не удалось проверить настройки провайдера.',
     settings_needs_migration: 'Проверьте обновлённые настройки провайдера.',
     settings_invalid: 'Проверьте недопустимые настройки провайдера.',
+    settings_missing_required_setting: 'Завершите обязательные настройки провайдера перед запуском голосового режима.',
     provider_mode_unknown: 'Выберите поддерживаемый режим для этого провайдера.',
     server_feature_disabled: 'Сервер отключил этого голосового провайдера.',
     server_feature_installing: 'Сервер подготавливает поддержку голосового режима.',
@@ -155,6 +158,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'Nie udało się sprawdzić ustawień dostawcy.',
     settings_needs_migration: 'Sprawdź zaktualizowane ustawienia dostawcy.',
     settings_invalid: 'Sprawdź nieprawidłowe ustawienia dostawcy.',
+    settings_missing_required_setting: 'Uzupełnij wymagane ustawienia dostawcy przed uruchomieniem trybu głosowego.',
     provider_mode_unknown: 'Wybierz tryb obsługiwany przez tego dostawcę.',
     server_feature_disabled: 'Serwer wyłączył tego dostawcę obsługi głosowej.',
     server_feature_installing: 'Serwer przygotowuje obsługę trybu głosowego.',
@@ -202,6 +206,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'No se ha podido comprobar la configuración del proveedor.',
     settings_needs_migration: 'Revisa la configuración actualizada del proveedor.',
     settings_invalid: 'Revisa la configuración no válida del proveedor.',
+    settings_missing_required_setting: 'Completa la configuración obligatoria del proveedor antes de iniciar Voz.',
     provider_mode_unknown: 'Elige un modo compatible con este proveedor.',
     server_feature_disabled: 'El servidor ha desactivado este proveedor de voz.',
     server_feature_installing: 'El servidor está preparando la compatibilidad con la función de voz.',
@@ -249,6 +254,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'Non è stato possibile controllare le impostazioni del provider.',
     settings_needs_migration: 'Controlla le impostazioni aggiornate del provider.',
     settings_invalid: 'Controlla le impostazioni non valide del provider.',
+    settings_missing_required_setting: 'Completa le impostazioni obbligatorie del provider prima di avviare Voce.',
     provider_mode_unknown: 'Scegli una modalità supportata da questo provider.',
     server_feature_disabled: 'Il server ha disabilitato questo provider vocale.',
     server_feature_installing: 'Il server sta preparando il supporto per la funzione Voce.',
@@ -296,6 +302,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'Não foi possível verificar as configurações do provedor.',
     settings_needs_migration: 'Revise as configurações atualizadas do provedor.',
     settings_invalid: 'Revise as configurações inválidas do provedor.',
+    settings_missing_required_setting: 'Conclua as configurações obrigatórias do provedor antes de iniciar a função de Voz.',
     provider_mode_unknown: 'Escolha um modo compatível com este provedor.',
     server_feature_disabled: 'O servidor desativou este provedor de Voz.',
     server_feature_installing: 'O servidor está preparando o suporte à função de Voz.',
@@ -343,6 +350,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'No s’ha pogut comprovar la configuració del proveïdor.',
     settings_needs_migration: 'Revisa la configuració actualitzada del proveïdor.',
     settings_invalid: 'Revisa la configuració no vàlida del proveïdor.',
+    settings_missing_required_setting: 'Completa la configuració obligatòria del proveïdor abans d’iniciar la funció de veu.',
     provider_mode_unknown: 'Tria un mode compatible amb aquest proveïdor.',
     server_feature_disabled: 'El servidor ha desactivat aquest proveïdor de veu.',
     server_feature_installing: 'El servidor està preparant la compatibilitat amb la funció de veu.',
@@ -390,6 +398,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: '无法检查提供商设置。',
     settings_needs_migration: '请检查此提供商更新后的设置。',
     settings_invalid: '请检查无效的提供商设置。',
+    settings_missing_required_setting: '使用语音功能前，请完成必填的提供商设置。',
     provider_mode_unknown: '请为此提供商选择受支持的模式。',
     server_feature_disabled: '服务器已禁用此语音提供商。',
     server_feature_installing: '服务器正在准备语音支持。',
@@ -437,6 +446,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: '無法檢查提供者設定。',
     settings_needs_migration: '請檢查此提供者更新後的設定。',
     settings_invalid: '請檢查無效的提供者設定。',
+    settings_missing_required_setting: '使用語音功能前，請完成必填的提供者設定。',
     provider_mode_unknown: '請為此提供者選擇支援的模式。',
     server_feature_disabled: '伺服器已停用此語音提供者。',
     server_feature_installing: '伺服器正在準備語音支援。',
@@ -484,6 +494,7 @@ export const voiceReadinessTranslations = {
     settings_unknown: 'プロバイダー設定を確認できませんでした。',
     settings_needs_migration: '更新されたプロバイダー設定を確認してください。',
     settings_invalid: '無効なプロバイダー設定を確認してください。',
+    settings_missing_required_setting: '音声機能を開始する前に、必須のプロバイダー設定を完了してください。',
     provider_mode_unknown: 'このプロバイダーが対応しているモードを選択してください。',
     server_feature_disabled: 'サーバーでこの音声プロバイダーが無効になっています。',
     server_feature_installing: 'サーバーで音声機能のサポートを準備しています。',

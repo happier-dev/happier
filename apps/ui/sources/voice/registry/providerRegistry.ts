@@ -23,7 +23,13 @@ import {
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 
 const VoiceProviderSettingsProjectionSchema = z.object({
-  status: z.enum(['ready', 'needs_migration', 'invalid', 'unsupported_version']),
+  status: z.enum([
+    'ready',
+    'missing_required_setting',
+    'needs_migration',
+    'invalid',
+    'unsupported_version',
+  ]),
   modeId: z.string().min(1).max(64).regex(/^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$/u).nullable(),
   requirements: z.array(z.enum([
     'server_feature',
@@ -39,12 +45,24 @@ const VoiceProviderSettingsProjectionSchema = z.object({
   }).optional(),
 }).strict();
 
+const VoiceProviderSettingsReadinessProjectionSchema = z.object({
+  status: z.enum(['ready', 'missing_required_setting']),
+}).strict();
+
 const VoiceProviderSettingsJsonObjectV1Schema = z.record(
   z.string(),
   VoiceProviderSettingsJsonValueV1Schema,
 );
 
 export type VoiceProviderSettingsProjection = z.infer<typeof VoiceProviderSettingsProjectionSchema>;
+
+export function isVoiceProviderSettingsProjectionCurrent(
+  projection: VoiceProviderSettingsProjection | null | undefined,
+): projection is VoiceProviderSettingsProjection & Readonly<{
+  status: 'ready' | 'missing_required_setting';
+}> {
+  return projection?.status === 'ready' || projection?.status === 'missing_required_setting';
+}
 
 export type VoiceProviderCredentialReadinessProjection = Readonly<{
   status: 'ready' | 'missing' | 'unknown';
@@ -287,6 +305,15 @@ function normalizeContribution(
     && 'internal' in raw
     ? raw.internal?.providerSettings ?? null
     : null;
+  const projectSettingsReadiness = raw.kind === 'voice.conversation-provider.v1'
+    && 'internal' in raw
+    ? raw.internal?.projectSettingsReadiness
+    : undefined;
+  if (projectSettingsReadiness !== undefined && typeof projectSettingsReadiness !== 'function') {
+    throw Object.assign(new Error('invalid_voice_provider_settings_readiness_projector'), {
+      code: 'invalid_voice_provider_settings_readiness_projector',
+    });
+  }
   const hasDisclosureOnlyInternalSettings = Boolean(publicConversationDeclaration?.settings
     && publicConversationDeclaration.settings.fields.length === 0
     && !publicConversationDeclaration.settings.connectedServicesBinding
@@ -316,11 +343,22 @@ function normalizeContribution(
         const projection = projectExternalVoiceProviderSettings(envelope, publicProviderSettings);
         if (projection.status !== 'ready') return projection;
         const parsedConfig = publicProviderSettings.parseConfig(envelope?.config);
+        const parsedConfigObject = VoiceProviderSettingsJsonObjectV1Schema.safeParse(parsedConfig);
+        if (!parsedConfigObject.success) return INVALID_SETTINGS_PROJECTION;
         const selectedMode = frozenDescriptor.selectionOptions?.find(
-          (option) => option.configPatch && isConfigPatchMatch(parsedConfig, option.configPatch),
+          (option) => option.configPatch && isConfigPatchMatch(parsedConfigObject.data, option.configPatch),
         )?.modeId;
+        const readinessProjection = projectSettingsReadiness
+          ? VoiceProviderSettingsReadinessProjectionSchema.safeParse(
+              projectSettingsReadiness(parsedConfigObject.data),
+            )
+          : null;
+        if (readinessProjection && !readinessProjection.success) return INVALID_SETTINGS_PROJECTION;
         return Object.freeze({
           ...projection,
+          ...(readinessProjection?.success
+            ? { status: readinessProjection.data.status }
+            : {}),
           modeId: selectedMode ?? frozenDescriptor.selectionOptions?.[0]?.modeId ?? projection.modeId,
         });
       }

@@ -1182,6 +1182,14 @@ describe('createBundledRealtimeProviderRuntime', () => {
       kind: 'provider_auth_invalid',
       reason: 'credential_access_review_required',
     });
+    controllerProtocol.machine.disconnected({
+      controlSessionId: 'voice-global',
+      code: 'realtime_byo_not_configured',
+    });
+    expect(host.createMachineError).toHaveBeenLastCalledWith({
+      kind: 'provider_setup_required',
+      reason: 'realtime_byo_not_configured',
+    });
     emitMicFailure({ kind: 'mic_permission_revoked', reason: 'browser_permission_revoked' });
     await vi.waitFor(() => expect(fail).toHaveBeenCalledWith('mic_permission_revoked'));
     controllerProtocol.machine.failed({ controlSessionId: 'voice-global', code: 'mic_permission_revoked' });

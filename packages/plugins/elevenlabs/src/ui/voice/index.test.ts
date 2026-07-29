@@ -35,6 +35,32 @@ describe('ElevenLabs bundled voice UI contribution', () => {
     })?.config)).not.toContain('xi_legacy');
   });
 
+  it('projects a missing BYO agent as required settings without blocking hosted mode', () => {
+    const internal = BUNDLED_VOICE_UI_ENTRIES[0]?.internal as
+      | (NonNullable<(typeof BUNDLED_VOICE_UI_ENTRIES)[number]['internal']> & {
+        projectSettingsReadiness?: (config: unknown) => Readonly<{ status: string }>;
+      })
+      | undefined;
+    const projector = internal?.projectSettingsReadiness;
+
+    expect(projector).toBeTypeOf('function');
+    expect(projector?.({
+      ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+      billingMode: 'byo',
+      byo: { agentId: null },
+    })).toEqual({ status: 'missing_required_setting' });
+    expect(projector?.({
+      ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+      billingMode: 'byo',
+      byo: { agentId: 'agent_1' },
+    })).toEqual({ status: 'ready' });
+    expect(projector?.({
+      ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+      billingMode: 'happier',
+      byo: { agentId: null },
+    })).toEqual({ status: 'ready' });
+  });
+
   it('resets a legacy speed outside the canonical provisioning range during migration', () => {
     const migrated = BUNDLED_VOICE_UI_ENTRIES[0]?.internal.legacySettingsMigration.migrateLegacy({
       billingMode: 'byo',

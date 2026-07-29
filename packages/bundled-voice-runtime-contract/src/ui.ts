@@ -100,7 +100,12 @@ export type BundledVoiceConversationSettingsDescriptor = Readonly<{
 }>;
 
 export type BundledVoiceSettingsProjection = Readonly<{
-  status: 'ready' | 'needs_migration' | 'invalid' | 'unsupported_version';
+  status:
+    | 'ready'
+    | 'missing_required_setting'
+    | 'needs_migration'
+    | 'invalid'
+    | 'unsupported_version';
   modeId: string | null;
 }>;
 
@@ -143,6 +148,13 @@ export type BundledVoiceConversationUiEntry = Readonly<{
     projectSettingsAnalytics?(
       config: BundledVoiceSettingsConfig,
     ): Readonly<Record<string, boolean | string>>;
+    /**
+     * Provider-owned readiness refinement for a config already accepted by
+     * the canonical public settings declaration.
+     */
+    projectSettingsReadiness?(
+      config: BundledVoiceSettingsConfig,
+    ): Readonly<{ status: 'ready' | 'missing_required_setting' }>;
     createSettingsSection?(): BundledVoiceConversationSettingsDescriptor;
     createAccountOperationClient?(input: Readonly<{
       createAccountOperations(signal: AbortSignal): BundledVoiceAccountOperationService;

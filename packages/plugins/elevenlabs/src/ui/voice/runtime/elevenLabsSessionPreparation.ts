@@ -89,10 +89,13 @@ export function createElevenLabsSessionPreparationService(deps: Readonly<{
     if (billingMode === 'byo') {
       const agentId = String(providerSettings?.byo?.agentId ?? '').trim();
       if (!agentId) {
-        deps.alert('common.error', 'settingsVoice.byo.notConfigured');
+        deps.alert('common.error', 'voice.readiness.settings_missing_required_setting');
         return {
           kind: 'declined',
-          error: deps.createMachineError({ kind: 'provider_error', reason: 'realtime_byo_not_configured' }),
+          error: deps.createMachineError({
+            kind: 'provider_setup_required',
+            reason: 'realtime_byo_not_configured',
+          }),
         };
       }
       if (input.signal.aborted) return { kind: 'aborted' };

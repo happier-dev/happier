@@ -30,6 +30,7 @@ import {
 import { VoiceCredentialItem } from '@/voice/credentials/CredentialItem';
 import { createDefaultVoiceProviderRegistry } from '@/voice/registry/defaultRegistry';
 import {
+  isVoiceProviderSettingsProjectionCurrent,
   projectVoiceProviderCredentialReadiness,
   projectVoiceProviderSettings,
   type VoiceProviderCredentialReadinessProjection,
@@ -283,7 +284,9 @@ export function VoiceProviderSection(props: {
     row.providerId === voice.providerId
     && row.entry.providerSettings
     && row.entry.source.kind !== 'built_in'
-    && projectVoiceProviderSettings(row.entry, voice.providers[row.providerId] ?? null)?.status === 'ready'
+    && isVoiceProviderSettingsProjectionCurrent(
+      projectVoiceProviderSettings(row.entry, voice.providers[row.providerId] ?? null),
+    )
   ));
   const selectedDeclarativeSettings = selectedDeclarativeSettingsRow?.entry.providerSettings;
   const selectedDeclarativeSettingsSource = selectedDeclarativeSettingsRow

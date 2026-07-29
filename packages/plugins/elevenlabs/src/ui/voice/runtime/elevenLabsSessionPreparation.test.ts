@@ -103,7 +103,17 @@ describe('createElevenLabsSessionPreparationService', () => {
       controlSessionId: 'byo', requestedTargetSessionId: null, retryAfterPaywall: false,
       settings: {}, accountOperations: accountOperations(), hostedConversation: null,
       signal: new AbortController().signal, textOnly: false,
-    })).resolves.toMatchObject({ kind: 'declined', error: { reason: 'realtime_byo_not_configured' } });
+    })).resolves.toMatchObject({
+      kind: 'declined',
+      error: {
+        kind: 'provider_setup_required',
+        reason: 'realtime_byo_not_configured',
+      },
+    });
+    expect(mocks.alert).toHaveBeenCalledWith(
+      'common.error',
+      'voice.readiness.settings_missing_required_setting',
+    );
   });
 
   it('uses short-lived provider auth minted from the account credential and builds the SDK configuration', async () => {

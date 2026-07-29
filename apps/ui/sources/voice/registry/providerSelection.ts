@@ -2,6 +2,7 @@ import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
 import type { VoiceProviderSettingsJsonValueV1 } from '@happier-dev/protocol';
 
 import {
+  isVoiceProviderSettingsProjectionCurrent,
   projectVoiceProviderSettings,
   type VoiceProviderRegistry,
   type VoiceProviderRegistryEntry,
@@ -69,7 +70,7 @@ export function projectVoiceProviderSelectionRows(
         titleKey: option.titleKey,
         subtitleKey: option.subtitleKey,
         selected: settings.providerId === entry.providerId
-          && projection?.status === 'ready'
+          && isVoiceProviderSettingsProjectionCurrent(projection)
           && projection.modeId === option.modeId,
         envelope,
         entry,
@@ -172,7 +173,8 @@ export function selectVoiceProviderOption(
     },
   };
   const projection = projectVoiceProviderSettings(entry, nextEnvelope);
-  if (!projection || projection.status !== 'ready' || projection.modeId !== option.modeId) return null;
+  if (!isVoiceProviderSettingsProjectionCurrent(projection)
+    || projection.modeId !== option.modeId) return null;
   return {
     ...settings,
     providerId,

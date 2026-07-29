@@ -170,7 +170,11 @@ describe('VoiceProviderSection', () => {
 
             expect(row?.props?.disabled).not.toBe(true);
             expect(row?.props?.onPress).toBeTypeOf('function');
-            expect(row?.props?.detail).toContain('voice.readiness.credential_missing');
+            expect(row?.props?.detail).toContain(
+                providerId === 'realtime_elevenlabs'
+                    ? 'voice.readiness.settings_missing_required_setting'
+                    : 'voice.readiness.credential_missing',
+            );
             row?.props?.onPress?.();
             expect(setVoice).toHaveBeenCalledWith(expect.objectContaining({
                 providerId,
@@ -369,6 +373,69 @@ describe('VoiceProviderSection', () => {
         expect(readiness?.props.subtitle).toContain('voice.readiness.actions.review_credential_access');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.credential_missing');
         expect(readiness?.props.subtitle).not.toContain('voice.readiness.actions.configure_credential');
+    }, 120_000);
+
+    it('does not report ElevenLabs ready when its credential is approved but its BYO agent is missing', async () => {
+        const { settingsParse } = await import('@/sync/domains/settings/settings');
+        const { createDefaultVoiceProviderRegistry } = await import('@/voice/registry/defaultRegistry');
+        const entry = createDefaultVoiceProviderRegistry().get('realtime_elevenlabs');
+        const slot = entry?.accountCredentialSlot;
+        if (!slot) throw new Error('expected ElevenLabs account credential slot');
+        const voice = {
+            providerId: 'realtime_elevenlabs',
+            providers: {
+                realtime_elevenlabs: {
+                    schemaVersion: 2,
+                    config: elevenLabsByoConfig(),
+                },
+            },
+            credentialBindings: [{
+                providerId: 'realtime_elevenlabs',
+                approvedRecipientContractDigest: slot.recipientContractDigest,
+                credentialBindings: {
+                    account: { [slot.id]: 'elevenlabs-secret' },
+                },
+            }],
+        };
+        storageBoundary.settings = settingsParse({
+            secrets: [{
+                id: 'elevenlabs-secret',
+                name: 'ElevenLabs Voice',
+                kind: 'apiKey',
+                encryptedValue: { _isSecretValue: true, value: 'retained' },
+                createdAt: 1,
+                updatedAt: 1,
+            }],
+            voice,
+        });
+        onTestFinished(() => {
+            storageBoundary.settings = null;
+        });
+
+        const { VoiceProviderSection } = await import('./VoiceProviderSection');
+        const { tree } = await renderScreen(React.createElement(VoiceProviderSection, {
+            voice: voice as any,
+            setVoice: vi.fn(),
+            happierVoiceSupported: true,
+            platformOs: 'web',
+        }));
+
+        await act(async () => {
+            findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+                testID: 'settings.voice.provider.checkSetup',
+            })?.props.onPress();
+        });
+        const readiness = findTestInstanceByTypeWithProps(tree, 'Item' as any, {
+            testID: 'settings.voice.provider.readiness',
+        });
+        expect(readiness?.props.subtitle).toContain(
+            'voice.readiness.settings_missing_required_setting',
+        );
+        expect(readiness?.props.subtitle).toContain(
+            'voice.readiness.actions.open_provider_settings',
+        );
+        expect(readiness?.props.subtitle).not.toContain('voice.readiness.ready');
+        expect(readiness?.props.subtitle).not.toContain('credential');
     }, 120_000);
 
     it('exposes every provider choice as the same radio control with selected state', async () => {

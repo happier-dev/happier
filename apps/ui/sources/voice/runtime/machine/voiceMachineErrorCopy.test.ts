@@ -11,6 +11,7 @@ const expectedTranslationKeys = {
     transport_disconnect: 'settingsVoice.local.machineErrors.transport_disconnect',
     provider_error: 'settingsVoice.local.machineErrors.provider_error',
     provider_auth_invalid: 'settingsVoice.local.machineErrors.provider_auth_invalid',
+    provider_setup_required: 'voice.readiness.settings_missing_required_setting',
     reconnect_exhausted: 'settingsVoice.local.machineErrors.transport_disconnect',
     audio_context_suspended: 'settingsVoice.local.machineErrors.audio_context_suspended',
     stt_timeout: 'settingsVoice.local.machineErrors.stt_timeout',

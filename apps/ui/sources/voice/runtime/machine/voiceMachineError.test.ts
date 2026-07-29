@@ -34,6 +34,7 @@ describe('createVoiceMachineError', () => {
     });
 
     it.each([
+        ['provider_setup_required', 'user_action', 'open_settings'],
         ['authentication_required', 'user_action', 'connect_agent'],
         ['session_unavailable', 'never', 'none'],
         ['unsupported_runtime', 'user_action', 'install_agent_runtime'],
@@ -107,6 +108,7 @@ describe('classifyMicSessionFailure', () => {
             'transport_disconnect',
             'provider_error',
             'provider_auth_invalid',
+            'provider_setup_required',
             'reconnect_exhausted',
             'audio_context_suspended',
             'stt_timeout',
@@ -125,6 +127,7 @@ describe('classifyMicSessionFailure', () => {
                 'immediate_once',
                 'immediate_once',
                 'backoff',
+                'user_action',
                 'user_action',
                 'user_action',
                 'user_action',

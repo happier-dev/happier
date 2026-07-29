@@ -25,6 +25,7 @@ import {
   createElevenLabsVoiceProviderRuntimeRegistration,
 } from './runtime/createRuntimeContribution.js';
 import { createElevenLabsEventMapper } from './runtime/elevenLabsEventMapper.js';
+import { projectElevenLabsSettingsReadiness } from './settingsReadiness.js';
 
 export { createElevenLabsProviderDiagnosticEvent } from './runtime/elevenLabsDiagnostics.js';
 
@@ -64,6 +65,7 @@ type ElevenLabsVoiceUiRuntimeEntry = ElevenLabsVoiceUiEntry
       ) => ReturnType<typeof ElevenLabsVoiceProviderSettingsSchema.parse> | null;
     }>;
     projectSettingsAnalytics: (value: unknown) => Readonly<Record<string, boolean | string>>;
+    projectSettingsReadiness: typeof projectElevenLabsSettingsReadiness;
     createSettingsSection: typeof createElevenLabsSettingsSection;
     createTranscriptEventMapper: typeof createElevenLabsEventMapper;
     projectCredentialReadiness: typeof projectElevenLabsCredentialReadiness;
@@ -245,6 +247,7 @@ export const BUNDLED_VOICE_UI_ENTRIES: readonly ElevenLabsVoiceUiRuntimeEntry[] 
       provisionResponseSchema: ElevenLabsProvisionResponseSchema,
       legacySettingsMigration,
       projectSettingsAnalytics,
+      projectSettingsReadiness: projectElevenLabsSettingsReadiness,
       createSettingsSection: createElevenLabsSettingsSection,
       createTranscriptEventMapper: createElevenLabsEventMapper,
       projectCredentialReadiness: projectElevenLabsCredentialReadiness,

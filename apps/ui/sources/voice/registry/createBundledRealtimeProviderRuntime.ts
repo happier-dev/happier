@@ -30,24 +30,26 @@ function abortIfRequested(signal: AbortSignal): void {
   if (signal.aborted) throw Object.assign(new Error('voice_attempt_aborted'), { name: 'AbortError' });
 }
 
-const LEGACY_CREDENTIAL_SETUP_DECLINE_CODE = 'realtime_byo_not_configured';
+const PROVIDER_SETTINGS_SETUP_DECLINE_CODE = 'realtime_byo_not_configured';
 
 function isCredentialSetupDeclineCode(code: string): boolean {
-  return code === LEGACY_CREDENTIAL_SETUP_DECLINE_CODE
-    || readVoiceProviderCredentialRemediationCode({ code }) !== null;
+  return readVoiceProviderCredentialRemediationCode({ code }) !== null;
 }
 
-function readCredentialSetupDeclineCode(error: unknown): string | null {
+function readActionableSetupDeclineCode(error: unknown): string | null {
   const remediationCode = readVoiceProviderCredentialRemediationCode(error);
   if (remediationCode) return remediationCode;
   const candidate = error as { code?: unknown } | null;
-  return candidate?.code === LEGACY_CREDENTIAL_SETUP_DECLINE_CODE
-    ? LEGACY_CREDENTIAL_SETUP_DECLINE_CODE
+  return candidate?.code === PROVIDER_SETTINGS_SETUP_DECLINE_CODE
+    ? PROVIDER_SETTINGS_SETUP_DECLINE_CODE
     : null;
 }
 
-function machineErrorKindForDecline(code: string): 'mic_permission_denied' | 'provider_auth_invalid' | 'provider_error' {
+function machineErrorKindForDecline(
+  code: string,
+): 'mic_permission_denied' | 'provider_auth_invalid' | 'provider_setup_required' | 'provider_error' {
   if (code === 'mic_permission_denied') return 'mic_permission_denied';
+  if (code === PROVIDER_SETTINGS_SETUP_DECLINE_CODE) return 'provider_setup_required';
   return isCredentialSetupDeclineCode(code) ? 'provider_auth_invalid' : 'provider_error';
 }
 
@@ -167,7 +169,7 @@ export function createBundledRealtimeProviderRuntime(
       try {
         return await config.protocol.prepare(input);
       } catch (error) {
-        const declineCode = readCredentialSetupDeclineCode(error);
+        const declineCode = readActionableSetupDeclineCode(error);
         if (declineCode) return { kind: 'declined', code: declineCode };
         throw error;
       }

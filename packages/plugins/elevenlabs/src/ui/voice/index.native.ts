@@ -3,6 +3,7 @@ import { PluginVoiceProviderContributionV1Schema } from '@happier-dev/protocol';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { createElevenLabsSettingsSection } from './settings.js';
 import { ElevenLabsVoiceProviderSettingsSchema } from '../../protocol/voice/index.js';
+import { projectElevenLabsSettingsReadiness } from './settingsReadiness.js';
 
 const declaration = PluginVoiceProviderContributionV1Schema.parse(
   PLUGIN_MANIFEST.contributes.voiceProviders[0],
@@ -71,6 +72,7 @@ export const BUNDLED_VOICE_UI_ENTRIES = Object.freeze([
     ]),
     internal: Object.freeze({
       createSettingsSection: createElevenLabsSettingsSection,
+      projectSettingsReadiness: projectElevenLabsSettingsReadiness,
       projectCredentialReadiness: projectElevenLabsCredentialReadiness,
     }),
   }),

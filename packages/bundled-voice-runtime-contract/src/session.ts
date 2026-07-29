@@ -6,6 +6,7 @@ export type VoiceMachineErrorKind =
   | 'transport_disconnect'
   | 'provider_error'
   | 'provider_auth_invalid'
+  | 'provider_setup_required'
   | 'reconnect_exhausted'
   | 'audio_context_suspended'
   | 'stt_timeout'

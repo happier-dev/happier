@@ -172,6 +172,13 @@ describe('voice provider registry', () => {
             kind: 'voice.internal.realtime-settings.v1',
             providerId: 'public_settings_fixture',
           }),
+          ...({
+            projectSettingsReadiness: (config: unknown) => (
+              (config as Readonly<{ billingMode?: unknown }>).billingMode === 'byo'
+                ? { status: 'missing_required_setting' as const }
+                : { status: 'ready' as const }
+            ),
+          } as Record<string, unknown>),
         },
       }],
     });
@@ -188,7 +195,7 @@ describe('voice provider registry', () => {
     expect(projectVoiceProviderSettings(entry, {
       schemaVersion: 2,
       config: { mode: 'default', billingMode: 'byo' },
-    })).toEqual({ status: 'ready', modeId: 'byo' });
+    })).toEqual({ status: 'missing_required_setting', modeId: 'byo' });
   });
 
   it('projects provider-owned credential readiness through the guarded registry boundary', () => {
@@ -313,7 +320,22 @@ describe('voice provider registry', () => {
         ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
         billingMode: 'byo',
       },
+    })).toMatchObject({ status: 'missing_required_setting', modeId: 'byo' });
+    expect(registry.get('realtime_elevenlabs')?.projectSettings?.({
+      schemaVersion: 2,
+      config: {
+        ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+        billingMode: 'byo',
+        byo: { agentId: 'agent_1' },
+      },
     })).toMatchObject({ status: 'ready', modeId: 'byo' });
+    expect(registry.get('realtime_elevenlabs')?.projectSettings?.({
+      schemaVersion: 2,
+      config: {
+        ...ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS,
+        billingMode: 'happier',
+      },
+    })).toMatchObject({ status: 'ready', modeId: 'happier' });
     expect(registry.get('realtime_elevenlabs')?.projectSettings?.({
       schemaVersion: 2,
       config: {

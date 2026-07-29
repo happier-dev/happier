@@ -286,6 +286,18 @@ describe('resolveVoiceRoleReadiness', () => {
       role: 'conversation_stt',
       providerId: 'cloud_stt',
       platform: 'web',
+      facts: { ...readyFacts, settings: 'missing_required_setting' },
+    })).toMatchObject({
+      status: 'needs_setup',
+      code: 'settings_missing_required_setting',
+      recoveryAction: 'open_provider_settings',
+    });
+
+    expect(resolveVoiceRoleReadiness({
+      registry,
+      role: 'conversation_stt',
+      providerId: 'cloud_stt',
+      platform: 'web',
       facts: { ...readyFacts, credential: 'unknown' },
     })).toMatchObject({ status: 'unavailable', code: 'credential_unknown' });
   });

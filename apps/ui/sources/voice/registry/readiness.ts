@@ -8,7 +8,13 @@ import type { VoiceProviderRegistry, VoiceProviderRegistryEntry } from './provid
 
 export type VoiceReadinessFact = 'ready' | 'missing' | 'installing' | 'incompatible' | 'unknown';
 export type VoiceCredentialReadinessFact = VoiceReadinessFact | 'approval_required';
-export type VoiceSettingsReadinessFact = 'ready' | 'needs_migration' | 'invalid' | 'unsupported_version' | 'unknown';
+export type VoiceSettingsReadinessFact =
+  | 'ready'
+  | 'missing_required_setting'
+  | 'needs_migration'
+  | 'invalid'
+  | 'unsupported_version'
+  | 'unknown';
 
 export type VoiceRoleReadinessFacts = Readonly<{
   settings: VoiceSettingsReadinessFact;
