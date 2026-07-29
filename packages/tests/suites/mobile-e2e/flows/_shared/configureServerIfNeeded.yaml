@@ -12,7 +12,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Mobile E2E uses an ephemeral server-light per run, so the previously selected
 # server (from a prior run) can be stale and unreachable.
 #
-# We don't wait for `welcome-create-account` here because it is intentionally
+# We don't wait for `welcome-primary-start` here because it is intentionally
 # gated on server availability (and may never appear until the server URL is
 # updated).
 - runFlow:
@@ -22,14 +22,16 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     file: dismissExpoDevMenuOverlayMaybe.yaml
 
-# Wait until *any* known Happier surface is visible (the welcome hero can be
+# Wait until *any* known Happier surface is visible (the decision panel can be
 # present even while the server is still "Loading...").
 - extendedWaitUntil:
     visible:
-      id: welcome-hero
+      id: welcome-decision-panel
     timeout: 240000
 
-- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/server?auto=1&url=${HAPPIER_E2E_SERVER_URL}
+- runFlow:
+    file: acceptIosOpenInPromptMaybe.yaml
 - runFlow:
     file: acceptAndroidOpenWithPromptMaybe.yaml
 
@@ -42,16 +44,16 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     file: dismissExpoDevMenuOverlayMaybe.yaml
 
 # In `auto=1` mode, server auto-add happens in a background effect and the
-# screen redirects away on success. Wait for the Welcome hero to be
+# screen redirects away on success. Wait for the Welcome decision panel to be
 # visible again, indicating we're back on `/`.
 - extendedWaitUntil:
     visible:
-      id: welcome-hero
+      id: welcome-decision-panel
     timeout: 240000
 
 # Sanity-check that the configured server is reachable/compatible by waiting
 # for the Welcome auth actions to become available again.
 - extendedWaitUntil:
     visible:
-      id: welcome-create-account
+      id: welcome-primary-start
     timeout: 240000

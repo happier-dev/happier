@@ -156,20 +156,20 @@ async function seedRealisticPlainTranscript(params: Readonly<{
       messageRole: 'event',
       value: {
         role: 'agent',
-        content: { type: 'acp', provider: 'codex', data: { type: 'task_started', id: 'turn-1' } },
+        content: { type: 'acp', agentId: 'codex', data: { type: 'task_started', id: 'turn-1' } },
       },
     },
     {
       localId: 'transcript-actions-empty-stream-1',
       messageRole: 'event',
-      value: { role: 'agent', content: { type: 'acp', provider: 'codex', data: { type: 'message', message: '' } } },
+      value: { role: 'agent', content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: '' } } },
     },
     {
       localId: 'transcript-actions-assistant-1',
       messageRole: 'agent',
       value: {
         role: 'agent',
-        content: { type: 'acp', provider: 'codex', data: { type: 'message', message: 'I inspected the repository.' } },
+        content: { type: 'acp', agentId: 'codex', data: { type: 'message', message: 'I inspected the repository.' } },
       },
     },
   ];

@@ -99,6 +99,9 @@ describe('core e2e: plaintext public share roundtrip', () => {
     expect(access.data?.encryptedDataKey).toBe(null);
 
     const publicMessages = await fetchJson<any>(`${server.baseUrl}/v1/public-share/${encodeURIComponent(token)}/messages`, {
+      headers: {
+        'x-public-share-messages-access-token': access.data?.messagesAccessToken,
+      },
       timeoutMs: 15_000,
     });
     expect(publicMessages.status).toBe(200);
@@ -107,4 +110,3 @@ describe('core e2e: plaintext public share roundtrip', () => {
     expect(first?.content?.v?.content?.text).toBe('hello public');
   }, 180_000);
 });
-

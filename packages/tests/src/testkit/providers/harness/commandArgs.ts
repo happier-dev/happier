@@ -19,6 +19,21 @@ export function buildProviderDevCommandArgs(params: Readonly<{
     'workspace',
     '@happier-dev/cli',
     'dev',
+    ...buildProviderCliCommandArgs(params),
+  ];
+}
+
+export function buildProviderCliCommandArgs(params: Readonly<{
+  providerSubcommand: string;
+  sessionId: string;
+  yoloCliArgs: readonly string[];
+  permissionCliArgs: readonly string[];
+  modelCliArgs: readonly string[];
+  extraCliArgs: readonly string[];
+  scenarioCliArgs: readonly string[];
+  providerCliExtraArgs: readonly string[];
+}>): string[] {
+  return [
     params.providerSubcommand,
     '--existing-session',
     params.sessionId,

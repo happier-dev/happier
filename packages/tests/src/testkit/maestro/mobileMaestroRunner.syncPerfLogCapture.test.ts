@@ -212,6 +212,7 @@ describe('mobileMaestroRunner sync performance log capture', () => {
                 cwd: process.cwd(),
                 env: {
                     ...process.env,
+                    HAPPIER_E2E_MOBILE_DEVICE_ID: 'E4245944-431E-418B-9797-B1AE85DAFDF6',
                     HAPPIER_E2E_MOBILE_MANAGE_METRO: '0',
                 },
             },
@@ -223,7 +224,13 @@ describe('mobileMaestroRunner sync performance log capture', () => {
 
         expect(spawnMock).toHaveBeenCalledWith(
             expect.stringMatching(/xcrun$/),
-            expect.arrayContaining(['simctl', 'spawn', 'booted', 'log', 'stream']),
+            expect.arrayContaining([
+                'simctl',
+                'spawn',
+                'E4245944-431E-418B-9797-B1AE85DAFDF6',
+                'log',
+                'stream',
+            ]),
             expect.objectContaining({ cwd: process.cwd() }),
         );
 

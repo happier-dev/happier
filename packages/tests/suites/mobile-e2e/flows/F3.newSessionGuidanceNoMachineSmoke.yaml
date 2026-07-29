@@ -16,16 +16,17 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - tapOn:
     id: main-header-start-new-session
 
+- runFlow:
+    file: _shared/dismissExpoDevMenuOverlayMaybe.yaml
+
 - extendedWaitUntil:
     visible:
-      id: session-getting-started-step-install_cli
+      id: setupWizard-machine-arrival-stack
     timeout: 60000
 
 - assertVisible:
-    id: session-getting-started-step-install_cli
+    id: setupWizard-machine-arrival-stack
 - assertVisible:
-    id: session-getting-started-step-auth_login
+    id: setupWizard-machine-arrival
 - assertVisible:
-    id: session-getting-started-step-daemon_install
-- assertVisible:
-    id: session-getting-started-step-create_session
+    id: setupWizard-machine-arrival-desktop-app-download-cta

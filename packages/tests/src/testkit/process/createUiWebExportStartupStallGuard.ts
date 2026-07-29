@@ -126,6 +126,16 @@ function didExportProgressChange(previous: ExportProgressSnapshot, next: ExportP
         || previous.publishPhaseFileCount !== next.publishPhaseFileCount;
 }
 
+function readLatestMetroBundleProgressToken(text: string): string | null {
+    const sanitized = text.replace(/\u001b\[[0-9;]*[A-Za-z]/gu, '');
+    const pattern = /Web[^\r\n]*?(\d+(?:\.\d+)?)%\s*\(\s*(\d+)\s*\/\s*(\d+)\s*\)/gu;
+    let latest: string | null = null;
+    for (const match of sanitized.matchAll(pattern)) {
+        latest = `${match[1]}:${match[2]}:${match[3]}`;
+    }
+    return latest;
+}
+
 export function createUiWebExportStartupStallGuard(params: {
     stdoutPath: string;
     stderrPath: string;
@@ -143,6 +153,7 @@ export function createUiWebExportStartupStallGuard(params: {
     let lastProgressAtMs = Date.now();
     let lastStdoutLength = 0;
     let lastStderrLength = 0;
+    let lastMetroBundleProgressToken: string | null = null;
     let lastExportProgress: ExportProgressSnapshot = {
         fileCount: 0,
         totalBytes: 0,
@@ -214,6 +225,7 @@ export function createUiWebExportStartupStallGuard(params: {
                 markerSeen = true;
                 markerSeenAtMs = Date.now();
                 lastProgressAtMs = markerSeenAtMs;
+                lastMetroBundleProgressToken = readLatestMetroBundleProgressToken(`${stdoutText}\n${stderrText}`);
                 lastExportProgress = await readExportProgressSnapshot(params.stagingDir);
             }
             if (logsChanged) {
@@ -235,7 +247,17 @@ export function createUiWebExportStartupStallGuard(params: {
         const exportProgressChanged = didExportProgressChange(lastExportProgress, exportProgress);
         lastExportProgress = exportProgress;
 
+        const metroBundleProgressToken = readLatestMetroBundleProgressToken(`${stdoutText}\n${stderrText}`);
+        const metroBundleProgressChanged = metroBundleProgressToken !== null
+            && metroBundleProgressToken !== lastMetroBundleProgressToken;
+        lastMetroBundleProgressToken = metroBundleProgressToken;
+
         if (exportProgressChanged) {
+            lastProgressAtMs = now;
+            return;
+        }
+
+        if (exportProgress.publishPhaseFileCount === 0 && metroBundleProgressChanged) {
             lastProgressAtMs = now;
             return;
         }

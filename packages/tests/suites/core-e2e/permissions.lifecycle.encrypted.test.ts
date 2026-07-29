@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createTestAuth } from '../../src/testkit/auth';
-import { createSession, fetchSessionV2 } from '../../src/testkit/sessions';
+import { createSession, fetchAllMessages, fetchSessionV2 } from '../../src/testkit/sessions';
 import { FailureArtifacts } from '../../src/testkit/failureArtifacts';
 import { envFlag } from '../../src/testkit/env';
 import { writeTestManifestForServer } from '../../src/testkit/manifestForServer';
@@ -13,6 +13,8 @@ import { createUserScopedSocketCollector } from '../../src/testkit/socketClient'
 import { decryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 import { createDataKeyRpcClient } from '../../src/testkit/syntheticAgent/rpcClient';
 import { SyntheticAgent } from '../../src/testkit/syntheticAgent/syntheticAgent';
+import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
+import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 
 const run = createRunDirs({ runLabel: 'core' });
 
@@ -70,6 +72,42 @@ describe('core e2e: permission lifecycle (encrypted rpc + agentState) + reconnec
       deviceA.connect();
       deviceB.connect();
       await agent.start();
+      await waitFor(async () => {
+        const session = await fetchSessionV2(server!.baseUrl, auth.token, sessionId);
+        return session.active === true;
+      }, { timeoutMs: 20_000, context: 'synthetic agent session active after start' });
+
+      const pendingLocalId = randomUUID();
+      const pendingCiphertext = encryptLegacyBase64({
+        role: 'user',
+        content: { type: 'text', text: 'synthetic pending input' },
+        localId: pendingLocalId,
+        meta: { source: 'ui', sentFrom: 'e2e' },
+      }, dataKey);
+      const enqueue = await enqueuePendingQueueV2({
+        baseUrl: server.baseUrl,
+        token: auth.token,
+        sessionId,
+        localId: pendingLocalId,
+        ciphertext: pendingCiphertext,
+        messageRole: 'user',
+        requestedAction: { v: 1, kind: 'send_now' },
+      });
+      expect(enqueue.status).toBe(200);
+      await waitFor(async () => {
+        agent.assertPendingConsumerHealthy();
+        const messages = await fetchAllMessages(server!.baseUrl, auth.token, sessionId);
+        return messages.some((message) => message.localId === pendingLocalId);
+      }, { timeoutMs: 20_000, failFast: true, context: 'synthetic agent materializes pending input' });
+      const committedPendingMessage = (await fetchAllMessages(server.baseUrl, auth.token, sessionId))
+        .find((message) => message.localId === pendingLocalId);
+      expect(committedPendingMessage).toEqual(expect.objectContaining({
+        id: expect.any(String),
+        seq: expect.any(Number),
+        localId: pendingLocalId,
+        messageRole: 'user',
+        content: { t: 'encrypted', c: pendingCiphertext },
+      }));
       await waitFor(() => deviceA.isConnected() && deviceB.isConnected(), { timeoutMs: 20_000 });
 
       // Device B goes offline (simulates backgrounded app / network loss).

@@ -27,6 +27,32 @@ function createChildProcess(): MockChildProcess {
 }
 
 describe('createComposeRuntime', () => {
+    it('restarts one exact compose container without starting its sibling replicas', async () => {
+        spawnMock.mockReset();
+        spawnMock.mockImplementation(() => {
+            const child = createChildProcess();
+            queueMicrotask(() => child.emit('close', 0, null));
+            return child;
+        });
+
+        const { createComposeRuntime } = await import('./composeRuntime');
+        const runtime = createComposeRuntime({
+            composeFilePath: '/tmp/topology/docker-compose.yml',
+            composeProjectName: 'happier-stress-run',
+            cwd: '/repo/root',
+        });
+
+        await expect(runtime.startContainer?.('api-container-b')).resolves.toBeUndefined();
+        expect(spawnMock).toHaveBeenCalledWith(
+            'docker',
+            ['start', 'api-container-b'],
+            expect.objectContaining({
+                cwd: '/repo/root',
+                stdio: ['ignore', 'pipe', 'pipe'],
+            }),
+        );
+    });
+
     it('prebuilds the canonical server image with the stress server target, freshness labels, and drained output', async () => {
         spawnMock.mockReset();
         spawnMock.mockImplementation(() => {
@@ -132,6 +158,54 @@ describe('createComposeRuntime', () => {
                 stdio: ['ignore', 'pipe', 'pipe'],
             }),
         );
+    });
+
+    it('rejects running service containers whose inherited image identity does not match the source tag and labels', async () => {
+        spawnMock.mockReset();
+        spawnMock
+            .mockImplementationOnce(() => {
+                const child = createChildProcess();
+                queueMicrotask(() => {
+                    child.stdout.emit('data', 'api-container\n');
+                    child.emit('close', 0, null);
+                });
+                return child;
+            })
+            .mockImplementationOnce(() => {
+                const child = createChildProcess();
+                queueMicrotask(() => {
+                    child.stdout.emit('data', JSON.stringify([{
+                        Id: 'api-container',
+                        Config: {
+                            Image: 'happier-stress-compose-server-repo-a-source-b',
+                            Labels: {
+                                'happier.stress.owner': 'stress-harness',
+                                'happier.stress.repo-root': 'repo-a',
+                                'happier.stress.image-fingerprint': 'source-b',
+                            },
+                        },
+                    }]));
+                    child.emit('close', 0, null);
+                });
+                return child;
+            });
+
+        const { createComposeRuntime } = await import('./composeRuntime');
+        const runtime = createComposeRuntime({
+            composeFilePath: '/tmp/topology/docker-compose.yml',
+            composeProjectName: 'happier-stress-run',
+            cwd: '/repo/root',
+        });
+
+        await expect(runtime.attestServicesUseImage?.({
+            services: ['api'],
+            imageName: 'happier-stress-compose-server-repo-a-source-a',
+            expectedLabels: {
+                'happier.stress.owner': 'stress-harness',
+                'happier.stress.repo-root': 'repo-a',
+                'happier.stress.image-fingerprint': 'source-a',
+            },
+        })).rejects.toThrow('did not start from the expected stress image');
     });
 
     it('captures streamed stdout for inspection commands', async () => {
@@ -272,7 +346,13 @@ describe('createComposeRuntime', () => {
             .mockImplementationOnce(() => {
                 const child = createChildProcess();
                 queueMicrotask(() => {
-                    child.stdout.emit('data', 'happier-stress-old-a\nhappier-stress-old-b\n');
+                    child.stdout.emit(
+                        'data',
+                        'happier-stress-old-a\tstress-harness\trepo-fingerprint\n'
+                        + 'happier-stress-foreign-owner\tanother-harness\trepo-fingerprint\n'
+                        + 'happier-stress-foreign-repo\tstress-harness\tother-repo\n'
+                        + 'happier-stress-prefix-only\t\t\n',
+                    );
                     child.emit('close', 0, null);
                 });
                 return child;
@@ -280,7 +360,7 @@ describe('createComposeRuntime', () => {
             .mockImplementationOnce(() => {
                 const child = createChildProcess();
                 queueMicrotask(() => {
-                    child.stdout.emit('data', 'happier-stress-old-b\n');
+                    child.stdout.emit('data', 'happier-stress-network-only\tstress-harness\trepo-fingerprint\n');
                     child.emit('close', 0, null);
                 });
                 return child;
@@ -301,7 +381,18 @@ describe('createComposeRuntime', () => {
             cwd: '/repo/root',
         });
 
-        await expect(runtime.listOwnedProjects()).resolves.toEqual(['happier-stress-old-a', 'happier-stress-old-b']);
+        await expect(runtime.listOwnedProjects('repo-fingerprint')).resolves.toEqual(['happier-stress-old-a']);
+        expect(spawnMock).toHaveBeenNthCalledWith(
+            1,
+            'docker',
+            [
+                'ps',
+                '-a',
+                '--format',
+                '{{.Label "com.docker.compose.project"}}\t{{.Label "happier.stress.owner"}}\t{{.Label "happier.stress.repo-root"}}',
+            ],
+            expect.objectContaining({ cwd: '/repo/root' }),
+        );
     });
 
     it('removes task-owned compose project resources by compose project label', async () => {

@@ -46,7 +46,7 @@ describe('usage query session drilldown', () => {
       request: {
         sessionId: sessionA.sessionId,
         observedAt: now - day,
-        providerId: 'anthropic',
+        agentId: 'anthropic',
         backendMode: 'claude:remote',
         modelId: 'claude-3.7-sonnet',
         projectKey: 'project-a',
@@ -66,7 +66,7 @@ describe('usage query session drilldown', () => {
       request: {
         sessionId: sessionA.sessionId,
         observedAt: now,
-        providerId: 'anthropic',
+        agentId: 'anthropic',
         backendMode: 'claude:remote',
         modelId: 'claude-4-sonnet',
         projectKey: 'project-a',
@@ -86,7 +86,7 @@ describe('usage query session drilldown', () => {
       request: {
         sessionId: sessionB.sessionId,
         observedAt: now,
-        providerId: 'openai',
+        agentId: 'openai',
         backendMode: 'codex:app-server',
         modelId: 'gpt-5-codex',
         projectKey: 'project-b',
@@ -121,7 +121,7 @@ describe('usage query session drilldown', () => {
         filters: {
           sessionIds: [sessionA.sessionId],
         },
-        breakdowns: ['provider', 'model', 'session', 'project', 'workspace', 'backendMode', 'source'],
+        breakdowns: ['agent', 'model', 'session', 'project', 'workspace', 'backendMode', 'source'],
       }),
       timeoutMs: 15_000,
     });
@@ -135,7 +135,7 @@ describe('usage query session drilldown', () => {
     expect(scoped.data.insights?.sessionsUsed).toBe(1);
     expect(scoped.data.leaders?.sessions?.[0]?.key).toBe(sessionA.sessionId);
     expect(scoped.data.breakdowns?.session?.[0]?.key).toBe(sessionA.sessionId);
-    expect(scoped.data.breakdowns?.provider?.[0]?.key).toBe('anthropic');
+    expect(scoped.data.breakdowns?.agent?.[0]?.key).toBe('anthropic');
     expect(scoped.data.breakdowns?.model?.[0]?.key).toBe('claude-4-sonnet');
 
     const allUsage = await fetchJson<UsageAnalyticsQueryResponse>(`${startedServer.baseUrl}/v2/usage/query`, {
@@ -155,7 +155,7 @@ describe('usage query session drilldown', () => {
         includeMessageStats: true,
         activityResolution: 'both',
         topLimit: 20,
-        breakdowns: ['provider', 'model', 'session', 'project', 'workspace', 'backendMode', 'source'],
+        breakdowns: ['agent', 'model', 'session', 'project', 'workspace', 'backendMode', 'source'],
       }),
       timeoutMs: 15_000,
     });

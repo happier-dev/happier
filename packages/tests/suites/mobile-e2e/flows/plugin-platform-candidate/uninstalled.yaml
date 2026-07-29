@@ -1,0 +1,22 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins
+- extendedWaitUntil:
+    visible:
+      id: settings.plugins.management.view:installed
+    timeout: 120000
+- assertNotVisible:
+    id: settings.plugins.marketplace.installed.${HAPPIER_E2E_PLUGIN_ID}
+- tapOn:
+    id: settings.plugins.appPanels
+- extendedWaitUntil:
+    visible:
+      id: inspector-surface
+    timeout: 120000
+- assertNotVisible:
+    id: ${HAPPIER_E2E_PLUGIN_TAB_ID}
+- assertNotVisible:
+    id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
+- takeScreenshot: plugin-platform-uninstalled-${HAPPIER_E2E_MOBILE_PLATFORM}

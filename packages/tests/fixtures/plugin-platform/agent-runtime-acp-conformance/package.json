@@ -1,0 +1,13 @@
+{
+  "name": "happier-declarative-acp-agent-runtime-conformance",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "happier-declarative-acp-fixture": "fixture-acp.sh"
+  },
+  "files": [
+    ".happier-plugin/plugin.json",
+    "fixture-acp.sh"
+  ]
+}

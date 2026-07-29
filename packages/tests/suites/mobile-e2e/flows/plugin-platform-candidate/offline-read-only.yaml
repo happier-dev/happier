@@ -1,0 +1,20 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins
+- extendedWaitUntil:
+    visible:
+      id: settings.plugins.marketplace.readOnlySnapshot
+    timeout: 120000
+- assertVisible:
+    id: settings.plugins.marketplace.installed.${HAPPIER_E2E_PLUGIN_ID}
+- tapOn:
+    id: settings.plugins.appPanels
+- tapOn:
+    id: ${HAPPIER_E2E_PLUGIN_TAB_ID}
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_PLUGIN_SENTINEL_V2}
+    timeout: 120000
+- takeScreenshot: plugin-platform-offline-read-only-${HAPPIER_E2E_MOBILE_PLATFORM}

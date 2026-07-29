@@ -3,7 +3,6 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createTestAuthMtls } from '../../src/testkit/auth';
-import { fetchJson } from '../../src/testkit/http';
 import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
@@ -14,10 +13,12 @@ import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../..
 import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
 import {
   createPlainSession,
-  deriveServerIdFromUrl,
   readVisibleSessionRowOrder,
-  sessionOrderKey,
 } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+import {
+  fetchSessionOrganizationSnapshot,
+  readPinnedSessionIdsFromOrganizationSnapshot,
+} from '../../src/testkit/uiE2e/sessionOrganization';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-list-multi-select-actions' });
@@ -28,8 +29,6 @@ const IDENTITY_HEADERS = {
   issuer: 'happier-ui-e2e-session-list-multi-select',
   fingerprint: `session-list-multi-select-${run.runId}`,
 } as const;
-
-const ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX = 'account-settings:v2:';
 
 const SESSION_CREATE_TIMESTAMP_SEPARATION_MS = 35;
 const STORAGE_SCOPE = `e2e-session-list-multi-select-${run.runId}`;
@@ -46,18 +45,6 @@ const testIds = {
   selectionConfirm: (actionId: string) => `session-list-selection-confirm-${safeActionId(actionId)}`,
 } as const;
 
-type PersistedSettingsEnvelope = {
-  settings?: Record<string, unknown>;
-};
-
-type ServerFeaturesIdentityResponse = {
-  capabilities?: {
-    serverIdentity?: {
-      serverIdentityId?: unknown;
-    };
-  };
-};
-
 type Deferred = Readonly<{
   promise: Promise<void>;
   resolve: () => void;
@@ -72,7 +59,8 @@ function createDeferred(): Deferred {
 }
 
 function safeActionId(actionId: string): string {
-  return actionId.replace(/[^a-zA-Z0-9_-]+/g, '-');
+  const stableActionId = actionId.startsWith('ui.') ? actionId.slice(3) : actionId;
+  return stableActionId.replace(/[^a-zA-Z0-9_-]+/g, '-');
 }
 
 function platformSelectionModifier(): 'Control' | 'Meta' {
@@ -83,53 +71,24 @@ async function pauseForDistinctCreatedAt(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, SESSION_CREATE_TIMESTAMP_SEPARATION_MS));
 }
 
-async function readPersistedAccountSettings(page: Page): Promise<Record<string, unknown>> {
-  return page.evaluate(({ accountSettingsLogicalKeyPrefix }) => {
-    const keys: string[] = [];
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const rawKey = window.localStorage.key(index);
-      if (!rawKey) continue;
-      const separatorIndex = rawKey.lastIndexOf('\\');
-      if (separatorIndex <= 0) continue;
-      const logicalKey = rawKey.slice(separatorIndex + 1);
-      if (logicalKey.startsWith(accountSettingsLogicalKeyPrefix)) {
-        keys.push(rawKey);
-      }
-    }
-    if (keys.length !== 1) {
-      throw new Error(`expected exactly one scoped persisted settings record, found ${keys.length}`);
-    }
-
-    const rawSettings = window.localStorage.getItem(keys[0]!);
-    if (!rawSettings) throw new Error('missing persisted settings');
-    const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
-    return typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
-  }, { accountSettingsLogicalKeyPrefix: ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX });
-}
-
-async function expectPinnedSessionKeys(page: Page, expectedKeys: readonly string[]): Promise<void> {
+async function expectPinnedSessions(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionIds: readonly string[];
+}>): Promise<void> {
   await expect.poll(async () => {
-    const settings = await readPersistedAccountSettings(page);
-    const pinnedKeys = Array.isArray(settings.pinnedSessionKeysV1)
-      ? settings.pinnedSessionKeysV1.filter((value): value is string => typeof value === 'string')
-      : [];
-    return expectedKeys.every((key) => pinnedKeys.includes(key));
-  }, { timeout: 60_000 }).toBe(true);
-}
-
-async function resolveCanonicalServerIdForUi(baseUrl: string): Promise<string> {
-  const fallback = deriveServerIdFromUrl(baseUrl);
-  try {
-    const response = await fetchJson<ServerFeaturesIdentityResponse>(`${baseUrl}/v1/features`, {
-      timeoutMs: 15_000,
+    const snapshot = await fetchSessionOrganizationSnapshot({
+      baseUrl: params.baseUrl,
+      token: params.token,
+      request: {
+        includeFolders: false,
+        includeTags: false,
+        includeLabels: false,
+      },
     });
-    const serverIdentityId = response.data?.capabilities?.serverIdentity?.serverIdentityId;
-    return typeof serverIdentityId === 'string' && serverIdentityId.trim()
-      ? serverIdentityId.trim()
-      : fallback;
-  } catch {
-    return fallback;
-  }
+    const pinnedSessionIds = new Set(readPinnedSessionIdsFromOrganizationSnapshot(snapshot));
+    return params.sessionIds.every((sessionId) => pinnedSessionIds.has(sessionId));
+  }, { timeout: 60_000 }).toBe(true);
 }
 
 async function expectRowsVisible(page: Page, sessionIds: readonly string[]): Promise<void> {
@@ -267,7 +226,6 @@ test.describe('ui e2e: session list multi-select actions', () => {
   let uiBaseUrl: string | null = null;
   let proxyStop: (() => Promise<void>) | null = null;
   let token: string | null = null;
-  let uiServerUrl: string | null = null;
 
   test.beforeAll(async () => {
     test.setTimeout(420_000);
@@ -310,7 +268,6 @@ test.describe('ui e2e: session list multi-select actions', () => {
       },
     });
     proxyStop = proxy.stop;
-    uiServerUrl = proxy.baseUrl;
 
     const auth = await createTestAuthMtls(server.baseUrl, {
       email: IDENTITY_HEADERS.email,
@@ -348,7 +305,7 @@ test.describe('ui e2e: session list multi-select actions', () => {
 
   test('selects non-contiguous sessions with the platform modifier and pins them in one local batch', async ({ page }) => {
     test.setTimeout(720_000);
-    if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
+    if (!server || !uiBaseUrl || !token) throw new Error('missing server/ui fixtures');
 
     const seededIds = await seedSessions({
       baseUrl: server.baseUrl,
@@ -376,11 +333,14 @@ test.describe('ui e2e: session list multi-select actions', () => {
     await expectSessionSelectionState(page, selectedIds[0]!, true);
     await expectSessionSelectionState(page, selectedIds[1]!, true);
 
-    await clickSelectionAction(page, 'session.pin');
-    await expectBulkResult({ page, actionId: 'session.pin', succeeded: selectedIds.length });
+    await clickSelectionAction(page, 'ui.session.pin');
+    await expectBulkResult({ page, actionId: 'ui.session.pin', succeeded: selectedIds.length });
 
-    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
-    await expectPinnedSessionKeys(page, selectedIds.map((sessionId) => sessionOrderKey(serverId, sessionId)));
+    await expectPinnedSessions({
+      baseUrl: server.baseUrl,
+      token,
+      sessionIds: selectedIds,
+    });
     await dismissSelectionResult(page);
   });
 
@@ -425,14 +385,14 @@ test.describe('ui e2e: session list multi-select actions', () => {
     });
 
     try {
-      await clickSelectionAction(page, 'session.archive');
+      await clickSelectionAction(page, 'ui.session.archive');
       const progress = page.getByTestId(testIds.selectionProgress);
       await expect(progress).toBeVisible({ timeout: 60_000 });
-      await expect(progress).toHaveAttribute('data-action-id', 'session.archive', { timeout: 60_000 });
+      await expect(progress).toHaveAttribute('data-action-id', 'ui.session.archive', { timeout: 60_000 });
 
       archiveGate.resolve();
 
-      await expectBulkResult({ page, actionId: 'session.archive', succeeded: rangeIds.length });
+      await expectBulkResult({ page, actionId: 'ui.session.archive', succeeded: rangeIds.length });
     } finally {
       archiveGate.resolve();
       await page.unroute('**/v2/sessions/*/archive').catch(() => {});

@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process';
 
 import {
-  buildWindowsCmdShimInvocation,
+  resolveNpmCommandInvocation as resolveWorkspaceNpmCommandInvocation,
   resolveYarnCommandInvocation as resolveWorkspaceYarnCommandInvocation,
 } from '../../../../../scripts/workspaces/execYarnCommand.mjs';
 
@@ -26,26 +26,7 @@ export function resolveNpmCommandInvocation(
   args: readonly string[] = [],
   options: Readonly<{ platform?: NodeJS.Platform; npmExecPath?: string; processExecPath?: string; comspec?: string }> = {},
 ): CommandInvocation {
-  const platform = options.platform ?? process.platform;
-  const npmExecPath = String(options.npmExecPath ?? '').trim();
-  const processExecPath = String(options.processExecPath ?? process.execPath).trim();
-  const command = platform === 'win32' ? 'npm.cmd' : 'npm';
-
-  if (npmExecPath && /(^|[\\/])npm-cli\.js$/i.test(npmExecPath)) {
-    return {
-      command: processExecPath,
-      args: [npmExecPath, ...args],
-    };
-  }
-
-  if (platform === 'win32') {
-    return buildWindowsCmdShimInvocation(command, [...args], { comspec: options.comspec });
-  }
-
-  return {
-    command,
-    args: [...args],
-  };
+  return resolveWorkspaceNpmCommandInvocation(args, options);
 }
 
 export function which(bin: string): string | null {

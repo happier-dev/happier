@@ -11,10 +11,17 @@ import { fetchJson } from './http';
 export async function createSession(
   baseUrl: string,
   token: string,
-  opts?: { dataEncryptionKeyBase64?: string | null; timeoutMs?: number },
+  opts?: {
+    dataEncryptionKeyBase64?: string | null;
+    timeoutMs?: number;
+  },
 ): Promise<{ sessionId: string; tag: string }> {
   const tag = `e2e-${randomUUID()}`;
-  const metadata = Buffer.from(JSON.stringify({ v: 1, tag, createdAt: Date.now() }), 'utf8').toString('base64');
+  const metadata = Buffer.from(JSON.stringify({
+    v: 1,
+    tag,
+    createdAt: Date.now(),
+  }), 'utf8').toString('base64');
 
   const res = await fetchJson<{ session?: { id?: string } }>(`${baseUrl}/v1/sessions`, {
     method: 'POST',

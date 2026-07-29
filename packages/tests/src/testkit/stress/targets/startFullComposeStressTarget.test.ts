@@ -67,6 +67,7 @@ describe('startFullComposeStressTarget', () => {
       imageExists: vi.fn(async () => false),
       inspectImage: vi.fn(async () => null),
       buildServerImage: vi.fn(async () => {}),
+      attestServicesUseImage: vi.fn(async () => {}),
       listOwnedProjects: vi.fn(async () => []),
       projectHasRunningContainers: vi.fn(async () => false),
       removeProjectResources: vi.fn(async () => {}),
@@ -120,7 +121,7 @@ describe('startFullComposeStressTarget', () => {
     );
 
     expect(runtime.buildServerImage).toHaveBeenCalledWith(
-      'happier-stress-compose-topology-canonical-server',
+      'happier-stress-compose-server-repo-fingerprint-current-fingerprint',
       expect.objectContaining({
         labels: expect.objectContaining({
           'happier.stress.owner': 'stress-harness',
@@ -131,6 +132,15 @@ describe('startFullComposeStressTarget', () => {
     );
     expect(runtime.buildServerImage.mock.invocationCallOrder[0]).toBeLessThan(runtime.up.mock.invocationCallOrder[0]);
     expect(runtime.up).toHaveBeenCalledWith({ apiReplicas: 3, workerReplicas: 2 });
+    expect(runtime.attestServicesUseImage).toHaveBeenCalledWith({
+      services: ['api', 'worker'],
+      imageName: 'happier-stress-compose-server-repo-fingerprint-current-fingerprint',
+      expectedLabels: {
+        'happier.stress.owner': 'stress-harness',
+        'happier.stress.repo-root': 'repo-fingerprint',
+        'happier.stress.image-fingerprint': 'current-fingerprint',
+      },
+    });
     expect(waitForComposeRpcGatewayReadiness).toHaveBeenCalledWith({
       attempts: 1,
       baseUrl: 'http://127.0.0.1:43080',
@@ -140,26 +150,86 @@ describe('startFullComposeStressTarget', () => {
     expect(result.topology.composeProjectName).toContain('happier-stress-');
     expect(result.topology.resolvedApiReplicas).toBe(3);
     expect(result.topology.resolvedWorkerReplicas).toBe(2);
+    expect(result.testRuntime?.peerMediation.allowedPorts).toEqual([3000]);
+    expect(result.testRuntime?.peerMediation.routeGrantSigning.keyId).toBe('stress-route-grant');
+    expect(result.testRuntime?.peerMediation.routeGrantSigning.privateKeySeedBase64Url).toEqual(
+      expect.any(String),
+    );
+    expect(result.testRuntime?.peerMediation.routeGrantSigning.publicKeyBase64Url).toEqual(
+      expect.any(String),
+    );
+    expect(Object.keys(result)).not.toContain('testRuntime');
+    expect(JSON.stringify(result)).not.toContain(
+      result.testRuntime?.peerMediation.routeGrantSigning.privateKeySeedBase64Url
+        ?? 'missing-relay-key',
+    );
 
     const composePath = join(testDir, 'topology', 'docker-compose.yml');
     const nginxPath = join(testDir, 'topology', 'nginx.conf');
     const generatedEnvPath = join(testDir, 'topology', 'env.generated.json');
     const generatedDockerfilePath = join(testDir, 'topology', 'Dockerfile.server-stress.generated');
 
-    expect(readFileSync(composePath, 'utf8')).toContain('gateway:');
+    const composeYaml = readFileSync(composePath, 'utf8');
+    expect(composeYaml).toContain('gateway:');
+    expect(composeYaml).toContain('HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: "1"');
+    expect(composeYaml).toContain(
+      `HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: ${
+        result.testRuntime?.peerMediation.routeGrantSigning.privateKeySeedBase64Url
+      }`,
+    );
+    expect(readFileSync(generatedEnvPath, 'utf8')).not.toContain(
+      result.testRuntime?.peerMediation.routeGrantSigning.privateKeySeedBase64Url ?? 'missing-relay-key',
+    );
     expect(readFileSync(nginxPath, 'utf8')).toContain('location /v1/updates');
     const generatedDockerfile = readFileSync(generatedDockerfilePath, 'utf8');
     expect(generatedDockerfile).toContain('COPY package.json yarn.lock ./');
     expect(generatedDockerfile).toContain(
-      'RUN mkdir -p apps/server packages/agents packages/cli-common packages/protocol packages/release-runtime scripts/pipeline/expo scripts/workspaces',
+      'RUN mkdir -p apps/cli apps/server apps/ui packages/agents packages/cli-common packages/plugin-sdk packages/plugins/review-coderabbit packages/plugins/review-deepsec packages/protocol packages/release-runtime scripts/pipeline/expo scripts/workspaces',
+    );
+    expect(generatedDockerfile).toContain(
+      'delete packageJson.dependencies?.[\'@happier-dev/cli\']',
     );
     expect(generatedDockerfile).toContain('COPY apps/server/package.json apps/server/');
+    expect(generatedDockerfile).toContain('COPY apps/cli/package.json apps/cli/');
+    expect(generatedDockerfile).toContain('COPY apps/ui/package.json apps/ui/');
+    expect(generatedDockerfile).toContain(
+      'COPY apps/stack/scripts/utils ./apps/stack/scripts/utils',
+    );
+    expect(generatedDockerfile).toContain(
+      'COPY .github/feature-policy ./.github/feature-policy',
+    );
+    expect(generatedDockerfile).toContain('COPY packages/plugin-sdk/package.json packages/plugin-sdk/');
+    expect(generatedDockerfile).toContain(
+      'COPY packages/plugins/review-coderabbit/package.json packages/plugins/review-coderabbit/',
+    );
+    expect(generatedDockerfile).toContain(
+      'COPY packages/plugins/review-deepsec/package.json packages/plugins/review-deepsec/',
+    );
     expect(generatedDockerfile).toContain('COPY packages/protocol/package.json packages/protocol/');
     expect(generatedDockerfile).toContain('COPY scripts/workspaces ./scripts/workspaces');
     expect(generatedDockerfile).toContain('COPY apps/server ./apps/server');
     expect(generatedDockerfile).toContain('COPY packages/agents ./packages/agents');
+    expect(generatedDockerfile).toContain('COPY packages/plugin-sdk ./packages/plugin-sdk');
+    expect(generatedDockerfile).toContain(
+      'COPY packages/plugins/review-coderabbit ./packages/plugins/review-coderabbit',
+    );
+    expect(generatedDockerfile).toContain(
+      'COPY packages/plugins/review-deepsec ./packages/plugins/review-deepsec',
+    );
+    expect(generatedDockerfile).toContain('resolveWorkspaceDependencyBuildOrder');
+    expect(generatedDockerfile).not.toContain('ensureWorkspacePackagesBuiltForComponent');
+    expect(generatedDockerfile).not.toContain(
+      'RUN yarn workspace @happier-dev/server build:shared',
+    );
+    expect(generatedDockerfile).not.toContain('postinstall:real');
     expect(generatedDockerfile).not.toContain('COPY . .');
-    expect(generatedDockerfile).not.toContain('RUN yarn workspace @happier-dev/server build');
+    expect(generatedDockerfile).not.toContain('RUN yarn workspace @happier-dev/server build:runtime');
+    expect(generatedDockerfile).not.toContain(
+      'RUN yarn workspace @happier-dev/server postinstall:real',
+    );
+    expect(generatedDockerfile).toContain(
+      'RUN yarn workspace @happier-dev/server generate:providers',
+    );
     expect(generatedDockerfile).toContain(
       'ENV HAPPIER_INSTALL_SCOPE=server,protocol,agents,cli-common,release-runtime',
     );
@@ -168,7 +238,7 @@ describe('startFullComposeStressTarget', () => {
       publicBaseUrl: 'http://127.0.0.1:43080',
       composeProjectName: result.topology.composeProjectName,
       image: {
-        name: 'happier-stress-compose-topology-canonical-server',
+        name: 'happier-stress-compose-server-repo-fingerprint-current-fingerprint',
         freshnessFingerprint: expect.any(String),
       },
     });
@@ -334,6 +404,7 @@ describe('startFullComposeStressTarget', () => {
       stop: vi.fn(async () => {}),
       stopContainer: vi.fn(async () => {}),
       killContainer: vi.fn(async () => {}),
+      startContainer: vi.fn(async () => {}),
       ps: vi.fn(async () => 'ps output'),
       logs: vi.fn(async () => 'compose logs'),
       execCapture: vi.fn(async () => 'worker metrics'),
@@ -420,12 +491,14 @@ describe('startFullComposeStressTarget', () => {
     await result.admin?.startService('worker');
     await result.admin?.stopContainer('container-1');
     await result.admin?.killContainer('container-2');
+    await result.admin?.startContainer?.('container-2');
     await result.admin?.execInService('redis', ['redis-cli', 'ping']);
 
     expect(runtime.stop).toHaveBeenCalledWith('worker');
     expect(runtime.start).toHaveBeenCalledWith('worker');
     expect(runtime.stopContainer).toHaveBeenCalledWith('container-1');
     expect(runtime.killContainer).toHaveBeenCalledWith('container-2');
+    expect(runtime.startContainer).toHaveBeenCalledWith('container-2');
     expect(runtime.execCapture).toHaveBeenCalledWith('redis', ['redis-cli', 'ping']);
   });
 
@@ -549,8 +622,12 @@ describe('startFullComposeStressTarget', () => {
       },
     );
 
-    expect(runtime.imageExists).toHaveBeenCalledWith('happier-stress-compose-topology-canonical-server');
-    expect(runtime.inspectImage).toHaveBeenCalledWith('happier-stress-compose-topology-canonical-server');
+    expect(runtime.imageExists).toHaveBeenCalledWith(
+      'happier-stress-compose-server-repo-fingerprint-current-fingerprint',
+    );
+    expect(runtime.inspectImage).toHaveBeenCalledWith(
+      'happier-stress-compose-server-repo-fingerprint-current-fingerprint',
+    );
     expect(runtime.buildServerImage).not.toHaveBeenCalled();
     expect(runtime.up).toHaveBeenCalledTimes(1);
   });

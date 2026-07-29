@@ -27,6 +27,7 @@ import { createSession, fetchAllMessages } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
 import { encryptLegacyBase64 } from '../../src/testkit/messageCrypto';
 import { fetchJson } from '../../src/testkit/http';
+import { readVoiceFixture } from '../../src/testkit/voice/voiceFixture';
 
 import { createEncryptedTransferChunkEnvelope } from '../../../../apps/cli/src/machines/transfer/transferChunkEncryption';
 
@@ -34,28 +35,6 @@ const run = createRunDirs({ runLabel: 'core' });
 
 function sha256Hex(value: Uint8Array): string {
     return createHash('sha256').update(value).digest('hex');
-}
-
-function createMonoPcm16WavBuffer(sampleCount = 8, sampleRate = 16_000): Buffer {
-    const dataSize = sampleCount * 2;
-    const buffer = Buffer.alloc(44 + dataSize);
-    buffer.write('RIFF', 0, 'ascii');
-    buffer.writeUInt32LE(36 + dataSize, 4);
-    buffer.write('WAVE', 8, 'ascii');
-    buffer.write('fmt ', 12, 'ascii');
-    buffer.writeUInt32LE(16, 16);
-    buffer.writeUInt16LE(1, 20);
-    buffer.writeUInt16LE(1, 22);
-    buffer.writeUInt32LE(sampleRate, 24);
-    buffer.writeUInt32LE(sampleRate * 2, 28);
-    buffer.writeUInt16LE(2, 32);
-    buffer.writeUInt16LE(16, 34);
-    buffer.write('data', 36, 'ascii');
-    buffer.writeUInt32LE(dataSize, 40);
-    for (let index = 0; index < sampleCount; index += 1) {
-        buffer.writeInt16LE(index * 128, 44 + (index * 2));
-    }
-    return buffer;
 }
 
 async function createFakeVoiceInferenceRuntimeModule(params: Readonly<{
@@ -75,7 +54,7 @@ async function createFakeVoiceInferenceRuntimeModule(params: Readonly<{
             '    transcribeAudio: async (input) => {',
             '        const bytes = await readFile(input.filePath);',
             '        return {',
-            "            text: `${expectedText}:${bytes.byteLength}:${input.inputMimeType}` ,",
+            "            text: `${expectedText}:${bytes.byteLength}:${input.inputMimeType}`,",
             "            language: input.language ?? 'en',",
             '        };',
             '    },',
@@ -90,6 +69,7 @@ async function startManifestServer(params: Readonly<{
     packId: string;
     modelBytes: Uint8Array;
 }>): Promise<Readonly<{ server: Server; manifestUrl: string }>> {
+    const requiredFiles = ['encoder.onnx', 'decoder.onnx', 'joiner.onnx', 'tokens.txt'] as const;
     const server = createServer((request, response) => {
         const address = server.address();
         if (!address || typeof address === 'string') {
@@ -106,19 +86,19 @@ async function startManifestServer(params: Readonly<{
                 kind: 'stt_sherpa',
                 model: 'sherpa',
                 version: '2026-04-17',
-                files: [
+                files: requiredFiles.map((path) => (
                     {
-                        path: 'model.onnx',
-                        url: `http://127.0.0.1:${address.port}/model.onnx`,
+                        path,
+                        url: `http://127.0.0.1:${address.port}/${path}`,
                         sha256: sha256Hex(params.modelBytes),
                         sizeBytes: params.modelBytes.byteLength,
-                    },
-                ],
+                    }
+                )),
             }));
             return;
         }
 
-        if (request.url === '/model.onnx') {
+        if (requiredFiles.some((path) => request.url === `/${path}`)) {
             response.statusCode = 200;
             response.setHeader('content-length', String(params.modelBytes.byteLength));
             response.end(Buffer.from(params.modelBytes));
@@ -160,8 +140,8 @@ describe('core e2e: daemon STT batch transcription', () => {
         const testDir = run.testDir('voice-daemon-stt-batch-transcription');
         const daemonHomeDir = resolve(join(testDir, 'daemon-home'));
         const runtimeModulePath = resolve(join(testDir, 'voice-inference-runtime-override.mjs'));
-        const sttPackId = 'sherpa-onnx-stt-en-v1';
-        const wavBytes = createMonoPcm16WavBuffer();
+        const sttPackId = 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17';
+        const { bytes: wavBytes } = await readVoiceFixture('short-command-16k');
         const expectedTranscriptionText = 'hello daemon stt';
 
         await mkdir(daemonHomeDir, { recursive: true });
@@ -232,17 +212,17 @@ describe('core e2e: daemon STT batch transcription', () => {
 
             const install = DaemonVoiceInferenceModelsInstallResponseSchema.parse(
                 unwrapDataKeyRpcResult(
-	                        await machineRpc.call(
-	                            `${seeded.machineId}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL}`,
-	                            {
-	                                packId: sttPackId,
-	                            },
-	                            120_000,
-	                        ),
-	                        'daemon voice inference model install',
-	                    ),
+                    await machineRpc.call(
+                        `${seeded.machineId}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL}`,
+                        {
+                            packId: sttPackId,
+                        },
+                        120_000,
+                    ),
+                    'daemon voice inference model install',
+                ),
             );
-            expect(install.ok).toBe(true);
+            expect(install).toMatchObject({ ok: true });
             if (install.ok !== true) {
                 throw new Error('daemon voice inference model install failed');
             }
@@ -321,7 +301,6 @@ describe('core e2e: daemon STT batch transcription', () => {
                             uploadId: uploadInit.uploadId,
                             packId: sttPackId,
                             language: 'en',
-                            inputMimeType: 'audio/wav',
                             normalization: {
                                 inputTransport: 'upload_transfer',
                                 strategy: 'daemon_decode',
@@ -333,10 +312,22 @@ describe('core e2e: daemon STT batch transcription', () => {
                     'daemon STT transcribe',
                 ),
             );
-            expect(transcription.ok).toBe(true);
             if (transcription.ok !== true) {
-                throw new Error('daemon STT transcribe failed');
+                const statusAfterFailure = DaemonVoiceInferenceStatusResponseSchema.parse(
+                    unwrapDataKeyRpcResult(
+                        await machineRpc.call(
+                            `${seeded.machineId}:${RPC_METHODS.DAEMON_VOICE_INFERENCE_STATUS}`,
+                            {},
+                            30_000,
+                        ),
+                        'daemon voice inference status after STT failure',
+                    ),
+                );
+                throw new Error(
+                    `daemon STT transcribe failed: ${JSON.stringify({ transcription, statusAfterFailure })}`,
+                );
             }
+            expect(transcription).toMatchObject({ ok: true });
             expect(transcription.modelPackId).toBe(sttPackId);
             expect(transcription.language).toBe('en');
             expect(transcription.text).toBe(`${expectedTranscriptionText}:${wavBytes.byteLength}:audio/wav`);

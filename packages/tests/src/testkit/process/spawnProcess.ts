@@ -11,6 +11,34 @@ export type SpawnedProcess = {
   stop: (signal?: NodeJS.Signals) => Promise<void>;
 };
 
+export type LoggedCommandProcessOutcome = Readonly<{
+  exitCode: number | null;
+  signal: NodeJS.Signals | null;
+}>;
+
+class LoggedCommandProcessError extends Error {
+  readonly process: LoggedCommandProcessOutcome;
+
+  constructor(message: string, processOutcome: LoggedCommandProcessOutcome) {
+    super(message);
+    this.name = 'LoggedCommandProcessError';
+    this.process = processOutcome;
+  }
+}
+
+export function readLoggedCommandProcessOutcome(error: unknown): LoggedCommandProcessOutcome | null {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = (error as { process?: unknown }).process;
+  if (!candidate || typeof candidate !== 'object') return null;
+  const { exitCode, signal } = candidate as { exitCode?: unknown; signal?: unknown };
+  if (!(exitCode === null || (typeof exitCode === 'number' && Number.isInteger(exitCode)))) return null;
+  if (!(signal === null || typeof signal === 'string')) return null;
+  return Object.freeze({
+    exitCode,
+    signal: signal as NodeJS.Signals | null,
+  });
+}
+
 function attachExitCleanup(
   child: ChildProcess,
   getAdditionalPids: () => number[] = () => [],
@@ -95,7 +123,7 @@ function resolveSpawnCommandInvocation(command: string, args: readonly string[],
   return { command, args: [...args] };
 }
 
-export async function runLoggedCommand(params: {
+type RunLoggedCommandParams = {
   command: string;
   args: string[];
   cwd: string;
@@ -104,7 +132,11 @@ export async function runLoggedCommand(params: {
   stderrPath: string;
   timeoutMs?: number;
   abortSignal?: AbortSignal;
-}): Promise<void> {
+};
+
+export async function runLoggedCommandWithOutcome(
+  params: RunLoggedCommandParams,
+): Promise<LoggedCommandProcessOutcome> {
   const invocation = resolveSpawnCommandInvocation(params.command, params.args, params.env);
   const child = spawn(invocation.command, invocation.args, {
     cwd: params.cwd,
@@ -153,9 +185,14 @@ export async function runLoggedCommand(params: {
     return new Error(`${params.command} ${params.args.join(' ')} aborted`);
   };
 
-  const outcome = await new Promise<{ ok: true } | { ok: false; error: Error }>((resolve) => {
+  const outcome = await new Promise<
+    | { ok: true; process: LoggedCommandProcessOutcome }
+    | { ok: false; error: Error }
+  >((resolve) => {
     let settled = false;
-    const settle = (result: { ok: true } | { ok: false; error: Error }) => {
+    const settle = (result:
+      | { ok: true; process: LoggedCommandProcessOutcome }
+      | { ok: false; error: Error }) => {
       if (settled) return;
       settled = true;
       if (params.abortSignal && abortHandler) {
@@ -196,13 +233,20 @@ export async function runLoggedCommand(params: {
     child.on('exit', (code, signal) => {
       clearTimeout(timer);
       detachCleanup();
+      const processOutcome = Object.freeze({ exitCode: code, signal });
       if (code === 0) {
-        settle({ ok: true });
+        settle({ ok: true, process: processOutcome });
         return;
       }
 
       const detail = signal ? `signal ${signal}` : `code ${code}`;
-      settle({ ok: false, error: new Error(`${params.command} exited with ${detail}`) });
+      settle({
+        ok: false,
+        error: new LoggedCommandProcessError(
+          `${params.command} exited with ${detail}`,
+          processOutcome,
+        ),
+      });
     });
   });
 
@@ -215,12 +259,24 @@ export async function runLoggedCommand(params: {
 
   if (drainError) {
     if (!outcome.ok) {
+      const processOutcome = readLoggedCommandProcessOutcome(outcome.error);
+      if (processOutcome) {
+        throw new LoggedCommandProcessError(
+          `${outcome.error.message}; ${drainError.message}`,
+          processOutcome,
+        );
+      }
       throw new Error(`${outcome.error.message}; ${drainError.message}`);
     }
-    throw drainError;
+    throw new LoggedCommandProcessError(drainError.message, outcome.process);
   }
 
   if (!outcome.ok) throw outcome.error;
+  return outcome.process;
+}
+
+export async function runLoggedCommand(params: RunLoggedCommandParams): Promise<void> {
+  await runLoggedCommandWithOutcome(params);
 }
 
 export function spawnLoggedProcess(params: {

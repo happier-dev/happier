@@ -5,13 +5,13 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 - runFlow:
     when:
       visible:
-        id: welcome-create-account
+        id: welcome-primary-start
     commands:
       - runFlow:
           file: waitForWelcomeCreateAccount.yaml
 
       - tapOn:
-          id: welcome-create-account
+          id: welcome-primary-start
           retryTapIfNoChange: true
           waitToSettleTimeoutMs: 1000
 

@@ -16,8 +16,20 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # screen before showing either the connect UI or the app UI. Wait until at
 # least one known bootstrap surface is visible.
 - extendedWaitUntil:
-    visible: "(Open in .*|DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(Open in .*|DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Get started|First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 60000
+
+# A clean mobile credential reset reveals Happier's one-time brand prelude
+# before the normal welcome surface. Dismiss it through its stable app-owned id.
+- runFlow:
+    when:
+      visible:
+        id: brand-hero-get-started
+    commands:
+      - tapOn:
+          id: brand-hero-get-started
+          retryTapIfNoChange: true
+          waitToSettleTimeoutMs: 1000
 
 # The Expo Dev Client can show a blocking onboarding sheet/overlay at any time.
 # Dismiss it early so we can safely interact with the connect UI.
@@ -33,7 +45,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     timeout: 5000
 
 - extendedWaitUntil:
-    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(DEVELOPMENT SERVERS|Development servers|New development server|Enter URL manually|Connect|Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 60000
 
 # The Dev Client can show a non-blocking "Error loading app" toast from a
@@ -63,8 +75,24 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # Maestro. The follow-up flows dismiss overlays again and then wait on `id`
 # selectors inside the real Happier UI.
 - extendedWaitUntil:
-    visible: "(Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+    visible: "(Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Get started|First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
     timeout: 480000
+
+# The first current-source bundle load can reveal Happier's one-time brand
+# prelude only after the Dev Client deep link has returned. Handle that
+# lifecycle point too, then wait for the normal welcome/app surface.
+- runFlow:
+    when:
+      visible:
+        id: brand-hero-get-started
+    commands:
+      - tapOn:
+          id: brand-hero-get-started
+          retryTapIfNoChange: true
+          waitToSettleTimeoutMs: 1000
+      - extendedWaitUntil:
+          visible: "(First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+          timeout: 60000
 
 # Dismiss dev-only overlays (not our UI).
 - runFlow:
@@ -82,7 +110,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       - runFlow:
           file: connectUsingManualEntry.yaml
       - extendedWaitUntil:
-          visible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+          visible: "(First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
           timeout: 240000
       - runFlow:
           file: dismissDeveloperMenuMaybe.yaml
@@ -106,7 +134,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
       # Retry the connect UX (best-effort) if the app surface is still missing.
       - runFlow:
           when:
-            notVisible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+            notVisible: "(First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
           commands:
             - runFlow:
                 when:
@@ -115,14 +143,14 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
                   - runFlow:
                       file: connectUsingLaunchUrl.yaml
             - extendedWaitUntil:
-                visible: "(Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+                visible: "(Error loading app|There was a problem loading the project|This is the developer menu.*|Continue|Go home|Go To Home|Loading from|Bundling.*|Downloading.*|Loading\\.\\.\\.|First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
                 timeout: 240000
             - runFlow:
                 file: dismissDeveloperMenuMaybe.yaml
             - runFlow:
                 file: dismissExpoDevMenuOverlayMaybe.yaml
             - extendedWaitUntil:
-                visible: "(Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
+                visible: "(First time here.*|Login with mobile app|Create account|What would you like to work on\\?|Hi! How can I help you today\\?|Sessions|Start a session from your computer)"
                 timeout: 240000
 
 - assertNotVisible: "There was a problem loading the project"

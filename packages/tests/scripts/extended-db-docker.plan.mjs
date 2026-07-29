@@ -166,7 +166,21 @@ export function buildExtendedDbCommandPlan({ db, mode, databaseUrl }) {
     },
   };
 
+  const mysqlVoiceIdentityUpgradeContractStep = {
+    kind: 'mysql-voice-identity-upgrade-contract',
+    command: 'yarn',
+    args: ['-s', 'workspace', resolveServerAppWorkspaceName(), 'test:mysql-voice-identity-upgrade-contract'],
+    env: {
+      HAPPIER_DB_PROVIDER: 'mysql',
+      DATABASE_URL: String(databaseUrl),
+    },
+  };
+
   if (mode === 'e2e') return [prebuildCliSharedStep, prebuildCliStep, e2eStep];
-  if (mode === 'contract') return [migrateStep, contractStep];
+  if (mode === 'contract') {
+    return db === 'mysql'
+      ? [mysqlVoiceIdentityUpgradeContractStep, migrateStep, contractStep]
+      : [migrateStep, contractStep];
+  }
   return [prebuildCliSharedStep, prebuildCliStep, e2eStep, migrateStep, contractStep];
 }

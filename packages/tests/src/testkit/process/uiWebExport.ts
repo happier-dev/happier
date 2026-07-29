@@ -1108,6 +1108,7 @@ async function startStaticUiServer(params: {
   await appendFile(stdoutPath, `http://127.0.0.1:${port}\n`).catch(() => {});
 
   return {
+    mode: 'export',
     baseUrl: `http://127.0.0.1:${port}`,
     proc: null,
     stop: async () => {
@@ -1131,6 +1132,22 @@ export async function startUiWebExport(params: {
   port?: number;
 }): Promise<StartedUiWeb> {
   const distDir = await ensureUiWebExportBuilt(params);
+  return await startStaticUiServer({
+    testDir: params.testDir,
+    distDir,
+    port: params.port,
+    runtimeConfig: buildRuntimeConfig(params.env),
+  });
+}
+
+export async function startExistingUiWebExport(params: {
+  testDir: string;
+  env: NodeJS.ProcessEnv;
+  distDir: string;
+  port?: number;
+}): Promise<StartedUiWeb> {
+  const distDir = resolvePath(params.distDir);
+  await assertCompleteUiWebExportDir(distDir);
   return await startStaticUiServer({
     testDir: params.testDir,
     distDir,

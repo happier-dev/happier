@@ -3,14 +3,22 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 
 const includedRoots = [
+  '.github/feature-policy',
   '.dockerignore',
   'package.json',
   'yarn.lock',
+  'apps/cli/package.json',
   'apps/server',
+  'apps/stack/scripts/utils',
+  'apps/ui/package.json',
   'packages/agents',
   'packages/cli-common',
+  'packages/plugin-sdk',
+  'packages/plugins/review-coderabbit',
+  'packages/plugins/review-deepsec',
   'packages/protocol',
   'packages/release-runtime',
+  'packages/tests/src/testkit/stress/targets/startFullComposeStressTarget.ts',
   'scripts/pipeline/expo/eas-postinstall.mjs',
   'scripts/workspaces',
 ] as const;
@@ -28,6 +36,13 @@ const ignoredDirectoryNames = new Set([
   'web-build',
 ]);
 
+const ignoredGeneratedDirectoryPrefixes = [
+  '.dist.build.',
+  '.dist.hstack-stage-',
+  '.restore.',
+  '.tmp.',
+] as const;
+
 const ignoredRelativePathPrefixes = [
   'apps/cli/tools/archives',
   'apps/cli/tools/unpacked',
@@ -40,7 +55,7 @@ const ignoredRelativePathPrefixes = [
 ] as const;
 
 function isIgnoredAbsolutePath(repoRootDir: string, absolutePath: string): boolean {
-  const relativePath = relative(repoRootDir, absolutePath);
+  const relativePath = relative(repoRootDir, absolutePath).replaceAll('\\', '/');
 
   if (relativePath.startsWith('..')) {
     return false;
@@ -62,8 +77,14 @@ function appendPathToHash(hash: ReturnType<typeof createHash>, repoRootDir: stri
   }
 
   if (stat.isDirectory()) {
-    const directoryName = absolutePath.split('/').at(-1);
-    if (directoryName && ignoredDirectoryNames.has(directoryName)) {
+    const directoryName = absolutePath.replaceAll('\\', '/').split('/').at(-1);
+    if (
+      directoryName
+      && (
+        ignoredDirectoryNames.has(directoryName)
+        || ignoredGeneratedDirectoryPrefixes.some((prefix) => directoryName.startsWith(prefix))
+      )
+    ) {
       return;
     }
 
@@ -78,7 +99,7 @@ function appendPathToHash(hash: ReturnType<typeof createHash>, repoRootDir: stri
     return;
   }
 
-  hash.update(relative(repoRootDir, absolutePath));
+  hash.update(relative(repoRootDir, absolutePath).replaceAll('\\', '/'));
   hash.update('\0');
   hash.update(readFileSync(absolutePath));
   hash.update('\0');
@@ -87,7 +108,7 @@ function appendPathToHash(hash: ReturnType<typeof createHash>, repoRootDir: stri
 export function computeComposeServerImageFingerprint(repoRootDir: string): string {
   const resolvedRepoRootDir = resolve(repoRootDir);
   const hash = createHash('sha1');
-  hash.update('happier-stress-compose-image-fingerprint:v1');
+  hash.update('happier-stress-compose-image-fingerprint:v5');
   hash.update('\0');
 
   for (const root of includedRoots) {

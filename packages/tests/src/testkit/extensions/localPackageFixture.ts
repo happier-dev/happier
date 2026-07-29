@@ -1,10 +1,39 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { writeEnabledPluginSdkV1State } from '../plugins/pluginSdkV1Fixture';
+import type { PluginContributesV2 } from '@happier-dev/protocol';
 
 type LocalExtensionContribution = Readonly<Record<string, unknown>>;
 type LocalExtensionContributionMap = Readonly<Record<string, readonly LocalExtensionContribution[] | undefined>>;
+const SUPPORTED_CONTRIBUTION_FAMILIES = new Set<string>([
+    'actions',
+    'agents',
+    'browserActions',
+    'browserTargets',
+    'commands',
+    'connectedAccountDescriptors',
+    'events',
+    'executionRunProfiles',
+    'hooks',
+    'managedDependencies',
+    'mcp',
+    'notificationChannels',
+    'notifications',
+    'promptAssets',
+    'providers',
+    'requestInterceptors',
+    'resources',
+    'scmBackends',
+    'scmHostingProviders',
+    'sessionHeaderActions',
+    'settings',
+    'structuredMessages',
+    'systemTools',
+    'tools',
+    'ui',
+    'voiceModelPacks',
+    'voiceProviders',
+] satisfies readonly (keyof PluginContributesV2)[]);
 
 export type LocalExtensionPackageManifest = Readonly<{
     schemaVersion: 2;
@@ -88,18 +117,26 @@ type ExtensionRuntimeCapability =
     | 'commands'
     | 'hooks'
     | 'resources'
-    | 'uiDescriptors'
     | 'settings'
     | 'managedDependencies'
     | 'mcp'
     | 'notifications'
     | 'executionRunProfiles'
-    | 'lifecycle'
     | 'reload';
+
+function assertSupportedContributionFamilies(contributes: LocalExtensionContributionMap): void {
+    const unsupported = Object.keys(contributes)
+        .filter((family) => !SUPPORTED_CONTRIBUTION_FAMILIES.has(family))
+        .sort();
+    if (unsupported.length > 0) {
+        throw new Error(`Unsupported plugin contribution families: ${unsupported.join(', ')}`);
+    }
+}
 
 function inferRuntimeCapabilitiesFromContributes(
     contributes: LocalExtensionContributionMap,
 ): readonly ExtensionRuntimeCapability[] {
+    assertSupportedContributionFamilies(contributes);
     const capabilities = new Set<ExtensionRuntimeCapability>();
 
     if ((contributes.agents?.length ?? 0) > 0) capabilities.add('agents');
@@ -108,10 +145,7 @@ function inferRuntimeCapabilitiesFromContributes(
     if ((contributes.commands?.length ?? 0) > 0) capabilities.add('commands');
     if ((contributes.hooks?.length ?? 0) > 0) capabilities.add('hooks');
     if ((contributes.resources?.length ?? 0) > 0) capabilities.add('resources');
-    if ((contributes.uiDescriptors?.length ?? 0) > 0) capabilities.add('uiDescriptors');
     if ((contributes.settings?.length ?? 0) > 0) capabilities.add('settings');
-    if ((contributes.agentSettings?.length ?? 0) > 0) capabilities.add('settings');
-    if ((contributes.lifecycleHandlers?.length ?? 0) > 0) capabilities.add('lifecycle');
     if ((contributes.managedDependencies?.length ?? 0) > 0) capabilities.add('managedDependencies');
     if (contributes.mcp) capabilities.add('mcp');
     if ((contributes.notifications?.length ?? 0) > 0) capabilities.add('notifications');
@@ -143,57 +177,6 @@ function normalizeResourceContributionV1ish(value: LocalExtensionContribution): 
     if (typeof value.contentType === 'string') normalized.contentType = value.contentType;
 
     return normalized;
-}
-
-function normalizeUiDescriptorFieldType(typeOrKind: unknown): string {
-    if (typeOrKind === 'enum') return 'select';
-    if (typeOrKind === 'markdown') return 'markdown';
-    if (typeOrKind === 'select') return 'select';
-    if (typeOrKind === 'text') return 'text';
-    if (typeOrKind === 'boolean') return 'boolean';
-    if (typeOrKind === 'secret') return 'secret';
-    if (typeOrKind === 'number') return 'number';
-    if (typeOrKind === 'action') return 'action';
-    return 'text';
-}
-
-function normalizeUiDescriptorContributionV1ish(value: LocalExtensionContribution): LocalExtensionContribution {
-    const id = typeof value.id === 'string' ? value.id : null;
-    const surface = typeof value.surface === 'string' ? value.surface : null;
-    const title = typeof value.title === 'string' ? value.title : null;
-    if (!id || !surface || !title) {
-        throw new Error('Invalid legacy uiDescriptor contribution; expected id, surface, and title');
-    }
-
-    const fieldsRaw = Array.isArray(value.fields) ? value.fields : [];
-    const fields = fieldsRaw.map((field) => {
-        const fieldObj = field as Record<string, unknown>;
-        return {
-            id: typeof fieldObj.id === 'string' ? fieldObj.id : 'unknown',
-            type: normalizeUiDescriptorFieldType(fieldObj.type ?? fieldObj.kind),
-            title: typeof fieldObj.title === 'string' ? fieldObj.title : 'Field',
-            description: typeof fieldObj.description === 'string' ? fieldObj.description : undefined,
-            options: Array.isArray(fieldObj.options) ? fieldObj.options : [],
-        };
-    });
-
-    if (
-        surface !== 'settings'
-        && surface !== 'setup'
-        && surface !== 'status'
-        && surface !== 'agentSettings'
-    ) {
-        throw new Error(`Unsupported uiDescriptor surface '${surface}'`);
-    }
-
-    return {
-        kind: 'uiDescriptor',
-        id,
-        surface,
-        title,
-        description: typeof value.description === 'string' ? value.description : undefined,
-        fields,
-    };
 }
 
 function normalizeLegacyActionContributionV1ish(value: LocalExtensionContribution): LocalExtensionContribution {
@@ -272,6 +255,7 @@ function normalizeManifestForWrite(manifest: LocalExtensionPackageManifest): Rec
 }
 
 function normalizeContributesForWrite(contributes: LocalExtensionContributionMap): LocalExtensionContributionMap {
+    assertSupportedContributionFamilies(contributes);
     const normalized: Record<string, readonly LocalExtensionContribution[]> = {};
 
     for (const [family, entries] of Object.entries(contributes)) {
@@ -280,8 +264,6 @@ function normalizeContributesForWrite(contributes: LocalExtensionContributionMap
             normalized.actions = entries.map((entry) => normalizeLegacyActionContributionV1ish(entry));
         } else if (family === 'resources') {
             normalized.resources = entries.map((entry) => normalizeResourceContributionV1ish(entry));
-        } else if (family === 'uiDescriptors') {
-            normalized.uiDescriptors = entries.map((entry) => normalizeUiDescriptorContributionV1ish(entry));
         } else {
             normalized[family] = entries;
         }
@@ -312,6 +294,7 @@ export async function writeEnabledLocalExtensionPackageState(params: Readonly<{
     pluginId: string;
     manifestVersion?: string;
 }>): Promise<void> {
+    const { writeEnabledPluginSdkV1State } = await import('../plugins/pluginSdkV1Fixture');
     await writeEnabledPluginSdkV1State({
         happyHomeDir: params.happyHomeDir,
         pluginRoot: params.pluginRoot,
@@ -464,81 +447,26 @@ export async function writeActivatedActionExecutionPluginFixture(params: Readonl
     };
 }
 
-export async function writeDescriptorProjectionPluginFixture(params: Readonly<{
-    pluginRoot: string;
-    pluginId: string;
-    descriptorId: string;
-    resourceId: string;
-}>): Promise<LocalExtensionPackageFixture> {
-    const manifest = createLocalExtensionPackageManifest({
-        pluginId: params.pluginId,
-        displayName: 'Descriptor Projection Fixture',
-        description: 'Contributes host-rendered descriptors and resources for projection validation',
-        contributes: {
-            resources: [
-                {
-                    kindVersion: 1,
-                    id: params.resourceId,
-                    type: 'prompt',
-                    title: 'Fixture Prompt',
-                    path: './resources/fixture-prompt.md',
-                },
-            ],
-            uiDescriptors: [
-                {
-                    kindVersion: 1,
-                    id: params.descriptorId,
-                    surface: 'settings',
-                    title: 'Fixture Settings',
-                    fields: [
-                        {
-                            kind: 'text',
-                            id: 'fixture.message',
-                            title: 'Fixture Message',
-                        },
-                    ],
-                },
-            ],
-        },
-    });
-    await writeLocalExtensionPackageFixture({
-        pluginRoot: params.pluginRoot,
-        manifest,
-        daemonModuleContents: 'export async function activate() {}\n',
-    });
-    return {
-        pluginId: params.pluginId,
-        pluginRoot: params.pluginRoot,
-        manifest,
-    };
-}
-
 export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
     pluginRoot: string;
     pluginId: string;
     actionId?: string;
     resourceId?: string;
-    settingsDescriptorId?: string;
-    setupDescriptorId?: string;
-    statusDescriptorId?: string;
-    agentSettingsDescriptorId?: string;
+    settingsId?: string;
 }>): Promise<LocalExtensionPackageFixture> {
     const actionId = params.actionId ?? `${params.pluginId}-refresh`;
     const resourceId = params.resourceId ?? `${params.pluginId}-prompt`;
-    const settingsDescriptorId = params.settingsDescriptorId ?? `${params.pluginId}-settings-panel`;
-    const setupDescriptorId = params.setupDescriptorId ?? `${params.pluginId}-setup-panel`;
-    const statusDescriptorId = params.statusDescriptorId ?? `${params.pluginId}-status-panel`;
-    const agentSettingsDescriptorId = params.agentSettingsDescriptorId ?? `${params.pluginId}-agent-settings-panel`;
+    const settingsId = params.settingsId ?? 'preferences';
     const manifest: LocalExtensionPackageManifest = {
         schemaVersion: 2,
         id: params.pluginId,
         version: '1.0.0',
         displayName: 'Runtime Projection Fixture',
-        description: 'Registers runtime actions, resources, and UI descriptors for projection validation',
+        description: 'Registers runtime actions, resources, and typed settings for projection validation',
         engines: {
             happier: '^0.2.0',
         },
-        uses: ['actions', 'resources', 'uiDescriptors'],
+        uses: ['actions', 'resources', 'settings'],
         entrypoints: {
             main: './daemon.mjs',
         },
@@ -568,74 +496,19 @@ export async function writeRuntimeProjectionPluginFixture(params: Readonly<{
                     contentType: 'text/markdown',
                 },
             ],
-            uiDescriptors: [
+            settings: [
                 {
-                    id: settingsDescriptorId,
-                    surface: 'settings',
-                    title: 'Plugin Settings',
-                    description: 'Host-rendered settings descriptor',
+                    id: settingsId,
+                    title: 'Plugin preferences',
+                    target: { kind: 'plugin' },
+                    scope: 'local',
                     fields: [
                         {
                             id: 'enabled',
-                            type: 'boolean',
                             title: 'Enabled',
-                        },
-                        {
-                            id: 'mode',
-                            type: 'select',
-                            title: 'Mode',
-                            options: [
-                                { value: 'safe', label: 'Safe' },
-                            ],
-                        },
-                        {
-                            id: 'agentSecret',
-                            type: 'secret',
-                            title: 'Agent secret',
-                        },
-                        {
-                            id: 'connect',
-                            type: 'action',
-                            title: 'Connect account',
-                        },
-                    ],
-                },
-                {
-                    id: setupDescriptorId,
-                    surface: 'setup',
-                    title: 'Plugin Setup',
-                    description: 'Host-rendered setup descriptor',
-                    fields: [
-                        {
-                            id: 'connect',
-                            type: 'action',
-                            title: 'Connect account',
-                        },
-                    ],
-                },
-                {
-                    id: statusDescriptorId,
-                    surface: 'status',
-                    title: 'Runtime Status',
-                    description: 'Host-rendered status descriptor',
-                    fields: [
-                        {
-                            id: 'generation',
-                            type: 'text',
-                            title: 'Registry generation',
-                        },
-                    ],
-                },
-                {
-                    id: agentSettingsDescriptorId,
-                    surface: 'agentSettings',
-                    title: 'Agent Settings',
-                    description: 'Host-rendered agent settings descriptor',
-                    fields: [
-                        {
-                            id: 'agentSecret',
-                            type: 'secret',
-                            title: 'Agent secret',
+                            description: 'Example host-rendered plugin preference.',
+                            schema: { type: 'boolean' },
+                            default: true,
                         },
                     ],
                 },

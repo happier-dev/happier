@@ -157,7 +157,7 @@ async function writeFakeCodexAppServerScript(params: { scriptPath: string }): Pr
 }
 
 async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Promise<void> {
-    await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/settings/providers/codex`, '/settings/providers/codex');
+    await gotoDomContentLoadedWithPathFallback(page, `${uiBaseUrl}/settings/agents/codex`, '/settings/agents/codex');
     const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
     await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
     if ((await backendModeRow.getByText('App Server').count()) > 0) return;

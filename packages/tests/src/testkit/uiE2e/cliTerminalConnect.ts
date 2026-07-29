@@ -1,7 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve as resolvePath } from 'node:path';
 
-import { resolveCliTestLaunchSpec } from '../process/cliLaunchSpec';
+import {
+  resolveCliTestLaunchSpec,
+  resolveCliTestLaunchSpecOrOverride,
+  type CliTestLaunchSpec,
+} from '../process/cliLaunchSpec';
 import {
   inspectOwnedProcess,
   registerProcessOwnershipLease,
@@ -16,6 +20,24 @@ import { waitFor } from '../timing';
 import { expandLoopbackBaseUrlCandidates } from '../network/loopbackBaseUrl';
 
 const DEFAULT_TERMINAL_CONNECT_URL_TIMEOUT_MS = 180_000;
+const TERMINAL_CONNECT_KEY_PATTERN = /([#&]key=)[^&\s]+/gu;
+
+function redactTerminalConnectKeys(text: string): string {
+  return text.replace(TERMINAL_CONNECT_KEY_PATTERN, '$1[redacted]');
+}
+
+async function redactTerminalConnectKeysInFile(path: string): Promise<void> {
+  const raw = await readFile(path, 'utf8').catch(() => null);
+  if (raw === null) return;
+  const redacted = redactTerminalConnectKeys(raw);
+  if (redacted === raw) return;
+  await writeFile(path, redacted, 'utf8');
+}
+
+function redactTerminalConnectError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+  return new Error(redactTerminalConnectKeys(message));
+}
 
 function extractHttpUrls(text: string): string[] {
   const out: string[] = [];
@@ -220,6 +242,7 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
   connectUrlTimeoutMs?: number;
   waitForConnectUrlReady?: boolean;
   env: NodeJS.ProcessEnv;
+  cliLaunchSpec?: CliTestLaunchSpec;
 }>): Promise<StartedCliTerminalConnect> {
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
   if (currentOwnerInspection.ok) {
@@ -232,9 +255,12 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     });
   }
 
-  const cliLaunchSpec = await resolveCliTestLaunchSpec(
-    { testDir: params.testDir, env: params.env },
-    { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
+  const cliLaunchSpec = await resolveCliTestLaunchSpecOrOverride(
+    params.cliLaunchSpec,
+    () => resolveCliTestLaunchSpec(
+      { testDir: params.testDir, env: params.env },
+      { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
+    ),
   );
 
   await ensureActiveServerSelection({
@@ -290,16 +316,21 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
       connectUrl,
       webappUrl: params.webappUrl,
     });
+    await redactTerminalConnectKeysInFile(stdoutPath);
     if (params.waitForConnectUrlReady !== false) {
       connectUrl = await waitForTerminalConnectUrlReady(connectUrl, params.env);
     }
   } catch (e) {
     await proc.stop().catch(() => {});
-    throw e;
+    await Promise.all([
+      redactTerminalConnectKeysInFile(stdoutPath),
+      redactTerminalConnectKeysInFile(stderrPath),
+    ]);
+    throw redactTerminalConnectError(e);
   }
 
   if (!connectUrl) {
-    const tail = await stdoutTail(stdoutPath);
+    const tail = redactTerminalConnectKeys(await stdoutTail(stdoutPath));
     await proc.stop().catch(() => {});
     throw new Error(`Failed to extract terminal connect URL from CLI stdout | stdoutTail=${JSON.stringify(tail)}`);
   }
@@ -309,6 +340,10 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     proc,
     waitForSuccess: async () => {
       const { code, signal } = await waitForExit(proc, resolveCliTerminalConnectSuccessTimeoutMs(params.env));
+      await Promise.all([
+        redactTerminalConnectKeysInFile(stdoutPath),
+        redactTerminalConnectKeysInFile(stderrPath),
+      ]);
       if (code === 0) {
         await ensureActiveServerSelection({
           cliHomeDir: params.cliHomeDir,
@@ -318,8 +353,8 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
         return;
       }
       const detail = signal ? `signal=${signal}` : `code=${code ?? 'null'}`;
-      const outTail = await stdoutTail(stdoutPath);
-      const errTail = await stderrTail(stderrPath);
+      const outTail = redactTerminalConnectKeys(await stdoutTail(stdoutPath));
+      const errTail = redactTerminalConnectKeys(await stderrTail(stderrPath));
       throw new Error(
         [
           `CLI auth login exited with ${detail}`,
@@ -330,6 +365,10 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     },
     stop: async () => {
       await proc.stop().catch(() => {});
+      await Promise.all([
+        redactTerminalConnectKeysInFile(stdoutPath),
+        redactTerminalConnectKeysInFile(stderrPath),
+      ]);
     },
   };
 }

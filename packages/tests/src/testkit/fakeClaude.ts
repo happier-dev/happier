@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { repoRootDir } from './paths';
 import { sleep } from './timing';
@@ -23,6 +24,42 @@ export function fakeClaudeFixturePath(): string {
     throw new Error(`Missing fake Claude fixture at ${path}`);
   }
   return path;
+}
+
+export async function createIsolatedFakeClaudeControlShim(params: Readonly<{
+  testDir: string;
+  invocationId: string;
+  captureEnvironmentKeys: readonly string[];
+  logFullStdin: boolean;
+}>): Promise<Readonly<{
+  executablePath: string;
+  logPath: string;
+  configDir: string;
+}>> {
+  const testDir = resolve(params.testDir);
+  const executablePath = resolve(join(testDir, 'fake-claude-control.mjs'));
+  const logPath = resolve(join(testDir, 'fake-claude.jsonl'));
+  const configDir = resolve(join(testDir, 'fake-claude-config'));
+  await mkdir(configDir, { recursive: true });
+
+  const controlledEnvironment = {
+    HAPPIER_E2E_FAKE_CLAUDE_LOG: logPath,
+    HAPPIER_E2E_FAKE_CLAUDE_INVOCATION_ID: params.invocationId,
+    HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN: params.logFullStdin ? '1' : '0',
+    HAPPIER_E2E_FAKE_CLAUDE_CAPTURE_ENV_KEYS: params.captureEnvironmentKeys.join(','),
+    CLAUDE_CONFIG_DIR: configDir,
+  } satisfies Record<string, string>;
+  const source = [
+    '// Scenario-owned fake-Claude controls intentionally live inside this test-only child shim.',
+    ...Object.entries(controlledEnvironment).map(
+      ([key, value]) => `process.env[${JSON.stringify(key)}] = ${JSON.stringify(value)};`,
+    ),
+    `await import(${JSON.stringify(pathToFileURL(fakeClaudeFixturePath()).href)});`,
+    '',
+  ].join('\n');
+  await writeFile(executablePath, source, { encoding: 'utf8', mode: 0o600 });
+
+  return { executablePath, logPath, configDir };
 }
 
 function parseJsonl(raw: string): any[] {
@@ -140,7 +177,7 @@ export async function waitForFakeClaudeInvocation(
 export async function waitForFakeClaudeUserText(
   logPath: string,
   predicate: (text: string) => boolean,
-  opts?: { timeoutMs?: number; pollMs?: number },
+  opts?: { invocationId?: string; timeoutMs?: number; pollMs?: number },
 ): Promise<string> {
   const timeoutMs = opts?.timeoutMs ?? 60_000;
   const pollMs = opts?.pollMs ?? 100;
@@ -150,9 +187,14 @@ export async function waitForFakeClaudeUserText(
     const events = await readJsonlFile(logPath);
     for (const event of events) {
       if (event?.type !== 'sdk_stdin') continue;
+      if (opts?.invocationId !== undefined && event?.invocationId !== opts.invocationId) continue;
       if (event?.hasUserText !== true) continue;
-      if (typeof event.userTextPreview !== 'string') continue;
-      if (predicate(event.userTextPreview)) return event.userTextPreview;
+      const userText = typeof event.userText === 'string'
+        ? event.userText
+        : typeof event.userTextPreview === 'string'
+          ? event.userTextPreview
+          : null;
+      if (userText !== null && predicate(userText)) return userText;
     }
     await sleep(pollMs);
   }

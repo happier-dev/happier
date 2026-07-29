@@ -65,6 +65,7 @@ describe('primePlatformAppLaunch', () => {
       ['-s', 'emulator-5554', 'shell', 'am', 'start', '-W', '-n', 'dev.happier.app.internaldev/.MainActivity'],
       expect.objectContaining({
         encoding: 'utf8',
+        timeout: 60_000,
       }),
     );
   });

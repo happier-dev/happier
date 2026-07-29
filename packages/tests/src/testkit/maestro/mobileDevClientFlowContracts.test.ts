@@ -25,6 +25,10 @@ const populatedRelayRestoreAndOpenUrl = new URL(
   '../../../suites/mobile-e2e/flows/F13.populatedRelayRestoreAndOpenSessionPerformance.yaml',
   import.meta.url,
 );
+const newSessionGuidanceNoMachineSmokeUrl = new URL(
+  '../../../suites/mobile-e2e/flows/F3.newSessionGuidanceNoMachineSmoke.yaml',
+  import.meta.url,
+);
 
 function listYamlFiles(dir: string): string[] {
   return readdirSync(dir)
@@ -71,7 +75,7 @@ describe('mobile Dev Client flow contracts', () => {
 
   it('accepts Android chooser prompts after server configuration deep links', () => {
     const flow = readFileSync(new URL('../../../suites/mobile-e2e/flows/_shared/configureServerIfNeeded.yaml', import.meta.url), 'utf8');
-    const openLinkIndex = flow.indexOf('openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}');
+    const openLinkIndex = flow.indexOf('openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/server?auto=1&url=${HAPPIER_E2E_SERVER_URL}');
     const chooserFlowIndex = flow.indexOf('file: acceptAndroidOpenWithPromptMaybe.yaml', openLinkIndex);
     const overlayDismissIndex = flow.indexOf('file: dismissAndroidSystemNotRespondingDialogMaybe.yaml', openLinkIndex);
 
@@ -82,7 +86,7 @@ describe('mobile Dev Client flow contracts', () => {
 
   it('configures the per-run server even when welcome auth actions are already visible', () => {
     const flow = readFileSync(new URL('../../../suites/mobile-e2e/flows/_shared/configureServerIfNeeded.yaml', import.meta.url), 'utf8');
-    const openLinkIndex = flow.indexOf('openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///server?auto=1&url=${HAPPIER_E2E_SERVER_URL}');
+    const openLinkIndex = flow.indexOf('openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/server?auto=1&url=${HAPPIER_E2E_SERVER_URL}');
     const welcomeCreateAccountGuardIndex = flow.indexOf('notVisible:\n        id: welcome-create-account');
 
     expect(openLinkIndex).toBeGreaterThanOrEqual(0);
@@ -97,6 +101,25 @@ describe('mobile Dev Client flow contracts', () => {
     expect(waitLines[0]).toContain('Continue');
     expect(waitLines[1]).toContain('This is the developer menu.*');
     expect(waitLines[1]).toContain('Continue');
+  });
+
+  it('dismisses the Happier brand prelude when it first appears after the Dev Client deep link', () => {
+    const launchFlow = readFileSync(
+      new URL('../../../suites/mobile-e2e/flows/_shared/connectUsingLaunchUrl.yaml', import.meta.url),
+      'utf8',
+    );
+    const bootstrapFlow = readFileSync(
+      new URL('../../../suites/mobile-e2e/flows/_shared/connectDevClientIfNeeded.yaml', import.meta.url),
+      'utf8',
+    );
+    const launchIndex = bootstrapFlow.indexOf('file: connectUsingLaunchUrl.yaml');
+    const postLaunchBrandStateIndex = bootstrapFlow.indexOf('Get started', launchIndex);
+    const postLaunchBrandTapIndex = bootstrapFlow.indexOf('id: brand-hero-get-started', launchIndex);
+
+    expect(launchFlow).toContain('Get started');
+    expect(launchIndex).toBeGreaterThanOrEqual(0);
+    expect(postLaunchBrandStateIndex).toBeGreaterThan(launchIndex);
+    expect(postLaunchBrandTapIndex).toBeGreaterThan(postLaunchBrandStateIndex);
   });
 
   it('fails the bootstrap flow before app-specific waits when native DevLauncher load fails', () => {
@@ -126,12 +149,30 @@ describe('mobile Dev Client flow contracts', () => {
 
   it('does not fail overlay dismissal when the Expo close affordance is absent', () => {
     const flow = readFileSync(expoDevMenuOverlayFlowUrl, 'utf8');
+    const closeGuardIndex = flow.indexOf('visible: "Close"');
+    const closeTapIndex = flow.indexOf('tapOn: "Close"', closeGuardIndex);
+    const fallbackGoHomeIndex = flow.indexOf('visible: "Go home"', closeTapIndex);
 
-    expect(flow).toContain('visible: "Close"');
-    expect(flow).toContain('tapOn: "Close"');
-    expect(flow).toContain('notVisible: "Close"');
+    expect(closeGuardIndex).toBeGreaterThanOrEqual(0);
+    expect(closeTapIndex).toBeGreaterThan(closeGuardIndex);
+    expect(fallbackGoHomeIndex).toBeGreaterThan(closeTapIndex);
+    expect(flow).not.toContain('notVisible: "Close"');
     expect(flow).toContain('visible: "Tap something to inspect it"');
     expect((flow.match(/- back/g) ?? []).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('dismisses a late Expo Dev Menu overlay before asserting new-session guidance', () => {
+    const flow = readFileSync(newSessionGuidanceNoMachineSmokeUrl, 'utf8');
+    const newSessionTapIndex = flow.indexOf('id: main-header-start-new-session');
+    const overlayDismissIndex = flow.indexOf('file: _shared/dismissExpoDevMenuOverlayMaybe.yaml', newSessionTapIndex);
+    const guidanceWaitIndex = flow.indexOf('id: setupWizard-machine-arrival-stack', newSessionTapIndex);
+
+    expect(newSessionTapIndex).toBeGreaterThanOrEqual(0);
+    expect(overlayDismissIndex).toBeGreaterThan(newSessionTapIndex);
+    expect(guidanceWaitIndex).toBeGreaterThan(overlayDismissIndex);
+    expect(flow).toContain('id: setupWizard-machine-arrival');
+    expect(flow).toContain('id: setupWizard-machine-arrival-desktop-app-download-cta');
+    expect(flow).not.toContain('session-getting-started-step-');
   });
 
   it('keeps runFlow file references resolvable relative to their owner flow', () => {

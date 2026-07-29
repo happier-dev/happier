@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { mkdir, readFile } from 'node:fs/promises';
 import { relative, resolve as resolvePath } from 'node:path';
 
@@ -13,12 +13,15 @@ import {
   resolveProcessOwnershipLeasesDir,
   sweepProcessOwnershipLeases,
 } from './processOwnershipLease';
+import { redactHarnessLogText } from './harnessLogRedaction';
 import { readPositiveEnvInt, resolveUiWebEntryProbeTimeoutMs } from './uiWebEnv';
 import { resolveScriptUrlsFromHtml, selectPrimaryAppScriptUrl } from './uiWebHtml';
 import { resolveUiWebSourceFingerprint } from './uiWebSourceFingerprint';
 import { spawnLoggedProcess } from './spawnProcess';
 import { ensureUiWebWorkspacePrebuild } from './uiWebWorkspacePrebuild';
 import type { StartedUiWeb } from './uiWebTypes';
+import { resolveExpoCliPath } from './expoCliPath';
+import { inspectMetroPackagerStatusResponse } from './metroPackagerStatus';
 
 function stripAnsi(text: string): string {
     return text.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '');
@@ -74,6 +77,26 @@ export function resolveUiWebMetroOwnershipLeasesDir(rootDir: string = repoRootDi
   return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'ui-web-metro' });
 }
 
+function resolveUiWebMetroNodeOptions(raw: string | undefined): string {
+  const existing = String(raw ?? '').trim();
+  const ipv4First = '--dns-result-order=ipv4first';
+  if (existing.split(/\s+/).includes(ipv4First)) {
+    return existing;
+  }
+  return existing ? `${existing} ${ipv4First}` : ipv4First;
+}
+
+type UiWebMetroStartParams = {
+  testDir: string;
+  env: NodeJS.ProcessEnv;
+  port?: number;
+  skipWorkspacePrebuild?: boolean;
+};
+
+function shouldRunWorkspacePrebuild(params: Pick<UiWebMetroStartParams, 'skipWorkspacePrebuild'>): boolean {
+  return params.skipWorkspacePrebuild !== true;
+}
+
 function resolveUiWebMetroSpawnEnv(params: Readonly<{
   env: NodeJS.ProcessEnv;
   tmpDir: string;
@@ -96,6 +119,9 @@ function resolveUiWebMetroSpawnEnv(params: Readonly<{
         }
       : {}),
     HAPPIER_UI_METRO_CACHE_VERSION_BUST: params.metroCacheVersionBust,
+    // Expo's localhost mode passes the hostname directly to `server.listen`. Pin its
+    // resolution to the same IPv4 loopback origin returned by the E2E URL normalizer.
+    NODE_OPTIONS: resolveUiWebMetroNodeOptions(params.env.NODE_OPTIONS),
     TMPDIR: params.tmpDir,
     TMP: params.tmpDir,
     TEMP: params.tmpDir,
@@ -116,7 +142,7 @@ export function resolveUiWebMetroStatusTimeoutMs(env: NodeJS.ProcessEnv): number
 }
 
 export function resolveUiWebMetroStatusAttemptTimeoutMs(env: NodeJS.ProcessEnv): number {
-  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS, 250);
+  return readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS, 5_000);
 }
 
 export function resolveUiWebScriptFetchTotalTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -164,30 +190,110 @@ type UiWebEntryPageProbe = Readonly<{
   isEntryPage: boolean;
   hasScriptTags: boolean;
   primaryScriptUrl: string | null;
+  diagnostic: UiWebHttpProbeDiagnostic;
 }>;
 
+type UiWebHttpProbeOutcome = 'ready' | 'http-error' | 'invalid-body' | 'request-failed' | 'timeout';
+
+type UiWebHttpProbeDiagnostic = Readonly<{
+  outcome: UiWebHttpProbeOutcome;
+  latencyMs: number;
+  detail: string;
+}>;
+
+function sanitizeUiWebProbeDetail(raw: unknown, maxLength = 320): string {
+  const text = raw instanceof Error
+    ? `${raw.name}: ${raw.message}`
+    : String(raw ?? '');
+  return redactHarnessLogText(stripAnsi(text))
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function classifyUiWebProbeError(error: unknown): 'request-failed' | 'timeout' {
+  if (error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError')) {
+    return 'timeout';
+  }
+  return 'request-failed';
+}
+
+function createUiWebProbeDiagnostic(params: Readonly<{
+  outcome: UiWebHttpProbeOutcome;
+  startedAtMs: number;
+  detail: unknown;
+}>): UiWebHttpProbeDiagnostic {
+  return {
+    outcome: params.outcome,
+    latencyMs: Math.max(0, Date.now() - params.startedAtMs),
+    detail: sanitizeUiWebProbeDetail(params.detail),
+  };
+}
+
+function createUiWebEntryPageProbe(params: Readonly<{
+  startedAtMs: number;
+  outcome: UiWebHttpProbeOutcome;
+  detail: unknown;
+  isEntryPage?: boolean;
+  primaryScriptUrl?: string | null;
+}>): UiWebEntryPageProbe {
+  const primaryScriptUrl = params.primaryScriptUrl ?? null;
+  return {
+    isEntryPage: params.isEntryPage === true,
+    hasScriptTags: Boolean(primaryScriptUrl),
+    primaryScriptUrl,
+    diagnostic: createUiWebProbeDiagnostic({
+      outcome: params.outcome,
+      startedAtMs: params.startedAtMs,
+      detail: params.detail,
+    }),
+  };
+}
+
 async function inspectUiWebEntryPage(url: string, env: NodeJS.ProcessEnv): Promise<UiWebEntryPageProbe> {
+  const startedAtMs = Date.now();
   try {
     const timeoutMs = resolveUiWebEntryProbeTimeoutMs(env);
     const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
+    if (!res.ok) {
+      return createUiWebEntryPageProbe({
+        startedAtMs,
+        outcome: 'http-error',
+        detail: `HTTP ${res.status}`,
+      });
+    }
     const text = await res.text().catch(() => '');
     if (!text.includes('<html') && !text.toLowerCase().includes('<!doctype html')) {
-      return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
+      return createUiWebEntryPageProbe({
+        startedAtMs,
+        outcome: 'invalid-body',
+        detail: 'response was not an HTML entry page',
+      });
     }
     if (text.toLowerCase().includes('metro bundler')) {
-      return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
+      return createUiWebEntryPageProbe({
+        startedAtMs,
+        outcome: 'invalid-body',
+        detail: 'response was the Metro landing page, not the app entry page',
+      });
     }
 
     const scripts = resolveScriptUrlsFromHtml(text, url);
     const primaryScriptUrl = scripts.length > 0 ? (selectPrimaryAppScriptUrl(scripts) ?? null) : null;
-    return {
+    const hasScriptTags = scripts.length > 0 && Boolean(primaryScriptUrl);
+    return createUiWebEntryPageProbe({
+      startedAtMs,
       isEntryPage: true,
-      hasScriptTags: scripts.length > 0 && Boolean(primaryScriptUrl),
       primaryScriptUrl,
-    };
-  } catch {
-    return { isEntryPage: false, hasScriptTags: false, primaryScriptUrl: null };
+      outcome: hasScriptTags ? 'ready' : 'invalid-body',
+      detail: hasScriptTags ? 'entry page exposed a primary app script' : 'entry page had no primary app script',
+    });
+  } catch (error) {
+    return createUiWebEntryPageProbe({
+      startedAtMs,
+      outcome: classifyUiWebProbeError(error),
+      detail: error,
+    });
   }
 }
 
@@ -233,6 +339,8 @@ async function resolveExpoWebBaseUrl(params: {
   timeoutMs: number;
   expectedPort?: number;
   env: NodeJS.ProcessEnv;
+  onEntryProbe?: (diagnostic: UiWebHttpProbeDiagnostic) => void;
+  onStatusProbe?: (diagnostic: UiWebHttpProbeDiagnostic) => void;
 }): Promise<ResolvedExpoWebBaseUrl> {
   const expectedCandidates =
     typeof params.expectedPort === 'number' && Number.isFinite(params.expectedPort) && params.expectedPort > 0
@@ -271,6 +379,7 @@ async function resolveExpoWebBaseUrl(params: {
     let firstEntryPage: ResolvedExpoWebBaseUrl | null = null;
     for (const url of orderedCandidates) {
       const probe = await inspectUiWebEntryPage(url, params.env);
+      params.onEntryProbe?.(probe.diagnostic);
       if (probe.isEntryPage) {
         const matchesExpectedPort =
           typeof params.expectedPort === 'number'
@@ -298,7 +407,9 @@ async function resolveExpoWebBaseUrl(params: {
     }
     if (stdoutAdvertisesExpectedPort && expectedCandidates.length > 0) {
       for (const url of expectedCandidates) {
-        if (await isMetroPackagerReady(url, params.env)) {
+        const statusDiagnostic = await probeMetroPackagerStatus(url, params.env);
+        params.onStatusProbe?.(statusDiagnostic);
+        if (statusDiagnostic.outcome === 'ready') {
           return {
             baseUrl: url,
             hasScriptTags: false,
@@ -341,47 +452,69 @@ export const __testables = {
   resolveExpoWebBaseUrl,
   resolveExpoCliPath,
   resolvePreferredLiveMetroBaseUrl,
-  isMetroPackagerReady,
+  inspectUiWebEntryPage,
+  probeMetroPackagerStatus,
   probeScriptReady,
+  waitForPrimaryAppScriptReady,
+  formatUiWebHttpProbeDiagnostic,
   resolveUiWebMetroSpawnEnv,
+  shouldRunWorkspacePrebuild,
 };
 
-function resolveExpoCliPath(params: Readonly<{ rootDir: string; uiWorkspaceDir: string }>): string {
-  const rootCandidate = resolvePath(params.rootDir, 'node_modules', 'expo', 'bin', 'cli');
-  if (existsSync(rootCandidate)) return rootCandidate;
-  const workspaceCandidate = resolvePath(params.uiWorkspaceDir, 'node_modules', 'expo', 'bin', 'cli');
-  if (existsSync(workspaceCandidate)) return workspaceCandidate;
-  return rootCandidate;
-}
-
-async function isMetroPackagerReady(baseUrl: string, env: NodeJS.ProcessEnv): Promise<boolean> {
+async function probeMetroPackagerStatus(
+  baseUrl: string,
+  env: NodeJS.ProcessEnv,
+): Promise<UiWebHttpProbeDiagnostic> {
+  const endpoint = `${baseUrl.replace(/\/+$/, '')}/status`;
+  const startedAtMs = Date.now();
   try {
-    const res = await fetch(`${baseUrl.replace(/\/+$/, '')}/status`, {
+    const res = await fetch(endpoint, {
       method: 'GET',
       signal: AbortSignal.timeout(resolveUiWebMetroStatusAttemptTimeoutMs(env)),
     });
-    if (!res.ok) {
-      return false;
+    const inspection = await inspectMetroPackagerStatusResponse(res);
+    if (inspection.outcome === 'http-error') {
+      return createUiWebProbeDiagnostic({
+        outcome: 'http-error',
+        startedAtMs,
+        detail: inspection.detail,
+      });
     }
-    const body = await res.text().catch(() => '');
-    if (body.length > 0) {
-      return body.includes('packager-status:running');
-    }
-    const projectRootHeader = res.headers.get('x-react-native-project-root');
-    return typeof projectRootHeader === 'string' && projectRootHeader.trim().length > 0;
-  } catch {
-    return false;
+    return createUiWebProbeDiagnostic({
+      outcome: inspection.outcome,
+      startedAtMs,
+      detail: inspection.detail,
+    });
+  } catch (error) {
+    return createUiWebProbeDiagnostic({
+      outcome: classifyUiWebProbeError(error),
+      startedAtMs,
+      detail: error,
+    });
   }
+}
+
+function formatUiWebHttpProbeDiagnostic(
+  label: 'status' | 'entry',
+  diagnostic: UiWebHttpProbeDiagnostic | null,
+): string {
+  if (!diagnostic) {
+    return `${label}=not-probed`;
+  }
+  const detail = diagnostic.detail ? ` detail=${JSON.stringify(diagnostic.detail)}` : '';
+  return `${label}=${diagnostic.outcome} latencyMs=${diagnostic.latencyMs}${detail}`;
 }
 
 async function resolvePreferredLiveMetroBaseUrl(params: {
   currentBaseUrl: string;
   metroPort: number;
   env: NodeJS.ProcessEnv;
+  onEntryProbe?: (diagnostic: UiWebHttpProbeDiagnostic) => void;
 }): Promise<ResolvedExpoWebBaseUrl | null> {
   const currentUrl = new URL(params.currentBaseUrl);
   if (resolveUrlPort(params.currentBaseUrl) === params.metroPort) {
     const currentProbe = await inspectUiWebEntryPage(params.currentBaseUrl, params.env);
+    params.onEntryProbe?.(currentProbe.diagnostic);
     if (currentProbe.isEntryPage) {
       return {
         baseUrl: params.currentBaseUrl,
@@ -406,6 +539,7 @@ async function resolvePreferredLiveMetroBaseUrl(params: {
     if (seen.has(candidate)) continue;
     seen.add(candidate);
     const probe = await inspectUiWebEntryPage(candidate, params.env);
+    params.onEntryProbe?.(probe.diagnostic);
     if (!probe.isEntryPage) continue;
     return {
       baseUrl: candidate,
@@ -415,10 +549,6 @@ async function resolvePreferredLiveMetroBaseUrl(params: {
   }
 
   return null;
-}
-
-export function resolveUiWebScriptFetchAttemptTimeoutMs(env: NodeJS.ProcessEnv, totalTimeoutMs: number): number {
-  return Math.min(totalTimeoutMs, readPositiveEnvInt(env.HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS, 15_000));
 }
 
 export function resolveUiWebScriptHtmlRefreshRetryCount(env: NodeJS.ProcessEnv): number {
@@ -439,15 +569,17 @@ class MetroBundleFailureError extends Error {
 
 type ScriptReadyProbe = 'ready' | 'retry' | 'refresh-html';
 
-async function fetchWithTimeout(
+async function fetchWithTimeout<TResult>(
   url: string,
   init: RequestInit,
   timeoutMs: number,
-): Promise<Response> {
+  consumeResponse: (response: Response) => Promise<TResult> | TResult,
+): Promise<TResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => {
     controller.abort(new DOMException('The operation was aborted.', 'AbortError'));
   }, timeoutMs);
+  let handleAbort: (() => void) | null = null;
 
   try {
     const mergedInit: RequestInit = {
@@ -455,15 +587,19 @@ async function fetchWithTimeout(
       signal: controller.signal,
     };
     return await Promise.race([
-      fetch(url, mergedInit),
+      fetch(url, mergedInit).then(consumeResponse),
       new Promise<never>((_, reject) => {
-        controller.signal.addEventListener('abort', () => {
+        handleAbort = () => {
           reject(controller.signal.reason instanceof Error ? controller.signal.reason : new DOMException('The operation was aborted.', 'AbortError'));
-        }, { once: true });
+        };
+        controller.signal.addEventListener('abort', handleAbort, { once: true });
       }),
     ]);
   } finally {
     clearTimeout(timeoutId);
+    if (handleAbort) {
+      controller.signal.removeEventListener('abort', handleAbort);
+    }
   }
 }
 
@@ -540,41 +676,42 @@ async function readMetroBundleFailureDetailFromLogs(stdoutPath: string, stderrPa
 
 async function probeScriptReady(url: string, timeoutMs: number): Promise<ScriptReadyProbe> {
   try {
-    const res = await fetchWithTimeout(url, { method: 'GET' }, timeoutMs);
-    const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+    return await fetchWithTimeout(url, { method: 'GET' }, timeoutMs, async (res) => {
+      const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
 
-    if (res.ok && contentType.includes('javascript')) {
-      return 'ready';
-    }
+      if (res.ok && contentType.includes('javascript')) {
+        return 'ready';
+      }
 
-    const text = await res.text().catch(() => '');
+      const text = await res.text().catch(() => '');
 
-    if (!res.ok) {
+      if (!res.ok) {
+        const detail = resolveMetroBundleFailureResponseDetail({
+          url,
+          status: typeof res.status === 'number' ? res.status : 500,
+          contentType,
+          body: text,
+        });
+        if (detail) {
+          throw new MetroBundleFailureError(detail);
+        }
+        return 'refresh-html';
+      }
+
       const detail = resolveMetroBundleFailureResponseDetail({
         url,
-        status: typeof res.status === 'number' ? res.status : 500,
+        status: typeof res.status === 'number' ? res.status : 200,
         contentType,
         body: text,
       });
       if (detail) {
         throw new MetroBundleFailureError(detail);
       }
-      return 'refresh-html';
-    }
 
-    const detail = resolveMetroBundleFailureResponseDetail({
-      url,
-      status: typeof res.status === 'number' ? res.status : 200,
-      contentType,
-      body: text,
+      return text.includes('__d(') || text.includes('webpackBootstrap') || text.includes('globalThis')
+        ? 'ready'
+        : 'retry';
     });
-    if (detail) {
-      throw new MetroBundleFailureError(detail);
-    }
-
-    return text.includes('__d(') || text.includes('webpackBootstrap') || text.includes('globalThis')
-      ? 'ready'
-      : 'retry';
   } catch (error) {
     if (error instanceof MetroBundleFailureError) {
       throw error;
@@ -597,8 +734,12 @@ async function resolvePrimaryAppScriptUrl(
   deadlineAtMs: number,
 ): Promise<string | null> {
   const entryTimeoutMs = resolveRemainingTimeoutMs(deadlineAtMs, resolveUiWebEntryProbeTimeoutMs(env));
-  const html = await fetchWithTimeout(baseUrl, { method: 'GET' }, entryTimeoutMs)
-    .then((response) => response.ok ? response.text() : '')
+  const html = await fetchWithTimeout(
+    baseUrl,
+    { method: 'GET' },
+    entryTimeoutMs,
+    async (response) => response.ok ? await response.text() : '',
+  )
     .catch(() => '');
   const scripts = resolveScriptUrlsFromHtml(html, baseUrl);
   return scripts.length > 0 ? selectPrimaryAppScriptUrl(scripts) : null;
@@ -606,10 +747,9 @@ async function resolvePrimaryAppScriptUrl(
 
 async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.ProcessEnv): Promise<boolean> {
   const totalTimeoutMs = resolveUiWebScriptFetchTotalTimeoutMs(env);
-  const attemptTimeoutMs = resolveUiWebScriptFetchAttemptTimeoutMs(env, totalTimeoutMs);
   const htmlRefreshRetryCount = resolveUiWebScriptHtmlRefreshRetryCount(env);
   const deadlineAtMs = Date.now() + totalTimeoutMs;
-  const retryDelayMs = Math.min(100, Math.max(25, Math.floor(attemptTimeoutMs / 2)));
+  const retryDelayMs = 100;
   let primaryAppScriptUrl: string | null = null;
   let retryCountForCurrentScript = 0;
   let lastError: unknown = null;
@@ -629,7 +769,7 @@ async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.Process
       try {
         const probe = await probeScriptReady(
           primaryAppScriptUrl,
-          resolveRemainingTimeoutMs(deadlineAtMs, attemptTimeoutMs),
+          resolveRemainingTimeoutMs(deadlineAtMs, totalTimeoutMs),
         );
         if (probe === 'ready') {
           return true;
@@ -674,11 +814,7 @@ async function waitForPrimaryAppScriptReady(baseUrl: string, env: NodeJS.Process
   return false;
 }
 
-export async function startUiWebMetro(params: {
-  testDir: string;
-  env: NodeJS.ProcessEnv;
-  port?: number;
-}): Promise<StartedUiWeb> {
+export async function startUiWebMetro(params: UiWebMetroStartParams): Promise<StartedUiWeb> {
   const maxAttempts = Math.max(1, resolveUiWebMetroStartAttempts(params.env));
   let lastError: unknown = null;
 
@@ -699,11 +835,7 @@ export async function startUiWebMetro(params: {
   throw new Error(String(lastError));
 }
 
-async function startUiWebMetroSingleAttempt(params: {
-  testDir: string;
-  env: NodeJS.ProcessEnv;
-  port?: number;
-}): Promise<StartedUiWeb> {
+async function startUiWebMetroSingleAttempt(params: UiWebMetroStartParams): Promise<StartedUiWeb> {
   const currentOwnerInspection = inspectOwnedProcess(process.pid);
   if (currentOwnerInspection.ok) {
     await sweepProcessOwnershipLeases({
@@ -724,15 +856,17 @@ async function startUiWebMetroSingleAttempt(params: {
   const noDev = noDevRaw === '1' || noDevRaw === 'true' || noDevRaw === 'yes' || noDevRaw === 'y';
 
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
-  await ensureUiWebWorkspacePrebuild({
-    testDir: params.testDir,
-    env: params.env,
-    workspaceRootDir: uiWorkspaceDir,
-    logPrefix: 'ui-web-metro',
-    timeoutMs: resolveUiWebMetroWorkspacePrebuildTimeoutMs(params.env),
-    stdoutPath,
-    stderrPath,
-  });
+  if (shouldRunWorkspacePrebuild(params)) {
+    await ensureUiWebWorkspacePrebuild({
+      testDir: params.testDir,
+      env: params.env,
+      workspaceRootDir: uiWorkspaceDir,
+      logPrefix: 'ui-web-metro',
+      timeoutMs: resolveUiWebMetroWorkspacePrebuildTimeoutMs(params.env),
+      stdoutPath,
+      stderrPath,
+    });
+  }
 
   const expoCliPath = resolveExpoCliPath({ rootDir: repoRootDir(), uiWorkspaceDir });
   const tmpDir = resolvePath(params.testDir, 'ui.web.tmp');
@@ -779,6 +913,8 @@ async function startUiWebMetroSingleAttempt(params: {
   });
 
   let baseUrl: string;
+  let lastStatusDiagnostic: UiWebHttpProbeDiagnostic | null = null;
+  let lastEntryDiagnostic: UiWebHttpProbeDiagnostic | null = null;
   try {
     const exitedEarly = new Promise<never>((_, reject) => {
       const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
@@ -798,6 +934,12 @@ async function startUiWebMetroSingleAttempt(params: {
         timeoutMs: resolveUiWebBaseUrlTimeoutMs(params.env),
         expectedPort: metroPort,
         env: params.env,
+        onEntryProbe: (diagnostic) => {
+          lastEntryDiagnostic = diagnostic;
+        },
+        onStatusProbe: (diagnostic) => {
+          lastStatusDiagnostic = diagnostic;
+        },
       }),
       exitedEarly,
     ]);
@@ -811,7 +953,9 @@ async function startUiWebMetroSingleAttempt(params: {
           const metroStatusCandidates = expandLoopbackBaseUrlCandidates(`http://localhost:${metroPort}`);
           let metroStatusReady = false;
           for (const candidate of metroStatusCandidates) {
-            if (await isMetroPackagerReady(candidate, params.env)) {
+            const statusDiagnostic = await probeMetroPackagerStatus(candidate, params.env);
+            lastStatusDiagnostic = statusDiagnostic;
+            if (statusDiagnostic.outcome === 'ready') {
               metroStatusReady = true;
               break;
             }
@@ -823,6 +967,9 @@ async function startUiWebMetroSingleAttempt(params: {
                 currentBaseUrl: baseUrl,
                 metroPort,
                 env: params.env,
+                onEntryProbe: (diagnostic) => {
+                  lastEntryDiagnostic = diagnostic;
+                },
               });
               if (preferredBaseUrl) {
                 baseUrl = preferredBaseUrl.baseUrl;
@@ -831,6 +978,7 @@ async function startUiWebMetroSingleAttempt(params: {
               }
             } else {
               const probe = await inspectUiWebEntryPage(baseUrl, params.env);
+              lastEntryDiagnostic = probe.diagnostic;
               if (probe.isEntryPage && probe.hasScriptTags) {
                 hasReadyEntryPage = probe.hasScriptTags;
                 return true;
@@ -843,6 +991,7 @@ async function startUiWebMetroSingleAttempt(params: {
           }
 
           const probe = await inspectUiWebEntryPage(baseUrl, params.env);
+          lastEntryDiagnostic = probe.diagnostic;
           if (!(probe.isEntryPage && probe.hasScriptTags)) {
             return false;
           }
@@ -867,10 +1016,12 @@ async function startUiWebMetroSingleAttempt(params: {
     const stdoutText = await readFile(stdoutPath, 'utf8').catch(() => '');
     const stderrText = await readFile(stderrPath, 'utf8').catch(() => '');
     const tailLimit = 8_000;
-    const stdoutTail = stdoutText.slice(Math.max(0, stdoutText.length - tailLimit));
-    const stderrTail = stderrText.slice(Math.max(0, stderrText.length - tailLimit));
+    const stdoutTail = redactHarnessLogText(stdoutText.slice(Math.max(0, stdoutText.length - tailLimit)));
+    const stderrTail = redactHarnessLogText(stderrText.slice(Math.max(0, stderrText.length - tailLimit)));
     const detail = [
-      e instanceof Error ? e.message : String(e),
+      sanitizeUiWebProbeDetail(e, 2_000),
+      formatUiWebHttpProbeDiagnostic('status', lastStatusDiagnostic),
+      formatUiWebHttpProbeDiagnostic('entry', lastEntryDiagnostic),
       `stdoutTail=${JSON.stringify(stdoutTail)}`,
       `stderrTail=${JSON.stringify(stderrTail)}`,
     ].join(' | ');
@@ -878,6 +1029,7 @@ async function startUiWebMetroSingleAttempt(params: {
   }
 
   return {
+    mode: 'metro',
     baseUrl,
     proc,
     stop: async () => {

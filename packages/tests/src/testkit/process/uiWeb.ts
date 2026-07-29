@@ -10,6 +10,7 @@ import {
   resolveUiWebExportBeforeAllTimeoutMs,
   resolveUiWebExportBuildTimeoutMs,
   resolveUiWebExportRootDir,
+  startExistingUiWebExport,
   startUiWebExport,
 } from './uiWebExport';
 
@@ -21,6 +22,7 @@ export {
   resolveUiWebScriptFetchTotalTimeoutMs,
   resolveUiWebExportBuildTimeoutMs,
   resolveUiWebExportRootDir,
+  startExistingUiWebExport,
 };
 
 export function resolveUiWebBeforeAllTimeoutMs(env: NodeJS.ProcessEnv): number {
@@ -37,6 +39,7 @@ export async function startUiWeb(params: {
   testDir: string;
   env: NodeJS.ProcessEnv;
   port?: number;
+  skipWorkspacePrebuild?: boolean;
 }) {
   if (resolveUiWebMode(params.env) === 'metro') {
     return await startUiWebMetro(params);

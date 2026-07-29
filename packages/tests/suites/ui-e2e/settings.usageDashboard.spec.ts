@@ -110,7 +110,7 @@ test.describe('ui e2e: usage dashboard', () => {
       request: {
         sessionId: sessionAlpha.sessionId,
         observedAt: now - 2 * day,
-        providerId: 'anthropic',
+        agentId: 'claude',
         backendMode: 'claude:remote',
         modelId: 'claude-3.7-sonnet',
         projectKey: 'project-a',
@@ -130,7 +130,7 @@ test.describe('ui e2e: usage dashboard', () => {
       request: {
         sessionId: sessionAlpha.sessionId,
         observedAt: now - day,
-        providerId: 'anthropic',
+        agentId: 'claude',
         backendMode: 'claude:remote',
         modelId: 'claude-3.7-sonnet',
         projectKey: 'project-a',
@@ -150,7 +150,7 @@ test.describe('ui e2e: usage dashboard', () => {
       request: {
         sessionId: sessionAlpha.sessionId,
         observedAt: now,
-        providerId: 'openai',
+        agentId: 'codex',
         backendMode: 'codex:app-server',
         modelId: 'gpt-5-codex',
         projectKey: 'project-b',
@@ -170,7 +170,7 @@ test.describe('ui e2e: usage dashboard', () => {
       request: {
         sessionId: sessionBeta.sessionId,
         observedAt: now,
-        providerId: 'anthropic',
+        agentId: 'claude',
         backendMode: 'claude:remote',
         modelId: 'claude-3.7-sonnet',
         projectKey: 'project-b',

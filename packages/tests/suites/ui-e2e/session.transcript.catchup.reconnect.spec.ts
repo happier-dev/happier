@@ -243,7 +243,6 @@ test.describe('ui e2e: transcript reconnect catch-up', () => {
           messageLargeGapSeq: 2,
           messageMaxIncrementalPagesOnResume: 2,
           transcriptForwardPrefetchThresholdPx: 120,
-          transcriptWebInitialPinStabilizeMs: 0,
           messageCatchUpConcurrencyLimit: 1,
           resumeConcurrencyLimit: 2,
           bootstrapConcurrencyLimit: 3,

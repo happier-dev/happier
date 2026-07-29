@@ -97,17 +97,25 @@ export async function primeVoiceSurfaceFixtureSettings(
                 currentFixtureId: string,
                 existingVoice: Record<string, unknown>,
             ): Record<string, unknown> => {
-                const existingAdapters =
-                    typeof existingVoice.adapters === 'object' && existingVoice.adapters
-                        ? existingVoice.adapters as Record<string, unknown>
+                const existingProviders =
+                    typeof existingVoice.providers === 'object' && existingVoice.providers
+                        ? existingVoice.providers as Record<string, unknown>
                         : {};
-                const existingRealtimeAdapter =
-                    typeof existingAdapters.realtime_elevenlabs === 'object' && existingAdapters.realtime_elevenlabs
-                        ? existingAdapters.realtime_elevenlabs as Record<string, unknown>
+                const existingRealtimeEnvelope =
+                    typeof existingProviders.realtime_elevenlabs === 'object' && existingProviders.realtime_elevenlabs
+                        ? existingProviders.realtime_elevenlabs as Record<string, unknown>
                         : {};
-                const existingLocalConversationAdapter =
-                    typeof existingAdapters.local_conversation === 'object' && existingAdapters.local_conversation
-                        ? existingAdapters.local_conversation as Record<string, unknown>
+                const existingRealtimeConfig =
+                    typeof existingRealtimeEnvelope.config === 'object' && existingRealtimeEnvelope.config
+                        ? existingRealtimeEnvelope.config as Record<string, unknown>
+                        : {};
+                const existingLocalConversationEnvelope =
+                    typeof existingProviders.local_conversation === 'object' && existingProviders.local_conversation
+                        ? existingProviders.local_conversation as Record<string, unknown>
+                        : {};
+                const existingLocalConversationConfig =
+                    typeof existingLocalConversationEnvelope.config === 'object' && existingLocalConversationEnvelope.config
+                        ? existingLocalConversationEnvelope.config as Record<string, unknown>
                         : {};
                 const existingUi =
                     typeof existingVoice.ui === 'object' && existingVoice.ui
@@ -129,12 +137,12 @@ export async function primeVoiceSurfaceFixtureSettings(
                     return {
                         ...existingVoice,
                         providerId: 'local_conversation',
-                        adapters: {
-                            ...existingAdapters,
-                            local_conversation: {
-                                ...existingLocalConversationAdapter,
+                        providers: {
+                            ...existingProviders,
+                            local_conversation: { schemaVersion: 1, config: {
+                                ...existingLocalConversationConfig,
                                 conversationMode: 'direct_session',
-                            },
+                            } },
                         },
                         ui: commonUi,
                     };
@@ -146,12 +154,12 @@ export async function primeVoiceSurfaceFixtureSettings(
                     return {
                         ...existingVoice,
                         providerId: 'realtime_elevenlabs',
-                        adapters: {
-                            ...existingAdapters,
-                            realtime_elevenlabs: {
-                                ...existingRealtimeAdapter,
+                        providers: {
+                            ...existingProviders,
+                            realtime_elevenlabs: { schemaVersion: 2, config: {
+                                ...existingRealtimeConfig,
                                 billingMode: 'byo',
-                            },
+                            } },
                         },
                         ui: commonUi,
                     };
@@ -161,12 +169,12 @@ export async function primeVoiceSurfaceFixtureSettings(
                     return {
                         ...existingVoice,
                         providerId: 'realtime_elevenlabs',
-                        adapters: {
-                            ...existingAdapters,
-                            realtime_elevenlabs: {
-                                ...existingRealtimeAdapter,
+                        providers: {
+                            ...existingProviders,
+                            realtime_elevenlabs: { schemaVersion: 2, config: {
+                                ...existingRealtimeConfig,
                                 billingMode: 'byo',
-                            },
+                            } },
                         },
                         ui: commonUi,
                     };

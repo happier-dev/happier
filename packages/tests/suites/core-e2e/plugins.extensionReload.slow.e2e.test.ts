@@ -192,8 +192,6 @@ function createReloadableDaemonModule(params: Readonly<{
         `  await appendFile(${JSON.stringify(params.activationMarkerPath)}, ${JSON.stringify(`activate:${params.generation}\n`)}, "utf8");`,
         '  api.registerAction({',
         `    id: ${JSON.stringify(params.actionId)},`,
-        `    title: ${JSON.stringify(`Reload Fixture ${params.generation}`)},`,
-        '    surface: "cli",',
         '    handler: async () => ({ ok: true, data: { generation: ' + JSON.stringify(params.generation) + ' } }),',
         '  });',
         '  api.onDispose(async () => {',
@@ -338,8 +336,8 @@ describe('core e2e: plugin extension reload', () => {
         const probeScriptPath = join(testDir, 'plugin-reload-last-known-good-probe.mts');
 
         try {
-            const pluginId = 'acme.reload.lastKnownGood';
-            const actionId = 'acme.reload.lastKnownGood.action';
+            const pluginId = 'acme.reload.last-known-good';
+            const actionId = 'acme.reload.last-known-good.action';
             await writeReloadableActivationPluginFixture({
                 pluginRoot,
                 pluginId,
@@ -359,7 +357,8 @@ describe('core e2e: plugin extension reload', () => {
                 'apps',
                 'cli',
                 'src',
-                'extensions',
+                'plugins',
+                'runtime',
                 'reload',
                 'controller.ts',
             )).href;
@@ -368,7 +367,8 @@ describe('core e2e: plugin extension reload', () => {
                 'apps',
                 'cli',
                 'src',
-                'extensions',
+                'plugins',
+                'projection',
                 'actions',
                 'execute.ts',
             )).href;
@@ -504,9 +504,7 @@ describe('core e2e: plugin extension reload', () => {
                 result: {
                     ok: true,
                     result: {
-                        data: {
-                            generation: 'good',
-                        },
+                        generation: 'good',
                     },
                 },
             });
@@ -515,9 +513,7 @@ describe('core e2e: plugin extension reload', () => {
                 result: {
                     ok: true,
                     result: {
-                        data: {
-                            generation: 'good',
-                        },
+                        generation: 'good',
                     },
                 },
             });
@@ -545,8 +541,8 @@ describe('core e2e: plugin extension reload', () => {
         const probeScriptPath = join(testDir, 'plugin-self-improving-probe.mts');
 
         try {
-            const pluginId = 'acme.reload.selfImproving';
-            const actionId = 'acme.reload.selfImproving.action';
+            const pluginId = 'acme.reload.self-improving';
+            const actionId = 'acme.reload.self-improving.action';
             await writeReloadableActivationPluginFixture({
                 pluginRoot,
                 pluginId,
@@ -566,7 +562,8 @@ describe('core e2e: plugin extension reload', () => {
                 'apps',
                 'cli',
                 'src',
-                'extensions',
+                'plugins',
+                'runtime',
                 'reload',
                 'controller.ts',
             )).href;
@@ -575,7 +572,8 @@ describe('core e2e: plugin extension reload', () => {
                 'apps',
                 'cli',
                 'src',
-                'extensions',
+                'plugins',
+                'projection',
                 'actions',
                 'execute.ts',
             )).href;
@@ -728,9 +726,7 @@ describe('core e2e: plugin extension reload', () => {
                 result: {
                     ok: true,
                     result: {
-                        data: {
-                            generation: 'one',
-                        },
+                        generation: 'one',
                     },
                 },
             });
@@ -739,9 +735,7 @@ describe('core e2e: plugin extension reload', () => {
                 result: {
                     ok: true,
                     result: {
-                        data: {
-                            generation: 'two',
-                        },
+                        generation: 'two',
                     },
                 },
             });
@@ -750,9 +744,7 @@ describe('core e2e: plugin extension reload', () => {
                 result: {
                     ok: true,
                     result: {
-                        data: {
-                            generation: 'three',
-                        },
+                        generation: 'three',
                     },
                 },
             });
@@ -836,7 +828,7 @@ describe('core e2e: plugin extension reload', () => {
                     '',
                     'const { dispatchBuiltInHappierTool } = await import(dispatchToolUrl);',
                     'const { listBuiltInHappierTools } = await import(listToolsUrl);',
-                    'const toolNames = listBuiltInHappierTools({ surface: "session_agent" }).map((tool) => tool.name);',
+                    'const toolNames = listBuiltInHappierTools({ surface: "agent" }).map((tool) => tool.name);',
                     'if (!toolNames.includes("plugins_reload")) {',
                     '  throw new Error("plugins_reload was not exposed to the agent tool catalog");',
                     '}',
@@ -849,7 +841,7 @@ describe('core e2e: plugin extension reload', () => {
                     '  toolName: "plugins_reload",',
                     '  args: { pluginId },',
                     '  sessionId: "sess-1",',
-                    '  surface: "session_agent",',
+                    '  surface: "agent",',
                     '  deps,',
                     '});',
                     'await writeFile(daemonEntryPath, generationTwoModule, "utf8");',
@@ -857,7 +849,7 @@ describe('core e2e: plugin extension reload', () => {
                     '  toolName: "plugins_reload",',
                     '  args: { pluginId },',
                     '  sessionId: "sess-1",',
-                    '  surface: "session_agent",',
+                    '  surface: "agent",',
                     '  deps,',
                     '});',
                     'process.stdout.write(JSON.stringify({ first, second }));',

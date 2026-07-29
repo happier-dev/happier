@@ -1,10 +1,10 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { AcpPermissionMode, ProviderScenario, ProviderUnderTest } from '../types';
-import { hasStringSubstring, waitForAcpSidechainMessages } from '../assertions';
+import { assertDurableToolCardinality, decryptSessionMessageLegacy, hasStringSubstring, waitForAcpSidechainMessages } from '../assertions';
 import { shapeOf, stableStringifyShape } from '../shape';
 import { fetchAllMessages, fetchSessionV2, patchSessionMetadataWithRetry } from '../../sessions';
 import { decryptLegacyBase64, encryptLegacyBase64 } from '../../messageCrypto';
@@ -18,6 +18,7 @@ import {
   yoloFlagForPermissionMode,
 } from '../permissions/acpPermissionPrompts';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { applyAcpConfigOptionIntentSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
 import { withCapabilityProbeRetry } from '../harness/capabilityRetry';
 import { enrichCapabilityProbeError } from '../harness/capabilityProbeFailure';
 import {
@@ -83,22 +84,50 @@ function capabilityProbeRetryOptions(providerId: string): { attempts: number; de
   return { attempts: 3, delayMs: 500 };
 }
 
-function outsideWorkspaceScenarioIdByMode(mode: Exclude<AcpPermissionMode, 'plan'>): string {
+export async function waitForToolCallPayloadSubstring(params: Readonly<{
+  traceFile: string;
+  requiredSubstring: string;
+  timeoutMs: number;
+  pollMs?: number;
+}>): Promise<void> {
+  const deadline = Date.now() + params.timeoutMs;
+  const pollMs = params.pollMs ?? 100;
+  while (Date.now() < deadline) {
+    const raw = await readFile(params.traceFile, 'utf8').catch(() => '');
+    const matched = raw.split('\n').some((line) => {
+      if (!line.trim()) return false;
+      try {
+        const event = JSON.parse(line) as { kind?: unknown; payload?: unknown };
+        return event.kind === 'tool-call'
+          && JSON.stringify(event.payload).includes(params.requiredSubstring);
+      } catch {
+        return false;
+      }
+    });
+    if (matched) return;
+    await sleep(pollMs);
+  }
+  throw new Error(`Timed out waiting for tool-call payload containing ${params.requiredSubstring}`);
+}
+
+function outsideWorkspaceScenarioIdByMode(mode: AcpPermissionMode): string {
   if (mode === 'default') return 'permission_mode_default_outside_workspace';
   if (mode === 'safe-yolo') return 'permission_mode_safe_yolo_outside_workspace';
   if (mode === 'read-only') return 'permission_mode_read_only_outside_workspace';
+  if (mode === 'plan') return 'permission_mode_plan_outside_workspace';
   return 'permission_mode_yolo_outside_workspace';
 }
 
-function outsideWorkspaceScenarioTitleByMode(mode: Exclude<AcpPermissionMode, 'plan'>): string {
+function outsideWorkspaceScenarioTitleByMode(mode: AcpPermissionMode): string {
   if (mode === 'read-only') return 'permissions: read-only mode denies outside-workspace write';
+  if (mode === 'plan') return 'permissions: legacy plan mode denies outside-workspace write';
   if (mode === 'yolo') return 'permissions: yolo mode allows outside-workspace write without prompt';
   return `permissions: ${mode} mode outside-workspace write behavior`;
 }
 
 function makeAcpPermissionModeOutsideWorkspaceScenario(
   provider: ProviderUnderTest,
-  mode: Exclude<AcpPermissionMode, 'plan'>,
+  mode: AcpPermissionMode,
 ): ProviderScenario {
   const providerId = acpProviderId(provider);
   const acpPermissions = provider.permissions?.acp;
@@ -197,6 +226,29 @@ function withAgentSdkRemoteMeta(
 }
 
 export const scenarioCatalog: Record<string, ScenarioFactory> = {
+  cursor_acp_stub_captured_lifecycle_replay: (provider) => {
+    if (provider.protocol !== 'acp' || provider.cli.subcommand !== 'cursor') {
+      throw new Error('cursor_acp_stub_captured_lifecycle_replay requires the Cursor ACP backend');
+    }
+    const assertSession = async (baseUrl: string, token: string, sessionId: string, secret: Uint8Array) => {
+      const messages = (await fetchAllMessages(baseUrl, token, sessionId))
+        .map((row) => decryptSessionMessageLegacy(row, secret))
+        .filter((message): message is NonNullable<typeof message> => message !== null);
+      assertDurableToolCardinality(messages, { calls: 271, results: 270 });
+    };
+    return {
+      id: 'cursor_acp_stub_captured_lifecycle_replay',
+      title: 'cursor: captured lifecycle replay preserves one durable row per logical call',
+      tier: 'extended', yolo: true,
+      prompt: () => 'CURSOR_STUB_CAPTURED_REPLAY=1', requiredTraceSubstrings: ['CURSOR_CAPTURED_REPLAY_DONE'],
+      resume: { metadataKey: 'cursorSessionId', freshSession: true, prompt: () => 'CURSOR_STUB_CAPTURED_REPLAY=1', requiredTraceSubstrings: ['CURSOR_CAPTURED_REPLAY_DONE'] },
+      verify: async ({ baseUrl, token, sessionId, resumeSessionId, secret }) => {
+        await assertSession(baseUrl, token, sessionId, secret);
+        if (!resumeSessionId) throw new Error('cursor captured replay did not create a fresh resume session');
+        await assertSession(baseUrl, token, resumeSessionId, secret);
+      },
+    } satisfies ProviderScenario;
+  },
   // --------------------
   // Claude (local/remote)
   // --------------------
@@ -634,7 +686,7 @@ await server.connect(new StdioServerTransport());
     }
 
     // ACP providers share the same scenario id, with ACP-specific fixtures.
-    return makeAcpReadInWorkspaceScenario({
+    const acpReadScenario = makeAcpReadInWorkspaceScenario({
       providerId: acpProviderId(provider),
       content: provider.id === 'codex' ? 'CODEX_READ_OK' : 'READ_SENTINEL_123',
       id: provider.id === 'codex' ? 'read_in_workspace' : 'read_known_file',
@@ -642,6 +694,9 @@ await server.connect(new StdioServerTransport());
       useAbsolutePath: provider.id === 'auggie',
       useExecuteFallbackOnReadFailure: provider.id === 'kimi' || provider.id === 'auggie',
     });
+    return provider.id === 'grok'
+      ? { ...acpReadScenario, tier: 'smoke' }
+      : acpReadScenario;
   },
 
   pi_read_known_file_smoke: (provider) => {
@@ -789,6 +844,41 @@ await server.connect(new StdioServerTransport());
         run: async ({ workspaceDir, baseUrl, token, sessionId, secret, cliHome }) => {
           await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
 
+          if (provider.id === 'grok') {
+            const deadline = Date.now() + 60_000;
+            let publishedModels: Record<string, unknown> | null = null;
+            while (Date.now() < deadline) {
+              const snapshot = await fetchSessionV2(baseUrl, token, sessionId);
+              const metadata = decryptLegacyBase64(snapshot.metadata, secret) as Record<string, unknown>;
+              const candidate = metadata.sessionModelsV1 ?? metadata.acpSessionModelsV1;
+              if (candidate && typeof candidate === 'object' && !Array.isArray(candidate)) {
+                const record = candidate as Record<string, unknown>;
+                const models = Array.isArray(record.availableModels) ? record.availableModels : [];
+                const currentModelId = typeof record.currentModelId === 'string' ? record.currentModelId : '';
+                if (models.length > 0 && models.some((model) => (
+                  model !== null
+                  && typeof model === 'object'
+                  && !Array.isArray(model)
+                  && (model as Record<string, unknown>).id === currentModelId
+                ))) {
+                  publishedModels = record;
+                  break;
+                }
+              }
+              await sleep(250);
+            }
+            if (!publishedModels) {
+              throw new Error('acp_probe_models: Grok did not publish active-session model state');
+            }
+            await writeFile(join(workspaceDir, outputRel), JSON.stringify({
+              provider: provider.id,
+              source: 'dynamic',
+              currentModelId: publishedModels.currentModelId,
+              availableModels: publishedModels.availableModels,
+            }, null, 2) + '\n', 'utf8');
+            return;
+          }
+
           const parsed = await withCapabilityProbeRetry(
             () =>
               invokeCapabilitiesMethod({
@@ -848,12 +938,234 @@ await server.connect(new StdioServerTransport());
           throw new Error(`acp_probe_models: availableModels is not an array: ${stableStringifyShape(shapeOf(json.availableModels))}`);
         }
 
-        // Accept either dynamic or static lists; require at least the "default" entry.
+        if (provider.id === 'grok') {
+          if (json.source !== 'dynamic') {
+            throw new Error(`acp_probe_models: expected Grok active-session source=dynamic, got ${String(json.source)}`);
+          }
+          const currentModelId = typeof json.currentModelId === 'string' ? json.currentModelId : '';
+          const currentModel = json.availableModels.find((model: any) => (
+            model && typeof model === 'object' && model.id === currentModelId
+          ));
+          if (!currentModel || currentModelId === 'default') {
+            throw new Error(`acp_probe_models: expected a provider-advertised non-default Grok model (shape: ${stableStringifyShape(shapeOf(json))})`);
+          }
+          const effort = Array.isArray(currentModel.modelOptions)
+            ? currentModel.modelOptions.find((option: any) => option?.id === 'reasoning_effort')
+            : null;
+          const effortValues = Array.isArray(effort?.options)
+            ? effort.options.map((option: any) => option?.value).filter((value: unknown) => typeof value === 'string')
+            : [];
+          if (!['low', 'medium', 'high'].every((value) => effortValues.includes(value))) {
+            throw new Error(`acp_probe_models: Grok model is missing advertised reasoning effort values (shape: ${stableStringifyShape(shapeOf(currentModel))})`);
+          }
+          return;
+        }
+
+        // Legacy preflight probes retain their placeholder entry until their provider advertises a model list.
         const hasDefault = json.availableModels.some((m: any) => m && typeof m === 'object' && m.id === 'default');
         if (!hasDefault) {
           throw new Error(`acp_probe_models: expected availableModels to include {id:'default'} (shape: ${stableStringifyShape(shapeOf(json))})`);
         }
       },
+    } satisfies ProviderScenario;
+  },
+
+  grok_set_reasoning_effort: (provider) => {
+    assertProviderId(provider, 'grok');
+    const outputRel = 'e2e-grok-reasoning-effort.json';
+    const base = makeAcpReadInWorkspaceScenario({
+      providerId: acpProviderId(provider),
+      content: `GROK_REASONING_EFFORT_SENTINEL_${randomUUID()}`,
+      id: 'grok_set_reasoning_effort',
+      title: 'grok: apply a provider-advertised reasoning effort while idle',
+    });
+
+    return {
+      ...base,
+      requiredFixtureKeys: undefined,
+      requiredAnyFixtureKeys: undefined,
+      requiredTraceSubstrings: undefined,
+      postSatisfy: {
+        timeoutMs: 120_000,
+        run: async ({ workspaceDir, baseUrl, token, sessionId, secret }) => {
+          await waitForSessionActive({ baseUrl, token, sessionId, timeoutMs: 60_000 });
+
+          const idleDeadline = Date.now() + 60_000;
+          let completedSnapshot: Awaited<ReturnType<typeof fetchSessionV2>> | null = null;
+          while (Date.now() < idleDeadline) {
+            const snapshot = await fetchSessionV2(baseUrl, token, sessionId);
+            if (snapshot.latestTurnStatus === 'completed') {
+              completedSnapshot = snapshot;
+              break;
+            }
+            await sleep(250);
+          }
+          if (!completedSnapshot) {
+            throw new Error('grok_set_reasoning_effort: initial provider turn did not become idle');
+          }
+
+          const beforeDeadline = Date.now() + 60_000;
+          let snapshotBefore: Awaited<ReturnType<typeof fetchSessionV2>> | null = completedSnapshot;
+          let targetEffort: string | null = null;
+          while (Date.now() < beforeDeadline) {
+            const snapshot = await fetchSessionV2(baseUrl, token, sessionId);
+            const metadata = decryptLegacyBase64(snapshot.metadata, secret) as Record<string, unknown>;
+            const modelStateCandidate = metadata.sessionModelsV1 ?? metadata.acpSessionModelsV1;
+            const modelState = modelStateCandidate && typeof modelStateCandidate === 'object' && !Array.isArray(modelStateCandidate)
+              ? modelStateCandidate as any
+              : null;
+            const models = Array.isArray(modelState?.availableModels) ? modelState.availableModels : [];
+            const currentModel = models.find((model: any) => model?.id === modelState?.currentModelId);
+            const effort = Array.isArray(currentModel?.modelOptions)
+              ? currentModel.modelOptions.find((option: any) => option?.id === 'reasoning_effort')
+              : null;
+            const values = Array.isArray(effort?.options)
+              ? effort.options.map((option: any) => option?.value).filter((value: unknown): value is string => typeof value === 'string')
+              : [];
+            targetEffort = values.find((value: string) => value !== effort?.currentValue) ?? null;
+            if (targetEffort) {
+              snapshotBefore = snapshot;
+              break;
+            }
+            await sleep(250);
+          }
+          if (!snapshotBefore || !targetEffort) {
+            throw new Error('grok_set_reasoning_effort: no alternative provider-advertised effort was available');
+          }
+
+          const metadataBefore = decryptLegacyBase64(snapshotBefore.metadata, secret) as Record<string, unknown>;
+          const updatedAt = Date.now();
+          const metadataWithIntent = applyAcpConfigOptionIntentSessionMetadata(metadataBefore, {
+            v: 1,
+            configId: 'reasoning_effort',
+            value: targetEffort,
+            updatedAt,
+          });
+          await patchSessionMetadataWithRetry({
+            baseUrl,
+            token,
+            sessionId,
+            ciphertext: encryptLegacyBase64(metadataWithIntent, secret),
+            expectedVersion: snapshotBefore.metadataVersion,
+          });
+
+          const appliedDeadline = Date.now() + 90_000;
+          let appliedEffort: string | null = null;
+          while (Date.now() < appliedDeadline) {
+            const snapshot = await fetchSessionV2(baseUrl, token, sessionId);
+            const metadata = decryptLegacyBase64(snapshot.metadata, secret) as Record<string, unknown>;
+            const modelStateCandidate = metadata.sessionModelsV1 ?? metadata.acpSessionModelsV1;
+            const modelState = modelStateCandidate && typeof modelStateCandidate === 'object' && !Array.isArray(modelStateCandidate)
+              ? modelStateCandidate as any
+              : null;
+            const models = Array.isArray(modelState?.availableModels) ? modelState.availableModels : [];
+            const currentModel = models.find((model: any) => model?.id === modelState?.currentModelId);
+            const effort = Array.isArray(currentModel?.modelOptions)
+              ? currentModel.modelOptions.find((option: any) => option?.id === 'reasoning_effort')
+              : null;
+            if (effort?.currentValue === targetEffort) {
+              appliedEffort = targetEffort;
+              break;
+            }
+            await sleep(250);
+          }
+          if (appliedEffort !== targetEffort) {
+            throw new Error(`grok_set_reasoning_effort: provider did not acknowledge effort ${targetEffort}`);
+          }
+
+          await writeFile(join(workspaceDir, outputRel), JSON.stringify({ targetEffort, appliedEffort }, null, 2) + '\n', 'utf8');
+        },
+      },
+      verify: async ({ workspaceDir }) => {
+        const raw = await readFile(join(workspaceDir, outputRel), 'utf8').catch(() => '');
+        if (!raw) throw new Error('grok_set_reasoning_effort: missing output file');
+        const parsed = JSON.parse(raw) as { targetEffort?: unknown; appliedEffort?: unknown };
+        if (typeof parsed.targetEffort !== 'string' || parsed.appliedEffort !== parsed.targetEffort) {
+          throw new Error('grok_set_reasoning_effort: applied effort does not match the requested advertised effort');
+        }
+      },
+    } satisfies ProviderScenario;
+  },
+
+  grok_structured_question_answers: (provider) => {
+    assertProviderId(provider, 'grok');
+    return {
+      id: 'grok_structured_question_answers',
+      title: 'grok: structured question answers preserve ordered arrays',
+      tier: 'extended',
+      yolo: true,
+      allowPermissionAutoApproveInYolo: true,
+      permissionAutoDecision: 'approved',
+      permissionAutoAnswers: {
+        components: ['alpha-beta', 'gamma', 'Custom, other'],
+      },
+      prompt: () => [
+        'Call the ask-user-question tool exactly once with this exact question:',
+        '- id: components',
+        '- prompt: Which components?',
+        '- multi-select: true',
+        '- option id alpha-beta with label Alpha, Beta',
+        '- option id gamma with label Gamma',
+        '- allow a custom answer',
+        'Wait for the answer. Confirm that it contains Alpha, Beta; Gamma; and the custom answer Custom, other.',
+        'Only after receiving all three answers, reply exactly GROK_STRUCTURED_ANSWERS_OK.',
+      ].join('\n'),
+      requiredTraceSubstrings: ['components', 'Alpha, Beta'],
+      requiredMessageSubstrings: ['GROK_STRUCTURED_ANSWERS_OK'],
+    } satisfies ProviderScenario;
+  },
+
+  grok_image_prompt: (provider) => {
+    assertProviderId(provider, 'grok');
+    const relativePath = '.happier/uploads/messages/grok-image-e2e/happy-green.png';
+    let imageMeta: Record<string, unknown> | null = null;
+
+    return {
+      id: 'grok_image_prompt',
+      title: 'grok: authorized structured image reaches the ACP prompt',
+      tier: 'extended',
+      yolo: true,
+      setup: async ({ workspaceDir }) => {
+        const sourcePath = join(repoRootDir(), 'apps', 'stack', 'extras', 'swiftbar', 'icons', 'happy-green.png');
+        const targetPath = join(workspaceDir, relativePath);
+        await mkdir(join(workspaceDir, '.happier', 'uploads', 'messages', 'grok-image-e2e'), { recursive: true });
+        await copyFile(sourcePath, targetPath);
+        const bytes = await readFile(targetPath);
+        const sha256 = createHash('sha256').update(bytes).digest('hex');
+        const attachment = {
+          name: 'happy-green.png',
+          path: relativePath,
+          mimeType: 'image/png',
+          sizeBytes: bytes.byteLength,
+          sha256,
+        };
+        imageMeta = {
+          happier: { kind: 'attachments.v1', payload: { attachments: [attachment] } },
+          happierStructuredInputV1: {
+            v: 1,
+            imageInputs: [{
+              id: 'grok-image-e2e',
+              kind: 'localImage',
+              path: relativePath,
+              mimeType: 'image/png',
+              sizeBytes: bytes.byteLength,
+              sha256,
+              provenance: { kind: 'sessionAttachmentUpload' },
+            }],
+          },
+        };
+      },
+      messageMeta: () => {
+        if (!imageMeta) throw new Error('grok_image_prompt: image metadata was not initialized');
+        return imageMeta;
+      },
+      prompt: () => [
+        'Inspect the attached image.',
+        'If its dominant color is green, reply exactly GROK_IMAGE_GREEN_E2E.',
+        'Otherwise reply exactly GROK_IMAGE_NOT_GREEN_E2E.',
+        'Do not use tools.',
+      ].join('\n'),
+      requiredMessageSubstrings: ['GROK_IMAGE_GREEN_E2E'],
     } satisfies ProviderScenario;
   },
 
@@ -1407,6 +1719,71 @@ await server.connect(new StdioServerTransport());
     return makeAcpPermissionModeOutsideWorkspaceScenario(provider, 'default');
   },
 
+  grok_outside_workspace_write_rejected: (provider) => {
+    assertProviderId(provider, 'grok');
+    const providerId = acpProviderId(provider);
+    const content = 'GROK_OUTSIDE_WORKSPACE_REJECTED_E2E';
+    let outsidePath: string | null = null;
+
+    return {
+      id: 'grok_outside_workspace_write_rejected',
+      title: 'grok: provider sandbox rejects an outside-workspace write',
+      tier: 'extended',
+      yolo: true,
+      setup: async ({ workspaceDir }) => {
+        outsidePath = makeOutsideWorkspacePath({
+          workspaceDir,
+          prefix: 'happier-e2e-grok-outside-rejected',
+        });
+        await cleanupOutsideWorkspacePath(outsidePath);
+      },
+      prompt: ({ workspaceDir }) => {
+        if (!outsidePath) {
+          outsidePath = makeOutsideWorkspacePath({
+            workspaceDir,
+            prefix: 'happier-e2e-grok-outside-rejected',
+          });
+        }
+        return [
+          'Run exactly one tool call:',
+          '- Use the Write file tool to write this file outside the current working directory.',
+          `- Absolute path: ${outsidePath}`,
+          `- Content: ${content}`,
+          '- Do not use execute, MCP, or another tool.',
+          '- If the provider rejects the write, do not retry.',
+          '- Then reply DONE.',
+          '',
+          `Note: current working directory is ${workspaceDir}`,
+        ].join('\n');
+      },
+      requiredAnyFixtureKeys: [
+        [`acp/${providerId}/tool-call/Write`],
+        [`acp/${providerId}/tool-result/Write`],
+      ],
+      requiredTraceSubstrings: [content, 'Permission denied for writeTextFile (path traversal)'],
+      verify: async ({ traceEvents }) => {
+        const writeResult = traceEvents
+          .map((event) => event.payload as any)
+          .find((payload) => payload?.type === 'tool-result' && payload?.output?._happier?.canonicalToolName === 'Write');
+        const filepath = outsidePath;
+        try {
+          if (writeResult?.isError !== true) {
+            throw new Error('Expected Grok outside-workspace Write result to be marked as an error');
+          }
+          if (typeof filepath !== 'string' || filepath.length === 0) {
+            throw new Error('Internal error: Grok outside-workspace path was not initialized');
+          }
+          if (existsSync(filepath)) {
+            throw new Error(`Grok provider sandbox rejection still wrote the outside-workspace file: ${filepath}`);
+          }
+        } finally {
+          await cleanupOutsideWorkspacePath(filepath);
+          outsidePath = null;
+        }
+      },
+    } satisfies ProviderScenario;
+  },
+
   permission_mode_safe_yolo_outside_workspace: (provider) => {
     if (provider.protocol !== 'acp') {
       throw new Error(`permission_mode_safe_yolo_outside_workspace only supports ACP providers (got ${provider.protocol})`);
@@ -1419,6 +1796,13 @@ await server.connect(new StdioServerTransport());
       throw new Error(`permission_mode_read_only_outside_workspace only supports ACP providers (got ${provider.protocol})`);
     }
     return makeAcpPermissionModeOutsideWorkspaceScenario(provider, 'read-only');
+  },
+
+  permission_mode_plan_outside_workspace: (provider) => {
+    if (provider.protocol !== 'acp') {
+      throw new Error(`permission_mode_plan_outside_workspace only supports ACP providers (got ${provider.protocol})`);
+    }
+    return makeAcpPermissionModeOutsideWorkspaceScenario(provider, 'plan');
   },
 
   permission_mode_yolo_outside_workspace: (provider) => {
@@ -1765,7 +2149,7 @@ await server.connect(new StdioServerTransport());
         requiredFixtureKeys: [],
         postSatisfy: {
           timeoutMs: 180_000,
-          run: async ({ baseUrl, token, sessionId, secret }) => {
+          run: async ({ baseUrl, token, sessionId, secret, traceFile }) => {
             await waitForAssistantMessageContaining({
               baseUrl,
               token,
@@ -1810,7 +2194,11 @@ await server.connect(new StdioServerTransport());
               ].join('\n'),
             });
 
-            await sleep(1_500);
+            await waitForToolCallPayloadSubstring({
+              traceFile,
+              requiredSubstring: memorySentinel,
+              timeoutMs: 120_000,
+            });
             await callSessionScopedRpc({
               baseUrl,
               token,
@@ -1876,7 +2264,7 @@ await server.connect(new StdioServerTransport());
         requiredFixtureKeys: [],
         postSatisfy: {
           timeoutMs: followupTimeoutMs,
-          run: async ({ baseUrl, token, sessionId, secret }) => {
+          run: async ({ baseUrl, token, sessionId, secret, traceFile }) => {
             await waitForAssistantMessageContaining({
               baseUrl,
               token,
@@ -1921,7 +2309,11 @@ await server.connect(new StdioServerTransport());
               ].join('\n'),
             });
 
-            await sleep(1_500);
+            await waitForToolCallPayloadSubstring({
+              traceFile,
+              requiredSubstring: memorySentinel,
+              timeoutMs: readyAndMemoryTimeoutMs,
+            });
             await callSessionScopedRpc({
               baseUrl,
               token,
@@ -2671,13 +3063,15 @@ await server.connect(new StdioServerTransport());
 
   mcp_change_title: (provider) => {
     const pid = acpProviderId(provider);
-    const title = 'KILO_MCP_TITLE_E2E';
+    const title = provider.id === 'grok' ? 'GROK_MCP_TITLE_E2E' : 'KILO_MCP_TITLE_E2E';
+    const maxToolEvents = provider.id === 'grok' ? 2 : 1;
     return {
       id: 'mcp_change_title',
       title: 'mcp: change_title via Happier MCP server',
       tier: 'extended',
       yolo: true,
-      maxTraceEvents: { toolCalls: 1, toolResults: 1, permissionRequests: 1 },
+      // Grok discovers hidden MCP tools through one provider-owned search call before invoking them.
+      maxTraceEvents: { toolCalls: maxToolEvents, toolResults: maxToolEvents, permissionRequests: 1 },
       prompt: ({ workspaceDir }) =>
         [
           'Run exactly one tool call:',

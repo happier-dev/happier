@@ -201,8 +201,8 @@ async function configureVoiceDaemonSttSettings(params: Readonly<{
     packId: string;
     machineId: string;
     voiceHomeDirectory: string;
-}>): Promise<void> {
-    await params.page.evaluate(({ packId, machineId, voiceHomeDirectory }) => {
+}>): Promise<Record<string, unknown>> {
+    return await params.page.evaluate(({ packId, machineId, voiceHomeDirectory }) => {
         const settingsKey = 'mmkv.default\\settings';
         const pendingSettingsKey = 'mmkv.default\\pending-settings';
 
@@ -224,15 +224,31 @@ async function configureVoiceDaemonSttSettings(params: Readonly<{
         const existingVoice = typeof persistedSettings.voice === 'object' && persistedSettings.voice
             ? persistedSettings.voice as Record<string, unknown>
             : {};
-        const existingAdapters = typeof existingVoice.adapters === 'object' && existingVoice.adapters
-            ? existingVoice.adapters as Record<string, unknown>
+        const existingProviders = typeof existingVoice.providers === 'object' && existingVoice.providers
+            ? existingVoice.providers as Record<string, unknown>
             : {};
-        const existingLocalConversation = typeof existingAdapters.local_conversation === 'object' && existingAdapters.local_conversation
-            ? existingAdapters.local_conversation as Record<string, unknown>
+        const existingLocalConversationEnvelope = typeof existingProviders.local_conversation === 'object'
+            && existingProviders.local_conversation
+            ? existingProviders.local_conversation as Record<string, unknown>
+            : {};
+        const existingLocalConversation = typeof existingLocalConversationEnvelope.config === 'object'
+            && existingLocalConversationEnvelope.config
+            ? existingLocalConversationEnvelope.config as Record<string, unknown>
             : {};
         const existingAgent = typeof existingLocalConversation.agent === 'object' && existingLocalConversation.agent
             ? existingLocalConversation.agent as Record<string, unknown>
             : {};
+        const {
+            machineTargetMode: _legacyMachineTargetMode,
+            machineTargetId: _legacyMachineTargetId,
+            autoTargetMachineId: _legacyAutoTargetMachineId,
+            ...canonicalExistingAgent
+        } = existingAgent;
+        const existingExecutionMachine = typeof existingVoice.executionMachine === 'object'
+            && existingVoice.executionMachine
+            ? existingVoice.executionMachine as Record<string, unknown>
+            : {};
+        const { adapters: _legacyAdapters, ...canonicalExistingVoice } = existingVoice;
         const featureToggles = {
             ...(typeof persistedSettings.featureToggles === 'object' && persistedSettings.featureToggles
                 ? persistedSettings.featureToggles as Record<string, unknown>
@@ -243,29 +259,42 @@ async function configureVoiceDaemonSttSettings(params: Readonly<{
             'voice.daemonInference': true,
         };
         const voice = {
-            ...existingVoice,
+            ...canonicalExistingVoice,
             providerId: 'local_conversation',
             assistantLanguage: 'en',
-            adapters: {
-                ...existingAdapters,
+            executionMachine: {
+                ...existingExecutionMachine,
+                mode: 'fixed',
+                machineId,
+                autoMachineId: null,
+            },
+            providers: {
+                ...existingProviders,
                 local_conversation: {
-                    ...existingLocalConversation,
-                    conversationMode: 'agent',
-                    networkTimeoutMs: 15_000,
-                    agent: {
-                        ...existingAgent,
-                        backend: 'daemon',
-                        machineTargetMode: 'fixed',
-                        machineTargetId: machineId,
-                    },
-                    stt: {
-                        provider: 'local_neural',
-                        openaiCompat: { baseUrl: null, apiKey: null, model: 'whisper-1' },
-                        googleGemini: { apiKey: null, model: 'gemini-2.5-flash', language: null },
-                        localNeural: {
-                            assetId: packId,
-                            language: 'en',
-                            execution: 'daemon',
+                    schemaVersion: 1,
+                    config: {
+                        ...existingLocalConversation,
+                        conversationMode: 'agent',
+                        networkTimeoutMs: 15_000,
+                        agent: {
+                            ...canonicalExistingAgent,
+                            backend: 'daemon',
+                        },
+                        stt: {
+                            provider: 'local_neural',
+                            openaiCompat: {
+                                baseUrl: null,
+                                insecureLocalOriginConsent: null,
+                                insecureLocalConsentMachineId: null,
+                                apiKey: null,
+                                model: 'whisper-1',
+                            },
+                            localNeural: {
+                                assetId: packId,
+                                language: 'en',
+                                execution: 'daemon',
+                            },
+                            providers: {},
                         },
                     },
                 },
@@ -291,6 +320,7 @@ async function configureVoiceDaemonSttSettings(params: Readonly<{
                 voice,
             }),
         );
+        return voice;
     }, {
         packId: params.packId,
         machineId: params.machineId,
@@ -461,12 +491,36 @@ test.describe('ui e2e: daemon STT batch transcription', () => {
             120_000,
         );
         await dismissSetupWizardIfVisible({ page });
-        await configureVoiceDaemonSttSettings({
+        const seededVoice = await configureVoiceDaemonSttSettings({
             page,
             packId: sttPackId,
             machineId: seededMachineId,
             voiceHomeDirectory,
         });
+        expect(seededVoice).not.toHaveProperty('adapters');
+        expect(seededVoice).toMatchObject({
+            executionMachine: {
+                mode: 'fixed',
+                machineId: seededMachineId,
+                autoMachineId: null,
+            },
+            providers: {
+                local_conversation: {
+                    schemaVersion: 1,
+                    config: {
+                        conversationMode: 'agent',
+                        agent: { backend: 'daemon' },
+                        stt: {
+                            provider: 'local_neural',
+                            localNeural: { assetId: sttPackId, execution: 'daemon' },
+                        },
+                    },
+                },
+            },
+        });
+        expect(JSON.stringify(seededVoice)).not.toMatch(
+            /machineTargetMode|machineTargetId|autoTargetMachineId/,
+        );
 
         await gotoDomContentLoadedWithPathFallback(
             page,

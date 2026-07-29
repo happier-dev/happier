@@ -1,0 +1,53 @@
+{
+  "v": 1,
+  "id": "cursor_acp_stub",
+  "enableEnvVar": "HAPPIER_E2E_PROVIDER_CURSOR_ACP_STUB",
+  "protocol": "acp",
+  "traceProvider": "cursor",
+  "requiredBinaries": ["node"],
+  "permissions": {
+    "v": 1,
+    "acp": {
+      "toolPermissionPromptsByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteAllowedByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceWriteMustCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "outsideWorkspaceRequireTaskCompleteByMode": {
+        "default": false,
+        "safe-yolo": false,
+        "read-only": false,
+        "yolo": false,
+        "plan": false
+      },
+      "expectToolPermissionPrompts": false,
+      "permissionSurfaceOutsideWorkspaceYolo": false
+    }
+  },
+  "cli": {
+    "subcommand": "cursor",
+    "extraArgs": ["--started-by", "terminal"],
+    "env": {
+      "HEADLESS": "1",
+      "HAPPIER_VARIANT": "dev",
+      "HAPPIER_E2E_ACP_TRACE_MARKERS": "1",
+      "HAPPIER_CURSOR_PATH": "../../packages/tests/fixtures/cli-backends/cursor_acp_stub/cursor-acp-stub-provider.mjs"
+    }
+  }
+}

@@ -18,8 +18,8 @@
 
 import { Readable, Writable } from 'node:stream';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
-import { resolve, join, dirname } from 'node:path';
+import { createRequire } from 'node:module';
+import { resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -31,12 +31,14 @@ async function loadAcpSdk() {
 
   // Default to the CLI workspace dependency (monorepo installs can be non-hoisted).
   const repoRoot = resolve(__dirname, '../../../..');
-  const defaultEntry = join(repoRoot, 'apps', 'cli', 'node_modules', '@agentclientprotocol', 'sdk', 'dist', 'acp.js');
+  const requireFromHere = createRequire(import.meta.url);
+  const defaultEntry = requireFromHere.resolve('@agentclientprotocol/sdk', {
+    paths: [resolve(repoRoot, 'apps', 'cli')],
+  });
 
   const candidates = [fromEnv, defaultEntry].filter(Boolean);
   for (const candidate of candidates) {
     try {
-      if (!existsSync(candidate)) continue;
       return await import(pathToFileURL(candidate).href);
     } catch {
       // try next candidate
@@ -279,6 +281,22 @@ const stream = acp.ndJsonStream(
   Readable.toWeb(process.stdin),
 );
 
-// Constructing AgentSideConnection starts the request loop.
-// eslint-disable-next-line no-new
-new acp.AgentSideConnection((conn) => new AcpStubAgent(conn), stream);
+let stubAgent = null;
+const currentAgent = () => {
+  if (!stubAgent) throw new Error('ACP stub connection has not opened');
+  return stubAgent;
+};
+const app = acp.agent({ name: 'happier-e2e-acp-stub' })
+  .onConnect(({ client }) => {
+    stubAgent = new AcpStubAgent({
+      sessionUpdate: (params) => client.notify('session/update', params),
+    });
+  })
+  .onRequest('initialize', ({ params }) => currentAgent().initialize(params))
+  .onRequest('authenticate', ({ params }) => currentAgent().authenticate(params))
+  .onRequest('session/new', ({ params }) => currentAgent().newSession(params))
+  .onRequest('session/load', ({ params }) => currentAgent().loadSession(params))
+  .onRequest('session/prompt', ({ params }) => currentAgent().prompt(params))
+  .onNotification('session/cancel', ({ params }) => currentAgent().cancel(params));
+const connection = app.connect(stream);
+await connection.closed;

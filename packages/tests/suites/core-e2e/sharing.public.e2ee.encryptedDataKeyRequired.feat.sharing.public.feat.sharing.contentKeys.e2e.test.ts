@@ -7,11 +7,8 @@ import { startServerLight, type StartedServer } from '../../src/testkit/process/
 
 const run = createRunDirs({ runLabel: 'core' });
 
-function makeEncryptedDataKeyV0Base64(): string {
-  const bytes = Buffer.alloc(1 + 32 + 24 + 16, 1);
-  bytes[0] = 0;
-  return bytes.toString('base64');
-}
+const CURRENT_RELEASED_SECRETBOX_ENVELOPE =
+  'CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJRIYkKAXBR77d5HFP5Lil/o4VB5lvpZLQNo94yuThilYBtgQ9LbGUyV6dWcbPnLGHBPcxyNkBZf40BNOjG6UZHJeiKCEmhA0XoQPUg27S16lSOR18S2AquqS32k0IM423w3n9rcPLiwrLKN7Pw9JYN+Ubz8mNl4CQHdiIDyjQKosZbPxByuWtcw+kPOkR';
 
 describe('core e2e: e2ee public share requires encryptedDataKey', () => {
   let server: StartedServer | null = null;
@@ -60,13 +57,32 @@ describe('core e2e: e2ee public share requires encryptedDataKey', () => {
     expect(missing.status).toBe(400);
     expect(typeof missing.data?.error).toBe('string');
 
+    const genericBox = await fetchJson<any>(`${server.baseUrl}/v1/sessions/${sessionId}/public-share`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${auth.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        token,
+        encryptedDataKey: Buffer.alloc(105, 1).toString('base64'),
+        isConsentRequired: false,
+      }),
+      timeoutMs: 15_000,
+    });
+    expect(genericBox.status).toBe(400);
+
     const createShare = await fetchJson<any>(`${server.baseUrl}/v1/sessions/${sessionId}/public-share`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${auth.token}`,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ token, encryptedDataKey: makeEncryptedDataKeyV0Base64(), isConsentRequired: false }),
+      body: JSON.stringify({
+        token,
+        encryptedDataKey: CURRENT_RELEASED_SECRETBOX_ENVELOPE,
+        isConsentRequired: false,
+      }),
       timeoutMs: 15_000,
     });
     expect(createShare.status).toBe(200);
@@ -78,7 +94,6 @@ describe('core e2e: e2ee public share requires encryptedDataKey', () => {
     expect(access.status).toBe(200);
     expect(access.data?.session?.id).toBe(sessionId);
     expect(access.data?.session?.encryptionMode).toBe('e2ee');
-    expect(typeof access.data?.encryptedDataKey).toBe('string');
+    expect(access.data?.encryptedDataKey).toBe(CURRENT_RELEASED_SECRETBOX_ENVELOPE);
   }, 180_000);
 });
-

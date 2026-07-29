@@ -1,5 +1,19 @@
-import { Dirent, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  Dirent,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, resolve, sep } from 'node:path';
+
+import { sanitizeBundledPackageJson } from '@happier-dev/cli-common/workspaces';
 
 type CopyMissingEntryOptions = {
   mergeExistingDirectoryContents?: boolean;
@@ -60,6 +74,11 @@ function writesThroughSymlinkedNodeModulesPath(destPath: string): boolean {
   const firstNodeModulesIndex = segments.indexOf('node_modules');
   if (firstNodeModulesIndex === -1) return false;
   let current = segments.slice(0, firstNodeModulesIndex + 1).join(sep) || sep;
+  try {
+    if (lstatSync(current).isSymbolicLink()) return true;
+  } catch {
+    return false;
+  }
   for (let i = firstNodeModulesIndex + 1; i < segments.length - 1; i += 1) {
     current = `${current}${sep}${segments[i]}`;
     try {
@@ -310,7 +329,18 @@ function ensureRootNodeModulesFallback(snapshotDistDir: string, rootDir: string)
 function ensureWorkspacePackageManifests(snapshotNodeModulesDir: string, rootDir: string): void {
   for (const { packageJsonPath, scopePackageName } of collectWorkspacePackageInfos(rootDir)) {
     const snapshotPackageJsonPath = resolve(snapshotNodeModulesDir, '@happier-dev', scopePackageName, 'package.json');
-    ensureCopiedTextFile(snapshotPackageJsonPath, packageJsonPath, { overwriteExisting: true });
+    if (writesThroughSymlinkedNodeModulesPath(snapshotPackageJsonPath)) continue;
+    try {
+      const sourceManifest = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+      mkdirSync(dirname(snapshotPackageJsonPath), { recursive: true });
+      writeFileSync(
+        snapshotPackageJsonPath,
+        `${JSON.stringify(sanitizeBundledPackageJson(sourceManifest), null, 2)}\n`,
+        'utf8',
+      );
+    } catch {
+      // Best-effort only. Tests can still use the bundled manifest copied before this repair.
+    }
   }
 }
 
@@ -554,10 +584,15 @@ export function ensureCliDistSnapshotNodeModules(params: {
   snapshotDir: string;
   snapshotDistDir: string;
   rootDir: string;
+  firstPartyClosureMode?: 'bundled-only' | 'workspace-overlay';
 }): void {
   const cliNodeModulesDir = resolve(params.rootDir, 'apps', 'cli', 'node_modules');
   const rootNodeModulesDir = resolve(params.rootDir, 'node_modules');
   const snapshotNodeModulesDir = resolve(params.snapshotDir, 'node_modules');
+
+  // Symlink-mode snapshots intentionally resolve the live CLI dependency tree directly. A later
+  // copy-mode hydration must treat that alias as read-only instead of repairing through it.
+  if (isSymbolicLinkEntry(snapshotNodeModulesDir)) return;
 
   if (existsSync(cliNodeModulesDir)) {
     mkdirSync(snapshotNodeModulesDir, { recursive: true });
@@ -565,10 +600,19 @@ export function ensureCliDistSnapshotNodeModules(params: {
       resolve(snapshotNodeModulesDir, '@happier-dev'),
       resolve(cliNodeModulesDir, '@happier-dev'),
     );
-    ensureWorkspacePackageManifests(snapshotNodeModulesDir, params.rootDir);
-    ensureWorkspacePackageDistTrees(snapshotNodeModulesDir, params.rootDir);
-    ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
+    if ((params.firstPartyClosureMode ?? 'workspace-overlay') === 'workspace-overlay') {
+      ensureWorkspacePackageManifests(snapshotNodeModulesDir, params.rootDir);
+      ensureWorkspacePackageDistTrees(snapshotNodeModulesDir, params.rootDir);
+      ensureWorkspacePackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
+    }
     ensureCopiedNodeModulesEntries(cliNodeModulesDir, snapshotNodeModulesDir, new Set(['@happier-dev']));
+    if (params.firstPartyClosureMode === 'bundled-only') {
+      ensureCliPackSnapshotRuntimeDependencies({
+        snapshotDir: params.snapshotDir,
+        rootDir: params.rootDir,
+        hydrationScope: 'bundled-workspaces-only',
+      });
+    }
     ensureExternalPackageRuntimeDependencyTrees(snapshotNodeModulesDir, params.rootDir);
   } else if (existsSync(rootNodeModulesDir)) {
     ensureSymlink(snapshotNodeModulesDir, rootNodeModulesDir);
@@ -577,4 +621,44 @@ export function ensureCliDistSnapshotNodeModules(params: {
   if (existsSync(cliNodeModulesDir) && existsSync(rootNodeModulesDir) && cliNodeModulesDir !== rootNodeModulesDir) {
     ensureRootNodeModulesFallback(params.snapshotDistDir, params.rootDir);
   }
+}
+
+function isCopiedTreeSubset(sourcePath: string, destPath: string): boolean {
+  let sourceStats;
+  let destStats;
+  try {
+    sourceStats = statSync(sourcePath);
+    destStats = statSync(destPath);
+  } catch {
+    return false;
+  }
+
+  if (sourceStats.isDirectory() !== destStats.isDirectory()) return false;
+  if (!sourceStats.isDirectory()) return sourceStats.size === destStats.size;
+
+  for (const entry of listNodeModulesEntries(sourcePath)) {
+    if (entry.name.startsWith('.')) continue;
+    if (!isCopiedTreeSubset(resolve(sourcePath, entry.name), resolve(destPath, entry.name))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function hasCliDistSnapshotFirstPartyCopyClosure(params: {
+  snapshotDir: string;
+  rootDir: string;
+}): boolean {
+  const sourceScopeDir = resolve(params.rootDir, 'apps', 'cli', 'node_modules', '@happier-dev');
+  const snapshotScopeDir = resolve(params.snapshotDir, 'node_modules', '@happier-dev');
+  if (!isDirectoryEntry(sourceScopeDir) || !isDirectoryEntry(snapshotScopeDir)) return false;
+  if (isSymbolicLinkEntry(snapshotScopeDir)) return false;
+
+  for (const entry of listScopedPackageEntries(sourceScopeDir)) {
+    const sourcePackageDir = resolve(sourceScopeDir, entry.name);
+    const snapshotPackageDir = resolve(snapshotScopeDir, entry.name);
+    if (isSymbolicLinkEntry(snapshotPackageDir)) return false;
+    if (!isCopiedTreeSubset(sourcePackageDir, snapshotPackageDir)) return false;
+  }
+  return true;
 }

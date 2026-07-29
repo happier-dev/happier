@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 
 let spawnStdoutText = '';
 let lastSpawnEnv: NodeJS.ProcessEnv | null = null;
+let lastSpawnArgs: string[] | null = null;
 let sourceFingerprint = 'fingerprint-a';
 let reservedMetroPort = 19077;
 let fetchResponder: ((input: unknown, init?: RequestInit) => Promise<unknown>) | null = null;
@@ -27,12 +28,13 @@ type RunLoggedCommandMockParams = {
 };
 
 vi.mock('./spawnProcess', () => ({
-    spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string; env?: NodeJS.ProcessEnv }) => {
+    spawnLoggedProcess: (params: { stdoutPath: string; stderrPath: string; args: string[]; env?: NodeJS.ProcessEnv }) => {
         startOrder.push('spawn');
         const currentStdout = spawnStdoutTextSequence?.[spawnInvocationIndex] ?? spawnStdoutText;
         writeFileSync(params.stdoutPath, currentStdout, 'utf8');
         writeFileSync(params.stderrPath, '', 'utf8');
         lastSpawnEnv = params.env && typeof params.env === 'object' ? params.env as NodeJS.ProcessEnv : null;
+        lastSpawnArgs = [...params.args];
         const child = new EventEmitter() as EventEmitter & {
             exitCode: number | null;
             signalCode: NodeJS.Signals | null;
@@ -96,6 +98,7 @@ afterAll(() => {
 beforeEach(() => {
     spawnStdoutText = 'http://127.0.0.1:19077\n';
     lastSpawnEnv = null;
+    lastSpawnArgs = null;
     sourceFingerprint = 'fingerprint-a';
     reservedMetroPort = 19077;
     fetchResponder = async (input: unknown) => {
@@ -207,6 +210,29 @@ describe('startUiWebMetro', () => {
 
             expect(lastSpawnEnv?.EXPO_NO_METRO_WORKSPACE_ROOT).toBeUndefined();
             expect(lastSpawnEnv?.HAPPIER_UI_METRO_NARROW_WATCH_FOLDERS).toBeUndefined();
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('binds Expo localhost to the IPv4 origin returned to browser callers', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-ui-web-metro-loopback-origin-'));
+
+        try {
+            await mkdir(testDir, { recursive: true });
+
+            const started = await startUiWebMetro({
+                testDir,
+                env: { NODE_ENV: 'test', NODE_OPTIONS: '--trace-warnings' },
+                port: 19077,
+            });
+
+            expect(lastSpawnArgs).toContain('--host');
+            expect(lastSpawnArgs?.[lastSpawnArgs.indexOf('--host') + 1]).toBe('localhost');
+            expect(lastSpawnEnv?.NODE_OPTIONS).toBe('--trace-warnings --dns-result-order=ipv4first');
+            expect(started.baseUrl).toBe('http://127.0.0.1:19077');
 
             await started.stop();
         } finally {
@@ -485,7 +511,6 @@ describe('startUiWebMetro', () => {
                     HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '500',
                     HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
                     HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-                    HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '25',
                 },
             });
 

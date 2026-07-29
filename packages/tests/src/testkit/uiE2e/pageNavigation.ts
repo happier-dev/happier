@@ -120,6 +120,16 @@ export function isGotoTimeoutOnExpectedPath(page: Pick<Page, 'url'>, expectedPat
   return hasPathname(page.url(), expectedPathname);
 }
 
+function isGotoRedirectInterruptionOnExpectedPath(
+  page: Pick<Page, 'url'>,
+  expectedPathname: string,
+  error: unknown,
+): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('is interrupted by another navigation')
+    && hasPathname(page.url(), expectedPathname);
+}
+
 export function hasPathname(url: string, expectedPathname: string): boolean {
   try {
     return normalizePathname(new URL(url).pathname) === normalizePathname(expectedPathname);
@@ -137,7 +147,10 @@ export async function gotoDomContentLoadedWithPathFallback(
   try {
     await gotoDomContentLoadedWithRetries(page, url, timeoutMs);
   } catch (error) {
-    if (isGotoTimeoutOnExpectedPath(page, expectedPathname, error)) return;
+    if (
+      isGotoTimeoutOnExpectedPath(page, expectedPathname, error)
+      || isGotoRedirectInterruptionOnExpectedPath(page, expectedPathname, error)
+    ) return;
     throw error;
   }
 }
@@ -293,13 +306,15 @@ async function waitForHomeUi(params: Readonly<{
       const createSessionVisible = await params.page.getByTestId('session-getting-started-kind-create_session').count();
       const selectSessionVisible = await params.page.getByTestId('session-getting-started-kind-select_session').count();
       const startNewSessionVisible = await params.page.getByTestId('main-header-start-new-session').count();
+      const setupReentryVisible = await params.page.getByTestId('sessions-empty-state-open-setup').count();
       const setupWizardVisible = await params.page.getByTestId('setupWizard.surface').count();
       const authenticatedHomeVisible = params.requireSessionActions
         ? createSessionVisible > 0 || selectSessionVisible > 0
         : connectMachineVisible > 0
           || createSessionVisible > 0
           || selectSessionVisible > 0
-          || startNewSessionVisible > 0;
+          || startNewSessionVisible > 0
+          || setupReentryVisible > 0;
 
       if (welcomeVisible === 0 && setupWizardVisible > 0) {
         await dismissSetupWizardIfVisible({ page: params.page });

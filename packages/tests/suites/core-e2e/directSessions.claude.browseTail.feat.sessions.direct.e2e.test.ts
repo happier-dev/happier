@@ -328,7 +328,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
       }));
       const sessionId = (linkResult as { sessionId: string }).sessionId;
 
-      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET}`, {
+      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET}`, {
         machineId: seeded.machineId,
         sessionId,
         providerId: 'claude',
@@ -507,7 +507,7 @@ describe('core e2e: direct Claude sessions browse/link/tail', () => {
         renewed: false,
       }));
 
-      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_FOLLOW_POLICY_SET}`, {
+      const follow = await machineRpc.call(`${seeded.machineId}:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_BACKGROUND_FOLLOW_SET}`, {
         machineId: seeded.machineId,
         sessionId,
         providerId: 'claude',

@@ -2,12 +2,32 @@ import { describe, expect, it } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
-import { readCliAccessKey } from './cliAccessKey';
+import {
+  accountScopedCryptoMaterialFromCliAccessKey,
+  readCliAccessKey,
+} from './cliAccessKey';
 import { createRunDirs } from './runDir';
 
 const run = createRunDirs({ runLabel: 'cli-access-key' });
 
 describe('readCliAccessKey', () => {
+  it('maps legacy secrets and data-key machine keys to account-scoped crypto material', () => {
+    const legacySecret = new Uint8Array([1, 2, 3, 4]);
+    const machineKey = new Uint8Array([5, 6, 7, 8]);
+
+    expect(accountScopedCryptoMaterialFromCliAccessKey({
+      token: 'legacy-token',
+      secret: Buffer.from(legacySecret).toString('base64'),
+    })).toEqual({ type: 'legacy', secret: legacySecret });
+    expect(accountScopedCryptoMaterialFromCliAccessKey({
+      token: 'data-key-token',
+      encryption: {
+        publicKey: 'unused-by-account-scoped-cipher',
+        machineKey: Buffer.from(machineKey).toString('base64url'),
+      },
+    })).toEqual({ type: 'dataKey', machineKey });
+  });
+
   it('falls back to newest per-server access.key when legacy root file is missing', async () => {
     const dir = run.testDir('fallback-newest-per-server');
     const home = resolve(join(dir, 'cli-home'));

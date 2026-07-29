@@ -7,6 +7,49 @@ import { describe, expect, it, vi } from 'vitest';
 import type { MobileMaestroDeps } from './mobileMaestroRunner';
 
 describe('mobileMaestroRunner', () => {
+  it('targets and records the configured iOS simulator identity', async () => {
+    const { runMobileMaestro } = await import('./mobileMaestroRunner');
+    const runMaestro = vi.fn(async () => ({ exitCode: 0 }));
+    const deviceId = 'E4245944-431E-418B-9797-B1AE85DAFDF6';
+
+    const result = await runMobileMaestro(
+      {
+        argv: [
+          'node',
+          'script',
+          '--platform',
+          'ios',
+          '--flows',
+          'suites/mobile-e2e/flows/plugin-platform-candidate/online-install-and-inspector.yaml',
+          '--appId',
+          'dev.happier.app.dev.internal',
+          '--serverUrl',
+          'http://127.0.0.1:26050',
+          '--skip-app-install-check',
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HAPPIER_E2E_MOBILE_DEVICE_ID: deviceId,
+          HAPPIER_E2E_IOS_SIMULATOR_LOG_CAPTURE: '0',
+          HAPPIER_E2E_MOBILE_MANAGE_METRO: '0',
+        },
+      },
+      {
+        runMaestro,
+        adbReversePorts: vi.fn(() => ({ enabled: false, reversedPorts: [] })),
+      },
+    );
+
+    expect(runMaestro).toHaveBeenCalledWith(expect.objectContaining({
+      args: expect.arrayContaining([`--udid=${deviceId}`]),
+    }));
+    const manifest = JSON.parse(readFileSync(result.manifestPath, 'utf8')) as {
+      deviceId?: string | null;
+    };
+    expect(manifest.deviceId).toBe(deviceId);
+  });
+
   it('fails fast when the app is not installed on the target device', async () => {
     const { runMobileMaestro } = await import('./mobileMaestroRunner');
 
@@ -354,6 +397,28 @@ describe('mobileMaestroRunner', () => {
     expect(loggedArgs.join(' ')).not.toContain('test-key');
     expect(loggedArgs.join(' ')).toContain(
       'HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK=[redacted:HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK]',
+    );
+  });
+
+  it('redacts packed novel connected-account credentials from logged Maestro arguments', async () => {
+    const { redactSensitiveMaestroCommandArgsForLog } = await import('./mobileMaestroRunner');
+    const accountSecret = 'packed-device-account-secret';
+
+    const loggedArgs = redactSensitiveMaestroCommandArgsForLog(
+      [
+        'test',
+        'packed-novel-manual-device.yaml',
+        '-e',
+        `HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET=${accountSecret}`,
+      ],
+      {
+        HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET: accountSecret,
+      },
+    );
+
+    expect(loggedArgs.join(' ')).not.toContain(accountSecret);
+    expect(loggedArgs.join(' ')).toContain(
+      'HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET=[redacted:HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET]',
     );
   });
 
@@ -1012,6 +1077,86 @@ describe('mobileMaestroRunner', () => {
       'cli-login-success',
       'daemon-start',
       'maestro:suites/mobile-e2e/flows/F4.connectedMachineComposerSmoke.yaml',
+    ]);
+  });
+
+  it('lets a connected-machine scenario interleave Maestro phases after the daemon is ready', async () => {
+    const { runMobileMaestro } = await import('./mobileMaestroRunner');
+
+    const events: string[] = [];
+    const runMaestro = vi.fn(async (params: { args: string[] }) => {
+      const flowsArgIndex = params.args.findIndex((arg) => arg === 'test') + 1;
+      events.push(`maestro:${params.args[flowsArgIndex] ?? 'unknown'}`);
+      return { exitCode: 0 };
+    });
+    const runConnectedMachineScenario = vi.fn(async (context: {
+      defaultFlowPath: string;
+      cliHomeDir: string;
+      runFlow: (flowPath: string, extraEnv?: NodeJS.ProcessEnv) => Promise<{ exitCode: number }>;
+    }) => {
+      expect(context.defaultFlowPath).toBe('suites/mobile-e2e/flows/F14.pluginPlatformCandidate.yaml');
+      expect(context.cliHomeDir).toContain('cli-home');
+      const first = await context.runFlow(
+        'suites/mobile-e2e/flows/F14.pluginPlatformCandidate.online.yaml',
+        { HAPPIER_E2E_PLUGIN_ID: 'acme.mobile-candidate' },
+      );
+      expect(first.exitCode).toBe(0);
+      const second = await context.runFlow(
+        'suites/mobile-e2e/flows/F14.pluginPlatformCandidate.reconnected.yaml',
+      );
+      return second.exitCode;
+    });
+    const startCliTerminalConnect = vi.fn(async () => ({
+      connectUrl: 'https://example.test/terminal/connect#key=test-key&server=http%3A%2F%2F127.0.0.1%3A43210',
+      waitForSuccess: vi.fn(async () => {}),
+      stop: vi.fn(async () => {}),
+    }));
+
+    const result = await runMobileMaestro(
+      {
+        argv: [
+          'node',
+          'script',
+          '--platform',
+          'ios',
+          '--flows',
+          'suites/mobile-e2e/flows/F14.pluginPlatformCandidate.yaml',
+          '--appId',
+          'dev.happier.app.dev.internal',
+        ],
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          HAPPIER_E2E_IOS_SIMULATOR_LOG_CAPTURE: '0',
+          HAPPIER_E2E_MOBILE_MANAGE_METRO: '0',
+          HAPPIER_E2E_MOBILE_CONNECTED_MACHINE_MODE: 'cli-terminal-daemon',
+        },
+      },
+      {
+        startServerLight: vi.fn(async () => ({
+          baseUrl: 'http://127.0.0.1:43210',
+          stop: vi.fn(async () => {}),
+        })),
+        startCliTerminalConnect,
+        startTestDaemon: vi.fn(async () => ({ stop: vi.fn(async () => {}) })),
+        runConnectedMachineScenario,
+        runMaestro,
+        isAppInstalled: vi.fn(async () => true),
+        adbReversePorts: vi.fn(() => ({ enabled: false, reversedPorts: [] })),
+        primeAppLaunch: vi.fn(async () => {}),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(runConnectedMachineScenario).toHaveBeenCalledTimes(1);
+    expect(startCliTerminalConnect).toHaveBeenCalledWith(expect.objectContaining({
+      waitForConnectUrlReady: false,
+    }));
+    expect(runMaestro).toHaveBeenCalledTimes(3);
+    expect(events).toEqual([
+      'maestro:suites/mobile-e2e/flows/_bootstrap/connectedMachineTerminalAuth.yaml',
+      'maestro:suites/mobile-e2e/flows/F14.pluginPlatformCandidate.online.yaml',
+      'maestro:suites/mobile-e2e/flows/F14.pluginPlatformCandidate.reconnected.yaml',
     ]);
   });
 

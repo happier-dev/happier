@@ -19,6 +19,8 @@ import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { resolveCliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { ensureCliSharedDepsBuilt } from '../../src/testkit/process/cliDist';
 
+import { resolveAcpSdkTestRuntime } from "../../src/testkit/providers/acpSdkTestRuntime";
+
 const run = createRunDirs({ runLabel: 'core' });
 
 describe('core e2e: Codex ACP in-flight steer (mid-turn)', () => {
@@ -67,7 +69,7 @@ describe('core e2e: Codex ACP in-flight steer (mid-turn)', () => {
 
     const attachFile = await writeCliSessionAttachFile({ cliHome, sessionId, secret });
 
-    const sdkEntry = resolve(repoRootDir(), 'apps/cli/node_modules/@agentclientprotocol/sdk/dist/acp.js');
+    const { sdkEntry, agentAppAdapterEntry } = resolveAcpSdkTestRuntime(repoRootDir());
     const fakeBinDir = resolve(join(testDir, 'fake-bin'));
     await mkdir(fakeBinDir, { recursive: true });
 
@@ -84,6 +86,9 @@ import { pathToFileURL } from "node:url";
 const sdkEntry = process.env.HAPPIER_E2E_ACP_SDK_ENTRY;
 if (!sdkEntry) throw new Error("Missing HAPPIER_E2E_ACP_SDK_ENTRY");
 const acp = await import(pathToFileURL(sdkEntry).href);
+const adapterEntry = process.env.HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY ?? ${JSON.stringify(agentAppAdapterEntry)};
+if (!adapterEntry) throw new Error("Missing HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY");
+const { connectAcpTestAgentApp } = await import(pathToFileURL(adapterEntry).href);
 
 const promptLogPath = process.env.HAPPIER_E2E_PROMPT_LOG;
 let primary = "";
@@ -135,7 +140,8 @@ class FakeAgent {
 }
 
 const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin));
-new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
+const connection = connectAcpTestAgentApp({ acp, stream, createAgent: (client) => new FakeAgent(client) });
+await connection.closed;
 `,
       'utf8',
     );
@@ -166,6 +172,7 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       // Prefer PATH stub to avoid relying on npx / installs.
       HAPPIER_CODEX_ACP_BIN: fakeAgentPath,
       HAPPIER_E2E_ACP_SDK_ENTRY: sdkEntry,
+      HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY: agentAppAdapterEntry,
       HAPPIER_E2E_PROMPT_LOG: promptLogPath,
       HAPPIER_E2E_PRIMARY_MAX_MS: '8000',
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',

@@ -223,10 +223,10 @@ test.describe('ui e2e: actions settings tool exposure', () => {
             page,
             baseUrl: uiBaseUrl,
             actionId,
-            requiredTestId: exposureControl(actionId, 'session_agent'),
+            requiredTestId: exposureControl(actionId, 'agent'),
         });
 
-        await expectResolvedExposure({ page, actionId, targetId: 'session_agent', mode: 'discoverable_only' });
+        await expectResolvedExposure({ page, actionId, targetId: 'agent', mode: 'discoverable_only' });
         await expectResolvedExposure({ page, actionId, targetId: 'mcp', mode: 'direct' });
         await expectResolvedExposure({ page, actionId, targetId: 'cli', mode: 'direct' });
         await waitForPersistedSettingsRecord(page);
@@ -234,14 +234,14 @@ test.describe('ui e2e: actions settings tool exposure', () => {
         await chooseExposureOption({
             page,
             actionId,
-            targetId: 'session_agent',
+            targetId: 'agent',
             option: 'direct',
         });
-        await expectResolvedExposure({ page, actionId, targetId: 'session_agent', mode: 'direct' });
+        await expectResolvedExposure({ page, actionId, targetId: 'agent', mode: 'direct' });
         await waitForLocalPersistedExposure({
             page,
             actionId,
-            targetId: 'session_agent',
+            targetId: 'agent',
             mode: 'direct',
         });
 
@@ -249,21 +249,21 @@ test.describe('ui e2e: actions settings tool exposure', () => {
             page,
             baseUrl: uiBaseUrl,
             actionId,
-            requiredTestId: resolvedExposureMarker(actionId, 'session_agent', 'direct'),
+            requiredTestId: resolvedExposureMarker(actionId, 'agent', 'direct'),
         });
-        await expectResolvedExposure({ page, actionId, targetId: 'session_agent', mode: 'direct' });
+        await expectResolvedExposure({ page, actionId, targetId: 'agent', mode: 'direct' });
 
         await chooseExposureOption({
             page,
             actionId,
-            targetId: 'session_agent',
+            targetId: 'agent',
             option: 'default',
         });
-        await expectResolvedExposure({ page, actionId, targetId: 'session_agent', mode: 'discoverable_only' });
+        await expectResolvedExposure({ page, actionId, targetId: 'agent', mode: 'discoverable_only' });
         await waitForLocalPersistedExposure({
             page,
             actionId,
-            targetId: 'session_agent',
+            targetId: 'agent',
             mode: null,
         });
 
@@ -271,8 +271,8 @@ test.describe('ui e2e: actions settings tool exposure', () => {
             page,
             baseUrl: uiBaseUrl,
             actionId,
-            requiredTestId: resolvedExposureMarker(actionId, 'session_agent', 'discoverable_only'),
+            requiredTestId: resolvedExposureMarker(actionId, 'agent', 'discoverable_only'),
         });
-        await expectResolvedExposure({ page, actionId, targetId: 'session_agent', mode: 'discoverable_only' });
+        await expectResolvedExposure({ page, actionId, targetId: 'agent', mode: 'discoverable_only' });
     });
 });

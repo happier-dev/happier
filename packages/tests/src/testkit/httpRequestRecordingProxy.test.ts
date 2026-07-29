@@ -38,6 +38,74 @@ async function waitForNoSockets(sockets: ReadonlySet<Socket>, label: string): Pr
 }
 
 describe('startHttpRequestRecordingProxy', () => {
+  it('can withhold a committed upstream response until the caller releases it', async () => {
+    let upstreamCommitCount = 0;
+    const target = createServer((_req, res) => {
+      upstreamCommitCount += 1;
+      res.statusCode = 200;
+      res.end('committed');
+    });
+    await listen(target);
+    const targetAddress = target.address();
+    if (!targetAddress || typeof targetAddress !== 'object') throw new Error('target server did not bind');
+
+    let releaseResponse = (): void => {};
+    const responseRelease = new Promise<void>((resolve) => {
+      releaseResponse = resolve;
+    });
+    let observeCommittedResponse = (): void => {};
+    const committedResponseObserved = new Promise<void>((resolve) => {
+      observeCommittedResponse = resolve;
+    });
+    const proxy = await startHttpRequestRecordingProxy({
+      targetBaseUrl: `http://127.0.0.1:${targetAddress.port}`,
+      beforeForwardResponse: async (request) => {
+        expect(request).toMatchObject({
+          method: 'POST',
+          path: '/commit',
+          statusCode: 200,
+        });
+        observeCommittedResponse();
+        await responseRelease;
+      },
+    });
+    let fetchSettled = false;
+    const responsePromise = fetch(`${proxy.baseUrl}/commit`, {
+      method: 'POST',
+      body: 'payload',
+    }).then(async (response) => {
+      fetchSettled = true;
+      return {
+        status: response.status,
+        body: await response.text(),
+      };
+    });
+
+    try {
+      await withTimeoutMs({
+        promise: committedResponseObserved,
+        timeoutMs: 1_000,
+        label: 'committed upstream response to reach proxy latch',
+      });
+      expect(upstreamCommitCount).toBe(1);
+      expect(fetchSettled).toBe(false);
+
+      releaseResponse();
+      await expect(withTimeoutMs({
+        promise: responsePromise,
+        timeoutMs: 1_000,
+        label: 'released proxy response',
+      })).resolves.toEqual({
+        status: 200,
+        body: 'committed',
+      });
+    } finally {
+      releaseResponse();
+      await proxy.stop().catch(() => {});
+      await closeServer(target);
+    }
+  });
+
   it('closes upgraded upstream sockets when stopped', async () => {
     const targetSockets = new Set<Socket>();
     const target = createServer((_req, res) => {

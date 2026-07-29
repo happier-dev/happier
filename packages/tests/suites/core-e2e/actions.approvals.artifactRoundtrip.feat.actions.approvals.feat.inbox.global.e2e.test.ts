@@ -63,9 +63,9 @@ describe('core e2e: approvals artifact roundtrip', () => {
       status: 'open' as const,
       createdAtMs,
       updatedAtMs: createdAtMs,
-      createdBy: { surface: 'session_agent' as const, sessionId: 'session-123', agentId: 'coding' },
+      createdBy: { surface: 'agent' as const, sessionId: 'session-123', agentId: 'coding' },
       actionId: 'review.start',
-      actionArgs: { instructions: 'Review the latest changes', backendIds: ['codex'] },
+      actionArgs: { instructions: 'Review the latest changes', engineIds: ['codex'] },
       summary: 'Approve starting a review run',
       preview: { type: 'review_plan', files: ['src/review.ts'] },
     };

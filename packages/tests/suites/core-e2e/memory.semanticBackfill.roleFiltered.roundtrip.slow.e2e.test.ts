@@ -106,7 +106,7 @@ async function seedEventHeavyTranscript(params: MemoryTestContext & Readonly<{
       role: 'agent',
       content: {
         type: 'acp',
-        provider: 'codex',
+        agentId: 'codex',
         data: {
           type: 'message',
           message: `The semantic backfill answer is ${params.semanticSentinel}.`,

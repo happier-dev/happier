@@ -19,6 +19,7 @@ export function acpResumeMetadataKey(providerId: ProviderUnderTest['id']): strin
   if (providerId === 'qwen') return 'qwenSessionId';
   if (providerId === 'kimi') return 'kimiSessionId';
   if (providerId === 'auggie') return 'auggieSessionId';
+  if (providerId === 'grok') return 'grokSessionId';
   return 'opencodeSessionId';
 }
 
@@ -61,9 +62,23 @@ function relaxAuggieResumeScenario(provider: ProviderUnderTest, scenario: Provid
 
 export function tuneResumeScenarioForProvider(provider: ProviderUnderTest, scenario: ProviderScenario): ProviderScenario {
   const auggieRelaxed = relaxAuggieResumeScenario(provider, scenario);
-  if (provider.id !== 'codex') return auggieRelaxed;
+  const toolProjectionAdjusted = provider.id === 'grok' && auggieRelaxed.requiredAnyFixtureKeys
+    ? {
+        ...auggieRelaxed,
+        requiredAnyFixtureKeys: auggieRelaxed.requiredAnyFixtureKeys.map((keys) => {
+          const keyKind = keys.some((key) => key.includes('/tool-call/'))
+            ? 'tool-call'
+            : keys.some((key) => key.includes('/tool-result/'))
+              ? 'tool-result'
+              : null;
+          if (!keyKind) return keys;
+          return [...keys, `acp/grok/${keyKind}/Write`];
+        }),
+      }
+    : auggieRelaxed;
+  if (provider.id !== 'codex') return toolProjectionAdjusted;
   return {
-    ...auggieRelaxed,
+    ...toolProjectionAdjusted,
     inactivityTimeoutMs: 240_000,
   };
 }

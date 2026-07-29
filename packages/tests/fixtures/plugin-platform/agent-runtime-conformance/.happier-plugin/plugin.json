@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.native-runtime-proof",
+  "version": "1.0.0",
+  "displayName": "Native AgentRuntime conformance",
+  "description": "Packed mixed-family fixture for the native AgentRuntime proving corridor",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "entrypoints": {
+    "daemon": "./daemon.mjs"
+  },
+  "activation": {
+    "events": [
+      {
+        "kind": "startup"
+      }
+    ]
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "fixture-runtime-process",
+        "capability": "process",
+        "reason": "Exercise the packed contribution through the canonical process and protocol owners",
+        "scope": {
+          "executables": [
+            {
+              "kind": "systemTool",
+              "id": "fixture-node"
+            }
+          ]
+        }
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "systemTools": [
+      {
+        "id": "fixture-node",
+        "title": "Fixture Node runtime",
+        "executableNames": [
+          "node"
+        ]
+      }
+    ],
+    "events": [
+      {
+        "id": "measured-event",
+        "kind": "event",
+        "title": "Measured packed action event"
+      },
+      {
+        "id": "watch-measured-event",
+        "kind": "subscription",
+        "event": "measured-event"
+      }
+    ],
+    "agents": [
+      {
+        "id": "novel-native-agent",
+        "title": "Novel native Agent",
+        "description": "Never-before-seen non-ACP AgentRuntime fixture",
+        "runtime": {
+          "kind": "custom"
+        },
+        "primary": "sessions",
+        "capabilities": {
+          "sessions": {
+            "open": [
+              "create",
+              "resume"
+            ],
+            "delivery": [
+              "newTurn"
+            ],
+            "cancel": true,
+            "workStateSources": [
+              {
+                "id": "tasks",
+                "itemKinds": [
+                  "task"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "actions": [
+      {
+        "id": "prove-coexistence",
+        "title": "Prove mixed contribution activation",
+        "scopes": [
+          "global"
+        ],
+        "surfaces": [
+          "cli"
+        ],
+        "placement": "primary",
+        "dangerLevel": "safe",
+        "hostAccess": [
+          "fixture-runtime-process"
+        ]
+      }
+    ]
+  }
+}

@@ -11,6 +11,8 @@ import {
   sweepProcessOwnershipLeases,
 } from './processOwnershipLease';
 import { spawnLoggedProcess } from './spawnProcess';
+import { resolveExpoCliPath } from './expoCliPath';
+import { inspectMetroPackagerStatusResponse } from './metroPackagerStatus';
 
 export type StartedUiDevClientMetro = Readonly<{
   baseUrl: string;
@@ -31,19 +33,60 @@ export function resolveUiDevClientMetroOwnershipLeasesDir(rootDir: string = repo
   return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'ui-dev-client-metro' });
 }
 
+export function resolveUiDevClientMetroLaunchSpec(params: Readonly<{
+  rootDir: string;
+  uiWorkspaceDir: string;
+  port: number;
+  host: string;
+  clearCache: boolean;
+}>): Readonly<{
+  command: string;
+  args: string[];
+  cwd: string;
+}> {
+  return {
+    command: process.execPath,
+    args: [
+      resolveExpoCliPath({
+        rootDir: params.rootDir,
+        uiWorkspaceDir: params.uiWorkspaceDir,
+      }),
+      'start',
+      '--dev-client',
+      '--host',
+      params.host,
+      '--port',
+      String(params.port),
+      ...(params.clearCache ? ['--clear'] : []),
+    ],
+    cwd: params.uiWorkspaceDir,
+  };
+}
+
+export function resolveUiDevClientMetroProbeBaseUrl(params: Readonly<{
+  host: string;
+  port: number;
+}>): string {
+  const probeHost = params.host === 'localhost' ? 'localhost' : '127.0.0.1';
+  return `http://${probeHost}:${params.port}`;
+}
+
 async function isMetroPackagerReady(baseUrl: string): Promise<boolean> {
   try {
     const res = await fetch(`${baseUrl.replace(/\/$/, '')}/status`, {
       method: 'GET',
       signal: AbortSignal.timeout(2000),
     });
-    if (!res.ok) return false;
-    const body = await res.text().catch(() => '');
-    return body.includes('packager-status:running');
+    const inspection = await inspectMetroPackagerStatusResponse(res);
+    return inspection.outcome === 'ready';
   } catch {
     return false;
   }
 }
+
+export const __testables = {
+  isMetroPackagerReady,
+};
 
 export async function startUiDevClientMetro(params: {
   testDir: string;
@@ -68,7 +111,6 @@ export async function startUiDevClientMetro(params: {
   const clearRaw = (params.env.HAPPIER_E2E_EXPO_CLEAR ?? '').toString().trim().toLowerCase();
   const clearCache = clearRaw === '1' || clearRaw === 'true' || clearRaw === 'yes' || clearRaw === 'y';
 
-  const expoCliPath = resolvePath(repoRootDir(), 'node_modules', 'expo', 'bin', 'cli');
   const uiWorkspaceDir = resolvePath(repoRootDir(), 'apps', 'ui');
   const tmpDir = resolvePath(params.testDir, 'ui.dev-client.metro.tmp');
   await mkdir(tmpDir, { recursive: true });
@@ -79,19 +121,15 @@ export async function startUiDevClientMetro(params: {
       : await reserveAvailablePort();
   const metroHost = String(params.host ?? '').trim() || 'localhost';
 
+  const launchSpec = resolveUiDevClientMetroLaunchSpec({
+    rootDir: repoRootDir(),
+    uiWorkspaceDir,
+    port: metroPort,
+    host: metroHost,
+    clearCache,
+  });
   const proc = spawnLoggedProcess({
-    command: process.execPath,
-    args: [
-      expoCliPath,
-      'start',
-      '--dev-client',
-      '--host',
-      metroHost,
-      '--port',
-      String(metroPort),
-      ...(clearCache ? ['--clear'] : []),
-    ],
-    cwd: uiWorkspaceDir,
+    ...launchSpec,
     env: {
       ...params.env,
       CI: '1',
@@ -117,7 +155,10 @@ export async function startUiDevClientMetro(params: {
     },
   });
 
-  const baseUrl = `http://127.0.0.1:${metroPort}`;
+  const baseUrl = resolveUiDevClientMetroProbeBaseUrl({
+    host: metroHost,
+    port: metroPort,
+  });
 
   try {
     const exitedEarly = new Promise<never>((_, reject) => {

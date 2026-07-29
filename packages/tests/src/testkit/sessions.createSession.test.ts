@@ -35,4 +35,5 @@ describe('createSession', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
+
 });

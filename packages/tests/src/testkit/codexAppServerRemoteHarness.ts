@@ -482,6 +482,7 @@ export async function startCodexAppServerRemoteHarness(params: Readonly<{
     HAPPIER_SERVER_URL: serverBaseUrl,
     HAPPIER_WEBAPP_URL: serverBaseUrl,
     HAPPIER_SESSION_ATTACH_FILE: attachFile,
+    HAPPIER_CODEX_PATH: fakeAppServer,
     HAPPIER_CODEX_APP_SERVER_BIN: fakeAppServer,
     HAPPIER_CODEX_APP_SERVER_RPC_TIMEOUT_MS: '2000',
     ...params.cliEnvOverrides,

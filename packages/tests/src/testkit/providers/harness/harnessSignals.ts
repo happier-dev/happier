@@ -2,6 +2,8 @@ import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { TranscriptRawRecordV1Schema } from '@happier-dev/protocol';
+
 import { envFlag } from '../../env';
 import { parsePositiveInt } from '../../numbers';
 
@@ -76,9 +78,49 @@ export function shouldStartProviderDaemon(params: {
 
 type UnknownRecord = Record<string, unknown>;
 
+export type ProviderTerminalFailure = Readonly<{
+  code: 'provider_turn_failed';
+  summary: 'Provider reported a terminal turn failure';
+}>;
+
 function asRecord(value: unknown): UnknownRecord | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as UnknownRecord;
+}
+
+export function extractProviderTerminalFailure(params: Readonly<{
+  afterSeq: number;
+  messages: ReadonlyArray<Readonly<{ seq: number; value: unknown }>>;
+}>): ProviderTerminalFailure | null {
+  for (const message of params.messages) {
+    if (!Number.isFinite(message.seq) || message.seq <= params.afterSeq) continue;
+
+    const parsed = TranscriptRawRecordV1Schema.safeParse(normalizeDecodedTranscriptValue(message.value));
+    if (!parsed.success || parsed.data.role !== 'agent') continue;
+
+    const content = asRecord(parsed.data.content);
+    const data = asRecord(content?.data);
+    if (data?.type !== 'turn_failed') continue;
+    if (typeof data.sidechainId === 'string' && data.sidechainId.trim().length > 0) continue;
+
+    return {
+      code: 'provider_turn_failed',
+      summary: 'Provider reported a terminal turn failure',
+    };
+  }
+
+  return null;
+}
+
+export function formatProviderTerminalFailure(params: Readonly<{
+  providerId: string;
+  scenarioId: string;
+  failure: ProviderTerminalFailure;
+}>): string {
+  return (
+    `Terminal provider failure (${params.providerId}.${params.scenarioId}): ` +
+    `code=${params.failure.code} summary=${params.failure.summary}`
+  );
 }
 
 export function countTaskCompleteMessages(messages: unknown[]): number {
@@ -97,6 +139,13 @@ export function countTaskCompleteTraceEvents(events: unknown[]): number {
     if (record?.kind === 'task_complete') count++;
   }
   return count;
+}
+
+export function readCompletedTurnId(sessionSnapshot: unknown): string | null {
+  const record = asRecord(sessionSnapshot);
+  if (record?.latestTurnStatus !== 'completed') return null;
+  const turnId = record.latestTurnId;
+  return typeof turnId === 'string' && turnId.trim().length > 0 ? turnId : null;
 }
 
 export function resolveTaskCompleteBaselineAtStepStart(params: {
@@ -119,6 +168,8 @@ export function shouldEnqueueNextStepAfterSatisfaction(params: {
   traceEvents: unknown[];
   decodedMessagesSeen: unknown[];
   taskCompleteCountAtStepSatisfaction: number | null;
+  completedTurnIdAtStepStart?: string | null;
+  currentSessionSnapshot?: unknown;
 }): boolean {
   if (params.allowInFlightSteer) return true;
   if (params.providerProtocol !== 'acp') return true;
@@ -127,7 +178,10 @@ export function shouldEnqueueNextStepAfterSatisfaction(params: {
     countTaskCompleteMessages(params.decodedMessagesSeen),
     countTaskCompleteTraceEvents(params.traceEvents),
   );
-  return taskCompleteCount > params.taskCompleteCountAtStepSatisfaction;
+  if (taskCompleteCount > params.taskCompleteCountAtStepSatisfaction) return true;
+
+  const completedTurnId = readCompletedTurnId(params.currentSessionSnapshot);
+  return completedTurnId !== null && completedTurnId !== (params.completedTurnIdAtStepStart ?? null);
 }
 
 export function isSkippableProviderUnavailabilityError(error: unknown): boolean {

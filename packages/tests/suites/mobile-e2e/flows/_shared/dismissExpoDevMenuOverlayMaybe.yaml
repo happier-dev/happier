@@ -6,23 +6,23 @@
 #
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
+# The overlay has a top-right "X" which is exposed via accessibility as
+# "Close". Prefer closing (returns to the app) over "Go home" (which
+# returns to the Dev Client home screen).
+- runFlow:
+    when:
+      visible: "Close"
+    commands:
+      - tapOn: "Close"
+
+# Re-evaluate the overlay itself after the close attempt. If "Go home" remains
+# visible, the close affordance was absent/ineffective and Back is the fallback.
+# Keeping this outside the close flow avoids pressing Back after Close succeeds.
 - runFlow:
     when:
       visible: "Go home"
     commands:
-      # The overlay has a top-right "X" which is exposed via accessibility as
-      # "Close". Prefer closing (returns to the app) over "Go home" (which
-      # returns to the Dev Client home screen).
-      - runFlow:
-          when:
-            visible: "Close"
-          commands:
-            - tapOn: "Close"
-      - runFlow:
-          when:
-            notVisible: "Close"
-          commands:
-            - back
+      - back
 
 - runFlow:
     when:

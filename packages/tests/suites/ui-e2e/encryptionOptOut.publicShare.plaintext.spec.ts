@@ -11,6 +11,7 @@ import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetri
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { acknowledgeTerminalConnectSuccessIfPresent } from '../../src/testkit/uiE2e/acknowledgeTerminalConnectSuccessIfPresent';
 import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
+import { fetchJson } from '../../src/testkit/http';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -47,13 +48,75 @@ async function extractPublicShareUrlFromDialog(params: Readonly<{ dialog: Return
   return match[0];
 }
 
-async function openShareInFreshContext(params: Readonly<{ baseContext: BrowserContext; url: string }>): Promise<Page> {
+async function openShareInFreshContext(params: Readonly<{
+  baseContext: BrowserContext;
+  url: string;
+  onPageCreated?: (page: Page) => void;
+}>): Promise<Page> {
   const browser = params.baseContext.browser();
   if (!browser) throw new Error('Missing browser instance');
   const context = await browser.newContext();
   const page = await context.newPage();
+  params.onPageCreated?.(page);
   await gotoDomContentLoadedWithRetries(page, params.url, 90_000);
   return page;
+}
+
+async function readAuthTokenFromBrowserStorage(page: Page): Promise<string> {
+  const token = await page.evaluate(() => {
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith('auth_credentials')) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw) as { token?: unknown };
+        if (typeof parsed.token === 'string' && parsed.token.trim()) return parsed.token.trim();
+      } catch {}
+    }
+    return null;
+  });
+  if (typeof token === 'string' && token.trim()) return token.trim();
+  throw new Error('Failed to read auth token from browser storage');
+}
+
+async function postPlainAgentMarkdown(params: Readonly<{
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+  markdown: string;
+}>): Promise<void> {
+  const localId = `agent-markdown-boundary-${Date.now()}`;
+  const response = await fetchJson<{ didWrite?: unknown }>(`${params.baseUrl}/v2/sessions/${params.sessionId}/messages`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${params.token}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': localId,
+    },
+    body: JSON.stringify({
+      localId,
+      messageRole: 'agent',
+      content: {
+        t: 'plain',
+        v: {
+          role: 'agent',
+          content: {
+            type: 'output',
+            data: {
+              type: 'assistant',
+              uuid: localId,
+              message: { content: [{ type: 'text', text: params.markdown }] },
+            },
+          },
+        },
+      },
+    }),
+    timeoutMs: 20_000,
+  });
+  if (response.status !== 200 || response.data?.didWrite !== true) {
+    throw new Error(`Failed to seed plaintext agent Markdown (status=${response.status})`);
+  }
 }
 
 test.describe('ui e2e: plaintext mode + public share', () => {
@@ -202,6 +265,8 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       expect((createEnvelope as any)?.data?.session?.encryptionMode).toBe('plain');
 
       const sessionId = String(createdSessionId);
+      const trackingPixelUrl = `https://tracking.invalid/pixel.gif?run=${encodeURIComponent(run.runId)}`;
+      const trackingPixelAlt = `tracking pixel guard ${run.runId}`;
 
       const sendEnvelope = await runCliJson({
         testDir,
@@ -219,6 +284,13 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       expect(sendEnvelope.ok).toBe(true);
       expect(sendEnvelope.kind).toBe('session_send');
 
+      await postPlainAgentMarkdown({
+        baseUrl: server.baseUrl,
+        token: await readAuthTokenFromBrowserStorage(page),
+        sessionId,
+        markdown: `Agent-authored image boundary: ![${trackingPixelAlt}](${trackingPixelUrl})`,
+      });
+
       await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/session/${sessionId}`, 120_000);
       await expect(page.getByText(message)).toHaveCount(1, { timeout: 120_000 });
 
@@ -233,11 +305,22 @@ test.describe('ui e2e: plaintext mode + public share', () => {
       const shareUrl = await extractPublicShareUrlFromDialog({ dialog });
       expect(shareUrl).toContain('/share/');
 
-      const sharePage = await openShareInFreshContext({ baseContext: context, url: shareUrl });
+      const trackingPixelRequests: string[] = [];
+      const sharePage = await openShareInFreshContext({
+        baseContext: context,
+        url: shareUrl,
+        onPageCreated: (freshPage) => {
+          freshPage.on('request', (request) => {
+            if (request.url().startsWith(trackingPixelUrl)) trackingPixelRequests.push(request.url());
+          });
+        },
+      });
       await expect(sharePage.getByText('Consent required')).toHaveCount(1, { timeout: 120_000 });
       await sharePage.getByText('Accept and view').click();
       await expect(sharePage.getByText('Public link (read-only)')).toHaveCount(1, { timeout: 120_000 });
       await expect(sharePage.getByText(message)).toHaveCount(1, { timeout: 120_000 });
+      await expect(sharePage.getByText(trackingPixelAlt)).toHaveCount(1, { timeout: 120_000 });
+      expect(trackingPixelRequests).toEqual([]);
       await sharePage.context().close().catch(() => {});
     } catch (error) {
       thrown = error;

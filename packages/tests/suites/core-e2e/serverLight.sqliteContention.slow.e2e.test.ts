@@ -235,7 +235,6 @@ describe('core e2e: server-light SQLite contention responsiveness', () => {
       dbProvider: 'sqlite',
       extraEnv: {
         HAPPIER_API_RATE_LIMITS_ENABLED: '0',
-        HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
         HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
       },
     });

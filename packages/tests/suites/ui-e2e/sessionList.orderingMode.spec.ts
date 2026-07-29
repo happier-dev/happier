@@ -10,14 +10,19 @@ import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import {
   createPlainSession,
-  deriveServerIdFromUrl,
   readSessionFolderDragSettings,
   readVisibleSessionRowOrder,
+  resolveCanonicalServerIdForUi,
   sessionOrderKey,
 } from '../../src/testkit/uiE2e/sessionFoldersDrag';
+import {
+  buildSessionOrganizationImportRequestFromFolderSettings,
+  importSessionOrganization,
+} from '../../src/testkit/uiE2e/sessionOrganization';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 
 const run = createRunDirs({ runLabel: 'ui-e2e-session-list-ordering-mode' });
@@ -31,7 +36,7 @@ const IDENTITY_HEADERS = {
 
 const SESSION_CREATE_TIMESTAMP_SEPARATION_MS = 35;
 const ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX = 'account-settings:v2:';
-const PENDING_ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX = 'pending-account-settings:v2:';
+const STORAGE_SCOPE = `e2e-session-list-ordering-${run.runId}`;
 
 type PersistedSettingsEnvelope = {
   settings?: Record<string, unknown>;
@@ -63,82 +68,6 @@ async function readPersistedAccountSettings(page: Page): Promise<Record<string, 
     const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
     return typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
   }, { accountSettingsLogicalKeyPrefix: ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX });
-}
-
-async function mutatePersistedAccountSettings(params: Readonly<{
-  page: Page;
-  baseUrl: string;
-  values: Record<string, unknown>;
-}>): Promise<void> {
-  await params.page.evaluate(
-    ({ accountSettingsLogicalKeyPrefix, pendingAccountSettingsLogicalKeyPrefix, values }) => {
-      type ParsedScopedSettingsKey = Readonly<{
-        fullKey: string;
-        logicalKey: string;
-        storageNamespace: string;
-      }>;
-
-      const parseScopedSettingsKey = (rawKey: string): ParsedScopedSettingsKey | null => {
-        const separatorIndex = rawKey.lastIndexOf('\\');
-        if (separatorIndex <= 0 || separatorIndex >= rawKey.length - 1) return null;
-
-        const storageNamespace = rawKey.slice(0, separatorIndex);
-        const logicalKey = rawKey.slice(separatorIndex + 1);
-        if (!logicalKey.startsWith(accountSettingsLogicalKeyPrefix)) return null;
-
-        return {
-          fullKey: rawKey,
-          logicalKey,
-          storageNamespace,
-        };
-      };
-
-      const scopedSettingsKeys: ParsedScopedSettingsKey[] = [];
-      for (let index = 0; index < window.localStorage.length; index += 1) {
-        const rawKey = window.localStorage.key(index);
-        if (!rawKey) continue;
-
-        const parsedKey = parseScopedSettingsKey(rawKey);
-        if (parsedKey) scopedSettingsKeys.push(parsedKey);
-      }
-      if (scopedSettingsKeys.length !== 1) {
-        throw new Error(`expected exactly one scoped persisted settings record, found ${scopedSettingsKeys.length}`);
-      }
-
-      const settingsKey = scopedSettingsKeys[0]!;
-      const pendingSettingsKey = `${settingsKey.storageNamespace}\\${pendingAccountSettingsLogicalKeyPrefix}${settingsKey.logicalKey.slice(accountSettingsLogicalKeyPrefix.length)}`;
-      const rawSettings = window.localStorage.getItem(settingsKey.fullKey);
-      if (!rawSettings) throw new Error('missing persisted settings');
-
-      const parsed = JSON.parse(rawSettings) as PersistedSettingsEnvelope;
-      const settings = typeof parsed.settings === 'object' && parsed.settings ? parsed.settings : {};
-      const rawPending = window.localStorage.getItem(pendingSettingsKey);
-      const pending = rawPending && typeof JSON.parse(rawPending) === 'object'
-        ? JSON.parse(rawPending) as Record<string, unknown>
-        : {};
-
-      parsed.settings = {
-        ...settings,
-        ...values,
-      };
-
-      window.localStorage.setItem(settingsKey.fullKey, JSON.stringify(parsed));
-      window.localStorage.setItem(
-        pendingSettingsKey,
-        JSON.stringify({
-          ...pending,
-          ...values,
-        }),
-      );
-    },
-    {
-      accountSettingsLogicalKeyPrefix: ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX,
-      pendingAccountSettingsLogicalKeyPrefix: PENDING_ACCOUNT_SETTINGS_LOGICAL_KEY_PREFIX,
-      values: params.values,
-    },
-  );
-
-  await gotoDomContentLoadedWithRetries(params.page, `${params.baseUrl}/?happier_hmr=0`, 120_000);
 }
 
 async function expectPersistedOrderingMode(page: Page, mode: 'custom' | 'created' | 'updated'): Promise<void> {
@@ -258,7 +187,7 @@ test.describe('ui e2e: session list ordering mode', () => {
         ...process.env,
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-session-list-ordering-${run.runId}`,
+        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: STORAGE_SCOPE,
         HAPPIER_E2E_UI_WEB_MODE: 'export',
       },
     });
@@ -306,6 +235,7 @@ test.describe('ui e2e: session list ordering mode', () => {
     });
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
@@ -332,28 +262,36 @@ test.describe('ui e2e: session list ordering mode', () => {
     ];
 
     const projectGroupKey = await readFirstProjectGroupKey(page);
-    const serverId = deriveServerIdFromUrl(uiServerUrl);
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
     const customOrderMap = {
       [projectGroupKey]: customOrder.map((sessionId) => sessionOrderKey(serverId, sessionId)),
     };
-    await mutatePersistedAccountSettings({
-      page,
-      baseUrl: uiBaseUrl,
-      values: {
+    await importSessionOrganization({
+      baseUrl: server.baseUrl,
+      token,
+      request: buildSessionOrganizationImportRequestFromFolderSettings({
+        serverId,
+        sessionFoldersV1: { v: 1, folders: [] },
         sessionListGroupOrderV1: customOrderMap,
-      },
+      }),
     });
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
     await expectVisibleSessionOrder(page, customOrder);
 
-    const customOrderSnapshot = (await readSessionFolderDragSettings(page)).sessionListGroupOrderV1;
+    const organizationRouteParams = {
+      baseUrl: server.baseUrl,
+      token,
+      serverId,
+    };
+    const customOrderSnapshot = (await readSessionFolderDragSettings(organizationRouteParams)).sessionListGroupOrderV1;
     expect(Object.values(customOrderSnapshot).some((keys) => Array.isArray(keys) && keys.length >= 2)).toBe(true);
 
     await selectOrderingMode(page, 'updated');
     await expectVisibleSessionOrder(page, baselineDateOrder);
-    expect((await readSessionFolderDragSettings(page)).sessionListGroupOrderV1).toEqual(customOrderSnapshot);
+    expect((await readSessionFolderDragSettings(organizationRouteParams)).sessionListGroupOrderV1).toEqual(customOrderSnapshot);
 
     await selectOrderingMode(page, 'custom');
     await expectVisibleSessionOrder(page, customOrder);
-    expect((await readSessionFolderDragSettings(page)).sessionListGroupOrderV1).toEqual(customOrderSnapshot);
+    expect((await readSessionFolderDragSettings(organizationRouteParams)).sessionListGroupOrderV1).toEqual(customOrderSnapshot);
   });
 });

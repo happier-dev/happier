@@ -1,0 +1,10 @@
+{
+  "name": "happier-native-agent-runtime-conformance",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    ".happier-plugin/plugin.json",
+    "daemon.mjs"
+  ]
+}

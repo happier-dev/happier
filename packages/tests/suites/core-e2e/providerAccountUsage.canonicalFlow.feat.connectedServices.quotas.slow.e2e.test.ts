@@ -3,17 +3,20 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import {
+  ConnectedServiceQuotaSnapshotV1Schema,
+  ExecutionRunStartResponseSchema,
+  ProviderAccountUsageSnapshotV1Schema,
+  buildConnectedServiceCredentialRecord,
   buildProviderAccountUsageRecordId,
   type ConnectedServiceId,
   type ConnectedServiceQuotaMeterV1,
   type ConnectedServiceQuotaSnapshotV1,
-  type ProviderAccountUsageAliasV1,
+  type ConnectedServiceUsageSourceV1,
   type ProviderAccountUsageConfidenceV1,
   type ProviderAccountUsageRecordKeyV1,
   type ProviderAccountUsageSnapshotV1,
   type ProviderAccountUsageSourceV1,
   type ProviderAccountUsageSubjectKindV1,
-  ExecutionRunStartResponseSchema,
 } from '@happier-dev/protocol';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -42,7 +45,6 @@ const claudeServiceId: ConnectedServiceId = 'anthropic';
 const plainProviderUsageServerEnv: NodeJS.ProcessEnv = {
   HAPPIER_E2E_PROVIDER_SKIP_SERVER_SHARED_DEPS_BUILD: '1',
   HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
-  HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: 'true',
   HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: 'true',
   HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional',
   HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: 'plain',
@@ -118,12 +120,24 @@ function createQuotaMeter(params: Readonly<{
   };
 }
 
+function createRecordKey(params: Readonly<{
+  providerId: string;
+  accountSubjectId: string;
+  subjectKind: ProviderAccountUsageSubjectKindV1;
+}>): ProviderAccountUsageRecordKeyV1 {
+  return {
+    providerId: params.providerId,
+    accountSubjectId: params.accountSubjectId,
+    subjectKind: params.subjectKind,
+    quotaScope: 'account',
+  };
+}
+
 function createProviderAccountUsageSnapshot(params: Readonly<{
   providerId: string;
   accountSubjectId: string;
   subjectKind: ProviderAccountUsageSubjectKindV1;
   accountSubjectKind: 'providerSubject' | 'provisionalLocalSubject';
-  aliases: readonly ProviderAccountUsageAliasV1[];
   fetchedAtMs: number;
   source: ProviderAccountUsageSourceV1;
   confidence: ProviderAccountUsageConfidenceV1;
@@ -131,14 +145,9 @@ function createProviderAccountUsageSnapshot(params: Readonly<{
   accountLabel?: string | null;
   meters?: readonly ConnectedServiceQuotaMeterV1[];
 }>): ProviderAccountUsageSnapshotV1 {
-  const recordKey = {
-    providerId: params.providerId,
-    accountSubjectId: params.accountSubjectId,
-    subjectKind: params.subjectKind,
-    quotaScope: 'account',
-  } satisfies ProviderAccountUsageRecordKeyV1;
+  const recordKey = createRecordKey(params);
   const staleAfterMs = 300_000;
-  return {
+  return ProviderAccountUsageSnapshotV1Schema.parse({
     v: 1,
     recordId: buildProviderAccountUsageRecordId(recordKey),
     recordKey,
@@ -147,7 +156,6 @@ function createProviderAccountUsageSnapshot(params: Readonly<{
       kind: params.accountSubjectKind,
       id: params.accountSubjectId,
     },
-    aliases: [...params.aliases],
     observedAtMs: params.fetchedAtMs,
     fetchedAtMs: params.fetchedAtMs,
     staleAfterMs,
@@ -166,7 +174,44 @@ function createProviderAccountUsageSnapshot(params: Readonly<{
         resetAtMs: params.fetchedAtMs + staleAfterMs,
       }),
     ],
-  };
+  });
+}
+
+function createConnectedQuotaSnapshot(params: Readonly<{
+  serviceId: ConnectedServiceId;
+  profileId: string;
+  providerId: string;
+  accountSubjectId: string;
+  fetchedAtMs: number;
+  planLabel?: string | null;
+  accountLabel?: string | null;
+  meters?: readonly ConnectedServiceQuotaMeterV1[];
+}>): ConnectedServiceQuotaSnapshotV1 {
+  const staleAfterMs = 300_000;
+  return ConnectedServiceQuotaSnapshotV1Schema.parse({
+    v: 1,
+    serviceId: params.serviceId,
+    profileId: params.profileId,
+    providerId: params.providerId,
+    activeAccountId: params.accountSubjectId,
+    fetchedAt: params.fetchedAtMs,
+    fetchedAtMs: params.fetchedAtMs,
+    staleAfterMs,
+    source: 'user_probe',
+    confidence: 'exact',
+    planLabel: params.planLabel ?? null,
+    accountLabel: params.accountLabel ?? null,
+    meters: params.meters ? [...params.meters] : [
+      createQuotaMeter({
+        meterId: 'primary',
+        label: 'Primary quota',
+        used: 40,
+        limit: 100,
+        utilizationPct: 40,
+        resetAtMs: params.fetchedAtMs + staleAfterMs,
+      }),
+    ],
+  });
 }
 
 async function postProviderUsageToServer(params: Readonly<{
@@ -174,6 +219,7 @@ async function postProviderUsageToServer(params: Readonly<{
   auth: TestAuth;
   snapshot: ProviderAccountUsageSnapshotV1;
   fingerprint: string;
+  source?: ConnectedServiceUsageSourceV1;
 }>): Promise<void> {
   const response = await fetchJson<{ success?: boolean; error?: unknown }>(
     `${params.serverBaseUrl}/v3/connect/provider-account-usage/${params.snapshot.recordId}`,
@@ -191,12 +237,62 @@ async function postProviderUsageToServer(params: Readonly<{
           status: 'ok',
           materialFingerprint: params.fingerprint,
         },
+        ...(params.source ? { source: params.source } : {}),
       }),
       timeoutMs: 20_000,
     },
   );
 
-  expect(response.status).toBe(200);
+  if (response.status !== 200) {
+    throw new Error(
+      `Expected provider-account usage write to succeed; status=${response.status}; body=${JSON.stringify(response.data)}`,
+    );
+  }
+  expect(response.data?.success).toBe(true);
+}
+
+async function postPlainConnectedCredential(params: Readonly<{
+  serverBaseUrl: string;
+  auth: TestAuth;
+  serviceId: ConnectedServiceId;
+  profileId: string;
+  providerAccountId: string;
+  providerEmail: string;
+}>): Promise<void> {
+  const now = Date.now();
+  const credential = buildConnectedServiceCredentialRecord({
+    now,
+    serviceId: params.serviceId,
+    profileId: params.profileId,
+    kind: 'oauth',
+    expiresAt: now + 60 * 60_000,
+    oauth: {
+      accessToken: `${params.profileId}-access`,
+      refreshToken: `${params.profileId}-refresh`,
+      idToken: null,
+      scope: null,
+      tokenType: null,
+      providerAccountId: params.providerAccountId,
+      providerEmail: params.providerEmail,
+    },
+  });
+  const response = await fetchJson<{ success?: boolean; error?: unknown }>(
+    `${params.serverBaseUrl}/v3/connect/${params.serviceId}/profiles/${params.profileId}/credential`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${params.auth.token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ content: { t: 'plain', v: credential } }),
+      timeoutMs: 20_000,
+    },
+  );
+  if (response.status !== 200) {
+    throw new Error(
+      `Expected connected-service credential seed to succeed; status=${response.status}; body=${JSON.stringify(response.data)}`,
+    );
+  }
   expect(response.data?.success).toBe(true);
 }
 
@@ -219,7 +315,6 @@ async function waitForProviderUsage(params: Readonly<{
   auth: TestAuth;
   recordId: string;
   context: string;
-  hasAliases?: readonly ProviderAccountUsageAliasV1['kind'][];
 }>): Promise<ProviderAccountUsageSnapshotV1> {
   let latestSnapshot: ProviderAccountUsageSnapshotV1 | null = null;
   await waitFor(async () => {
@@ -228,8 +323,7 @@ async function waitForProviderUsage(params: Readonly<{
     const snapshot = latest.data.content.v;
     if (!snapshot || snapshot.recordId !== params.recordId) return false;
     latestSnapshot = snapshot;
-    const required = params.hasAliases ?? [];
-    return required.every((kind) => snapshot.aliases.some((alias) => alias.kind === kind));
+    return true;
   }, {
     timeoutMs: 60_000,
     intervalMs: 250,
@@ -255,6 +349,24 @@ async function readQuotaProjection(params: Readonly<{
   );
 }
 
+async function deleteQuotaSource(params: Readonly<{
+  serverBaseUrl: string;
+  auth: TestAuth;
+  serviceId: ConnectedServiceId;
+  profileId: string;
+}>): Promise<void> {
+  const response = await fetchJson<{ success?: boolean; error?: unknown }>(
+    `${params.serverBaseUrl}/v3/connect/${params.serviceId}/profiles/${params.profileId}/quotas`,
+    {
+      method: 'DELETE',
+      headers: { Authorization: `Bearer ${params.auth.token}` },
+      timeoutMs: 10_000,
+    },
+  );
+  expect(response.status).toBe(200);
+  expect(response.data?.success).toBe(true);
+}
+
 describe('core e2e: provider account usage canonical flow', () => {
   let server: StartedServer | null = null;
   let daemon: StartedDaemon | null = null;
@@ -266,7 +378,7 @@ describe('core e2e: provider account usage canonical flow', () => {
     server = null;
   });
 
-  it('persists native Codex app-server usage and derives connected-service profile projection from canonical aliases only', async () => {
+  it('keeps direct provider usage separate from connected-service quota views until an explicit source link exists', async () => {
     const testDir = run.testDir(`provider-account-usage-codex-${randomUUID()}`);
     server = await startServerLight({
       testDir,
@@ -276,20 +388,12 @@ describe('core e2e: provider account usage canonical flow', () => {
     const auth = await createTestAuth(server.baseUrl);
 
     const subjectId = 'acct-1';
-    const groupId = 'codex-shared-group';
     const fetchedAtMs = Date.now();
-    const nativeAlias: ProviderAccountUsageAliasV1 = {
-      kind: 'appServerNative',
-      providerId: codexProviderId,
-      localCredentialRef: 'codex-app-server',
-      accountSubjectId: subjectId,
-    };
     const nativeSnapshot = createProviderAccountUsageSnapshot({
       providerId: codexProviderId,
       accountSubjectId: subjectId,
       subjectKind: 'account',
       accountSubjectKind: 'providerSubject',
-      aliases: [nativeAlias],
       fetchedAtMs,
       source: 'runtimeSignal',
       confidence: 'confirmed',
@@ -307,14 +411,11 @@ describe('core e2e: provider account usage canonical flow', () => {
       serverBaseUrl: server.baseUrl,
       auth,
       recordId: nativeSnapshot.recordId,
-      hasAliases: ['appServerNative'],
       context: 'native Codex usage persists through canonical server route',
     });
 
     expect(nativePersisted.recordKey).toEqual(nativeSnapshot.recordKey);
-    expect(nativePersisted.aliases).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'appServerNative', accountSubjectId: subjectId }),
-    ]));
+    expect('aliases' in nativePersisted).toBe(false);
 
     const beforeConnectedProjection = await readQuotaProjection({
       serverBaseUrl: server.baseUrl,
@@ -324,55 +425,64 @@ describe('core e2e: provider account usage canonical flow', () => {
     });
     expect(beforeConnectedProjection.status).toBe(404);
 
-    const connectedSnapshot = createProviderAccountUsageSnapshot({
+    await postPlainConnectedCredential({
+      serverBaseUrl: server.baseUrl,
+      auth,
+      serviceId: codexServiceId,
+      profileId: 'work',
+      providerAccountId: subjectId,
+      providerEmail: 'user@example.test',
+    });
+    const connectedSnapshot = createConnectedQuotaSnapshot({
+      serviceId: codexServiceId,
+      profileId: 'work',
+      providerId: codexProviderId,
+      accountSubjectId: subjectId,
+      fetchedAtMs: fetchedAtMs + 1,
+      planLabel: 'ChatGPT Team',
+      accountLabel: 'user@example.test',
+    });
+    const connectedRecordId = buildProviderAccountUsageRecordId(createRecordKey({
+      providerId: codexProviderId,
+      accountSubjectId: subjectId,
+      subjectKind: 'account',
+    }));
+    expect(connectedRecordId).toBe(nativeSnapshot.recordId);
+    const connectedUsageSnapshot = createProviderAccountUsageSnapshot({
       providerId: codexProviderId,
       accountSubjectId: subjectId,
       subjectKind: 'account',
       accountSubjectKind: 'providerSubject',
-      aliases: [
-        {
-          kind: 'connectedServiceProfile',
-          providerId: codexProviderId,
-          serviceId: codexServiceId,
-          profileId: 'work',
-          accountSubjectId: subjectId,
-        },
-        {
-          kind: 'connectedServiceGroupMember',
-          providerId: codexProviderId,
-          serviceId: codexServiceId,
-          profileId: 'work',
-          groupId,
-          accountSubjectId: subjectId,
-        },
-      ],
-      fetchedAtMs: fetchedAtMs + 1,
+      fetchedAtMs: connectedSnapshot.fetchedAt,
       source: 'connectedServiceProbe',
       confidence: 'confirmed',
-      planLabel: 'ChatGPT Team',
-      accountLabel: 'user@example.test',
+      planLabel: connectedSnapshot.planLabel,
+      accountLabel: connectedSnapshot.accountLabel,
+      meters: connectedSnapshot.meters,
     });
-    expect(connectedSnapshot.recordId).toBe(nativeSnapshot.recordId);
+    expect(connectedUsageSnapshot.recordId).toBe(connectedRecordId);
 
     await postProviderUsageToServer({
       serverBaseUrl: server.baseUrl,
       auth,
-      snapshot: connectedSnapshot,
-      fingerprint: `codex-connected:${connectedSnapshot.recordId}`,
+      snapshot: connectedUsageSnapshot,
+      fingerprint: `codex-connected:${connectedRecordId}`,
+      source: {
+        serviceId: codexServiceId,
+        profileId: 'work',
+        bindingKind: 'profile',
+      },
     });
     const connectedPersisted = await waitForProviderUsage({
       serverBaseUrl: server.baseUrl,
       auth,
-      recordId: connectedSnapshot.recordId,
-      hasAliases: ['appServerNative', 'connectedServiceProfile', 'connectedServiceGroupMember'],
-      context: 'connected-service evidence merges into canonical Codex usage',
+      recordId: connectedRecordId,
+      context: 'connected-service source writes canonical Codex usage',
     });
 
     expect(connectedPersisted.recordKey.accountSubjectId).toBe(subjectId);
-    expect(connectedPersisted.aliases).toEqual(expect.arrayContaining([
-      expect.objectContaining({ kind: 'connectedServiceProfile', serviceId: codexServiceId, profileId: 'work' }),
-      expect.objectContaining({ kind: 'connectedServiceGroupMember', serviceId: codexServiceId, profileId: 'work', groupId }),
-    ]));
+    expect('aliases' in connectedPersisted).toBe(false);
+    expect(connectedPersisted.meters).toEqual(connectedUsageSnapshot.meters);
 
     const projected = await readQuotaProjection({
       serverBaseUrl: server.baseUrl,
@@ -394,14 +504,22 @@ describe('core e2e: provider account usage canonical flow', () => {
     });
     expect(projected.data?.content?.v?.meters).toEqual(connectedPersisted.meters);
 
-    const groupProjection = await readQuotaProjection({
+    await deleteQuotaSource({
       serverBaseUrl: server.baseUrl,
       auth,
       serviceId: codexServiceId,
-      profileId: groupId,
+      profileId: 'work',
     });
-    expect(groupProjection.status).toBe(404);
-  });
+    const afterDeleteProjection = await readQuotaProjection({
+      serverBaseUrl: server.baseUrl,
+      auth,
+      serviceId: codexServiceId,
+      profileId: 'work',
+    });
+    expect(afterDeleteProjection.status).toBe(404);
+    const preservedUsage = await readProviderUsage({ serverBaseUrl: server.baseUrl, auth, recordId: connectedRecordId });
+    expect(preservedUsage.status).toBe(200);
+  }, 60_000);
 
   it('keeps Claude native and connected provisional subjects separate until provider-owned evidence exists', async () => {
     const testDir = run.testDir(`provider-account-usage-claude-${randomUUID()}`);
@@ -420,38 +538,28 @@ describe('core e2e: provider account usage canonical flow', () => {
       accountSubjectId: nativeSubjectId,
       subjectKind: 'unknown',
       accountSubjectKind: 'provisionalLocalSubject',
-      aliases: [{
-        kind: 'nativeCli',
-        providerId: claudeProviderId,
-        localCredentialRef: 'claude-code',
-        accountSubjectId: nativeSubjectId,
-      }],
       fetchedAtMs,
       source: 'runtimeSignal',
       confidence: 'unknown',
       planLabel: 'Claude Pro',
       accountLabel: 'same-user@example.test',
     });
-    const connectedSnapshot = createProviderAccountUsageSnapshot({
+    const connectedSnapshot = createConnectedQuotaSnapshot({
+      serviceId: claudeServiceId,
+      profileId: 'work',
       providerId: claudeProviderId,
       accountSubjectId: connectedSubjectId,
-      subjectKind: 'unknown',
-      accountSubjectKind: 'provisionalLocalSubject',
-      aliases: [{
-        kind: 'connectedServiceProfile',
-        providerId: claudeProviderId,
-        serviceId: claudeServiceId,
-        profileId: 'work',
-        accountSubjectId: connectedSubjectId,
-      }],
       fetchedAtMs: fetchedAtMs + 1,
-      source: 'connectedServiceProbe',
-      confidence: 'unknown',
       planLabel: 'Claude Pro',
       accountLabel: 'same-user@example.test',
     });
+    const connectedRecordId = buildProviderAccountUsageRecordId(createRecordKey({
+      providerId: claudeProviderId,
+      accountSubjectId: connectedSubjectId,
+      subjectKind: 'account',
+    }));
 
-    expect(nativeSnapshot.recordId).not.toBe(connectedSnapshot.recordId);
+    expect(nativeSnapshot.recordId).not.toBe(connectedRecordId);
 
     await postProviderUsageToServer({
       serverBaseUrl: server.baseUrl,
@@ -459,11 +567,38 @@ describe('core e2e: provider account usage canonical flow', () => {
       snapshot: nativeSnapshot,
       fingerprint: `claude-native:${nativeSnapshot.recordId}`,
     });
+    await postPlainConnectedCredential({
+      serverBaseUrl: server.baseUrl,
+      auth,
+      serviceId: claudeServiceId,
+      profileId: 'work',
+      providerAccountId: connectedSubjectId,
+      providerEmail: 'same-user@example.test',
+    });
+    const connectedUsageSnapshot = createProviderAccountUsageSnapshot({
+      providerId: claudeProviderId,
+      accountSubjectId: connectedSubjectId,
+      subjectKind: 'account',
+      accountSubjectKind: 'providerSubject',
+      fetchedAtMs: connectedSnapshot.fetchedAt,
+      source: 'connectedServiceProbe',
+      confidence: 'confirmed',
+      planLabel: connectedSnapshot.planLabel,
+      accountLabel: connectedSnapshot.accountLabel,
+      meters: connectedSnapshot.meters,
+    });
+    expect(connectedUsageSnapshot.recordId).toBe(connectedRecordId);
+
     await postProviderUsageToServer({
       serverBaseUrl: server.baseUrl,
       auth,
-      snapshot: connectedSnapshot,
-      fingerprint: `claude-connected:${connectedSnapshot.recordId}`,
+      snapshot: connectedUsageSnapshot,
+      fingerprint: `claude-connected:${connectedRecordId}`,
+      source: {
+        serviceId: claudeServiceId,
+        profileId: 'work',
+        bindingKind: 'profile',
+      },
     });
 
     const nativeRead = await readProviderUsage({
@@ -474,7 +609,7 @@ describe('core e2e: provider account usage canonical flow', () => {
     const connectedRead = await readProviderUsage({
       serverBaseUrl: server.baseUrl,
       auth,
-      recordId: connectedSnapshot.recordId,
+      recordId: connectedRecordId,
     });
 
     expect(nativeRead.status).toBe(200);
@@ -484,9 +619,10 @@ describe('core e2e: provider account usage canonical flow', () => {
       id: nativeSubjectId,
     });
     expect(connectedRead.data?.content?.v?.accountSubject).toEqual({
-      kind: 'provisionalLocalSubject',
+      kind: 'providerSubject',
       id: connectedSubjectId,
     });
+    expect('aliases' in (connectedRead.data?.content?.v ?? {})).toBe(false);
 
     const projected = await readQuotaProjection({
       serverBaseUrl: server.baseUrl,
@@ -506,7 +642,7 @@ describe('core e2e: provider account usage canonical flow', () => {
         accountLabel: 'same-user@example.test',
       },
     });
-  });
+  }, 60_000);
 
   it('records daemon-spawn native Codex app-server usage without a connected-service binding', async () => {
     const testDir = run.testDir(`provider-account-usage-codex-daemon-${randomUUID()}`);
@@ -644,7 +780,6 @@ describe('core e2e: provider account usage canonical flow', () => {
         serverBaseUrl,
         auth,
         recordId,
-        hasAliases: ['appServerNative'],
         context: 'daemon-spawn native Codex app-server usage persists canonically',
       });
 
@@ -656,12 +791,7 @@ describe('core e2e: provider account usage canonical flow', () => {
         accountLabel: 'daemon-codex@example.test',
         state: 'loaded_data',
       });
-      expect(persisted.aliases).toEqual(expect.arrayContaining([
-        expect.objectContaining({
-          kind: 'appServerNative',
-          accountSubjectId: subjectId,
-        }),
-      ]));
+      expect('aliases' in persisted).toBe(false);
       expect(persisted.meters).toEqual(expect.arrayContaining([
         expect.objectContaining({
           meterId: 'primary',

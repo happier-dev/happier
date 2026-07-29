@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 import { waitFor } from '../timing';
 import { isProcessAlive, terminateProcessTreeByPid } from './processTree';
-import { runLoggedCommand, spawnLoggedProcess } from './spawnProcess';
+import { runLoggedCommand, runLoggedCommandWithOutcome, spawnLoggedProcess } from './spawnProcess';
 
 async function waitForMarker(path: string, timeoutMs = 10_000): Promise<{ childPid: number; grandchildPid: number }> {
   const deadline = Date.now() + timeoutMs;
@@ -203,6 +203,71 @@ describe('spawnLoggedProcess', () => {
 });
 
 describe('runLoggedCommand', () => {
+  it('returns the actual zero exit tuple after log streams drain', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-success-'));
+
+    try {
+      await expect(runLoggedCommandWithOutcome({
+        command: process.execPath,
+        args: ['-e', "process.stdout.write('ok\\n')"],
+        cwd: rootDir,
+        stdoutPath: join(rootDir, 'stdout.log'),
+        stderrPath: join(rootDir, 'stderr.log'),
+      })).resolves.toEqual({ exitCode: 0, signal: null });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('attaches the actual nonzero exit tuple to command failures', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-failure-'));
+
+    try {
+      const error = await runLoggedCommandWithOutcome({
+        command: process.execPath,
+        args: ['-e', 'process.exit(7)'],
+        cwd: rootDir,
+        stdoutPath: join(rootDir, 'stdout.log'),
+        stderrPath: join(rootDir, 'stderr.log'),
+      }).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toMatchObject({
+        message: expect.stringContaining('code 7'),
+        process: { exitCode: 7, signal: null },
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
+  it('attaches the actual signal tuple to signal failures', async () => {
+    if (process.platform === 'win32') return;
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-signal-'));
+
+    try {
+      const error = await runLoggedCommandWithOutcome({
+        command: process.execPath,
+        args: ['-e', "process.kill(process.pid, 'SIGTERM')"],
+        cwd: rootDir,
+        stdoutPath: join(rootDir, 'stdout.log'),
+        stderrPath: join(rootDir, 'stderr.log'),
+      }).then(
+        () => null,
+        (reason: unknown) => reason,
+      );
+
+      expect(error).toMatchObject({
+        message: expect.stringContaining('signal SIGTERM'),
+        process: { exitCode: null, signal: 'SIGTERM' },
+      });
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('aborts promptly and reaps descendant processes when aborted', async () => {
     if (process.platform === 'win32') {
       return;

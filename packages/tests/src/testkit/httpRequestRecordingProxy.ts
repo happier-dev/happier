@@ -66,6 +66,9 @@ function headerLinesFromRawHeaders(rawHeaders: readonly string[]): string {
 export async function startHttpRequestRecordingProxy(params: Readonly<{
   targetBaseUrl: string;
   delayRequestMs?: (request: RecordedHttpProxyRequest) => number | Promise<number>;
+  beforeForwardResponse?: (
+    request: RecordedHttpProxyRequest,
+  ) => void | Promise<void>;
 }>): Promise<HttpRequestRecordingProxy> {
   const target = new URL(params.targetBaseUrl);
   if (target.protocol !== 'http:') {
@@ -129,10 +132,34 @@ export async function startHttpRequestRecordingProxy(params: Readonly<{
       path: req.url,
       headers,
     }, (upstreamRes) => {
-      res.writeHead(upstreamRes.statusCode ?? 502, upstreamRes.statusMessage, upstreamRes.headers);
-      upstreamRes.pipe(res);
-      upstreamRes.once('end', () => finish(entry, { statusCode: upstreamRes.statusCode ?? null }));
-      upstreamRes.once('error', (error) => finish(entry, { error: error.message }));
+      const statusCode = upstreamRes.statusCode ?? 502;
+      entry.statusCode = statusCode;
+      upstreamRes.pause();
+      void (async () => {
+        try {
+          await params.beforeForwardResponse?.({
+            ...entry,
+            headers: { ...entry.headers },
+          });
+          if (res.destroyed) {
+            upstreamRes.destroy();
+            finish(entry, { statusCode });
+            return;
+          }
+          res.writeHead(statusCode, upstreamRes.statusMessage, upstreamRes.headers);
+          upstreamRes.pipe(res);
+          upstreamRes.once('end', () => finish(entry, { statusCode }));
+          upstreamRes.once('error', (error) => finish(entry, { error: error.message }));
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          upstreamRes.destroy();
+          if (!res.headersSent) {
+            res.statusCode = 502;
+          }
+          res.end('proxy response latch failed');
+          finish(entry, { statusCode: res.statusCode, error: message });
+        }
+      })();
     });
 
     upstream.once('error', (error) => {

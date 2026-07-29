@@ -1,0 +1,75 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/connected-services/account?pluginId=${HAPPIER_E2E_PACKED_NOVEL_PLUGIN_ID}&localId=${HAPPIER_E2E_PACKED_NOVEL_SERVICE_ID}
+- extendedWaitUntil:
+    visible:
+      id: connected-account-mode:manual
+    timeout: 120000
+
+- assertVisible:
+    id: connected-account-mode:device
+- assertVisible:
+    id: connected-account-mode:oauth
+- tapOn:
+    id: connected-account-mode:manual
+- extendedWaitUntil:
+    visible:
+      id: connected-account-configuration:api-origin
+    timeout: 120000
+- tapOn:
+    id: connected-account-configuration:api-origin
+- inputText: ${HAPPIER_E2E_PACKED_NOVEL_PROVIDER_ORIGIN}
+- tapOn:
+    id: connected-account-configuration:save
+- extendedWaitUntil:
+    visible:
+      id: connected-account-manual:token
+    timeout: 120000
+- tapOn:
+    id: connected-account-manual:token
+- inputText: ${HAPPIER_E2E_PACKED_NOVEL_MANUAL_TOKEN}
+- tapOn:
+    id: connected-account-manual:submit
+- extendedWaitUntil:
+    visible:
+      id: connected-account:account-a
+    timeout: 120000
+
+- tapOn:
+    id: connected-account-mode:device
+- extendedWaitUntil:
+    visible:
+      id: connected-account-configuration:api-origin
+    timeout: 120000
+- tapOn:
+    id: connected-account-configuration:api-origin
+- inputText: ${HAPPIER_E2E_PACKED_NOVEL_PROVIDER_ORIGIN}
+- tapOn:
+    id: connected-account-configuration:workspace
+- inputText: packed-device-workspace
+- tapOn:
+    id: connected-account-configuration:account-secret
+- inputText: ${HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET}
+- tapOn:
+    id: connected-account-configuration:save
+- extendedWaitUntil:
+    visible:
+      id: connected-account-device:code
+    timeout: 120000
+- assertVisible: NOVEL-123
+- tapOn:
+    id: connected-account-device:poll
+- extendedWaitUntil:
+    visible:
+      id: connected-account-device:poll
+    timeout: 120000
+- tapOn:
+    id: connected-account-device:poll
+- extendedWaitUntil:
+    visible:
+      id: connected-account:device-account
+    timeout: 120000
+- takeScreenshot: plugin-platform-packed-novel-manual-device-${HAPPIER_E2E_MOBILE_PLATFORM}

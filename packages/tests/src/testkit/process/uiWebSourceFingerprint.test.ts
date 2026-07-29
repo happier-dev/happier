@@ -306,6 +306,49 @@ describe('uiWebSourceFingerprint', () => {
     await rm(rootDir, { recursive: true, force: true }).catch(() => {});
   });
 
+  it('ignores internal workspace TypeScript incremental build metadata', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-fingerprint-ignore-tsbuildinfo-'));
+    testState.repoRootDir = rootDir;
+
+    const uiDir = join(rootDir, 'apps', 'ui');
+    const sourcesDir = join(uiDir, 'sources');
+    const pluginSdkDir = join(rootDir, 'packages', 'plugin-sdk');
+    const buildInfoFile = join(pluginSdkDir, '.tsbuildinfo');
+
+    await mkdir(sourcesDir, { recursive: true });
+    await mkdir(pluginSdkDir, { recursive: true });
+
+    await writeFile(join(uiDir, 'index.ts'), 'export {};\n', 'utf8');
+    await writeFile(join(uiDir, 'metro.config.js'), 'module.exports = {};\n', 'utf8');
+    await writeFile(
+      join(uiDir, 'package.json'),
+      JSON.stringify({
+        name: '@happier-dev/ui',
+        dependencies: {
+          '@happier-dev/plugin-sdk': '0.0.0',
+        },
+      }),
+      'utf8',
+    );
+    await writeFile(
+      join(pluginSdkDir, 'package.json'),
+      JSON.stringify({ name: '@happier-dev/plugin-sdk' }),
+      'utf8',
+    );
+    await writeFile(buildInfoFile, '{"version":"before"}\n', 'utf8');
+
+    const firstFingerprint = (await import('./uiWebSourceFingerprint')).resolveUiWebSourceFingerprint();
+    await writeFile(buildInfoFile, '{"version":"after"}\n', 'utf8');
+
+    vi.resetModules();
+    testState.repoRootDir = rootDir;
+    const secondFingerprint = (await import('./uiWebSourceFingerprint')).resolveUiWebSourceFingerprint();
+
+    expect(secondFingerprint).toBe(firstFingerprint);
+
+    await rm(rootDir, { recursive: true, force: true }).catch(() => {});
+  });
+
   it('ignores transient ENOENT while hashing internal workspace files', async () => {
     const rootDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-fingerprint-missing-file-'));
     testState.repoRootDir = rootDir;

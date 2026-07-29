@@ -1,17 +1,50 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
+import {
+  resolveWorkspaceBundleLockPath,
+  withWorkspaceBundleLock,
+} from '@happier-dev/cli-common/workspaceBundleLock';
+
 import { repoRootDir } from '../paths';
-import { ensureCliDistSnapshotEntrypoint, ensureCliSharedDepsBuilt } from './cliDist';
-import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
+import {
+  ensureCliDistSnapshotEntrypoint,
+  ensureCliSharedDepsBuilt,
+  ensureCliSourceDevSharedDepsCurrent,
+  shouldSkipCliSharedDepsBuild,
+} from './cliDist';
+import {
+  ensureCliDistSnapshotNodeModules,
+  hasCliDistSnapshotFirstPartyCopyClosure,
+} from './cliDistSnapshotNodeModules';
 import { resolveTsxImportHookSpecifier } from './tsxImportHook';
+import { resolveCliWorkspacePackageDir } from './workspacePackageResolution';
 
 export type CliTestLaunchSpec = Readonly<{
   command: string;
   args: string[];
   cwd?: string;
-  env?: NodeJS.ProcessEnv;
+  env?: Readonly<Record<string, string | undefined>>;
 }>;
+
+export async function resolveCliTestLaunchSpecOrOverride(
+  explicit: CliTestLaunchSpec | undefined,
+  resolveDefault: () => Promise<CliTestLaunchSpec>,
+): Promise<CliTestLaunchSpec> {
+  return explicit ?? await resolveDefault();
+}
 
 type CliLaunchOptions = Parameters<typeof ensureCliDistSnapshotEntrypoint>[1] & {
   preferSourceEntrypoint?: boolean;
@@ -40,10 +73,23 @@ function resolvePreparedDistSnapshotEntrypoint(snapshotDir: string): string {
   return entrypoint;
 }
 
-function ensureCliSourceSnapshot(
+type CliSnapshotNodeModulesMode = 'auto' | 'copy' | 'symlink';
+
+let sourceSnapshotGeneration = 0;
+
+function resolveCliSnapshotNodeModulesMode(env: NodeJS.ProcessEnv): CliSnapshotNodeModulesMode {
+  const raw = (env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? '')
+    .toString()
+    .trim()
+    .toLowerCase();
+  if (raw === 'copy' || raw === 'symlink') return raw;
+  return raw ? 'copy' : 'auto';
+}
+
+function materializeCliSourceSnapshot(
   snapshotDir: string,
   rootDir: string,
-  env: NodeJS.ProcessEnv,
+  snapshotNodeModulesMode: CliSnapshotNodeModulesMode,
 ): void {
   mkdirSync(snapshotDir, { recursive: true });
 
@@ -53,18 +99,16 @@ function ensureCliSourceSnapshot(
     if (!existsSync(target)) continue;
     const dest = resolve(snapshotDir, relPath);
     if (existsSync(dest)) continue;
+    if (snapshotNodeModulesMode === 'copy') {
+      cpSync(target, dest, {
+        recursive: true,
+        dereference: true,
+        preserveTimestamps: true,
+      });
+      continue;
+    }
     symlinkSync(target, dest, process.platform === 'win32' ? 'junction' : 'dir');
   }
-
-  const snapshotNodeModulesModeRaw = (
-    env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? ''
-  ).toString().trim().toLowerCase();
-  const snapshotNodeModulesMode =
-    snapshotNodeModulesModeRaw === 'symlink' || snapshotNodeModulesModeRaw === 'copy'
-      ? snapshotNodeModulesModeRaw
-      : snapshotNodeModulesModeRaw
-        ? 'copy'
-        : 'auto';
 
   const snapshotNodeModulesDir = resolve(snapshotDir, 'node_modules');
   let snapshotNodeModulesUsesSymlinkOverlay = false;
@@ -149,6 +193,7 @@ function ensureCliSourceSnapshot(
       snapshotDir,
       snapshotDistDir: resolve(snapshotDir, 'dist'),
       rootDir,
+      firstPartyClosureMode: snapshotNodeModulesMode === 'copy' ? 'bundled-only' : 'workspace-overlay',
     });
   }
 
@@ -161,24 +206,255 @@ function ensureCliSourceSnapshot(
   }
 }
 
+type CliSourceSnapshotOutputSignature = Readonly<{
+  path: string;
+  size: number;
+  mtimeMs: number;
+}>;
+
+type CliSourceSnapshotPackageAdmission = Readonly<{
+  dependencies: readonly string[];
+  outputs: readonly CliSourceSnapshotOutputSignature[];
+  dist: Readonly<{
+    fileCount: number;
+    totalBytes: number;
+  }>;
+}>;
+
+function normalizeSnapshotRelativePath(path: string): string {
+  return path.replaceAll('\\', '/');
+}
+
+function isSafeSnapshotWorkspaceName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value);
+}
+
+function listPackageOutputSignatures(packageDir: string): CliSourceSnapshotOutputSignature[] {
+  const outputPaths = new Set<string>(['package.json']);
+
+  let packageJson: Record<string, unknown> = {};
+  try {
+    packageJson = JSON.parse(readFileSync(resolve(packageDir, 'package.json'), 'utf8')) as Record<string, unknown>;
+  } catch {
+    // The closure validator below will reject a missing or malformed manifest.
+  }
+  const collectDeclaredOutputTargets = (value: unknown): void => {
+    if (typeof value === 'string') {
+      if (value.startsWith('./') && !value.includes('*')) {
+        outputPaths.add(normalizeSnapshotRelativePath(value.slice(2)));
+      }
+      return;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) collectDeclaredOutputTargets(item);
+      return;
+    }
+    if (!value || typeof value !== 'object') return;
+    for (const nested of Object.values(value)) collectDeclaredOutputTargets(nested);
+  };
+  collectDeclaredOutputTargets(packageJson.main);
+  collectDeclaredOutputTargets(packageJson.module);
+  collectDeclaredOutputTargets(packageJson.types);
+  collectDeclaredOutputTargets(packageJson.exports);
+
+  return [...outputPaths]
+    .sort()
+    .map((relativePath) => {
+      const stats = statSync(resolve(packageDir, ...relativePath.split('/')));
+      if (!stats.isFile()) {
+        throw new Error(`CLI source snapshot package output is not a file: ${relativePath}`);
+      }
+      return {
+        path: relativePath,
+        size: stats.size,
+        mtimeMs: stats.mtimeMs,
+      };
+    });
+}
+
+function readPackageDistAggregate(packageDir: string): { fileCount: number; totalBytes: number } {
+  let fileCount = 0;
+  let totalBytes = 0;
+  const visit = (dir: string): void => {
+    if (!existsSync(dir)) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const absolutePath = resolve(dir, entry.name);
+      const stats = lstatSync(absolutePath);
+      if (stats.isSymbolicLink()) {
+        throw new Error(`CLI source snapshot package dist contains a symlink: ${absolutePath}`);
+      }
+      if (stats.isDirectory()) {
+        visit(absolutePath);
+        continue;
+      }
+      if (!stats.isFile()) continue;
+      fileCount += 1;
+      totalBytes += stats.size;
+    }
+  };
+  visit(resolve(packageDir, 'dist'));
+  return { fileCount, totalBytes };
+}
+
+function readInternalWorkspaceDependencies(packageJsonPath: string): string[] {
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8')) as {
+    dependencies?: Record<string, unknown>;
+    optionalDependencies?: Record<string, unknown>;
+  };
+  const dependencies = new Set<string>();
+  for (const dependencyMap of [packageJson.dependencies, packageJson.optionalDependencies]) {
+    if (!dependencyMap || typeof dependencyMap !== 'object') continue;
+    for (const dependencyName of Object.keys(dependencyMap)) {
+      if (!dependencyName.startsWith('@happier-dev/')) continue;
+      const workspaceName = dependencyName.slice('@happier-dev/'.length).trim();
+      if (!isSafeSnapshotWorkspaceName(workspaceName)) {
+        throw new Error(`CLI source snapshot has an invalid workspace dependency name: ${dependencyName}`);
+      }
+      dependencies.add(workspaceName);
+    }
+  }
+  return [...dependencies].sort();
+}
+
+function hasNoSymlinkEntries(rootPath: string): boolean {
+  if (!existsSync(rootPath)) return true;
+  if (lstatSync(rootPath).isSymbolicLink()) return false;
+  if (!lstatSync(rootPath).isDirectory()) return true;
+  return readdirSync(rootPath, { withFileTypes: true }).every((entry) =>
+    hasNoSymlinkEntries(resolve(rootPath, entry.name)));
+}
+
+function publishCliSourceSnapshotAdmission(snapshotDir: string, rootDir: string): void {
+  for (const relativePath of ['src', 'scripts', 'tools', 'bin', 'package.json', 'tsconfig.json']) {
+    const candidatePath = resolve(snapshotDir, relativePath);
+    if (!hasNoSymlinkEntries(candidatePath)) {
+      throw new Error(`CLI source copy snapshot aliases live source/config: ${candidatePath}`);
+    }
+  }
+
+  const packages: Record<string, CliSourceSnapshotPackageAdmission> = {};
+  const scopeDir = resolve(snapshotDir, 'node_modules', '@happier-dev');
+  for (const entry of readdirSync(scopeDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue;
+    if (!isSafeSnapshotWorkspaceName(entry.name)) {
+      throw new Error(`CLI source snapshot has an invalid workspace package name: ${entry.name}`);
+    }
+    const packageDir = resolve(scopeDir, entry.name);
+    if (lstatSync(packageDir).isSymbolicLink()) {
+      throw new Error(`CLI source snapshot package aliases live node_modules: ${packageDir}`);
+    }
+    const packageJsonPath = resolve(packageDir, 'package.json');
+    const workspacePackageJsonPath = resolve(
+      resolveCliWorkspacePackageDir(rootDir, entry.name),
+      'package.json',
+    );
+    packages[entry.name] = {
+      dependencies: readInternalWorkspaceDependencies(
+        existsSync(workspacePackageJsonPath)
+          ? workspacePackageJsonPath
+          : packageJsonPath,
+      ),
+      outputs: listPackageOutputSignatures(packageDir),
+      dist: readPackageDistAggregate(packageDir),
+    };
+  }
+  for (const [workspaceName, packageAdmission] of Object.entries(packages)) {
+    for (const dependencyWorkspaceName of packageAdmission.dependencies) {
+      if (packages[dependencyWorkspaceName]) continue;
+      throw new Error(
+        `CLI source snapshot workspace closure is missing ${dependencyWorkspaceName}, required by ${workspaceName}`,
+      );
+    }
+  }
+
+  writeFileSync(
+    resolve(snapshotDir, '.cli-source-snapshot-admission.json'),
+    `${JSON.stringify({ version: 1, packages })}\n`,
+    'utf8',
+  );
+}
+
+function publishCliSourceCopySnapshot(snapshotDir: string, rootDir: string): string {
+  sourceSnapshotGeneration += 1;
+  const generationSuffix = `${process.pid}-${Date.now()}-${sourceSnapshotGeneration}`;
+  const publishedSnapshotDir = `${snapshotDir}-source-${generationSuffix}`;
+  const stagingSnapshotDir = `${publishedSnapshotDir}.source-snapshot-tmp.${generationSuffix}`;
+
+  mkdirSync(dirname(snapshotDir), { recursive: true });
+  rmSync(stagingSnapshotDir, { recursive: true, force: true });
+  try {
+    materializeCliSourceSnapshot(stagingSnapshotDir, rootDir, 'copy');
+    if (!hasCliDistSnapshotFirstPartyCopyClosure({ snapshotDir: stagingSnapshotDir, rootDir })) {
+      throw new Error(
+        `CLI source snapshot first-party dependency closure is incomplete or aliases live node_modules: ${stagingSnapshotDir}`,
+      );
+    }
+    publishCliSourceSnapshotAdmission(stagingSnapshotDir, rootDir);
+    renameSync(stagingSnapshotDir, publishedSnapshotDir);
+    return publishedSnapshotDir;
+  } catch (error) {
+    rmSync(stagingSnapshotDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function resolveCliSourceLaunchSpec(
   params: Readonly<{ testDir: string; env: NodeJS.ProcessEnv }>,
   rootDir: string,
   options: CliLaunchOptions,
 ): Promise<CliTestLaunchSpec> {
-  if (!shouldSkipCliSharedDepsBuild(params.env)) {
-    await ensureCliSharedDepsBuilt(params, {
-      repoRoot: rootDir,
-      runCommand: options.runCommand,
-      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
-      timeoutMs: options.timeoutMs,
-      pollIntervalMs: options.pollIntervalMs,
-      staleAfterMs: options.staleAfterMs,
-      buildTimeoutMs: options.buildTimeoutMs,
-    });
+  const snapshotNodeModulesMode = resolveCliSnapshotNodeModulesMode(params.env);
+  const skipSharedDepsBuild = shouldSkipCliSharedDepsBuild(params.env);
+  const ensureSharedDeps = async (env: NodeJS.ProcessEnv): Promise<void> => {
+    await ensureCliSharedDepsBuilt(
+      { ...params, env },
+      {
+        repoRoot: rootDir,
+        runCommand: options.runCommand,
+        skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
+        timeoutMs: options.timeoutMs,
+        pollIntervalMs: options.pollIntervalMs,
+        staleAfterMs: options.staleAfterMs,
+        buildTimeoutMs: options.buildTimeoutMs,
+      },
+    );
+  };
+
+  let snapshotDir: string;
+  if (snapshotNodeModulesMode === 'copy') {
+    snapshotDir = await withWorkspaceBundleLock(
+      async ({ heldLockValue }) => {
+        const lockedEnv = {
+          ...params.env,
+          HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: heldLockValue,
+        };
+        await ensureSharedDeps(lockedEnv);
+        if (skipSharedDepsBuild || options.skipSourceFreshnessCheck === true) {
+          await ensureCliSourceDevSharedDepsCurrent(
+            { ...params, env: lockedEnv },
+            {
+              repoRoot: rootDir,
+              runCommand: options.runCommand,
+              buildTimeoutMs: options.buildTimeoutMs,
+            },
+          );
+        }
+        return publishCliSourceCopySnapshot(options.snapshotDir, rootDir);
+      },
+      {
+        lockPath: resolveWorkspaceBundleLockPath(rootDir),
+        timeoutMs: options.timeoutMs,
+        pollIntervalMs: options.pollIntervalMs,
+        staleAfterMs: options.staleAfterMs,
+        errorLabel: 'CLI source snapshot dependency-closure lock',
+      },
+    );
+  } else {
+    await ensureSharedDeps(params.env);
+    snapshotDir = options.snapshotDir;
+    materializeCliSourceSnapshot(snapshotDir, rootDir, snapshotNodeModulesMode);
   }
-  const snapshotDir = options.snapshotDir;
-  ensureCliSourceSnapshot(snapshotDir, rootDir, params.env);
+
   const sourceEntrypoint = resolveCliSnapshotSourceEntrypoint(snapshotDir);
   if (!existsSync(sourceEntrypoint)) {
     throw new Error(`CLI source entrypoint missing for test launch: ${sourceEntrypoint}`);
@@ -203,19 +479,6 @@ export function shouldUseCliSourceEntrypoint(env: NodeJS.ProcessEnv): boolean {
   const raw = (
     env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ??
     env.HAPPY_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT ??
-    ''
-  )
-    .toString()
-    .trim()
-    .toLowerCase();
-
-  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'y';
-}
-
-export function shouldSkipCliSharedDepsBuild(env: NodeJS.ProcessEnv): boolean {
-  const raw = (
-    env.HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
-    env.HAPPY_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
     ''
   )
     .toString()

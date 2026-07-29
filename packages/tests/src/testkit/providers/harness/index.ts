@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
 import { createRunDirs } from '../../runDir';
 import { startServerLight, type StartedServer } from '../../process/serverLight';
@@ -18,10 +19,16 @@ import { sleep } from '../../timing';
 import { createUserScopedSocketCollector } from '../../socketClient';
 import { which, yarnCommand } from '../../process/commands';
 import { ensureCliDistBuilt, ensureCliSharedDepsBuilt } from '../../process/cliDist';
+import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint } from '../../process/cliLaunchSpec';
 import { enqueuePendingQueueV2, listPendingQueueV2 } from '../../pendingQueueV2';
 import { seedCliAuthForServer } from '../../cliAuth';
+import {
+  createRuntimeLimitMeasurementCaptureFromEnv,
+  recordJsonlTraceMeasurements,
+} from '../../../../scripts/plugin-platform/runtime-limit-measurement.mjs';
 
 import { runWithFlakeRetry } from './flakeRetry';
+import { launchProviderHarnessSession } from './launchProviderHarnessSession';
 import { providerTraceProtocolMatches } from './providerTraceProtocolMatcher';
 import { resolveProviderCliSpawnSpec } from './resolveProviderCliSpawnSpec';
 
@@ -51,7 +58,9 @@ import { resolveAcpToolPermissionPromptExpectation } from '../permissions/acpPer
 import { stopOpenCodeManagedServerFromHomeDir } from '../opencode/stopOpenCodeManagedServerFromHomeDir';
 import { normalizeDecodedTranscriptValue } from '../normalizeDecodedTranscriptValue';
 import { registerOpenCodeManagedServerHomeForCleanup } from './opencodeManagedServerCleanupRegistry';
+import { shouldPrepareProviderCliDist } from './cliDistPreparationPolicy';
 import {
+  buildProviderCliCommandArgs,
   buildProviderDevCommandArgs,
   resolveAllowPermissionAutoApproveInYolo as resolveAllowPermissionAutoApproveInYoloFromCommandArgs,
   resolveCodexCliPermissionArgs,
@@ -69,9 +78,12 @@ import {
   type ProviderTokenTelemetryEntryV1,
 } from './tokenLedger';
 import {
+  extractProviderTerminalFailure,
   extractFatalAgentErrorMessage,
+  formatProviderTerminalFailure,
   formatFatalProviderAssistantError,
   isSkippableProviderUnavailabilityError,
+  readCompletedTurnId,
   readFatalProviderErrorFromCliLogs,
   resolveTaskCompleteBaselineAtStepStart,
   resolveCliDistPreflightAllowRebuild,
@@ -91,6 +103,7 @@ import {
 } from './harnessSignals';
 
 export {
+  buildProviderCliCommandArgs,
   buildProviderDevCommandArgs,
   resolveCodexCliPermissionArgs,
   resolveProviderModelCliArgs,
@@ -118,7 +131,9 @@ export {
 } from './tokenLedger';
 
 export {
+  extractProviderTerminalFailure,
   extractFatalAgentErrorMessage,
+  formatProviderTerminalFailure,
   formatFatalProviderAssistantError,
   isSkippableProviderUnavailabilityError,
   readFatalProviderErrorFromCliLogs,
@@ -186,6 +201,7 @@ export async function autoResolvePendingPermissionRequests(params: {
   yolo: boolean;
   allowPermissionAutoApproveInYolo: boolean;
   decision: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+  answers?: Readonly<Record<string, string | readonly string[]>>;
   sessionId: string;
   secret: Uint8Array;
   uiSocket: PermissionRpcSocket;
@@ -216,7 +232,12 @@ export async function autoResolvePendingPermissionRequests(params: {
       continue;
     }
 
-    const payload = encryptLegacyBase64({ id: req.id, approved, decision: params.decision }, params.secret);
+    const payload = encryptLegacyBase64({
+      id: req.id,
+      approved,
+      decision: params.decision,
+      ...(params.answers === undefined ? null : { answers: params.answers }),
+    }, params.secret);
     try {
       const result = await Promise.race([
         params.uiSocket.rpcCall<any>(`${params.sessionId}:permission`, payload),
@@ -283,16 +304,35 @@ export async function mirrorHostAuthStateForProvider(params: {
   void params.cliHome;
 }
 
-function resolveModelIdFromCliArgs(args: string[]): string | null {
-  const index = args.indexOf('--model');
-  if (index < 0) return null;
-  const value = args[index + 1];
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+function resolveLastCliFlagValue(args: readonly string[], flag: string): string | null {
+  for (let index = args.length - 2; index >= 0; index -= 1) {
+    if (args[index] !== flag) continue;
+    const value = args[index + 1];
+    return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+  }
+  return null;
+}
+
+function resolveModelIdFromCliArgs(args: readonly string[]): string | null {
+  return resolveLastCliFlagValue(args, '--model');
+}
+
+function resolvePositiveTimestampFromCliArgs(args: readonly string[], flag: string): number | undefined {
+  const raw = resolveLastCliFlagValue(args, flag);
+  if (!raw) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : undefined;
 }
 
 function resolveModelIdFromMetadataSnapshot(metadata: unknown): string | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
   const record = metadata as Record<string, unknown>;
+
+  const canonical = record.sessionModelsV1;
+  if (canonical && typeof canonical === 'object' && !Array.isArray(canonical)) {
+    const current = (canonical as Record<string, unknown>).currentModelId;
+    if (typeof current === 'string' && current.trim().length > 0) return current.trim();
+  }
 
   const acp = record.acpSessionModelsV1;
   if (acp && typeof acp === 'object' && !Array.isArray(acp)) {
@@ -497,6 +537,20 @@ async function runOneScenario(params: {
   const workspaceDir = resolve(join(testDir, 'workspace'));
   await mkdir(cliHome, { recursive: true });
   await mkdir(workspaceDir, { recursive: true });
+  const measurement = createRuntimeLimitMeasurementCaptureFromEnv({
+    env: process.env.HAPPIER_RA21_MEASUREMENT_DIR
+      ? {
+          ...process.env,
+          HAPPIER_RA21_MEASUREMENT_DIR: join(
+            process.env.HAPPIER_RA21_MEASUREMENT_DIR,
+            `${provider.id}.${scenario.id}`,
+          ),
+          HAPPIER_RA21_PROVIDER_ID: provider.id,
+        }
+      : process.env,
+    runnerId: 'provider-scenario-runner',
+    scenarioId: scenario.id,
+  });
 
   const unregisterOpenCodeManagedServerCleanup = provider.id === 'opencode_server'
     ? registerOpenCodeManagedServerHomeForCleanup(cliHome)
@@ -636,8 +690,6 @@ async function runOneScenario(params: {
       const modelCliArgs = resolveProviderModelCliArgs({
         providerId: provider.id,
       });
-      const modelIdFromCliArgs = resolveModelIdFromCliArgs(modelCliArgs);
-
       const scenarioCliArgs: string[] = (() => {
         const raw = scenario.cliArgs;
         if (!raw) return [];
@@ -650,37 +702,64 @@ async function runOneScenario(params: {
         }
       })();
 
-      const attachFile = await writeCliSessionAttachFile({
-        cliHome,
-        sessionId: params.sessionId,
-        secret,
-      encryptionVariant: 'legacy',
-    });
+      const effectiveModelCliArgs = [...modelCliArgs, ...scenarioCliArgs];
+      const modelIdFromCliArgs = resolveModelIdFromCliArgs(effectiveModelCliArgs);
+      const modelUpdatedAtFromCliArgs = resolvePositiveTimestampFromCliArgs(
+        effectiveModelCliArgs,
+        '--model-updated-at',
+      );
+      const resumeId = resolveLastCliFlagValue(params.extraCliArgs ?? [], '--resume');
+      const rawPermissionMode = scenarioMeta.permissionMode;
+      const permissionMode =
+        typeof rawPermissionMode === 'string' && rawPermissionMode.trim().length > 0
+          ? rawPermissionMode.trim()
+          : yolo
+            ? 'yolo'
+            : undefined;
+      const rawPermissionModeUpdatedAt = scenarioMeta.permissionModeUpdatedAt;
+      const permissionModeUpdatedAt =
+        typeof rawPermissionModeUpdatedAt === 'number'
+        && Number.isFinite(rawPermissionModeUpdatedAt)
+        && rawPermissionModeUpdatedAt > 0
+          ? Math.floor(rawPermissionModeUpdatedAt)
+          : permissionMode
+            ? Date.now()
+            : undefined;
+
+      const attachFile = provider.protocol === 'acp'
+        ? null
+        : await writeCliSessionAttachFile({
+            cliHome,
+            sessionId: params.sessionId,
+            secret,
+            encryptionVariant: 'legacy',
+          });
 
       const cliEnv: NodeJS.ProcessEnv = applyCliDevTsxTsconfigEnv({
         repoRootDir: repoRootDir(),
         env: {
           ...authedCliEnv,
-          HAPPIER_SESSION_ATTACH_FILE: attachFile,
+          ...(attachFile ? { HAPPIER_SESSION_ATTACH_FILE: attachFile } : {}),
           HAPPIER_STACK_TOOL_TRACE_FILE: params.traceFile,
         },
       });
 
-      // Some code paths (daemon startup via spawnHappyCLI) execute the built CLI entrypoint.
-      // Re-check dist before each phase, but do not rebuild it here. Rebuilding dist while other
-      // providers are running can invalidate hashed chunk imports in already-running daemon processes.
-      await ensureCliDistBuilt(
-        { testDir, env: cliEnv },
-        {
-          allowRebuild: false,
-          waitForAvailabilityMs: resolveCliDistAvailabilityWaitMs(
-            process.env.HAPPIER_E2E_CLI_DIST_WAIT_MS ?? process.env.HAPPY_E2E_CLI_DIST_WAIT_MS,
-          ),
-          buildTimeoutMs: resolveCliDistBuildTimeoutMs(
-            process.env.HAPPIER_E2E_CLI_DIST_BUILD_TIMEOUT_MS ?? process.env.HAPPY_E2E_CLI_DIST_BUILD_TIMEOUT_MS,
-          ),
-        },
-      );
+      if (shouldPrepareProviderCliDist(cliEnv)) {
+        // Built-entrypoint mode can start the daemon through spawnHappyCLI. Re-check dist before each
+        // phase, but do not rebuild it here because that could invalidate imports in running daemons.
+        await ensureCliDistBuilt(
+          { testDir, env: cliEnv },
+          {
+            allowRebuild: false,
+            waitForAvailabilityMs: resolveCliDistAvailabilityWaitMs(
+              process.env.HAPPIER_E2E_CLI_DIST_WAIT_MS ?? process.env.HAPPY_E2E_CLI_DIST_WAIT_MS,
+            ),
+            buildTimeoutMs: resolveCliDistBuildTimeoutMs(
+              process.env.HAPPIER_E2E_CLI_DIST_BUILD_TIMEOUT_MS ?? process.env.HAPPY_E2E_CLI_DIST_BUILD_TIMEOUT_MS,
+            ),
+          },
+        );
+      }
 
       let daemon: StartedDaemon | null = null;
 	      if (
@@ -694,12 +773,21 @@ async function runOneScenario(params: {
 	        daemon = await startTestDaemon({ testDir: daemonDir, happyHomeDir: cliHome, env: cliEnv });
 	      }
 
-      const proc: SpawnedProcess = spawnLoggedProcess({
-        ...resolveProviderCliSpawnSpec({
-          platform: process.platform,
-          scriptPath: which('script'),
-          baseCommand: yarnCommand(),
-          baseArgs: buildProviderDevCommandArgs({
+      const launched = await launchProviderHarnessSession({
+        providerId: String(provider.id),
+        agentId: provider.cli.subcommand,
+        providerProtocol: provider.protocol,
+        daemon,
+        directory: workspaceDir,
+        existingSessionId: params.sessionId,
+        ...(resumeId ? { resume: resumeId } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(permissionModeUpdatedAt !== undefined ? { permissionModeUpdatedAt } : {}),
+        ...(modelIdFromCliArgs ? { modelId: modelIdFromCliArgs } : {}),
+        ...(modelUpdatedAtFromCliArgs !== undefined ? { modelUpdatedAt: modelUpdatedAtFromCliArgs } : {}),
+        environmentVariables: cliEnv,
+        spawnDirect: async () => {
+          const providerCommandParams = {
             providerSubcommand: provider.cli.subcommand,
             sessionId: params.sessionId,
             yoloCliArgs,
@@ -708,14 +796,39 @@ async function runOneScenario(params: {
             extraCliArgs: params.extraCliArgs ?? [],
             scenarioCliArgs,
             providerCliExtraArgs: provider.cli.extraArgs ?? [],
-          }),
-          scenario,
-        }),
-        cwd: repoRootDir(),
-        env: cliEnv,
-        stdoutPath: params.stdoutPath,
-        stderrPath: params.stderrPath,
+          } as const;
+          const sourceLaunchSpec = shouldUseCliSourceEntrypoint(cliEnv)
+            ? await resolveCliTestLaunchSpec(
+                { testDir: resolve(testDir, 'provider-cli-source'), env: cliEnv },
+                {
+                  snapshotDir: resolve(testDir, 'provider-cli-source', 'snapshot'),
+                  preferSourceEntrypoint: true,
+                  skipDistIntegrityCheck: true,
+                  skipSourceFreshnessCheck: true,
+                },
+              )
+            : null;
+          const baseCommand = sourceLaunchSpec?.command ?? yarnCommand();
+          const baseArgs = sourceLaunchSpec
+            ? [...sourceLaunchSpec.args, ...buildProviderCliCommandArgs(providerCommandParams)]
+            : buildProviderDevCommandArgs(providerCommandParams);
+
+          return spawnLoggedProcess({
+            ...resolveProviderCliSpawnSpec({
+              platform: process.platform,
+              scriptPath: which('script'),
+              baseCommand,
+              baseArgs,
+              scenario,
+            }),
+            cwd: sourceLaunchSpec?.cwd ?? repoRootDir(),
+            env: { ...cliEnv, ...sourceLaunchSpec?.env },
+            stdoutPath: params.stdoutPath,
+            stderrPath: params.stderrPath,
+          });
+        },
       });
+      const proc: SpawnedProcess | null = launched.process;
 
       let uiSocket: Awaited<ReturnType<typeof waitForPermissionRpcReady>>['socket'] | null = null;
     try {
@@ -770,6 +883,7 @@ async function runOneScenario(params: {
             yolo,
             allowPermissionAutoApproveInYolo,
             decision: permissionDecision,
+            answers: scenario.permissionAutoAnswers,
             sessionId: params.sessionId,
             secret,
             uiSocket,
@@ -891,6 +1005,8 @@ async function runOneScenario(params: {
           timeoutMs: 20_000,
         }).catch(() => undefined);
       }
+      const sessionBeforePrompt = await fetchSessionV2(server.baseUrl, auth.token, params.sessionId);
+      const messageSeqBeforePrompt = sessionBeforePrompt.seq;
       await enqueuePrompt(
         steps[0]!.prompt({ workspaceDir }),
         resolveMeta(steps[0]!.messageMeta),
@@ -913,6 +1029,7 @@ async function runOneScenario(params: {
 	        traceEvents: [],
 	        decodedMessagesSeen: [],
 	      });
+	      let completedTurnIdAtCurrentStepStart = readCompletedTurnId(sessionBeforePrompt);
 
       let traceRaw = '';
       let traceEvents: ToolTraceEventV1[] = [];
@@ -975,23 +1092,18 @@ async function runOneScenario(params: {
               }
             }
 
-            if (changedMessages.length > 0) {
-              lastProviderActivityAt = Date.now();
-            }
             lastSeenMessageSeq = Math.max(lastSeenMessageSeq, ...newMessages.map((m) => m.seq));
-            const decodedMessages = changedMessages.flatMap((m) => {
+            const decodedMessageRows = changedMessages.flatMap((m) => {
               try {
-                return [normalizeDecodedTranscriptValue(decryptLegacyBase64(m.content.c, secret))];
+                return [{
+                  seq: m.seq,
+                  value: normalizeDecodedTranscriptValue(decryptLegacyBase64(m.content.c, secret)),
+                }];
               } catch {
                 return [];
               }
             });
-            if (decodedMessages.length > 0) {
-              decodedMessagesSeen.push(...decodedMessages);
-              if (decodedMessagesSeen.length > 2_000) {
-                decodedMessagesSeen.splice(0, decodedMessagesSeen.length - 2_000);
-              }
-            }
+            const decodedMessages = decodedMessageRows.map((message) => message.value);
             const fatal = extractFatalAgentErrorMessage(decodedMessages);
             if (fatal) {
               throw new Error(
@@ -1002,6 +1114,26 @@ async function runOneScenario(params: {
                   env: process.env,
                 }),
               );
+            }
+            const terminalFailure = extractProviderTerminalFailure({
+              afterSeq: messageSeqBeforePrompt,
+              messages: decodedMessageRows,
+            });
+            if (terminalFailure) {
+              throw new Error(formatProviderTerminalFailure({
+                providerId: provider.id,
+                scenarioId: scenario.id,
+                failure: terminalFailure,
+              }));
+            }
+            if (changedMessages.length > 0) {
+              lastProviderActivityAt = Date.now();
+            }
+            if (decodedMessages.length > 0) {
+              decodedMessagesSeen.push(...decodedMessages);
+              if (decodedMessagesSeen.length > 2_000) {
+                decodedMessagesSeen.splice(0, decodedMessagesSeen.length - 2_000);
+              }
             }
           }
         }
@@ -1053,12 +1185,19 @@ async function runOneScenario(params: {
 	              scenarioSatisfiedByTrace(relevant as any, satisfaction) &&
 	              scenarioSatisfiedByMessages({ decodedMessages: decodedMessagesSeen, socketEvents: uiSocket?.getEvents() ?? [] }, satisfaction)
 	            ) {
+	              const currentSessionSnapshot = await fetchSessionV2(
+	                server.baseUrl,
+	                auth.token,
+	                params.sessionId,
+	              );
 	              const okToEnqueueNext = shouldEnqueueNextStepAfterSatisfaction({
 	                providerProtocol: provider.protocol,
 	                allowInFlightSteer: step?.allowInFlightSteer,
 	                traceEvents: relevant,
 	                decodedMessagesSeen,
 	                taskCompleteCountAtStepSatisfaction: taskCompleteCountAtCurrentStepStart,
+	                completedTurnIdAtStepStart: completedTurnIdAtCurrentStepStart,
+	                currentSessionSnapshot,
 	              });
 	              if (okToEnqueueNext) {
 	                stepIndex++;
@@ -1070,6 +1209,7 @@ async function runOneScenario(params: {
 	                  traceEvents: relevant,
 	                  decodedMessagesSeen,
 	                });
+	                completedTurnIdAtCurrentStepStart = readCompletedTurnId(currentSessionSnapshot);
 	              }
 	            }
 	          }
@@ -1089,6 +1229,7 @@ async function runOneScenario(params: {
                     sessionId: params.sessionId,
                     secret,
                     cliHome,
+                    traceFile: params.traceFile,
                   });
                 }
 
@@ -1207,7 +1348,7 @@ async function runOneScenario(params: {
           // ignore
         }
         await daemon?.stop().catch(() => {});
-        await proc.stop();
+        await proc?.stop();
         await stopDaemonFromHomeDir(cliHome).catch(() => {});
       }
     }
@@ -1217,11 +1358,21 @@ async function runOneScenario(params: {
     throw new Error(`Scenario ${provider.id}.${scenario.id} is missing both prompt and steps`);
   }
 
+  const phase1PromptText = scenario.prompt ? scenario.prompt({ workspaceDir }) : '';
+  if (phase1PromptText) {
+    const envelope = { text: phase1PromptText };
+    measurement?.capture.recordEnvelope({
+      direction: 'send',
+      family: 'prompt',
+      decodedValue: envelope,
+      encodedValue: JSON.stringify(envelope),
+    });
+  }
   const phase1 = await runPhase({
     sessionId: sessionIdPhase1,
     traceFile: traceFilePhase1,
     phase: scenario.resume ? 'phase1' : 'single',
-    promptText: scenario.prompt ? scenario.prompt({ workspaceDir }) : '',
+    promptText: phase1PromptText,
     stdoutPath: resolve(join(testDir, 'cli.phase1.stdout.log')),
     stderrPath: resolve(join(testDir, 'cli.phase1.stderr.log')),
   });
@@ -1268,11 +1419,21 @@ async function runOneScenario(params: {
       sessionIdPhase2 = sessionIdPhase1;
     }
 
+    const phase2PromptText = scenario.resume.prompt({ workspaceDir });
+    if (phase2PromptText) {
+      const envelope = { text: phase2PromptText };
+      measurement?.capture.recordEnvelope({
+        direction: 'send',
+        family: 'resume-prompt',
+        decodedValue: envelope,
+        encodedValue: JSON.stringify(envelope),
+      });
+    }
     const phase2 = await runPhase({
       sessionId: sessionIdPhase2 ?? sessionIdPhase1,
       traceFile: traceFilePhase2,
       phase: 'phase2',
-      promptText: scenario.resume.prompt({ workspaceDir }),
+      promptText: phase2PromptText,
       traceSubstringsOverride: scenario.resume.requiredTraceSubstrings,
       extraCliArgs: ['--resume', resumeId],
       stdoutPath: resolve(join(testDir, 'cli.phase2.stdout.log')),
@@ -1304,7 +1465,15 @@ async function runOneScenario(params: {
     throw new Error('Tool trace file was not created (did provider connect and produce tool events?)');
   }
 
+  const decodeStartedAt = measurement ? performance.now() : null;
   const traceEvents = readJsonlEvents(mergedTraceRaw);
+  if (measurement && decodeStartedAt !== null) {
+    recordJsonlTraceMeasurements(measurement.capture, {
+      traceRaw: mergedTraceRaw,
+      traceEvents,
+      decodeDurationMs: performance.now() - decodeStartedAt,
+    });
+  }
 
   // Extract fixtures using the same repo logic used for curated allowlists.
   await runLoggedCommand({
@@ -1423,6 +1592,9 @@ async function runOneScenario(params: {
       resumeId: resumeIdForVerify,
     });
   }
+  if (measurement) {
+    await measurement.capture.writeArtifact({ artifactDir: measurement.artifactDir });
+  }
   } finally {
     // OpenCode server-native backend starts a detached managed `opencode serve` process.
     // Provider harness runs each scenario with its own isolated happy home; without cleanup,
@@ -1471,18 +1643,20 @@ export async function runProviderContractMatrix(): Promise<ProviderContractMatri
     // `@happier-dev/*` ESM exports are up-to-date before starting provider processes.
     const setupDir = run.testDir('setup');
     await ensureCliSharedDepsBuilt({ testDir: setupDir, env: process.env });
-    await ensureCliDistBuilt(
-      { testDir: setupDir, env: process.env },
-      {
-        allowRebuild: resolveCliDistPreflightAllowRebuild(),
-        waitForAvailabilityMs: resolveCliDistAvailabilityWaitMs(
-          process.env.HAPPIER_E2E_CLI_DIST_WAIT_MS ?? process.env.HAPPY_E2E_CLI_DIST_WAIT_MS,
-        ),
-        buildTimeoutMs: resolveCliDistBuildTimeoutMs(
-          process.env.HAPPIER_E2E_CLI_DIST_BUILD_TIMEOUT_MS ?? process.env.HAPPY_E2E_CLI_DIST_BUILD_TIMEOUT_MS,
-        ),
-      },
-    );
+    if (shouldPrepareProviderCliDist(process.env)) {
+      await ensureCliDistBuilt(
+        { testDir: setupDir, env: process.env },
+        {
+          allowRebuild: resolveCliDistPreflightAllowRebuild(),
+          waitForAvailabilityMs: resolveCliDistAvailabilityWaitMs(
+            process.env.HAPPIER_E2E_CLI_DIST_WAIT_MS ?? process.env.HAPPY_E2E_CLI_DIST_WAIT_MS,
+          ),
+          buildTimeoutMs: resolveCliDistBuildTimeoutMs(
+            process.env.HAPPIER_E2E_CLI_DIST_BUILD_TIMEOUT_MS ?? process.env.HAPPY_E2E_CLI_DIST_BUILD_TIMEOUT_MS,
+          ),
+        },
+      );
+    }
 
     const runnableProviders: ProviderUnderTest[] = [];
     for (const provider of enabledProviders) {

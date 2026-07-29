@@ -349,6 +349,8 @@ describe('startUiWeb baseUrl resolution', () => {
       expect(buildCallsAfterA).toBeGreaterThanOrEqual(1);
       expect(runLoggedCalls).toHaveLength(buildCallsAfterA);
       expect(spawnCallCount).toBe(0);
+      expect(startedA.mode).toBe('export');
+      expect(startedB.mode).toBe('export');
 
       const html = await fetch(startedA.baseUrl).then((response) => response.text());
       expect(html).toContain('__HAPPIER_WEB_RUNTIME_CONFIG__');
@@ -762,6 +764,21 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
+  it('skips the Metro workspace prebuild when the caller provides a source-backed snapshot', async () => {
+    const metroModule = await import('./uiWebMetro');
+    const shouldRunWorkspacePrebuild = (metroModule.__testables as Record<string, unknown>).shouldRunWorkspacePrebuild;
+
+    expect(typeof shouldRunWorkspacePrebuild).toBe('function');
+    expect(
+      (shouldRunWorkspacePrebuild as (params: { skipWorkspacePrebuild?: boolean }) => boolean)({
+        skipWorkspacePrebuild: true,
+      }),
+    ).toBe(false);
+    expect(
+      (shouldRunWorkspacePrebuild as (params: { skipWorkspacePrebuild?: boolean }) => boolean)({}),
+    ).toBe(true);
+  });
+
   it('passes --clear to expo export when requested', async () => {
     vi.resetModules();
     const { startUiWeb } = await import('./uiWeb');
@@ -945,7 +962,6 @@ describe('startUiWeb baseUrl resolution', () => {
       env: {
         HAPPIER_E2E_UI_WEB_MODE: 'metro',
         HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '4000',
-        HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '500',
       },
       port: 43123,
     });
@@ -1134,7 +1150,7 @@ describe('startUiWeb baseUrl resolution', () => {
     }
   }, 10_000);
 
-  it('retries the primary app script fetch after an aborted attempt', async () => {
+  it('retries the primary app script fetch after a transport abort', async () => {
     const { startUiWeb } = await import('./uiWeb');
 
     const testDir = await mkdtemp(join(tmpdir(), 'happier-uiweb-'));
@@ -1144,7 +1160,7 @@ describe('startUiWeb baseUrl resolution', () => {
     const webEntryHtml = '<!doctype html><html><head><script src="/index.bundle?platform=web&dev=false&minify=true"></script></head></html>';
     let bundleFetchCount = 0;
 
-    const fetchMock = vi.fn(async (input: unknown, init?: { signal?: AbortSignal }): Promise<FakeFetchResponse> => {
+    const fetchMock = vi.fn(async (input: unknown): Promise<FakeFetchResponse> => {
       const url = resolveUrlString(input);
       const parsed = new URL(url);
 
@@ -1159,11 +1175,7 @@ describe('startUiWeb baseUrl resolution', () => {
       if (parsed.pathname.startsWith('/index.bundle')) {
         bundleFetchCount += 1;
         if (bundleFetchCount === 1) {
-          return await new Promise<FakeFetchResponse>((_, reject) => {
-            init?.signal?.addEventListener('abort', () => {
-              reject(new DOMException('The operation was aborted.', 'AbortError'));
-            }, { once: true });
-          });
+          throw new DOMException('The transport aborted the request.', 'AbortError');
         }
         return okText('globalThis.__HAPPIER_E2E__ = true;', 'application/javascript');
       }
@@ -1181,7 +1193,6 @@ describe('startUiWeb baseUrl resolution', () => {
           env: {
             HAPPIER_E2E_UI_WEB_MODE: 'metro',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           },
           port: 43123,
         }),
@@ -1280,7 +1291,6 @@ describe('startUiWeb baseUrl resolution', () => {
         env: {
           HAPPIER_E2E_UI_WEB_MODE: 'metro',
           HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
         },
       })).rejects.toThrow(/resolveActivitySurfaceSlots/);
     } finally {
@@ -1336,7 +1346,6 @@ describe('startUiWeb baseUrl resolution', () => {
           env: {
             HAPPIER_E2E_UI_WEB_MODE: 'metro',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
             HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
           },
         }),
@@ -1402,7 +1411,6 @@ describe('startUiWeb baseUrl resolution', () => {
         env: {
           HAPPIER_E2E_UI_WEB_MODE: 'metro',
           HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '250',
-          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
         },
       })).rejects.toThrow(/resolveActivitySurfaceSlots/);
@@ -1521,7 +1529,6 @@ describe('startUiWeb baseUrl resolution', () => {
             HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '150',
             HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           },
           port: 43123,
         }),
@@ -1597,7 +1604,6 @@ describe('startUiWeb baseUrl resolution', () => {
             HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '800',
             HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           },
           port: 43123,
         }),
@@ -1663,7 +1669,6 @@ describe('startUiWeb baseUrl resolution', () => {
             HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '150',
             HAPPIER_E2E_UI_WEB_METRO_STATUS_ATTEMPT_TIMEOUT_MS: '25',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           },
         }),
         new Promise<never>((_, reject) => {
@@ -1674,6 +1679,7 @@ describe('startUiWeb baseUrl resolution', () => {
       expect(readUiWebExportRunLoggedCalls()).toHaveLength(1);
       expect(spawnCallCount).toBe(1);
       expect(lastSpawnArgs).toEqual(expect.arrayContaining(['start', '--web']));
+      expect(started.mode).toBe('metro');
       await started.stop();
     } finally {
       if (typeof originalFetch === 'function') {
@@ -1715,39 +1721,6 @@ describe('startUiWeb baseUrl resolution', () => {
         HAPPIER_E2E_UI_WEB_METRO_STATUS_TIMEOUT_MS: '9000',
       }),
     ).toBe(9000);
-  });
-
-  it('uses a bounded metro script-fetch attempt budget unless explicitly overridden', async () => {
-    const metroModule = await import('./uiWebMetro');
-    const resolveUiWebScriptFetchTotalTimeoutMs = (metroModule as Record<string, unknown>).resolveUiWebScriptFetchTotalTimeoutMs;
-    const resolveUiWebScriptFetchAttemptTimeoutMs = (metroModule as Record<string, unknown>).resolveUiWebScriptFetchAttemptTimeoutMs;
-
-    expect(typeof resolveUiWebScriptFetchTotalTimeoutMs).toBe('function');
-    expect(typeof resolveUiWebScriptFetchAttemptTimeoutMs).toBe('function');
-
-    const totalTimeoutMs = (resolveUiWebScriptFetchTotalTimeoutMs as (env: NodeJS.ProcessEnv) => number)({
-      HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '1000',
-    });
-    expect(totalTimeoutMs).toBe(1000);
-
-    const defaultAttemptTimeoutMs = (resolveUiWebScriptFetchAttemptTimeoutMs as (env: NodeJS.ProcessEnv, totalTimeoutMs: number) => number)(
-      {},
-      totalTimeoutMs,
-    );
-    expect(defaultAttemptTimeoutMs).toBeGreaterThan(0);
-    expect(defaultAttemptTimeoutMs).toBeLessThanOrEqual(totalTimeoutMs);
-
-    expect(
-      (resolveUiWebScriptFetchAttemptTimeoutMs as (env: NodeJS.ProcessEnv, totalTimeoutMs: number) => number)({
-        HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '5000',
-      }, totalTimeoutMs),
-    ).toBe(totalTimeoutMs);
-
-    expect(
-      (resolveUiWebScriptFetchAttemptTimeoutMs as (env: NodeJS.ProcessEnv, totalTimeoutMs: number) => number)({
-        HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '250',
-      }, totalTimeoutMs),
-    ).toBe(250);
   });
 
   it('re-resolves the primary app script when the entry html changes during cold startup', async () => {
@@ -1796,7 +1769,6 @@ describe('startUiWeb baseUrl resolution', () => {
           env: {
             HAPPIER_E2E_UI_WEB_MODE: 'metro',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           },
         }),
         new Promise<never>((_, reject) => {
@@ -1873,7 +1845,6 @@ describe('startUiWeb baseUrl resolution', () => {
           env: {
             HAPPIER_E2E_UI_WEB_MODE: 'metro',
             HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-            HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           },
         }),
         new Promise<never>((_, reject) => {
@@ -1951,7 +1922,6 @@ describe('startUiWeb baseUrl resolution', () => {
         env: {
           HAPPIER_E2E_UI_WEB_MODE: 'metro',
           HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '2000',
-          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
         },
       });
 
@@ -2034,7 +2004,6 @@ describe('startUiWeb baseUrl resolution', () => {
         env: {
           HAPPIER_E2E_UI_WEB_MODE: 'metro',
           HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_TIMEOUT_MS: '500',
-          HAPPIER_E2E_UI_WEB_SCRIPT_FETCH_ATTEMPT_TIMEOUT_MS: '50',
           HAPPIER_E2E_UI_WEB_SCRIPT_HTML_REFRESH_RETRY_COUNT: '1',
         },
       });

@@ -124,7 +124,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
     }, { timeoutMs: 60_000 });
   }, 240_000);
 
-  it('processes a daemon-seeded initial prompt without dropping the first turn', async () => {
+  it('commits a spawn-first Pending input without dropping the first turn', async () => {
     const testDir = run.testDir('daemon-spawn-initial-prompt-not-dropped');
     server = await startServerLight({ testDir, dbProvider: 'sqlite' });
     const auth = await createTestAuth(server.baseUrl);
@@ -159,7 +159,7 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
     const daemonPort = daemon.state.httpPort;
     expect(daemonPort).toBeGreaterThan(0);
     const controlToken = (daemon.state as any)?.controlToken as string | undefined;
-    const prompt = 'E2E_DAEMON_INITIAL_PROMPT_SHOULD_NOT_DROP';
+    const prompt = 'E2E_SPAWN_FIRST_PENDING_INPUT_SHOULD_NOT_DROP';
     const spawnRes = await daemonControlPostJson<{ success: boolean; sessionId?: string }>({
       port: daemonPort,
       path: '/spawn-session',
@@ -168,6 +168,10 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
         directory: workspaceDir,
         backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
         terminal: { mode: 'plain' },
+        pendingFirstInput: {
+          text: prompt,
+          localId: 'spawn-first-turn:e2e-daemon-initial-prompt',
+        },
         environmentVariables: {
           HAPPIER_HOME_DIR: daemonHomeDir,
           HAPPIER_SERVER_URL: server.baseUrl,
@@ -176,7 +180,6 @@ describe('core e2e: daemon spawn does not drop the first UI message', () => {
           HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_CLAUDE_PATH: fakeClaudePath,
           HAPPIER_E2E_FAKE_CLAUDE_LOG: fakeLogPath,
-          HAPPIER_DAEMON_INITIAL_PROMPT: prompt,
         },
       },
     });

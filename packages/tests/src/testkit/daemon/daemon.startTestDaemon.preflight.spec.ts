@@ -122,6 +122,40 @@ async function writeReplacementDaemonScript(scriptPath: string, opts: { serverId
 }
 
 describe('startTestDaemon', () => {
+  it('creates a nested test directory before opening daemon log streams', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'happier-daemon-nested-log-dir-'));
+    const testDir = resolve(rootDir, 'nested', 'daemon-runtime');
+    const homeDir = resolve(rootDir, 'home');
+
+    try {
+      const fakeScriptDir = resolve(rootDir, 'fake-daemon', 'dist');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeHoldingDaemonScript(resolve(fakeScriptDir, 'index.mjs'), { writesState: true });
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [resolve(fakeScriptDir, 'index.mjs')],
+        cwd: rootDir,
+        env: {},
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {},
+        startupTimeoutMs: 15_000,
+      });
+
+      expect(await readFile(resolve(testDir, 'daemon.stdout.log'), 'utf8')).toBe('');
+      expect(await readFile(resolve(testDir, 'daemon.stderr.log'), 'utf8')).toBe('');
+
+      await daemon.stop();
+    } finally {
+      await rm(rootDir, { recursive: true, force: true });
+    }
+  });
+
   it('fails with phase diagnostics when daemon startup stalls before spawning the daemon', async () => {
     const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-startup-phase-timeout-'));
     const homeDir = resolve(testDir, 'home');
@@ -245,6 +279,93 @@ describe('startTestDaemon', () => {
       const observed = JSON.parse(await readFile(observedEnvPath, 'utf8')) as { directPeerBindPort?: unknown };
       expect(typeof observed.directPeerBindPort).toBe('string');
       expect(Number(observed.directPeerBindPort)).toBeGreaterThan(0);
+
+      await daemon.stop();
+    } finally {
+      await rm(testDir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps stack authority out of the final isolated daemon env without enabling takeover', async () => {
+    const testDir = await mkdtemp(join(tmpdir(), 'happier-daemon-stack-env-isolation-'));
+    const homeDir = resolve(testDir, 'home');
+    const observedEnvPath = resolve(testDir, 'observed-env.json');
+
+    try {
+      const fakeScriptDir = resolve(testDir, 'fake-daemon', 'dist');
+      const fakeEntrypoint = resolve(fakeScriptDir, 'index.mjs');
+      await mkdir(fakeScriptDir, { recursive: true });
+      await mkdir(homeDir, { recursive: true });
+      await writeFile(
+        fakeEntrypoint,
+        [
+          "import { writeFileSync } from 'node:fs';",
+          "import { resolve } from 'node:path';",
+          "const homeDir = process.env.HAPPIER_HOME_DIR;",
+          "if (!homeDir) throw new Error('Missing HAPPIER_HOME_DIR');",
+          "const args = process.argv.slice(2);",
+          "if (JSON.stringify(args) !== JSON.stringify(['daemon', 'start-sync'])) process.exit(7);",
+          `writeFileSync(${JSON.stringify(observedEnvPath)}, JSON.stringify({`,
+          "  args,",
+          "  homeDir,",
+          "  serverUrl: process.env.HAPPIER_SERVER_URL ?? null,",
+          "  webappUrl: process.env.HAPPIER_WEBAPP_URL ?? null,",
+          "  variant: process.env.HAPPIER_VARIANT ?? null,",
+          "  subprocessEntrypoint: process.env.HAPPIER_CLI_SUBPROCESS_ENTRYPOINT ?? null,",
+          "  stackName: process.env.HAPPIER_STACK_STACK ?? null,",
+          "  stackRepoDir: process.env.HAPPIER_STACK_REPO_DIR ?? null,",
+          "  lifecycleScopeId: process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID ?? null,",
+          "  activeServerId: process.env.HAPPIER_ACTIVE_SERVER_ID ?? null,",
+          "  passthrough: process.env.HAPPIER_E2E_PASSTHROUGH ?? null,",
+          "}), 'utf8');",
+          "writeFileSync(resolve(homeDir, 'daemon.state.json'), JSON.stringify({ pid: process.pid, httpPort: 32232, controlToken: 'fresh-control-token' }), 'utf8');",
+          "process.on('SIGTERM', () => process.exit(0));",
+          "setInterval(() => {}, 1000);",
+        ].join('\n'),
+        'utf8',
+      );
+
+      cliLaunchSpecMock.resolveCliTestLaunchSpec.mockResolvedValueOnce({
+        command: process.execPath,
+        args: [fakeEntrypoint],
+        cwd: testDir,
+        env: {
+          HAPPIER_CLI_SUBPROCESS_ENTRYPOINT: '/tmp/pinned-cli/dist/index.mjs',
+          HAPPIER_STACK_REPO_DIR: '/tmp/inherited-stack-repo',
+          HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: 'stack_inherited',
+          HAPPIER_ACTIVE_SERVER_ID: 'inherited-server',
+        },
+      });
+
+      const daemon = await startTestDaemon({
+        testDir,
+        happyHomeDir: homeDir,
+        env: {
+          HAPPIER_HOME_DIR: '/tmp/inherited-home',
+          HAPPIER_SERVER_URL: 'http://127.0.0.1:30123',
+          HAPPIER_WEBAPP_URL: 'http://127.0.0.1:30124',
+          HAPPIER_VARIANT: 'dev',
+          HAPPIER_STACK_STACK: 'inherited-stack',
+          HAPPIER_STACK_ENV_FILE: '/tmp/inherited-stack.env',
+          HAPPIER_E2E_PASSTHROUGH: 'preserved',
+        },
+        startupTimeoutMs: 15_000,
+      });
+
+      const observed = JSON.parse(await readFile(observedEnvPath, 'utf8')) as Record<string, unknown>;
+      expect(observed).toEqual({
+        args: ['daemon', 'start-sync'],
+        homeDir,
+        serverUrl: 'http://127.0.0.1:30123',
+        webappUrl: 'http://127.0.0.1:30124',
+        variant: 'dev',
+        subprocessEntrypoint: fakeEntrypoint,
+        stackName: null,
+        stackRepoDir: null,
+        lifecycleScopeId: null,
+        activeServerId: null,
+        passthrough: 'preserved',
+      });
 
       await daemon.stop();
     } finally {
@@ -1075,6 +1196,14 @@ describe('startTestDaemon', () => {
       await rm(testDir, { recursive: true, force: true });
     }
   }, 20_000);
+
+  it('passes the derived startup phase timeout to the replacement-state wait', async () => {
+    const source = await readFile(resolve(repoRootDir(), 'packages', 'tests', 'src', 'testkit', 'daemon', 'daemon.ts'), 'utf8');
+
+    expect(source).toMatch(
+      /waitForReplacementDaemonState\(params\.happyHomeDir, originalState\.pid, \{ timeoutMs: phaseTimeoutMs \}\)/u,
+    );
+  });
 
   it('fails with phase diagnostics when replacement daemon setup stalls before takeover spawn', async () => {
     if (process.platform === 'win32') {

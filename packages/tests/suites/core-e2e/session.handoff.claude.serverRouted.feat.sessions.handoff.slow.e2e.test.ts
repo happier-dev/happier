@@ -35,7 +35,7 @@ type HandoffStartResult = Readonly<{
     endpointCandidates: readonly Readonly<{ kind: string; url: string; expiresAt: number }>[];
     targetPath: string;
     handoffMetadataV2?: unknown;
-    providerBundle?: unknown;
+    agentBundle?: unknown;
 }>;
 
 type HandoffPrepareResult = Readonly<{
@@ -125,9 +125,9 @@ function requireAbsoluteWorkspaceRoot(value: unknown, context: string): string {
     return trimmed;
 }
 
-function expectProviderBundleTransferPublicationMaybe(value: unknown): void {
+function expectAgentBundleTransferPublicationMaybe(value: unknown): void {
     if (value === undefined) return;
-    expect(requireObject(value, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+    expect(requireObject(value, 'agentBundleTransferPublication')).toEqual(expect.objectContaining({
         transferId: expect.any(String),
         sizeBytes: expect.any(Number),
         manifestHash: expect.any(String),
@@ -565,9 +565,9 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             targetPath: expect.any(String),
             endpointCandidates: [],
         }));
-        expect(started.providerBundle).toBeUndefined();
+        expect(started.agentBundle).toBeUndefined();
         const handoffMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed handoff start');
-        expectProviderBundleTransferPublicationMaybe(handoffMetadataV2.providerBundleTransferPublication);
+        expectAgentBundleTransferPublicationMaybe(handoffMetadataV2.agentBundleTransferPublication);
         expect(requireObject(handoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
             transferId: expect.any(String),
         }));
@@ -779,7 +779,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
         ) as HandoffStartResult;
         expect(secondStarted.handoffId).not.toBe(started.handoffId);
         const secondHandoffMetadataV2 = requireHandoffMetadataV2(secondStarted, 'target server-routed handoff-back start');
-        expectProviderBundleTransferPublicationMaybe(secondHandoffMetadataV2.providerBundleTransferPublication);
+        expectAgentBundleTransferPublicationMaybe(secondHandoffMetadataV2.agentBundleTransferPublication);
         const secondHandoffBackTargetRootPath = requireAbsoluteWorkspaceRoot(
             resolveSessionHandoffBackTargetRootPath({
                 metadata: patchedMetadata,
@@ -1077,7 +1077,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             'source server-routed abort handoff start',
         ) as HandoffStartResult;
         const abortHandoffMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed abort handoff start');
-        expectProviderBundleTransferPublicationMaybe(abortHandoffMetadataV2.providerBundleTransferPublication);
+        expectAgentBundleTransferPublicationMaybe(abortHandoffMetadataV2.agentBundleTransferPublication);
         expect(requireObject(abortHandoffMetadataV2.workspaceReplicationManifestTransferPublication, 'workspaceReplicationManifestTransferPublication')).toEqual(expect.objectContaining({
             transferId: expect.any(String),
         }));
@@ -1332,7 +1332,7 @@ describe('core e2e: session handoff via server-routed transfer', () => {
             'source server-routed handoff start for late cutover proof',
         ) as HandoffStartResult;
         const lateCutoverMetadataV2 = requireHandoffMetadataV2(started, 'source server-routed handoff start for late cutover proof');
-        expect(requireObject(lateCutoverMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+        expect(requireObject(lateCutoverMetadataV2.agentBundleTransferPublication, 'agentBundleTransferPublication')).toEqual(expect.objectContaining({
             transferId: expect.any(String),
             sizeBytes: expect.any(Number),
             manifestHash: expect.any(String),

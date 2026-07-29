@@ -1,3 +1,4 @@
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { randomUUID } from 'node:crypto';
 
@@ -120,6 +121,7 @@ export async function enqueueSessionPromptForScenario(params: {
   secret: Uint8Array;
   text: string;
   meta?: Record<string, unknown>;
+  requestedAction?: PendingRequestedActionV1;
 }): Promise<void> {
   const localId = randomUUID();
   const payload = {
@@ -142,6 +144,7 @@ export async function enqueueSessionPromptForScenario(params: {
       sessionId: params.sessionId,
       localId,
       ciphertext,
+      ...(params.requestedAction ? { requestedAction: params.requestedAction } : {}),
       timeoutMs: 20_000,
     }).catch(() => null);
     if (res?.status === 200) return;

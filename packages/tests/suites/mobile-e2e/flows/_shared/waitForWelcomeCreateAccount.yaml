@@ -3,7 +3,7 @@
 # In development builds, Expo's developer menu onboarding sheet can appear and
 # block the UI. This flow repeatedly:
 # - dismisses the developer menu if present, and
-# - waits for the Welcome screen "Create account" button.
+# - waits for the Welcome screen primary start button.
 #
 appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 ---
@@ -18,7 +18,7 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 # then dismiss the sheet if it appeared, and finally wait for Welcome.
 - extendedWaitUntil:
     visible:
-      id: welcome-hero
+      id: welcome-decision-panel
     timeout: 480000
 
 - runFlow:
@@ -29,8 +29,8 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
 
 - extendedWaitUntil:
     visible:
-      id: welcome-create-account
+      id: welcome-primary-start
     timeout: 480000
 
 - assertVisible:
-    id: welcome-create-account
+    id: welcome-primary-start

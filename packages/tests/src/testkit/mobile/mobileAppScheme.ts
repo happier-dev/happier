@@ -4,6 +4,7 @@ const APP_SCHEME_BY_APP_ID = new Map<string, string>([
   ['dev.happier.app.internaldev', 'happier-internaldev'],
   ['dev.happier.app.internaldev.devclient', 'happier-internaldev'],
   ['dev.happier.app.dev.internal.devclient', 'happier-internaldev'],
+  ['dev.happier.app.dev.internal', 'happier-dev'],
   ['dev.happier.app.publicdev', 'happier-dev'],
   ['dev.happier.app.publicdev.devclient', 'happier-dev'],
 ]);

@@ -14,6 +14,7 @@ import { listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { enqueueSessionPromptForScenario, waitForAssistantMessageContaining } from '../../src/testkit/providers/scenarios/sessionRuntime';
+import { resolveAcpSdkTestRuntime } from '../../src/testkit/providers/acpSdkTestRuntime';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { fetchAllMessages, fetchSessionV2, type SessionMessageRow } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
@@ -194,7 +195,7 @@ async function writeFakeGeminiAcpCli(params: {
   fakeGeminiLogPath: string;
   fakeGeminiPath: string;
 }): Promise<void> {
-  const acpSdkEntry = resolve(repoRootDir(), 'apps/cli/node_modules/@agentclientprotocol/sdk/dist/acp.js');
+  const { sdkEntry: acpSdkEntry, agentAppAdapterEntry } = resolveAcpSdkTestRuntime(repoRootDir());
   await writeFile(
     params.fakeGeminiPath,
     `#!/usr/bin/env node
@@ -202,6 +203,7 @@ import { appendFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { Readable, Writable } from "node:stream";
+import { connectAcpTestAgentApp } from ${JSON.stringify(agentAppAdapterEntry)};
 
 if (process.argv.includes("--help")) {
   process.stdout.write("fake gemini usage --acp\\n");
@@ -265,7 +267,8 @@ class FakeGeminiAgent {
 }
 
 const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin));
-new acp.AgentSideConnection((conn) => new FakeGeminiAgent(conn), stream);
+const connection = connectAcpTestAgentApp({ acp, stream, createAgent: (client) => new FakeGeminiAgent(client) });
+await connection.closed;
 `,
     'utf8',
   );

@@ -10,6 +10,14 @@ export type StressComposeSecrets = Readonly<{
   s3Bucket: string;
 }>;
 
+export type StressComposePeerMediation = Readonly<{
+  allowedPorts: readonly number[];
+  routeGrantSigningKeyId: string;
+  routeGrantSigningPrivateKey: string;
+  routeGrantSigningPublicKey: string;
+  routeGrantSigningExpiresAt: string;
+}>;
+
 export function renderStressComposeYaml(params: {
   repoRootDir: string;
   repoRootFingerprint: string;
@@ -19,8 +27,19 @@ export function renderStressComposeYaml(params: {
   publicBaseUrl: string;
   config: StressComposeConfig;
   secrets: StressComposeSecrets;
+  peerMediation: StressComposePeerMediation;
 }): string {
-  const { repoRootDir, repoRootFingerprint, composeDir, serverImageName, gatewayConfigPath, publicBaseUrl, config, secrets } = params;
+  const {
+    repoRootDir,
+    repoRootFingerprint,
+    composeDir,
+    serverImageName,
+    gatewayConfigPath,
+    publicBaseUrl,
+    config,
+    secrets,
+    peerMediation,
+  } = params;
   const frontDoorMode = config.frontDoorMode ?? 'gateway';
   const metricsEnabled = config.metricsEnabled ? '"1"' : '"false"';
   const authLoginEligibilityAccountSnapshotCacheTtlMs =
@@ -44,7 +63,14 @@ ${stressLabels}
       HAPPIER_DB_CONNECTION_LIMIT: "${config.dbConnectionLimit ?? ''}"
       REDIS_URL: redis://redis:6379
       HAPPIER_SOCKET_ADAPTER: redis-streams
+      HAPPIER_MACHINE_SOCKET_OWNER_TTL_SECONDS: "5"
       HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1"
+      HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: "1"
+      HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: "${peerMediation.allowedPorts.join(',')}"
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: ${peerMediation.routeGrantSigningKeyId}
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: ${peerMediation.routeGrantSigningPrivateKey}
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: ${peerMediation.routeGrantSigningPublicKey}
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: ${peerMediation.routeGrantSigningExpiresAt}
       HANDY_MASTER_SECRET: ${secrets.masterSecret}
       HAPPIER_FILES_BACKEND: ${config.filesBackend}
       S3_HOST: minio
@@ -88,7 +114,7 @@ ${stressLabels}
     volumes:
       - "${composeDir}/postgres:/var/lib/postgresql/data"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${secrets.postgresUser} -d ${secrets.postgresDb}"]
+      test: ["CMD-SHELL", "test \\"$(head -n 1 \\"$$PGDATA/postmaster.pid\\" 2>/dev/null)\\" = \\"1\\" && pg_isready -U ${secrets.postgresUser} -d ${secrets.postgresDb}"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -148,7 +174,14 @@ ${stressLabels}
       HAPPIER_DB_CONNECTION_LIMIT: "${config.dbConnectionLimit ?? ''}"
       REDIS_URL: redis://redis:6379
       HAPPIER_SOCKET_ADAPTER: redis-streams
+      HAPPIER_MACHINE_SOCKET_OWNER_TTL_SECONDS: "5"
       HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1"
+      HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: "1"
+      HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: "${peerMediation.allowedPorts.join(',')}"
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: ${peerMediation.routeGrantSigningKeyId}
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: ${peerMediation.routeGrantSigningPrivateKey}
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: ${peerMediation.routeGrantSigningPublicKey}
+      HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: ${peerMediation.routeGrantSigningExpiresAt}
       HANDY_MASTER_SECRET: ${secrets.masterSecret}
       HAPPIER_FILES_BACKEND: ${config.filesBackend}
       S3_HOST: minio

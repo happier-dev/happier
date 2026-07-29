@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { CLI_SHARED_DEP_PACKAGE_NAMES } from '../../src/testkit/process/workspacePackageResolution';
+import { CLI_SHARED_DEP_TEST_FIXTURE_PACKAGE_NAMES } from '../../src/testkit/process/workspacePackageResolution';
 
 type RunLoggedCommand = (params: {
   command: string;
@@ -27,10 +27,25 @@ async function exists(path: string): Promise<boolean> {
 
 const execFileAsync = promisify(execFile);
 
+async function writeCliBundledHostManifest(repoRoot: string): Promise<void> {
+  const packageJsonPath = resolve(repoRoot, 'apps', 'cli', 'package.json');
+  await mkdir(resolve(packageJsonPath, '..'), { recursive: true });
+  await writeFile(
+    packageJsonPath,
+    JSON.stringify({
+      name: '@happier-dev/cli',
+      bundledDependencies: CLI_SHARED_DEP_TEST_FIXTURE_PACKAGE_NAMES.map(
+        (packageName) => `@happier-dev/${packageName}`,
+      ),
+    }),
+    'utf8',
+  );
+}
+
 async function writeSharedWorkspaceOutputs(repoRoot: string, protocolMarker = 'protocol-from-workspace'): Promise<void> {
   await createBundledWorkspacePackageDirs(repoRoot);
 
-  const outputEntries = CLI_SHARED_DEP_PACKAGE_NAMES.map((packageName) => ({
+  const outputEntries = CLI_SHARED_DEP_TEST_FIXTURE_PACKAGE_NAMES.map((packageName) => ({
     packageName,
     path: resolve(repoRoot, 'packages', packageName, 'dist', 'index.js'),
     contents: packageName === 'protocol' ? `export const marker = '${protocolMarker}';\n` : 'export {};\n',
@@ -65,7 +80,7 @@ async function writeSharedWorkspaceOutputs(repoRoot: string, protocolMarker = 'p
 }
 
 async function createBundledWorkspacePackageDirs(repoRoot: string): Promise<void> {
-  for (const packageName of CLI_SHARED_DEP_PACKAGE_NAMES) {
+  for (const packageName of CLI_SHARED_DEP_TEST_FIXTURE_PACKAGE_NAMES) {
     await mkdir(resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', packageName), { recursive: true });
   }
 }
@@ -88,6 +103,7 @@ describe('core e2e: cli dist build', () => {
   it('builds shared workspace deps before returning a usable CLI dist entrypoint', async () => {
     dir = await mkdtemp(join(tmpdir(), 'happier-cli-dist-'));
     const repoRoot = dir;
+    await writeCliBundledHostManifest(repoRoot);
 
     const cliDistDir = resolve(repoRoot, 'apps', 'cli', 'dist');
     await mkdir(cliDistDir, { recursive: true });
@@ -120,6 +136,7 @@ describe('core e2e: cli dist build', () => {
   it('creates a stable CLI dist snapshot for spawned processes', async () => {
     dir = await mkdtemp(join(tmpdir(), 'happier-cli-dist-snapshot-'));
     const repoRoot = dir;
+    await writeCliBundledHostManifest(repoRoot);
 
     const cliDistDir = resolve(repoRoot, 'apps', 'cli', 'dist');
     await mkdir(cliDistDir, { recursive: true });
@@ -162,6 +179,7 @@ describe('core e2e: cli dist build', () => {
   it('launches the CLI dist snapshot from an arbitrary cwd with bundled workspace packages available', async () => {
     dir = await mkdtemp(join(tmpdir(), 'happier-cli-dist-snapshot-launch-'));
     const repoRoot = dir;
+    await writeCliBundledHostManifest(repoRoot);
 
     const cliDistDir = resolve(repoRoot, 'apps', 'cli', 'dist');
     const cliNodeModulesProtocolDir = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol');
@@ -224,6 +242,7 @@ describe('core e2e: cli dist build', () => {
   it('launches the CLI dist snapshot with hoisted root runtime deps alongside CLI-local bundled packages', async () => {
     dir = await mkdtemp(join(tmpdir(), 'happier-cli-dist-snapshot-hoisted-launch-'));
     const repoRoot = dir;
+    await writeCliBundledHostManifest(repoRoot);
     extraDir = await mkdtemp(join(tmpdir(), 'happier-cli-dist-external-snapshot-'));
     const externalSnapshotRoot = extraDir;
 
@@ -303,6 +322,7 @@ describe('core e2e: cli dist build', () => {
   it('launches the CLI source entrypoint from the snapshot root when source mode is enabled', async () => {
     dir = await mkdtemp(join(tmpdir(), 'happier-cli-source-snapshot-launch-'));
     const repoRoot = dir;
+    await writeCliBundledHostManifest(repoRoot);
 
     const cliSrcDir = resolve(repoRoot, 'apps', 'cli', 'src');
     const cliNodeModulesProtocolDir = resolve(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'protocol');
@@ -334,7 +354,6 @@ describe('core e2e: cli dist build', () => {
       'utf8',
     );
     await writeFile(resolve(cliNodeModulesProtocolDir, 'dist', 'index.js'), "export const marker = 'protocol-ok';\n", 'utf8');
-    await writeFile(resolve(repoRoot, 'apps', 'cli', 'package.json'), '{"name":"@happier-dev/cli"}', 'utf8');
     await writeFile(resolve(repoRoot, 'apps', 'cli', 'tsconfig.json'), '{}', 'utf8');
     await writeSharedWorkspaceOutputs(repoRoot);
 
@@ -366,6 +385,7 @@ describe('core e2e: cli dist build', () => {
   it('retries CLI dist snapshot copy when dist files change during the first copy attempt', async () => {
     dir = await mkdtemp(join(tmpdir(), 'happier-cli-dist-snapshot-retry-'));
     const repoRoot = dir;
+    await writeCliBundledHostManifest(repoRoot);
 
     const cliDistDir = resolve(repoRoot, 'apps', 'cli', 'dist');
     await mkdir(cliDistDir, { recursive: true });

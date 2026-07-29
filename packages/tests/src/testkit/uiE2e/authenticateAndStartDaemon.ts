@@ -9,6 +9,7 @@ import { ensureAccountReadyForConnect } from './ensureAccountReadyForConnect';
 import { ensurePendingTerminalConnectReadyForApproval } from './terminalConnectApprovalFlow';
 import { waitForInitialAppUi } from './waitForInitialAppUi';
 import { createAccountAndReachConnectMachineState } from './createAccountAndReachConnectMachineState';
+import type { CliTestLaunchSpec } from '../process/cliLaunchSpec';
 
 export async function authenticateAndStartDaemon(params: Readonly<{
   page: Page;
@@ -22,6 +23,8 @@ export async function authenticateAndStartDaemon(params: Readonly<{
   terminalConnectUrlTimeoutMs?: number;
   daemonStartupTimeoutMs?: number;
   extraEnv?: NodeJS.ProcessEnv;
+  cliLaunchSpec?: CliTestLaunchSpec;
+  variant?: 'dev' | 'stable';
 }>): Promise<StartedDaemon> {
   await gotoCommittedWithRetries(params.page, params.uiBaseUrl, params.initialUiGotoTimeoutMs);
   await waitForInitialAppUi({
@@ -47,13 +50,14 @@ export async function authenticateAndStartDaemon(params: Readonly<{
     cliHomeDir: params.cliHomeDir,
     serverUrl: params.serverUrl,
     webappUrl: params.uiBaseUrl,
+    cliLaunchSpec: params.cliLaunchSpec,
     connectUrlTimeoutMs: params.terminalConnectUrlTimeoutMs,
     env: {
       ...process.env,
       ...(params.extraEnv ?? {}),
       CI: '1',
       HAPPIER_DISABLE_CAFFEINATE: '1',
-      HAPPIER_VARIANT: 'dev',
+      HAPPIER_VARIANT: params.variant ?? 'dev',
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     },
   });
@@ -95,8 +99,9 @@ export async function authenticateAndStartDaemon(params: Readonly<{
       HAPPIER_SERVER_URL: params.serverUrl,
       HAPPIER_WEBAPP_URL: params.uiBaseUrl,
       HAPPIER_DISABLE_CAFFEINATE: '1',
-      HAPPIER_VARIANT: 'dev',
+      HAPPIER_VARIANT: params.variant ?? 'dev',
       HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
     },
+    cliLaunchSpec: params.cliLaunchSpec,
   });
 }

@@ -10,7 +10,18 @@ type RpcRegisterEventPayload = { method?: unknown; error?: unknown };
 type RpcResponseEnvelope = { ok?: unknown; result?: unknown; error?: unknown; errorCode?: unknown };
 type SocketTransport = 'websocket' | 'polling';
 
+export type SocketConnectivityTransition = Readonly<{
+  sequence: number;
+  kind: 'connect' | 'disconnect' | 'connect_error';
+  at: number;
+  reason?: string;
+  message?: string;
+}>;
+
 export type SocketConnectivityState = Readonly<{
+  connected: boolean;
+  totalTransitionCount: number;
+  transitions: readonly SocketConnectivityTransition[];
   lastConnectError?: {
     at: number;
     message: string;
@@ -25,6 +36,8 @@ type SocketCollectorRuntimeOptions = Readonly<{
   captureEvents?: boolean;
 }>;
 
+const MAX_CONNECTIVITY_TRANSITIONS = 16;
+
 export class SocketCollector {
   private readonly socket: Socket;
   private readonly eventCollector: SocketEventCollector;
@@ -38,6 +51,8 @@ export class SocketCollector {
       at: number;
       reason?: string;
     };
+    totalTransitionCount: number;
+    transitions: SocketConnectivityTransition[];
   };
 
   constructor(socket: Socket, options: SocketCollectorRuntimeOptions = {}) {
@@ -46,26 +61,61 @@ export class SocketCollector {
     this.eventCollector = this.captureEvents
       ? attachSocketEventCollector(socket)
       : new SocketEventCollector();
-    this.connectivityState = {};
+    this.connectivityState = {
+      totalTransitionCount: 0,
+      transitions: [],
+    };
     socket.on('connect', () => {
+      this.recordConnectivityTransition({
+        kind: 'connect',
+        at: Date.now(),
+      });
       this.connectivityState.lastConnectError = undefined;
       this.connectivityState.lastDisconnect = undefined;
     });
     socket.on('disconnect', (reason?: string) => {
+      const at = Date.now();
       this.connectivityState.lastDisconnect = {
-        at: Date.now(),
+        at,
         ...(typeof reason === 'string' ? { reason } : {}),
       };
+      this.recordConnectivityTransition({
+        kind: 'disconnect',
+        at,
+        ...(typeof reason === 'string' ? { reason } : {}),
+      });
     });
     socket.on('connect_error', (error: unknown) => {
       const message = error && typeof error === 'object' && 'message' in error
         ? String((error as { message?: unknown }).message ?? error)
         : String(error);
+      const at = Date.now();
       this.connectivityState.lastConnectError = {
-        at: Date.now(),
+        at,
         message,
       };
+      this.recordConnectivityTransition({
+        kind: 'connect_error',
+        at,
+        message,
+      });
     });
+  }
+
+  private recordConnectivityTransition(
+    transition: Omit<SocketConnectivityTransition, 'sequence'>,
+  ): void {
+    this.connectivityState.totalTransitionCount += 1;
+    this.connectivityState.transitions.push({
+      sequence: this.connectivityState.totalTransitionCount,
+      ...transition,
+    });
+    if (this.connectivityState.transitions.length > MAX_CONNECTIVITY_TRANSITIONS) {
+      this.connectivityState.transitions.splice(
+        0,
+        this.connectivityState.transitions.length - MAX_CONNECTIVITY_TRANSITIONS,
+      );
+    }
   }
 
   connect(): void {
@@ -90,6 +140,9 @@ export class SocketCollector {
 
   getConnectivityState(): SocketConnectivityState {
     return {
+      connected: this.socket.connected,
+      totalTransitionCount: this.connectivityState.totalTransitionCount,
+      transitions: this.connectivityState.transitions.map((transition) => ({ ...transition })),
       ...(this.connectivityState.lastConnectError ? { lastConnectError: { ...this.connectivityState.lastConnectError } } : {}),
       ...(this.connectivityState.lastDisconnect ? { lastDisconnect: { ...this.connectivityState.lastDisconnect } } : {}),
     };
@@ -149,7 +202,11 @@ export class SocketCollector {
   }
 
   async rpcCall<T = RpcResponseEnvelope>(method: string, params: string, timeoutMs = 30_000): Promise<T> {
-    return await this.emitWithAck(SOCKET_RPC_EVENTS.CALL, { method, params }, timeoutMs);
+    return await this.emitWithAck(
+      SOCKET_RPC_EVENTS.CALL,
+      { method, params, timeoutMs },
+      timeoutMs,
+    );
   }
 
   emit(event: string, data: unknown): void {

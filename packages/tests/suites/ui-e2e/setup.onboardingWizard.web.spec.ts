@@ -4,6 +4,7 @@ import { mkdir } from 'node:fs/promises';
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { resolveUiWebBeforeAllTimeoutMs, startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
+import { navigateSpa } from '../../src/testkit/uiE2e/fakeTauriDesktop';
 import { gotoCommittedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
@@ -23,6 +24,8 @@ test.describe('ui e2e: web onboarding wizard', () => {
         ...process.env,
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: '',
+        EXPO_PUBLIC_HAPPIER_FEATURE_APP_UI_ONBOARDING_TOUR__ENABLED: '0',
+        EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY: 'app.ui.onboardingTour',
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
         HAPPIER_E2E_UI_WEB_MODE: 'export',
     };
@@ -35,6 +38,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
             testDir: suiteDir,
             dbProvider: 'sqlite',
             extraEnv: {
+                NODE_ENV: process.env.NODE_ENV ?? 'test',
                 HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: '1',
                 AUTH_ANONYMOUS_SIGNUP_ENABLED: '1',
                 AUTH_SIGNUP_PROVIDERS: 'github',
@@ -90,7 +94,13 @@ test.describe('ui e2e: web onboarding wizard', () => {
         }
         await gotoCommittedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 240_000);
         try {
+            const brandGetStarted = page.locator('[data-testid="brand-hero-get-started"]:visible').first();
             const wizard = page.getByTestId('onboarding-wizard');
+            await expect(wizard.or(brandGetStarted)).toBeVisible({ timeout: 180_000 });
+            if (await brandGetStarted.isVisible().catch(() => false)) {
+                await expect(brandGetStarted).toBeEnabled({ timeout: 120_000 });
+                await brandGetStarted.click();
+            }
             await expect(wizard).toBeVisible({ timeout: 180_000 });
             const size = page.viewportSize();
             if (size) {
@@ -124,31 +134,10 @@ test.describe('ui e2e: web onboarding wizard', () => {
     async function advanceWizardToAuthEntry(page: Page, mode: 'guided' | 'skip', viewport: 'mobile' | 'desktop' = 'mobile') {
         await openRoot(page, viewport);
 
-        const createAccount = page.getByTestId('welcome-create-account');
-        const primary = page.getByTestId('onboarding-wizard-primary');
-        const skip = page.getByTestId('onboarding-wizard-skip');
-        const relayDiagram = page.getByTestId('onboarding-wizard-relay-diagram');
-
-        await expect(createAccount.or(primary)).toBeVisible({ timeout: 120_000 });
-
-        if (await createAccount.isVisible()) {
-            return;
-        }
-
-        if (mode === 'skip' && await skip.isVisible()) {
-            await skip.click();
-            await expect(createAccount).toBeVisible({ timeout: 120_000 });
-            return;
-        }
-
-        // First-launch may start on the welcome intro (no auth actions). Move forward to the auth entry.
-        await expect(primary).toBeVisible({ timeout: 120_000 });
-        await expect(primary).toBeEnabled({ timeout: 120_000 });
-        await primary.click();
-        await expect(relayDiagram).toHaveCount(1, { timeout: 120_000 });
-        await expect(primary).toBeEnabled({ timeout: 120_000 });
-        await primary.click();
-        await expect(createAccount).toBeVisible({ timeout: 120_000 });
+        void mode;
+        await expect(page.getByTestId('welcome-primary-start')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-secondary-login')).toBeVisible({ timeout: 120_000 });
+        await expect(page.getByTestId('welcome-footer-relay-action')).toBeVisible({ timeout: 120_000 });
     }
 
     async function openRootAndCreateAccount(
@@ -159,7 +148,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
     ) {
         await advanceWizardToAuthEntry(page, mode, viewport);
 
-        const createAccount = page.getByTestId('welcome-create-account');
+        const createAccount = page.getByTestId('welcome-primary-start');
         await expect(createAccount).toBeVisible({ timeout: 120_000 });
         await expect(createAccount).toBeEnabled({ timeout: 120_000 });
         await createAccount.click();
@@ -168,7 +157,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
 
         if (advanceIntoLocalSetup) {
             const localBranch = page.getByTestId('setupWizard-branch:local');
-            const handoff = page.getByTestId('setupWizard-web-machine-setup-handoff');
+            const handoff = page.getByTestId('setupWizard-machine-arrival-stack');
             await expect(localBranch.or(handoff)).toBeVisible({ timeout: 120_000 });
             if (await handoff.isVisible()) {
                 // Already on the local handoff surface.
@@ -180,42 +169,36 @@ test.describe('ui e2e: web onboarding wizard', () => {
             }
         }
 
-        await expect(page.getByTestId('setupWizard-web-machine-setup-handoff')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('setupWizard-web-machine-setup-handoff-terminal')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('setupWizard-web-machine-setup-handoff-download-desktop')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('setupWizard-web-machine-setup-handoff-optional')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-machine-arrival-stack')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-machine-arrival')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('machine-arrival-card-status:variant:neutral')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-machine-arrival-desktop-app-download-cta')).toHaveCount(1, { timeout: 120_000 });
     }
 
     async function openRootAndGoToRelaySelect(page: Page, viewport: 'mobile' | 'desktop' = 'mobile') {
         await openRoot(page, viewport);
 
-        const changeRelay = page.getByTestId('onboarding-wizard-change-relay');
-        const primary = page.getByTestId('onboarding-wizard-primary');
-        await expect(changeRelay.or(primary)).toBeVisible({ timeout: 120_000 });
-        if (await changeRelay.isVisible()) {
-            await expect(changeRelay).toBeEnabled({ timeout: 120_000 });
-            await changeRelay.click();
-        } else {
-            await expect(primary).toBeEnabled({ timeout: 120_000 });
-            await primary.click();
-        }
+        const changeRelay = page.getByTestId('welcome-footer-relay-action');
+        await expect(changeRelay).toBeVisible({ timeout: 120_000 });
+        await expect(changeRelay).toBeEnabled({ timeout: 120_000 });
+        await changeRelay.click();
 
-        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-relay:thisComputer')).toHaveCount(1, { timeout: 120_000 });
     }
 
     test('web onboarding supports auth entry relay changes and back navigation', async ({ page }) => {
         test.setTimeout(300_000);
         await advanceWizardToAuthEntry(page, 'guided', 'mobile');
-        await expect(page.getByTestId('onboarding-wizard-change-relay')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-change-relay')).toBeEnabled({ timeout: 120_000 });
-        await page.getByTestId('onboarding-wizard-change-relay').click();
-        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-back')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-back')).toBeEnabled({ timeout: 120_000 });
-        await page.getByTestId('onboarding-wizard-back').click();
+        await expect(page.getByTestId('welcome-footer-relay-action')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('welcome-footer-relay-action')).toBeEnabled({ timeout: 120_000 });
+        await page.getByTestId('welcome-footer-relay-action').click();
+        await expect(page.getByTestId('onboarding-wizard-relay:thisComputer')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('unauth-shell-back-chevron')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('unauth-shell-back-chevron')).toBeEnabled({ timeout: 120_000 });
+        await page.getByTestId('unauth-shell-back-chevron').click();
 
-        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-change-relay')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('welcome-primary-start')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('welcome-footer-relay-action')).toHaveCount(1, { timeout: 120_000 });
     });
 
     test('web onboarding supports "On this computer" guided handoff', async ({ page }) => {
@@ -227,19 +210,19 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await page.getByTestId('onboarding-wizard-primary').click();
 
         await expect(page.getByTestId('onboarding-wizard-desktop-handoff')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-download-desktop')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-cli-install')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-relay-install')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-relay-status')).toHaveCount(1, { timeout: 120_000 });
-        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-optional')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-terminal-step-relay-setup')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-desktop-handoff-download-desktop')).toHaveCount(1, { timeout: 120_000 });
 
+        await expect(page.getByTestId('onboarding-wizard-primary')).toBeEnabled({ timeout: 120_000 });
         await page.getByTestId('onboarding-wizard-primary').click();
         await expect(page.getByTestId('onboarding-wizard-relay-url-input')).toHaveCount(1, { timeout: 120_000 });
         await page.getByTestId('onboarding-wizard-relay-url-input').fill(server?.baseUrl ?? '');
         await expect(page.getByTestId('onboarding-wizard-primary')).toBeEnabled({ timeout: 120_000 });
         await page.getByTestId('onboarding-wizard-primary').click();
-        await expect(page.getByTestId('welcome-create-account')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-background-service-handoff')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-background-service-arrival')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-background-service-desktop-app-download-cta')).toHaveCount(1, { timeout: 120_000 });
     });
 
     test('web onboarding renders a centered modal card on desktop viewports', async ({ page }) => {
@@ -262,6 +245,8 @@ test.describe('ui e2e: web onboarding wizard', () => {
 
         await expect(page.getByTestId('onboarding-wizard-relay:customUrl')).toHaveCount(1, { timeout: 120_000 });
         await page.getByTestId('onboarding-wizard-relay:customUrl').click();
+        await expect(page.getByTestId('onboarding-wizard-primary')).toBeEnabled({ timeout: 120_000 });
+        await page.getByTestId('onboarding-wizard-primary').click();
 
         const urlInput = page.getByTestId('onboarding-wizard-relay-url-input');
         await expect(urlInput).toBeVisible({ timeout: 120_000 });
@@ -276,7 +261,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await expect(page.getByTestId('onboarding-wizard-relay-hint-line')).toContainText('127.0.0.1:59999', { timeout: 120_000 });
 
         await page.getByTestId('welcome-configure-server').click();
-        await expect(page.getByTestId('onboarding-wizard-relay-diagram')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('onboarding-wizard-relay:thisComputer')).toHaveCount(1, { timeout: 120_000 });
         await expect(page.getByTestId('onboarding-wizard-primary')).toBeDisabled({ timeout: 120_000 });
     });
 
@@ -284,7 +269,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
         test.setTimeout(300_000);
         await advanceWizardToAuthEntry(page, 'guided', 'mobile');
 
-        const loginWithMobile = page.getByTestId('welcome-restore');
+        const loginWithMobile = page.getByTestId('welcome-secondary-login');
         await expect(loginWithMobile).toBeVisible({ timeout: 120_000 });
         await expect(loginWithMobile).toBeEnabled({ timeout: 120_000 });
         await loginWithMobile.click();
@@ -302,8 +287,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
         test.setTimeout(300_000);
         await openRootAndCreateAccount(page, 'guided', 'desktop', false);
 
-        if (!uiBaseUrl) throw new Error('missing ui base url');
-        await gotoCommittedWithRetries(page, `${uiBaseUrl}/setup/wizard?step=setup_chooser`, 120_000);
+        await navigateSpa(page, '/setup/wizard?step=setup_chooser');
         await expect(page.getByTestId('setupWizard.surface')).toBeVisible({ timeout: 120_000 });
 
         await expect(page.getByTestId('setupWizard-branch:remoteRelay')).toHaveCount(1, { timeout: 120_000 });
@@ -311,18 +295,19 @@ test.describe('ui e2e: web onboarding wizard', () => {
         await expect(page.getByTestId('setupWizard.surface-primary')).toBeEnabled({ timeout: 120_000 });
         await page.getByTestId('setupWizard.surface-primary').click();
 
-        await expect(page.getByTestId('setupWizard-web-remote-ssh-handoff')).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByTestId('setupWizard-web-remote-ssh')).toHaveCount(1, { timeout: 120_000 });
         await page.getByTestId('setupWizard-web-remote-ssh-sshUsernameInput').fill('very-long-admin-username');
         await page.getByTestId('setupWizard-web-remote-ssh-sshHostInput').fill('very-long-relay-host-name.example.internal');
         await page.getByTestId('setupWizard-web-remote-ssh-sshPortInput').fill('2200');
-        await page.getByTestId('setupWizard-web-remote-ssh-sshAuthPassword').click();
+        await page.getByTestId('setupWizard-web-remote-ssh-sshAuthMethod:password').click();
         await page.getByTestId('setupWizard-web-remote-ssh-sshPasswordInput').fill('correct horse battery staple');
 
+        await expect(page.getByTestId('setupWizard-terminal-handoff-step-remote-ssh-setup')).toBeVisible({ timeout: 120_000 });
         const relayInstallCode = page.getByTestId('setupWizard-terminal-handoff-remote-ssh-setup');
         await expect(relayInstallCode).toBeVisible({ timeout: 120_000 });
 
         const commandText = await relayInstallCode.evaluate((node) => (node.textContent ?? '').replace(/\s+/g, ' ').trim());
-        expect(commandText).toContain('happier machine setup --ssh');
+        expect(commandText).toContain('machine setup');
         expect(commandText).toContain('--ssh-user very-long-admin-username');
         expect(commandText).toContain('--ssh-host very-long-relay-host-name.example.internal');
         expect(commandText).toContain('--ssh-auth password');
@@ -345,7 +330,7 @@ test.describe('ui e2e: web onboarding wizard', () => {
         test.setTimeout(300_000);
         await openRootAndCreateAccount(page, 'guided', 'mobile');
 
-        const setupCode = page.getByTestId('setupWizard-web-machine-setup-handoff-terminal-setup');
+        const setupCode = page.getByTestId('machine-arrival-card-command-setup');
         const overflowX = await setupCode.evaluate((node) => getComputedStyle(node as HTMLElement).overflowX);
         expect(['auto', 'scroll']).toContain(overflowX);
     });

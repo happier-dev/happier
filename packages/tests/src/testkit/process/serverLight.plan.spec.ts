@@ -368,6 +368,33 @@ describe("startServerLight planning helpers", () => {
     expect(retry).toBe(true);
   });
 
+  it("retries server start when health never becomes reachable and stdout only contains the Yarn script echo", () => {
+    const retry = shouldRetryServerStartFromFailureContext({
+      attempt: 1,
+      maxAttempts: 5,
+      preflightPortAvailable: true,
+      error: new Error("Timed out waiting for /health at http://127.0.0.1:40550 | lastStatus=none | lastBodyStatus=none | lastError=fetch failed"),
+      stderrTail: "",
+      stdoutTail: "$ node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./sources/main.light.ts\n",
+    });
+    expect(retry).toBe(true);
+  });
+
+  it("does not retry a health timeout when the Yarn script echo is followed by substantive server stdout", () => {
+    const retry = shouldRetryServerStartFromFailureContext({
+      attempt: 1,
+      maxAttempts: 5,
+      preflightPortAvailable: true,
+      error: new Error("Timed out waiting for /health at http://127.0.0.1:40550 | lastStatus=none | lastBodyStatus=none | lastError=fetch failed"),
+      stderrTail: "",
+      stdoutTail: [
+        "$ node ./scripts/runTsx.mjs --tsconfig ./tsconfig.json ./sources/main.light.ts",
+        "Fatal startup configuration error",
+      ].join("\n"),
+    });
+    expect(retry).toBe(false);
+  });
+
   it("supports explicit server source-entrypoint mode flags", () => {
     expect(shouldUseServerSourceEntrypoint({})).toBe(false);
     expect(shouldUseServerSourceEntrypoint({ HAPPIER_E2E_PROVIDER_USE_SERVER_SOURCE_ENTRYPOINT: "1" })).toBe(true);

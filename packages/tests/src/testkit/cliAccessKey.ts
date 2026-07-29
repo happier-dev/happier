@@ -1,5 +1,8 @@
+import { Buffer } from 'node:buffer';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 
 export type CliAccessKey =
   | Readonly<{
@@ -13,6 +16,17 @@ export type CliAccessKey =
         machineKey: string;
       }>;
     }>;
+
+export function accountScopedCryptoMaterialFromCliAccessKey(
+  accessKey: CliAccessKey,
+): AccountScopedCryptoMaterial {
+  return 'secret' in accessKey
+    ? { type: 'legacy', secret: Uint8Array.from(Buffer.from(accessKey.secret, 'base64')) }
+    : {
+        type: 'dataKey',
+        machineKey: Uint8Array.from(Buffer.from(accessKey.encryption.machineKey, 'base64')),
+      };
+}
 
 function parseAccessKey(raw: string): CliAccessKey | null {
   try {

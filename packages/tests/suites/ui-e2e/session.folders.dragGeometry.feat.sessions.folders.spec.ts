@@ -7,6 +7,7 @@ import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { createTestAuthMtls } from '../../src/testkit/auth';
@@ -15,13 +16,13 @@ import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHead
 import {
   beginSteppedSessionDrag,
   createPlainSession,
-  deriveServerIdFromUrl,
   dragSessionToTarget,
   dragSessionWithGeometryProbe,
   dragSessionWithLongTaskProbe,
   expectFolderAssignment,
   expectOrderBefore,
   readVisibleSessionRowOrder,
+  resolveCanonicalServerIdForUi,
   setSessionFolderDragSettings,
   type CapturedRect,
   type SessionFoldersSetting,
@@ -65,6 +66,7 @@ const FOLDER_TOP_ID = 'geo_top';
 const FOLDER_NEST_PARENT_ID = 'geo_nest_parent';
 const FOLDER_NEST_CHILD_ID = 'geo_nest_child';
 const FOLDER_BOTTOM_ID = 'geo_bottom';
+const STORAGE_SCOPE = `e2e-session-drag-geometry-${run.runId}`;
 
 /** Number of root-level filler sessions so the list scrolls and virtualizes. */
 const FILLER_SESSION_COUNT = 28;
@@ -204,7 +206,7 @@ test.describe('ui e2e: session list drag geometry', () => {
         ...process.env,
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-session-drag-geometry-${run.runId}`,
+        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: STORAGE_SCOPE,
         HAPPIER_E2E_UI_WEB_MODE: 'export',
       },
     });
@@ -224,7 +226,7 @@ test.describe('ui e2e: session list drag geometry', () => {
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
     const rootPath = repoRootDir();
-    const serverId = deriveServerIdFromUrl(uiServerUrl);
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
     const workspace = {
       t: 'workspaceScope' as const,
       serverId,
@@ -273,6 +275,7 @@ test.describe('ui e2e: session list drag geometry', () => {
     }
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
@@ -286,6 +289,9 @@ test.describe('ui e2e: session list drag geometry', () => {
     await setSessionFolderDragSettings({
       page,
       baseUrl: uiBaseUrl,
+      apiBaseUrl: server.baseUrl,
+      token,
+      serverId,
       sessionFoldersV1: buildSessionFolderSettings({ workspace }),
     });
 
@@ -451,7 +457,7 @@ test.describe('ui e2e: session list drag geometry', () => {
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
     const rootPath = repoRootDir();
-    const serverId = deriveServerIdFromUrl(uiServerUrl);
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
     const workspace = {
       t: 'workspaceScope' as const,
       serverId,
@@ -469,12 +475,16 @@ test.describe('ui e2e: session list drag geometry', () => {
     });
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
     await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId: 'sessions.folders', enabled: true });
     await setSessionFolderDragSettings({
       page,
       baseUrl: uiBaseUrl,
+      apiBaseUrl: server.baseUrl,
+      token,
+      serverId,
       sessionFoldersV1: buildSessionFolderSettings({ workspace }),
     });
 
@@ -503,7 +513,7 @@ test.describe('ui e2e: session list drag geometry', () => {
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
     const rootPath = repoRootDir();
-    const serverId = deriveServerIdFromUrl(uiServerUrl);
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
     const workspace = {
       t: 'workspaceScope' as const,
       serverId,
@@ -532,12 +542,16 @@ test.describe('ui e2e: session list drag geometry', () => {
     }
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
     await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId: 'sessions.folders', enabled: true });
     await setSessionFolderDragSettings({
       page,
       baseUrl: uiBaseUrl,
+      apiBaseUrl: server.baseUrl,
+      token,
+      serverId,
       sessionFoldersV1: buildSessionFolderSettings({ workspace }),
     });
 
@@ -591,7 +605,7 @@ test.describe('ui e2e: session list drag geometry', () => {
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
     const rootPath = repoRootDir();
-    const serverId = deriveServerIdFromUrl(uiServerUrl);
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
     const workspace = {
       t: 'workspaceScope' as const,
       serverId,
@@ -609,12 +623,16 @@ test.describe('ui e2e: session list drag geometry', () => {
     });
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
     await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId: 'sessions.folders', enabled: true });
     await setSessionFolderDragSettings({
       page,
       baseUrl: uiBaseUrl,
+      apiBaseUrl: server.baseUrl,
+      token,
+      serverId,
       sessionFoldersV1: buildSessionFolderSettings({ workspace }),
     });
 
@@ -665,7 +683,7 @@ test.describe('ui e2e: session list drag geometry', () => {
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
 
     const rootPath = repoRootDir();
-    const serverId = deriveServerIdFromUrl(uiServerUrl);
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
     const workspace = {
       t: 'workspaceScope' as const,
       serverId,
@@ -683,12 +701,16 @@ test.describe('ui e2e: session list drag geometry', () => {
     });
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
     await setUiFeatureToggle({ page, baseUrl: uiBaseUrl, featureId: 'sessions.folders', enabled: true });
     await setSessionFolderDragSettings({
       page,
       baseUrl: uiBaseUrl,
+      apiBaseUrl: server.baseUrl,
+      token,
+      serverId,
       sessionFoldersV1: buildSessionFolderSettings({ workspace }),
     });
 

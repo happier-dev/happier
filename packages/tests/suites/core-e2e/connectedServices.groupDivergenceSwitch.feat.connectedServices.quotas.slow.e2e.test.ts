@@ -128,7 +128,6 @@ async function createConnectedServiceAuthGroup(params: Readonly<{
         policy: {
           autoSwitch: true,
           recoveryMode: 'switch_or_wait',
-          memberRuntimeStatePersistence: 'server_state_json',
         },
       }),
       timeoutMs: 20_000,
@@ -173,6 +172,7 @@ async function patchMemberQuotaState(params: Readonly<{
   fixture: StartedConnectedServicesCodexDaemonFixture;
   groupId: string;
   expectedGeneration: number;
+  expectedRuntimeStateRevision: number;
   profileId: string;
   quotaExhaustedUntilMs: number;
 }>): Promise<UnknownRecord> {
@@ -187,6 +187,7 @@ async function patchMemberQuotaState(params: Readonly<{
       },
       body: JSON.stringify({
         expectedGeneration: params.expectedGeneration,
+        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
         state: {
           status: 'exhausted',
           lastSwitchReason: 'usage_limit',
@@ -365,6 +366,7 @@ describe('core e2e: connected-service group divergence switching', () => {
       fixture,
       groupId,
       expectedGeneration: 1,
+      expectedRuntimeStateRevision: 0,
       profileId: exhaustedActiveProfileId,
       quotaExhaustedUntilMs: Date.now() + 60_000,
     });

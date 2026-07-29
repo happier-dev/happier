@@ -287,7 +287,7 @@ async function ensureAgentChipAvailable(page: Page, uiBaseUrl: string, opts?: Re
 }
 
 async function setCodexBackendModeToAppServer(page: Page, uiBaseUrl: string): Promise<void> {
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/agents/codex`);
     const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
     await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
     if ((await backendModeRow.getByText('App Server').count()) > 0) return;

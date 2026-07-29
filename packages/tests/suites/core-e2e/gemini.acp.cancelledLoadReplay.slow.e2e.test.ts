@@ -18,6 +18,8 @@ import { createRunDirs } from '../../src/testkit/runDir';
 import { createSessionWithCiphertexts, fetchAllMessages, fetchSessionV2 } from '../../src/testkit/sessions';
 import { waitFor } from '../../src/testkit/timing';
 
+import { resolveAcpSdkTestRuntime } from "../../src/testkit/providers/acpSdkTestRuntime";
+
 const run = createRunDirs({ runLabel: 'core' });
 
 type FakeGeminiEvent =
@@ -134,7 +136,7 @@ describe('core e2e: Gemini ACP cancelled stopReason and load replay', () => {
     const attachFile = await writeCliSessionAttachFile({ cliHome, sessionId, secret });
     const fakeGeminiPath = resolve(join(fakeBinDir, 'gemini'));
     const fakeGeminiLog = resolve(join(testDir, 'fake-gemini.jsonl'));
-    const acpSdkEntry = resolve(repoRootDir(), 'apps/cli/node_modules/@agentclientprotocol/sdk/dist/acp.js');
+    const { sdkEntry: acpSdkEntry, agentAppAdapterEntry } = resolveAcpSdkTestRuntime(repoRootDir());
 
     await writeFile(
       fakeGeminiPath,
@@ -161,6 +163,9 @@ function promptText(blocks) {
 }
 
 const acp = await import(pathToFileURL(${JSON.stringify(acpSdkEntry)}).href);
+const adapterEntry = process.env.HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY ?? ${JSON.stringify(agentAppAdapterEntry)};
+if (!adapterEntry) throw new Error("Missing HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY");
+const { connectAcpTestAgentApp } = await import(pathToFileURL(adapterEntry).href);
 
 class FakeGeminiAgent {
   connection;
@@ -219,7 +224,8 @@ class FakeGeminiAgent {
 }
 
 const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin));
-new acp.AgentSideConnection((conn) => new FakeGeminiAgent(conn), stream);
+const connection = connectAcpTestAgentApp({ acp, stream, createAgent: (client) => new FakeGeminiAgent(client) });
+await connection.closed;
 `,
       'utf8',
     );

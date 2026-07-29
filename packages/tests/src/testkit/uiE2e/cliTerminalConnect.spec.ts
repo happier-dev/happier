@@ -12,6 +12,8 @@ let stopCalls = 0;
 const defaultTerminalConnectStdout = 'https://127.0.0.1:4011/terminal/connect#key=test-key\n';
 let terminalConnectStdout = defaultTerminalConnectStdout;
 let lastSpawnCwd: string | null = null;
+let lastSpawnCommand: string | null = null;
+let lastSpawnArgs: string[] = [];
 
 vi.mock('../process/cliLaunchSpec', () => ({
     resolveCliTestLaunchSpec: vi.fn(async (params: { testDir: string }) => ({
@@ -20,10 +22,22 @@ vi.mock('../process/cliLaunchSpec', () => ({
         cwd: resolve(params.testDir),
         env: {},
     })),
+    resolveCliTestLaunchSpecOrOverride: vi.fn(async (
+        explicit: unknown,
+        resolveDefault: () => Promise<unknown>,
+    ) => explicit ?? await resolveDefault()),
 }));
 
 vi.mock('../process/spawnProcess', () => ({
-    spawnLoggedProcess: (params: { cwd: string; stdoutPath: string; stderrPath: string }) => {
+    spawnLoggedProcess: (params: {
+        command: string;
+        args: string[];
+        cwd: string;
+        stdoutPath: string;
+        stderrPath: string;
+    }) => {
+        lastSpawnCommand = params.command;
+        lastSpawnArgs = params.args;
         lastSpawnCwd = params.cwd;
         writeFileSync(params.stdoutPath, terminalConnectStdout, 'utf8');
         writeFileSync(params.stderrPath, '', 'utf8');
@@ -78,6 +92,8 @@ afterEach(() => {
     stopCalls = 0;
     terminalConnectStdout = defaultTerminalConnectStdout;
     lastSpawnCwd = null;
+    lastSpawnCommand = null;
+    lastSpawnArgs = [];
 });
 
 function readProcessStartTime(pid: number): string {
@@ -106,6 +122,76 @@ describe('startCliAuthLoginForTerminalConnect', () => {
             });
 
             expect(lastSpawnCwd).toBe(resolve(testDir));
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('uses an explicit packed-candidate CLI for terminal-connect authentication', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-candidate-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+        const candidateEntrypoint = resolve(testDir, 'candidate', 'bin', 'happier.mjs');
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+
+            const started = await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://127.0.0.1:19006',
+                waitForConnectUrlReady: false,
+                env: {},
+                cliLaunchSpec: {
+                    command: process.execPath,
+                    args: [candidateEntrypoint],
+                    cwd: resolve(testDir, 'candidate'),
+                },
+            });
+
+            expect(lastSpawnCommand).toBe(process.execPath);
+            expect(lastSpawnArgs).toEqual([
+                candidateEntrypoint,
+                'auth',
+                'login',
+                '--force',
+                '--no-open',
+                '--method',
+                'web',
+            ]);
+            expect(lastSpawnCwd).toBe(resolve(testDir, 'candidate'));
+
+            await started.stop();
+        } finally {
+            await rm(testDir, { recursive: true, force: true });
+        }
+    });
+
+    it('redacts the terminal-connect key from the persisted CLI stdout artifact', async () => {
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-cli-terminal-connect-redaction-'));
+        const cliHomeDir = resolve(testDir, 'cli-home');
+
+        try {
+            await mkdir(cliHomeDir, { recursive: true });
+
+            const started = await startCliAuthLoginForTerminalConnect({
+                testDir,
+                cliHomeDir,
+                serverUrl: 'http://127.0.0.1:4011',
+                webappUrl: 'http://127.0.0.1:19006',
+                waitForConnectUrlReady: false,
+                env: {},
+            });
+
+            expect(started.connectUrl).toContain('#key=test-key');
+            const persistedStdout = await readFile(
+                resolve(testDir, 'cli.auth.login.stdout.log'),
+                'utf8',
+            );
+            expect(persistedStdout).not.toContain('test-key');
+            expect(persistedStdout).toContain('#key=[redacted]');
 
             await started.stop();
         } finally {

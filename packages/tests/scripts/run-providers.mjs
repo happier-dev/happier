@@ -73,13 +73,14 @@ function usage(exitCode, message) {
       'Usage:',
       '  yarn providers:run <preset> <tier> [--update-baselines] [--strict-keys] [--flake-retry|--no-flake-retry]',
       '',
-      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | pi | all',
+      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | pi | grok | all',
       'Tiers:   smoke | extended',
       '',
       'Examples:',
       '  yarn providers:opencode:smoke',
       '  yarn providers:codex:smoke',
       '  yarn providers:qwen:extended',
+      '  yarn providers:grok:smoke',
       '  yarn providers:all:smoke --strict-keys',
       '  yarn providers:opencode:smoke:update-baselines',
     ].join('\n'),
@@ -154,7 +155,7 @@ export async function main(argv = process.argv) {
     });
   }
 
-  const invocation = resolveProviderRunYarnInvocation(['-s', 'test:providers']);
+  const invocation = resolveProviderRunYarnInvocation(['-s', 'test:agents']);
   const child = spawn(invocation.command, invocation.args, {
     stdio: 'inherit',
     env,
@@ -181,7 +182,7 @@ export async function main(argv = process.argv) {
       const pid = child.pid;
       // eslint-disable-next-line no-console
       console.error(
-        `[providers] timed out after ${timeoutMs}ms while running test:providers ` +
+        `[providers] timed out after ${timeoutMs}ms while running test:agents ` +
           `(preset=${parsed.presetId}, tier=${parsed.tier}). ` +
           'Set HAPPIER_E2E_PROVIDER_RUN_TIMEOUT_MS to override.',
       );

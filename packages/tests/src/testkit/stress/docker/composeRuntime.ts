@@ -1,6 +1,11 @@
 import { spawn } from 'node:child_process';
 
-import { isStressComposeProjectName } from './composeOwnership';
+import {
+  isStressComposeProjectName,
+  stressComposeOwnerLabelKey,
+  stressComposeOwnerLabelValue,
+  stressComposeRepoRootLabelKey,
+} from './composeOwnership';
 
 export type ComposeImageMetadata = Readonly<{
   createdAt?: string;
@@ -18,7 +23,12 @@ export type ComposeRuntime = Readonly<{
       contextDir?: string;
     },
   ) => Promise<void>;
-  listOwnedProjects: () => Promise<string[]>;
+  listOwnedProjects: (repoRootFingerprint: string) => Promise<string[]>;
+  attestServicesUseImage?: (params: {
+    services: readonly string[];
+    imageName: string;
+    expectedLabels: Record<string, string>;
+  }) => Promise<void>;
   projectHasRunningContainers: (composeProjectName: string) => Promise<boolean>;
   removeProjectResources: (composeProjectName: string) => Promise<void>;
   up: (params: { apiReplicas: number; workerReplicas: number }) => Promise<void>;
@@ -28,6 +38,7 @@ export type ComposeRuntime = Readonly<{
   stop?: (service: string) => Promise<void>;
   stopContainer?: (containerId: string) => Promise<void>;
   killContainer?: (containerId: string) => Promise<void>;
+  startContainer?: (containerId: string) => Promise<void>;
   ps: () => Promise<string>;
   logs: () => Promise<string>;
   serviceContainerIds: (service: string) => Promise<string[]>;
@@ -196,23 +207,58 @@ export function createComposeRuntime(params: {
         { captureStdout: false },
       );
     },
-    listOwnedProjects: async () => {
+    listOwnedProjects: async (repoRootFingerprint) => {
       const projectNames = new Set<string>();
-      const outputs = await Promise.all([
-        runDocker(['ps', '-a', '--format', '{{.Label "com.docker.compose.project"}}'], params.cwd),
-        runDocker(['network', 'ls', '--format', '{{.Label "com.docker.compose.project"}}'], params.cwd),
-        runDocker(['volume', 'ls', '--format', '{{.Label "com.docker.compose.project"}}'], params.cwd),
-      ]);
+      const format = [
+        '{{.Label "com.docker.compose.project"}}',
+        `{{.Label "${stressComposeOwnerLabelKey}"}}`,
+        `{{.Label "${stressComposeRepoRootLabelKey}"}}`,
+      ].join('\t');
+      const output = await runDocker(['ps', '-a', '--format', format], params.cwd);
 
-      for (const output of outputs) {
-        for (const projectName of parseNonEmptyLines(output)) {
-          if (isStressComposeProjectName(projectName)) {
-            projectNames.add(projectName);
-          }
+      for (const line of parseNonEmptyLines(output)) {
+        const [projectName, owner, resourceRepoRootFingerprint] = line.split('\t');
+        if (
+          projectName
+          && isStressComposeProjectName(projectName)
+          && owner === stressComposeOwnerLabelValue
+          && resourceRepoRootFingerprint === repoRootFingerprint
+        ) {
+          projectNames.add(projectName);
         }
       }
 
       return [...projectNames].sort((left, right) => left.localeCompare(right));
+    },
+    attestServicesUseImage: async ({ services, imageName, expectedLabels }) => {
+      for (const service of services) {
+        const containerIds = await listDockerResourceIds(composeArgs('ps', '-q', service), params.cwd);
+        if (containerIds.length === 0) {
+          throw new Error(`Cannot attest ${service} image identity: no compose containers are present`);
+        }
+
+        const output = await runDocker(['inspect', ...containerIds], params.cwd);
+        const entries = JSON.parse(output) as Array<{
+          Id?: string;
+          Config?: {
+            Image?: string;
+            Labels?: Record<string, string>;
+          };
+        }>;
+        for (const entry of entries) {
+          const actualImageName = entry.Config?.Image;
+          const actualLabels = entry.Config?.Labels ?? {};
+          const labelsMatch = Object.entries(expectedLabels).every(
+            ([key, expectedValue]) => actualLabels[key] === expectedValue,
+          );
+          if (actualImageName !== imageName || !labelsMatch) {
+            throw new Error(
+              `Compose ${service} container ${entry.Id ?? 'unknown'} did not start from the expected stress image `
+              + `${imageName} with the current source and repo-root labels`,
+            );
+          }
+        }
+      }
     },
     projectHasRunningContainers: async (composeProjectName) => {
       const runningContainerIds = await listDockerResourceIds(
@@ -279,6 +325,9 @@ export function createComposeRuntime(params: {
     },
     killContainer: async (containerId) => {
       await runDocker(['kill', containerId], params.cwd, { captureStdout: false });
+    },
+    startContainer: async (containerId) => {
+      await runDocker(['start', containerId], params.cwd, { captureStdout: false });
     },
     ps: async () => {
       return await runDocker(composeArgs('ps', '--format', 'json'), params.cwd);

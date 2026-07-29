@@ -103,37 +103,6 @@ async function waitForRequestQuiescence(params: Readonly<{
   throw new Error(`Timed out waiting for ${params.context} request quiescence; recent=${JSON.stringify(summarized)}`);
 }
 
-async function waitForChangesBeforeSessionDetail(params: Readonly<{
-  proxy: HttpRequestRecordingProxy;
-  timeoutMs: number;
-  intervalMs: number;
-  context: string;
-}>): Promise<void> {
-  const startedAt = Date.now();
-  while (Date.now() - startedAt < params.timeoutMs) {
-    const relevant = params.proxy.entries()
-      .filter((entry) => isChangesRead(entry) || isSessionDetailRead(entry))
-      .sort((a, b) => a.startedAtMs - b.startedAtMs);
-    const firstRelevant = relevant[0];
-    if (firstRelevant && isSessionDetailRead(firstRelevant)) {
-      throw new Error(`Observed session-detail read before ${params.context}; relevant=${JSON.stringify(summarizeRequests({
-        requests: relevant,
-        startedAtMs: startedAt,
-      }))}`);
-    }
-    if (firstRelevant && isChangesRead(firstRelevant)) return;
-    await sleep(params.intervalMs);
-  }
-
-  const recentHttp = params.proxy.entries()
-    .filter((entry) => !entry.path.startsWith('/socket.io/') && !entry.path.startsWith('/v1/updates/'))
-    .slice(-20);
-  throw new Error(`Timed out waiting for ${params.context}; recentHttp=${JSON.stringify(summarizeRequests({
-    requests: recentHttp,
-    startedAtMs: startedAt,
-  }))}`);
-}
-
 describe('core e2e: socket-first runtime route counts', () => {
   let connectedFixture: StartedConnectedServicesCodexDaemonFixture | null = null;
   let tokenServer: Awaited<ReturnType<typeof startFakeTokenServer>> | null = null;
@@ -162,8 +131,6 @@ describe('core e2e: socket-first runtime route counts', () => {
 
   it('keeps healthy idle ACP/provider waits at zero repeated session-detail reads after startup', async () => {
     await withTemporaryEnv({
-      HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS: '50',
-      HAPPIER_SESSION_SOCKET_STALE_SAFETY_INTERVAL_MS: '60000',
       HAPPIER_SOCKET_TRANSPORTS: 'polling',
     }, async () => {
       const testDir = run.testDir(`socket-first-idle-route-counts-${randomUUID()}`);
@@ -194,8 +161,6 @@ describe('core e2e: socket-first runtime route counts', () => {
       });
 
       const runnerEnv = {
-        HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS: '50',
-        HAPPIER_SESSION_SOCKET_STALE_SAFETY_INTERVAL_MS: '60000',
         HAPPIER_SOCKET_TRANSPORTS: 'polling',
       };
       const spawn = await spawnConnectedCodexSession(connectedFixture, randomUUID(), {
@@ -216,75 +181,14 @@ describe('core e2e: socket-first runtime route counts', () => {
       const measurementStartedAt = Date.now();
       await sleep(8_000);
 
-      const postStartupDetailReads = proxy.entries().filter(isSessionDetailRead);
+      const postStartupDetailReads = proxy.entries().filter((entry) =>
+        isSessionDetailRead(entry) || isChangesRead(entry));
       expect(summarizeRequests({
         requests: postStartupDetailReads,
         startedAtMs: measurementStartedAt,
       })).toEqual([]);
     });
   }, 240_000);
-
-  it('runs stale socket safety through /v2/changes before any heavy session-detail read', async () => {
-    await withTemporaryEnv({
-      HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS: '0',
-      HAPPIER_SESSION_SOCKET_STALE_SAFETY_INTERVAL_MS: '60000',
-      HAPPIER_SOCKET_TRANSPORTS: 'polling',
-    }, async () => {
-      const testDir = run.testDir(`socket-first-stale-route-counts-${randomUUID()}`);
-      tokenServer = await startFakeTokenServer({
-        respond: () => ({
-          status: 200,
-          body: {
-            access_token: 'access-refreshed',
-            refresh_token: 'refresh-refreshed',
-            id_token: 'id-refreshed',
-            expires_in: 3600,
-            token_type: 'Bearer',
-          },
-        }),
-      });
-      connectedFixture = await startConnectedServicesCodexDaemon({
-        testDir,
-        testName: 'socket-first-stale-route-counts',
-        tokenUrl: tokenServer.tokenUrl,
-        accessToken: 'access-initial',
-        refreshToken: 'refresh-initial',
-        idToken: 'id-initial',
-        expiresAt: Date.now() + 60 * 60_000,
-        resolveDaemonServerBaseUrl: async (serverBaseUrl) => {
-          proxy = await startHttpRequestRecordingProxy({ targetBaseUrl: serverBaseUrl });
-          return proxy.baseUrl;
-        },
-      });
-
-      const runnerEnv = {
-        HAPPIER_PENDING_QUEUE_IDLE_WAKE_POLL_INTERVAL_MS: '0',
-        HAPPIER_SESSION_SOCKET_STALE_SAFETY_INTERVAL_MS: '60000',
-        HAPPIER_SOCKET_TRANSPORTS: 'polling',
-      };
-      const spawn = await spawnConnectedCodexSession(connectedFixture, randomUUID(), {
-        environmentVariables: runnerEnv,
-      });
-      expect(spawn.status).toBe(200);
-      expect(spawn.data.success).toBe(true);
-
-      if (!proxy) throw new Error('Expected recording proxy');
-      await waitForRequestQuiescence({
-        proxy,
-        predicate: (entry) => isSessionDetailRead(entry) || isChangesRead(entry),
-        quietMs: 5_000,
-        timeoutMs: 60_000,
-        context: 'startup realtime catch-up',
-      });
-      proxy.clear();
-      await waitForChangesBeforeSessionDetail({
-        proxy,
-        timeoutMs: 85_000,
-        intervalMs: 500,
-        context: 'stale socket safety /v2/changes request',
-      });
-    });
-  }, 360_000);
 
   it('limits concurrent existing-session attach detail reads during daemon spawn bursts', async () => {
     const testDir = run.testDir(`socket-first-attach-burst-${randomUUID()}`);

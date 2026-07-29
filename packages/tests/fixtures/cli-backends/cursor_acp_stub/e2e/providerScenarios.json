@@ -1,0 +1,4 @@
+{
+  "v": 1,
+  "tiers": { "smoke": [], "extended": ["cursor_acp_stub_captured_lifecycle_replay"] }
+}

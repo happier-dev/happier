@@ -1,9 +1,11 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
+
+import { createIsolatedFakeClaudeControlShim } from '../../src/testkit/fakeClaude';
 
 function parseJsonLines(raw: string): any[] {
   return raw
@@ -20,6 +22,71 @@ function parseJsonLines(raw: string): any[] {
 }
 
 describe('fake Claude CLI fixture', () => {
+  it('uses scenario-owned controls when the parent fake-control environment is filtered', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-shim-'));
+    try {
+      const ambientHome = join(dir, 'ambient-home');
+      await mkdir(ambientHome, { recursive: true });
+      const fixture = await createIsolatedFakeClaudeControlShim({
+        testDir: dir,
+        invocationId: 'isolated-invocation',
+        captureEnvironmentKeys: ['ANTHROPIC_API_KEY'],
+        logFullStdin: true,
+      });
+      const marker = 'ISOLATED_FAKE_CLAUDE_STDIN';
+      const input = JSON.stringify({
+        type: 'message',
+        message: { role: 'user', content: [{ type: 'text', text: marker }] },
+      });
+      const filteredParentEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: ambientHome,
+        ANTHROPIC_API_KEY: 'scenario-provider-key',
+      };
+      for (const key of Object.keys(filteredParentEnv)) {
+        if (key.startsWith('HAPPIER_E2E_FAKE_CLAUDE_') || key === 'CLAUDE_CONFIG_DIR') {
+          delete filteredParentEnv[key];
+        }
+      }
+
+      const res = spawnSync(
+        process.execPath,
+        [fixture.executablePath, '--output-format', 'stream-json', '--input-format', 'stream-json'],
+        {
+          cwd: dir,
+          env: filteredParentEnv,
+          input: `${input}\n`,
+          encoding: 'utf8',
+        },
+      );
+
+      expect(res.status).toBe(0);
+      const events = parseJsonLines(await readFile(fixture.logPath, 'utf8'));
+      expect(events).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          type: 'invocation',
+          invocationId: 'isolated-invocation',
+          environmentAttestation: {
+            ANTHROPIC_API_KEY: expect.objectContaining({ present: true }),
+          },
+        }),
+        expect.objectContaining({
+          type: 'sdk_stdin',
+          invocationId: 'isolated-invocation',
+          userText: marker,
+        }),
+      ]));
+      expect(await readdir(ambientHome, { recursive: true })).toEqual([]);
+      expect(await readdir(fixture.configDir, { recursive: true }))
+        .toEqual(expect.arrayContaining([expect.stringMatching(/\.jsonl$/)]));
+      expect(fixture.executablePath).toBe(resolve(join(dir, 'fake-claude-control.mjs')));
+      expect(fixture.logPath).toBe(resolve(join(dir, 'fake-claude.jsonl')));
+      expect(fixture.configDir).toBe(resolve(join(dir, 'fake-claude-config')));
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('acknowledges control_request messages with a control_response', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-fake-claude-control-'));
     try {

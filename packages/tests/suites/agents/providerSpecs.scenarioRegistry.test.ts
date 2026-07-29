@@ -1,0 +1,114 @@
+import { describe, expect, it } from 'vitest';
+
+import { loadProvidersFromCliSpecs } from '../../src/testkit/providers/specs/providerSpecs';
+import { scenarioCatalog } from '../../src/testkit/providers/scenarios/scenarioCatalog';
+
+describe('providers: cli provider scenario registry', () => {
+  it('loads provider scenario registry from apps/cli backends when present', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const opencode = providers.find((p) => p.id === 'opencode');
+    expect(opencode).toBeTruthy();
+
+    // Use runtime checks to avoid coupling the test to type changes during refactors.
+    const opencodeObj = opencode as Record<string, unknown> | undefined;
+    const registry =
+      opencodeObj && typeof opencodeObj.scenarioRegistry === 'object' && opencodeObj.scenarioRegistry !== null
+        ? (opencodeObj.scenarioRegistry as Record<string, unknown>)
+        : null;
+    const tiers = registry && typeof registry.tiers === 'object' && registry.tiers !== null
+      ? (registry.tiers as Record<string, unknown>)
+      : null;
+
+    expect(registry && typeof registry === 'object').toBe(true);
+    expect(typeof registry?.v).toBe('number');
+    expect(registry?.v).toBe(1);
+    expect(tiers && typeof tiers === 'object').toBe(true);
+    expect(Array.isArray(tiers?.smoke)).toBe(true);
+    expect(Array.isArray(tiers?.extended)).toBe(true);
+    expect(tiers?.smoke).toContain('execute_trace_ok');
+  });
+
+  it('does not include shell-dependent LS scenarios for kimi in extended tier', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const kimi = providers.find((p) => p.id === 'kimi');
+    expect(kimi).toBeTruthy();
+
+    const kimiObj = kimi as Record<string, unknown> | undefined;
+    const registry =
+      kimiObj && typeof kimiObj.scenarioRegistry === 'object' && kimiObj.scenarioRegistry !== null
+        ? (kimiObj.scenarioRegistry as Record<string, unknown>)
+        : null;
+    const tiers = registry && typeof registry.tiers === 'object' && registry.tiers !== null
+      ? (registry.tiers as Record<string, unknown>)
+      : null;
+    const extended = Array.isArray(tiers?.extended) ? (tiers?.extended as string[]) : [];
+
+    expect(extended).not.toContain('glob_list_files');
+    expect(extended).not.toContain('search_ls_equivalence');
+  });
+
+  it('does not include unsupported edit/diff scenarios for kimi in extended tier', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const kimi = providers.find((p) => p.id === 'kimi');
+    expect(kimi).toBeTruthy();
+
+    const kimiObj = kimi as Record<string, unknown> | undefined;
+    const registry =
+      kimiObj && typeof kimiObj.scenarioRegistry === 'object' && kimiObj.scenarioRegistry !== null
+        ? (kimiObj.scenarioRegistry as Record<string, unknown>)
+        : null;
+    const tiers = registry && typeof registry.tiers === 'object' && registry.tiers !== null
+      ? (registry.tiers as Record<string, unknown>)
+      : null;
+    const extended = Array.isArray(tiers?.extended) ? (tiers?.extended as string[]) : [];
+
+    expect(extended).not.toContain('edit_result_includes_diff');
+    expect(extended).not.toContain('multi_file_edit_in_workspace');
+    expect(extended).not.toContain('multi_file_edit_in_workspace_includes_diff');
+  });
+
+  it('does not include missing-file read scenario for kimi in extended tier', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const kimi = providers.find((p) => p.id === 'kimi');
+    expect(kimi).toBeTruthy();
+
+    const kimiObj = kimi as Record<string, unknown> | undefined;
+    const registry =
+      kimiObj && typeof kimiObj.scenarioRegistry === 'object' && kimiObj.scenarioRegistry !== null
+        ? (kimiObj.scenarioRegistry as Record<string, unknown>)
+        : null;
+    const tiers = registry && typeof registry.tiers === 'object' && registry.tiers !== null
+      ? (registry.tiers as Record<string, unknown>)
+      : null;
+    const extended = Array.isArray(tiers?.extended) ? (tiers?.extended as string[]) : [];
+
+    expect(extended).not.toContain('read_missing_file_in_workspace');
+  });
+
+  it('gives Grok generic tool, provider sandbox, permission, and MCP coverage while retaining lifecycle coverage', async () => {
+    const providers = await loadProvidersFromCliSpecs();
+    const grok = providers.find((provider) => provider.id === 'grok');
+
+    expect(grok).toBeTruthy();
+    expect(grok?.scenarioRegistry.tiers.smoke).toContain('read_known_file');
+    expect(grok?.scenarioRegistry.tiers.extended).toEqual(expect.arrayContaining([
+      'acp_resume_load_session',
+      'abort_turn_then_continue',
+      'search_known_token',
+      'edit_result_includes_diff',
+      'grok_set_reasoning_effort',
+      'grok_image_prompt',
+      'grok_outside_workspace_write_rejected',
+      'mcp_change_title',
+    ]));
+    expect(scenarioCatalog.mcp_change_title(grok!).maxTraceEvents).toEqual({
+      toolCalls: 2,
+      toolResults: 2,
+      permissionRequests: 1,
+    });
+    expect(scenarioCatalog.grok_outside_workspace_write_rejected(grok!).requiredAnyFixtureKeys).toEqual([
+      ['acp/grok/tool-call/Write'],
+      ['acp/grok/tool-result/Write'],
+    ]);
+  });
+});

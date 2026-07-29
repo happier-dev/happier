@@ -19,7 +19,6 @@ const run = createRunDirs({ runLabel: 'core' });
 type UnknownRecord = Record<string, unknown>;
 
 const CONNECTED_SERVICE_RECOVERY_ENV = {
-  HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
   HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
   HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: '1',
   HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED: '1',
@@ -147,6 +146,7 @@ async function patchConnectedServiceAuthGroupRuntimeState(params: Readonly<{
   serviceId: string;
   groupId: string;
   expectedGeneration: number;
+  expectedRuntimeStateRevision: number;
   memberProfileId: string;
   quotaExhaustedUntilMs: number | null;
 }>): Promise<UnknownRecord> {
@@ -160,6 +160,7 @@ async function patchConnectedServiceAuthGroupRuntimeState(params: Readonly<{
       },
       body: JSON.stringify({
         expectedGeneration: params.expectedGeneration,
+        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
         memberStates: [
           {
             profileId: params.memberProfileId,
@@ -253,6 +254,7 @@ describe('core e2e: connected-service quota switch and recovery contracts', () =
       serviceId,
       groupId,
       expectedGeneration: 0,
+      expectedRuntimeStateRevision: 0,
       memberProfileId: 'primary',
       quotaExhaustedUntilMs: resetAtMs,
     });
@@ -300,6 +302,7 @@ describe('core e2e: connected-service quota switch and recovery contracts', () =
       serviceId,
       groupId,
       expectedGeneration: 0,
+      expectedRuntimeStateRevision: Number(restarted.runtimeStateRevision),
       memberProfileId: 'primary',
       quotaExhaustedUntilMs: null,
     });

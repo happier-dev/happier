@@ -32,7 +32,6 @@ describe('core e2e: manual connected-service auth switch', () => {
       testDir,
       dbProvider: 'sqlite',
       extraEnv: {
-        HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
         HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED: '1',
       },
     });

@@ -1,5 +1,7 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+
+import { seedCurrentLocalPathPluginFixture } from '../../../../../apps/cli/src/plugins/store/registry/currentState.testkit';
 
 type PluginSdkV1ContributionMap = Readonly<Record<string, unknown>>;
 
@@ -112,27 +114,6 @@ export async function writePluginSdkV1Fixture(params: Readonly<{
     }
 }
 
-type PluginStateFile = Readonly<{
-    t: 'happier_plugin_state_v1';
-    schemaVersion: 1;
-    plugins: Record<string, unknown>;
-}>;
-
-async function readStateFile(path: string): Promise<PluginStateFile> {
-    try {
-        return JSON.parse(await readFile(path, 'utf8')) as PluginStateFile;
-    } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-            return {
-                t: 'happier_plugin_state_v1',
-                schemaVersion: 1,
-                plugins: {},
-            };
-        }
-        throw error;
-    }
-}
-
 export async function writeEnabledPluginSdkV1State(params: Readonly<{
     happyHomeDir: string;
     pluginRoot: string;
@@ -140,62 +121,13 @@ export async function writeEnabledPluginSdkV1State(params: Readonly<{
     manifestVersion?: string;
     devWatch?: boolean;
 }>): Promise<void> {
-    const rootDir = join(params.happyHomeDir, 'plugins', 'plugins');
-    const stateDir = join(rootDir, 'state');
-    const stateFilePath = join(stateDir, 'plugin-state.v1.json');
-    const manifestPath = join(params.pluginRoot, '.happier-plugin', 'plugin.json');
-
-    await Promise.all([
-        mkdir(stateDir, { recursive: true }),
-        mkdir(join(rootDir, 'installed'), { recursive: true }),
-        mkdir(join(rootDir, 'cache'), { recursive: true }),
-        mkdir(join(rootDir, 'logs'), { recursive: true }),
-        mkdir(join(rootDir, 'locks'), { recursive: true }),
-        mkdir(join(rootDir, 'storage'), { recursive: true }),
-        mkdir(join(rootDir, 'secrets'), { recursive: true }),
-        mkdir(join(rootDir, 'settings'), { recursive: true }),
-    ]);
-
-    const current = await readStateFile(stateFilePath);
-    await writeFile(
-        stateFilePath,
-        JSON.stringify(
-            {
-                t: 'happier_plugin_state_v1',
-                schemaVersion: 1,
-                plugins: {
-                    ...current.plugins,
-                    [params.pluginId]: {
-                        source: {
-                            kind: 'path',
-                            locator: params.pluginRoot,
-                            trustPolicy: 'local_trusted',
-                            installPolicy: 'link',
-                            resolvedPath: params.pluginRoot,
-                            manifestPath,
-                            ...(params.devWatch !== undefined ? { devWatch: params.devWatch } : {}),
-                        },
-                        compatibility: {
-                            status: 'unknown',
-                            diagnostics: [],
-                        },
-                        install: {
-                            mode: 'link',
-                            manifestVersion: params.manifestVersion ?? '1.0.0',
-                            manifestDigest: null,
-                            installedPath: null,
-                        },
-                        state: {
-                            enabled: true,
-                        },
-                    },
-                },
-            },
-            null,
-            2,
-        ),
-        'utf8',
-    );
+    await seedCurrentLocalPathPluginFixture({
+        happyHomeDir: params.happyHomeDir,
+        pluginRoot: params.pluginRoot,
+        pluginId: params.pluginId,
+        manifestVersion: params.manifestVersion ?? '1.0.0',
+        ...(params.devWatch === undefined ? {} : { devWatch: params.devWatch }),
+    });
 }
 
 export function createReloadablePluginSdkV1DaemonModule(params: Readonly<{

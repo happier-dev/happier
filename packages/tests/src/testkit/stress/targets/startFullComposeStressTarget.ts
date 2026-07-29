@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
+import nacl from 'tweetnacl';
 
 import { repoRootDir } from '../../paths';
 import { computeComposeServerImageFingerprint } from '../docker/computeComposeServerImageFingerprint';
@@ -24,7 +25,9 @@ import type {
   StressTargetServiceContainer,
 } from './stressTargetTypes';
 
-const canonicalStressServerImageName = 'happier-stress-compose-topology-canonical-server';
+const stressServerImageNamePrefix = 'happier-stress-compose-server';
+const relayRouteGrantSigningKeyId = 'stress-route-grant';
+const relayAllowedPorts = [3000] as const;
 
 function randomSecret(): string {
   return randomBytes(18).toString('hex');
@@ -99,23 +102,33 @@ WORKDIR /repo
 RUN corepack enable && corepack prepare yarn@1.22.22 --activate
 ENV HAPPIER_INSTALL_SCOPE=server,protocol,agents,cli-common,release-runtime
 COPY package.json yarn.lock ./
-RUN mkdir -p apps/server packages/agents packages/cli-common packages/protocol packages/release-runtime scripts/pipeline/expo scripts/workspaces
+RUN node -e "const fs=require('fs');const packageJson=require('./package.json');delete packageJson.dependencies?.['@happier-dev/cli'];fs.writeFileSync('package.json',JSON.stringify(packageJson));"
+RUN mkdir -p apps/cli apps/server apps/ui packages/agents packages/cli-common packages/plugin-sdk packages/plugins/review-coderabbit packages/plugins/review-deepsec packages/protocol packages/release-runtime scripts/pipeline/expo scripts/workspaces
 COPY apps/server/package.json apps/server/
 COPY packages/agents/package.json packages/agents/
 COPY packages/cli-common/package.json packages/cli-common/
+COPY packages/plugin-sdk/package.json packages/plugin-sdk/
+COPY packages/plugins/review-coderabbit/package.json packages/plugins/review-coderabbit/
+COPY packages/plugins/review-deepsec/package.json packages/plugins/review-deepsec/
 COPY packages/protocol/package.json packages/protocol/
 COPY packages/release-runtime/package.json packages/release-runtime/
 COPY scripts/pipeline/expo/eas-postinstall.mjs scripts/pipeline/expo/
 COPY scripts/workspaces ./scripts/workspaces
 RUN yarn install --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+COPY apps/cli/package.json apps/cli/
+COPY apps/ui/package.json apps/ui/
+COPY .github/feature-policy ./.github/feature-policy
+COPY apps/stack/scripts/utils ./apps/stack/scripts/utils
 COPY apps/server ./apps/server
 COPY packages/agents ./packages/agents
 COPY packages/cli-common ./packages/cli-common
+COPY packages/plugin-sdk ./packages/plugin-sdk
+COPY packages/plugins/review-coderabbit ./packages/plugins/review-coderabbit
+COPY packages/plugins/review-deepsec ./packages/plugins/review-deepsec
 COPY packages/protocol ./packages/protocol
 COPY packages/release-runtime ./packages/release-runtime
-RUN yarn workspace @happier-dev/protocol postinstall:real && yarn workspace @happier-dev/agents postinstall:real
-RUN yarn workspace @happier-dev/release-runtime postinstall:real
-RUN yarn workspace @happier-dev/server postinstall:real
+RUN node --input-type=module -e "import { readFileSync } from 'node:fs'; import { spawnSync } from 'node:child_process'; const { resolveWorkspaceDependencyBuildOrder } = await import('./scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs'); const serverPackageJson = JSON.parse(readFileSync('./apps/server/package.json', 'utf8')); const seedPackageNames = ['dependencies', 'optionalDependencies', 'devDependencies'].flatMap((field) => Object.keys(serverPackageJson[field] ?? {})).filter((name) => name.startsWith('@happier-dev/')); const workspaceNames = resolveWorkspaceDependencyBuildOrder({ repoRoot: '/repo', seedPackageNames }); for (const workspaceName of workspaceNames) { const result = spawnSync('yarn', ['-s', 'workspace', '@happier-dev/' + workspaceName, 'build'], { cwd: '/repo', stdio: 'inherit', env: process.env }); if (result.error) throw result.error; if (result.status !== 0) process.exit(result.status ?? 1); }"
+RUN yarn workspace @happier-dev/server generate:providers
 ENV NODE_ENV=production
 ENV PORT=3005
 ENV RUN_MIGRATIONS=1
@@ -170,10 +183,15 @@ async function writeStartupFailureDiagnostics(params: {
   ]);
 }
 
-async function cleanupOwnedStressComposeProjects(runtime: ComposeRuntime, currentProjectName: string): Promise<void> {
+async function cleanupOwnedStressComposeProjects(
+  runtime: ComposeRuntime,
+  currentProjectName: string,
+  repoRootFingerprint: string,
+): Promise<void> {
   await runtime.removeProjectResources(currentProjectName);
 
-  const staleProjectNames = (await runtime.listOwnedProjects()).filter((projectName) => projectName !== currentProjectName);
+  const staleProjectNames = (await runtime.listOwnedProjects(repoRootFingerprint))
+    .filter((projectName) => projectName !== currentProjectName);
   for (const projectName of staleProjectNames) {
     if (await runtime.projectHasRunningContainers(projectName)) {
       continue;
@@ -182,7 +200,7 @@ async function cleanupOwnedStressComposeProjects(runtime: ComposeRuntime, curren
   }
 
   const blockingProjectNames: string[] = [];
-  for (const projectName of await runtime.listOwnedProjects()) {
+  for (const projectName of await runtime.listOwnedProjects(repoRootFingerprint)) {
     if (projectName === currentProjectName) {
       blockingProjectNames.push(projectName);
       continue;
@@ -270,7 +288,7 @@ export async function startFullComposeStressTarget(
     : gatewayPort;
   const publicBaseUrl = `http://127.0.0.1:${frontDoorPort}`;
   const composeProjectName = createComposeProjectName(params.testDir);
-  const serverImageName = canonicalStressServerImageName;
+  const serverImageName = `${stressServerImageNamePrefix}-${repoRootFingerprint}-${imageFreshnessFingerprint}`;
 
   const secrets = {
     postgresDb: 'stressdb',
@@ -280,6 +298,15 @@ export async function startFullComposeStressTarget(
     minioAccessKey: `minio-${deps.randomSecret().slice(0, 8)}`,
     minioSecretKey: deps.randomSecret(),
     s3Bucket: `stress-${deps.randomSecret().slice(0, 8)}`,
+  };
+  const relaySigningSeed = randomBytes(nacl.sign.seedLength);
+  const relaySigningKeyPair = nacl.sign.keyPair.fromSeed(relaySigningSeed);
+  const peerMediation = {
+    allowedPorts: relayAllowedPorts,
+    routeGrantSigningKeyId: relayRouteGrantSigningKeyId,
+    routeGrantSigningPrivateKey: relaySigningSeed.toString('base64url'),
+    routeGrantSigningPublicKey: Buffer.from(relaySigningKeyPair.publicKey).toString('base64url'),
+    routeGrantSigningExpiresAt: String(Date.now() + 7 * 24 * 60 * 60 * 1000),
   };
 
   const composeFilePath = join(topologyDir, 'docker-compose.yml');
@@ -317,6 +344,7 @@ export async function startFullComposeStressTarget(
         minioConsolePort,
       },
       secrets,
+      peerMediation,
     }),
     'utf8',
   );
@@ -363,7 +391,7 @@ export async function startFullComposeStressTarget(
   let startupFailureCleanedUp = false;
 
   try {
-    await cleanupOwnedStressComposeProjects(runtime, composeProjectName);
+    await cleanupOwnedStressComposeProjects(runtime, composeProjectName, repoRootFingerprint);
 
     const imageExists = await runtime.imageExists(serverImageName);
     const existingImageMetadata = imageExists ? await runtime.inspectImage(serverImageName) : null;
@@ -442,6 +470,15 @@ export async function startFullComposeStressTarget(
           baseUrl: publicBaseUrl,
           attempts: params.config.flakeRetry ? 2 : 1,
         });
+        await runtime.attestServicesUseImage?.({
+          services: ['api', 'worker'],
+          imageName: serverImageName,
+          expectedLabels: {
+            [stressComposeOwnerLabelKey]: stressComposeOwnerLabelValue,
+            [stressComposeRepoRootLabelKey]: repoRootFingerprint,
+            [stressComposeImageFingerprintLabelKey]: imageFreshnessFingerprint,
+          },
+        });
         startupAttemptActive = false;
         break;
       } catch (error) {
@@ -473,7 +510,7 @@ export async function startFullComposeStressTarget(
     const psPath = join(topologyDir, 'docker-compose.ps.txt');
     let preserveTopologyOnStop = false;
 
-    return {
+    const startedTarget: StartedStressTarget = {
       mode: 'full-compose',
       baseUrl: publicBaseUrl,
       topology: {
@@ -554,6 +591,9 @@ export async function startFullComposeStressTarget(
           }
           await runtime.killContainer(containerId);
         },
+        startContainer: runtime.startContainer
+          ? async (containerId) => await runtime.startContainer!(containerId)
+          : undefined,
         execInService: async (service, command) => {
           return await runtime.execCapture(service, command);
         },
@@ -576,6 +616,23 @@ export async function startFullComposeStressTarget(
         writeFileSync(psPath, `${await runtime.ps()}\n`, 'utf8');
       },
     };
+    Object.defineProperty(startedTarget, 'testRuntime', {
+      configurable: false,
+      enumerable: false,
+      writable: false,
+      value: {
+        peerMediation: {
+          allowedPorts: peerMediation.allowedPorts,
+          routeGrantSigning: {
+            keyId: peerMediation.routeGrantSigningKeyId,
+            privateKeySeedBase64Url: peerMediation.routeGrantSigningPrivateKey,
+            publicKeyBase64Url: peerMediation.routeGrantSigningPublicKey,
+            expiresAt: peerMediation.routeGrantSigningExpiresAt,
+          },
+        },
+      },
+    });
+    return startedTarget;
   } catch (error) {
     if (!startupFailureCleanedUp || startupAttemptActive || topologyIsRunning) {
       await runtime.down().catch(() => undefined);

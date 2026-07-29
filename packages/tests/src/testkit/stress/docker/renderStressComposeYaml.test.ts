@@ -20,6 +20,13 @@ describe('renderStressComposeYaml', () => {
         minioSecretKey: 'minio-secret',
         s3Bucket: 'stress-bucket',
       },
+      peerMediation: {
+        allowedPorts: [3000],
+        routeGrantSigningKeyId: 'stress-route-key',
+        routeGrantSigningPrivateKey: 'stress-private-seed',
+        routeGrantSigningPublicKey: 'stress-public-key',
+        routeGrantSigningExpiresAt: '2099-01-01T00:00:00.000Z',
+      },
       config: {
         apiReplicas: 3,
         workerReplicas: 2,
@@ -54,7 +61,14 @@ describe('renderStressComposeYaml', () => {
     expect(yaml).toContain('SERVER_ROLE: worker');
     expect(yaml).toContain('HAPPIER_SERVER_FLAVOR: full');
     expect(yaml).toContain('HAPPIER_SOCKET_ADAPTER: redis-streams');
+    expect(yaml.match(/HAPPIER_MACHINE_SOCKET_OWNER_TTL_SECONDS: "5"/g)).toHaveLength(2);
     expect(yaml).toContain('HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1"');
+    expect(yaml).toContain('HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: "1"');
+    expect(yaml).toContain('HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: "3000"');
+    expect(yaml).toContain('HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_KEY_ID: stress-route-key');
+    expect(yaml).toContain('HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PRIVATE_KEY: stress-private-seed');
+    expect(yaml).toContain('HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_PUBLIC_KEY: stress-public-key');
+    expect(yaml).toContain('HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT: 2099-01-01T00:00:00.000Z');
     expect(yaml).toContain('HAPPIER_FILES_BACKEND: s3');
     expect(yaml).toContain('S3_ACCESS_KEY: minio-user');
     expect(yaml).toContain('S3_SECRET_KEY: minio-secret');
@@ -69,6 +83,8 @@ describe('renderStressComposeYaml', () => {
     expect(yaml).toContain('happier.stress.owner: stress-harness');
     expect(yaml).toContain('happier.stress.repo-root: repo-fingerprint');
     expect(yaml).toContain('healthcheck:');
+    expect(yaml).toContain('head -n 1 \\"$$PGDATA/postmaster.pid\\"');
+    expect(yaml).toContain('= \\"1\\" && pg_isready -U stress -d stressdb');
     expect(yaml).toContain('http://127.0.0.1:53288/health');
     expect(yaml).toContain('127.0.0.1:43080:8080');
     expect(yaml).toContain('127.0.0.1:43081:53288');

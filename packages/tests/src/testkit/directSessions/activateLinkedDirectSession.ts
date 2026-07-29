@@ -1,4 +1,4 @@
-import type { ExternalSessionsProviderId, ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsAgentId, ExternalSessionsSource } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { DataKeyRpcResult } from '../syntheticAgent/rpcClient';
@@ -21,7 +21,7 @@ export async function activateLinkedDirectSession(params: Readonly<{
   machineRpc: DataKeyRpcClientLike;
   machineId: string;
   sessionId: string;
-  providerId: ExternalSessionsProviderId;
+  providerId: ExternalSessionsAgentId;
   remoteSessionId: string;
   source: ExternalSessionsSource;
   timeoutMs?: number;

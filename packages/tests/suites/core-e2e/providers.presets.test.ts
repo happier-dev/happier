@@ -18,6 +18,7 @@ describe('providers: run presets', () => {
       'HAPPIER_E2E_PROVIDER_QWEN',
       'HAPPIER_E2E_PROVIDER_KIMI',
       'HAPPIER_E2E_PROVIDER_AUGGIE',
+      'HAPPIER_E2E_PROVIDER_CURSOR_ACP_STUB',
     ] as const;
 
     const cases: Array<{
@@ -33,6 +34,7 @@ describe('providers: run presets', () => {
       { provider: 'qwen', tier: 'smoke', enabledFlags: ['HAPPIER_E2E_PROVIDER_QWEN'] },
       { provider: 'kimi', tier: 'extended', enabledFlags: ['HAPPIER_E2E_PROVIDER_KIMI'] },
       { provider: 'auggie', tier: 'smoke', enabledFlags: ['HAPPIER_E2E_PROVIDER_AUGGIE'] },
+      { provider: 'cursor_acp_stub', tier: 'extended', enabledFlags: ['HAPPIER_E2E_PROVIDER_CURSOR_ACP_STUB'] },
       {
         provider: 'all',
         tier: 'smoke',

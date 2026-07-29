@@ -1,5 +1,7 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { mkdir, open, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -18,6 +20,8 @@ import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi
 import { collectTransferRelayV2Traffic } from '../../src/testkit/uiE2e/transferRelayV2TrafficCapture';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
+const CANCELED_UPLOAD_BYTES = 40 * 1024 * 1024;
+const LARGE_FILE_CHUNK_BYTES = 1024 * 1024;
 
 test.use({ acceptDownloads: true });
 
@@ -98,6 +102,57 @@ function pushLimited(list: string[], value: string, maxEntries = 200): void {
   }
 }
 
+async function createDeterministicLargeFile(path: string, sizeBytes: number): Promise<string> {
+  const chunk = Buffer.allocUnsafe(LARGE_FILE_CHUNK_BYTES);
+  for (let index = 0; index < chunk.byteLength; index += 1) {
+    chunk[index] = (index * 31 + 17) & 0xff;
+  }
+
+  const hash = createHash('sha256');
+  const handle = await open(path, 'w');
+  try {
+    let writtenBytes = 0;
+    while (writtenBytes < sizeBytes) {
+      const bytes = chunk.subarray(0, Math.min(chunk.byteLength, sizeBytes - writtenBytes));
+      await handle.write(bytes);
+      hash.update(bytes);
+      writtenBytes += bytes.byteLength;
+    }
+  } finally {
+    await handle.close();
+  }
+  return hash.digest('hex');
+}
+
+type DaemonUploadPartial = Readonly<{ path: string; sizeBytes: number }>;
+
+async function readDaemonUploadPartials(daemonPid: number): Promise<DaemonUploadPartial[]> {
+  const baseRoot = join(tmpdir(), 'happier', 'file-transfers');
+  const roots = await readdir(baseRoot, { withFileTypes: true }).catch(() => []);
+  const partials: DaemonUploadPartial[] = [];
+
+  for (const root of roots) {
+    if (!root.isDirectory() || !root.name.startsWith(`${daemonPid}-`)) continue;
+    const rootPath = join(baseRoot, root.name);
+    const entries = await readdir(rootPath, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith('.upload')) continue;
+      const path = join(rootPath, entry.name);
+      const fileStats = await stat(path).catch(() => null);
+      if (!fileStats) continue;
+      partials.push({ path, sizeBytes: fileStats.size });
+    }
+  }
+
+  return partials;
+}
+
+async function readDaemonLog(daemon: StartedDaemon): Promise<string> {
+  const logPath = daemon.state.daemonLogPath;
+  if (!logPath) return '';
+  return await readFile(logPath, 'utf8').catch(() => '');
+}
+
 test.describe('ui e2e: relay fallback when direct peer is disabled', () => {
   test.describe.configure({ mode: 'serial' });
 
@@ -156,7 +211,7 @@ test.describe('ui e2e: relay fallback when direct peer is disabled', () => {
     await server?.stop().catch(() => {});
   });
 
-  test('downloads a file via server-mediated fallback when direct peer is disabled', async ({ page }, testInfo) => {
+  test('downloads and uploads via server-mediated fallback, including admitted upload cancellation', async ({ page }, testInfo) => {
     test.setTimeout(420_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
@@ -173,7 +228,12 @@ test.describe('ui e2e: relay fallback when direct peer is disabled', () => {
     await waitForInitialAppUi({ page, browserDiagnostics: () => '' });
     await maybeDismissDetectedClisModal(page, 1_000).catch(() => {});
     await maybeDismissAgentPickerPopover(page).catch(() => {});
-    await createAccountAndReachConnectMachineState({ page, useFirstCreateButton: true });
+    await createAccountAndReachConnectMachineState({
+      page,
+      useFirstCreateButton: true,
+      // The terminal-connect flow below is the authoritative auth check for this scenario.
+      requirePersistedAuthCredentials: false,
+    });
 
     const cliLogin: StartedCliTerminalConnect = await startCliAuthLoginForTerminalConnect({
       testDir,
@@ -264,19 +324,14 @@ test.describe('ui e2e: relay fallback when direct peer is disabled', () => {
       await expect.poll(async () => await readFile(fileDownloadPath, 'utf8')).toBe('hello relay\n');
     }
 
-    // Gate: no direct-peer HTTP calls, and server-mediated fallback observed.
-    //
-    // Bridge-state allows either:
-    // - relay-v2 traffic, or
-    // - legacy bulk download chunk RPCs.
+    // Gate: direct-peer HTTP stays disabled and download uses relay-v2, never the
+    // legacy bulk download fallback.
     expect(directPeerRequests.length).toBe(0);
     try {
-      await expect.poll(async () => {
-        if (relayTraffic.sawRelayV2EventName() || relayTraffic.sawChunkEnvelope()) {
-          return true;
-        }
-        return relayTraffic.frames.some((frame) => frame.includes('daemon.transfer.download.chunk'));
-      }, { timeout: 60_000 }).toBe(true);
+      await expect.poll(async () => relayTraffic.sawRelayV2EventName(), { timeout: 60_000 }).toBe(true);
+      await expect.poll(async () => relayTraffic.sawChunkEnvelope(), { timeout: 60_000 }).toBe(true);
+      const relayEvidence = [...relayTraffic.frames, ...relayTraffic.updateBodies].join('\n\n---\n\n');
+      expect(relayEvidence.includes('daemon.transfer.download.chunk')).toBe(false);
     } catch (error) {
       await testInfo.attach('relay-v2-ws-frames', {
         body: relayTraffic.frames.join('\n\n---\n\n'),
@@ -307,5 +362,88 @@ test.describe('ui e2e: relay fallback when direct peer is disabled', () => {
       ).catch(() => {});
       throw error;
     }
+
+    // Upload a complete workspace file with the same direct-disabled daemon. The daemon log is
+    // the authoritative composed-boundary record for the relay RPC lifecycle; browser requests
+    // independently prove that no direct import endpoint was used.
+    const uploadInput = rightPane.getByTestId('repository-tree-upload-input-files');
+    await expect(uploadInput).toHaveCount(1, { timeout: 60_000 });
+    const uploadedFileName = 'relay-upload.txt';
+    const uploadedContent = 'hello upload fallback\n';
+    const uploadedSourcePath = resolve(join(testDir, uploadedFileName));
+    const uploadedDestinationPath = resolve(join(workspaceDir, uploadedFileName));
+    const uploadedSha256 = createHash('sha256').update(uploadedContent).digest('hex');
+    await writeFile(uploadedSourcePath, uploadedContent, 'utf8');
+    const completedUploadLogOffset = (await readDaemonLog(runDaemon)).length;
+    await uploadInput.setInputFiles(uploadedSourcePath);
+    await expect
+      .poll(async () => await readFile(uploadedDestinationPath, 'utf8').catch(() => null), { timeout: 120_000 })
+      .toBe(uploadedContent);
+    await expect(rightPane.getByTestId('repository-tree-upload-status')).toHaveCount(0, { timeout: 60_000 });
+    await expect.poll(async () => {
+      const phaseLog = (await readDaemonLog(runDaemon)).slice(completedUploadLogOffset);
+      return [
+        'daemon.bulkTransfer.upload.init',
+        'daemon.bulkTransfer.upload.chunk',
+        'daemon.bulkTransfer.upload.finalize',
+      ].every((marker) => phaseLog.includes(marker));
+    }, { timeout: 60_000 }).toBe(true);
+    expect(directPeerRequests.length).toBe(0);
+    expect(createHash('sha256').update(await readFile(uploadedDestinationPath)).digest('hex')).toBe(uploadedSha256);
+
+    // Cancel only after the daemon has admitted and persisted at least one encrypted relay chunk.
+    // This distinguishes cleanup from a preflight-only cancellation.
+    const canceledFileName = 'relay-upload-canceled.bin';
+    const canceledSourcePath = resolve(join(testDir, canceledFileName));
+    const canceledDestinationPath = resolve(join(workspaceDir, canceledFileName));
+    const canceledSourceSha256 = await createDeterministicLargeFile(canceledSourcePath, CANCELED_UPLOAD_BYTES);
+    const cancellationLogOffset = (await readDaemonLog(runDaemon)).length;
+    await uploadInput.setInputFiles(canceledSourcePath);
+    let admittedPartials: DaemonUploadPartial[] = [];
+    await expect.poll(async () => {
+      admittedPartials = (await readDaemonUploadPartials(runDaemon.state.pid))
+        .filter((partial) => partial.sizeBytes > 0);
+      return admittedPartials.length;
+    }, { timeout: 120_000, intervals: [10, 20, 50, 100] }).toBeGreaterThan(0);
+    await expect(rightPane.getByTestId('repository-tree-upload-cancel')).toHaveCount(1, { timeout: 60_000 });
+    await rightPane.getByTestId('repository-tree-upload-cancel').click();
+    await expect(rightPane.getByTestId('repository-tree-upload-status')).toHaveCount(0, { timeout: 60_000 });
+    await expect.poll(async () => await stat(canceledDestinationPath).then(() => true).catch(() => false), {
+      timeout: 60_000,
+    }).toBe(false);
+    await expect.poll(async () => (await readDaemonUploadPartials(runDaemon.state.pid)).length, {
+      timeout: 60_000,
+    }).toBe(0);
+    await expect.poll(async () => {
+      const phaseLog = (await readDaemonLog(runDaemon)).slice(cancellationLogOffset);
+      return [
+        'daemon.bulkTransfer.upload.init',
+        'daemon.bulkTransfer.upload.chunk',
+        'daemon.bulkTransfer.upload.abort',
+      ].every((marker) => phaseLog.includes(marker));
+    }, { timeout: 60_000 }).toBe(true);
+    expect(directPeerRequests.length).toBe(0);
+
+    await testInfo.attach('upload-fallback-live-evidence', {
+      body: JSON.stringify({
+        daemonPid: runDaemon.state.pid,
+        route: 'server-mediated bulkTransfer upload fallback',
+        directPeerRequestCount: directPeerRequests.length,
+        completedUpload: {
+          name: uploadedFileName,
+          sizeBytes: Buffer.byteLength(uploadedContent),
+          sha256: uploadedSha256,
+        },
+        canceledUpload: {
+          name: canceledFileName,
+          sourceSizeBytes: CANCELED_UPLOAD_BYTES,
+          sourceSha256: canceledSourceSha256,
+          admittedPartialSizesBytes: admittedPartials.map((partial) => partial.sizeBytes),
+          destinationExistsAfterCancel: false,
+          remainingDaemonUploadPartials: 0,
+        },
+      }, null, 2),
+      contentType: 'application/json',
+    });
   });
 });

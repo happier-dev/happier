@@ -25,9 +25,7 @@ import { connect, type Socket } from 'node:net';
 import { join, resolve } from 'node:path';
 
 import {
-  SESSION_CONTINUATION_RECOVERY_METADATA_KEY,
   buildConnectedServiceCredentialRecord,
-  readSessionContinuationRecoveryFromMetadata,
   sealAccountScopedBlobCiphertext,
   type ConnectedServiceId,
 } from '@happier-dev/protocol';
@@ -38,7 +36,6 @@ import { seedCliAuthForServer } from './cliAuth';
 import { daemonControlPostJson } from './daemon/controlServerClient';
 import { fetchJson } from './http';
 import { writeTestManifestForServer } from './manifestForServer';
-import { decryptLegacyBase64 } from './messageCrypto';
 import { ensureCliSharedDepsBuilt } from './process/cliDist';
 import { startServerLight, type StartedServer } from './process/serverLight';
 import { startTestDaemon, type StartedDaemon } from './daemon/daemon';
@@ -419,6 +416,7 @@ export async function patchConnectedServiceAuthGroupMemberExhaustion(params: Rea
   serviceId: ConnectedServiceId;
   groupId: string;
   expectedGeneration: number;
+  expectedRuntimeStateRevision: number;
   memberProfileId: string;
   quotaExhaustedUntilMs: number | null;
 }>): Promise<UnknownRecord> {
@@ -432,6 +430,7 @@ export async function patchConnectedServiceAuthGroupMemberExhaustion(params: Rea
       },
       body: JSON.stringify({
         expectedGeneration: params.expectedGeneration,
+        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
         state: {
           status: params.quotaExhaustedUntilMs === null ? 'ready' : 'exhausted',
           ...(params.quotaExhaustedUntilMs === null ? {} : { lastSwitchReason: 'usage_limit' }),
@@ -543,7 +542,6 @@ export async function startConnectedServicesClaudeDaemon(params: Readonly<{
     testDir: params.testDir,
     dbProvider: 'sqlite',
     extraEnv: {
-      HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
       HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: '1',
       HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED: '1',
     },
@@ -748,90 +746,6 @@ export async function recordConnectedServiceTurnLifecycle(params: Readonly<{
   if (response.status !== 200) {
     throw new Error(`Failed to record connected-service turn lifecycle (status=${response.status})`);
   }
-}
-
-function readLegacyMetadata(params: Readonly<{
-  metadataCiphertext: string;
-  secret: Uint8Array;
-}>): UnknownRecord | null {
-  const decoded = decryptLegacyBase64(params.metadataCiphertext, params.secret);
-  return asRecord(decoded);
-}
-
-export async function readSessionContinuationRecoveryRaw(params: Readonly<{
-  fixture: Pick<StartedConnectedServicesClaudeDaemonFixture, 'serverBaseUrl' | 'auth' | 'accountSecret'>;
-  sessionId: string;
-}>): Promise<UnknownRecord | null> {
-  const { fetchSessionV2 } = await import('./sessions');
-  const session = await fetchSessionV2(params.fixture.serverBaseUrl, params.fixture.auth.token, params.sessionId);
-  const metadata = readLegacyMetadata({
-    metadataCiphertext: session.metadata,
-    secret: params.fixture.accountSecret,
-  });
-  return asRecord(metadata?.[SESSION_CONTINUATION_RECOVERY_METADATA_KEY]);
-}
-
-export async function readSessionContinuationRecoveryAttempts(params: Readonly<{
-  fixture: Pick<StartedConnectedServicesClaudeDaemonFixture, 'serverBaseUrl' | 'auth' | 'accountSecret'>;
-  sessionId: string;
-}>): Promise<readonly UnknownRecord[]> {
-  const { fetchSessionV2 } = await import('./sessions');
-  const session = await fetchSessionV2(params.fixture.serverBaseUrl, params.fixture.auth.token, params.sessionId);
-  const metadata = readLegacyMetadata({
-    metadataCiphertext: session.metadata,
-    secret: params.fixture.accountSecret,
-  });
-  const recovery = readSessionContinuationRecoveryFromMetadata(metadata);
-  return Object.values(recovery?.attemptsById ?? {}).flatMap((attempt) => {
-    const record = asRecord(attempt);
-    if (!record) return [];
-    const recoveryIdentity = asRecord(record.recoveryIdentity);
-    if (!recoveryIdentity) return [record];
-    return [{
-      ...record,
-      serviceId: recoveryIdentity.serviceId,
-      selectionKind: recoveryIdentity.selectionKind,
-      groupId: recoveryIdentity.groupId,
-      profileId: recoveryIdentity.profileId,
-      failureFingerprint: recoveryIdentity.failureFingerprint,
-      targetGeneration: recoveryIdentity.targetGeneration,
-    }];
-  });
-}
-
-export type SessionContinuationProofWaitStatus =
-  | 'awaiting_provider_activity'
-  | 'provider_activity_timeout';
-
-const SESSION_CONTINUATION_PROOF_WAIT_STATUSES: ReadonlySet<string> = new Set([
-  'awaiting_provider_activity',
-  'provider_activity_timeout',
-]);
-
-export function findSessionContinuationProofWaitAttempt(params: Readonly<{
-  attempts: readonly unknown[];
-  serviceId: ConnectedServiceId;
-  groupId: string | null;
-  profileId: string | null;
-  statuses?: ReadonlySet<SessionContinuationProofWaitStatus> | readonly SessionContinuationProofWaitStatus[];
-}>): UnknownRecord | null {
-  const statuses = params.statuses
-    ? new Set(params.statuses)
-    : SESSION_CONTINUATION_PROOF_WAIT_STATUSES;
-  for (const candidate of params.attempts) {
-    const attempt = asRecord(candidate);
-    if (!attempt) continue;
-    if (attempt.continuationRequired !== true) continue;
-    if (attempt.replayMode !== 'continuation_prompt') continue;
-    if (attempt.serviceId !== params.serviceId) continue;
-    if ((attempt.groupId ?? null) !== params.groupId) continue;
-    if ((attempt.profileId ?? null) !== params.profileId) continue;
-    if (typeof attempt.status !== 'string' || !statuses.has(attempt.status as SessionContinuationProofWaitStatus)) {
-      continue;
-    }
-    return attempt;
-  }
-  return null;
 }
 
 export function isRuntimeAuthRecoveryAwaitingProviderOutcomeProof(intent: unknown): boolean {

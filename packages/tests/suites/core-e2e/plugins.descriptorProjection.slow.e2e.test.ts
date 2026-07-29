@@ -12,12 +12,16 @@ import {
     writeRuntimeProjectionPluginFixture,
 } from '../../src/testkit/extensions/localPackageFixture';
 
-type DescriptorProjectionProbeResult = Readonly<{
+type ContributionProjectionProbeResult = Readonly<{
     generation?: number;
-    descriptor?: Readonly<{
+    settings?: Readonly<{
         id?: string;
-        surface?: string;
         pluginId?: string;
+        storageScope?: string;
+        fields?: readonly Readonly<{
+            id?: string;
+            control?: string;
+        }>[];
     }>;
     resource?: Readonly<{
         id?: string;
@@ -26,22 +30,23 @@ type DescriptorProjectionProbeResult = Readonly<{
     }>;
 }>;
 
-describe('core e2e: plugin descriptor projection', () => {
-    it('projects plugin resources and host-rendered UI descriptors through the daemon contribution registry projection', async () => {
-        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-descriptor-home-'));
-        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-descriptor-root-'));
-        const testDir = await mkdtemp(join(tmpdir(), 'happier-plugin-descriptor-e2e-'));
-        const probeScriptPath = join(testDir, 'plugin-descriptor-probe.mts');
+describe('core e2e: plugin contribution projection', () => {
+    it('projects plugin resources and canonical typed settings through the daemon contribution registry projection', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-plugin-projection-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-plugin-projection-root-'));
+        const testDir = await mkdtemp(join(tmpdir(), 'happier-plugin-projection-e2e-'));
+        const probeScriptPath = join(testDir, 'plugin-contribution-probe.mts');
 
         try {
-            const pluginId = 'acme.descriptor.integration';
-            const descriptorId = 'acme.descriptor.integration.settings';
-            const resourceId = 'acme.descriptor.integration.prompt';
+            const pluginId = 'acme.projection.integration';
+            const settingsId = 'preferences';
+            const settingsProjectionKey = `${pluginId}/${settingsId}`;
+            const resourceId = 'acme.projection.integration.prompt';
             await writeRuntimeProjectionPluginFixture({
                 pluginRoot,
                 pluginId,
                 resourceId,
-                settingsDescriptorId: descriptorId,
+                settingsId,
             });
             await writeEnabledLocalExtensionPackageState({
                 happyHomeDir,
@@ -57,10 +62,10 @@ describe('core e2e: plugin descriptor projection', () => {
                 probeScriptPath,
                 [
                     'const projectionHandlerUrl = process.env.CLI_PROJECTION_HANDLER_URL;',
-                    'const descriptorId = process.env.PLUGIN_DESCRIPTOR_ID;',
+                    'const settingsProjectionKey = process.env.PLUGIN_SETTINGS_PROJECTION_KEY;',
                     'const resourceId = process.env.PLUGIN_RESOURCE_ID;',
                     'if (!projectionHandlerUrl) throw new Error("Missing CLI_PROJECTION_HANDLER_URL");',
-                    'if (!descriptorId) throw new Error("Missing PLUGIN_DESCRIPTOR_ID");',
+                    'if (!settingsProjectionKey) throw new Error("Missing PLUGIN_SETTINGS_PROJECTION_KEY");',
                     'if (!resourceId) throw new Error("Missing PLUGIN_RESOURCE_ID");',
                     '',
                     'const { registerDaemonContributionRegistryProjectionHandler, invalidateDaemonContributionRegistryProjectionCache } = await import(projectionHandlerUrl);',
@@ -78,9 +83,9 @@ describe('core e2e: plugin descriptor projection', () => {
                     'if (!projection || typeof projection !== "object") {',
                     '  throw new Error("Expected versioned daemon projection response");',
                     '}',
-                    'const descriptor = projection.uiDescriptorsById?.[descriptorId];',
-                    'if (!descriptor) {',
-                    '  throw new Error(`Expected projected UI descriptor ${descriptorId}`);',
+                    'const settings = projection.settingsById?.[settingsProjectionKey];',
+                    'if (!settings) {',
+                    '  throw new Error(`Expected projected settings ${settingsProjectionKey}; settings=${JSON.stringify(Object.keys(projection.settingsById ?? {}))}; resources=${JSON.stringify(Object.keys(projection.resourcesById ?? {}))}; packages=${JSON.stringify(Object.keys(projection.installedPackagesById ?? {}))}; diagnostics=${JSON.stringify(projection.diagnostics ?? [])}`);',
                     '}',
                     'const resource = projection.resourcesById?.[resourceId];',
                     'if (!resource) {',
@@ -89,7 +94,7 @@ describe('core e2e: plugin descriptor projection', () => {
                     'if (typeof projection.generation !== "number" || projection.generation < 0) {',
                     '  throw new Error("Expected numeric projection generation for reload freshness tracking");',
                     '}',
-                    'process.stdout.write(JSON.stringify({ generation: projection.generation, descriptor, resource }));',
+                    'process.stdout.write(JSON.stringify({ generation: projection.generation, settings, resource }));',
                     '',
                 ].join('\n'),
                 'utf8',
@@ -101,7 +106,7 @@ describe('core e2e: plugin descriptor projection', () => {
                     ...process.env,
                     HAPPIER_HOME_DIR: happyHomeDir,
                     CLI_PROJECTION_HANDLER_URL: projectionHandlerUrl,
-                    PLUGIN_DESCRIPTOR_ID: descriptorId,
+                    PLUGIN_SETTINGS_PROJECTION_KEY: settingsProjectionKey,
                     PLUGIN_RESOURCE_ID: resourceId,
                     TSX_TSCONFIG_PATH: cliTsconfigPath,
                 },
@@ -110,12 +115,18 @@ describe('core e2e: plugin descriptor projection', () => {
             });
 
             expect(spawnRes.status, spawnRes.stderr).toBe(0);
-            const parsed = JSON.parse(spawnRes.stdout) as DescriptorProjectionProbeResult;
+            const parsed = JSON.parse(spawnRes.stdout) as ContributionProjectionProbeResult;
             expect(parsed.generation).toEqual(expect.any(Number));
-            expect(parsed.descriptor).toMatchObject({
-                id: descriptorId,
-                surface: 'settings',
+            expect(parsed.settings).toMatchObject({
+                id: settingsId,
                 pluginId,
+                storageScope: 'local',
+                fields: [
+                    {
+                        id: 'enabled',
+                        control: 'switch',
+                    },
+                ],
             });
             expect(parsed.resource).toMatchObject({
                 id: resourceId,

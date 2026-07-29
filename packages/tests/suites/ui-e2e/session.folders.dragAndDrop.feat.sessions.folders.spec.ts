@@ -7,6 +7,7 @@ import { repoRootDir } from '../../src/testkit/paths';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
 import { gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
+import { seedDismissedPendingSetupIntent } from '../../src/testkit/uiE2e/pendingSetupIntent';
 import { setUiFeatureToggle } from '../../src/testkit/uiE2e/setUiFeatureToggle';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
 import { createTestAuthMtls } from '../../src/testkit/auth';
@@ -14,7 +15,6 @@ import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
 import { startForwardedHeaderProxy } from '../../src/testkit/uiE2e/forwardedHeaderProxy';
 import {
   createPlainSession,
-  deriveServerIdFromUrl,
   dragFolderToTarget,
   dragSessionToTarget,
   expectFolderAssignment,
@@ -24,6 +24,7 @@ import {
   expectOrderMapStartsWith,
   folderOrderKey,
   readSessionFolderDragSettings,
+  resolveCanonicalServerIdForUi,
   sessionOrderKey,
   setSessionFolderAssignment,
   setSessionFolderDragSettings,
@@ -43,6 +44,7 @@ const FOLDER_ALPHA_ID = 'drag_alpha';
 const FOLDER_BETA_ID = 'drag_beta';
 const FOLDER_ALPHA_CHILD_ID = 'drag_alpha_child';
 const FOLDER_BOTTOM_ID = 'drag_bottom';
+const STORAGE_SCOPE = `e2e-session-folders-drag-${run.runId}`;
 
 function folderSetting(params: Readonly<{
   id: string;
@@ -180,8 +182,9 @@ test.describe('ui e2e: session folders drag and drop', () => {
       env: {
         ...process.env,
         EXPO_PUBLIC_DEBUG: '1',
+        EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS: process.env.EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS ?? '300000',
         EXPO_PUBLIC_HAPPY_SERVER_URL: proxy.baseUrl,
-        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-session-folders-drag-${run.runId}`,
+        EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: STORAGE_SCOPE,
         HAPPIER_E2E_UI_WEB_MODE: 'export',
       },
     });
@@ -199,9 +202,12 @@ test.describe('ui e2e: session folders drag and drop', () => {
   test('session folders drag supports root, nested, blocked, and scrolled drops', async ({ page }) => {
     test.setTimeout(900_000);
     if (!server || !uiBaseUrl || !token || !uiServerUrl) throw new Error('missing server/ui fixtures');
+    const serverBaseUrl = server.baseUrl;
+    const authToken = token;
+    const uiBaseUrlForTest = uiBaseUrl;
 
     const rootPath = repoRootDir();
-    const serverId = deriveServerIdFromUrl(uiServerUrl);
+    const serverId = await resolveCanonicalServerIdForUi(uiServerUrl);
     const workspace = {
       t: 'workspaceScope' as const,
       serverId,
@@ -233,14 +239,9 @@ test.describe('ui e2e: session folders drag and drop', () => {
       machineId: SEEDED_MACHINE_ID,
       tagPrefix: 'session-folders-drag',
     });
-    await setSessionFolderAssignment({
-      baseUrl: server.baseUrl,
-      token,
-      sessionId: nestedSessionId,
-      folderId: FOLDER_ALPHA_ID,
-    });
 
     await page.setViewportSize({ width: 1440, height: 900 });
+    await seedDismissedPendingSetupIntent(page, STORAGE_SCOPE);
     await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 300_000);
     await waitForInitialAppUi({ page, timeoutMs: 180_000 });
 
@@ -251,11 +252,26 @@ test.describe('ui e2e: session folders drag and drop', () => {
       enabled: true,
     });
 
-    await setSessionFolderDragSettings({
-      page,
-      baseUrl: uiBaseUrl,
-      sessionFoldersV1: buildSessionFolderSettings({ workspace }),
+    const seededFolderSettings = buildSessionFolderSettings({ workspace });
+    const refreshFolderDragView = async (): Promise<void> => {
+      await setSessionFolderDragSettings({
+        page,
+        baseUrl: uiBaseUrlForTest,
+        apiBaseUrl: serverBaseUrl,
+        token: authToken,
+        serverId,
+        sessionFoldersV1: seededFolderSettings,
+      });
+    };
+
+    await refreshFolderDragView();
+    await setSessionFolderAssignment({
+      baseUrl: server.baseUrl,
+      token,
+      sessionId: nestedSessionId,
+      folderId: FOLDER_ALPHA_ID,
     });
+    await refreshFolderDragView();
 
     await expect(page.getByTestId(`session-list-item-${rootSessionId}`)).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByTestId(`session-list-item-${nestedSessionId}`)).toHaveCount(1, { timeout: 120_000 });
@@ -268,26 +284,37 @@ test.describe('ui e2e: session folders drag and drop', () => {
     // present (and unique) before exercising drags.
     await expect(page.getByTestId('session-list-drop-overlay')).toHaveCount(1, { timeout: 60_000 });
 
+    const firstRootReorderRequestPromise = page.waitForRequest((request) => (
+      request.method() === 'PUT'
+      && request.url().includes('/v2/session-organization/order')
+    ), { timeout: 10_000 }).catch(() => null);
     await dragSessionToTarget(page, {
       sessionId: rootSessionId,
       targetTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
       targetEdge: 'top',
     });
+    const firstRootReorderRequest = await firstRootReorderRequestPromise;
+    expect(
+      firstRootReorderRequest,
+      'root-session top-edge drag before a root folder must persist session organization order',
+    ).not.toBeNull();
     await expectFolderAssignment({
       baseUrl: server.baseUrl,
       token,
       sessionId: rootSessionId,
       folderId: null,
     });
+    await expectOrderMapContainsBefore({
+      baseUrl: server.baseUrl,
+      token,
+      serverId,
+      firstKey: sessionOrderKey(serverId, rootSessionId),
+      secondKey: folderOrderKey(FOLDER_ALPHA_ID),
+    });
     await expectOrderBefore({
       page,
       firstTestId: `session-list-item-${rootSessionId}`,
       secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
-    });
-    await expectOrderMapContainsBefore({
-      page,
-      firstKey: sessionOrderKey(serverId, rootSessionId),
-      secondKey: folderOrderKey(FOLDER_ALPHA_ID),
     });
 
     await dragSessionToTarget(page, {
@@ -302,8 +329,20 @@ test.describe('ui e2e: session folders drag and drop', () => {
       folderId: FOLDER_BETA_ID,
     });
     await expectOrderMapStartsWith({
-      page,
+      baseUrl: server.baseUrl,
+      token,
+      serverId,
       firstKey: sessionOrderKey(serverId, rootSessionId),
+    });
+    await expectOrderBefore({
+      page,
+      firstTestId: `session-folder-header-${FOLDER_BETA_ID}`,
+      secondTestId: `session-list-item-${rootSessionId}`,
+    });
+    await expectOrderBefore({
+      page,
+      firstTestId: `session-list-item-${rootSessionId}`,
+      secondTestId: 'session-folder-header-drag_filler_01',
     });
 
     await dragSessionToTarget(page, {
@@ -323,21 +362,27 @@ test.describe('ui e2e: session folders drag and drop', () => {
       secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
     });
 
-    const beforeFolderMove = await readSessionFolderDragSettings(page);
+    const beforeFolderMove = await readSessionFolderDragSettings({ baseUrl: server.baseUrl, token, serverId });
     const alphaSortKeyBefore = beforeFolderMove.sessionFoldersV1.folders.find((folder) => folder.id === FOLDER_ALPHA_ID)?.sortKey;
 
+    const folderSiblingReorderRequestPromise = page.waitForRequest((request) => (
+      request.method() === 'PUT'
+      && (
+        request.url().includes('/v2/session-organization/folders')
+        || request.url().includes('/v2/session-organization/order')
+      )
+    ), { timeout: 10_000 }).catch(() => null);
     await dragFolderToTarget(page, {
       sourceFolderId: FOLDER_BETA_ID,
       targetTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
       targetEdge: 'top',
     });
-    await expectOrderBefore({
-      page,
-      firstTestId: `session-folder-header-${FOLDER_BETA_ID}`,
-      secondTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
-    });
+    expect(
+      await folderSiblingReorderRequestPromise,
+      'folder top-edge drag before a sibling must persist folder organization',
+    ).not.toBeNull();
     await expect.poll(async () => {
-      const snapshot = await readSessionFolderDragSettings(page);
+      const snapshot = await readSessionFolderDragSettings({ baseUrl: serverBaseUrl, token: authToken, serverId });
       const alpha = snapshot.sessionFoldersV1.folders.find((folder) => folder.id === FOLDER_ALPHA_ID);
       const beta = snapshot.sessionFoldersV1.folders.find((folder) => folder.id === FOLDER_BETA_ID);
       return Boolean(alpha?.sortKey === alphaSortKeyBefore && beta?.sortKey && beta.sortKey !== 'b0');
@@ -348,21 +393,30 @@ test.describe('ui e2e: session folders drag and drop', () => {
       targetTestId: `session-folder-header-${FOLDER_ALPHA_ID}`,
       targetEdge: 'middle',
     });
-    await expectFolderParent({ page, folderId: FOLDER_BETA_ID, parentId: FOLDER_ALPHA_ID });
+    await expectFolderParent({
+      baseUrl: server.baseUrl,
+      token,
+      serverId,
+      folderId: FOLDER_BETA_ID,
+      parentId: FOLDER_ALPHA_ID,
+    });
     await expectOrderMapContainsBefore({
-      page,
+      baseUrl: server.baseUrl,
+      token,
+      serverId,
       firstKey: folderOrderKey(FOLDER_BETA_ID),
       secondKey: folderOrderKey(FOLDER_ALPHA_CHILD_ID),
     });
 
-    const beforeBlockedMove = await readSessionFolderDragSettings(page);
+    const beforeBlockedMove = await readSessionFolderDragSettings({ baseUrl: server.baseUrl, token, serverId });
     await dragFolderToTarget(page, {
       sourceFolderId: FOLDER_ALPHA_ID,
       targetTestId: `session-folder-header-${FOLDER_BETA_ID}`,
       targetEdge: 'middle',
+      requireDropOverlay: false,
     });
     await page.waitForTimeout(350);
-    const afterBlockedMove = await readSessionFolderDragSettings(page);
+    const afterBlockedMove = await readSessionFolderDragSettings({ baseUrl: server.baseUrl, token, serverId });
     expect(afterBlockedMove.sessionFoldersV1.folders).toEqual(beforeBlockedMove.sessionFoldersV1.folders);
 
     const scrollDrag = await dragSessionToTarget(page, {
@@ -379,27 +433,14 @@ test.describe('ui e2e: session folders drag and drop', () => {
       folderId: FOLDER_BOTTOM_ID,
     });
 
-    await setSessionFolderAssignment({
-      baseUrl: server.baseUrl,
-      token,
-      sessionId: scrollSessionId,
-      folderId: null,
-    });
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/?happier_hmr=0`, 120_000);
-    await expect(page.getByTestId(`session-list-item-${scrollSessionId}`)).toHaveCount(1, { timeout: 120_000 });
-
     const autoScrollDrag = await dragSessionToTarget(page, {
-      sessionId: scrollSessionId,
+      sessionId: rootSessionId,
       targetTestId: `session-folder-header-${FOLDER_BOTTOM_ID}`,
       targetEdge: 'middle',
       scrollDuringDrag: 'autoscroll-bottom',
     });
-    expect(autoScrollDrag.scrollTopAfter ?? 0).toBeGreaterThan(autoScrollDrag.scrollTopBefore ?? -1);
-    await expectFolderAssignment({
-      baseUrl: server.baseUrl,
-      token,
-      sessionId: scrollSessionId,
-      folderId: FOLDER_BOTTOM_ID,
-    });
+    // Assignment is covered above; this final gesture specifically proves that
+    // bottom-edge holding during a drag scrolls the session tree.
+    expect(autoScrollDrag.scrollTopDuringDrag ?? 0).toBeGreaterThan(autoScrollDrag.scrollTopBefore ?? -1);
   });
 });

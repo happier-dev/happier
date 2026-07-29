@@ -1,4 +1,5 @@
 import { fetchJson } from './http';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol';
 
 export type PendingQueueV2Row = {
   localId: string;
@@ -18,13 +19,20 @@ export async function enqueuePendingQueueV2(params: {
   sessionId: string;
   localId: string;
   ciphertext: string;
+  messageRole?: 'user' | 'agent' | 'event' | 'unknown';
+  requestedAction?: PendingRequestedActionV1;
   timeoutMs?: number;
 }): Promise<{ status: number; data: any }> {
   const sessionId = encodeURIComponent(params.sessionId);
   return await fetchJson<any>(`${params.baseUrl}/v2/sessions/${sessionId}/pending`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${params.token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ localId: params.localId, ciphertext: params.ciphertext }),
+    body: JSON.stringify({
+      localId: params.localId,
+      ciphertext: params.ciphertext,
+      ...(params.messageRole ? { messageRole: params.messageRole } : {}),
+      ...(params.requestedAction ? { requestedAction: params.requestedAction } : {}),
+    }),
     timeoutMs: params.timeoutMs ?? 20_000,
   });
 }

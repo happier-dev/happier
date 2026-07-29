@@ -2,7 +2,7 @@
  * Fake Claude Code CLI for deterministic Happier e2e tests.
  *
  * This is intentionally minimal and only implements the behaviors our e2e suite needs:
- * - Parses `--settings` and triggers the SessionStart hook forwarder with JSON on stdin.
+ * - Parses `--plugin-dir`/`--settings` and triggers the SessionStart hook forwarder with JSON on stdin.
  * - Records invocations (argv + parsed --mcp-config) to a JSONL log for assertions.
  * - In SDK mode (`--output-format stream-json --input-format stream-json`), reads user messages from stdin until EOF,
  *   and for each user turn emits a small stream-json transcript (system:init once → assistant → result).
@@ -15,7 +15,7 @@ const path = require('node:path');
 const os = require('node:os');
 const fs = require('node:fs');
 const readline = require('node:readline');
-const { randomUUID } = require('node:crypto');
+const { createHash, randomUUID } = require('node:crypto');
 const { resolveClaudeProjectId } = require('../testkit/claudeProjectId.cjs');
 const {
   findArgValue,
@@ -40,6 +40,24 @@ const logPath = process.env.HAPPIER_E2E_FAKE_CLAUDE_LOG || process.env.HAPPY_E2E
 const shouldLogFullStdin = /^(1|true|yes|on)$/i.test(
   String(process.env.HAPPIER_E2E_FAKE_CLAUDE_LOG_FULL_STDIN || process.env.HAPPY_E2E_FAKE_CLAUDE_LOG_FULL_STDIN || '').trim(),
 );
+
+function captureEnvironmentAttestation() {
+  const rawKeys = String(process.env.HAPPIER_E2E_FAKE_CLAUDE_CAPTURE_ENV_KEYS || '').trim();
+  if (!rawKeys) return undefined;
+  const keys = [...new Set(rawKeys.split(',').map((value) => value.trim()).filter(Boolean))]
+    .filter((value) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(value))
+    .slice(0, 32);
+  return Object.fromEntries(keys.map((key) => {
+    const value = process.env[key];
+    return [key, value === undefined
+      ? { present: false }
+      : {
+          present: true,
+          sha256: createHash('sha256').update(value, 'utf8').digest('hex'),
+          byteLength: Buffer.byteLength(value, 'utf8'),
+        }];
+  }));
+}
 
 const mcpConfigs = parseMcpConfigs(argv);
 const mergedMcpServers = mergeMcpServers(mcpConfigs);
@@ -119,6 +137,7 @@ safeAppendJsonl(logPath, {
   argv,
   mcpConfigs,
   mergedMcpServers,
+  environmentAttestation: captureEnvironmentAttestation(),
 });
 
 // Ensure the transcript path exists even if this process is terminated before any SDK output is emitted.
@@ -132,7 +151,8 @@ safeAppendTranscriptJsonl({
 });
 
 const settingsPath = findArgValue(argv, '--settings');
-const hook = parseHookForwarderCommand(settingsPath);
+const hookPluginDir = findArgValue(argv, '--plugin-dir');
+const hook = parseHookForwarderCommand(settingsPath, hookPluginDir);
 void runHookForwarder({
   hook,
   payload: {
@@ -190,7 +210,7 @@ async function runSdkStreamUntilEof() {
       name: 'runtime.descriptor',
       payload: {
         v: 1,
-        providerId: 'fake-claude',
+        agentId: 'fake-claude',
         provider: {
           backendMode: 'sdk',
           providerExtra: {
@@ -884,13 +904,26 @@ async function runPrintStreamJsonAndExit() {
   process.exit(0);
 }
 
+function renderLocalIdleComposer() {
+  try {
+    process.stdout.write('\n> Try "refactor <filepath>"\n');
+    safeAppendJsonl(logPath, {
+      type: 'local_idle_composer_rendered',
+      invocationId,
+      ts: Date.now(),
+    });
+  } catch {
+    // Best-effort fixture readiness output.
+  }
+}
+
 if (isSdkStreamJson) {
   void runSdkStreamUntilEof();
 } else if (isStreamJson && hasPrint) {
   void runPrintStreamJsonAndExit();
 } else {
   // Local/interactive: keep the process alive until the parent aborts us (SIGTERM on mode switch).
-  // Avoid printing anything on stdout, as local mode uses `inherit`.
+  renderLocalIdleComposer();
   const interval = setInterval(() => {}, 1000);
   const stop = () => {
     clearInterval(interval);

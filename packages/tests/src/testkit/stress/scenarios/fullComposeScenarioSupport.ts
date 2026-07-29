@@ -6,7 +6,7 @@ import type { StartedStressTarget } from '../targets/stressTargetTypes';
 
 type FullComposeAdmin = NonNullable<StartedStressTarget['admin']>;
 
-type ServiceReplicaTarget = Readonly<{
+export type ServiceReplicaTarget = Readonly<{
   target: string;
   containerId: string;
   containerName: string;
@@ -123,7 +123,7 @@ export async function readClusterServiceMetricsViaNodeFetch(
     .join('\n');
 }
 
-async function readClusterServiceMetricsByReplicaViaNodeFetch(
+export async function readClusterServiceMetricsByReplicaViaNodeFetch(
   target: StartedStressTarget,
   service: string,
 ): Promise<ReadonlyArray<ServiceReplicaTarget & { metricsText: string }>> {

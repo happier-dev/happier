@@ -7,6 +7,7 @@ import { fetchJson } from './http';
 export type TestAuth = {
   token: string;
   publicKeyBase64: string;
+  accountSigningSeed: Uint8Array;
 };
 
 export type TestAuthMtls = {
@@ -14,7 +15,8 @@ export type TestAuthMtls = {
 };
 
 export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
-  const kp = tweetnacl.sign.keyPair();
+  const accountSigningSeed = Uint8Array.from(randomBytes(tweetnacl.sign.seedLength));
+  const kp = tweetnacl.sign.keyPair.fromSeed(accountSigningSeed);
   // privacy-kit Bytes is `Uint8Array<ArrayBuffer>`; ensure our buffers are compatible across TS libs.
   const publicKey = Uint8Array.from(kp.publicKey);
   const secretKey = Uint8Array.from(kp.secretKey);
@@ -38,7 +40,7 @@ export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
     throw new Error(`Failed to create test auth token (status=${res.status})`);
   }
 
-  return { token: res.data.token, publicKeyBase64: body.publicKey };
+  return { token: res.data.token, publicKeyBase64: body.publicKey, accountSigningSeed };
 }
 
 export async function createTestAuthMtls(

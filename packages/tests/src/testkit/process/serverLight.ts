@@ -106,7 +106,14 @@ function isSilentHealthTimeoutDuringStartup(params: { error: unknown; stderrTail
   if (!message.includes('Timed out waiting for /health')) return false;
   if (!message.includes('lastStatus=none')) return false;
   if (!message.includes('lastError=fetch failed')) return false;
-  if (params.stdoutTail.trim().length > 0) return false;
+
+  const substantiveStdout = params.stdoutTail
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    // Yarn prints the selected workspace script before the server itself emits anything.
+    .filter((line) => !/^\$ node \.\/scripts\/runTsx\.mjs --tsconfig \.\/tsconfig\.json \.\/sources\/main(?:\.light)?\.ts$/.test(line));
+  if (substantiveStdout.length > 0) return false;
 
   const substantiveStderr = params.stderrTail
     .split(/\r?\n/)

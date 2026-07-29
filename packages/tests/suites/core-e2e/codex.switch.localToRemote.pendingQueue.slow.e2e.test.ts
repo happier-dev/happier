@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import { delimiter, join, resolve } from 'node:path';
 
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -26,11 +25,11 @@ import {
   readFakeCodexAppServerRequestLog,
   writeFakeCodexAppServerScript,
 } from '../../src/testkit/codexAppServerRemoteHarness';
+import { resolveAcpSdkTestRuntime } from '../../src/testkit/providers/acpSdkTestRuntime';
 
 const run = createRunDirs({ runLabel: 'core' });
 type RemoteBackend = 'acp' | 'appServer';
 type SwitchTrigger = 'rpc' | 'queuedMessage';
-const requireFromRepoRoot = createRequire(import.meta.url);
 
 type DecryptedSessionMetadata = Readonly<{ codexSessionId?: string }>;
 type DecryptedAgentState = Readonly<{ controlledByUser?: boolean }>;
@@ -173,9 +172,7 @@ setInterval(() => {}, 1000);
 
     expect(existsSync(rolloutPath)).toBe(false);
 
-    const sdkEntry = requireFromRepoRoot.resolve('@agentclientprotocol/sdk/dist/acp.js', {
-      paths: [resolve(repoRootDir(), 'apps/cli')],
-    });
+    const { sdkEntry } = resolveAcpSdkTestRuntime(repoRootDir());
     const acpStubProviderPath = resolve(
       repoRootDir(),
       'packages/tests/fixtures/acp-stub-provider/acp-stub-provider.mjs',

@@ -54,24 +54,27 @@ describe('core e2e: voice local_neural model-pack settings roundtrip', () => {
 
     const nextSettings = {
       voice: {
-        adapters: {
+        providers: {
           local_conversation: {
-            tts: {
-              provider: 'local_neural',
-              localNeural: {
-                model: 'kokoro',
-                assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
-                voiceId: 'af_heart',
-                speed: 1,
-                execution: 'daemon',
+            schemaVersion: 1,
+            config: {
+              tts: {
+                provider: 'local_neural',
+                localNeural: {
+                  model: 'kokoro',
+                  assetId: 'kokoro-82m-v1.0-onnx-q8-wasm',
+                  voiceId: 'af_heart',
+                  speed: 1,
+                  execution: 'daemon',
+                },
               },
-            },
-            stt: {
-              provider: 'local_neural',
-              localNeural: {
-                assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
-                language: 'en',
-                execution: 'device',
+              stt: {
+                provider: 'local_neural',
+                localNeural: {
+                  assetId: 'sherpa-onnx-streaming-zipformer-en-20M-2023-02-17',
+                  language: 'en',
+                  execution: 'device',
+                },
               },
             },
           },
@@ -115,19 +118,21 @@ describe('core e2e: voice local_neural model-pack settings roundtrip', () => {
     if (rawSettings === null) throw new Error('Expected non-null settings blob');
     const settingsBlob = getString(getRow2, 'settings');
     const parsed = JSON.parse(settingsBlob) as any;
-    expect(parsed?.voice?.adapters?.local_conversation?.tts?.provider).toBe('local_neural');
-    expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.model).toBe('kokoro');
-    expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.voiceId).toBe('af_heart');
-    expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.assetId).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
-    expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.execution).toBe('daemon');
+    const localConversation = parsed?.voice?.providers?.local_conversation;
+    expect(localConversation?.schemaVersion).toBe(1);
+    expect(localConversation?.config?.tts?.provider).toBe('local_neural');
+    expect(localConversation?.config?.tts?.localNeural?.model).toBe('kokoro');
+    expect(localConversation?.config?.tts?.localNeural?.voiceId).toBe('af_heart');
+    expect(localConversation?.config?.tts?.localNeural?.assetId).toBe('kokoro-82m-v1.0-onnx-q8-wasm');
+    expect(localConversation?.config?.tts?.localNeural?.execution).toBe('daemon');
 
-    expect(parsed?.voice?.adapters?.local_conversation?.stt?.provider).toBe('local_neural');
-    expect(parsed?.voice?.adapters?.local_conversation?.stt?.localNeural?.assetId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
-    expect(parsed?.voice?.adapters?.local_conversation?.stt?.localNeural?.language).toBe('en');
-    expect(parsed?.voice?.adapters?.local_conversation?.stt?.localNeural?.execution).toBe('device');
+    expect(localConversation?.config?.stt?.provider).toBe('local_neural');
+    expect(localConversation?.config?.stt?.localNeural?.assetId).toBe('sherpa-onnx-streaming-zipformer-en-20M-2023-02-17');
+    expect(localConversation?.config?.stt?.localNeural?.language).toBe('en');
+    expect(localConversation?.config?.stt?.localNeural?.execution).toBe('device');
 
     // Ensure installation state stays device-local (never synced).
-    expect(parsed?.voice?.adapters?.local_conversation?.tts?.localNeural?.packDirUri).toBeUndefined();
-    expect(parsed?.voice?.adapters?.local_conversation?.stt?.localNeural?.packDirUri).toBeUndefined();
+    expect(localConversation?.config?.tts?.localNeural?.packDirUri).toBeUndefined();
+    expect(localConversation?.config?.stt?.localNeural?.packDirUri).toBeUndefined();
   }, 240_000);
 });

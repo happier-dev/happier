@@ -20,6 +20,8 @@ import { writeCliSessionAttachFile } from '../../src/testkit/cliAttachFile';
 import { enqueuePendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 
+import { resolveAcpSdkTestRuntime } from "../../src/testkit/providers/acpSdkTestRuntime";
+
 const run = createRunDirs({ runLabel: 'core' });
 
 describe('core e2e: ACP session mode override applies without a user message (OpenCode)', () => {
@@ -74,7 +76,7 @@ describe('core e2e: ACP session mode override applies without a user message (Op
 
     const modeLogPath = resolve(join(testDir, 'mode-log.jsonl'));
     const promptLogPath = resolve(join(testDir, 'prompt-log.jsonl'));
-    const sdkEntry = resolve(repoRootDir(), 'apps/cli/node_modules/@agentclientprotocol/sdk/dist/acp.js');
+    const { sdkEntry, agentAppAdapterEntry } = resolveAcpSdkTestRuntime(repoRootDir());
 
     await writeFile(
       fakeOpenCodePath,
@@ -87,6 +89,9 @@ import { pathToFileURL } from "node:url";
 const sdkPath = process.env.HAPPIER_E2E_ACP_SDK_ENTRY;
 if (!sdkPath) throw new Error("Missing HAPPIER_E2E_ACP_SDK_ENTRY");
 const acp = await import(pathToFileURL(sdkPath).href);
+const adapterEntry = process.env.HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY ?? ${JSON.stringify(agentAppAdapterEntry)};
+if (!adapterEntry) throw new Error("Missing HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY");
+const { connectAcpTestAgentApp } = await import(pathToFileURL(adapterEntry).href);
 
 const modeLog = process.env.HAPPIER_E2E_MODE_LOG;
 const promptLog = process.env.HAPPIER_E2E_PROMPT_LOG;
@@ -138,7 +143,8 @@ class FakeAgent {
 }
 
 const stream = acp.ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin));
-new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
+const connection = connectAcpTestAgentApp({ acp, stream, createAgent: (client) => new FakeAgent(client) });
+await connection.closed;
 `,
       'utf8',
     );
@@ -164,6 +170,7 @@ new acp.AgentSideConnection((conn) => new FakeAgent(conn), stream);
       HAPPIER_SESSION_ATTACH_FILE: attachFile,
       HAPPIER_OPENCODE_BACKEND_MODE: 'acp',
       HAPPIER_E2E_ACP_SDK_ENTRY: sdkEntry,
+      HAPPIER_E2E_ACP_AGENT_APP_ADAPTER_ENTRY: agentAppAdapterEntry,
       HAPPIER_E2E_MODE_LOG: modeLogPath,
       HAPPIER_E2E_PROMPT_LOG: promptLogPath,
       PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,

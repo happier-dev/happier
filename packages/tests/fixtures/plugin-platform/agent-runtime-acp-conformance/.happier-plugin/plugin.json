@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 2,
+  "id": "acme.declarative-acp-proof",
+  "version": "1.0.0",
+  "displayName": "Declarative ACP Agent Runtime Proof",
+  "description": "Packed static ACP Agent fixture with no executable plugin entrypoint.",
+  "engines": {
+    "happier": "^0.2.0"
+  },
+  "runtime": {
+    "apiVersion": 1
+  },
+  "hostAccess": {
+    "required": [
+      {
+        "id": "agent-process",
+        "capability": "process",
+        "reason": "Launch the fixture ACP Agent through its declared system-tool boundary.",
+        "scope": {
+          "executables": [
+            {
+              "kind": "systemTool",
+              "id": "happier-declarative-acp-fixture"
+            }
+          ]
+        }
+      }
+    ],
+    "optional": []
+  },
+  "contributes": {
+    "agents": [
+      {
+        "id": "novel-declarative-acp-agent",
+        "title": "Novel Declarative ACP Agent",
+        "description": "Never-before-seen static ACP Agent used only by the packed conformance runner.",
+        "runtime": {
+          "kind": "acp",
+          "transport": {
+            "kind": "stdio",
+            "executable": {
+              "kind": "systemTool",
+              "id": "happier-declarative-acp-fixture"
+            },
+            "timeouts": {
+              "initializeMs": 2000,
+              "idleMs": 2000,
+              "toolCallMs": 2000
+            }
+          }
+        },
+        "primary": "sessions",
+        "capabilities": {
+          "sessions": {
+            "open": [
+              "create",
+              "resume"
+            ],
+            "delivery": [
+              "newTurn"
+            ],
+            "cancel": true
+          }
+        }
+      }
+    ],
+    "systemTools": [
+      {
+        "id": "happier-declarative-acp-fixture",
+        "title": "Declarative ACP fixture",
+        "description": "Packed real-process ACP protocol fixture.",
+        "executableNames": [
+          "happier-declarative-acp-fixture"
+        ]
+      }
+    ]
+  }
+}

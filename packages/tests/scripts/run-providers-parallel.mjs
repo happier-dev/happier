@@ -86,7 +86,7 @@ function usage(exitCode) {
       'Usage:',
       '  yarn providers:run:parallel <preset> <tier> [--max-parallel N] [--update-baselines] [--strict-keys] [--flake-retry|--no-flake-retry] [--no-retry-serial]',
       '',
-      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | pi | all',
+      'Presets: opencode | claude | codex | kilo | gemini | qwen | kimi | auggie | pi | grok | all',
       'Tiers:   smoke | extended',
       '',
       'Notes:',
@@ -98,6 +98,7 @@ function usage(exitCode) {
       '  yarn providers:run:parallel all extended',
       '  yarn providers:run:parallel all extended --max-parallel 5',
       '  yarn providers:run:parallel opencode extended --strict-keys',
+      '  yarn providers:run:parallel grok extended',
     ].join('\n'),
   );
   return exitCode;
@@ -109,6 +110,28 @@ export function resolveProviderRunYarnInvocation(args, options = {}) {
 
 function signalExitCode(signal) {
   return signal ? 128 : 1;
+}
+
+function providerScenarioPathCandidates(providerId) {
+  return [
+    resolve(REPO_ROOT, 'packages', 'plugins', providerId, 'src', 'agent', 'e2e', 'providerScenarios.json'),
+    resolve(REPO_ROOT, 'packages', 'tests', 'fixtures', 'cli-backends', providerId, 'e2e', 'providerScenarios.json'),
+  ];
+}
+
+async function loadProviderScenarioRegistry(providerId) {
+  for (const scenariosPath of providerScenarioPathCandidates(providerId)) {
+    const raw = await readFile(scenariosPath, 'utf8').catch(() => null);
+    if (!raw) continue;
+
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function resolveDbProviderForServerGenerate(baseEnv) {
@@ -128,27 +151,8 @@ export async function filterProviderIdsByScenarioRegistry(params) {
 
   const filtered = [];
   for (const providerId of providerIds) {
-    const scenariosPath = resolve(
-      REPO_ROOT,
-      'apps',
-      'cli',
-      'src',
-      'backends',
-      providerId,
-      'e2e',
-      'providerScenarios.json',
-    );
-
-    const raw = await readFile(scenariosPath, 'utf8').catch(() => null);
-    if (!raw) {
-      filtered.push(providerId);
-      continue;
-    }
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
+    const parsed = await loadProviderScenarioRegistry(providerId);
+    if (!parsed) {
       filtered.push(providerId);
       continue;
     }
@@ -163,7 +167,7 @@ export async function filterProviderIdsByScenarioRegistry(params) {
     if (hasAnySelectedScenario) filtered.push(providerId);
   }
 
-  return filtered.length > 0 ? filtered : [...providerIds];
+  return filtered;
 }
 
 function buildProviderRunArgs(params) {
@@ -390,25 +394,9 @@ async function loadOrderedScenarioIdsForRetry(params) {
   const explicitSelection = parseScenarioSelection(explicitSelectionRaw);
   if (explicitSelection.length > 0) return explicitSelection;
 
-  const scenariosPath = resolve(
-    REPO_ROOT,
-    'apps',
-    'cli',
-    'src',
-    'backends',
-    params.providerId,
-    'e2e',
-    'providerScenarios.json',
-  );
-  const raw = await readFile(scenariosPath, 'utf8').catch(() => null);
-  if (!raw) return null;
+  const parsed = await loadProviderScenarioRegistry(params.providerId);
+  if (!parsed) return null;
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return null;
-  }
   const list = parsed?.tiers?.[params.tier];
   if (!Array.isArray(list)) return null;
   return list

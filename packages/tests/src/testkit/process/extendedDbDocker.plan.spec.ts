@@ -67,10 +67,18 @@ describe('extended db docker plan', () => {
     expect(e2e[2].env.DATABASE_URL).toBe(databaseUrl);
 
     const contract = buildExtendedDbCommandPlan({ db: 'mysql', mode: 'contract', databaseUrl: 'mysql://root:happier@127.0.0.1:3306/happier' });
-    expect(contract).toHaveLength(2);
-    expect(contract[0].kind).toBe('migrate');
-    expect(contract[1].kind).toBe('contract');
-    expect(contract[1].env.HAPPIER_DB_PROVIDER).toBe('mysql');
+    expect(contract).toHaveLength(3);
+    expect(contract[0]).toMatchObject({
+      kind: 'mysql-voice-identity-upgrade-contract',
+      args: ['-s', 'workspace', '@happier-dev/server', 'test:mysql-voice-identity-upgrade-contract'],
+      env: {
+        HAPPIER_DB_PROVIDER: 'mysql',
+        DATABASE_URL: 'mysql://root:happier@127.0.0.1:3306/happier',
+      },
+    });
+    expect(contract[1].kind).toBe('migrate');
+    expect(contract[2].kind).toBe('contract');
+    expect(contract[2].env.HAPPIER_DB_PROVIDER).toBe('mysql');
   });
 
   it('plans the correct yarn commands for extended mode (all steps)', () => {

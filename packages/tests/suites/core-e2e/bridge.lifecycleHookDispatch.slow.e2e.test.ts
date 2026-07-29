@@ -20,6 +20,7 @@ import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
 import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { callLegacyEncryptedSessionRpc as callSessionRpc } from '../../src/testkit/sessionRpc';
 import {
+    createLocalExtensionPackageManifest,
     writeEnabledLocalPathPluginState,
     writeLocalPathPluginFixture,
 } from '../../src/testkit/plugins/localPathPluginFixture';
@@ -76,21 +77,11 @@ describe('core e2e: bridge lifecycle hook dispatch', () => {
                 '}',
                 '',
             ].join('\n'),
-            manifest: {
-                schemaVersion: 1,
-                id: 'acme.bridge.lifecycle.fixture',
-                version: '1.0.0',
+            manifest: createLocalExtensionPackageManifest({
+                pluginId: 'acme.bridge.lifecycle.fixture',
                 displayName: 'Bridge Lifecycle Fixture',
                 description: 'Exercises bridge-owned lifecycle hook execution through a real execution-run host event',
-                engines: {
-                    happier: '^0.2.0',
-                },
-                targets: {
-                    daemon: {
-                        entry: './daemon.mjs',
-                    },
-                },
-                contributions: {
+                contributes: {
                     hooks: [
                         {
                             hookApiVersion: 1,
@@ -105,7 +96,7 @@ describe('core e2e: bridge lifecycle hook dispatch', () => {
                         },
                     ],
                 },
-            },
+            }),
         });
 
         await writeEnabledLocalPathPluginState({

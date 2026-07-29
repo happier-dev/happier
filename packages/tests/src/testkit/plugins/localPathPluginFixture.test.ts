@@ -11,7 +11,7 @@ import {
 } from './localPathPluginFixture';
 
 describe('localPathPluginFixture', () => {
-    it('writes a deterministic local-path plugin manifest and enabled plugin-state record', async () => {
+    it('writes a deterministic local-path plugin and enables its current registry generation', async () => {
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-local-path-plugin-root-'));
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-local-path-plugin-home-'));
 
@@ -52,24 +52,36 @@ describe('localPathPluginFixture', () => {
 
             await expect(readFile(join(pluginRoot, 'daemon.mjs'), 'utf8')).resolves.toContain('plugin-hook-fired');
             await expect(readFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), 'utf8')).resolves.toContain('"acme.local-path.fixture"');
-            const stateJson = JSON.parse(await readFile(join(happyHomeDir, 'plugins', 'plugins', 'state', 'plugin-state.v1.json'), 'utf8')) as Record<string, unknown>;
-            expect(stateJson).toMatchObject({
-                t: 'happier_plugin_state_v1',
-                schemaVersion: 1,
+            const storeRoot = join(happyHomeDir, 'plugins', 'plugins');
+            const commit = JSON.parse(
+                await readFile(join(storeRoot, 'state', 'plugin-registry-current.v1.json'), 'utf8'),
+            ) as {
+                installationState: { revisionId: string };
+                pluginGenerations: Record<string, { immutableGenerationId: string }>;
+            };
+            expect(commit.pluginGenerations['acme.local-path.fixture']?.immutableGenerationId)
+                .toEqual(expect.any(String));
+            const installationState = JSON.parse(
+                await readFile(
+                    join(
+                        storeRoot,
+                        'state-revisions',
+                        commit.installationState.revisionId,
+                        'plugin-installations.v1.json',
+                    ),
+                    'utf8',
+                ),
+            ) as {
+                runtimeCatalog?: { plugins?: Record<string, unknown> };
+            };
+            expect(installationState.runtimeCatalog?.plugins?.['acme.local-path.fixture']).toMatchObject({
+                state: { enabled: true },
+                source: { kind: 'path', devWatch: true },
+                install: { mode: 'managed_install' },
             });
-            const plugins = stateJson.plugins as Record<string, unknown>;
-            const pluginState = plugins['acme.local-path.fixture'] as Record<string, unknown>;
-            expect(pluginState).toMatchObject({
-                state: {
-                    enabled: true,
-                },
-                source: {
-                    kind: 'path',
-                },
-                install: {
-                    mode: 'link',
-                },
-            });
+            await expect(readFile(join(storeRoot, 'state', 'plugin-state.v1.json'), 'utf8'))
+                .rejects
+                .toMatchObject({ code: 'ENOENT' });
         } finally {
             await rm(pluginRoot, { recursive: true, force: true });
             await rm(happyHomeDir, { recursive: true, force: true });

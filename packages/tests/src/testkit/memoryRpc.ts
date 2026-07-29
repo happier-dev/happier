@@ -15,7 +15,7 @@ class ExplicitMachineRpcError extends Error {
 }
 
 export type MemoryRpcSchema<T> = {
-  safeParse: (input: unknown) => { success: true; data: T } | { success: false };
+  safeParse: (input: unknown) => { success: true; data: T } | { success: false; error?: unknown };
 };
 
 export const MemoryEnsureUpToDateAckSchema: MemoryRpcSchema<Readonly<{ ok: true }>> = {
@@ -38,6 +38,26 @@ function normalizeRpcAck(value: unknown): RpcAck | null {
   };
 }
 
+function describeInvalidResponseShape(value: unknown): string {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  }
+  const record = value as Record<string, unknown>;
+  const describeKnownField = (key: 'protocolVersion' | 'projection'): string => {
+    if (!(key in record)) return 'absent';
+    const field = record[key];
+    if (key === 'protocolVersion' && (typeof field === 'number' || typeof field === 'string')) {
+      return JSON.stringify(field);
+    }
+    if (field === null) return 'null';
+    return Array.isArray(field) ? 'array' : typeof field;
+  };
+  const errorDetail = ['errorCode', 'error']
+    .flatMap((key) => typeof record[key] === 'string' ? [` ${key}=${JSON.stringify(record[key])}`] : [])
+    .join('');
+  return `object keys=[${Object.keys(record).sort().join(',')}] protocolVersion=${describeKnownField('protocolVersion')} projection=${describeKnownField('projection')}${errorDetail}`;
+}
+
 export async function callEncryptedMachineRpc<TReq, TRes>(params: {
   ui: { rpcCall: (method: string, encryptedParams: string) => Promise<unknown> };
   machineId: string;
@@ -48,31 +68,58 @@ export async function callEncryptedMachineRpc<TReq, TRes>(params: {
   timeoutMs?: number;
 }): Promise<TRes> {
   let out: TRes | null = null;
+  let lastSchemaError: unknown = null;
+  let lastInvalidResponseShape: string | null = null;
   const encryptedParams = encryptLegacyBase64(params.req, params.secret);
 
-  await waitFor(
-    async () => {
-      const res = normalizeRpcAck(await params.ui.rpcCall(`${params.machineId}:${params.method}`, encryptedParams));
-      if (res && (res.ok === false || typeof res.errorCode === 'string' || typeof res.error === 'string')) {
-        throw new ExplicitMachineRpcError({
-          method: params.method,
-          errorCode: res.errorCode,
-          error: res.error,
-        });
-      }
-      if (!res || res.ok !== true || typeof res.result !== 'string') return false;
-      const decrypted = decryptLegacyBase64(res.result, params.secret);
-      const parsed = params.schema.safeParse(decrypted);
-      if (!parsed.success) return false;
-      out = parsed.data;
-      return true;
-    },
-    {
-      timeoutMs: params.timeoutMs ?? 45_000,
-      shouldRetryOnError: (error) => !(error instanceof ExplicitMachineRpcError),
-      context: params.method,
-    },
-  );
+  try {
+    await waitFor(
+      async () => {
+        const res = normalizeRpcAck(await params.ui.rpcCall(`${params.machineId}:${params.method}`, encryptedParams));
+        if (res && (res.ok === false || typeof res.errorCode === 'string' || typeof res.error === 'string')) {
+          throw new ExplicitMachineRpcError({
+            method: params.method,
+            errorCode: res.errorCode,
+            error: res.error,
+          });
+        }
+        if (!res || res.ok !== true || typeof res.result !== 'string') return false;
+        const decrypted = decryptLegacyBase64(res.result, params.secret);
+        const parsed = params.schema.safeParse(decrypted);
+        if (!parsed.success) {
+          const handlerError = normalizeRpcAck(decrypted);
+          if (handlerError && (typeof handlerError.errorCode === 'string' || typeof handlerError.error === 'string')) {
+            throw new ExplicitMachineRpcError({
+              method: params.method,
+              errorCode: handlerError.errorCode,
+              error: handlerError.error,
+            });
+          }
+          lastSchemaError = parsed.error ?? null;
+          lastInvalidResponseShape = describeInvalidResponseShape(decrypted);
+          return false;
+        }
+        out = parsed.data;
+        return true;
+      },
+      {
+        timeoutMs: params.timeoutMs ?? 45_000,
+        shouldRetryOnError: (error) => !(error instanceof ExplicitMachineRpcError),
+        context: params.method,
+      },
+    );
+  } catch (error) {
+    if (lastSchemaError) {
+      const detail = lastSchemaError instanceof Error
+        ? lastSchemaError.message
+        : String(lastSchemaError);
+      const shapeDetail = lastInvalidResponseShape
+        ? `; invalid response shape: ${lastInvalidResponseShape}`
+        : '';
+      throw new Error(`${error instanceof Error ? error.message : String(error)}; last schema error: ${detail}${shapeDetail}`);
+    }
+    throw error;
+  }
 
   if (!out) throw new Error(`Machine RPC did not return a valid response: ${params.method}`);
   return out;

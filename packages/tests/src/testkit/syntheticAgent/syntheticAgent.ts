@@ -4,6 +4,7 @@ import { decryptDataKeyBase64, encryptDataKeyBase64 } from '../rpcCrypto';
 import { fetchSessionV2, patchSessionAgentState } from '../sessions';
 import { sleep, waitFor } from '../timing';
 import { createMachineBoundSessionScopedSocketCollector } from '../sessionSocketBinding';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 type PermissionRequest = {
   id: string;
@@ -41,6 +42,14 @@ type AgentStateShape = {
   >;
 };
 
+type PendingMaterializeAck = {
+  ok?: unknown;
+  error?: unknown;
+  didMaterialize?: unknown;
+  pendingCount?: unknown;
+  pendingVersion?: unknown;
+};
+
 export function computeVersionMismatchBackoffMs(attempt: number): number {
   const boundedAttempt = Math.max(1, Math.floor(attempt));
   const base = 25;
@@ -56,6 +65,9 @@ export class SyntheticAgent {
   private readonly sessionId: string;
   private readonly dataKey: Uint8Array;
   private socket: SocketCollector | null = null;
+  private pendingConsumerStopRequested = true;
+  private pendingConsumerLoop: Promise<void> | null = null;
+  private pendingConsumerFailure: Error | null = null;
 
   constructor(params: { baseUrl: string; token: string; sessionId: string; dataKey: Uint8Array }) {
     this.baseUrl = params.baseUrl;
@@ -86,9 +98,17 @@ export class SyntheticAgent {
     socket.connect();
     await waitFor(() => socket.isConnected(), { timeoutMs: 20_000 });
 
-    const method = `${this.sessionId}:permission`;
+    const permissionMethod = `${this.sessionId}:permission`;
+    const userMessageMethod = `${this.sessionId}:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`;
     socket.onRpcRequest(async (req) => {
-      if (req.method !== method) {
+      if (req.method === userMessageMethod) {
+        const message = decryptDataKeyBase64(req.params, this.dataKey) as Record<string, unknown> | null;
+        if (!message || typeof message.text !== 'string' || typeof message.localId !== 'string') {
+          return encryptDataKeyBase64({ error: 'invalid-request' }, this.dataKey);
+        }
+        return encryptDataKeyBase64({ ok: true }, this.dataKey);
+      }
+      if (req.method !== permissionMethod) {
         // Return an encrypted METHOD_NOT_FOUND-like response; server also guards this.
         return encryptDataKeyBase64({ error: 'method-not-found' }, this.dataKey);
       }
@@ -102,11 +122,35 @@ export class SyntheticAgent {
       return encryptDataKeyBase64({ ok: true }, this.dataKey);
     });
 
-    await socket.rpcRegister(method);
+    await socket.rpcRegister(permissionMethod);
+    await socket.rpcRegister(userMessageMethod);
+    socket.emit('session-alive', {
+      sid: this.sessionId,
+      time: Date.now(),
+      thinking: false,
+    });
+    await waitFor(async () => {
+      const session = await fetchSessionV2(this.baseUrl, this.token, this.sessionId);
+      return session.active === true;
+    }, { timeoutMs: 20_000, context: `synthetic agent session active (${this.sessionId})` });
+
+    this.pendingConsumerStopRequested = false;
+    this.pendingConsumerFailure = null;
+    this.pendingConsumerLoop = this.runPendingConsumerLoop(socket).catch((error: unknown) => {
+      if (this.pendingConsumerStopRequested) return;
+      this.pendingConsumerFailure = error instanceof Error ? error : new Error(String(error));
+    });
   }
 
   async stop(): Promise<void> {
+    this.pendingConsumerStopRequested = true;
     this.socket?.close();
+    await this.pendingConsumerLoop;
+    this.pendingConsumerLoop = null;
+  }
+
+  assertPendingConsumerHealthy(): void {
+    if (this.pendingConsumerFailure) throw this.pendingConsumerFailure;
   }
 
   async publishPermissionRequest(req: PermissionRequest): Promise<void> {
@@ -155,6 +199,57 @@ export class SyntheticAgent {
       next.completedRequests = completedRequests;
       return next;
     });
+  }
+
+  private async runPendingConsumerLoop(socket: SocketCollector): Promise<void> {
+    const initialSession = await fetchSessionV2(this.baseUrl, this.token, this.sessionId);
+    let shouldDrain = (initialSession.pendingCount ?? 0) > 0;
+    let pendingVersion = initialSession.pendingVersion;
+    let eventCursor = 0;
+
+    while (!this.pendingConsumerStopRequested) {
+      const events = socket.getEvents();
+      for (const event of events.slice(eventCursor)) {
+        if (event.kind !== 'update') continue;
+        const body = event.payload.body;
+        if (body?.t !== 'pending-changed') continue;
+        if (body.sid !== this.sessionId && body.sessionId !== this.sessionId) continue;
+        if (typeof body.pendingVersion === 'number' && Number.isSafeInteger(body.pendingVersion) && body.pendingVersion >= 0) {
+          pendingVersion = body.pendingVersion;
+        }
+        if (typeof body.pendingCount === 'number' && Number.isSafeInteger(body.pendingCount) && body.pendingCount >= 0) {
+          shouldDrain = body.pendingCount > 0;
+        }
+      }
+      eventCursor = events.length;
+
+      if (!shouldDrain || !socket.isConnected()) {
+        await sleep(50);
+        continue;
+      }
+
+      let ack: PendingMaterializeAck;
+      try {
+        ack = await socket.emitWithAck<PendingMaterializeAck>('pending-materialize-next', {
+          sid: this.sessionId,
+          ...(typeof pendingVersion === 'number' ? { pendingVersion } : {}),
+        }, 10_000);
+      } catch (error) {
+        if (this.pendingConsumerStopRequested) return;
+        throw error;
+      }
+      if (ack?.ok !== true) {
+        throw new Error(`SyntheticAgent pending-materialize-next failed (${typeof ack?.error === 'string' ? ack.error : 'unknown'})`);
+      }
+      if (typeof ack.pendingVersion === 'number' && Number.isSafeInteger(ack.pendingVersion) && ack.pendingVersion >= 0) {
+        pendingVersion = ack.pendingVersion;
+      }
+      if (ack.didMaterialize === true) {
+        shouldDrain = typeof ack.pendingCount === 'number' ? ack.pendingCount > 0 : true;
+        continue;
+      }
+      shouldDrain = false;
+    }
   }
 
   private async updateAgentStateWithRetry(updater: (state: AgentStateShape) => AgentStateShape): Promise<void> {

@@ -10,6 +10,11 @@ import {
 } from '@happier-dev/protocol';
 
 import { createTestAuth } from '../../src/testkit/auth';
+import {
+  readEncryptedAccountSettingsV2,
+  readEncryptedAccountSettingsV2OrEmpty,
+  upsertEncryptedAccountSettingsV2,
+} from '../../src/testkit/accountSettings';
 import { fetchJson } from '../../src/testkit/http';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
 import { createRunDirs } from '../../src/testkit/runDir';
@@ -157,5 +162,68 @@ describe('core e2e: account settings sync safety', () => {
       scmIncludeCoAuthoredBy: true,
       otherClientSparseField: 'from-second-writer',
     });
+  }, 240_000);
+
+  it('round-trips encrypted settings through the canonical material-aware testkit reader and writer', async () => {
+    const testDir = run.testDir(`account-settings-encrypted-testkit-${randomUUID()}`);
+    server = await startServerLight({ testDir });
+    const auth = await createTestAuth(server.baseUrl);
+    const material = { type: 'legacy' as const, secret: accountSettingsSecret };
+
+    const initial = await fetchSettings(server.baseUrl, auth.token);
+    const empty = await readEncryptedAccountSettingsV2OrEmpty({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      material,
+    });
+    expect(empty.settingsVersion).toBe(initial.version);
+    expect(empty.settings).toMatchObject({ schemaVersion: 2 });
+    expect(empty.settings.providerSettingsV1).toBeUndefined();
+
+    await upsertEncryptedAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      material,
+      settings: {
+        schemaVersion: 2,
+        providerSettingsV1: { marker: 'before' },
+        unknownFutureKey: { preserved: true },
+      },
+    });
+
+    const storedAfterSeed = await fetchSettings(server.baseUrl, auth.token);
+    expect(storedAfterSeed.content?.t).toBe('encrypted');
+
+    const seeded = await readEncryptedAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      material,
+    });
+    expect(seeded.settings.providerSettingsV1).toEqual({ marker: 'before' });
+
+    const nextVersion = await upsertEncryptedAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      material,
+      expectedVersion: seeded.settingsVersion,
+      settings: {
+        ...seeded.settings,
+        providerSettingsV1: { marker: 'after' },
+      },
+    });
+    expect(nextVersion).toBe(seeded.settingsVersion + 1);
+
+    const updated = await readEncryptedAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      material,
+    });
+    expect(updated.settings.providerSettingsV1).toEqual({ marker: 'after' });
+    expect(updated.settings.unknownFutureKey).toEqual({ preserved: true });
+    await expect(readEncryptedAccountSettingsV2({
+      baseUrl: server.baseUrl,
+      token: auth.token,
+      material: { type: 'legacy', secret: new Uint8Array(32).fill(99) },
+    })).rejects.toThrow(/decrypt encrypted account settings/i);
   }, 240_000);
 });

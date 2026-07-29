@@ -35,7 +35,7 @@ type HandoffStartResult = Readonly<{
   endpointCandidates: readonly Readonly<{ kind: string; url: string; expiresAt: number }>[];
   targetPath: string;
   handoffMetadataV2?: unknown;
-  providerBundle?: unknown;
+  agentBundle?: unknown;
 }>;
 
 type HandoffStartResponse = HandoffStartResult | Readonly<{ ok: false; error?: unknown; errorCode?: unknown }>;
@@ -504,9 +504,9 @@ describe('core e2e: session handoff via direct peer', () => {
       targetPath: expect.any(String),
       endpointCandidates: expect.any(Array),
     }));
-    expect(started.providerBundle).toBeUndefined();
+    expect(started.agentBundle).toBeUndefined();
     const handoffMetadataV2 = requireHandoffMetadataV2(started, 'source handoff start');
-    expect(requireObject(handoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+    expect(requireObject(handoffMetadataV2.agentBundleTransferPublication, 'agentBundleTransferPublication')).toEqual(expect.objectContaining({
       transferId: expect.any(String),
       sizeBytes: expect.any(Number),
       manifestHash: expect.any(String),
@@ -701,7 +701,7 @@ describe('core e2e: session handoff via direct peer', () => {
     ) as HandoffStartResponse, 'target handoff-back start');
     expect(secondStarted.handoffId).not.toBe(started.handoffId);
     const secondHandoffMetadataV2 = requireHandoffMetadataV2(secondStarted, 'target handoff-back start');
-    expect(requireObject(secondHandoffMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+    expect(requireObject(secondHandoffMetadataV2.agentBundleTransferPublication, 'agentBundleTransferPublication')).toEqual(expect.objectContaining({
       transferId: expect.any(String),
       sizeBytes: expect.any(Number),
       manifestHash: expect.any(String),
@@ -1010,7 +1010,7 @@ describe('core e2e: session handoff via direct peer', () => {
       'source handoff start for late cutover proof',
     ) as HandoffStartResult;
     const lateCutoverMetadataV2 = requireHandoffMetadataV2(started, 'source handoff start for late cutover proof');
-    expect(requireObject(lateCutoverMetadataV2.providerBundleTransferPublication, 'providerBundleTransferPublication')).toEqual(expect.objectContaining({
+    expect(requireObject(lateCutoverMetadataV2.agentBundleTransferPublication, 'agentBundleTransferPublication')).toEqual(expect.objectContaining({
       transferId: expect.any(String),
       sizeBytes: expect.any(Number),
       manifestHash: expect.any(String),

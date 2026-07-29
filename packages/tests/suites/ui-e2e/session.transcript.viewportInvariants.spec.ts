@@ -56,6 +56,11 @@ type TranscriptScrollMetrics = Readonly<{
   distanceFromBottom: number;
 }>;
 
+type VisibleMessageAnchor = Readonly<{
+  testId: string;
+  rowTopRelativeToScroller: number;
+}>;
+
 // Mirrors WRITE_REASON_OWNERS in the UI viewport-telemetry assertion harness.
 const VIEWPORT_WRITE_REASON_OWNERS: Readonly<Record<string, 'entry' | 'prepend' | 'follow' | 'explicit'>> = {
   'initial-open': 'entry',
@@ -122,20 +127,19 @@ function assertNoSilentBails(events: readonly ViewportTelemetryEvent[], label: s
 
 // Mirrors DEFAULT_PIN_THRESHOLD_PX in the UI harness.
 const PIN_THRESHOLD_PX = 72;
-const REOPEN_ANCHOR_TOLERANCE_PX = 150;
-const PREPEND_ANCHOR_HOLD_TOLERANCE_PX = 150;
+// Browser layout values can differ by one physical pixel after fractional CSS-pixel rounding.
+// Anchor preservation is otherwise exact: proximity thresholds must never certify this contract.
+const VIEWPORT_MEASUREMENT_ROUNDING_PX = 1;
 // Dev pages /v1/sessions/:id/messages at a FIXED 150 (`SESSION_MESSAGES_PAGE_SIZE` in
 // `apps/ui/sources/sync/sync.ts` — dev has NO message-page-size tuning key, unlike remote-dev's
 // `sessionMessagesPageSize`), and the server's own limit default/cap is also 150
 // (`apps/server/sources/app/api/routes/session/registerSessionMessageRoutes.ts`,
 // `limit: z.coerce.number().int().min(1).max(500).default(150)`). A session at or under 150
 // materializes ENTIRELY on open (hasMore=false) and `loadOlder` is deterministically no_more — no
-// user-triggered older-page request can ever fire. Each seeded turn persists ~5 messages
-// (user + agent events + assistant), so 35 turns + the initial turn ≈ 180 messages > 150, which
-// guarantees a real older page (~30 messages) remains after the cold open. The prepend scenario
-// premise guard below fails LOUDLY if the entry phase drains that backlog (G-RV rework: seeding
-// inside the cap makes prepend scenarios structurally impossible).
-const SEED_TURN_COUNT = 35;
+// user-triggered older-page request can ever fire. Each seeded turn persists ~5 messages.
+// 95 turns + the initial turn ≈ 480 messages, so two real older pages remain even if the bounded
+// entry phase consumes one delayed 150-message page before the user-triggered exact-top phase.
+const SEED_TURN_COUNT = 95;
 
 function describeViewportEvent(event: ViewportTelemetryEvent): string {
   const parts = [`t=${event.timestampMs}`, event.type];
@@ -155,7 +159,7 @@ function formatViewportEvents(events: readonly ViewportTelemetryEvent[]): string
 }
 
 function committedScrollWrites(events: readonly ViewportTelemetryEvent[]): ViewportTelemetryEvent[] {
-  return events.filter((event) => event.type === 'scroll-write' && event.writer !== 'mvcp-skip');
+  return events.filter((event) => event.type === 'scroll-write');
 }
 
 function distinctWriteTargets(writes: readonly ViewportTelemetryEvent[]): number {
@@ -267,7 +271,7 @@ async function readTranscriptScrollMetrics(page: Page): Promise<TranscriptScroll
       scrollTop,
       scrollHeight,
       clientHeight,
-      distanceFromBottom: Math.max(0, Math.trunc(scrollHeight - clientHeight - scrollTop)),
+      distanceFromBottom: scrollHeight - clientHeight - scrollTop,
     };
   });
 }
@@ -278,29 +282,63 @@ async function requireTranscriptScrollMetrics(page: Page): Promise<TranscriptScr
   return metrics;
 }
 
-type VisibleMessageAnchor = Readonly<{ testId: string; top: number }>;
-
 async function readTopVisibleMessageAnchor(page: Page): Promise<VisibleMessageAnchor | null> {
   return await page.evaluate(() => {
-    const nodes = Array.from(document.querySelectorAll('[data-testid^="transcript-message-"]'));
-    let best: { testId: string; top: number } | null = null;
+    const root = document.querySelector('[data-testid="transcript-chat-list"]');
+    if (!root) return null;
+    const candidates: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
+    let ancestor: Element | null = root.parentElement;
+    for (let depth = 0; ancestor && depth < 6; depth += 1) {
+      candidates.push(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+    let scroller: Element | null = null;
+    for (const element of candidates) {
+      if (element.scrollHeight > element.clientHeight + 1 && element.clientHeight > 0) {
+        if (!scroller || element.scrollHeight > scroller.scrollHeight) scroller = element;
+      }
+    }
+    if (!scroller) return null;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const nodes = Array.from(root.querySelectorAll('[data-testid^="transcript-message-"]'));
+    let best: { testId: string; rowTopRelativeToScroller: number } | null = null;
     for (const node of nodes) {
       const rect = node.getBoundingClientRect();
       if (rect.height <= 0) continue;
-      if (rect.bottom <= 0 || rect.top >= window.innerHeight) continue;
-      if (!best || rect.top < best.top) {
-        best = { testId: node.getAttribute('data-testid') ?? '', top: rect.top };
+      if (rect.bottom <= scrollerRect.top || rect.top >= scrollerRect.bottom) continue;
+      const testId = node.getAttribute('data-testid');
+      const messageId = testId?.slice('transcript-message-'.length) ?? '';
+      if (!testId || !messageId || messageId.includes(':')) continue;
+      const rowTopRelativeToScroller = rect.top - scrollerRect.top;
+      if (!best || rowTopRelativeToScroller < best.rowTopRelativeToScroller) {
+        best = { testId, rowTopRelativeToScroller };
       }
     }
     return best;
   });
 }
 
-async function readMessageAnchorTop(page: Page, testId: string): Promise<number | null> {
+async function readMessageAnchorTopRelativeToScroller(page: Page, testId: string): Promise<number | null> {
   return await page.evaluate((id) => {
+    const root = document.querySelector('[data-testid="transcript-chat-list"]');
+    if (!root) return null;
+    const candidates: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
+    let ancestor: Element | null = root.parentElement;
+    for (let depth = 0; ancestor && depth < 6; depth += 1) {
+      candidates.push(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+    let scroller: Element | null = null;
+    for (const element of candidates) {
+      if (element.scrollHeight > element.clientHeight + 1 && element.clientHeight > 0) {
+        if (!scroller || element.scrollHeight > scroller.scrollHeight) scroller = element;
+      }
+    }
+    if (!scroller) return null;
     const node = document.querySelector(`[data-testid="${id}"]`);
     if (!node) return null;
-    return node.getBoundingClientRect().top;
+    return node.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
   }, testId);
 }
 
@@ -495,7 +533,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
   });
 
   test('seeds a session past the initial-fetch cap and viewport telemetry is readable', async ({ page }) => {
-    test.setTimeout(720_000);
+    test.setTimeout(1_800_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
     await installViewportTelemetryOverride(page);
@@ -533,9 +571,8 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
     await expect(page.getByText('FAKE_CLAUDE_OK_1').first()).toBeVisible({ timeout: 180_000 });
 
-    // Each turn persists ~5 messages: 1 + SEED_TURN_COUNT turns => ~180 messages total, exceeding
-    // the 150-message initial fetch so older-page prepends stay reachable (see the
-    // SEED_TURN_COUNT comment).
+    // Each turn persists ~5 messages: 1 + SEED_TURN_COUNT turns => ~480 messages total, leaving
+    // two 150-message pages even after one bounded entry-phase load (see SEED_TURN_COUNT).
     for (let i = 1; i <= SEED_TURN_COUNT; i += 1) {
       await sendSeedPromptAndWaitForOk(page, seedMessageText(i, run.runId), i + 1);
     }
@@ -673,6 +710,11 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     await page.waitForTimeout(2_500);
     const anchorMetrics = await requireTranscriptScrollMetrics(page);
     const anchorProbe = await readTopVisibleMessageAnchor(page);
+    if (!anchorProbe) {
+      throw new Error(
+        'Invariant B premise violated: warm reopen requires a non-null keyed logical-row probe',
+      );
+    }
 
     const baseline = await readViewportTelemetrySnapshot(page);
     if (!baseline) throw new Error('viewport telemetry unavailable before reopen');
@@ -710,36 +752,24 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     assertTransactionOwnerTargetSpread(entryEvents, 'warm reopen');
     assertNoSilentBails(entryEvents, 'warm reopen');
 
-    // Final position lands near the remembered anchor (DOM-confirmed; web has no scroll-observed).
-    // Assert on the anchored MESSAGE's on-screen position, not absolute scrollTop: rows above the
-    // anchor re-measure between visits on large transcripts (virtualized/estimated heights), which
-    // legitimately shifts absolute offsets while the user-visible anchor stays put.
+    // Final position preserves the exact logical row and its row-relative coordinate. Absolute
+    // scrollTop may change as rows above remeasure, but that is never a fallback pass condition.
     const reopenedMetrics = await requireTranscriptScrollMetrics(page);
-    if (anchorProbe && anchorProbe.testId) {
-      const afterTop = await readMessageAnchorTop(page, anchorProbe.testId);
-      if (afterTop === null) {
-        throw new Error(
-          `Invariant B violated: the pre-reopen top visible message ${anchorProbe.testId} is not in `
-          + 'the DOM after the reopen (anchor content lost)',
-        );
-      }
-      const anchorTopDeltaPx = Math.abs(afterTop - anchorProbe.top);
-      if (anchorTopDeltaPx > REOPEN_ANCHOR_TOLERANCE_PX) {
-        throw new Error(
-          `Invariant B violated: reopen left the anchored message ${anchorProbe.testId} ${anchorTopDeltaPx}px `
-          + `from its remembered viewport position (tolerance ${REOPEN_ANCHOR_TOLERANCE_PX}px; `
-          + `top before=${anchorProbe.top}, after=${afterTop}; scrollTop before=${anchorMetrics.scrollTop}, `
-          + `after=${reopenedMetrics.scrollTop})`,
-        );
-      }
-    } else {
-      const anchorDeltaPx = Math.abs(reopenedMetrics.scrollTop - anchorMetrics.scrollTop);
-      if (anchorDeltaPx > REOPEN_ANCHOR_TOLERANCE_PX) {
-        throw new Error(
-          `Invariant B violated: reopen landed ${anchorDeltaPx}px from the remembered anchor `
-          + `(tolerance ${REOPEN_ANCHOR_TOLERANCE_PX}px; before=${anchorMetrics.scrollTop}, after=${reopenedMetrics.scrollTop})`,
-        );
-      }
+    const afterTop = await readMessageAnchorTopRelativeToScroller(page, anchorProbe.testId);
+    if (afterTop === null) {
+      throw new Error(
+        `Invariant B violated: the pre-reopen top visible message ${anchorProbe.testId} is not in `
+        + 'the DOM after the reopen (anchor content lost)',
+      );
+    }
+    const anchorTopDeltaPx = Math.abs(afterTop - anchorProbe.rowTopRelativeToScroller);
+    if (anchorTopDeltaPx > VIEWPORT_MEASUREMENT_ROUNDING_PX) {
+      throw new Error(
+        `Invariant B violated: reopen shifted keyed row ${anchorProbe.testId} by ${anchorTopDeltaPx}px `
+        + `(allowed rounding ${VIEWPORT_MEASUREMENT_ROUNDING_PX}px; row-relative top before=`
+        + `${anchorProbe.rowTopRelativeToScroller}, after=${afterTop}; scrollTop before=`
+        + `${anchorMetrics.scrollTop}, after=${reopenedMetrics.scrollTop})`,
+      );
     }
 
     // Scenario isolation: leave the stored viewport at the BOTTOM so the next test's cold open
@@ -756,7 +786,7 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     ).toBeLessThanOrEqual(PIN_THRESHOLD_PX);
   });
 
-  test('older-page prepend: loading indicator, ≤1 page in flight, one transaction outcome (invariants D/H)', async ({ page }) => {
+  test('exact-top older-page prepend: two successive pages preserve one keyed row exactly (invariants D/H)', async ({ page }) => {
     test.setTimeout(420_000);
     if (!sessionId) throw new Error('missing seeded session fixtures');
 
@@ -817,15 +847,18 @@ test.describe('ui e2e: transcript viewport invariants', () => {
       );
     }
 
-    // Scroll INTO the top-prefetch threshold but stay above offset 0: the pagination machine
-    // (Lane D, anti-E6) suspends loads while the observed offset is ≤ 0 and arms on a threshold
-    // outside→inside transition — a single full-travel fling that lands exactly at scrollTop=0
-    // never loads by design (unit-pinned: 'suspends older loads while the observed offset is at
-    // or below zero'). Land at ~half the configured 300px threshold instead.
-    await wheelOverTranscript(page, -(beforeMetrics.scrollTop - 150));
-    // Probe the anchored message AFTER the scroll settles but BEFORE the (700ms-delayed) older
-    // page lands, so the drift check below measures only what the prepend did to the viewport.
+    // Reach the exact physical older edge with trusted wheel input. The delayed response leaves a
+    // deterministic window to capture the logical row before either prepend materializes.
+    await wheelOverTranscript(page, -(beforeMetrics.scrollTop + beforeMetrics.clientHeight));
+    await expect
+      .poll(async () => Math.abs((await requireTranscriptScrollMetrics(page)).scrollTop), { timeout: 10_000 })
+      .toBeLessThanOrEqual(VIEWPORT_MEASUREMENT_ROUNDING_PX);
     const anchorProbe = await readTopVisibleMessageAnchor(page);
+    if (!anchorProbe) {
+      throw new Error(
+        'Prepend scenario premise violated: exact-top activation requires a non-null keyed logical-row probe',
+      );
+    }
     await expect
       .poll(() => olderRequestCount, { timeout: 60_000 })
       .toBeGreaterThan(0);
@@ -836,10 +869,32 @@ test.describe('ui e2e: transcript viewport invariants', () => {
       'invariant H: older-load progress overlay must be visible while the load is in flight',
     ).toBeVisible({ timeout: 5_000 });
 
-    await expect.poll(() => olderRequestsSettled, { timeout: 60_000 }).toBeGreaterThan(0);
+    await expect.poll(() => olderRequestsSettled, { timeout: 60_000 }).toBeGreaterThanOrEqual(1);
     await expect
       .poll(async () => (await requireTranscriptScrollMetrics(page)).scrollHeight, { timeout: 60_000 })
       .toBeGreaterThan(beforeMetrics.scrollHeight);
+    const firstPageMetrics = await requireTranscriptScrollMetrics(page);
+    const afterFirstPageTop = await readMessageAnchorTopRelativeToScroller(page, anchorProbe.testId);
+    if (afterFirstPageTop === null) {
+      throw new Error(`prepend anchor probe ${anchorProbe.testId} disappeared after the first prepend`);
+    }
+    expect(
+      Math.abs(afterFirstPageTop - anchorProbe.rowTopRelativeToScroller),
+      `first prepend shifted keyed row ${anchorProbe.testId}`,
+    ).toBeLessThanOrEqual(VIEWPORT_MEASUREMENT_ROUNDING_PX);
+
+    // One exact-top activation must permit a second sequential materialization without another
+    // user movement. This rejects the reproduced "first page looked stable, second page lost the
+    // row while scrollTop stayed zero" failure.
+    await expect.poll(() => olderRequestCount, { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
+    await expect(
+      page.getByTestId('transcript-older-load-progress-overlay'),
+      'invariant H: progress overlay must remain observable for the second sequential older load',
+    ).toBeVisible({ timeout: 5_000 });
+    await expect.poll(() => olderRequestsSettled, { timeout: 60_000 }).toBeGreaterThanOrEqual(2);
+    await expect
+      .poll(async () => (await requireTranscriptScrollMetrics(page)).scrollHeight, { timeout: 60_000 })
+      .toBeGreaterThan(firstPageMetrics.scrollHeight);
     const snapshot = await waitForViewportTelemetryQuiescence(page);
 
     // Invariant H: never more than one user-triggered older page in flight.
@@ -848,19 +903,14 @@ test.describe('ui e2e: transcript viewport invariants', () => {
       `invariant H: ${maxConcurrentOlderRequests} older-page requests were in flight concurrently (max 1)`,
     ).toBeLessThanOrEqual(1);
 
-    // The prepend must hold the viewport: the message that was at the top of the viewport before
-    // the prepend stays put (within tolerance) instead of jumping.
-    if (anchorProbe && anchorProbe.testId) {
-      const afterTop = await readMessageAnchorTop(page, anchorProbe.testId);
-      if (afterTop === null) {
-        throw new Error(`prepend anchor probe ${anchorProbe.testId} disappeared from the DOM after the prepend`);
-      }
-      const driftPx = Math.abs(afterTop - anchorProbe.top);
-      expect(
-        driftPx,
-        `prepend shifted the anchored message ${anchorProbe.testId} by ${driftPx}px (tolerance ${PREPEND_ANCHOR_HOLD_TOLERANCE_PX}px)`,
-      ).toBeLessThanOrEqual(PREPEND_ANCHOR_HOLD_TOLERANCE_PX);
+    const afterSecondPageTop = await readMessageAnchorTopRelativeToScroller(page, anchorProbe.testId);
+    if (afterSecondPageTop === null) {
+      throw new Error(`prepend anchor probe ${anchorProbe.testId} disappeared after the second prepend`);
     }
+    expect(
+      Math.abs(afterSecondPageTop - anchorProbe.rowTopRelativeToScroller),
+      `second prepend shifted keyed row ${anchorProbe.testId}`,
+    ).toBeLessThanOrEqual(VIEWPORT_MEASUREMENT_ROUNDING_PX);
 
     expect(snapshot.droppedCount).toBe(0);
     const phaseEvents = snapshot.events.slice(baselineCount);
@@ -869,16 +919,21 @@ test.describe('ui e2e: transcript viewport invariants', () => {
     // the KEEP web prepend system emits restore-decision events ('pending' on capture, closed by
     // a terminal reason). Assert never-silent via no-silent-bails instead of counting native
     // transaction outcomes (scenario-D outcome counting is native-only).
-    const prependDecisions = phaseEvents.filter(
-      (event) => event.type === 'restore-decision' && event.reason !== undefined
-        && (event.reason === 'pending' || TERMINAL_DECISION_REASONS.has(event.reason)),
+    const pendingPrependDecisions = phaseEvents.filter(
+      (event) => event.type === 'restore-decision' && event.reason === 'pending',
     );
-    if (prependDecisions.length === 0) {
+    const terminalPrependDecisions = phaseEvents.filter(
+      (event) => event.type === 'restore-decision' && event.reason !== undefined
+        && TERMINAL_DECISION_REASONS.has(event.reason),
+    );
+    if (pendingPrependDecisions.length < 2 || terminalPrependDecisions.length < 2) {
       const prependWrites = committedScrollWrites(phaseEvents)
         .filter((event) => VIEWPORT_WRITE_REASON_OWNERS[event.reason ?? ''] === 'prepend');
       throw new Error(
-        'Invariant D violated: no restore-decision telemetry was emitted for the prepend (silent prepend, E5). '
-        + `Observed ${olderRequestCount} older-page request(s) and ${prependWrites.length} prepend write(s):\n`
+        'Invariant D violated: both completed prepends require pending plus terminal restore decisions. '
+        + `Observed ${olderRequestCount} older-page request(s), ${pendingPrependDecisions.length} pending `
+        + `decision(s), ${terminalPrependDecisions.length} terminal decision(s), and `
+        + `${prependWrites.length} prepend write(s):\n`
         + formatViewportEvents(committedScrollWrites(phaseEvents)),
       );
     }

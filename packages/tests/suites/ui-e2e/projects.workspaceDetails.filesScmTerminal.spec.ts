@@ -5,12 +5,31 @@ import { randomUUID } from 'node:crypto';
 
 import { createRunDirs } from '../../src/testkit/runDir';
 import { startServerLight, type StartedServer } from '../../src/testkit/process/serverLight';
-import { startUiWeb, type StartedUiWeb } from '../../src/testkit/process/uiWeb';
-import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
+import {
+    startExistingUiWebExport,
+    startUiWeb,
+    type StartedUiWeb,
+} from '../../src/testkit/process/uiWeb';
+import {
+    sanitizeDaemonEnvForSpawn,
+    startTestDaemon,
+    type StartedDaemon,
+} from '../../src/testkit/daemon/daemon';
 import { startCliAuthLoginForTerminalConnect, type StartedCliTerminalConnect } from '../../src/testkit/uiE2e/cliTerminalConnect';
 import { createGitRepoWithChanges } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { createAccountAndReachConnectMachineState, gotoDomContentLoadedWithRetries, normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { waitForInitialAppUi } from '../../src/testkit/uiE2e/waitForInitialAppUi';
+import { authenticateAndStartDaemon } from '../../src/testkit/uiE2e/authenticateAndStartDaemon';
+import { repoRootDir } from '../../src/testkit/paths';
+import {
+    decideAuthenticatedPluginInstallReview,
+    readPluginInstallReviewRequiredEnvelope,
+} from '../../src/testkit/pluginPlatform/authenticatedInstallReview';
+import {
+    parseJsonEnvelope,
+    runPackedCli,
+    runPackedCliJson,
+} from '../../scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 
@@ -43,6 +62,7 @@ async function ensureSignedInAndConnected(params: Readonly<{
         env: {
             ...process.env,
             CI: '1',
+            HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED: 'false',
             HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
             HAPPIER_DISABLE_CAFFEINATE: '1',
             HAPPIER_VARIANT: 'dev',
@@ -60,6 +80,7 @@ async function ensureSignedInAndConnected(params: Readonly<{
         env: {
             ...process.env,
             CI: '1',
+            HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED: 'false',
             HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1',
             HAPPIER_HOME_DIR: cliHomeDir,
             HAPPIER_SERVER_URL: server.baseUrl,
@@ -226,6 +247,40 @@ function parseWorkspaceRefIdFromProjectsUrl(url: string): string | null {
     }
 }
 
+function getTerminalInput(page: Page, testId: string) {
+    return page.getByTestId(testId).locator('textarea').first();
+}
+
+function toShellPrintfOctalCommand(text: string): string {
+    const encoded = Array.from(Buffer.from(`${text}\n`, 'utf8'))
+        .map((byte) => `\\${byte.toString(8).padStart(3, '0')}`)
+        .join('');
+    return `printf '${encoded}'`;
+}
+
+async function pasteIntoTerminal(page: Page, params: Readonly<{ testId: string; baseUrl: string; text: string }>) {
+    await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], {
+        origin: new URL(params.baseUrl).origin,
+    });
+    await page.evaluate(async (value) => {
+        if (!navigator.clipboard?.writeText) {
+            throw new Error('clipboard writeText is unavailable');
+        }
+        await navigator.clipboard.writeText(value);
+    }, params.text);
+
+    await page.getByTestId(params.testId).click();
+    await page.keyboard.press('ControlOrMeta+V');
+}
+
+async function expectTerminalTranscriptToContain(page: Page, testId: string, needle: string) {
+    const terminal = page.getByTestId(testId);
+    await expect(terminal).toHaveCount(1, { timeout: 180_000 });
+    await expect
+        .poll(async () => await terminal.getAttribute('data-happier-terminal-text'), { timeout: 60_000 })
+        .toContain(needle);
+}
+
 test.describe('ui e2e: projects (workspaces) details + files/scm/terminal', () => {
     test.describe.configure({ mode: 'serial' });
 
@@ -257,15 +312,23 @@ test.describe('ui e2e: projects (workspaces) details + files/scm/terminal', () =
             },
         });
 
-        ui = await startUiWeb({
-            testDir: suiteDir,
-            env: {
-                ...process.env,
-                EXPO_PUBLIC_DEBUG: '1',
-                EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
-                EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-projects`,
-            },
-        });
+        const uiEnv = {
+            ...process.env,
+            EXPO_PUBLIC_DEBUG: '1',
+            EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
+            EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}-projects`,
+        };
+        const existingUiDistDir = process.env.HAPPIER_E2E_UI_WEB_EXISTING_DIST_DIR?.trim() ?? '';
+        ui = existingUiDistDir
+            ? await startExistingUiWebExport({
+                testDir: suiteDir,
+                env: uiEnv,
+                distDir: existingUiDistDir,
+            })
+            : await startUiWeb({
+                testDir: suiteDir,
+                env: uiEnv,
+            });
 
         uiBaseUrl = normalizeLoopbackBaseUrl(ui.baseUrl);
     });
@@ -347,5 +410,165 @@ test.describe('ui e2e: projects (workspaces) details + files/scm/terminal', () =
         // Open terminal from the workspace details panel header.
         await page.getByTestId('workspace-details-open-terminal').click();
         await expect(page.getByTestId('workspace-embedded-terminal-root')).toHaveCount(1, { timeout: 180_000 });
+
+        const xtermTestId = 'workspace-embedded-terminal-xterm';
+        const terminalInput = getTerminalInput(page, xtermTestId);
+        await expect(terminalInput).toHaveCount(1, { timeout: 60_000 });
+        await terminalInput.focus();
+
+        const marker = 'happier-project-terminal-e2e';
+        await pasteIntoTerminal(page, {
+            testId: xtermTestId,
+            baseUrl: uiBaseUrl,
+            text: toShellPrintfOctalCommand(marker),
+        });
+        await page.keyboard.press('Enter');
+
+        await expectTerminalTranscriptToContain(page, xtermTestId, marker);
+    });
+
+    test('renders daemon-projected SCM backends and opens projected hosting authentication', async ({ page }) => {
+        test.setTimeout(900_000);
+        if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
+
+        await page.setViewportSize({ width: 1440, height: 900 });
+        const testDir = resolve(join(suiteDir, 't2-source-control-settings'));
+        await mkdir(testDir, { recursive: true });
+        const cliLaunchSpec = {
+            command: process.execPath,
+            args: [resolve(repoRootDir(), 'apps/cli/bin/happier.mjs')],
+            cwd: repoRootDir(),
+        };
+        const cliCommandEnv = sanitizeDaemonEnvForSpawn({
+            ...process.env,
+            HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED: 'false',
+        });
+        daemon = await authenticateAndStartDaemon({
+            page,
+            testDir,
+            cliHomeDir,
+            serverUrl: server.baseUrl,
+            uiBaseUrl,
+            extraEnv: {
+                HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED: 'false',
+            },
+            cliLaunchSpec,
+            variant: 'stable',
+        });
+
+        const externalArtifactPath = process.env.HAPPIER_SCM_EXTERNAL_ARTIFACT?.trim() ?? '';
+        if (externalArtifactPath) {
+            const installResult = await runPackedCli({
+                cliEntrypoint: cliLaunchSpec.args[0]!,
+                cwd: cliLaunchSpec.cwd,
+                env: {
+                    ...cliCommandEnv,
+                    CI: '1',
+                    HAPPIER_HOME_DIR: cliHomeDir,
+                    HAPPIER_SERVER_URL: server.baseUrl,
+                    HAPPIER_WEBAPP_URL: uiBaseUrl,
+                    HAPPIER_VARIANT: 'stable',
+                },
+                args: ['plugins', 'install', externalArtifactPath, '--json'],
+            });
+            expect(installResult.code).not.toBe(0);
+            expect(installResult.signal).toBeNull();
+            const installReview = readPluginInstallReviewRequiredEnvelope(
+                parseJsonEnvelope(installResult.stdout, 'plugins_install_review'),
+            );
+            const installOutcome = await decideAuthenticatedPluginInstallReview({
+                cliHomeDir,
+                serverUrl: server.baseUrl,
+                pendingChangeId: installReview.pendingChangeId,
+                optionalSelections: installReview.review.optionalHostAccess.map((entry) => ({
+                    accessId: entry.id,
+                    selected: false,
+                })),
+                confirmPresentUser: async () => true,
+            });
+            expect(installOutcome).toMatchObject({
+                kind: 'committed',
+                pluginId: installReview.review.pluginId,
+            });
+        }
+
+        await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/source-control`, 180_000);
+
+        await expect(page.getByText('Git', { exact: true })).toHaveCount(1, { timeout: 120_000 });
+        await expect(page.getByText('Sapling', { exact: true })).toHaveCount(1, { timeout: 120_000 });
+
+        const projectedGithubProvider = page.getByText('GitHub', { exact: true });
+        await expect(projectedGithubProvider).toHaveCount(1, { timeout: 120_000 });
+        await projectedGithubProvider.click();
+        await expect(page).toHaveURL(/\/settings\/connected-services\/github(?:[/?#]|$)/, {
+            timeout: 60_000,
+        });
+
+        if (externalArtifactPath) {
+            await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/source-control`, 180_000);
+            await expect(page.getByText('Packed Stacked SCM', { exact: true }))
+                .toHaveCount(1, { timeout: 120_000 });
+            await expect(page.getByText('Packed Forge', { exact: true }))
+                .toHaveCount(1, { timeout: 120_000 });
+            await page.getByText('Packed Stacked SCM', { exact: true }).click();
+            const packedPendingDiffSetting = page.getByText(
+                'Packed Stacked SCM default diff: Pending',
+                { exact: true },
+            );
+            await expect(packedPendingDiffSetting).toHaveCount(1);
+            await packedPendingDiffSetting.click();
+
+            await page.getByText('Packed Forge', { exact: true }).click();
+            await expect(page).toHaveURL(/\/settings\/connected-services\/forge(?:[/?#]|$)/, {
+                timeout: 60_000,
+            });
+            await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/source-control`, 180_000);
+
+            const uninstall = await runPackedCliJson({
+                cliEntrypoint: cliLaunchSpec.args[0]!,
+                cwd: cliLaunchSpec.cwd,
+                env: {
+                    ...cliCommandEnv,
+                    CI: '1',
+                    HAPPIER_HOME_DIR: cliHomeDir,
+                    HAPPIER_SERVER_URL: server.baseUrl,
+                    HAPPIER_WEBAPP_URL: uiBaseUrl,
+                    HAPPIER_VARIANT: 'stable',
+                },
+                args: ['plugins', 'uninstall', 'acme.vertical-a', '--json'],
+            }, 'plugins_uninstall');
+            expect(uninstall.ok).toBe(true);
+            expect(uninstall.kind).toBe('plugins_uninstall');
+
+            const sourceControlSettingsUrl = `${uiBaseUrl}/settings/source-control`;
+            await expect.poll(
+                async () => {
+                    await gotoDomContentLoadedWithRetries(
+                        page,
+                        sourceControlSettingsUrl,
+                        30_000,
+                    );
+                    return {
+                        externalBackendCount: await page
+                            .getByText('Packed Stacked SCM', { exact: true })
+                            .count(),
+                        externalHostingProviderCount: await page
+                            .getByText('Packed Forge', { exact: true })
+                            .count(),
+                        gitCount: await page.getByText('Git', { exact: true }).count(),
+                    };
+                },
+                { timeout: 120_000 },
+            ).toEqual({
+                externalBackendCount: 0,
+                externalHostingProviderCount: 0,
+                gitCount: 1,
+            });
+            await expect(page.getByText('Packed Stacked SCM', { exact: true })).toHaveCount(0);
+            await expect(page.getByText('Packed Forge', { exact: true })).toHaveCount(0);
+            await expect(page.getByText('Git', { exact: true })).toHaveCount(1, {
+                timeout: 120_000,
+            });
+        }
     });
 });

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as connectTcp, type Socket } from 'node:net';
@@ -18,6 +18,7 @@ import {
 
 import { createTestAuth } from '../../src/testkit/auth';
 import { seedCliAuthForServer } from '../../src/testkit/cliAuth';
+import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerClient';
 import { startTestDaemon, type StartedDaemon } from '../../src/testkit/daemon/daemon';
 import { fetchJson } from '../../src/testkit/http';
 import { fetchMachineIdentities } from '../../src/testkit/machineIdentity';
@@ -58,6 +59,12 @@ function writePreviewResponse(req: IncomingMessage, res: ServerResponse, request
   res.end(body);
 }
 
+function webSocketAcceptKey(key: string): string {
+  return createHash('sha1')
+    .update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`)
+    .digest('base64');
+}
+
 async function startPreviewApp(port: number): Promise<PreviewApp> {
   const requests: string[] = [];
   const upgrades: string[] = [];
@@ -68,11 +75,16 @@ async function startPreviewApp(port: number): Promise<PreviewApp> {
     const requestedProtocol = Array.isArray(req.headers['sec-websocket-protocol'])
       ? req.headers['sec-websocket-protocol'][0]
       : req.headers['sec-websocket-protocol'];
+    const key = Array.isArray(req.headers['sec-websocket-key'])
+      ? req.headers['sec-websocket-key'][0]
+      : req.headers['sec-websocket-key'];
     const protocolLine = requestedProtocol ? `Sec-WebSocket-Protocol: ${requestedProtocol}\r\n` : '';
+    const acceptLine = key ? `Sec-WebSocket-Accept: ${webSocketAcceptKey(key)}\r\n` : '';
     socket.write([
       'HTTP/1.1 101 Switching Protocols',
       'Upgrade: websocket',
       'Connection: Upgrade',
+      acceptLine.trimEnd(),
       protocolLine.trimEnd(),
       '',
       '',
@@ -120,11 +132,66 @@ type PreviewHttpResponse = Readonly<{
   url?: string;
   marker?: string;
 }>;
+type LocalServicesInventorySnapshotResponse = Readonly<{
+  ok?: boolean;
+  snapshot?: {
+    entries?: readonly unknown[];
+  };
+}>;
 type JsonFetchResponse<T> = Readonly<{
   status: number;
   headers: Headers;
   data: T;
+  cookie?: string;
 }>;
+
+async function fetchPreviewJsonWithCookieExchange<T>(
+  url: string,
+  init?: RequestInit & { timeoutMs?: number },
+): Promise<JsonFetchResponse<T>> {
+  const timeoutMs = init?.timeoutMs ?? 15_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const first = await fetch(url, { ...init, redirect: 'manual', signal: controller.signal });
+    if (first.status !== 303) {
+      const text = await first.text();
+      return {
+        status: first.status,
+        headers: first.headers,
+        data: (text ? JSON.parse(text) : null) as T,
+      };
+    }
+
+    const location = first.headers.get('location');
+    const setCookie = first.headers.get('set-cookie');
+    const cookie = setCookie?.split(';')[0];
+    if (!location || !cookie) {
+      const text = await first.text();
+      return {
+        status: first.status,
+        headers: first.headers,
+        data: (text ? JSON.parse(text) : null) as T,
+      };
+    }
+
+    const redirected = await fetch(new URL(location, url), {
+      headers: {
+        cookie,
+      },
+      signal: controller.signal,
+    });
+    const text = await redirected.text();
+    return {
+      status: redirected.status,
+      headers: redirected.headers,
+      data: (text ? JSON.parse(text) : null) as T,
+      cookie,
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function summarizeRelayEvents(events: readonly PeerTcpTunnelRelayEnvelope[]): unknown {
   return {
@@ -192,6 +259,7 @@ async function requestRawWebSocketUpgrade(params: {
   serverUrl: string;
   pathAndSearch: string;
   protocol: string;
+  cookie?: string;
 }): Promise<string> {
   const serverUrl = new URL(params.serverUrl);
   const port = Number(serverUrl.port);
@@ -209,6 +277,7 @@ async function requestRawWebSocketUpgrade(params: {
       'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==',
       'Sec-WebSocket-Version: 13',
       `Sec-WebSocket-Protocol: ${params.protocol}`,
+      ...(params.cookie ? [`Cookie: ${params.cookie}`] : []),
       '',
       '',
     ].join('\r\n'));
@@ -315,6 +384,34 @@ describe('core e2e: local service preview over production PMS relay', () => {
       },
       startupTimeoutMs: 300_000,
     });
+    const controlToken = (daemon.state as { controlToken?: string }).controlToken;
+
+    let detectedInventoryEntry: unknown = null;
+    await waitFor(async () => {
+      const inventory = await daemonControlPostJson<LocalServicesInventorySnapshotResponse>({
+        port: daemon!.state.httpPort,
+        path: '/local-services/inventory/refresh',
+        controlToken,
+        timeoutMs: 60_000,
+      });
+      if (inventory.status !== 200 || inventory.data.ok !== true) return false;
+      const entries = Array.isArray(inventory.data.snapshot?.entries)
+        ? inventory.data.snapshot.entries
+        : [];
+      detectedInventoryEntry = entries.find((entry) => {
+        const row = entry as { port?: unknown };
+        return Number(row.port) === previewPort;
+      }) ?? null;
+      return detectedInventoryEntry !== null;
+    }, {
+      timeoutMs: 120_000,
+      intervalMs: 1_000,
+      context: 'daemon local-services inventory detects the live preview app',
+    });
+    expect(detectedInventoryEntry).toMatchObject({
+      port: previewPort,
+      state: 'listening',
+    });
 
     const machineId = await waitForDaemonMachineIdFromCliSettings({
       cliHomeDir: daemonHomeDir,
@@ -384,7 +481,7 @@ describe('core e2e: local service preview over production PMS relay', () => {
     const httpResponse: { current: JsonFetchResponse<PreviewHttpResponse> | null } = { current: null };
     try {
       await waitFor(async () => {
-        httpResponse.current = await fetchJson<PreviewHttpResponse>(previewUrl.toString(), {
+        httpResponse.current = await fetchPreviewJsonWithCookieExchange<PreviewHttpResponse>(previewUrl.toString(), {
           timeoutMs: 5_000,
         });
         return httpResponse.current.status === 200
@@ -417,11 +514,17 @@ describe('core e2e: local service preview over production PMS relay', () => {
 
     const hmrUrl = new URL(registration.data.accessUrl);
     hmrUrl.pathname = `/v1/local-services/preview/${encodeURIComponent(previewId)}/@vite/client`;
+    hmrUrl.searchParams.delete('previewToken');
     hmrUrl.searchParams.set('hmr', '1');
+    const previewCookie = httpResponse.current?.cookie;
+    if (!previewCookie) {
+      throw new Error('Missing preview cookie from HTTP data-plane exchange');
+    }
     const rawUpgradeResponse = await requestRawWebSocketUpgrade({
       serverUrl: server.baseUrl,
       pathAndSearch: `${hmrUrl.pathname}${hmrUrl.search}`,
       protocol: 'vite-hmr',
+      cookie: previewCookie,
     });
 
     expect(rawUpgradeResponse).toContain('HTTP/1.1 101 Switching Protocols');

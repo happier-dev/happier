@@ -28,7 +28,6 @@ import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAcco
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
 const CONNECTED_SERVICE_FEATURE_ENV = {
-    HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
     HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
     HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: '1',
     HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED: '1',
@@ -414,7 +413,6 @@ async function createConnectedServiceAuthGroup(params: Readonly<{
             policy: {
                 autoSwitch: true,
                 recoveryMode: 'switch_or_wait',
-                memberRuntimeStatePersistence: 'server_state_json',
             },
         }),
         timeoutMs: 20_000,
@@ -527,7 +525,7 @@ async function publishProviderUsageRuntimeIssue(params: Readonly<{
     baseUrl: string;
     token: string;
     sessionId: string;
-    provider?: string;
+    agentId?: string;
     serviceId?: ConnectedServiceId;
     profileId?: string;
     groupId?: string;
@@ -544,7 +542,7 @@ async function publishProviderUsageRuntimeIssue(params: Readonly<{
         status: 'failed',
         code: 'provider_usage_limit',
         source: 'usage_limit',
-        provider: params.provider ?? 'codex',
+        agentId: 'codex',
         occurredAt,
         sanitizedPreview: 'Provider usage limit reached.',
         usageLimit: {
@@ -584,7 +582,7 @@ async function publishProviderUsageRuntimeIssue(params: Readonly<{
             turnId,
             mutationId: `mutation-${randomUUID()}`,
             observedAt: occurredAt,
-            provider: params.provider ?? 'codex',
+            agentId: params.agentId ?? 'codex',
         },
     });
     await postSessionTurnMutation({
@@ -596,7 +594,7 @@ async function publishProviderUsageRuntimeIssue(params: Readonly<{
             turnId,
             mutationId: `mutation-${randomUUID()}`,
             observedAt: occurredAt + 1,
-            provider: params.provider ?? 'codex',
+            agentId: params.agentId ?? 'codex',
             issue,
         },
     });
@@ -989,7 +987,7 @@ test.describe('ui e2e: connected-service quota switch and recovery surfaces', ()
                 baseUrl: server.baseUrl,
                 token: authToken,
                 sessionId,
-                provider: 'claude',
+                agentId: 'claude',
                 serviceId,
                 profileId: primaryProfileId,
                 groupId,

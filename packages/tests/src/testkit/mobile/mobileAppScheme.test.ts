@@ -31,6 +31,13 @@ describe('resolveMobileAppScheme', () => {
     )).toBe('happier-internaldev');
   });
 
+  it('infers the current internal-app dev route scheme from the installed app id', () => {
+    expect(resolveMobileAppScheme(
+      {},
+      { appId: 'dev.happier.app.dev.internal' },
+    )).toBe('happier-dev');
+  });
+
   it('falls back to the production scheme for unknown app ids', () => {
     expect(resolveMobileAppScheme(
       {},

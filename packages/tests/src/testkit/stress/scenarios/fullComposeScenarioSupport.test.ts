@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { StartedStressTarget } from '../targets/stressTargetTypes';
 import {
   fetchGatewayStubStatus,
+  readClusterServiceMetricsByReplicaViaNodeFetch,
   scrapeClusterServiceMetricCounters,
   scrapeClusterServiceMetricSelectors,
   scrapeServiceMetricCounters,
@@ -14,6 +15,72 @@ import {
 } from './fullComposeScenarioSupport';
 
 describe('fullComposeScenarioSupport', () => {
+  it('exposes per-replica metrics with the exact compose container identity', async () => {
+    const execInService = vi.fn(async () => JSON.stringify([
+      'websocket_connections_active{role="api",type="user-scoped"} 1',
+      'websocket_connections_active{role="api",type="user-scoped"} 0',
+    ]));
+    const target = {
+      mode: 'full-compose',
+      baseUrl: 'http://127.0.0.1:43080',
+      topology: {
+        kind: 'full-compose',
+        services: ['api'],
+        expectedApiReplicas: 2,
+        expectedWorkerReplicas: 0,
+        resolvedApiReplicas: 2,
+        resolvedWorkerReplicas: 0,
+        baseUrl: 'http://127.0.0.1:43080',
+        ports: {},
+      },
+      admin: {
+        listServiceContainers: vi.fn(async () => [
+          {
+            id: 'api-a',
+            name: 'project-api-1',
+            service: 'api',
+            state: 'running',
+            health: 'healthy',
+            ipv4Addresses: ['172.20.0.11'],
+          },
+          {
+            id: 'api-b',
+            name: 'project-api-2',
+            service: 'api',
+            state: 'running',
+            health: 'healthy',
+            ipv4Addresses: ['172.20.0.12'],
+          },
+        ]),
+        writeGatewayConfig: vi.fn(async () => ''),
+        activateGatewayConfig: vi.fn(async () => {}),
+        startService: vi.fn(async () => {}),
+        stopService: vi.fn(async () => {}),
+        stopContainer: vi.fn(async () => {}),
+        killContainer: vi.fn(async () => {}),
+        execInService,
+      },
+      preserveForInspection: vi.fn(),
+      stop: vi.fn(async () => {}),
+      collectDiagnostics: vi.fn(async () => {}),
+    } satisfies StartedStressTarget;
+
+    await expect(readClusterServiceMetricsByReplicaViaNodeFetch(target, 'api')).resolves.toEqual([
+      {
+        target: '172.20.0.11:9090',
+        containerId: 'api-a',
+        containerName: 'project-api-1',
+        metricsText: 'websocket_connections_active{role="api",type="user-scoped"} 1',
+      },
+      {
+        target: '172.20.0.12:9090',
+        containerId: 'api-b',
+        containerName: 'project-api-2',
+        metricsText: 'websocket_connections_active{role="api",type="user-scoped"} 0',
+      },
+    ]);
+  });
+
   it('scrapes selected counters directly from a full-compose service metrics endpoint', async () => {
     const execInService = vi.fn(async () => [
       'session_alive_events_total 12',

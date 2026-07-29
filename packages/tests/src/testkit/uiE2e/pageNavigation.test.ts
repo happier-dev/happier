@@ -233,6 +233,24 @@ describe('gotoDomContentLoadedWithRetries', () => {
     await expect(gotoDomContentLoadedWithPathFallback(page as never, targetUrl, '/')).resolves.toBeUndefined();
     expect(goto).toHaveBeenCalledTimes(1);
   });
+
+  it('treats a loopback redirect interruption as usable once the expected pathname has committed', async () => {
+    const targetUrl = 'http://127.0.0.1:3000/dev/voice-qa?voiceQaMode=media';
+    const goto = vi.fn(async () => {
+      throw new Error(
+        'Navigation to "http://127.0.0.1:3000/dev/voice-qa" is interrupted by another navigation to "http://localhost:3000/dev/voice-qa".',
+      );
+    });
+    const page = {
+      goto,
+      waitForTimeout: vi.fn(async () => {}),
+      url: () => 'http://localhost:3000/dev/voice-qa?voiceQaMode=media',
+    };
+
+    await expect(
+      gotoDomContentLoadedWithPathFallback(page as never, targetUrl, '/dev/voice-qa', 1),
+    ).resolves.toBeUndefined();
+  });
 });
 
 describe('gotoCommittedWithRetries', () => {
@@ -514,6 +532,34 @@ describe('waitForAuthenticatedHomeUi', () => {
     expect(counts.get('main-header-start-new-session')).toBeGreaterThanOrEqual(1);
   });
 
+  it('accepts the authenticated empty-state setup re-entry affordance as home', async () => {
+    let nowMs = 0;
+    vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+
+    const page = {
+      getByTestId: (testId: string) => ({
+        count: async () => testId === 'sessions-empty-state-open-setup' ? 1 : 0,
+        click: async () => {},
+      }),
+      waitForTimeout: vi.fn(async (delayMs: number) => {
+        nowMs += delayMs;
+      }),
+      reload: vi.fn(async () => {}),
+      url: () => 'http://127.0.0.1:3000/',
+    };
+
+    const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedHomeUi;
+    expect(helper).toBeTypeOf('function');
+
+    await expect(
+      (helper as (
+        params: Readonly<{ page: WaitForAuthenticatedHomeUiPage; timeoutMs?: number; reloadOnFailure?: boolean }>,
+      ) => Promise<void>)({ page, timeoutMs: 1_000, reloadOnFailure: false }),
+    ).resolves.toBeUndefined();
+
+    expect(page.reload).not.toHaveBeenCalled();
+  });
+
   it('dismisses an auto-open setup wizard before authenticated home markers render', async () => {
     let nowMs = 0;
     let setupWizardDismissed = false;
@@ -618,7 +664,7 @@ describe('waitForAuthenticatedRouteUi', () => {
       reload: vi.fn(async () => {}),
       url: () => (nowMs < 250
         ? 'http://127.0.0.1:3000/'
-        : 'http://127.0.0.1:3000/settings/providers/codex'),
+        : 'http://127.0.0.1:3000/settings/agents/codex'),
     };
 
     const helper = (pageNavigation as Record<string, unknown>).waitForAuthenticatedRouteUi;
@@ -635,7 +681,7 @@ describe('waitForAuthenticatedRouteUi', () => {
         }>,
       ) => Promise<void>)({
         page,
-        expectedPathname: '/settings/providers/codex',
+        expectedPathname: '/settings/agents/codex',
         requiredTestIds: ['settings-provider-field-codexBackendMode'],
         timeoutMs: 2_000,
         reloadOnFailure: false,

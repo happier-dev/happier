@@ -13,7 +13,11 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { cp } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { basename, dirname, resolve } from 'node:path';
+import { clearInterval as clearNodeInterval, setInterval as setNodeInterval } from 'node:timers';
+import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 
 import { repoRootDir } from '../paths';
 import { sleep } from '../timing';
@@ -21,7 +25,7 @@ import { ensureCliDistSnapshotNodeModules } from './cliDistSnapshotNodeModules';
 import { yarnCommand } from './commands';
 import { runLoggedCommand } from './spawnProcess';
 import {
-  CLI_SHARED_DEP_PACKAGE_NAMES,
+  resolveCliSharedDepPackageNames,
   resolveCliBundledWorkspacePackageDir,
   resolveCliWorkspacePackageDir,
   type CliSharedDepPackageName,
@@ -32,7 +36,7 @@ const ensureSharedPromisesByRepoRoot = new Map<string, Promise<void>>();
 const DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS = 600_000;
 const CLI_DIST_SNAPSHOT_MTIME_TOLERANCE_MS = 5;
 
-function shouldSkipCliSharedDepsBuildForE2e(env: NodeJS.ProcessEnv): boolean {
+export function shouldSkipCliSharedDepsBuild(env: NodeJS.ProcessEnv): boolean {
   const raw = (
     env.HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
     env.HAPPY_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD ??
@@ -68,11 +72,6 @@ type EnsureCliSharedDepsBuiltOptions = CliDistBuildLockOptions & {
   repoRoot?: string;
   buildTimeoutMs?: number;
   maxBuildAttempts?: number;
-  beforeRepairBundledWorkspaceDistSymlink?: (params: {
-    packageName: CliSharedDepPackageName;
-    workspaceDistDir: string;
-    bundledDistDir: string;
-  }) => void;
   runCommand?: (params: {
     command: string;
     args: string[];
@@ -101,6 +100,14 @@ type EnsureCliDistBuiltOptions = CliDistBuildLockOptions & {
     timeoutMs?: number;
   }) => Promise<void>;
 };
+
+function unrefNodeTimer(timer: unknown): void {
+  if (typeof timer !== 'object' || timer === null || !('unref' in timer)) return;
+  const unref = timer.unref;
+  if (typeof unref === 'function') {
+    unref.call(timer);
+  }
+}
 
 type CliDistBuildInvocation = {
   command: string;
@@ -264,11 +271,13 @@ function findMissingDistChunkImports(distDir: string): string[] {
 }
 
 function resolveCliSharedDepsOutputPaths(rootDir: string): string[] {
-  return CLI_SHARED_DEP_PACKAGE_NAMES.flatMap((packageName) => resolveCliWorkspaceExpectedOutputPaths(rootDir, packageName));
+  return resolveCliSharedDepPackageNames(rootDir)
+    .flatMap((packageName) => resolveCliWorkspaceExpectedOutputPaths(rootDir, packageName));
 }
 
 function resolveCliBundledSharedDepsOutputPaths(rootDir: string): string[] {
-  return CLI_SHARED_DEP_PACKAGE_NAMES.flatMap((packageName) => resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName));
+  return resolveCliSharedDepPackageNames(rootDir)
+    .flatMap((packageName) => resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName));
 }
 
 function collectPackageJsonDistPaths(value: unknown, result: Set<string>): void {
@@ -312,9 +321,10 @@ function resolveWorkspacePackageExpectedOutputPaths(
   packageName: CliSharedDepPackageName,
   packageDir: string,
 ): string[] {
-  const packageJsonPath = existsSync(resolve(packageDir, 'package.json'))
-    ? resolve(packageDir, 'package.json')
-    : resolve(rootDir, 'packages', packageName, 'package.json');
+  const sourcePackageJsonPath = resolve(resolveCliWorkspacePackageDir(rootDir, packageName), 'package.json');
+  const packageJsonPath = existsSync(sourcePackageJsonPath)
+    ? sourcePackageJsonPath
+    : resolve(packageDir, 'package.json');
   const distPaths = new Set<string>();
 
   try {
@@ -360,6 +370,10 @@ function resolveCliWorkspaceExpectedOutputPaths(rootDir: string, packageName: Cl
   return [...distPaths].map((relPath) => resolve(packageDir, relPath));
 }
 
+function isTypeScriptIncrementalMetadataPath(relativePath: string): boolean {
+  return relativePath.replace(/\\/g, '/').endsWith('.tsbuildinfo');
+}
+
 function hasWorkspacePackageDistParity(
   rootDir: string,
   packageName: CliSharedDepPackageName,
@@ -377,6 +391,7 @@ function hasWorkspacePackageDistParity(
 
   return workspaceFiles.every((workspaceFilePath) => {
     const relativePath = workspaceFilePath.slice(resolve(workspaceDistDir, 'dist').length + 1);
+    if (isTypeScriptIncrementalMetadataPath(relativePath)) return true;
     return bundledFileSet.has(relativePath);
   });
 }
@@ -448,7 +463,7 @@ function hasCliDistSnapshotNodeModulesHealth(rootDir: string, snapshotDir: strin
   const snapshotWorkspaceScopeDir = resolve(snapshotNodeModulesDir, '@happier-dev');
   if (!existsSync(snapshotWorkspaceScopeDir)) return true;
 
-  return CLI_SHARED_DEP_PACKAGE_NAMES.every((packageName) => {
+  return resolveCliSharedDepPackageNames(rootDir).every((packageName) => {
     const packageDir = resolve(snapshotNodeModulesDir, '@happier-dev', packageName);
     if (!existsSync(packageDir)) return false;
     if (!hasWorkspacePackageManifestParity(rootDir, packageName, packageDir)) return false;
@@ -456,86 +471,22 @@ function hasCliDistSnapshotNodeModulesHealth(rootDir: string, snapshotDir: strin
     const expectedOutputPaths = resolveWorkspacePackageExpectedOutputPaths(rootDir, packageName, packageDir);
     if (!expectedOutputPaths.every((candidatePath) => existsSync(candidatePath))) return false;
     if (!hasWorkspacePackageDistParity(rootDir, packageName, packageDir)) return false;
-    if (packageName === 'protocol' && !hasValidProtocolDistIndexExportsAtPath(resolve(packageDir, 'dist', 'index.js'))) {
-      return false;
-    }
-
     return isBundledWorkspaceRuntimeDependencyTreeHealthy(resolve(packageDir, 'package.json'));
   });
 }
 
-function hasCliDistSnapshotProtocolExportsHealth(snapshotDir: string): boolean {
-  return hasValidProtocolDistIndexExportsAtPath(
-    resolve(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
-  );
-}
-
-function hasCliDistSnapshotProtocolRootImportCompatibility(snapshotDir: string): boolean {
-  return hasCliDistProtocolRootImportCompatibility({
+function hasCliDistSnapshotFirstPartyNamedImportCompatibility(snapshotDir: string): boolean {
+  return hasCliDistFirstPartyNamedImportCompatibility({
     distDir: resolve(snapshotDir, 'dist'),
-    protocolDistIndexPath: resolve(snapshotDir, 'node_modules', '@happier-dev', 'protocol', 'dist', 'index.js'),
+    nodeModulesDir: resolve(snapshotDir, 'node_modules'),
   });
-}
-
-function repairMissingCliBundledSharedDepsOutputs(
-  rootDir: string,
-  opts?: {
-    beforeRepairBundledWorkspaceDistSymlink?: (params: {
-      packageName: CliSharedDepPackageName;
-      workspaceDistDir: string;
-      bundledDistDir: string;
-    }) => void;
-  },
-): void {
-  for (const packageName of CLI_SHARED_DEP_PACKAGE_NAMES) {
-    const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
-    if (!existsSync(packageDir)) continue;
-
-    const workspaceDistDir = resolve(rootDir, 'packages', packageName, 'dist');
-    if (!existsSync(workspaceDistDir)) continue;
-
-    const expectedOutputPaths = resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName);
-    if (
-      expectedOutputPaths.length > 0
-      && expectedOutputPaths.every((candidatePath) => existsSync(candidatePath))
-      && hasCliBundledWorkspaceDistParity(rootDir, packageName)
-    ) {
-      continue;
-    }
-
-    const bundledDistDir = resolve(packageDir, 'dist');
-    try {
-      rmSync(bundledDistDir, { recursive: true, force: true });
-    } catch {
-      // Best-effort cleanup only.
-    }
-
-    mkdirSync(dirname(bundledDistDir), { recursive: true });
-    opts?.beforeRepairBundledWorkspaceDistSymlink?.({
-      packageName,
-      workspaceDistDir,
-      bundledDistDir,
-    });
-    try {
-      symlinkSync(workspaceDistDir, bundledDistDir, process.platform === 'win32' ? 'junction' : 'dir');
-    } catch (error) {
-      const err = error as NodeJS.ErrnoException | null;
-      if (err?.code === 'EEXIST' && existsSync(bundledDistDir)) {
-        // Another process won the race and created the same symlink before we did.
-        // The shared-deps health check runs immediately after this repair, so an existing
-        // dist link is sufficient.
-        continue;
-      }
-      throw error;
-    }
-  }
 }
 
 function hasCliBundledSharedDepsOutputs(rootDir: string): boolean {
   const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev');
   if (!existsSync(cliNodeModulesDir)) return true;
 
-  return CLI_SHARED_DEP_PACKAGE_NAMES.every((packageName) => {
+  return resolveCliSharedDepPackageNames(rootDir).every((packageName) => {
     const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
     if (!existsSync(packageDir)) return false;
     if (!hasCliBundledWorkspaceManifestParity(rootDir, packageName)) return false;
@@ -664,20 +615,11 @@ function isBundledWorkspaceRuntimeDependencyTreeHealthy(
   return true;
 }
 
-function resolveCliSharedDepsSourcePaths(rootDir: string): string[] {
+function resolveCliSharedDepSourcePaths(rootDir: string, packageName: CliSharedDepPackageName): string[] {
+  const packageDir = resolveCliWorkspacePackageDir(rootDir, packageName);
   return [
-    resolve(rootDir, 'packages', 'agents', 'src'),
-    resolve(rootDir, 'packages', 'agents', 'package.json'),
-    resolve(rootDir, 'packages', 'agents', 'tsconfig.json'),
-    resolve(rootDir, 'packages', 'cli-common', 'src'),
-    resolve(rootDir, 'packages', 'cli-common', 'package.json'),
-    resolve(rootDir, 'packages', 'cli-common', 'tsconfig.json'),
-    resolve(rootDir, 'packages', 'protocol', 'src'),
-    resolve(rootDir, 'packages', 'protocol', 'package.json'),
-    resolve(rootDir, 'packages', 'protocol', 'tsconfig.json'),
-    resolve(rootDir, 'packages', 'release-runtime', 'src'),
-    resolve(rootDir, 'packages', 'release-runtime', 'package.json'),
-    resolve(rootDir, 'packages', 'release-runtime', 'tsconfig.json'),
+    resolve(packageDir, 'src'),
+    resolve(packageDir, 'tsconfig.json'),
   ];
 }
 
@@ -795,6 +737,49 @@ function areBuildOutputsStale(params: { sourcePaths: readonly string[]; outputPa
   return newestSourceMtimeMs > oldestOutputMtimeMs;
 }
 
+function areCliSharedDepsBuildOutputsStale(rootDir: string): boolean {
+  return resolveCliSharedDepPackageNames(rootDir).some((packageName) => areBuildOutputsStale({
+    sourcePaths: resolveCliSharedDepSourcePaths(rootDir, packageName),
+    outputPaths: resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName),
+  }));
+}
+
+type CliSharedDepsSourceFreshnessSignature = ReadonlyArray<readonly [path: string, size: number, mtimeMs: number]>;
+
+function readCliSharedDepsSourceFreshnessSignature(rootDir: string): CliSharedDepsSourceFreshnessSignature {
+  const sourceFilePaths = resolveCliSharedDepPackageNames(rootDir).flatMap((packageName) =>
+    resolveCliSharedDepSourcePaths(rootDir, packageName).flatMap((sourcePath) => {
+      if (!existsSync(sourcePath)) return [];
+      try {
+        return statSync(sourcePath).isDirectory() ? collectAllFilePaths(sourcePath) : [sourcePath];
+      } catch {
+        return [];
+      }
+    }),
+  )
+    .filter((sourcePath) => !shouldIgnoreBuildFreshnessSourcePath(sourcePath))
+    .sort((left, right) => left.localeCompare(right));
+
+  return sourceFilePaths.map((sourcePath) => {
+    try {
+      const stats = statSync(sourcePath);
+      return [sourcePath, stats.size, stats.mtimeMs] as const;
+    } catch {
+      return [sourcePath, -1, -1] as const;
+    }
+  });
+}
+
+function areCliSharedDepsSourceFreshnessSignaturesEqual(
+  left: CliSharedDepsSourceFreshnessSignature,
+  right: CliSharedDepsSourceFreshnessSignature,
+): boolean {
+  return left.length === right.length && left.every(([path, size, mtimeMs], index) => {
+    const candidate = right[index];
+    return candidate?.[0] === path && candidate[1] === size && candidate[2] === mtimeMs;
+  });
+}
+
 function isBuildDirectoryStale(params: {
   sourcePaths: readonly string[];
   outputDir: string;
@@ -811,169 +796,196 @@ function isBuildDirectoryStale(params: {
   return newestSourceMtimeMs - newestOutputMtimeMs > (params.mtimeToleranceMs ?? 0);
 }
 
-function listExplicitNamedExportsFromModuleSource(sourceText: string): string[] {
-  const namedExports: string[] = [];
-  const exportDeclarationPattern = /\bexport\s+(?:const|let|var|function|class)\s+([A-Za-z_$][\w$]*)/gu;
-  for (const match of sourceText.matchAll(exportDeclarationPattern)) {
-    const exportName = match[1];
-    if (exportName) namedExports.push(exportName);
-  }
+type CliDistNamedImport = Readonly<{
+  moduleSpecifier: string;
+  importedNames: readonly string[];
+}>;
 
-  const exportListPattern = /\bexport\s*\{([\s\S]*?)\}\s*(?:from\b[\s\S]*?)?;/gu;
-  for (const match of sourceText.matchAll(exportListPattern)) {
-    const specifierBlock = match[1];
-    if (!specifierBlock) continue;
-    const specifiers = specifierBlock.split(',');
-    for (const rawSpecifier of specifiers) {
-      const normalizedSpecifier = rawSpecifier.replace(/\/\*[\s\S]*?\*\//gu, '').trim();
-      if (!normalizedSpecifier) continue;
-      const aliasMatch = normalizedSpecifier.match(/\bas\s+([A-Za-z_$][\w$]*)$/u);
-      if (aliasMatch?.[1]) {
-        namedExports.push(aliasMatch[1]);
-        continue;
+function listCliDistFirstPartyNamedImports(sourceText: string): CliDistNamedImport[] {
+  if (!sourceText.includes('@happier-dev/')) return [];
+
+  const sourceFile = ts.createSourceFile(
+    '/cli-dist-first-party-import-scanner.js',
+    sourceText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const imports: CliDistNamedImport[] = [];
+
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isImportDeclaration(node)
+      && ts.isStringLiteral(node.moduleSpecifier)
+      && node.moduleSpecifier.text.startsWith('@happier-dev/')
+    ) {
+      const namedBindings = node.importClause?.namedBindings;
+      if (namedBindings && ts.isNamedImports(namedBindings)) {
+        imports.push({
+          moduleSpecifier: node.moduleSpecifier.text,
+          importedNames: namedBindings.elements.map((element) => (element.propertyName ?? element.name).text),
+        });
       }
-      const directMatch = normalizedSpecifier.match(/^([A-Za-z_$][\w$]*)$/u);
-      if (directMatch?.[1]) {
-        namedExports.push(directMatch[1]);
-      }
     }
-  }
-
-  return namedExports;
-}
-
-function listImportedNamesFromProtocolSpecifierBlock(specifierBlock: string): string[] {
-  const importedNames: string[] = [];
-  for (const rawSpecifier of specifierBlock.split(',')) {
-    const normalizedSpecifier = rawSpecifier
-      .replace(/\/\*[\s\S]*?\*\//gu, '')
-      .trim()
-      .replace(/^type\s+/u, '')
-      .trim();
-    if (!normalizedSpecifier) continue;
-    const importedName = normalizedSpecifier.split(/\s+as\s+/u)[0]?.split(':')[0]?.trim();
-    if (importedName && /^[A-Za-z_$][\w$]*$/u.test(importedName)) {
-      importedNames.push(importedName);
+    if (
+      ts.isExportDeclaration(node)
+      && node.moduleSpecifier != null
+      && ts.isStringLiteral(node.moduleSpecifier)
+      && node.moduleSpecifier.text.startsWith('@happier-dev/')
+      && node.exportClause
+      && ts.isNamedExports(node.exportClause)
+    ) {
+      imports.push({
+        moduleSpecifier: node.moduleSpecifier.text,
+        importedNames: node.exportClause.elements.map((element) => (element.propertyName ?? element.name).text),
+      });
     }
-  }
-  return importedNames;
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return imports;
 }
 
-function listCliDistProtocolRootReferences(sourceText: string): string[] {
-  const references: string[] = [];
-  const namedImportPattern = /\bimport\s*\{([^}]*)\}\s*from\s*['"]@happier-dev\/protocol['"]/gu;
-  for (const match of sourceText.matchAll(namedImportPattern)) {
-    references.push(...listImportedNamesFromProtocolSpecifierBlock(match[1] ?? ''));
-  }
+type CliDistNamedImportProbeRequest = CliDistNamedImport & Readonly<{
+  fileName: string;
+}>;
 
-  const destructuredRequirePattern =
-    /\b(?:const|let|var)\s*\{([^}]*)\}\s*=\s*require\(['"]@happier-dev\/protocol['"]\)/gu;
-  for (const match of sourceText.matchAll(destructuredRequirePattern)) {
-    references.push(...listImportedNamesFromProtocolSpecifierBlock(match[1] ?? ''));
-  }
+type CliDistNamedImportProbeError = Readonly<{
+  fileName: string;
+  moduleSpecifier: string;
+  missingNames?: readonly string[];
+  importError?: string;
+}>;
 
-  const namespaceNames = new Set<string>();
-  const namespaceImportPattern = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]@happier-dev\/protocol['"]/gu;
-  for (const match of sourceText.matchAll(namespaceImportPattern)) {
-    if (match[1]) namespaceNames.add(match[1]);
-  }
+const CLI_DIST_NAMED_IMPORT_PROBE_RESULT_MARKER = '__HAPPIER_CLI_DIST_NAMED_IMPORT_PROBE__';
+const CLI_DIST_NAMED_IMPORT_PROBE_SOURCE = `
+import { readFileSync } from 'node:fs';
 
-  const namespaceRequirePattern =
-    /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[A-Za-z_$][\w$]*\()?require\(['"]@happier-dev\/protocol['"]\)\)?/gu;
-  for (const match of sourceText.matchAll(namespaceRequirePattern)) {
-    if (match[1]) namespaceNames.add(match[1]);
-  }
-
-  for (const namespaceName of namespaceNames) {
-    const propertyPattern = new RegExp(`(^|[^.$\\w])${namespaceName}\\.([A-Za-z_$][\\w$]*)`, 'gu');
-    for (const match of sourceText.matchAll(propertyPattern)) {
-      const propertyName = match[2];
-      if (propertyName && propertyName !== 'default') references.push(propertyName);
-    }
-  }
-
-  return references;
-}
-
-function hasDuplicateExplicitNamedExports(sourceText: string): boolean {
-  const seenExports = new Set<string>();
-  for (const exportName of listExplicitNamedExportsFromModuleSource(sourceText)) {
-    if (seenExports.has(exportName)) return true;
-    seenExports.add(exportName);
-  }
-  return false;
-}
-
-function hasValidProtocolDistIndexExportsAtPath(protocolDistIndexPath: string): boolean {
+const requests = JSON.parse(readFileSync(0, 'utf8'));
+const errors = [];
+for (const request of requests) {
   try {
-    const sourceText = readFileSync(protocolDistIndexPath, 'utf8');
-    if (!sourceText.trim()) return false;
-    return !hasDuplicateExplicitNamedExports(sourceText);
-  } catch {
-    return false;
+    const namespace = await import(request.moduleSpecifier);
+    const missingNames = request.importedNames.filter((name) => !(name in namespace));
+    if (missingNames.length > 0) {
+      errors.push({
+        fileName: request.fileName,
+        moduleSpecifier: request.moduleSpecifier,
+        missingNames,
+      });
+    }
+  } catch (error) {
+    errors.push({
+      fileName: request.fileName,
+      moduleSpecifier: request.moduleSpecifier,
+      importError: error instanceof Error ? error.name + ': ' + error.message : String(error),
+    });
   }
 }
+process.stdout.write('\\n${CLI_DIST_NAMED_IMPORT_PROBE_RESULT_MARKER}' + JSON.stringify(errors));
+process.exit(0);
+`;
 
-function readModuleExportNames(modulePath: string, visited = new Set<string>()): Set<string> | null {
-  if (visited.has(modulePath)) return new Set();
-  visited.add(modulePath);
+function listNamedImportRuntimeCompatibilityErrors(params: {
+  cwd: string;
+  requests: readonly CliDistNamedImportProbeRequest[];
+}): CliDistNamedImportProbeError[] {
+  if (params.requests.length === 0) return [];
+
+  const probe = spawnSync(
+    process.execPath,
+    ['--input-type=module', '--eval', CLI_DIST_NAMED_IMPORT_PROBE_SOURCE],
+    {
+      cwd: params.cwd,
+      encoding: 'utf8',
+      env: { ...process.env, NODE_ENV: 'test' },
+      input: JSON.stringify(params.requests),
+      maxBuffer: 10 * 1024 * 1024,
+      timeout: 60_000,
+    },
+  );
+  if (probe.error) {
+    return [{
+      fileName: '<probe>',
+      moduleSpecifier: '<runtime>',
+      importError: probe.error.message,
+    }];
+  }
+
+  const markerIndex = probe.stdout.lastIndexOf(CLI_DIST_NAMED_IMPORT_PROBE_RESULT_MARKER);
+  if (markerIndex < 0) {
+    const stderr = probe.stderr.trim();
+    return [{
+      fileName: '<probe>',
+      moduleSpecifier: '<runtime>',
+      importError: stderr || `probe exited without a result (status=${String(probe.status)})`,
+    }];
+  }
 
   try {
-    const sourceText = readFileSync(modulePath, 'utf8');
-    if (!sourceText.trim()) return null;
-    const exportNames = new Set(listExplicitNamedExportsFromModuleSource(sourceText));
-    const exportStarPattern = /\bexport\s+\*\s+from\s+['"]\.\/([^'"]+)['"]\s*;/gu;
-    for (const match of sourceText.matchAll(exportStarPattern)) {
-      const relModulePath = match[1];
-      if (!relModulePath) continue;
-      const nestedExportNames = readModuleExportNames(resolve(dirname(modulePath), relModulePath), visited);
-      if (!nestedExportNames) return null;
-      for (const exportName of nestedExportNames) {
-        exportNames.add(exportName);
-      }
-    }
-    return exportNames;
-  } catch {
-    return null;
+    return JSON.parse(
+      probe.stdout.slice(markerIndex + CLI_DIST_NAMED_IMPORT_PROBE_RESULT_MARKER.length),
+    ) as CliDistNamedImportProbeError[];
+  } catch (error) {
+    return [{
+      fileName: '<probe>',
+      moduleSpecifier: '<runtime>',
+      importError: error instanceof Error ? error.message : String(error),
+    }];
   }
 }
 
-function readProtocolDistIndexExportNames(protocolDistIndexPath: string): Set<string> | null {
-  return readModuleExportNames(protocolDistIndexPath);
-}
-
-function hasCliDistProtocolRootImportCompatibility(params: {
+function listCliDistFirstPartyNamedImportCompatibilityErrors(params: {
   distDir: string;
-  protocolDistIndexPath: string;
-}): boolean {
-  const protocolExportNames = readProtocolDistIndexExportNames(params.protocolDistIndexPath);
-  if (!protocolExportNames) return true;
-  if (protocolExportNames.size === 0) return true;
-
+  nodeModulesDir: string;
+}): string[] {
   let distFiles: string[] = [];
   try {
-    distFiles = readdirSync(params.distDir).filter((fileName) => fileName.endsWith('.mjs') || fileName.endsWith('.cjs'));
+    distFiles = readdirSync(params.distDir).filter((fileName) => fileName.endsWith('.mjs'));
   } catch {
-    return false;
+    return [`unable to read CLI dist directory: ${params.distDir}`];
   }
 
+  const requests: CliDistNamedImportProbeRequest[] = [];
   for (const fileName of distFiles) {
     let sourceText = '';
     try {
       sourceText = readFileSync(resolve(params.distDir, fileName), 'utf8');
     } catch {
-      return false;
+      requests.push({
+        fileName,
+        moduleSpecifier: pathToFileURL(resolve(params.distDir, fileName)).href,
+        importedNames: ['<unreadable>'],
+      });
+      continue;
     }
-    for (const referenceName of listCliDistProtocolRootReferences(sourceText)) {
-      if (!protocolExportNames.has(referenceName)) return false;
+
+    for (const namedImport of listCliDistFirstPartyNamedImports(sourceText)) {
+      requests.push({ fileName, ...namedImport });
     }
   }
 
-  return true;
+  return listNamedImportRuntimeCompatibilityErrors({
+    cwd: params.nodeModulesDir,
+    requests,
+  }).map((error) => {
+    if (error.missingNames && error.missingNames.length > 0) {
+      return `${error.fileName}: ${error.moduleSpecifier} missing ${error.missingNames.join(', ')}`;
+    }
+    return `${error.fileName}: ${error.moduleSpecifier} failed to import (${error.importError ?? 'unknown error'})`;
+  });
+}
+
+function hasCliDistFirstPartyNamedImportCompatibility(params: {
+  distDir: string;
+  nodeModulesDir: string;
+}): boolean {
+  return listCliDistFirstPartyNamedImportCompatibilityErrors(params).length === 0;
 }
 
 export const __cliDistTestHooks = {
-  hasCliDistProtocolRootImportCompatibility,
+  hasCliDistFirstPartyNamedImportCompatibility,
+  listCliDistFirstPartyNamedImportCompatibilityErrors,
 };
 
 function hasValidCliSharedDepsProtocolExports(rootDir: string): boolean {
@@ -988,30 +1000,37 @@ function hasValidCliSharedDepsProtocolExports(rootDir: string): boolean {
     'dist',
     'index.js',
   );
-  return hasValidProtocolDistIndexExportsAtPath(workspaceProtocolDistIndexPath)
-    && hasValidProtocolDistIndexExportsAtPath(bundledProtocolDistIndexPath);
+  return listNamedImportRuntimeCompatibilityErrors({
+    cwd: rootDir,
+    requests: [
+      {
+        fileName: workspaceProtocolDistIndexPath,
+        moduleSpecifier: pathToFileURL(workspaceProtocolDistIndexPath).href,
+        importedNames: [],
+      },
+      {
+        fileName: bundledProtocolDistIndexPath,
+        moduleSpecifier: pathToFileURL(bundledProtocolDistIndexPath).href,
+        importedNames: [],
+      },
+    ],
+  }).length === 0;
 }
 
 function hasCliSharedDepsOutputs(
   rootDir: string,
-  opts: { skipSourceFreshnessCheck?: boolean; beforeRepairBundledWorkspaceDistSymlink?: EnsureCliSharedDepsBuiltOptions['beforeRepairBundledWorkspaceDistSymlink'] } = {},
+  opts: { skipSourceFreshnessCheck?: boolean } = {},
 ): boolean {
   const workspaceOutputPaths = resolveCliSharedDepsOutputPaths(rootDir);
   if (!workspaceOutputPaths.every((candidatePath) => existsSync(candidatePath))) {
     return false;
   }
 
-  repairMissingCliBundledSharedDepsOutputs(rootDir, {
-    beforeRepairBundledWorkspaceDistSymlink: opts.beforeRepairBundledWorkspaceDistSymlink,
-  });
   if (!hasCliBundledSharedDepsOutputs(rootDir)) return false;
   if (!hasValidCliSharedDepsProtocolExports(rootDir)) return false;
   if (opts.skipSourceFreshnessCheck) return true;
 
-  return !areBuildOutputsStale({
-    sourcePaths: resolveCliSharedDepsSourcePaths(rootDir),
-    outputPaths: resolveCliBundledSharedDepsOutputPaths(rootDir),
-  });
+  return !areCliSharedDepsBuildOutputsStale(rootDir);
 }
 
 type CliSharedDepsHealthReport = Readonly<{
@@ -1038,7 +1057,7 @@ function describeCliSharedDepsHealth(
   const cliNodeModulesDir = resolve(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev');
   const workspaceOutputPaths = resolveCliSharedDepsOutputPaths(rootDir);
   const bundledOutputPaths = resolveCliBundledSharedDepsOutputPaths(rootDir);
-  const packages = CLI_SHARED_DEP_PACKAGE_NAMES.map((packageName) => {
+  const packages = resolveCliSharedDepPackageNames(rootDir).map((packageName) => {
     const packageDir = resolveCliBundledWorkspacePackageDir(rootDir, packageName);
     const packageExists = existsSync(packageDir);
     const expectedOutputPaths = resolveCliBundledWorkspaceExpectedOutputPaths(rootDir, packageName);
@@ -1081,33 +1100,33 @@ export async function ensureCliSharedDepsBuilt(
   // Many provider/E2E harnesses pass a fresh temporary directory; make sure we can always
   // write build logs without requiring callers to pre-create the folder.
   mkdirSync(params.testDir, { recursive: true });
-  if (shouldSkipCliSharedDepsBuildForE2e(params.env)) {
+  const rootDir = options.repoRoot ?? repoRootDir();
+  if (shouldSkipCliSharedDepsBuild(params.env)) {
+    if (!hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck: true })) {
+      throw new Error(
+        `Shared workspace deps runtime prerequisites are missing while the E2E build skip is enabled: ${resolve(rootDir, 'packages')} | health=${JSON.stringify(describeCliSharedDepsHealth(rootDir, { skipSourceFreshnessCheck: true }))}`,
+      );
+    }
     return;
   }
 
-  const rootDir = options.repoRoot ?? repoRootDir();
   const skipSourceFreshnessCheck = options.skipSourceFreshnessCheck ?? false;
   const maxBuildAttempts = Math.max(1, options.maxBuildAttempts ?? 2);
   const existing = ensureSharedPromisesByRepoRoot.get(rootDir);
   if (existing) return await existing;
 
-  if (hasCliSharedDepsOutputs(rootDir, {
-    skipSourceFreshnessCheck,
-    beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
-  })) {
+  if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
     return;
   }
 
   const promise = (async () => {
-    if (hasCliSharedDepsOutputs(rootDir, {
-      skipSourceFreshnessCheck,
-      beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
-    })) {
+    if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
       return;
     }
 
     const runCommand = options.runCommand ?? runLoggedCommand;
     for (let attempt = 1; attempt <= maxBuildAttempts; attempt += 1) {
+      const sourceFreshnessBeforeBuild = readCliSharedDepsSourceFreshnessSignature(rootDir);
       await runCommand({
         command: yarnCommand(),
         args: ['-s', 'workspace', '@happier-dev/cli', 'build:shared'],
@@ -1117,19 +1136,25 @@ export async function ensureCliSharedDepsBuilt(
         stderrPath: resolve(params.testDir, 'cli.buildShared.stderr.log'),
         timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
       });
+      const sourceFreshnessAfterBuild = readCliSharedDepsSourceFreshnessSignature(rootDir);
 
-      if (hasCliSharedDepsOutputs(rootDir, {
-        skipSourceFreshnessCheck,
-        beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
-      })) {
+      if (hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
+        return;
+      }
+
+      if (
+        !skipSourceFreshnessCheck
+        && areCliSharedDepsSourceFreshnessSignaturesEqual(sourceFreshnessBeforeBuild, sourceFreshnessAfterBuild)
+        && hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck: true })
+      ) {
+        // The canonical full shared-deps build completed against a stable source/config snapshot.
+        // Incremental compilers legitimately preserve mtimes for unchanged sibling entrypoints,
+        // so structural/parity/protocol health is authoritative after that successful build.
         return;
       }
     }
 
-    if (!hasCliSharedDepsOutputs(rootDir, {
-      skipSourceFreshnessCheck,
-      beforeRepairBundledWorkspaceDistSymlink: options.beforeRepairBundledWorkspaceDistSymlink,
-    })) {
+    if (!hasCliSharedDepsOutputs(rootDir, { skipSourceFreshnessCheck })) {
       throw new Error(
         `Shared workspace deps output missing after build: ${resolve(rootDir, 'packages')} | health=${JSON.stringify(describeCliSharedDepsHealth(rootDir, { skipSourceFreshnessCheck }))}`,
       );
@@ -1144,6 +1169,24 @@ export async function ensureCliSharedDepsBuilt(
   }
 }
 
+export async function ensureCliSourceDevSharedDepsCurrent(
+  params: { testDir: string; env: NodeJS.ProcessEnv },
+  options: Pick<EnsureCliSharedDepsBuiltOptions, 'repoRoot' | 'runCommand' | 'buildTimeoutMs'> = {},
+): Promise<void> {
+  mkdirSync(params.testDir, { recursive: true });
+  const rootDir = options.repoRoot ?? repoRootDir();
+  const runCommand = options.runCommand ?? runLoggedCommand;
+  await runCommand({
+    command: process.execPath,
+    args: [resolve(rootDir, 'apps', 'cli', 'scripts', 'syncSharedDepsForDev.mjs'), '--check'],
+    cwd: resolve(rootDir, 'apps', 'cli'),
+    env: { ...process.env, ...params.env, CI: '1' },
+    stdoutPath: resolve(params.testDir, 'cli.sourceDevSharedDepsCheck.stdout.log'),
+    stderrPath: resolve(params.testDir, 'cli.sourceDevSharedDepsCheck.stderr.log'),
+    timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
+  });
+}
+
 export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: CliDistBuildLockOptions = {}): Promise<T> {
   const lockPath = options.lockPath ?? resolve(repoRootDir(), '.project', 'tmp', 'cli-dist-build.lock');
   mkdirSync(dirname(lockPath), { recursive: true });
@@ -1154,7 +1197,7 @@ export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: Cli
   const staleAfterMs = options.staleAfterMs ?? timeoutMs;
 
   let fd: number | null = null;
-  let heartbeatTimer: NodeJS.Timeout | null = null;
+  let heartbeatTimer: ReturnType<typeof setNodeInterval> | null = null;
   let ownLockRaw: string | null = null;
   while (true) {
     try {
@@ -1181,7 +1224,7 @@ export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: Cli
   try {
     if (staleAfterMs > 0) {
       const heartbeatIntervalMs = Math.max(250, Math.min(5_000, Math.floor(staleAfterMs / 4) || 250));
-      heartbeatTimer = setInterval(() => {
+      heartbeatTimer = setNodeInterval(() => {
         try {
           if (!isCliDistBuildLockOwnedBy(lockPath, ownLockRaw)) return;
           ownLockRaw = serializeCliDistLockOwner(Date.now());
@@ -1190,13 +1233,13 @@ export async function withCliDistBuildLock<T>(fn: () => Promise<T>, options: Cli
           // Best-effort lease heartbeat only.
         }
       }, heartbeatIntervalMs);
-      heartbeatTimer.unref();
+      unrefNodeTimer(heartbeatTimer);
     }
 
     return await fn();
   } finally {
     if (heartbeatTimer) {
-      clearInterval(heartbeatTimer);
+      clearNodeInterval(heartbeatTimer);
     }
     try {
       if (fd != null) closeSync(fd);
@@ -1218,16 +1261,14 @@ export async function ensureCliDistBuilt(
   const rootDir = options.repoRoot ?? repoRootDir();
   // Daemon processes execute `apps/cli/dist/*` which imports from workspace deps.
   // Ensure those deps are compiled first so we don't start with a stale/partial protocol build.
-  if (!shouldSkipCliSharedDepsBuildForE2e(params.env)) {
-    await ensureCliSharedDepsBuilt(params, {
-      repoRoot: rootDir,
-      runCommand: options.runCommand,
-      skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
-      timeoutMs: options.timeoutMs,
-      pollIntervalMs: options.pollIntervalMs,
-      staleAfterMs: options.staleAfterMs,
-    });
-  }
+  await ensureCliSharedDepsBuilt(params, {
+    repoRoot: rootDir,
+    runCommand: options.runCommand,
+    skipSourceFreshnessCheck: options.skipSourceFreshnessCheck,
+    timeoutMs: options.timeoutMs,
+    pollIntervalMs: options.pollIntervalMs,
+    staleAfterMs: options.staleAfterMs,
+  });
   const distDir = resolveCliDistDir(rootDir);
   const entrypoint = resolveCliDistEntrypoint(distDir);
   const allowRebuild = options.allowRebuild ?? true;
@@ -1355,7 +1396,7 @@ function isCliDistSnapshotStale(params: {
     return true;
   }
 
-  return CLI_SHARED_DEP_PACKAGE_NAMES.some((packageName) => {
+  return resolveCliSharedDepPackageNames(params.rootDir).some((packageName) => {
     const bundledPackageDir = resolveCliBundledWorkspacePackageDir(params.rootDir, packageName);
     const snapshotPackageDir = resolve(params.snapshotDir, 'node_modules', '@happier-dev', packageName);
     if (!existsSync(bundledPackageDir) || !existsSync(snapshotPackageDir)) {
@@ -1434,7 +1475,7 @@ export async function ensureCliDistSnapshotEntrypoint(
   const snapshotHasReadyMarker = (dir: string): boolean => {
     return snapshotReadyMarkerExists(dir)
       && hasCliDistSnapshotNodeModulesHealth(rootDir, dir)
-      && hasCliDistSnapshotProtocolRootImportCompatibility(dir);
+      && hasCliDistSnapshotFirstPartyNamedImportCompatibility(dir);
   };
   const isReadyReusableSnapshot = (dir: string): boolean => {
     const distDir = resolve(dir, 'dist');
@@ -1554,8 +1595,7 @@ export async function ensureCliDistSnapshotEntrypoint(
               && snapshotReadyMarkerExists(dir)
               && isHealthyCliDist(distDir)
               && (
-                !hasCliDistSnapshotProtocolExportsHealth(dir)
-                || !hasCliDistSnapshotProtocolRootImportCompatibility(dir)
+                !hasCliDistSnapshotFirstPartyNamedImportCompatibility(dir)
                 || isSnapshotStale(distDir)
               );
           };
@@ -1619,8 +1659,14 @@ export async function ensureCliDistSnapshotEntrypoint(
                   : `CLI dist snapshot missing entrypoint: ${targetSnapshotEntrypoint}`,
               );
             }
-            if (!hasCliDistSnapshotProtocolRootImportCompatibility(targetSnapshotDir)) {
-              throw new Error('CLI dist snapshot imports protocol root exports that are not available in the snapshot');
+            if (!hasCliDistSnapshotFirstPartyNamedImportCompatibility(targetSnapshotDir)) {
+              const incompatibilities = listCliDistFirstPartyNamedImportCompatibilityErrors({
+                distDir: targetSnapshotDistDir,
+                nodeModulesDir: resolve(targetSnapshotDir, 'node_modules'),
+              });
+              throw new Error(
+                `CLI dist snapshot imports first-party named exports that are not available in the snapshot: ${incompatibilities.join('; ')}`,
+              );
             }
 
             markSnapshotReady(targetSnapshotDir);

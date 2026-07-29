@@ -120,7 +120,6 @@ async function createConnectedServiceAuthGroup(params: Readonly<{
       policy: {
         autoSwitch: true,
         recoveryMode: 'switch_or_wait',
-        memberRuntimeStatePersistence: 'server_state_json',
       },
     }),
     timeoutMs: 20_000,
@@ -163,6 +162,7 @@ async function patchRuntimeState(params: Readonly<{
   token: string;
   groupId: string;
   expectedGeneration: number;
+  expectedRuntimeStateRevision: number;
   profileId: string;
 }>): Promise<Readonly<{ status: number; data: AuthGroupResponse }>> {
   const response = await fetchJson<AuthGroupResponse>(
@@ -175,6 +175,7 @@ async function patchRuntimeState(params: Readonly<{
       },
       body: JSON.stringify({
         expectedGeneration: params.expectedGeneration,
+        expectedRuntimeStateRevision: params.expectedRuntimeStateRevision,
         state: {
           status: 'exhausted',
           lastSwitchReason: 'usage_limit',
@@ -231,7 +232,6 @@ describe('core e2e: connected-service auth group CAS', () => {
       testDir,
       dbProvider: 'sqlite',
       extraEnv: {
-        HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: '1',
         HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED: '1',
       },
     });
@@ -320,6 +320,7 @@ describe('core e2e: connected-service auth group CAS', () => {
       groupId,
       profileId: 'primary',
       expectedGeneration: 1,
+      expectedRuntimeStateRevision: 0,
     });
     expect(staleRuntimeState.status).toBe(409);
     expect(staleRuntimeState.data).toEqual({

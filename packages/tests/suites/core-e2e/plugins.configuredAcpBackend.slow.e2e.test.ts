@@ -12,8 +12,11 @@ import { daemonControlPostJson } from '../../src/testkit/daemon/controlServerCli
 import { decryptLegacyBase64Normalized } from '../../src/testkit/decryptLegacyBase64Normalized';
 import { fetchMessagesSince, fetchSessionV2 } from '../../src/testkit/sessions';
 import { repoRootDir } from '../../src/testkit/paths';
+import { resolveAcpSdkTestRuntime } from '../../src/testkit/providers/acpSdkTestRuntime';
 import { waitFor } from '../../src/testkit/timing';
+import { listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import {
+    createLocalExtensionPackageManifest,
     writeEnabledLocalPathPluginState,
     writeLocalPathPluginFixture,
 } from '../../src/testkit/plugins/localPathPluginFixture';
@@ -21,7 +24,7 @@ import {
 const run = createRunDirs({ runLabel: 'core' });
 
 const ACP_STUB_PROVIDER_PATH = resolve(repoRootDir(), 'packages/tests/fixtures/acp-stub-provider/acp-stub-provider.mjs');
-const ACP_SDK_ENTRY = resolve(repoRootDir(), 'apps/cli/node_modules/@agentclientprotocol/sdk/dist/acp.js');
+const { sdkEntry: ACP_SDK_ENTRY } = resolveAcpSdkTestRuntime(repoRootDir());
 
 type DecryptedTextMessage = Readonly<{
   role?: string;
@@ -67,7 +70,6 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
   it('resolves a local-path plugin ACP backend end-to-end and preserves the concrete backend title in metadata and transcript', async () => {
     const testDir = run.testDir('plugin-backed-configured-acp');
     const backendId = 'acme.plugin-backed-acp.backend';
-    const providerId = 'acme.plugin-backed-acp.provider';
     const pluginId = 'acme.plugin-backed-acp.plugin';
 
     server = await startServerLight({
@@ -102,50 +104,39 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
         '}',
         '',
       ].join('\n'),
-      manifest: {
-        schemaVersion: 1,
-        id: pluginId,
-        version: '1.0.0',
+      manifest: createLocalExtensionPackageManifest({
+        pluginId,
         displayName: 'Plugin Backed ACP Integration',
         description: 'Contributes a configured ACP backend through a local-path plugin',
-        engines: {
-          happier: '^0.2.0',
-        },
-        targets: {
-          daemon: {
-            entry: './daemon.mjs',
-          },
-        },
-        contributions: {
-          providers: [
+        contributes: {
+          agents: [
             {
               kindVersion: 1,
-              id: providerId,
+              id: backendId,
               display: {
                 name: 'Plugin Backed ACP',
                 tags: ['plugin'],
               },
               ownedBackendIds: [backendId],
-            },
-          ],
-          backends: [
-            {
-              kindVersion: 1,
-              id: backendId,
-              providerId,
-              runtimeKind: 'acp',
-              acp: {
-                title: 'Plugin Review Bot',
-                description: 'Plugin-sourced ACP backend for end-to-end validation',
-                command: process.execPath,
-                args: [ACP_STUB_PROVIDER_PATH],
-                env: {
-                  HAPPIER_E2E_ACP_SDK_ENTRY: {
-                    t: 'literal',
-                    v: ACP_SDK_ENTRY,
+              runtime: {
+                kind: 'acp',
+                transport: {
+                  kind: 'stdio',
+                  launch: {
+                    kind: 'executable',
+                    command: process.execPath,
+                    args: [ACP_STUB_PROVIDER_PATH],
+                    env: {
+                      HAPPIER_E2E_ACP_SDK_ENTRY: ACP_SDK_ENTRY,
+                    },
                   },
                 },
-                transportProfile: 'generic',
+                ux: {
+                  title: 'Plugin Review Bot',
+                  description: 'Plugin-sourced ACP backend for end-to-end validation',
+                  defaultMode: 'plan',
+                  defaultModel: 'plugin-pro',
+                },
                 capabilities: {
                   supportsLoadSession: true,
                   supportsModes: 'yes',
@@ -153,17 +144,12 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
                   supportsConfigOptions: 'unknown',
                   promptImageSupport: 'unknown',
                 },
-                defaultMode: 'plan',
-                defaultModel: 'plugin-pro',
-              },
-              capabilities: {
-                directSessions: true,
               },
             },
           ],
           hooks: [],
         },
-      },
+      }),
     });
     await writeEnabledLocalPathPluginState({
       happyHomeDir: cliHomeDir,
@@ -192,12 +178,15 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
 
     const controlToken = (daemon.state as { controlToken?: string | null }).controlToken ?? undefined;
     const initialPrompt = 'ACP_STUB_USAGE_UPDATE=plugin-backed-acp-e2e';
+    const spawnNonce = `plugin-backed-acp-${randomBytes(8).toString('hex')}`;
+    const firstInputLocalId = `spawn-first-turn:${spawnNonce}`;
     const spawnRes = await daemonControlPostJson<{ success?: boolean; sessionId?: string }>({
       port: daemon.state.httpPort,
       path: '/spawn-session',
       controlToken,
       body: {
         directory: workspaceDir,
+        spawnNonce,
         backendTarget: {
           kind: 'backend',
           backendId,
@@ -205,7 +194,10 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
           sourceKind: 'configured',
         },
         terminal: { mode: 'plain' },
-        initialPrompt,
+        pendingFirstInput: {
+          text: initialPrompt,
+          localId: firstInputLocalId,
+        },
         environmentVariables: {
           HAPPIER_HOME_DIR: cliHomeDir,
           HAPPIER_SERVER_URL: server.baseUrl,
@@ -254,7 +246,7 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
         afterSeq: 0,
       });
 
-      let sawPrompt = false;
+      let matchingPromptRows = 0;
       let sawAcpResponse = false;
 
       for (const row of rows) {
@@ -262,8 +254,13 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
         if (!isRecord(decoded)) continue;
 
         const content = isRecord(decoded.content) ? decoded.content : null;
-        if (decoded.role === 'user' && content?.type === 'text' && content.text === initialPrompt) {
-          sawPrompt = true;
+        if (
+          row.localId === firstInputLocalId
+          && decoded.role === 'user'
+          && content?.type === 'text'
+          && content.text === initialPrompt
+        ) {
+          matchingPromptRows += 1;
         }
 
         if (decoded.role !== 'agent') continue;
@@ -275,11 +272,26 @@ describe('core e2e: plugin-backed ACP configured backend', () => {
         }
       }
 
-      return sawPrompt && sawAcpResponse;
+      return matchingPromptRows === 1 && sawAcpResponse;
     }, {
       timeoutMs: 90_000,
       intervalMs: 250,
       context: 'plugin-backed ACP transcript markers',
+    });
+
+    await waitFor(async () => {
+      const pending = await listPendingQueueV2({
+        baseUrl: activeServer.baseUrl,
+        token: auth.token,
+        sessionId,
+      });
+      return pending.status === 200
+        && Array.isArray(pending.data.pending)
+        && pending.data.pending.every((row) => row.localId !== firstInputLocalId);
+    }, {
+      timeoutMs: 60_000,
+      intervalMs: 250,
+      context: 'plugin-backed ACP exact Pending first-input settlement',
     });
   }, 240_000);
 });

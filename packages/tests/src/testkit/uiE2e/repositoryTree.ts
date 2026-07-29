@@ -136,6 +136,13 @@ export async function openRepositoryTreeRowMenuAndSelectItem(params: Readonly<{
     const deadline = Date.now() + (params.timeoutMs ?? 60_000);
     let lastError: unknown = null;
 
+    // A transfer may finish on disk before its refreshed row has committed in the web tree.
+    // Wait at the row boundary so an initial missing menu does not permanently choose the
+    // host-component fallback while the real row and its test-id menu are still rendering.
+    await expect(repositoryTreeRowLocator(params.scope, params.path)).toHaveCount(1, {
+        timeout: Math.max(1_000, deadline - Date.now()),
+    });
+
     while (Date.now() < deadline) {
         await openRepositoryTreeRowMenu(params.scope, params.path);
         try {

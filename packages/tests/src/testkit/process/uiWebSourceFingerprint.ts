@@ -30,7 +30,8 @@ function shouldIgnoreUiWebWorkspaceDir(name: string): boolean {
 }
 
 function shouldIgnoreUiWebSourceFile(name: string): boolean {
-  return /\.(test|spec|stories)\.[cm]?[jt]sx?$/u.test(name);
+  return name.endsWith('.tsbuildinfo')
+    || /\.(test|spec|stories)\.[cm]?[jt]sx?$/u.test(name);
 }
 
 function updateUiWebSourceHashForPath(

@@ -378,7 +378,7 @@ test.describe('ui e2e: auth + terminal connect', () => {
     if (!uiBaseUrl) throw new Error('missing ui base url');
 
     await ensureAuthenticatedAccount(page, uiBaseUrl);
-    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/providers/codex`);
+    await gotoDomContentLoadedWithRetries(page, `${uiBaseUrl}/settings/agents/codex`);
     const backendModeRow = page.getByTestId('settings-provider-field-codexBackendMode');
     await expect(backendModeRow).toHaveCount(1, { timeout: 60_000 });
     await expect(backendModeRow).toContainText('ACP', { timeout: 60_000 });

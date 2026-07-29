@@ -36,6 +36,19 @@ export type StartedDaemonLike = Readonly<{
   stop: () => Promise<void>;
 }>;
 
+export type MobileConnectedMachineScenarioContext = Readonly<{
+  defaultFlowPath: string;
+  cliHomeDir: string;
+  serverUrlHost: string;
+  serverUrlDevice: string;
+  platform: 'android' | 'ios' | null;
+  runFlow: (
+    flowPath: string,
+    extraEnv?: NodeJS.ProcessEnv,
+    extraArgs?: string[],
+  ) => Promise<{ exitCode: number }>;
+}>;
+
 export type MobileMaestroRunResult = Readonly<{
   exitCode: number;
   runDir: string;
@@ -59,6 +72,7 @@ export type MobileMaestroDeps = Readonly<{
     serverUrl: string;
     webappUrl: string;
     env: NodeJS.ProcessEnv;
+    waitForConnectUrlReady: boolean;
   }) => Promise<StartedCliTerminalConnectLike>;
   startTestDaemon: (params: {
     testDir: string;
@@ -66,6 +80,9 @@ export type MobileMaestroDeps = Readonly<{
     env: NodeJS.ProcessEnv;
     startupTimeoutMs?: number;
   }) => Promise<StartedDaemonLike>;
+  runConnectedMachineScenario: (
+    context: MobileConnectedMachineScenarioContext,
+  ) => Promise<number>;
   runMaestro: (params: {
     cwd: string;
     env: NodeJS.ProcessEnv;
@@ -115,6 +132,21 @@ function xcrunCommand(env: NodeJS.ProcessEnv): string {
   return (String(env.HAPPIER_E2E_XCRUN_BIN ?? '').trim() || 'xcrun');
 }
 
+function resolveMobileTargetDeviceId(
+  env: NodeJS.ProcessEnv,
+  platform: 'android' | 'ios' | null,
+): string {
+  const explicit = String(env.HAPPIER_E2E_MOBILE_DEVICE_ID ?? '').trim();
+  if (explicit) return explicit;
+  if (platform === 'android') {
+    return String(env.HAPPIER_E2E_ANDROID_SERIAL ?? env.ANDROID_SERIAL ?? '').trim();
+  }
+  if (platform === 'ios') {
+    return String(env.HAPPIER_E2E_IOS_SIMULATOR_UDID ?? '').trim();
+  }
+  return '';
+}
+
 function isTruthyEnv(value: unknown): boolean {
   const normalized = String(value ?? '')
     .trim()
@@ -148,7 +180,12 @@ function resolveVisibleHostPatternFromUrl(url: string): string {
 
 type ConnectedMachineMode = 'cli-terminal-daemon' | null;
 
-const SENSITIVE_MAESTRO_ENV_KEYS = ['HAPPIER_E2E_RESTORE_KEY', 'HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK'] as const;
+const SENSITIVE_MAESTRO_ENV_KEYS = [
+  'HAPPIER_E2E_RESTORE_KEY',
+  'HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK',
+  'HAPPIER_E2E_PACKED_NOVEL_MANUAL_TOKEN',
+  'HAPPIER_E2E_PACKED_NOVEL_ACCOUNT_SECRET',
+] as const;
 const RESTORE_KEY_CHUNK_SIZE = 8;
 const RESTORE_KEY_CHUNK_COUNT = 8;
 const REDACTABLE_MAESTRO_ARTIFACT_EXTENSIONS = new Set(['.html', '.json', '.log', '.txt', '.yaml', '.yml']);
@@ -209,7 +246,7 @@ function startAndroidLogcatCapture(params: Readonly<{
   runDir: string;
 }>): AndroidLogcatCapture {
   const logPath = resolvePath(params.runDir, ANDROID_LOGCAT_ARTIFACT);
-  const serial = String(params.env.HAPPIER_E2E_ANDROID_SERIAL ?? params.env.ANDROID_SERIAL ?? '').trim();
+  const serial = resolveMobileTargetDeviceId(params.env, 'android');
   const baseArgs = serial ? ['-s', serial] : [];
   const child = spawn(
     adbCommand(params.env),
@@ -264,12 +301,13 @@ function startIosSimulatorLogCapture(params: Readonly<{
   runDir: string;
 }>): AndroidLogcatCapture {
   const logPath = resolvePath(params.runDir, IOS_SIMULATOR_LOG_ARTIFACT);
+  const simulator = resolveMobileTargetDeviceId(params.env, 'ios') || 'booted';
   const child = spawn(
     xcrunCommand(params.env),
     [
       'simctl',
       'spawn',
-      'booted',
+      simulator,
       'log',
       'stream',
       '--style',
@@ -563,9 +601,10 @@ async function defaultIsAppInstalled(params: Readonly<{
   );
   if (params.platform === 'ios') {
     try {
+      const simulator = resolveMobileTargetDeviceId(params.env, 'ios') || 'booted';
       const outcome = spawnSync(
         'xcrun',
-        ['simctl', 'get_app_container', 'booted', params.appId, 'app'],
+        ['simctl', 'get_app_container', simulator, params.appId, 'app'],
         { stdio: 'ignore', timeout: timeoutMs, env: params.env },
       );
       return outcome.status === 0;
@@ -576,7 +615,7 @@ async function defaultIsAppInstalled(params: Readonly<{
 
   if (params.platform === 'android') {
     try {
-      const serial = String(params.env.HAPPIER_E2E_ANDROID_SERIAL ?? params.env.ANDROID_SERIAL ?? '').trim();
+      const serial = resolveMobileTargetDeviceId(params.env, 'android');
       const baseArgs = serial ? ['-s', serial] : [];
       const outcome = spawnSync(
         adbCommand(params.env),
@@ -614,7 +653,7 @@ function runAdbReverseIfEnabled(params: Readonly<{
   const adbReverseSetting = params.env.HAPPIER_E2E_ANDROID_ADB_REVERSE;
   if (adbReverseSetting !== undefined && !isTruthyEnv(adbReverseSetting)) return { enabled: false, reversedPorts: [] };
 
-  const serial = String(params.env.HAPPIER_E2E_ANDROID_SERIAL ?? params.env.ANDROID_SERIAL ?? '').trim();
+  const serial = resolveMobileTargetDeviceId(params.env, 'android');
   const baseArgs = serial ? ['-s', serial] : [];
 
   const ports = new Set<number>();
@@ -663,6 +702,7 @@ export async function runMobileMaestro(
     'dev.happier.app.internaldev';
   const platform = parsed.platform ? parsed.platform.trim() : '';
   const mobilePlatform = platform === 'android' || platform === 'ios' ? platform : null;
+  const mobileDeviceId = resolveMobileTargetDeviceId(params.env, mobilePlatform);
   const skipAppInstallCheck =
     parsed.skipAppInstallCheck === true || isTruthyEnv(params.env.HAPPIER_E2E_SKIP_APP_INSTALL_CHECK ?? '0');
   const orchestrationEnv = buildNonSecretOrchestrationProcessEnv(params.env);
@@ -902,6 +942,7 @@ export async function runMobileMaestro(
         flows,
         appId,
         platform: platform || null,
+        deviceId: mobileDeviceId || null,
         serverUrlHost: server?.baseUrl ?? null,
         serverUrlDevice: deviceServerUrl ?? null,
         metroUrlHost: hostMetroUrl ?? null,
@@ -956,6 +997,12 @@ export async function runMobileMaestro(
 
   const baseSensitiveMaestroEnvEntries = collectSensitiveMaestroEnvEntries(params.env);
   let runtimeLogSensitiveMaestroEnvEntries = baseSensitiveMaestroEnvEntries;
+  const passThroughTargetsDevice = (parsed.passThrough ?? []).some((arg) => (
+    arg === '--udid'
+    || arg === '--device'
+    || arg.startsWith('--udid=')
+    || arg.startsWith('--device=')
+  ));
 
   const buildMaestroArgs = (
     flowPath: string,
@@ -965,6 +1012,7 @@ export async function runMobileMaestro(
     ...(platform ? ['-p', platform] : []),
     'test',
     flowPath,
+    ...(mobileDeviceId && !passThroughTargetsDevice ? [`--udid=${mobileDeviceId}`] : []),
     '--debug-output',
     debugOutputDir,
     '-e',
@@ -1022,6 +1070,9 @@ export async function runMobileMaestro(
         serverUrl: server.baseUrl,
         webappUrl: server.baseUrl,
         env: orchestrationEnv,
+        // Mobile authentication consumes the emitted deep link directly. The
+        // API-only server-light harness intentionally does not host this web page.
+        waitForConnectUrlReady: false,
       });
 
       const terminalConnectDeepLink = resolveTerminalConnectDeepLink(startedCliTerminalConnect.connectUrl, {
@@ -1050,11 +1101,29 @@ export async function runMobileMaestro(
             HAPPIER_WEBAPP_URL: server.baseUrl,
           },
         });
-        const result = await runMaestroFlow(
-          flows,
-          { HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK: terminalConnectDeepLink },
-        );
-        exitCode = result.exitCode;
+        if (deps.runConnectedMachineScenario) {
+          exitCode = await deps.runConnectedMachineScenario({
+            defaultFlowPath: flows,
+            cliHomeDir,
+            serverUrlHost: server.baseUrl,
+            serverUrlDevice: deviceServerUrl,
+            platform: mobilePlatform,
+            runFlow: async (flowPath, extraEnv, extraArgs) => await runMaestroFlow(
+              flowPath,
+              {
+                HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK: terminalConnectDeepLink,
+                ...(extraEnv ?? {}),
+              },
+              extraArgs,
+            ),
+          });
+        } else {
+          const result = await runMaestroFlow(
+            flows,
+            { HAPPIER_E2E_TERMINAL_CONNECT_DEEP_LINK: terminalConnectDeepLink },
+          );
+          exitCode = result.exitCode;
+        }
       }
     } else {
       const result = await runMaestroFlow(flows);

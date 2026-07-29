@@ -1,0 +1,400 @@
+{
+  "contract": "runtime-activity-projection-v1",
+  "states": [
+    "active",
+    "idle",
+    "unknown"
+  ],
+  "activeCountMax": 2147483647,
+  "snapshotFields": [
+    "state",
+    "activeCount"
+  ],
+  "projectionFields": [
+    "state",
+    "activeCount",
+    "observedAt",
+    "revision"
+  ],
+  "prismaSessionFields": [
+    {
+      "name": "runtimeActivityActiveCount",
+      "type": "Int",
+      "nullable": false,
+      "default": 0
+    },
+    {
+      "name": "runtimeActivityObservedAt",
+      "type": "BigInt",
+      "nullable": true,
+      "default": null
+    },
+    {
+      "name": "runtimeActivityRevision",
+      "type": "BigInt",
+      "nullable": false,
+      "default": 0
+    },
+    {
+      "name": "runtimeActivityState",
+      "type": "String",
+      "nullable": false,
+      "default": "unknown"
+    }
+  ],
+  "semanticCas": {
+    "compareFields": [
+      "state",
+      "activeCount"
+    ],
+    "expectedRevisionPrecondition": "exact_current_revision",
+    "duplicateSnapshot": {
+      "decision": "unchanged",
+      "revision": "preserve",
+      "observedAt": "preserve"
+    },
+    "changedSnapshot": {
+      "decision": "applied",
+      "revision": "increment_by_one",
+      "observedAt": "server_stamped_for_revision"
+    }
+  },
+  "validSnapshots": [
+    {
+      "id": "active_count_one",
+      "value": {
+        "state": "active",
+        "activeCount": 1
+      }
+    },
+    {
+      "id": "active_count_two",
+      "value": {
+        "state": "active",
+        "activeCount": 2
+      }
+    },
+    {
+      "id": "active_count_three",
+      "value": {
+        "state": "active",
+        "activeCount": 3
+      }
+    },
+    {
+      "id": "active_count_four",
+      "value": {
+        "state": "active",
+        "activeCount": 4
+      }
+    },
+    {
+      "id": "active_count_maximum",
+      "value": {
+        "state": "active",
+        "activeCount": 2147483647
+      }
+    },
+    {
+      "id": "idle",
+      "value": {
+        "state": "idle",
+        "activeCount": 0
+      }
+    },
+    {
+      "id": "unknown",
+      "value": {
+        "state": "unknown",
+        "activeCount": 0
+      }
+    }
+  ],
+  "invalidSnapshots": [
+    {
+      "id": "active_requires_positive_count",
+      "value": {
+        "state": "active",
+        "activeCount": 0
+      }
+    },
+    {
+      "id": "idle_requires_zero_count",
+      "value": {
+        "state": "idle",
+        "activeCount": 1
+      }
+    },
+    {
+      "id": "idle_requires_null_source_class",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "sourceClass": "execution_run"
+      }
+    },
+    {
+      "id": "snapshot_rejects_null_source_class",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "sourceClass": null
+      }
+    },
+    {
+      "id": "unknown_requires_zero_count",
+      "value": {
+        "state": "unknown",
+        "activeCount": 1
+      }
+    },
+    {
+      "id": "unknown_requires_null_source_class",
+      "value": {
+        "state": "unknown",
+        "activeCount": 0,
+        "sourceClass": "agent_autonomous_output"
+      }
+    },
+    {
+      "id": "negative_count",
+      "value": {
+        "state": "active",
+        "activeCount": -1
+      }
+    },
+    {
+      "id": "fractional_count",
+      "value": {
+        "state": "active",
+        "activeCount": 1.5
+      }
+    },
+    {
+      "id": "count_above_storage_maximum",
+      "value": {
+        "state": "active",
+        "activeCount": 2147483648
+      }
+    },
+    {
+      "id": "legacy_provider_source_value",
+      "value": {
+        "state": "active",
+        "activeCount": 1,
+        "sourceClass": "provider_detached_task"
+      }
+    },
+    {
+      "id": "producer_cannot_set_server_owned_fields",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "observedAt": 1000,
+        "revision": 1
+      }
+    },
+    {
+      "id": "lease_field_is_not_part_of_snapshot",
+      "value": {
+        "state": "active",
+        "activeCount": 1,
+        "expiresAt": 2000
+      }
+    }
+  ],
+  "validProjections": [
+    {
+      "id": "active_later_revision",
+      "value": {
+        "state": "active",
+        "activeCount": 2,
+        "observedAt": 1000,
+        "revision": 1
+      }
+    },
+    {
+      "id": "active_higher_count_later_revision",
+      "value": {
+        "state": "active",
+        "activeCount": 3,
+        "observedAt": 2000,
+        "revision": 2
+      }
+    },
+    {
+      "id": "active_higher_revision",
+      "value": {
+        "state": "active",
+        "activeCount": 4,
+        "observedAt": 3000,
+        "revision": 7
+      }
+    },
+    {
+      "id": "idle_later_revision",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "observedAt": 4000,
+        "revision": 8
+      }
+    },
+    {
+      "id": "unknown_revision_zero",
+      "value": {
+        "state": "unknown",
+        "activeCount": 0,
+        "observedAt": null,
+        "revision": 0
+      }
+    },
+    {
+      "id": "unknown_later_revision",
+      "value": {
+        "state": "unknown",
+        "activeCount": 0,
+        "observedAt": 5000,
+        "revision": 9
+      }
+    }
+  ],
+  "invalidProjections": [
+    {
+      "id": "projection_rejects_invalid_tuple",
+      "value": {
+        "state": "idle",
+        "activeCount": 1,
+        "observedAt": 1000,
+        "revision": 1
+      }
+    },
+    {
+      "id": "negative_revision",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "observedAt": 1000,
+        "revision": -1
+      }
+    },
+    {
+      "id": "fractional_revision",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "observedAt": 1000,
+        "revision": 1.5
+      }
+    },
+    {
+      "id": "unsafe_revision",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "observedAt": 1000,
+        "revision": 9007199254740992
+      }
+    },
+    {
+      "id": "negative_observed_at",
+      "value": {
+        "state": "unknown",
+        "activeCount": 0,
+        "observedAt": -1,
+        "revision": 1
+      }
+    },
+    {
+      "id": "projection_requires_observed_at",
+      "value": {
+        "state": "unknown",
+        "activeCount": 0,
+        "revision": 1
+      }
+    },
+    {
+      "id": "projection_requires_revision",
+      "value": {
+        "state": "unknown",
+        "activeCount": 0,
+        "observedAt": null
+      }
+    },
+    {
+      "id": "projection_rejects_legacy_provider_value",
+      "value": {
+        "state": "active",
+        "activeCount": 1,
+        "sourceClass": "provider_autonomous_output",
+        "observedAt": 1000,
+        "revision": 1
+      }
+    },
+    {
+      "id": "projection_rejects_null_source_class",
+      "value": {
+        "state": "idle",
+        "activeCount": 0,
+        "sourceClass": null,
+        "observedAt": 1000,
+        "revision": 1
+      }
+    },
+    {
+      "id": "projection_rejects_version_and_expiry",
+      "value": {
+        "state": "active",
+        "activeCount": 1,
+        "sourceClass": "agent_detached_task",
+        "observedAt": 1000,
+        "revision": 1,
+        "version": 1,
+        "expiresAt": 2000
+      }
+    }
+  ],
+  "admissionCases": [
+    {
+      "id": "idle_allows_exact_revision_cas",
+      "projection": {
+        "state": "idle",
+        "activeCount": 0,
+        "observedAt": 4000,
+        "revision": 7
+      },
+      "expected": {
+        "decision": "allow",
+        "revision": 7
+      }
+    },
+    {
+      "id": "active_defers_with_exact_revision",
+      "projection": {
+        "state": "active",
+        "activeCount": 1,
+        "observedAt": 5000,
+        "revision": 8
+      },
+      "expected": {
+        "decision": "defer",
+        "reason": "active",
+        "revision": 8
+      }
+    },
+    {
+      "id": "unknown_defers_with_exact_revision",
+      "projection": {
+        "state": "unknown",
+        "activeCount": 0,
+        "observedAt": null,
+        "revision": 9
+      },
+      "expected": {
+        "decision": "defer",
+        "reason": "unknown",
+        "revision": 9
+      }
+    }
+  ]
+}

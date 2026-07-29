@@ -137,7 +137,7 @@ describe('buildPatchedSessionHandoffMetadata', () => {
           linkedAtMs: 1,
           agentRuntimeDescriptorV1: {
             v: 1,
-            providerId: 'codex',
+            agentId: 'codex',
             provider: {
               backendMode: 'appServer',
               providerSessionId: 'thread_old',
@@ -157,7 +157,7 @@ describe('buildPatchedSessionHandoffMetadata', () => {
     expect(patched.directSessionV1).toEqual(expect.objectContaining({
       runtimeDescriptorV1: {
         v: 1,
-        providerId: 'codex',
+        agentId: 'codex',
         provider: {
           backendMode: 'appServer',
           providerSessionId: 'thread_old',

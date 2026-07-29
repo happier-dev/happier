@@ -29,7 +29,11 @@ describe('waitForComposeRpcGatewayReadiness', () => {
       waitForComposeRpcGatewayReadiness(
         { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000 },
         {
-          createTestAuth: vi.fn(async () => ({ token: 'token-1', publicKeyBase64: 'public-key' })),
+          createTestAuth: vi.fn(async () => ({
+            token: 'token-1',
+            publicKeyBase64: 'public-key',
+            accountSigningSeed: new Uint8Array(32),
+          })),
           createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
           createUserScopedSocketCollector: vi.fn(() => ui as never),
           createMachineBoundSessionScopedSocketCollector: vi.fn(async () => listener as never),
@@ -72,7 +76,11 @@ describe('waitForComposeRpcGatewayReadiness', () => {
       waitForComposeRpcGatewayReadiness(
         { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000 },
         {
-          createTestAuth: vi.fn(async () => ({ token: 'token-1', publicKeyBase64: 'public-key' })),
+          createTestAuth: vi.fn(async () => ({
+            token: 'token-1',
+            publicKeyBase64: 'public-key',
+            accountSigningSeed: new Uint8Array(32),
+          })),
           createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
           createUserScopedSocketCollector: vi.fn(() => ui as never),
           createMachineBoundSessionScopedSocketCollector: vi.fn(async () => listener as never),
@@ -135,7 +143,11 @@ describe('waitForComposeRpcGatewayReadiness', () => {
       waitForComposeRpcGatewayReadiness(
         { baseUrl: 'http://127.0.0.1:43080', timeoutMs: 5_000, attempts: 2, retryDelayMs: 0 },
         {
-          createTestAuth: vi.fn(async () => ({ token: 'token-1', publicKeyBase64: 'public-key' })),
+          createTestAuth: vi.fn(async () => ({
+            token: 'token-1',
+            publicKeyBase64: 'public-key',
+            accountSigningSeed: new Uint8Array(32),
+          })),
           createSession: vi.fn(async () => ({ sessionId: 'session-1', tag: 'session-1' })),
           createUserScopedSocketCollector,
           createMachineBoundSessionScopedSocketCollector,
@@ -171,7 +183,11 @@ describe('waitForComposeRpcGatewayReadiness', () => {
     };
     const createTestAuth = vi.fn()
       .mockRejectedValueOnce(new Error('gateway restarting'))
-      .mockResolvedValueOnce({ token: 'token-1', publicKeyBase64: 'public-key' });
+      .mockResolvedValueOnce({
+        token: 'token-1',
+        publicKeyBase64: 'public-key',
+        accountSigningSeed: new Uint8Array(32),
+      });
 
     await expect(
       waitForComposeRpcGatewayReadiness(

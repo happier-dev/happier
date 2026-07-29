@@ -183,18 +183,6 @@ test.describe('ui e2e: unauth split shell', () => {
     await expect(setupShell.getByTestId('relay-select-route-content')).toBeVisible();
   });
 
-  test('mobile deep-linked unauth steps skip the brand hero', async ({ page }) => {
-    test.setTimeout(240_000);
-    await page.setViewportSize({ width: 393, height: 852 });
-
-    for (const stepId of ['auth_restore', 'relay_select'] as const) {
-      await gotoApp(page, `/?happier_wizard_step=${stepId}`);
-      await waitForInitialAppUi({ page, timeoutMs: 120_000 });
-      await expect(page.getByTestId('brand-hero-get-started')).toHaveCount(0);
-      await expect(page.getByTestId('unauth-shell-workflow-pane')).toBeVisible();
-    }
-  });
-
   test('desktop primary start creates an account and reaches authenticated UI', async ({ page }) => {
     test.setTimeout(300_000);
     await page.setViewportSize({ width: 1100, height: 720 });

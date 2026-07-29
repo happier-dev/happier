@@ -1,0 +1,392 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "id": "short-command-16k",
+      "file": "phrases/short-command.16k.wav",
+      "sourceText": "Open the project settings.",
+      "language": "en-US",
+      "sampleRate": 16000,
+      "channels": 1,
+      "durationMs": 2775,
+      "sha256": "d1fcb168a288e898c2849608ceee5a7b099d53f7909b3f98bc006c14c0098462",
+      "expectedTranscriptSubstrings": [
+        "open",
+        "project",
+        "settings"
+      ],
+      "timelineMs": [
+        {
+          "kind": "speech",
+          "start": 0,
+          "end": 1875
+        },
+        {
+          "kind": "silence",
+          "start": 1875,
+          "end": 2775
+        }
+      ],
+      "scenarios": [
+        "daemon-stt-batch"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned test fixture; eSpeak GPL does not apply to generated WAV output.",
+        "speechEngine": "eSpeak formant synthesis",
+        "normalizer": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "sourceVersion": "1.48.03",
+        "sourceUrl": "https://downloads.sourceforge.net/project/espeak/espeak/espeak-1.48/espeak-1.48.04-source.zip",
+        "sourceArchiveSha256": "bf9a17673adffcc28ff7ea18764f06136547e97bbd9edf2ec612f09b207f0659",
+        "engineLicense": "GPL-3.0-or-later",
+        "outputLicenseEvidence": "https://sourceforge.net/p/espeak/discussion/538920/thread/c6944a60/",
+        "voice": "en-us"
+      }
+    },
+    {
+      "id": "short-command-24k",
+      "file": "phrases/short-command.24k.wav",
+      "sourceText": "Open the project settings.",
+      "language": "en-US",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 2775,
+      "sha256": "2112664e60ac3b1120d5c38ac5b2747aa8e9f2d359d6506ded396c51bcfacf2b",
+      "expectedTranscriptSubstrings": [
+        "open",
+        "project",
+        "settings"
+      ],
+      "timelineMs": [
+        {
+          "kind": "speech",
+          "start": 0,
+          "end": 1875
+        },
+        {
+          "kind": "silence",
+          "start": 1875,
+          "end": 2775
+        }
+      ],
+      "scenarios": [
+        "native-virtual-media",
+        "browser-capture"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned test fixture; eSpeak GPL does not apply to generated WAV output.",
+        "speechEngine": "eSpeak formant synthesis",
+        "normalizer": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "sourceVersion": "1.48.03",
+        "sourceUrl": "https://downloads.sourceforge.net/project/espeak/espeak/espeak-1.48/espeak-1.48.04-source.zip",
+        "sourceArchiveSha256": "bf9a17673adffcc28ff7ea18764f06136547e97bbd9edf2ec612f09b207f0659",
+        "engineLicense": "GPL-3.0-or-later",
+        "outputLicenseEvidence": "https://sourceforge.net/p/espeak/discussion/538920/thread/c6944a60/",
+        "voice": "en-us"
+      }
+    },
+    {
+      "id": "long-utterance-16k",
+      "file": "phrases/long-utterance.16k.wav",
+      "sourceText": "Summarize the latest changes, explain any failing checks, and wait for my confirmation before continuing.",
+      "language": "en-US",
+      "sampleRate": 16000,
+      "channels": 1,
+      "durationMs": 7126,
+      "sha256": "eb43c6741e5ae8562de45ac30b1cf97fdab5388a3e8b9e238528e99c59ffce0c",
+      "expectedTranscriptSubstrings": [
+        "summarize",
+        "failing checks",
+        "confirmation"
+      ],
+      "timelineMs": [
+        {
+          "kind": "speech",
+          "start": 0,
+          "end": 6226
+        },
+        {
+          "kind": "silence",
+          "start": 6226,
+          "end": 7126
+        }
+      ],
+      "scenarios": [
+        "streaming-stt",
+        "backpressure",
+        "cancellation",
+        "browser-capture"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned test fixture; eSpeak GPL does not apply to generated WAV output.",
+        "speechEngine": "eSpeak formant synthesis",
+        "normalizer": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "sourceVersion": "1.48.03",
+        "sourceUrl": "https://downloads.sourceforge.net/project/espeak/espeak/espeak-1.48/espeak-1.48.04-source.zip",
+        "sourceArchiveSha256": "bf9a17673adffcc28ff7ea18764f06136547e97bbd9edf2ec612f09b207f0659",
+        "engineLicense": "GPL-3.0-or-later",
+        "outputLicenseEvidence": "https://sourceforge.net/p/espeak/discussion/538920/thread/c6944a60/",
+        "voice": "en-us"
+      }
+    },
+    {
+      "id": "two-turns-with-pause-24k",
+      "file": "phrases/two-turns-with-pause.24k.wav",
+      "sourceText": "Start a new session. [1500ms silence] Then open the project settings.",
+      "language": "en-US",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 5857,
+      "sha256": "55434ee4fd61320609cf84d2a4c3297228d0bbb0ada26b92f5b1ade4204cab9d",
+      "expectedTranscriptSubstrings": [
+        "start a new session",
+        "open the project settings"
+      ],
+      "timelineMs": [
+        {
+          "kind": "speech",
+          "start": 0,
+          "end": 1402
+        },
+        {
+          "kind": "silence",
+          "start": 1402,
+          "end": 2902
+        },
+        {
+          "kind": "speech",
+          "start": 2902,
+          "end": 4957
+        },
+        {
+          "kind": "silence",
+          "start": 4957,
+          "end": 5857
+        }
+      ],
+      "scenarios": [
+        "endpointing",
+        "multi-turn"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned test fixture; eSpeak GPL does not apply to generated WAV output.",
+        "speechEngine": "eSpeak formant synthesis",
+        "normalizer": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "sourceVersion": "1.48.03",
+        "sourceUrl": "https://downloads.sourceforge.net/project/espeak/espeak/espeak-1.48/espeak-1.48.04-source.zip",
+        "sourceArchiveSha256": "bf9a17673adffcc28ff7ea18764f06136547e97bbd9edf2ec612f09b207f0659",
+        "engineLicense": "GPL-3.0-or-later",
+        "outputLicenseEvidence": "https://sourceforge.net/p/espeak/discussion/538920/thread/c6944a60/",
+        "voice": "en-us"
+      }
+    },
+    {
+      "id": "barge-in-timeline-24k",
+      "file": "phrases/barge-in-timeline.24k.wav",
+      "sourceText": "Please read the summary aloud. [650ms silence] Stop. I have another question.",
+      "language": "en-US",
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 5627,
+      "sha256": "ef0fda69ebf9273c349e23d1f490a94efe10ca9cdee3444394bb5cb8b13242ff",
+      "expectedTranscriptSubstrings": [
+        "read the summary",
+        "another question"
+      ],
+      "timelineMs": [
+        {
+          "kind": "speech",
+          "start": 0,
+          "end": 1830
+        },
+        {
+          "kind": "silence",
+          "start": 1830,
+          "end": 2480
+        },
+        {
+          "kind": "barge_in_speech",
+          "start": 2480,
+          "end": 4727
+        },
+        {
+          "kind": "silence",
+          "start": 4727,
+          "end": 5627
+        }
+      ],
+      "scenarios": [
+        "barge-in",
+        "cancellation-boundary"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned test fixture; eSpeak GPL does not apply to generated WAV output.",
+        "speechEngine": "eSpeak formant synthesis",
+        "normalizer": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "sourceVersion": "1.48.03",
+        "sourceUrl": "https://downloads.sourceforge.net/project/espeak/espeak/espeak-1.48/espeak-1.48.04-source.zip",
+        "sourceArchiveSha256": "bf9a17673adffcc28ff7ea18764f06136547e97bbd9edf2ec612f09b207f0659",
+        "engineLicense": "GPL-3.0-or-later",
+        "outputLicenseEvidence": "https://sourceforge.net/p/espeak/discussion/538920/thread/c6944a60/",
+        "voice": "en-us"
+      }
+    },
+    {
+      "id": "multilingual-fr-16k",
+      "file": "phrases/multilingual-fr.16k.wav",
+      "sourceText": "Ouvre les paramètres du projet.",
+      "language": "fr-FR",
+      "sampleRate": 16000,
+      "channels": 1,
+      "durationMs": 2564,
+      "sha256": "3c79111612ad4f02025bcf13e1ae3150424f62809e03359c4ae46f71cc67a875",
+      "expectedTranscriptSubstrings": [
+        "ouvre",
+        "paramètres",
+        "projet"
+      ],
+      "timelineMs": [
+        {
+          "kind": "speech",
+          "start": 0,
+          "end": 1664
+        },
+        {
+          "kind": "silence",
+          "start": 1664,
+          "end": 2564
+        }
+      ],
+      "scenarios": [
+        "language-selection",
+        "multilingual-stt"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned test fixture; eSpeak GPL does not apply to generated WAV output.",
+        "speechEngine": "eSpeak formant synthesis",
+        "normalizer": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+        "sourceVersion": "1.48.03",
+        "sourceUrl": "https://downloads.sourceforge.net/project/espeak/espeak/espeak-1.48/espeak-1.48.04-source.zip",
+        "sourceArchiveSha256": "bf9a17673adffcc28ff7ea18764f06136547e97bbd9edf2ec612f09b207f0659",
+        "engineLicense": "GPL-3.0-or-later",
+        "outputLicenseEvidence": "https://sourceforge.net/p/espeak/discussion/538920/thread/c6944a60/",
+        "voice": "fr-fr"
+      }
+    },
+    {
+      "id": "silence-5s",
+      "file": "phrases/silence-5s.wav",
+      "sourceText": null,
+      "language": null,
+      "sampleRate": 16000,
+      "channels": 1,
+      "durationMs": 5000,
+      "sha256": "262d1f34f300560a4c82ba8127ddea9e1d72946f187fdbd3e8f70ee096077aec",
+      "expectedTranscriptSubstrings": [],
+      "timelineMs": [
+        {
+          "kind": "silence",
+          "start": 0,
+          "end": 5000
+        }
+      ],
+      "scenarios": [
+        "silence",
+        "endpoint-timeout"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned deterministic test fixture; no third-party media input.",
+        "speechEngine": "deterministic PCM generator",
+        "normalizer": "direct PCM16 mono WAV encoder",
+        "algorithmVersion": "1",
+        "seed": "zero-filled"
+      }
+    },
+    {
+      "id": "low-noise",
+      "file": "phrases/low-noise.wav",
+      "sourceText": null,
+      "language": null,
+      "sampleRate": 16000,
+      "channels": 1,
+      "durationMs": 5000,
+      "sha256": "69c1a9d0cc77d2893f5f5f0ce79af168a32a87508359a0988a92f238a013ad9f",
+      "expectedTranscriptSubstrings": [],
+      "timelineMs": [
+        {
+          "kind": "low_noise",
+          "start": 0,
+          "end": 5000
+        }
+      ],
+      "scenarios": [
+        "noise-rejection",
+        "false-endpoint"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned deterministic test fixture; no third-party media input.",
+        "speechEngine": "seeded PCM noise generator",
+        "normalizer": "direct PCM16 mono WAV encoder",
+        "algorithmVersion": "1",
+        "seed": "0x5eed1234"
+      }
+    },
+    {
+      "id": "transient-cough-like",
+      "file": "phrases/transient-cough-like.wav",
+      "sourceText": null,
+      "language": null,
+      "sampleRate": 24000,
+      "channels": 1,
+      "durationMs": 1800,
+      "sha256": "39d858bcf25921a6a4de5f6fec36d8b724f3d866444bd42d22b5f6b17512c7fc",
+      "expectedTranscriptSubstrings": [],
+      "timelineMs": [
+        {
+          "kind": "silence",
+          "start": 0,
+          "end": 280
+        },
+        {
+          "kind": "transient",
+          "start": 280,
+          "end": 510
+        },
+        {
+          "kind": "silence",
+          "start": 510,
+          "end": 720
+        },
+        {
+          "kind": "transient",
+          "start": 720,
+          "end": 970
+        },
+        {
+          "kind": "silence",
+          "start": 970,
+          "end": 1800
+        }
+      ],
+      "scenarios": [
+        "false-interruption",
+        "noise-rejection"
+      ],
+      "provenance": {
+        "generator": "packages/tests/fixtures/voice/generate.mjs",
+        "license": "Project-owned deterministic test fixture; no third-party media input.",
+        "speechEngine": "seeded shaped-noise generator",
+        "normalizer": "direct PCM16 mono WAV encoder",
+        "algorithmVersion": "1",
+        "seed": "0xc0ffee"
+      }
+    }
+  ]
+}

@@ -172,6 +172,8 @@ export type ProviderScenario = {
   // When YOLO is disabled, the harness will auto-respond to permission requests via `${sessionId}:permission`.
   // Defaults to `approved`.
   permissionAutoDecision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+  // Optional exact structured question answers to include in the permission response.
+  permissionAutoAnswers?: Readonly<Record<string, string | readonly string[]>>;
   // Optional override for YOLO scenarios: when true, the harness will auto-respond to provider
   // permission requests even in YOLO mode. This is useful for providers that occasionally surface
   // external-directory prompts despite running with a permissive policy.
@@ -218,6 +220,7 @@ export type ProviderScenario = {
       sessionId: string;
       secret: Uint8Array;
       cliHome: string;
+      traceFile: string;
     }) => Promise<void>;
     /**
      * Optional ACP-only wait: after satisfaction, locate a tool-call id and wait for sidechain

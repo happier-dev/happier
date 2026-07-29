@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import { repoRootDir } from '../../src/testkit/paths';
 import {
+    createLocalExtensionPackageManifest,
     writeEnabledLocalPathPluginState,
     writeLocalPathPluginFixture,
 } from '../../src/testkit/plugins/localPathPluginFixture';
@@ -39,28 +40,18 @@ describe('core e2e: plugin hook execution', () => {
                     '}',
                     '',
                 ].join('\n'),
-                manifest: {
-                    schemaVersion: 1,
-                    id: 'acme.hook.integration',
-                    version: '1.0.0',
+                manifest: createLocalExtensionPackageManifest({
+                    pluginId,
                     displayName: 'Acme Hook Integration',
                     description: 'Exercises plugin hook execution through the executable runtime registry',
-                    engines: {
-                        happier: '^0.2.0',
-                    },
-                    targets: {
-                        daemon: {
-                            entry: './daemon.mjs',
-                        },
-                    },
-                    contributions: {
+                    contributes: {
                         hooks: [
                             {
                                 hookApiVersion: 1,
-                                id: 'backend.terminalRuntime.bindTranscript',
-                                category: 'integration',
-                                scope: 'backend',
-                                executionKind: 'integrate',
+                                id: 'session.message.send',
+                                category: 'lifecycle',
+                                scope: 'session',
+                                executionKind: 'observe',
                                 handler: {
                                     target: 'plugin',
                                     exportName: 'recordHookInvocation',
@@ -68,7 +59,7 @@ describe('core e2e: plugin hook execution', () => {
                             },
                         ],
                     },
-                },
+                }),
             });
             await writeEnabledLocalPathPluginState({
                 happyHomeDir,
@@ -76,7 +67,7 @@ describe('core e2e: plugin hook execution', () => {
                 pluginId,
             });
 
-            const runtimeRegistryUrl = pathToFileURL(join(repoRootDir(), 'apps', 'cli', 'src', 'extensions', 'runtime', 'resolveExecutablePluginRuntimeRegistry.ts')).href;
+            const runtimeRegistryUrl = pathToFileURL(join(repoRootDir(), 'apps', 'cli', 'src', 'plugins', 'runtime', 'resolveExecutablePluginRuntimeRegistry.ts')).href;
             const cliTsconfigPath = join(repoRootDir(), 'apps', 'cli', 'tsconfig.json');
 
             await writeFile(
@@ -91,7 +82,7 @@ describe('core e2e: plugin hook execution', () => {
                     '',
                     'const { resolveExecutablePluginRuntimeRegistry } = await import(runtimeRegistryUrl);',
                     'const runtimeRegistry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });',
-                    'const handlers = runtimeRegistry.hookHandlersByHookId.get("backend.terminalRuntime.bindTranscript");',
+                    'const handlers = runtimeRegistry.hookHandlersByHookId.get("session.message.send");',
                     'if (!handlers || handlers.length !== 1) {',
                     '  throw new Error(`Expected one hook handler, found ${handlers?.length ?? 0}`);',
                     '}',

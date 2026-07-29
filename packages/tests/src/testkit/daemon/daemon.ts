@@ -1,4 +1,4 @@
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat } from 'node:fs/promises';
 import { unlink } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -12,10 +12,17 @@ import {
   resolveProcessOwnershipLeasesDir,
   sweepProcessOwnershipLeases,
 } from '../process/processOwnershipLease';
+import { redactHarnessLogText } from '../process/harnessLogRedaction';
 import { spawnLoggedProcess, type SpawnedProcess } from '../process/spawnProcess';
-import { resolveCliTestLaunchSpec, shouldUseCliSourceEntrypoint } from '../process/cliLaunchSpec';
+import {
+  resolveCliTestLaunchSpec,
+  resolveCliTestLaunchSpecOrOverride,
+  shouldUseCliSourceEntrypoint,
+  type CliTestLaunchSpec,
+} from '../process/cliLaunchSpec';
 import { terminateProcessTreeByPid } from '../process/processTree';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
+import { sanitizeDaemonSpawnEnv } from '@happier-dev/cli-common/process';
 
 export type DaemonState = {
   pid: number;
@@ -499,9 +506,24 @@ function resolveDaemonStartupPhaseTimeoutMs(env: NodeJS.ProcessEnv, startupTimeo
 }
 
 function sanitizeDiagnosticText(text: string): string {
-  return text
+  return redactHarnessLogText(text)
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/gi, 'Bearer <redacted>')
-    .replace(/("?(?:token|secret|controlToken)"?\s*[:=]\s*")([^"]+)(")/gi, '$1<redacted>$3');
+    .replace(
+      /(\bcontrolToken"?\s*[:=]\s*)("[^"\r\n]*"|[^\s,}\r\n]+)/gi,
+      (_match, prefix: string, value: string) => (
+        `${prefix}${value.startsWith('"') ? '"<redacted>"' : '<redacted>'}`
+      ),
+    );
+}
+
+async function readSanitizedDiagnosticTail(path: string): Promise<string | null> {
+  try {
+    const text = await readFile(path, 'utf8');
+    const sanitized = sanitizeDiagnosticText(text);
+    return sanitized.slice(Math.max(0, sanitized.length - 4_000));
+  } catch {
+    return null;
+  }
 }
 
 async function readInternalDaemonLogTail(happyHomeDir: string): Promise<string | null> {
@@ -523,8 +545,8 @@ async function readInternalDaemonLogTail(happyHomeDir: string): Promise<string |
     candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
     const latest = candidates[0];
     if (!latest) return null;
-    const text = await readFile(latest.path, 'utf8');
-    const tail = sanitizeDiagnosticText(text.slice(Math.max(0, text.length - 4_000)));
+    const tail = await readSanitizedDiagnosticTail(latest.path);
+    if (tail === null) return null;
     return `${latest.path}:${tail}`;
   } catch {
     return null;
@@ -550,6 +572,10 @@ async function formatDaemonStartupDiagnostics(params: DaemonStartupDiagnostics):
       ? 'alive'
       : 'not-alive';
   const statePresence = params.statePresence;
+  const [stdoutTail, stderrTail] = await Promise.all([
+    readSanitizedDiagnosticTail(params.stdoutPath),
+    readSanitizedDiagnosticTail(params.stderrPath),
+  ]);
   const internalDaemonLogTail = await readInternalDaemonLogTail(params.happyHomeDir);
 
   return [
@@ -569,6 +595,8 @@ async function formatDaemonStartupDiagnostics(params: DaemonStartupDiagnostics):
     `processStatus=${processStatus}`,
     `stdoutPath=${params.stdoutPath}`,
     `stderrPath=${params.stderrPath}`,
+    `daemonStdoutTail=${JSON.stringify(stdoutTail ?? 'none')}`,
+    `daemonStderrTail=${JSON.stringify(stderrTail ?? 'none')}`,
     `internalDaemonLogTail=${JSON.stringify(internalDaemonLogTail ?? 'none')}`,
   ]
     .filter((part): part is string => Boolean(part))
@@ -753,28 +781,7 @@ export function resolveTestDaemonOwnershipLeasesDir(rootDir: string = repoRootDi
   return resolveProcessOwnershipLeasesDir({ rootDir, leaseKind: 'test-daemon' });
 }
 
-export function sanitizeDaemonEnvForSpawn(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const sanitized = { ...env };
-  delete sanitized.TMUX;
-  delete sanitized.TMUX_PANE;
-  delete sanitized.TMUX_TMPDIR;
-  // Daemons should never inherit per-session attach/trace env. If they do, they can consume and
-  // delete attach files intended for the actual session runner process, breaking provider e2e.
-  delete sanitized.HAPPIER_SESSION_ATTACH_FILE;
-  delete sanitized.HAPPY_SESSION_ATTACH_FILE;
-  delete sanitized.HAPPIER_STACK_TOOL_TRACE_FILE;
-  delete sanitized.HAPPY_STACK_TOOL_TRACE_FILE;
-  delete sanitized.HAPPIER_ACTIVE_SERVER_ID;
-  delete sanitized.HAPPIER_DAEMON_SERVICE_INSTANCE_ID;
-  delete sanitized.HAPPIER_DAEMON_SERVICE_SERVER_URL;
-  if (sanitized.HAPPIER_DISABLE_CAFFEINATE === undefined || sanitized.HAPPIER_DISABLE_CAFFEINATE === '') {
-    sanitized.HAPPIER_DISABLE_CAFFEINATE = '1';
-  }
-  if (sanitized.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED === undefined || sanitized.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED === '') {
-    sanitized.HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED = '0';
-  }
-  return sanitized;
-}
+export const sanitizeDaemonEnvForSpawn = sanitizeDaemonSpawnEnv;
 
 function buildIsolatedDaemonServiceEnv(
   env: NodeJS.ProcessEnv,
@@ -872,7 +879,9 @@ export async function startTestDaemon(params: {
   snapshotDir?: string;
   startupTimeoutMs?: number;
   cleanupDescendantsOnExit?: boolean;
+  cliLaunchSpec?: CliTestLaunchSpec;
 }): Promise<StartedDaemon> {
+  await mkdir(params.testDir, { recursive: true });
   const stdoutPath = resolve(params.testDir, 'daemon.stdout.log');
   const stderrPath = resolve(params.testDir, 'daemon.stderr.log');
   const phaseTimeoutMs = resolveDaemonStartupPhaseTimeoutMs(params.env, params.startupTimeoutMs);
@@ -901,25 +910,28 @@ export async function startTestDaemon(params: {
 
   const cliLaunchSpec = await runDaemonStartupPhase(
     'resolveCliTestLaunchSpec',
-    resolveCliTestLaunchSpec(
-      {
-        testDir: params.testDir,
-        env: buildIsolatedDaemonServiceEnv({
-          ...params.env,
-          // Use an isolated snapshot node_modules copy by default. Symlink mode aliases the live
-          // workspace tree and can observe transient file gaps while shared deps are being rebuilt.
-          HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? 'copy',
-        }, params.happyHomeDir),
-      },
-      {
-        snapshotDir: resolveDaemonLaunchSnapshotDir({
+    resolveCliTestLaunchSpecOrOverride(
+      params.cliLaunchSpec,
+      () => resolveCliTestLaunchSpec(
+        {
           testDir: params.testDir,
-          env: params.env,
-          snapshotDir: params.snapshotDir,
-        }),
-        skipDistIntegrityCheck: true,
-        skipSourceFreshnessCheck: true,
-      },
+          env: buildIsolatedDaemonServiceEnv({
+            ...params.env,
+            // Use an isolated snapshot node_modules copy by default. Symlink mode aliases the live
+            // workspace tree and can observe transient file gaps while shared deps are being rebuilt.
+            HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: params.env.HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE ?? 'copy',
+          }, params.happyHomeDir),
+        },
+        {
+          snapshotDir: resolveDaemonLaunchSnapshotDir({
+            testDir: params.testDir,
+            env: params.env,
+            snapshotDir: params.snapshotDir,
+          }),
+          skipDistIntegrityCheck: true,
+          skipSourceFreshnessCheck: true,
+        },
+      ),
     ),
     baseDiagnostics,
   );
@@ -943,8 +955,8 @@ export async function startTestDaemon(params: {
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, 'daemon', 'start-sync'],
     cwd: cliLaunchSpec.cwd ?? repoRootDir(),
-    env: {
-      ...sanitizeDaemonEnvForSpawn(buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir)),
+    env: sanitizeDaemonEnvForSpawn({
+      ...buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
       ...resolveDaemonSourceSnapshotEnv(cliLaunchSpec),
       ...(cliLaunchSpec.env ?? {}),
       ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
@@ -952,7 +964,7 @@ export async function startTestDaemon(params: {
       CI: '1',
       HAPPIER_HOME_DIR: params.happyHomeDir,
       HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: directPeerBindPort,
-    },
+    }),
     stdoutPath,
     stderrPath,
     cleanupDescendantsOnExit: params.cleanupDescendantsOnExit,
@@ -1121,14 +1133,14 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
     command: cliLaunchSpec.command,
     args: [...cliLaunchSpec.args, 'daemon', 'start-sync', '--takeover'],
     cwd: cliLaunchSpec.cwd ?? repoRootDir(),
-    env: {
-      ...sanitizeDaemonEnvForSpawn(buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir)),
+    env: sanitizeDaemonEnvForSpawn({
+      ...buildIsolatedDaemonServiceEnv(params.env, params.happyHomeDir),
       ...(cliLaunchSpec.env ?? {}),
       ...resolveDaemonSubprocessEntrypointEnv(cliLaunchSpec),
       CI: '1',
       HAPPIER_HOME_DIR: params.happyHomeDir,
       HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT: directPeerBindPort,
-    },
+    }),
     stdoutPath,
     stderrPath,
   });
@@ -1136,7 +1148,7 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
   try {
     return await runDaemonStartupPhase(
       'waitForReplacementDaemonState',
-      waitForReplacementDaemonState(params.happyHomeDir, originalState.pid, { timeoutMs: 45_000 }),
+      waitForReplacementDaemonState(params.happyHomeDir, originalState.pid, { timeoutMs: phaseTimeoutMs }),
       {
         ...baseDiagnostics,
         processPid: proc.child.pid ?? null,

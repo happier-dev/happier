@@ -42,14 +42,45 @@ Out of scope for this package:
 - Core deterministic e2e (slow lane): `yarn workspace @happier-dev/tests test:core:slow`
 - Core deterministic e2e (handoff slice): `yarn workspace @happier-dev/tests test:core:handoff`
 - UI E2E (Playwright, web UI): `yarn workspace @happier-dev/tests test:ui:e2e`
+- Plugin Platform exact-candidate native E2E (Maestro, gated): `yarn workspace @happier-dev/tests test:mobile:e2e:plugin-platform-candidate`
 - WSREPL Lima matrix (macOS/Linux host opt-in): `yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima -- happier-wsrepl-qa`
 - Stress (configuration-driven scale harness): `yarn workspace @happier-dev/tests test:stress`
 - Stress (full Compose topology): `yarn workspace @happier-dev/tests test:stress:full-compose`
 - Stress Compose topology only: `yarn workspace @happier-dev/tests stress:compose:up|status|down`
-- Providers (real provider CLIs, opt-in): `yarn workspace @happier-dev/tests test:providers`
+- Providers (real provider CLIs, opt-in): `yarn workspace @happier-dev/tests test:agents`
 - Typecheck: `yarn workspace @happier-dev/tests typecheck`
 
 Root aliases may exist (e.g. `yarn test:e2e`), but the workspace commands above are the source of truth.
+
+### Plugin Platform exact-candidate native QA
+
+This opt-in lane consumes the daemon-selected packed SDK/CLI candidate, rechecks
+both tarball SRIs and package identities, materializes that exact CLI, and uses
+the exact SDK tarball to build two iOS/Android Re.Pack generations of a native
+lifecycle fixture. It then drives install-and-trust, enable/disable, Inspector
+reload, update/cache replacement, offline read-only state, reconnect, rollback,
+and uninstall through the connected-machine product path.
+
+Do not run either platform lane until the candidate producer has handed off
+`candidate.json` and issued the literal authorization
+`G5_GENERATED_INPUTS_GREEN`. Both values are mandatory and the harness fails
+closed:
+
+```bash
+export HAPPIER_E2E_PLUGIN_PLATFORM_CANDIDATE=/absolute/path/to/candidate.json
+export HAPPIER_E2E_PLUGIN_PLATFORM_G5_AUTHORIZATION=G5_GENERATED_INPUTS_GREEN
+yarn workspace @happier-dev/tests test:mobile:e2e:ios:plugin-platform-candidate
+yarn workspace @happier-dev/tests test:mobile:e2e:android:plugin-platform-candidate
+```
+
+Prerequisites are the normal connected-machine Maestro prerequisites for the
+selected platform: installed native dev client, Maestro, simulator/emulator,
+managed Metro support, and the repository-managed CLI author toolchain. The
+combined command runs iOS and Android sequentially.
+
+Candidate identity/materialization and both fixture generations can be checked
+without launching Metro, Maestro, or a device by adding
+`HAPPIER_E2E_PLUGIN_PLATFORM_PREPARE_ONLY=1` to either platform command.
 
 ## Shared platform homes
 
@@ -101,7 +132,7 @@ Baseline updates are explicit:
 - `suites/ui-e2e/*`: Playwright-driven browser E2E against Expo web (covers critical UI flows like auth + terminal connect)
 - Native desktop E2E (Tauri MCP) is app-owned in `apps/ui/scripts/qa/**` and is invoked via `yarn test:e2e:desktop:native` (or `yarn workspace @happier-dev/tests test:desktop:native`).
 - `suites/stress/*`: nightly/on-demand configuration-driven scale harness (`light`, `full-compose`, `external`)
-- `suites/providers/*`: opt-in “real provider contract” tests (slow, may consume provider credits)
+- `suites/agents/*`: opt-in “real provider contract” tests (slow, may consume provider credits)
 
 Core E2E split convention:
 - `*.slow.e2e.test.ts` -> slow lane (`test:core:slow`)
@@ -327,15 +358,15 @@ Provider tests are **contract drift** detectors:
 
 The goal is to fail loudly when a provider changes its tool formats or our normalization changes in a breaking way.
 
-By default, `test:providers` is a fast no-op. Enable explicitly:
+By default, `test:agents` is a fast no-op. Enable explicitly:
 
 ```bash
-HAPPIER_E2E_PROVIDERS=1 HAPPIER_E2E_PROVIDER_OPENCODE=1 yarn workspace @happier-dev/tests test:providers
+HAPPIER_E2E_PROVIDERS=1 HAPPIER_E2E_PROVIDER_OPENCODE=1 yarn workspace @happier-dev/tests test:agents
 ```
 
 ### Provider matrix runner
 
-The entrypoint is `suites/providers/provider.matrix.test.ts`, backed by:
+The entrypoint is `suites/agents/provider.matrix.test.ts`, backed by:
 
 - `src/testkit/providers/harness/index.ts`
 - `src/testkit/providers/scenarios/scenarioCatalog.ts`
@@ -346,7 +377,7 @@ The entrypoint is `suites/providers/provider.matrix.test.ts`, backed by:
 
 Current Codex scope note:
 - `HAPPIER_E2E_PROVIDER_CODEX=1` exercises the Codex ACP provider lane only.
-- Codex app-server behavior is covered outside the provider lane in targeted CLI/backend tests (for example `apps/cli/src/capabilities/probes/agentModesProbe.codexAppServer.test.ts`, `apps/cli/src/capabilities/probes/agentModelsProbe.codexAppServer.test.ts`, and `apps/cli/src/backends/codex/runCodex.acpResumePreflight.integration.test.ts`).
+- Codex app-server behavior is covered outside the provider lane in targeted CLI/plugin-runtime tests (for example `apps/cli/src/capabilities/probes/agentModesProbe.codexAppServer.test.ts`, `apps/cli/src/capabilities/probes/agentModelsProbe.codexAppServer.test.ts`, and `packages/plugins/codex/src/agent/runtime/appServer/**` tests).
 
 ### Environment flags
 
@@ -368,13 +399,15 @@ Current Codex scope note:
   - `HAPPIER_E2E_PROVIDER_SCENARIO_TIER=smoke` (or `extended`)
 
 Scenario IDs are source-of-truth in provider registries:
-- `apps/cli/src/backends/opencode/e2e/providerScenarios.json`
-- `apps/cli/src/backends/claude/e2e/providerScenarios.json`
-- `apps/cli/src/backends/codex/e2e/providerScenarios.json`
+- `packages/plugins/opencode/src/agent/e2e/providerScenarios.json`
+- `packages/plugins/claude/src/agent/e2e/providerScenarios.json`
+- `packages/plugins/codex/src/agent/e2e/providerScenarios.json`
+- `packages/plugins/gemini/src/agent/e2e/providerScenarios.json`
 - `packages/plugins/kilo/src/agent/e2e/providerScenarios.json`
-- `apps/cli/src/backends/qwen/e2e/providerScenarios.json`
+- `packages/plugins/qwen/src/agent/e2e/providerScenarios.json`
 - `packages/plugins/kimi/src/agent/e2e/providerScenarios.json`
 - `packages/plugins/auggie/src/agent/e2e/providerScenarios.json`
+- `packages/plugins/pi/src/agent/e2e/providerScenarios.json`
 
 Two quick examples (current at time of writing):
 - OpenCode smoke: `execute_trace_ok`, `execute_error_exit_2`
@@ -454,7 +487,7 @@ Baselines should be updated when:
 To update baselines:
 - run the scenario(s) with `HAPPIER_E2E_PROVIDER_UPDATE_BASELINES=1`
   - easiest: `yarn workspace @happier-dev/tests providers:opencode:smoke:update-baselines`
-  - or: `HAPPIER_E2E_PROVIDER_UPDATE_BASELINES=1 HAPPIER_E2E_PROVIDERS=1 HAPPIER_E2E_PROVIDER_OPENCODE=1 yarn workspace @happier-dev/tests test:providers`
+  - or: `HAPPIER_E2E_PROVIDER_UPDATE_BASELINES=1 HAPPIER_E2E_PROVIDERS=1 HAPPIER_E2E_PROVIDER_OPENCODE=1 yarn workspace @happier-dev/tests test:agents`
 
 After updating:
 - review the baseline JSON diff (keys and shapes)
@@ -465,12 +498,11 @@ Optional strictness:
 
 ## Adding a new provider
 
-Providers are CLI-backend-owned. The test harness discovers providers by reading JSON specs from the CLI backend folders.
+Providers are plugin-owned and projected into the CLI catalog. The test harness discovers providers by reading JSON specs from plugin agent e2e folders.
 
-1) In the CLI backend folder, add:
-   - `apps/cli/src/backends/<providerId>/e2e/providerSpec.json`
-   - `apps/cli/src/backends/<providerId>/e2e/providerScenarios.json`
-   - or `packages/plugins/<providerId>/src/agent/e2e/providerScenarios.json` for plugin-owned providers
+1) In the provider plugin folder, add:
+   - `packages/plugins/<providerId>/src/agent/e2e/providerSpec.json`
+   - `packages/plugins/<providerId>/src/agent/e2e/providerScenarios.json`
 2) In the tests package, add a scenario module:
    - `packages/tests/src/testkit/providers/scenarios.<providerId>.ts`
    - Register IDs in `src/testkit/providers/scenarios/scenarioCatalog.ts` so each id maps to a scenario factory.

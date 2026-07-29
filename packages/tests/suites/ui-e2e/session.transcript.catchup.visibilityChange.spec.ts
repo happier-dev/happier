@@ -15,6 +15,144 @@ import { runCliJson } from '../../src/testkit/uiE2e/cliJson';
 import { ensureAccountReadyForConnect } from '../../src/testkit/uiE2e/ensureAccountReadyForConnect';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
+const VIEWPORT_MEASUREMENT_ROUNDING_PX = 1;
+
+type ViewportTelemetryEvent = Readonly<{
+  type: string;
+  writer?: string;
+  reason?: string;
+  sessionId: string;
+  timestampMs: number;
+}>;
+
+type ViewportTelemetrySnapshot = Readonly<{
+  events: ViewportTelemetryEvent[];
+  droppedCount: number;
+}>;
+
+type TranscriptScrollMetrics = Readonly<{
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  distanceFromBottom: number;
+}>;
+
+type LogicalTailRowProbe = Readonly<{
+  testId: string;
+  rowTopRelativeToScroller: number;
+  rowBottomRelativeToScroller: number;
+  scrollerClientHeight: number;
+}>;
+
+async function installViewportTelemetryOverride(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    (globalThis as Record<string, unknown>).__HAPPIER_TRANSCRIPT_VIEWPORT_TELEMETRY_OVERRIDE__ = {
+      enabled: true,
+      capacity: 5000,
+    };
+  });
+}
+
+async function readViewportTelemetrySnapshot(page: Page): Promise<ViewportTelemetrySnapshot | null> {
+  return await page.evaluate(() => {
+    const readEvents = (globalThis as Record<string, unknown>).__HAPPIER_TRANSCRIPT_VIEWPORT_EVENTS__;
+    if (typeof readEvents !== 'function') return null;
+    return (readEvents as () => ViewportTelemetrySnapshot)();
+  });
+}
+
+async function requireViewportTelemetrySnapshot(page: Page): Promise<ViewportTelemetrySnapshot> {
+  await expect
+    .poll(async () => (await readViewportTelemetrySnapshot(page)) !== null, { timeout: 60_000 })
+    .toBe(true);
+  const snapshot = await readViewportTelemetrySnapshot(page);
+  if (!snapshot) throw new Error('viewport telemetry debug seam was unavailable');
+  return snapshot;
+}
+
+async function readTranscriptScrollMetrics(page: Page): Promise<TranscriptScrollMetrics | null> {
+  return await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="transcript-chat-list"]');
+    if (!root) return null;
+    const candidates: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
+    let ancestor: Element | null = root.parentElement;
+    for (let depth = 0; ancestor && depth < 6; depth += 1) {
+      candidates.push(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+    let scroller: Element | null = null;
+    for (const element of candidates) {
+      if (element.scrollHeight > element.clientHeight + 1 && element.clientHeight > 0) {
+        if (!scroller || element.scrollHeight > scroller.scrollHeight) scroller = element;
+      }
+    }
+    if (!scroller) return null;
+    return {
+      scrollTop: scroller.scrollTop,
+      scrollHeight: scroller.scrollHeight,
+      clientHeight: scroller.clientHeight,
+      distanceFromBottom: scroller.scrollHeight - scroller.clientHeight - scroller.scrollTop,
+    };
+  });
+}
+
+async function requireTranscriptScrollMetrics(page: Page): Promise<TranscriptScrollMetrics> {
+  const metrics = await readTranscriptScrollMetrics(page);
+  if (!metrics) throw new Error('failed to resolve the transcript scroll container');
+  return metrics;
+}
+
+async function readLogicalTailRowProbe(page: Page): Promise<LogicalTailRowProbe | null> {
+  return await page.evaluate(() => {
+    const root = document.querySelector('[data-testid="transcript-chat-list"]');
+    if (!root) return null;
+    const candidates: Element[] = [root, ...Array.from(root.querySelectorAll('*'))];
+    let ancestor: Element | null = root.parentElement;
+    for (let depth = 0; ancestor && depth < 6; depth += 1) {
+      candidates.push(ancestor);
+      ancestor = ancestor.parentElement;
+    }
+    let scroller: Element | null = null;
+    for (const element of candidates) {
+      if (element.scrollHeight > element.clientHeight + 1 && element.clientHeight > 0) {
+        if (!scroller || element.scrollHeight > scroller.scrollHeight) scroller = element;
+      }
+    }
+    if (!scroller) return null;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    let tail: LogicalTailRowProbe | null = null;
+    for (const node of Array.from(root.querySelectorAll('[data-testid^="transcript-message-"]'))) {
+      const testId = node.getAttribute('data-testid');
+      const messageId = testId?.slice('transcript-message-'.length) ?? '';
+      if (!testId || !messageId || messageId.includes(':')) continue;
+      const rect = node.getBoundingClientRect();
+      if (rect.height <= 0) continue;
+      const candidate = {
+        testId,
+        rowTopRelativeToScroller: rect.top - scrollerRect.top,
+        rowBottomRelativeToScroller: rect.bottom - scrollerRect.top,
+        scrollerClientHeight: scroller.clientHeight,
+      };
+      if (!tail || candidate.rowBottomRelativeToScroller > tail.rowBottomRelativeToScroller) {
+        tail = candidate;
+      }
+    }
+    return tail;
+  });
+}
+
+function assertTailRowVisible(probe: LogicalTailRowProbe | null, label: string): asserts probe is LogicalTailRowProbe {
+  if (!probe) throw new Error(`${label}: no keyed logical tail row was mounted`);
+  expect(
+    probe.rowBottomRelativeToScroller,
+    `${label}: logical tail row ${probe.testId} ended above the viewport`,
+  ).toBeGreaterThan(0);
+  expect(
+    probe.rowTopRelativeToScroller,
+    `${label}: logical tail row ${probe.testId} began below the viewport`,
+  ).toBeLessThan(probe.scrollerClientHeight);
+}
 
 function resolveServerLightSqliteDbPath(params: { suiteDir: string }): string {
   return resolve(join(params.suiteDir, 'server-light-data', 'happier-server-light.sqlite'));
@@ -69,7 +207,7 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
   let daemon: StartedDaemon | null = null;
 
   test.beforeAll(async () => {
-    test.setTimeout(420_000);
+    test.setTimeout(720_000);
     await mkdir(cliHomeDir, { recursive: true });
     await writeFile(resolve(join(cliHomeDir, 'AGENTS.md')), '# UI e2e fixture\n', 'utf8');
 
@@ -92,6 +230,8 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
         EXPO_PUBLIC_DEBUG: '1',
         EXPO_PUBLIC_HAPPY_SERVER_URL: server.baseUrl,
         EXPO_PUBLIC_HAPPY_STORAGE_SCOPE: `e2e-${run.runId}`,
+        HAPPIER_E2E_UI_WEB_MODE: 'metro',
+        HAPPIER_E2E_UI_WEB_NO_DEV: '0',
         EXPO_PUBLIC_HAPPIER_SYNC_TUNING_JSON: JSON.stringify({
           // Keep thresholds forgiving; this test targets background/foreground resume rather than large-gap behavior.
           messageLargeGapSeq: 100,
@@ -101,6 +241,8 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
           resumeConcurrencyLimit: 2,
           bootstrapConcurrencyLimit: 3,
           changesPageLimit: 200,
+          transcriptViewportTelemetryEnabled: true,
+          transcriptViewportTelemetryMaxEvents: 5000,
         }),
       },
     });
@@ -119,6 +261,7 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
     test.setTimeout(540_000);
     if (!server || !uiBaseUrl) throw new Error('missing server/ui fixtures');
 
+    await installViewportTelemetryOverride(page);
     await page.addInitScript(() => {
       const key = '__HAPPIER_E2E_VIS_STATE__';
       const getState = () => {
@@ -191,6 +334,7 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
     const sessionId = await createSessionFromComposer({ page, uiBaseUrl, machineId, prompt: `hello vis ${run.runId}` });
     await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByTestId('transcript-chat-list')).toHaveCount(1, { timeout: 120_000 });
+    await requireViewportTelemetrySnapshot(page);
 
     const requests: Array<{ url: string; ts: number }> = [];
     page.on('request', (req) => requests.push({ url: req.url(), ts: Date.now() }));
@@ -321,11 +465,81 @@ test.describe('ui e2e: transcript background/foreground catch-up (visibility)', 
 
     // Jump-to-bottom should remain visible (we stayed unpinned) and the new messages should be catch-upped.
     await expect(page.getByTestId('transcript-jump-to-bottom')).toHaveCount(1, { timeout: 120_000 });
-    // Messages should have been catch-upped, but may not be in the DOM while we're scrolled mid-history.
-    // Clicking the affordance should bring the tail into view.
+    const telemetryBeforeJump = await requireViewportTelemetrySnapshot(page);
+
+    // Messages should have been catch-upped, but may not be in the DOM while we're scrolled
+    // mid-history. JTB completion requires the actual logical tail and the physical bottom.
     await page.getByTestId('transcript-jump-to-bottom').click();
     for (const message of missedWhileUnpinned) {
       await expect(page.getByText(message, { exact: true })).toBeVisible({ timeout: 120_000 });
     }
+    await expect(page.getByTestId('transcript-jump-to-bottom')).toHaveCount(0, { timeout: 60_000 });
+    await expect
+      .poll(async () => Math.abs((await requireTranscriptScrollMetrics(page)).distanceFromBottom), { timeout: 60_000 })
+      .toBeLessThanOrEqual(VIEWPORT_MEASUREMENT_ROUNDING_PX);
+
+    const metricsAfterJump = await requireTranscriptScrollMetrics(page);
+    const tailAfterJump = await readLogicalTailRowProbe(page);
+    assertTailRowVisible(tailAfterJump, 'JTB completion');
+
+    // A later remote append must grow the transcript while the same held-end lifecycle keeps the
+    // viewport physically at bottom; a partial one-shot landing would fail here.
+    const growthMessage = `growth after jtb ${run.runId}`;
+    const growth = await runCliJson({
+      testDir,
+      cliHomeDir,
+      serverUrl: server.baseUrl,
+      webappUrl: uiBaseUrl,
+      env: { ...process.env, HOME: cliHomeDir },
+      label: 'session-send-growth-after-jtb',
+      args: ['session', 'send', sessionId, growthMessage, '--json'],
+      timeoutMs: 120_000,
+    });
+    expect(growth.ok).toBe(true);
+    expect(growth.kind).toBe('session_send');
+    await expect(page.getByText(growthMessage, { exact: true })).toBeVisible({ timeout: 120_000 });
+    await expect
+      .poll(async () => (await requireTranscriptScrollMetrics(page)).scrollHeight, { timeout: 60_000 })
+      .toBeGreaterThan(metricsAfterJump.scrollHeight);
+    await page.waitForTimeout(2_500);
+    await expect
+      .poll(async () => Math.abs((await requireTranscriptScrollMetrics(page)).distanceFromBottom), { timeout: 60_000 })
+      .toBeLessThanOrEqual(VIEWPORT_MEASUREMENT_ROUNDING_PX);
+    await expect(page.getByTestId('transcript-jump-to-bottom')).toHaveCount(0);
+
+    const tailAfterGrowth = await readLogicalTailRowProbe(page);
+    assertTailRowVisible(tailAfterGrowth, 'JTB growth hold');
+    expect(
+      tailAfterGrowth.testId,
+      'JTB growth hold: the logical tail identity did not advance after new transcript content',
+    ).not.toBe(tailAfterJump.testId);
+
+    // The public telemetry seam cannot expose Legend's private held-intent ref, but it can prove
+    // that no competing keyed/entry/prepend writer survived the explicit takeover. The renderer
+    // may perform the sole physical end landing internally, so app-owned explicit writes are 0..1.
+    const telemetryAfterGrowth = await requireViewportTelemetrySnapshot(page);
+    expect(telemetryAfterGrowth.droppedCount).toBe(0);
+    const jumpAndGrowthEvents = telemetryAfterGrowth.events.slice(telemetryBeforeJump.events.length);
+    const explicitAppWrites = jumpAndGrowthEvents.filter(
+      (event) => event.type === 'scroll-write' && event.reason === 'jump-to-bottom',
+    );
+    expect(
+      explicitAppWrites.length,
+      'JTB takeover emitted more than one app-owned explicit physical writer',
+    ).toBeLessThanOrEqual(1);
+    const competingReasons = new Set(['initial-open', 'entry-restore', 'prepend-restore', 'jump-to-seq']);
+    const competingWriters = new Set(['web-dom-restore', 'web-scroll-to-index']);
+    const competingEvents = jumpAndGrowthEvents.filter(
+      (event) => (
+        event.type === 'scroll-write' || event.type === 'scroll-write-rejected'
+      ) && (
+        competingReasons.has(event.reason ?? '')
+        || competingWriters.has(event.writer ?? '')
+      ),
+    );
+    expect(
+      competingEvents,
+      `JTB takeover left a competing writer: ${JSON.stringify(competingEvents)}`,
+    ).toEqual([]);
   });
 });

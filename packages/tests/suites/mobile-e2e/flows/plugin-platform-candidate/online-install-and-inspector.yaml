@@ -1,0 +1,114 @@
+appId: ${HAPPIER_E2E_MOBILE_APP_ID}
+---
+- launchApp:
+    clearState: false
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins
+- extendedWaitUntil:
+    visible:
+      id: settings.plugins.management.view:installed
+    timeout: 120000
+
+- assertVisible:
+    id: settings.plugins.appPanels
+- tapOn:
+    id: settings.plugins.appPanels
+- extendedWaitUntil:
+    visible:
+      id: settings.plugins.appPanels.host
+    timeout: 120000
+- tapOn:
+    id: ${HAPPIER_E2E_PLUGIN_TAB_ID}
+- extendedWaitUntil:
+    visible:
+      id: candidate-native-surface
+    timeout: 120000
+- assertVisible:
+    id: ${HAPPIER_E2E_PLUGIN_SENTINEL_V1}
+- extendedWaitUntil:
+    visible:
+      id: candidate-native-host-api-ok
+    timeout: 120000
+- tapOn:
+    id: candidate-native-crash-trigger
+- extendedWaitUntil:
+    visible:
+      id: plugin-rn-ui-unavailable
+    timeout: 120000
+- tapOn:
+    id: app-scope-right-sidebar-tab:plugin:happier.inspector:inspector-app
+- extendedWaitUntil:
+    visible:
+      id: inspector-surface
+    timeout: 120000
+- tapOn:
+    id: ${HAPPIER_E2E_PLUGIN_TAB_ID}
+- extendedWaitUntil:
+    visible:
+      id: ${HAPPIER_E2E_PLUGIN_SENTINEL_V1}
+    timeout: 120000
+- extendedWaitUntil:
+    visible:
+      id: candidate-native-host-api-ok
+    timeout: 120000
+- tapOn:
+    id: app-scope-right-sidebar-tab:plugin:happier.inspector:inspector-app
+- extendedWaitUntil:
+    visible:
+      id: inspector-surface
+    timeout: 120000
+- tapOn:
+    id: inspector-reload-all
+- extendedWaitUntil:
+    visible:
+      id: inspector-last-reload
+    timeout: 120000
+- takeScreenshot: plugin-platform-inspector-mounted-${HAPPIER_E2E_MOBILE_PLATFORM}
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins
+- extendedWaitUntil:
+    visible:
+      id: settings.plugins.marketplace.installed.${HAPPIER_E2E_PLUGIN_ID}
+    timeout: 120000
+- tapOn:
+    id: settings.plugins.marketplace.installed.${HAPPIER_E2E_PLUGIN_ID}.action.disable
+- extendedWaitUntil:
+    visible:
+      id: web-modal-button-0
+    timeout: 120000
+- tapOn:
+    id: web-modal-button-0
+- extendedWaitUntil:
+    visible:
+      id: settings.plugins.marketplace.installed.${HAPPIER_E2E_PLUGIN_ID}.action.enable
+    timeout: 120000
+- tapOn:
+    id: settings.plugins.marketplace.installed.${HAPPIER_E2E_PLUGIN_ID}.action.enable
+- extendedWaitUntil:
+    visible:
+      id: web-modal-button-0
+    timeout: 120000
+- tapOn:
+    id: web-modal-button-0
+
+- tapOn:
+    id: settings.plugins.appPanels
+- tapOn:
+    id: app-scope-right-sidebar-tab:plugin:happier.inspector:inspector-app
+- extendedWaitUntil:
+    visible:
+      id: inspector-plugin-${HAPPIER_E2E_PLUGIN_ID}
+    timeout: 120000
+- tapOn:
+    id: inspector-reload-${HAPPIER_E2E_PLUGIN_ID}
+- extendedWaitUntil:
+    visible:
+      id: inspector-last-reload
+    timeout: 120000
+
+- openLink: ${HAPPIER_E2E_MOBILE_APP_SCHEME}:///settings/plugins
+- tapOn:
+    id: settings.plugins.management.view:diagnostics
+- assertVisible:
+    id: settings.plugins.management.diagnostics.live
+- takeScreenshot: plugin-platform-install-enable-reload-${HAPPIER_E2E_MOBILE_PLATFORM}

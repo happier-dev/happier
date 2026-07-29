@@ -40,13 +40,21 @@ async function main() {
           stop: started.stop,
         };
       },
-      startCliTerminalConnect: async ({ testDir, cliHomeDir, serverUrl, webappUrl, env }) => {
+      startCliTerminalConnect: async ({
+        testDir,
+        cliHomeDir,
+        serverUrl,
+        webappUrl,
+        env,
+        waitForConnectUrlReady,
+      }) => {
         return await startCliAuthLoginForTerminalConnect({
           testDir,
           cliHomeDir,
           serverUrl,
           webappUrl,
           env,
+          waitForConnectUrlReady,
         });
       },
       startTestDaemon: async ({ testDir, happyHomeDir, env, startupTimeoutMs }) => {

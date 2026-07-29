@@ -52,6 +52,107 @@ describe('ensureCliDistSnapshotNodeModules', () => {
     expect(readFileSync(snapshotFile, 'utf8')).toContain('initial');
   });
 
+  it('preserves the canonical bundled package manifest instead of replacing it with workspace authoring metadata', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-bundled-manifest-'));
+    createdDirs.push(rootDir);
+    const bundledPackageDir = join(
+      rootDir,
+      'apps',
+      'cli',
+      'node_modules',
+      '@happier-dev',
+      'plugins-acme',
+    );
+    const workspacePackageDir = join(rootDir, 'packages', 'plugins', 'acme');
+    mkdirSync(join(bundledPackageDir, 'dist'), { recursive: true });
+    mkdirSync(join(workspacePackageDir, 'dist'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    const bundledManifest = {
+      name: '@happier-dev/plugins-acme',
+      version: '0.0.0',
+      private: true,
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': { default: './dist/index.js' } },
+      dependencies: {},
+    };
+    writeFileSync(
+      join(bundledPackageDir, 'package.json'),
+      `${JSON.stringify(bundledManifest, null, 2)}\n`,
+      'utf8',
+    );
+    writeFileSync(join(bundledPackageDir, 'dist', 'index.js'), 'export const bundled = true;\n', 'utf8');
+    writeFileSync(
+      join(workspacePackageDir, 'package.json'),
+      JSON.stringify({
+        ...bundledManifest,
+        scripts: { build: 'workspace-only-command' },
+        devDependencies: { vitest: '^3.2.4' },
+        dependencies: { '@happier-dev/plugin-sdk': '0.0.0' },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(workspacePackageDir, 'dist', 'index.js'), 'export const workspace = true;\n', 'utf8');
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-bundled-manifest-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    expect(JSON.parse(readFileSync(
+      join(snapshotDir, 'node_modules', '@happier-dev', 'plugins-acme', 'package.json'),
+      'utf8',
+    ))).toEqual(bundledManifest);
+  });
+
+  it('never repairs snapshot manifests through a node_modules symlink into the live CLI bundle', () => {
+    const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-root-symlink-'));
+    createdDirs.push(rootDir);
+    const livePackageDir = join(rootDir, 'apps', 'cli', 'node_modules', '@happier-dev', 'plugins-acme');
+    const workspacePackageDir = join(rootDir, 'packages', 'plugins', 'acme');
+    mkdirSync(join(livePackageDir, 'dist'), { recursive: true });
+    mkdirSync(join(workspacePackageDir, 'dist'), { recursive: true });
+    mkdirSync(join(rootDir, 'node_modules'), { recursive: true });
+
+    const liveManifest = {
+      name: '@happier-dev/plugins-acme',
+      version: '0.0.0',
+      private: true,
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': { default: './dist/index.js' } },
+      dependencies: {},
+    };
+    const liveManifestPath = join(livePackageDir, 'package.json');
+    writeFileSync(liveManifestPath, `${JSON.stringify(liveManifest, null, 2)}\n`, 'utf8');
+    writeFileSync(join(livePackageDir, 'dist', 'index.js'), 'export const live = true;\n', 'utf8');
+    writeFileSync(
+      join(workspacePackageDir, 'package.json'),
+      JSON.stringify({
+        ...liveManifest,
+        main: './dist/replacement.js',
+        exports: { '.': { default: './dist/replacement.js' } },
+      }, null, 2),
+      'utf8',
+    );
+    writeFileSync(join(workspacePackageDir, 'dist', 'replacement.js'), 'export const replacement = true;\n', 'utf8');
+
+    const snapshotDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-root-symlink-out-'));
+    createdDirs.push(snapshotDir);
+    const snapshotDistDir = resolve(snapshotDir, 'dist');
+    mkdirSync(snapshotDistDir, { recursive: true });
+    symlinkSync(join(rootDir, 'apps', 'cli', 'node_modules'), join(snapshotDir, 'node_modules'));
+
+    ensureCliDistSnapshotNodeModules({ snapshotDir, snapshotDistDir, rootDir });
+
+    expect(JSON.parse(readFileSync(liveManifestPath, 'utf8'))).toEqual(liveManifest);
+    expect(readFileSync(join(livePackageDir, 'dist', 'index.js'), 'utf8')).toBe('export const live = true;\n');
+    expect(existsSync(join(livePackageDir, 'dist', 'replacement.js'))).toBe(false);
+  });
+
   it('copies direct CLI dependencies into the snapshot so built dist can resolve them', () => {
     const rootDir = mkdtempSync(join(tmpdir(), 'happier-cli-dist-snapshot-direct-deps-'));
     createdDirs.push(rootDir);

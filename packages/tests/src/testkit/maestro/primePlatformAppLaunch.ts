@@ -33,7 +33,7 @@ export async function defaultPrimePlatformAppLaunch(params: PrimePlatformAppLaun
   if (params.platform !== 'android') return;
 
   const timeoutMs =
-    Number.parseInt(params.env.HAPPIER_E2E_ANDROID_PRIME_APP_LAUNCH_TIMEOUT_MS ?? '15000', 10) || 15000;
+    Number.parseInt(params.env.HAPPIER_E2E_ANDROID_PRIME_APP_LAUNCH_TIMEOUT_MS ?? '60000', 10) || 60_000;
   const baseArgs = resolveAndroidBaseArgs(params.env);
 
   const resolvedActivity = spawnSync(
