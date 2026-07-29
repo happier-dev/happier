@@ -1,10 +1,12 @@
 // @ts-check
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { copyFile, mkdtemp, mkdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join, resolve } from 'node:path';
-import { loadCliCommonDistModule } from '../../../ensureCliCommonDistModule.mjs';
+import { delimiter, dirname, join, resolve } from 'node:path';
+import {
+  loadPackedAuthorCandidateManifest,
+} from '../../../../packages/tests/scripts/plugin-platform/run-packed-author-ui-compat.mjs';
 
 /**
  * @param {NodeJS.ProcessEnv} baseEnv
@@ -28,41 +30,6 @@ function minisignAvailable(env) {
   });
   return probe.status === 0;
 }
-
-/**
- * @param {string} raw
- */
-function parseTrailingJsonObject(raw) {
-  const value = String(raw ?? '').trim();
-  const lastObjectStart = value.lastIndexOf('\n{');
-  const candidate = lastObjectStart >= 0 ? value.slice(lastObjectStart + 1) : value;
-  return JSON.parse(candidate);
-}
-
-export const parseTrailingJsonObjectForTests = parseTrailingJsonObject;
-
-/**
- * @param {{ version?: unknown; artifacts?: unknown }} buildOutput
- * @returns {string | null}
- */
-function resolveLocalBuildInstallVersion(buildOutput) {
-  const explicit = String(buildOutput?.version ?? '').trim();
-  if (explicit.length > 0) {
-    return explicit;
-  }
-  const artifacts = Array.isArray(buildOutput?.artifacts) ? buildOutput.artifacts : [];
-  for (const artifact of artifacts) {
-    const name = String(artifact ?? '');
-    const match = name.match(/^.+-v(.+)-(linux|darwin|win32)-[^-]+[.]tar[.]gz$/);
-    if (match?.[1]) {
-      return match[1];
-    }
-  }
-  return null;
-}
-
-export const resolveLocalBuildInstallVersionForTests = resolveLocalBuildInstallVersion;
-const LOCAL_BUILD_TIMEOUT_MS = 20 * 60_000;
 
 /**
  * @param {{ repoRoot: string; scratchDir: string; baseEnv?: NodeJS.ProcessEnv }} params
@@ -102,83 +69,81 @@ function resolveSigningEnv({ repoRoot, scratchDir, baseEnv = process.env }) {
 export const resolveSigningEnvForTests = resolveSigningEnv;
 
 /**
- * @param {{ repoRoot: string; platform: 'linux' | 'darwin' | 'win32'; releaseChannel: 'stable' | 'preview' | 'publicdev' }} params
+ * @param {{ repoRoot: string; baseEnv?: NodeJS.ProcessEnv }} params
  */
-export async function prepareInstallersSmokeLocalBuildAssets({ repoRoot, platform, releaseChannel }) {
-  const scratchDir = await mkdtemp(join(tmpdir(), 'happier-installers-local-build-'));
-  const { env: signingEnv, keyPathEntries } = resolveSigningEnv({ repoRoot, scratchDir });
-  const componentArtifacts = await loadCliCommonDistModule({
-    repoRoot,
-    subpath: 'componentArtifacts',
-  });
-  const target = componentArtifacts.resolveCurrentBinaryTarget({
-    availableTargets: componentArtifacts.CLI_BINARY_TARGETS,
-    platform,
-    arch: process.arch,
-  });
-  const targetId = `${target.os}-${target.arch}`;
-
-  const keyDir = join(scratchDir, 'minisign');
-  await mkdir(keyDir, { recursive: true });
-  const publicKeyPath = join(keyDir, 'installers-smoke.pub');
-  const secretKeyPath = join(keyDir, 'installers-smoke.key');
-  execFileSync('minisign', ['-G', '-p', publicKeyPath, '-s', secretKeyPath, '-W'], {
-    cwd: repoRoot,
-    env: signingEnv,
-    stdio: 'ignore',
-  });
-
-  const rawOutput = execFileSync(
-    process.execPath,
-    [
-      resolve(repoRoot, 'scripts', 'pipeline', 'release', 'build-cli-binaries.mjs'),
-      '--channel',
-      releaseChannel === 'publicdev' ? 'dev' : releaseChannel,
-      '--targets',
-      targetId,
-    ],
-    {
-      cwd: repoRoot,
-      env: {
-        ...signingEnv,
-        CI: '1',
-        MINISIGN_SECRET_KEY: secretKeyPath,
-        HAPPIER_RELEASE_PARENT_TIMEOUT_MS: String(LOCAL_BUILD_TIMEOUT_MS),
+export async function prepareReleaseValidationMinisignEnv({
+  repoRoot,
+  baseEnv = process.env,
+}) {
+  const scratchDir = await mkdtemp(join(tmpdir(), 'happier-release-validation-minisign-'));
+  try {
+    const signing = resolveSigningEnv({ repoRoot, scratchDir, baseEnv });
+    return {
+      ...signing,
+      async cleanup() {
+        await rm(scratchDir, { recursive: true, force: true });
       },
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'inherit'],
-      timeout: LOCAL_BUILD_TIMEOUT_MS,
-    },
-  );
-
-  /** @type {{ version?: string; outDir: string; artifacts: string[]; checksums: string; signature: string | null }} */
-  const buildOutput = parseTrailingJsonObject(rawOutput);
-  if (!buildOutput.signature) {
-    throw new Error('installers-smoke local-build expected build-cli-binaries to produce a minisign signature');
+    };
+  } catch (error) {
+    await rm(scratchDir, { recursive: true, force: true });
+    throw error;
   }
-  const installVersion = resolveLocalBuildInstallVersion(buildOutput);
+}
 
-  const assetsDir = join(scratchDir, 'release-assets');
-  await mkdir(assetsDir, { recursive: true });
-  const generatedPaths = [
-    ...buildOutput.artifacts.map((artifactName) => resolve(buildOutput.outDir, artifactName)),
-    resolve(buildOutput.checksums),
-    resolve(buildOutput.signature),
-  ];
-  for (const sourcePath of generatedPaths) {
-    await copyFile(sourcePath, join(assetsDir, sourcePath.split(/[\\/]/).pop() ?? 'asset'));
+/**
+ * @param {{
+ *   repoRoot: string;
+ *   platform: 'linux' | 'darwin' | 'win32';
+ *   candidateManifestPath: string;
+ * }} params
+ */
+export async function prepareInstallersSmokeCandidateAssets({
+  repoRoot,
+  platform,
+  candidateManifestPath,
+}) {
+  const signing = await prepareReleaseValidationMinisignEnv({ repoRoot });
+  try {
+    const manifestPath = resolve(repoRoot, candidateManifestPath);
+    const candidate = await loadPackedAuthorCandidateManifest(
+      ['--candidate', manifestPath],
+      { cwd: repoRoot },
+    );
+    if (!candidate.standaloneCli?.signature) {
+      throw new Error('installers-smoke exact candidate requires a bound minisign signature');
+    }
+    const targetOs = platform === 'win32' ? 'windows' : platform;
+    const target = candidate.standaloneCli.archives.find(
+      (artifact) => artifact.os === targetOs && artifact.arch === process.arch,
+    );
+    if (!target) {
+      throw new Error(
+        `installers-smoke candidate does not contain native target ${targetOs}-${process.arch}`,
+      );
+    }
+    const assetsDir = dirname(target.archivePath);
+    const boundAssetPaths = [
+      ...candidate.standaloneCli.archives.map((artifact) => artifact.archivePath),
+      candidate.standaloneCli.checksums.filePath,
+      candidate.standaloneCli.signature.filePath,
+    ];
+    if (boundAssetPaths.some((artifactPath) => dirname(artifactPath) !== assetsDir)) {
+      throw new Error('installers-smoke candidate native matrix must share one assets directory');
+    }
+    return {
+      assetsDir,
+      installVersion: candidate.cli.version,
+      installerPath: platform === 'win32'
+        ? candidate.installers.powershell.filePath
+        : candidate.installers.shell.filePath,
+      publicKey: await readFile(candidate.installers.publicKey.filePath, 'utf8'),
+      envPathEntries: signing.keyPathEntries,
+      async cleanup() {
+        await signing.cleanup();
+      },
+    };
+  } catch (error) {
+    await signing.cleanup();
+    throw error;
   }
-
-  const publicKey = await readFile(publicKeyPath, 'utf8');
-
-  return {
-    assetsDir,
-    installVersion,
-    publicKey,
-    envPathEntries: keyPathEntries,
-    async cleanup() {
-      await Promise.allSettled(generatedPaths.map((path) => rm(path, { force: true })));
-      await rm(scratchDir, { recursive: true, force: true });
-    },
-  };
 }

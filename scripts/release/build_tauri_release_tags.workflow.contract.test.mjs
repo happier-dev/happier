@@ -15,6 +15,11 @@ async function loadFile(rel) {
   return readFile(join(repoRoot, rel), 'utf8');
 }
 
+async function loadCanonicalUiInstallScope() {
+  const easJson = JSON.parse(await loadFile('apps/ui/eas.json'));
+  return String(easJson?.build?.base?.env?.HAPPIER_INSTALL_SCOPE ?? '');
+}
+
 test('build-tauri publishes desktop releases under ui-desktop-* tags', async () => {
   const raw = await loadWorkflow('build-tauri.yml');
 
@@ -50,9 +55,14 @@ test('build-tauri enables Expo Router web modal support for desktop UI builds', 
 
 test('build-tauri latest.json generator uses ui-desktop-* release tags and publish assets are namespaced', async () => {
   const raw = await loadWorkflow('build-tauri.yml');
+  const expectedScope = await loadCanonicalUiInstallScope();
 
   assert.match(raw, /node scripts\/pipeline\/run\.mjs tauri-prepare-assets/);
-  assert.match(raw, /HAPPIER_INSTALL_SCOPE:\s*\"ui,protocol,agents,cli-common,peer-mediation,release-runtime,transfers,connection-supervisor\"/);
+  const scopeMatches = [...raw.matchAll(/HAPPIER_INSTALL_SCOPE:\s*"([^"]+)"/g)];
+  assert.ok(scopeMatches.length > 0, 'build-tauri.yml should define HAPPIER_INSTALL_SCOPE');
+  for (const [, scope = ''] of scopeMatches) {
+    assert.equal(scope, expectedScope);
+  }
 
   const script = await loadFile('scripts/pipeline/tauri/prepare-publish-assets.mjs');
   assert.match(script, /ui-desktop-preview/);

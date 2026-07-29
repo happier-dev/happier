@@ -135,6 +135,14 @@ async function buildCliDistUnlocked(options = {}) {
   ) {
     throw new Error('[cli-build-inputs] invalid Stack-admitted runtime input fingerprint');
   }
+  if (
+    stackAdmittedInputFingerprint
+    && stackAdmittedInputFingerprint !== initialInputFreshness.fingerprint
+  ) {
+    throw new Error(
+      '[cli-build-inputs] runtime inputs changed while package prebuild was preparing dependencies; refusing to build a mixed CLI closure',
+    );
+  }
   const admittedInputFingerprint =
     stackAdmittedInputFingerprint || initialInputFreshness.fingerprint;
   const immutableSource = callerOwnsOutputDir

@@ -9,7 +9,7 @@ import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './rel
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI release can include npm publish lane in dry-run', async () => {
+test('pipeline CLI release dry-run reports hosted inputs and bump facts without predicting npm jobs', async () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const out = execFileSync(
@@ -27,11 +27,7 @@ test('pipeline CLI release can include npm publish lane in dry-run', async () =>
         'true',
         '--repository',
         'happier-dev/happier',
-        '--npm-mode',
-        'pack+publish',
         '--dry-run',
-        '--secrets-source',
-        'env',
       ],
       {
         cwd: repoRoot,
@@ -54,14 +50,18 @@ test('pipeline CLI release can include npm publish lane in dry-run', async () =>
     );
 
     assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
-    assert.match(out, /\[pipeline\] dry-run: would run/);
-    assert.match(out, /- runPublishNpm: true/);
+    assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
+    assert.match(out, /- workflow: release\.yml/);
+    assert.match(out, /- deploy_targets: cli/);
+    assert.match(out, /- force_deploy: true/);
+    assert.match(out, /- publish_cli=true/);
+    assert.doesNotMatch(out, /runPublishNpm|runPublishCliBinaries|runDeploy/);
   } finally {
     stub.cleanup();
   }
 });
 
-test('pipeline CLI release treats cli-common-only changes as cli and stack release work in dry-run', async () => {
+test('pipeline CLI release reports cli-common-only bump facts without predicting hosted jobs', async () => {
   const stub = createReleaseCliDryRunEnv(process.env, {
     diffPaths: ['packages/cli-common/src/providers/resolution.ts'],
   });
@@ -81,11 +81,7 @@ test('pipeline CLI release treats cli-common-only changes as cli and stack relea
         'patch',
         '--repository',
         'happier-dev/happier',
-        '--npm-mode',
-        'pack+publish',
         '--dry-run',
-        '--secrets-source',
-        'env',
       ],
       {
         cwd: repoRoot,
@@ -104,11 +100,9 @@ test('pipeline CLI release treats cli-common-only changes as cli and stack relea
 
     assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
     assert.match(out, /- bump_app=none bump_server=none bump_website=none bump_cli=patch bump_stack=patch/);
-    assert.match(out, /\[pipeline\] dry-run: would run/);
-    assert.match(out, /- runPublishNpm: true/);
-    assert.match(out, /- runPublishDocker: true/);
-    assert.match(out, /- dockerBuildDevBox: true/);
-    assert.match(out, /- dockerBuildRelay: false/);
+    assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
+    assert.match(out, /- deploy_targets: cli,stack/);
+    assert.doesNotMatch(out, /runPublish|runDeploy|dockerBuild/);
   } finally {
     stub.cleanup();
   }

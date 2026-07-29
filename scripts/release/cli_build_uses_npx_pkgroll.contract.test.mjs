@@ -8,12 +8,16 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('apps/cli build script routes pkgroll through the manifest rewrite helper', async () => {
+test('apps/cli public build script routes pkgroll through the stage-manifest helper', async () => {
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'apps', 'cli', 'package.json'), 'utf8'));
   const build = String(pkg?.scripts?.build ?? '');
   assert.ok(build, 'apps/cli/package.json scripts.build must exist');
 
-  assert.match(build, /\bnode\s+scripts\/runPkgrollBuild\.mjs\b/, 'build should invoke the pkgroll manifest helper so pkgroll sees dist entrypoints during local/runtime builds');
+  assert.match(build, /\bnode\s+scripts\/build\.mjs\b/, 'the public build command should use the canonical build owner');
+
+  const buildOwner = fs.readFileSync(path.join(repoRoot, 'apps', 'cli', 'scripts', 'build.mjs'), 'utf8');
+  assert.match(buildOwner, /import\s+\{\s*runPkgrollBuild\s*\}\s+from\s+['"]\.\/runPkgrollBuild\.mjs['"];/, 'the canonical build owner should import the pkgroll stage-manifest helper');
+  assert.match(buildOwner, /\(\s*options\.runPkgrollBuildImpl\s*\?\?\s*runPkgrollBuild\s*\)\s*\(\s*\{/, 'the canonical build owner should invoke the pkgroll stage-manifest helper');
 });
 
 test('apps/cli pkgroll helper resolves the local pkgroll cli directly instead of shelling out through npx', async () => {

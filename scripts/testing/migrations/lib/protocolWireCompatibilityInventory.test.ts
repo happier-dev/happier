@@ -29,9 +29,9 @@ test('validateProtocolWireCompatibilityInventory rejects non-boundary translatio
       {
         id: 'socket-rpc',
         title: 'Socket RPC',
-        protocolModules: ['packages/protocol/src/socketRpc.ts'],
+        protocolModules: ['packages/protocol/src/rpc/socket.ts'],
         boundaryModules: ['apps/cli/src/agent/runtime/createExecutionRunBackend.ts'],
-        proofTests: ['packages/protocol/src/socketRpc.test.ts'],
+        proofTests: ['packages/protocol/src/rpc/socket.test.ts'],
       },
     ],
     pathExists: () => true,
@@ -51,7 +51,7 @@ test('validateProtocolWireCompatibilityInventory rejects entries without proof t
       {
         id: 'changes-v2',
         title: 'Changes V2',
-        protocolModules: ['packages/protocol/src/changes.ts'],
+        protocolModules: ['packages/protocol/src/changes/index.ts'],
         boundaryModules: ['apps/server/sources/app/api/routes/changes/changesRoutes.ts'],
         proofTests: [],
       },
@@ -70,9 +70,9 @@ test('validateProtocolWireCompatibilityInventory treats CLI plugin/extensions pa
       {
         id: 'extensions-contracts',
         title: 'Plugin manifest and hook envelopes',
-        protocolModules: ['packages/protocol/src/plugins/pluginManifestV1.ts'],
+        protocolModules: ['packages/protocol/src/plugins/manifest/v2.ts'],
         boundaryModules: ['apps/cli/src/plugins/manifest/read.ts'],
-        proofTests: ['packages/protocol/src/plugins/contractsV1.test.ts'],
+        proofTests: ['packages/protocol/src/plugins/manifest/v2.test.ts'],
       },
     ],
     pathExists: () => true,
@@ -104,22 +104,63 @@ test('the plugin and hook ABI inventory pins hook catalogs and bridge lifecycle 
   assert.ok(entry.protocolModules.includes('packages/protocol/src/hooks/hookExecutionSemantics.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/hooks/bridgeLifecycleHookCatalog.ts'));
   assert.ok(entry.protocolModules.includes('packages/protocol/src/hooks/daemonSpawnHookCatalog.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/plugins/extensionSourceSpecV1.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/plugins/sourceSpecV1.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/plugins/agentDefinitionV1.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/plugins/backendSurfaceDeclarationV1.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/plugins/hooks/catalog.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/plugins/hooks/eventEnvelopeV1.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/manifest/read.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/registry/normalize/package.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/projection/registry/normalize/package.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/manifest/daemonEntry.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/hooks/execution/bridgeLifecycleHookEmissionInventory.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/runtime/loadPluginDaemonModule.ts'));
-  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/runtime/resolvePluginHookHandlerRegistry.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/runtime/hooks/execution/dispatchPluginHookEvent.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/daemon/spawn/resolveSpawnChildEnvironment.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.ts'));
+  assert.ok(entry.proofTests.includes('packages/protocol/src/plugins/sourceSpecV1.test.ts'));
+  assert.ok(entry.proofTests.includes('packages/protocol/src/plugins/hooks/catalog.test.ts'));
+  assert.ok(entry.proofTests.includes('packages/protocol/src/plugins/hooks/compatibilityReaders.test.ts'));
   assert.ok(entry.proofTests.includes('apps/cli/src/plugins/manifest/read.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/registry/normalize/package.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/projection/registry/normalize/package.test.ts'));
   assert.ok(entry.proofTests.includes('apps/cli/src/plugins/manifest/daemonEntry.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/loadPluginDaemonModule.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/resolvePluginHookHandlerRegistry.test.ts'));
-  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/resolveExecutablePluginRuntimeRegistry.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/hooks/execution/dispatchPluginHookEvent.integration.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/plugins/runtime/hooks/execution/dispatchBridgeLifecycleHookEvent.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/daemon/spawn/resolveSpawnChildEnvironment.pluginHooks.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/agent/runtime/bridges/session/SessionHostBridge.hooks.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/agent/runtime/bridges/executionRun/ExecutionRunHostBridge.registry.test.ts'));
   assert.ok(entry.proofTests.includes('packages/tests/suites/core-e2e/bridge.lifecycleHookDispatch.slow.e2e.test.ts'));
   assert.ok(entry.proofTests.includes('packages/tests/suites/core-e2e/plugins.hookExecution.slow.e2e.test.ts'));
+});
+
+test('the authoritative protocol wire compatibility inventory pins relocated protocol owners', () => {
+  const byId = new Map(PROTOCOL_WIRE_COMPATIBILITY_INVENTORY.map((entry) => [entry.id, entry] as const));
+
+  assert.ok(byId.get('changes-v2')?.protocolModules.includes('packages/protocol/src/changes/index.ts'));
+
+  const socketRpc = byId.get('socket-rpc-transport');
+  assert.ok(socketRpc?.protocolModules.includes('packages/protocol/src/rpc/socket.ts'));
+  assert.ok(socketRpc?.protocolModules.includes('packages/protocol/src/rpc/index.ts'));
+  assert.ok(socketRpc?.protocolModules.includes('packages/protocol/src/machines/ownership/daemonOwnership.ts'));
+  assert.ok(socketRpc?.proofTests.includes('packages/protocol/src/rpc/socket.test.ts'));
+  assert.ok(socketRpc?.proofTests.includes('packages/protocol/src/rpc/wireCompatibility.test.ts'));
+  assert.ok(socketRpc?.proofTests.includes('packages/protocol/src/machines/ownership/daemonOwnership.test.ts'));
+
+  const systemTasks = byId.get('system-tasks');
+  assert.ok(systemTasks?.protocolModules.includes('packages/protocol/src/system/tasks/spec.ts'));
+  assert.ok(systemTasks?.proofTests.includes('packages/protocol/src/system/tasks/spec.test.ts'));
+
+  const executionRun = byId.get('execution-run-and-replay');
+  assert.ok(executionRun?.protocolModules.includes('packages/protocol/src/execution/runs/startRequest.ts'));
+  assert.ok(executionRun?.protocolModules.includes('packages/protocol/src/daemon/executionRuns.ts'));
+  assert.ok(executionRun?.protocolModules.includes('packages/protocol/src/sessions/continueWithReplay.ts'));
+  assert.ok(executionRun?.proofTests.includes('packages/protocol/src/execution/runs/index.test.ts'));
+  assert.ok(executionRun?.proofTests.includes('packages/protocol/src/rpc/executionRuns.test.ts'));
+  assert.ok(executionRun?.proofTests.includes('packages/protocol/src/daemon/executionRuns.test.ts'));
+  assert.ok(executionRun?.proofTests.includes('packages/protocol/src/sessions/continueWithReplay.test.ts'));
+
+  const daemonProjection = byId.get('daemon-contribution-registry-projection');
+  assert.ok(daemonProjection?.protocolModules.includes('packages/protocol/src/daemon/contributionRegistryProjection.ts'));
+  assert.ok(daemonProjection?.proofTests.includes('packages/protocol/src/daemon/contributionRegistryProjection.test.ts'));
+
+  assert.ok(byId.get('machine-capabilities-protocol')?.protocolModules.includes('packages/protocol/src/capabilities/index.ts'));
 });
 
 test('the authoritative protocol wire compatibility inventory pins machine capabilities protocol parsing and callers', () => {
@@ -128,7 +169,7 @@ test('the authoritative protocol wire compatibility inventory pins machine capab
   );
 
   assert.ok(entry);
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/capabilities.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/capabilities/index.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/capabilities/types.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/rpc/handlers/capabilities.ts'));
   assert.ok(entry.boundaryModules.includes('apps/ui/sources/sync/api/capabilities/capabilitiesProtocol.ts'));
@@ -143,22 +184,25 @@ test('the authoritative protocol wire compatibility inventory pins canonical run
 
   assert.ok(entry);
   assert.ok(!entry.protocolModules.includes('packages/protocol/src/sessionMetadata/agentRuntimeDescriptorV1.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessionMetadata/runtimeDescriptorV1.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessionMetadata/compat/runtimeDescriptorMetadata.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/providers/codex/runtimeDescriptorCompat.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessionControl/handoff/handoffSchemas.ts'));
-  assert.ok(entry.protocolModules.includes('packages/protocol/src/directSessions/daemonRpcV1.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/metadata/runtimeDescriptorV1.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/metadata/compat/runtimeDescriptorMetadata.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/agents/generated/runtime/descriptors/codex.ts'));
+  assert.ok(!entry.protocolModules.includes('packages/protocol/src/agents/codex/runtimeDescriptorCompat.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/control/handoff/handoffSchemas.ts'));
+  assert.ok(entry.protocolModules.includes('packages/protocol/src/sessions/external/daemonRpcV1.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/rpc/handlers/registerSessionHandlers.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/rpc/handlers/spawnSessionOptionsContract.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/rpc/handlers/spawnRuntimeSelection.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/api/machine/rpcHandlers.sessions.ts'));
+  assert.ok(entry.boundaryModules.includes('apps/cli/src/api/session/external/linking/ensureExternalSessionLink.ts'));
   assert.ok(entry.boundaryModules.includes('apps/cli/src/daemon/processSupervision/sessionRunnerRespawnDescriptor.ts'));
   assert.ok(entry.boundaryModules.includes('apps/ui/sources/sync/ops/sessionHandoffs.ts'));
   assert.ok(entry.boundaryModules.includes('apps/ui/sources/sync/domains/state/storageTypes.ts'));
-  assert.ok(entry.proofTests.includes('packages/protocol/src/sessionMetadata/runtimeDescriptorV1.test.ts'));
-  assert.ok(entry.proofTests.includes('packages/protocol/src/sessionMetadata/compat/runtimeDescriptorMetadata.test.ts'));
-  assert.ok(entry.proofTests.includes('packages/protocol/src/sessionControl/handoff/handoffSchemas.test.ts'));
-  assert.ok(entry.proofTests.includes('packages/protocol/src/directSessions/daemonRpcV1.test.ts'));
+  assert.ok(entry.proofTests.includes('packages/protocol/src/sessions/metadata/runtimeDescriptorV1.test.ts'));
+  assert.ok(entry.proofTests.includes('packages/protocol/src/sessions/metadata/compat/runtimeDescriptorMetadata.test.ts'));
+  assert.ok(entry.proofTests.includes('packages/protocol/src/sessions/control/handoff/handoffSchemas.test.ts'));
+  assert.ok(entry.proofTests.includes('packages/protocol/src/sessions/external/daemonRpcV1.test.ts'));
+  assert.ok(entry.proofTests.includes('apps/cli/src/api/session/external/linking/ensureExternalSessionLink.test.ts'));
   assert.ok(entry.proofTests.includes('apps/cli/src/rpc/handlers/spawnRuntimeSelection.test.ts'));
   assert.ok(entry.proofTests.includes('apps/cli/src/rpc/handlers/spawnSessionOptionsContract.test.ts'));
   assert.ok(entry.proofTests.includes('apps/cli/src/daemon/processSupervision/sessionRunnerRespawnDescriptor.test.ts'));
@@ -206,7 +250,8 @@ test('the accepted compat closure inventory records kept edge proofs', () => {
   assert.match(persistedMetadata?.keptBecause ?? '', /legacy persisted/i);
   assert.match(persistedMetadata?.compatibilityInput ?? '', /agentRuntimeDescriptorV1/);
   assert.equal(persistedMetadata?.canonicalOutput, 'runtimeDescriptorV1');
-  assert.ok(persistedMetadata?.proofTests?.includes('packages/protocol/src/sessionMetadata/compat/runtimeDescriptorMetadata.test.ts'));
+  assert.equal(persistedMetadata?.sourcePath, 'packages/protocol/src/sessions/metadata/compat/runtimeDescriptorMetadata.ts');
+  assert.ok(persistedMetadata?.proofTests?.includes('packages/protocol/src/sessions/metadata/compat/runtimeDescriptorMetadata.test.ts'));
 
   const rpcIngress = byId.get('F4-SR-06');
   assert.equal(rpcIngress?.classification, 'PERMANENT_WIRE_EDGE');

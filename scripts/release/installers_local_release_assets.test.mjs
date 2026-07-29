@@ -141,6 +141,21 @@ test('install.sh --version semver-sorts local release assets instead of trusting
   }
 });
 
+test('install.sh reports missing local release assets instead of exiting silently', () => {
+  const scenario = createLinuxInstallerVersionScenario({
+    channel: 'preview',
+    assets: [],
+    findOrder: [],
+  });
+
+  try {
+    assert.notEqual(scenario.status, 0);
+    assert.match(scenario.stderr, /Unable to locate release assets for linux-x64/i);
+  } finally {
+    rmSync(scenario.scratch, { recursive: true, force: true });
+  }
+});
+
 test('install.sh --version keeps preview local asset lookup isolated from stable assets', () => {
   const scenario = createLinuxInstallerVersionScenario({
     channel: 'preview',

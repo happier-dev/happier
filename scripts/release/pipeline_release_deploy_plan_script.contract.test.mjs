@@ -187,3 +187,112 @@ test('compute-deploy-plan respects force-deploy when deploy branch is missing', 
   assert.equal(parsed.deploy_server.commits_behind, 0);
   assert.equal(parsed.deploy_server.relevant_changes, false);
 });
+
+test('public deploy planning resolves current remote identities without changing user refs', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'happier-deploy-plan-remote-identity-'));
+  const origin = path.join(dir, 'origin.git');
+  const seed = path.join(dir, 'seed');
+  const runner = path.join(dir, 'runner');
+
+  try {
+    git(dir, ['init', '--bare', origin]);
+    git(dir, ['init', seed]);
+    git(seed, ['config', 'user.email', 'ci@example.com']);
+    git(seed, ['config', 'user.name', 'CI']);
+
+    writeFile(seed, 'README.md', 'base\n');
+    git(seed, ['add', '.']);
+    git(seed, ['commit', '-m', 'base']);
+    git(seed, ['branch', '-M', 'main']);
+    git(seed, ['checkout', '-b', 'dev']);
+    writeFile(seed, 'apps/server/sources/app.ts', 'export const first = true;\n');
+    git(seed, ['add', '.']);
+    git(seed, ['commit', '-m', 'first dev']);
+    git(seed, ['branch', 'preview']);
+    for (const ref of ['deploy/preview/ui', 'deploy/preview/server', 'deploy/preview/website', 'deploy/preview/docs']) {
+      git(seed, ['branch', ref, 'main']);
+    }
+    git(seed, ['branch', 'stale-remote']);
+    git(seed, ['remote', 'add', 'origin', origin]);
+    git(seed, [
+      'push',
+      'origin',
+      'main',
+      'dev',
+      'preview',
+      'stale-remote',
+      'deploy/preview/ui',
+      'deploy/preview/server',
+      'deploy/preview/website',
+      'deploy/preview/docs',
+    ]);
+
+    git(dir, ['clone', '--branch', 'dev', origin, runner]);
+    git(runner, ['tag', 'user-local-tag']);
+
+    writeFile(seed, 'apps/server/sources/app.ts', 'export const second = true;\n');
+    git(seed, ['add', '.']);
+    git(seed, ['commit', '-m', 'second dev']);
+    const advertisedDevSha = git(seed, ['rev-parse', 'HEAD']);
+    git(seed, ['push', 'origin', 'dev']);
+    git(seed, ['push', 'origin', '--delete', 'stale-remote']);
+
+    const refsBefore = git(runner, [
+      'for-each-ref',
+      '--format=%(refname) %(objectname)',
+      'refs/heads',
+      'refs/remotes',
+      'refs/tags',
+    ]);
+
+    const out = execFileSync(
+      process.execPath,
+      [
+        resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+        'release-compute-deploy-plan',
+        '--deploy-environment',
+        'preview',
+        '--source-ref',
+        'dev',
+        '--force-deploy',
+        'false',
+        '--deploy-ui',
+        'false',
+        '--deploy-server',
+        'true',
+        '--deploy-website',
+        'false',
+        '--deploy-docs',
+        'false',
+      ],
+      {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          GIT_DIR: path.join(runner, '.git'),
+          GIT_WORK_TREE: runner,
+        },
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
+    );
+
+    const parsed = JSON.parse(out.trim().split(/\r?\n/).at(-1));
+    assert.equal(parsed.source_sha, advertisedDevSha, 'planning must use the currently advertised source commit');
+    assert.equal(parsed.deploy_server.needed, true);
+    assert.equal(
+      git(runner, [
+        'for-each-ref',
+        '--format=%(refname) %(objectname)',
+        'refs/heads',
+        'refs/remotes',
+        'refs/tags',
+      ]),
+      refsBefore,
+      'planning must leave local branches, remote-tracking refs, and tags unchanged',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

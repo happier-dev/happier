@@ -10,6 +10,13 @@ function writeFile(p, contents) {
   fs.writeFileSync(p, contents);
 }
 
+function makeUpdaterSignature(label) {
+  return Buffer.from(
+    `untrusted comment: minisign signature ${label}\ntrusted comment: timestamp:0\tfile:${label}`,
+    'utf8',
+  ).toString('base64');
+}
+
 test('tauri latest.json generator tolerates flattened updater artifacts (no platform subfolders)', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-tauri-latest-json-'));
   const artifactsDir = path.join(tmp, 'updates');
@@ -21,22 +28,22 @@ test('tauri latest.json generator tolerates flattened updater artifacts (no plat
     {
       platform: 'linux-x86_64',
       file: 'happier-ui-desktop-dev-linux-x86_64.AppImage',
-      sig: 'linux-sig',
+      sig: makeUpdaterSignature('linux'),
     },
     {
       platform: 'windows-x86_64',
       file: 'happier-ui-desktop-dev-windows-x86_64.nsis.zip',
-      sig: 'windows-sig',
+      sig: makeUpdaterSignature('windows'),
     },
     {
       platform: 'darwin-x86_64',
       file: 'happier-ui-desktop-dev-darwin-x86_64.app.tar.gz',
-      sig: 'darwin-x86_64-sig',
+      sig: makeUpdaterSignature('darwin-x86_64'),
     },
     {
       platform: 'darwin-aarch64',
       file: 'happier-ui-desktop-dev-darwin-aarch64.app.tar.gz',
-      sig: 'darwin-aarch64-sig',
+      sig: makeUpdaterSignature('darwin-aarch64'),
     },
   ];
 
@@ -80,4 +87,3 @@ test('tauri latest.json generator tolerates flattened updater artifacts (no plat
     assert.equal(latest.platforms[platform].url, `https://github.com/happier-dev/happier/releases/download/ui-desktop-dev/${file}`);
   }
 });
-

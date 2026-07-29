@@ -3,8 +3,10 @@
 // @ts-check
 
 import { mkdir } from 'node:fs/promises';
-import { dirname, resolve } from 'node:path';
+import { basename, dirname, resolve } from 'node:path';
 import * as tar from 'tar';
+
+import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
 function parseArgs(argv) {
   const kv = new Map();
@@ -41,14 +43,33 @@ function shouldExcludeArchiveEntry(pathLike) {
 
 async function main() {
   const kv = parseArgs(process.argv.slice(2));
-  const sourcePath = resolve(String(kv.get('--source-path') ?? '').trim());
-  const sourceName = String(kv.get('--source-name') ?? '').trim();
-  const artifactPath = resolve(String(kv.get('--artifact-path') ?? '').trim());
+  const extractArchivePathInput = String(kv.get('--extract-archive-path') ?? '').trim();
+  const extractDirInput = String(kv.get('--extract-dir') ?? '').trim();
+  if (extractArchivePathInput || extractDirInput) {
+    if (!extractArchivePathInput || !extractDirInput) {
+      throw new Error(
+        '[release] node archive extraction requires --extract-archive-path and --extract-dir',
+      );
+    }
+    const extractArchivePath = resolve(extractArchivePathInput);
+    await extractArchivePayloadToDirectory({
+      archivePath: extractArchivePath,
+      archiveName: basename(extractArchivePath),
+      extractDir: resolve(extractDirInput),
+    });
+    return;
+  }
 
-  if (!sourcePath || !sourceName || !artifactPath) {
+  const sourcePathInput = String(kv.get('--source-path') ?? '').trim();
+  const sourceName = String(kv.get('--source-name') ?? '').trim();
+  const artifactPathInput = String(kv.get('--artifact-path') ?? '').trim();
+
+  if (!sourcePathInput || !sourceName || !artifactPathInput) {
     throw new Error('[release] node archive helper requires --source-path, --source-name, and --artifact-path');
   }
 
+  const sourcePath = resolve(sourcePathInput);
+  const artifactPath = resolve(artifactPathInput);
   await mkdir(dirname(artifactPath), { recursive: true });
   await tar.c(
     {

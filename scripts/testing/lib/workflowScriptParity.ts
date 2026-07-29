@@ -48,6 +48,7 @@ const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
       'yarn workspace @happier-dev/connection-supervisor test',
       'yarn workspace @happier-dev/bootstrap test',
       'yarn workspace @happier-dev/plugin-sdk test',
+      'yarn workspace @happier-dev/plugin-ui test',
       'yarn workspace @happier-dev/app test:unit',
       'yarn workspace @happier-dev/cli test:unit',
       'yarn --cwd apps/server test:unit',
@@ -135,9 +136,9 @@ const CANONICAL_LANE_PARITY: readonly ParityDefinition[] = Object.freeze([
     triggerMode: 'optional',
   },
   {
-    id: 'test:providers',
-    rootScriptName: 'test:providers',
-    docsCommands: ['yarn test:providers'],
+    id: 'test:agents',
+    rootScriptName: 'test:agents',
+    docsCommands: ['yarn test:agents'],
     workflowCommands: ['yarn workspace @happier-dev/tests providers:run'],
     workflowMode: 'any',
     triggerMode: 'optional',
@@ -253,7 +254,7 @@ export const FEATURE_GATING_CONFIG_PATHS: readonly string[] = Object.freeze([
   'apps/server/vitest.dbcontract.config.ts',
   'packages/tests/vitest.core.config.ts',
   'packages/tests/vitest.core.fast.config.ts',
-  'packages/tests/vitest.providers.config.ts',
+  'packages/tests/vitest.agents.config.ts',
   'packages/tests/vitest.stress.config.ts',
 ]);
 

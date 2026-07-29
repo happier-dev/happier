@@ -49,7 +49,11 @@ async function main() {
 
   // The hstack binary compiles against the bundled workspace copies under apps/stack/node_modules.
   // Prepare that dependency tree first so bun can resolve vendored runtime deps like zod.
-  await bundleWorkspaceDeps({ repoRoot, stackDir: join(repoRoot, 'apps', 'stack') });
+  await bundleWorkspaceDeps({
+    repoRoot,
+    stackDir: join(repoRoot, 'apps', 'stack'),
+    publicationMode: 'artifact',
+  });
 
   await ensureFileExists(entrypoint);
   await mkdir(tempBaseDir, { recursive: true });

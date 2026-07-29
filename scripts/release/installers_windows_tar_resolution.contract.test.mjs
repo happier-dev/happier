@@ -12,13 +12,13 @@ test('install.ps1 resolves tar.exe before extraction and reports actionable diag
 
   assert.match(
     source,
-    /function Resolve-TarExecutable\s*\{[\s\S]*Get-Command\s+\$commandName[\s\S]*\[Environment\]::GetEnvironmentVariable\("Path",\s*\[EnvironmentVariableTarget\]::User\)[\s\S]*\[Environment\]::GetEnvironmentVariable\("Path",\s*\[EnvironmentVariableTarget\]::Machine\)[\s\S]*\$env:WINDIR[\s\S]*System32[\s\S]*tar\.exe/i,
+    /function Resolve-TarExecutablePath\s*\{[\s\S]*Get-Command\s+"tar\.exe"[\s\S]*\[Environment\]::GetEnvironmentVariable\("Path",\s*\[EnvironmentVariableTarget\]::User\)[\s\S]*\[Environment\]::GetEnvironmentVariable\("Path",\s*\[EnvironmentVariableTarget\]::Machine\)[\s\S]*\$env:WINDIR[\s\S]*System32[\s\S]*tar\.exe/i,
     'expected install.ps1 to resolve tar.exe/tar from the current command table, User/Machine PATH, and System32 before extracting archives',
   );
   assert.match(
     source,
-    /function Invoke-InstallerTarExtraction\s*\{[\s\S]*Resolve-TarExecutable[\s\S]*tar\.exe[\s\S]*-xzf/i,
-    'expected install.ps1 to extract archives through a diagnostic tar wrapper',
+    /\$tarPath\s*=\s*Resolve-TarExecutablePath[\s\S]*&\s*\$tarPath\s+-xzf\s+\$archivePath\s+-C\s+\$extractDir/i,
+    'expected install.ps1 to extract archives through the resolved tar executable',
   );
   assert.doesNotMatch(
     source,

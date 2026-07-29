@@ -65,6 +65,13 @@ jobs:
       with:
         args: --frozen-lockfile --ignore-engines
 
+    - name: Transfer filesystem contracts (Windows)
+      run: >-
+        yarn workspace @happier-dev/cli vitest run --config vitest.config.ts
+        src/machines/transfer/transferPayloadFileSink.test.ts
+        src/machines/transfer/directTransferImportSession.test.ts
+        src/transfers/core/transferSessionStore.test.ts
+
     - name: CLI smoke (pipeline)
       run: node scripts/pipeline/run.mjs smoke-cli
 

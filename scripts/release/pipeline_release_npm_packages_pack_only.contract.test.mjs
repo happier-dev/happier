@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,3 +38,22 @@ test('pipeline npm release script supports pack-only mode (no publish) in dry-ru
   assert.doesNotMatch(out, /publish-tarball\.mjs/);
 });
 
+test('pipeline npm release force-admits every bundled workspace package before ignore-scripts packing', () => {
+  const source = readFileSync(
+    resolve(repoRoot, 'scripts', 'pipeline', 'npm', 'release-packages.mjs'),
+    'utf8',
+  );
+  const artifactBundleCalls =
+    source.match(/\['scripts\/bundleWorkspaceDeps\.mjs',\s*'--artifact'\]/g) ?? [];
+
+  assert.equal(
+    artifactBundleCalls.length,
+    3,
+    'expected CLI, Stack, and server release preparation to invoke their bundlers in artifact mode',
+  );
+  assert.match(
+    source,
+    /args:\s*\['pack',\s*'--ignore-scripts'/,
+    'expected the release path to retain explicit ignore-scripts packing after artifact preparation',
+  );
+});

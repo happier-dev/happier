@@ -65,7 +65,7 @@ on:
           - minor
           - major
       confirm:
-        description: "Confirm — Choose the exact action for this environment"
+        description: "Confirm — Choose the exact action. If the plan reports Qualified V4 activation, this also attests backup/restore readiness, all old API and worker writers are stopped, they will remain stopped if migration fails, and no old-server or old-daemon rollback."
         required: true
         type: choice
         options:
@@ -248,6 +248,30 @@ jobs:
           cache: yarn
           cache-dependency-path: yarn.lock
 
+      - name: Admit irreversible Qualified V4 activation
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          deploy_branch="deploy/${DEPLOY_ENVIRONMENT}/server"
+          baseline_ref="refs/remotes/origin/${deploy_branch}"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
+          baseline_status=$?
+          set -e
+          case "$baseline_status" in
+            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
+            2) ;;
+            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
+          esac
+          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
+            --baseline-ref "$baseline_ref" \
+            --candidate-ref HEAD \
+            --approval-kind release-confirm \
+            --approval-value "$RELEASE_CONFIRM" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
+
       - name: Enable Corepack (Yarn)
         if: ${{ inputs.checks_profile == 'full' }}
         run: |
@@ -417,6 +441,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
 
       - name: Checkout release source
         uses: actions/checkout@v4
@@ -498,6 +525,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       - name: Checkout dev
         uses: actions/checkout@v4
@@ -538,6 +568,28 @@ jobs:
             --bump-stack "${{ needs.plan.outputs.bump_stack }}" \
             --github-output "$GITHUB_OUTPUT"
 
+  bind_server_source:
+    name: Bind promoted release source SHA
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    needs: [plan, bump_versions_dev, promote_preview, promote_main]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      authorized_sha: ${{ steps.source.outputs.authorized_sha }}
+    steps:
+      - name: Resolve promoted branch once
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_BRANCH: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+        run: |
+          set -euo pipefail
+          authorized_sha="$(gh api "repos/${GH_REPO}/branches/${SOURCE_BRANCH}" --jq '.commit.sha')"
+          test "$(printf '%s' "$authorized_sha" | wc -c | tr -d ' ')" = "40"
+          echo "authorized_sha=$authorized_sha" >> "$GITHUB_OUTPUT"
+
   deploy_ui:
     if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',ui,') && (needs.deploy_plan.outputs.deploy_ui_needed == 'true' || needs.plan.outputs.bump_app != 'none' || inputs.force_deploy == true || inputs.ui_expo_action != 'none') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
@@ -559,8 +611,8 @@ jobs:
       expo_update_message: ${{ inputs.release_message }}
 
   deploy_server:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true) && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main, deploy_plan]
+    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && (needs.publish_server_runtime.result == 'success' || needs.publish_server_runtime.result == 'skipped') && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true)
+    needs: [plan, bind_server_source, publish_server_runtime, deploy_plan]
     permissions:
       contents: write
       actions: read
@@ -569,48 +621,52 @@ jobs:
     with:
       environment: ${{ inputs.environment }}
       force_deploy: ${{ inputs.force_deploy }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
       allow_cross_promote: false
       bump: none
       publish_runtime_release: false
       run_tests: false
+      qualified_v4_activation_approval: true
 
   publish_server_runtime:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_server == 'true' || inputs.force_deploy == true || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main]
+    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_server == 'true' || inputs.force_deploy == true || needs.plan.outputs.changed_server == 'true' || needs.plan.outputs.changed_shared == 'true')
+    needs: [plan, bind_server_source]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-server-runtime.yml
     secrets: inherit
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ inputs.release_message }}
 
   publish_ui_web:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main]
+    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (contains(format(',{0},', inputs.deploy_targets), ',ui,') || inputs.force_deploy == true || needs.plan.outputs.changed_ui == 'true' || needs.plan.outputs.changed_shared == 'true')
+    needs: [plan, bind_server_source]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-ui-web.yml
     secrets: inherit
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ inputs.release_message }}
 
   publish_cli_binaries:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
-    needs: [plan, bump_versions_dev, promote_preview, promote_main]
+    if: always() && needs.plan.result == 'success' && needs.bind_server_source.result == 'success' && inputs.dry_run != true && (inputs.force_deploy == true || needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.changed_cli == 'true' || needs.plan.outputs.changed_cli_stack_shared == 'true' || needs.plan.outputs.changed_shared == 'true')
+    needs: [plan, bind_server_source]
     permissions:
       contents: write
     uses: ./.github/workflows/publish-cli-binaries.yml
     secrets: inherit
     with:
       channel: ${{ inputs.environment == 'production' && 'stable' || 'preview' }}
-      source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}
+      source_ref: ${{ needs.bind_server_source.outputs.authorized_sha }}
+      authorized_sha: ${{ needs.bind_server_source.outputs.authorized_sha }}
       allow_stable: ${{ inputs.environment == 'production' }}
       release_message: ${{ inputs.release_message }}
 
@@ -660,7 +716,7 @@ jobs:
       run_build: true
 
   publish_npm:
-    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_stack == 'true' || needs.plan.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
+    if: always() && needs.plan.result == 'success' && inputs.dry_run != true && (needs.plan.outputs.publish_cli == 'true' || needs.plan.outputs.publish_server == 'true') && (needs.bump_versions_dev.result == 'success' || needs.bump_versions_dev.result == 'skipped') && ((inputs.environment == 'production' && needs.promote_main.result == 'success') || (inputs.environment == 'preview' && needs.promote_preview.result == 'success'))
     needs: [plan, bump_versions_dev, promote_preview, promote_main]
     permissions:
       contents: write
@@ -669,7 +725,6 @@ jobs:
     secrets: inherit
     with:
       publish_cli: ${{ needs.plan.outputs.publish_cli == 'true' }}
-      publish_stack: ${{ needs.plan.outputs.publish_stack == 'true' }}
       publish_server: ${{ needs.plan.outputs.publish_server == 'true' }}
       channel: ${{ inputs.environment }}
       source_ref: ${{ inputs.environment == 'production' && 'main' || 'preview' }}

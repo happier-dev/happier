@@ -115,6 +115,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
 
       - name: Guard stable channel
         if: ${{ inputs.channel == 'stable' && steps.channel_meta.outputs.source_ref != 'main' }}

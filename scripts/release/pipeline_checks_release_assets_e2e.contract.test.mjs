@@ -20,7 +20,7 @@ test('pipeline checks release-assets profile dry-run includes release-assets-e2e
   assert.match(res.stdout ?? '', /- runReleaseAssetsE2e: true/);
   assert.match(
     res.stdout ?? '',
-    /\[dry-run\] bash scripts\/release\/release-assets-e2e\/run\.sh --mode=local --monorepo=local --with-relay-upgrade/,
+    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source local-build --ref \. --mode local --monorepo local --with-relay-upgrade/,
   );
 });
 
@@ -33,7 +33,7 @@ test('pipeline checks release-assets-e2e mode/monorepo are configurable via env'
   assert.equal(res.status, 0, res.stderr || res.stdout);
   assert.match(
     res.stdout ?? '',
-    /\[dry-run\] bash scripts\/release\/release-assets-e2e\/run\.sh --mode=npm --monorepo=github --with-relay-upgrade/,
+    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source local-build --ref \. --mode npm --monorepo github --with-relay-upgrade/,
   );
 });
 
@@ -46,7 +46,7 @@ test('pipeline checks release-assets-e2e relay upgrade can be disabled via env',
   assert.equal(res.status, 0, res.stderr || res.stdout);
   assert.match(
     res.stdout ?? '',
-    /\[dry-run\] bash scripts\/release\/release-assets-e2e\/run\.sh --mode=local --monorepo=local --no-relay-upgrade/,
+    /\[dry-run\] [^\n]*node scripts\/pipeline\/run\.mjs release-validate --suite docker-release-assets --platform linux --source local-build --ref \. --mode local --monorepo local --no-relay-upgrade/,
   );
 });
 

@@ -69,6 +69,7 @@ function deriveRollingStableApkPath(apkAbs) {
 function publishGitHubRelease(input) {
   const prerelease = input.releaseMeta.prerelease ? 'true' : 'false';
   const rollingTag = input.releaseMeta.rollingTag ? 'true' : 'false';
+  const clobber = input.releaseMeta.rollingTag ? 'true' : 'false';
   const pruneAssets = input.releaseMeta.rollingTag ? 'true' : 'false';
   const generateNotes = input.releaseMeta.generateNotes ? 'true' : 'false';
 
@@ -94,7 +95,7 @@ function publishGitHubRelease(input) {
       '--assets',
       input.apkAbs,
       '--clobber',
-      'true',
+      clobber,
       '--prune-assets',
       pruneAssets,
       '--release-message',

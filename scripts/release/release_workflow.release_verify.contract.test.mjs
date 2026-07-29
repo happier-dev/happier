@@ -12,7 +12,7 @@ test('release workflow runs reusable release verification after publish lanes fi
 
   assert.match(
     raw,
-    /release_verify:[\s\S]*?needs:\s*\[plan, publish_server_runtime, publish_ui_web, publish_docker, publish_npm\][\s\S]*?if:\s*\$\{\{\s*always\(\) && inputs\.checks_profile == 'full'[\s\S]*?uses:\s*\.\/\.github\/workflows\/release-verify\.yml/,
+    /release_verify:[\s\S]*?needs:\s*\[plan, publish_cli_binaries, publish_server_runtime, publish_ui_web, publish_docker, publish_npm\][\s\S]*?if:\s*\$\{\{\s*always\(\) && inputs\.checks_profile == 'full'[\s\S]*?needs\.publish_cli_binaries\.result == 'success' \|\| needs\.publish_cli_binaries\.result == 'skipped'[\s\S]*?uses:\s*\.\/\.github\/workflows\/release-verify\.yml/,
     'release.yml should call the reusable release-verify workflow after the publish lanes finish when full checks are requested',
   );
   assert.match(

@@ -28,7 +28,7 @@ test('collectPolicyFindings detects direct policy violations in tests', () => {
 test('collectPolicyFindings keeps hidden skip aliases report-only for provider real probes', () => {
   const report = collectPolicyFindings([
     {
-      filePath: 'packages/tests/suites/providers/claude.agentTeams.subagents.jsonl.realProbe.test.ts',
+      filePath: 'packages/tests/suites/agents/claude.agentTeams.subagents.jsonl.realProbe.test.ts',
       content: `
         const maybeIt = gate ? it : it.skip;
       `,

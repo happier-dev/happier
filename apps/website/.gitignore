@@ -1,1 +1,5 @@
 /.happier/uploads/
+
+# Full-resolution feature-art sources. The optimized web variants are generated
+# into public/images/features (committed) via `npm run optimize:images`.
+/assets/features/*.png

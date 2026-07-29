@@ -27,7 +27,7 @@ test('ota-update routes fingerprint JSON through the shared noisy-output parser'
 
   assert.match(
     src,
-    /parseJsonFromCommandOutput/,
+    /parseExpoFingerprintFromCommandOutput/,
     'expected ota-update.mjs to use the shared JSON-output parser for eas fingerprint:generate output',
   );
   assert.doesNotMatch(

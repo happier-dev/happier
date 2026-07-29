@@ -5,20 +5,9 @@
 import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
+import { parseArtifactChecksums } from './lib/artifact-checksums.mjs';
 import { normalizeChannel, parseArgs } from './lib/binary-release.mjs';
 import { buildManifestRecord, parseArtifactFilename } from './lib/manifests.mjs';
-
-function parseChecksums(raw) {
-  const map = new Map();
-  for (const line of String(raw ?? '').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    const match = /^([a-fA-F0-9]{64})\s{2}(.+)$/.exec(trimmed);
-    if (!match) continue;
-    map.set(match[2], match[1].toLowerCase());
-  }
-  return map;
-}
 
 function ensureUrlBase(baseUrl) {
   const value = String(baseUrl ?? '').trim();
@@ -68,7 +57,9 @@ async function main() {
   const version = String(kv.get('--version') ?? '').trim() || parsedArtifacts[0].version;
   const checksumsPath = join(artifactsDir, `checksums-${product}-v${version}.txt`);
   const checksumsRaw = await readFile(checksumsPath, 'utf-8');
-  const checksums = parseChecksums(checksumsRaw);
+  const checksums = new Map(
+    parseArtifactChecksums(checksumsRaw).map((entry) => [entry.name, entry.sha256]),
+  );
   const checksumsSigName = `checksums-${product}-v${version}.txt.minisig`;
   const checksumsSigPresent = entries.includes(checksumsSigName);
   if (!checksumsSigPresent) {

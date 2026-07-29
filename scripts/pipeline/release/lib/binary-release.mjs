@@ -1,6 +1,5 @@
 // @ts-check
 
-import { createHash } from 'node:crypto';
 import { createReadStream, createWriteStream, readFileSync } from 'node:fs';
 import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve } from 'node:path';
@@ -11,7 +10,10 @@ import { pipeline } from 'node:stream/promises';
 import { createGzip } from 'node:zlib';
 import { loadCliCommonDistModule } from '../../../../scripts/ensureCliCommonDistModule.mjs';
 import { listPublicReleaseRingCatalogEntries, normalizePublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { resolveTarCreateArgs } from './archive-tar-options.mjs';
+import { fileSha256 } from './artifact-checksums.mjs';
 import { prepareMinisignSecretKeyFile } from './minisign-secret-key.mjs';
+import { parseArgs } from './release-script-arguments.mjs';
 
 const {
   CLI_BINARY_TARGETS,
@@ -22,10 +24,12 @@ const {
   compileBunBinary,
   ensureFileExists,
   execOrThrow,
+  prepareUiWebDist,
   resolveYarnCommand,
 } = await loadCliCommonDistModule({
   repoRoot: fileURLToPath(new URL('../../../../', import.meta.url)),
   subpath: 'componentArtifacts',
+  force: true,
 });
 
 export {
@@ -35,9 +39,12 @@ export {
   compileBunBinary,
   ensureFileExists,
   execOrThrow,
+  prepareUiWebDist,
   resolveYarnCommand,
 };
+export { fileSha256 } from './artifact-checksums.mjs';
 export { prepareMinisignSecretKeyFile } from './minisign-secret-key.mjs';
+export { parseArgs } from './release-script-arguments.mjs';
 
 export const RELEASE_CHANNELS = new Set(listPublicReleaseRingCatalogEntries().map((entry) => entry.id));
 
@@ -96,55 +103,9 @@ function shouldCollectArchiveStats({
   return platform !== 'win32';
 }
 
-export function parseArgs(argv) {
-  const kv = new Map();
-  const flags = new Set();
-  const positionals = [];
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (!arg.startsWith('--')) {
-      positionals.push(arg);
-      continue;
-    }
-    if (arg.includes('=')) {
-      const idx = arg.indexOf('=');
-      kv.set(arg.slice(0, idx), arg.slice(idx + 1));
-      continue;
-    }
-    const next = argv[i + 1];
-    if (next && !next.startsWith('--')) {
-      kv.set(arg, next);
-      i += 1;
-      continue;
-    }
-    flags.add(arg);
-  }
-  return { kv, flags, positionals };
-}
-
 export async function ensureCleanDir(path) {
   await rm(path, { recursive: true, force: true });
   await mkdir(path, { recursive: true });
-}
-
-export async function fileSha256(path) {
-  const targetPath = String(path ?? '').trim();
-  // Release packaging often runs on developer machines where file providers (or aggressive AV) can
-  // briefly delay visibility of newly created archives. Treat ENOENT as a short, retryable condition.
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    try {
-      const bytes = await readFile(targetPath);
-      return createHash('sha256').update(bytes).digest('hex');
-    } catch (error) {
-      const code = error && typeof error === 'object' && 'code' in error ? String(error.code ?? '') : '';
-      if (code === 'ENOENT' && attempt < 9) {
-        await delay(50);
-        continue;
-      }
-      throw error;
-    }
-  }
-  // unreachable: loop always returns or throws
 }
 
 function resolveTarArchiveInvocation({ artifactPath, sourcePath, sourceName }) {
@@ -228,26 +189,6 @@ function isTarTimeoutError(error) {
   if (code === 'ETIMEDOUT') return true;
   const message = error instanceof Error ? error.message : String(error ?? '');
   return message.includes('ETIMEDOUT');
-}
-
-function resolveTarCreateArgs({ isGnuTar, excludeArgs, artifactArg, sourceDirArg, sourceNameArg, compressed }) {
-  const modeArg = compressed ? '-czf' : '-cf';
-  if (isGnuTar) {
-    return [
-      '--sort=name',
-      '--mtime=@0',
-      '--owner=0',
-      '--group=0',
-      '--numeric-owner',
-      ...excludeArgs,
-      modeArg,
-      artifactArg,
-      '-C',
-      sourceDirArg,
-      sourceNameArg,
-    ];
-  }
-  return ['--no-mac-metadata', ...excludeArgs, modeArg, artifactArg, '-C', sourceDirArg, sourceNameArg];
 }
 
 export function resolveGzipExecutionTimeoutMs(env = process.env, archiveStats = null) {
@@ -342,6 +283,9 @@ export function resolveArchiveBackend({
     if (forcedSplit === true) {
       return ARCHIVE_BACKEND_SPLIT;
     }
+    return ARCHIVE_BACKEND_NODE;
+  }
+  if (platform === 'darwin') {
     return ARCHIVE_BACKEND_NODE;
   }
   void archiveStats;
@@ -699,13 +643,14 @@ export async function writeChecksumsFile({ product, version, artifacts, outDir }
 }
 
 export async function maybeSignFile({ path, trustedComment = '' }) {
+  const sigPath = `${path}.minisig`;
   const keyRaw = String(process.env.MINISIGN_SECRET_KEY ?? '').trim();
+  await rm(sigPath, { force: true });
   if (!keyRaw) return null;
   if (!commandExists('minisign')) {
     throw new Error('[release] MINISIGN_SECRET_KEY is set but minisign is not installed');
   }
   const preparedKey = await prepareMinisignSecretKeyFile(keyRaw);
-  const sigPath = `${path}.minisig`;
   const hasPassphrase = Object.prototype.hasOwnProperty.call(process.env, 'MINISIGN_PASSPHRASE');
   const passphrase = String(process.env.MINISIGN_PASSPHRASE ?? '');
   const keyPath = preparedKey.path;

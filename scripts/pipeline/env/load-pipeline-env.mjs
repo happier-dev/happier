@@ -20,25 +20,35 @@ function loadEnvFileIfExists(filePath) {
  * - .env.pipeline.<deployEnv>.local
  * - .env.pipeline.local
  *
- * @param {{ repoRoot: string; deployEnvironment?: string }} opts
+ * @param {{
+ *   repoRoot: string;
+ *   deployEnvironment?: string;
+ *   includeFiles?: boolean;
+ *   processEnv?: Record<string, string | undefined>;
+ * }} opts
  * @returns {{ env: Record<string, string>; sources: string[] }}
  */
-export function loadPipelineEnv({ repoRoot, deployEnvironment }) {
+export function loadPipelineEnv({
+  repoRoot,
+  deployEnvironment,
+  includeFiles = true,
+  processEnv = process.env,
+}) {
   const sources = [];
 
   const baseFile = path.join(repoRoot, '.env.pipeline.local');
-  const base = loadEnvFileIfExists(baseFile);
+  const base = includeFiles ? loadEnvFileIfExists(baseFile) : {};
   if (Object.keys(base).length > 0) sources.push('.env.pipeline.local');
 
   const envFile = deployEnvironment
     ? path.join(repoRoot, `.env.pipeline.${deployEnvironment}.local`)
     : '';
-  const deploy = envFile ? loadEnvFileIfExists(envFile) : {};
+  const deploy = includeFiles && envFile ? loadEnvFileIfExists(envFile) : {};
   if (Object.keys(deploy).length > 0 && deployEnvironment) {
     sources.push(`.env.pipeline.${deployEnvironment}.local`);
   }
 
   // process.env should override file-based values.
-  const env = normalizePipelineEnvAliases({ ...base, ...deploy, ...process.env });
+  const env = normalizePipelineEnvAliases({ ...base, ...deploy, ...processEnv });
   return { env, sources };
 }

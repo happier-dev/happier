@@ -4,37 +4,68 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const repoRoot = path.resolve(import.meta.dirname, '..', '..');
+const OPTIONAL_UI_NATIVE_INSTALL_SCOPE_WORKSPACES = new Set(['ssh-native', 'terminal-native']);
+
+function collectWorkspacePackageDirs(rootDir) {
+  const packageDirs = [];
+  const stack = [rootDir];
+
+  while (stack.length > 0) {
+    const currentDir = stack.pop();
+    if (!currentDir) continue;
+
+    const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    const hasPackageJson = entries.some((entry) => entry.isFile() && entry.name === 'package.json');
+    if (hasPackageJson) {
+      packageDirs.push(currentDir);
+      continue;
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === 'node_modules' || entry.name.startsWith('.')) continue;
+      stack.push(path.join(currentDir, entry.name));
+    }
+  }
+
+  return packageDirs;
+}
+
+const workspacePackageDirByName = (() => {
+  const packageDirs = collectWorkspacePackageDirs(path.join(repoRoot, 'packages'));
+  return new Map(
+    packageDirs
+      .map((dir) => {
+        const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+        return typeof pkg?.name === 'string' && pkg.name.length > 0
+          ? [pkg.name, dir]
+          : null;
+      })
+      .filter(Boolean),
+  );
+})();
+
+function findWorkspacePackageDir(packageName) {
+  return workspacePackageDirByName.get(packageName) ?? null;
+}
 
 function collectExpectedUiInstallScopeWorkspaces() {
   const uiPackage = JSON.parse(fs.readFileSync(path.join(repoRoot, 'apps', 'ui', 'package.json'), 'utf8'));
-  const internalDeps = Object.keys(uiPackage?.dependencies ?? {})
-    .filter((name) => name.startsWith('@happier-dev/'))
-    .map((name) => name.split('/')[1])
-    .filter(Boolean);
+  const internalDeps = Object.keys(uiPackage?.dependencies ?? {}).filter((name) => name.startsWith('@happier-dev/'));
 
-  const requiresBuiltDist = internalDeps.filter((workspace) => {
-    const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'packages', workspace, 'package.json'), 'utf8'));
-    const candidates = [];
-    for (const key of ['main', 'module', 'types']) {
-      if (typeof pkg?.[key] === 'string') candidates.push(pkg[key]);
+  const requiresBuiltDist = internalDeps.flatMap((packageName) => {
+    const workspaceDir = findWorkspacePackageDir(packageName);
+    if (!workspaceDir) {
+      throw new Error(`Unable to resolve workspace package dir for ${packageName}`);
     }
-    const visit = (value) => {
-      if (!value) return;
-      if (typeof value === 'string') {
-        candidates.push(value);
-        return;
-      }
-      if (Array.isArray(value)) {
-        value.forEach(visit);
-        return;
-      }
-      if (typeof value === 'object') {
-        Object.values(value).forEach(visit);
-      }
-    };
-    visit(pkg?.exports);
 
-    return candidates.some((candidate) => /^\.?\/?dist\//.test(String(candidate)));
+    const workspace = packageName.split('/')[1];
+    if (!workspace) return [];
+    const hasExpoNativeModuleConfig = fs.existsSync(path.join(workspaceDir, 'expo-module.config.json'));
+
+    return hasExpoNativeModuleConfig && !OPTIONAL_UI_NATIVE_INSTALL_SCOPE_WORKSPACES.has(workspace)
+      ? [workspace]
+      : [];
   });
 
   return new Set(['ui', ...requiresBuiltDist]);
@@ -65,15 +96,15 @@ test('apps/ui/eas.json defines internaldev profiles for OTA-native debug dev-cli
       .filter(Boolean),
   );
   assert.deepEqual(
-    [...installScopeTokens].sort(),
+    [...collectExpectedUiInstallScopeWorkspaces()].filter((workspace) => installScopeTokens.has(workspace)).sort(),
     [...collectExpectedUiInstallScopeWorkspaces()].sort(),
-    'apps/ui/eas.json should define the canonical UI install scope token set',
+    'apps/ui/eas.json should include the canonical UI native workspace token set',
   );
   for (const workspace of collectExpectedUiInstallScopeWorkspaces()) {
     assert.equal(
       installScopeTokens.has(workspace),
       true,
-      `base HAPPIER_INSTALL_SCOPE should include ${workspace} because apps/ui depends on it via dist-based workspace exports`,
+      `base HAPPIER_INSTALL_SCOPE should include ${workspace} because apps/ui ships it as a first-party native workspace`,
     );
   }
 

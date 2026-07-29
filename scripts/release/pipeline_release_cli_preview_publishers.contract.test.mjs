@@ -9,7 +9,7 @@ import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './rel
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI release can include preview publishers (docker + ui-web + server-runtime) in dry-run', async () => {
+test('pipeline CLI release dry-run reports preview target and force inputs without predicting publisher jobs', async () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const out = execFileSync(
@@ -28,8 +28,6 @@ test('pipeline CLI release can include preview publishers (docker + ui-web + ser
         '--repository',
         'happier-dev/happier',
         '--dry-run',
-        '--secrets-source',
-        'env',
       ],
       {
         cwd: repoRoot,
@@ -52,10 +50,10 @@ test('pipeline CLI release can include preview publishers (docker + ui-web + ser
     );
 
     assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
-    assert.match(out, /\[pipeline\] dry-run: would run/);
-    assert.match(out, /- runPublishDocker: true/);
-    assert.match(out, /- runPublishUiWeb: true/);
-    assert.match(out, /- runPublishServerRuntime: true/);
+    assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
+    assert.match(out, /- deploy_targets: ui,server,server_runner/);
+    assert.match(out, /- force_deploy: true/);
+    assert.doesNotMatch(out, /runPublishDocker|runPublishUiWeb|runPublishServerRuntime/);
   } finally {
     stub.cleanup();
   }

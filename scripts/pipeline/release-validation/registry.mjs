@@ -17,8 +17,12 @@ export const RELEASE_VALIDATION_SUITES = [
   {
     id: 'installers-smoke',
     supportsDirectSource: true,
-    supportsUpdateSources: false,
+    supportsUpdateSources: true,
     supportedDirectSourceKinds: ['published-channel', 'published-tag', 'local-build'],
+    supportedUpdateSourceKinds: ['published-channel', 'local-build'],
+    supportedUpdateSourcePairs: [
+      { from: 'published-channel', to: 'local-build' },
+    ],
     executorId: 'installers-smoke',
   },
   {

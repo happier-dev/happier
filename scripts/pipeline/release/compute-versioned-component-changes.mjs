@@ -59,6 +59,15 @@ function listMergedTags(head, prefix) {
     .filter(Boolean);
 }
 
+function isAncestor(baseRef, head) {
+  const result = spawnSync('git', ['merge-base', '--is-ancestor', baseRef, head], { encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status === 0) return true;
+  if (result.status === 1) return false;
+  const err = String(result.stderr || result.stdout || '').trim();
+  throw new Error(`git merge-base --is-ancestor ${baseRef} ${head} failed: ${err}`);
+}
+
 function listTrackedPaths() {
   return runGit(['ls-files'])
     .split('\n')
@@ -73,26 +82,31 @@ function listChangedPathsSince(baseRef, head) {
     .filter(Boolean);
 }
 
-function resolveBaselineTag({ environment, head, prefix }) {
+function resolveBaselineTag({ environment, head, prefix, remoteTagRefs }) {
   const allowedChannels = allowedChannelsForEnvironment(environment);
-  const candidates = listMergedTags(head, prefix);
-  /** @type {{ tag: string; distance: number } | null} */
+  const candidates =
+    remoteTagRefs === null
+      ? listMergedTags(head, prefix).map((tag) => ({ tag, ref: tag }))
+      : Object.entries(remoteTagRefs)
+          .filter(([tag]) => tag.startsWith(prefix))
+          .map(([tag, ref]) => ({ tag, ref }))
+          .filter(({ ref }) => isAncestor(ref, head));
   let best = null;
 
-  for (const tag of candidates) {
+  for (const { tag, ref } of candidates) {
     const channel = parseTagChannel(tag, prefix);
     if (channel === null || !allowedChannels.has(channel)) continue;
-    const tagCommit = runGit(['rev-list', '-n', '1', tag]).trim();
+    const tagCommit = runGit(['rev-list', '-n', '1', ref]).trim();
     if (!tagCommit) continue;
     const distanceRaw = runGit(['rev-list', '--count', `${tagCommit}..${head}`]).trim();
     const distance = Number(distanceRaw);
     if (!Number.isFinite(distance) || distance < 0) continue;
     if (best === null || distance < best.distance) {
-      best = { tag, distance };
+      best = { tag, ref: tagCommit, distance };
     }
   }
 
-  return best?.tag ?? '';
+  return best;
 }
 
 function main() {
@@ -100,25 +114,42 @@ function main() {
   const environment = String(args.get('--environment') ?? '').trim();
   const head = String(args.get('--head') ?? '').trim();
   const outPath = String(args.get('--out') ?? '').trim();
+  const tagRefsJson = args.get('--tag-refs-json');
 
   if (!environment) fail('--environment is required');
   if (!head) fail('--head is required');
+
+  let remoteTagRefs = null;
+  if (tagRefsJson !== undefined) {
+    const parsed = JSON.parse(String(tagRefsJson));
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      fail('--tag-refs-json must be a JSON object');
+    }
+    remoteTagRefs = Object.fromEntries(
+      Object.entries(parsed).map(([tag, ref]) => {
+        const normalizedRef = String(ref ?? '').trim();
+        if (!tag.trim() || !normalizedRef) fail('--tag-refs-json entries must have non-empty tag names and refs');
+        return [tag, normalizedRef];
+      }),
+    );
+  }
 
   /** @type {Record<string, string>} */
   const outputs = {};
 
   for (const [key, definition] of Object.entries(versionedComponents)) {
-    const baselineTag = resolveBaselineTag({
+    const baseline = resolveBaselineTag({
       environment,
       head,
       prefix: definition.baselineTagPrefix,
+      remoteTagRefs,
     });
-    const paths = baselineTag ? listChangedPathsSince(baselineTag, head) : listTrackedPaths();
+    const paths = baseline ? listChangedPathsSince(baseline.ref, head) : listTrackedPaths();
     const classified = classifyChangedPaths(paths);
     const derived = deriveVersionedComponentChanges(classified);
 
     outputs[`changed_${key}`] = derived[key] ? 'true' : 'false';
-    outputs[`${key}_baseline_tag`] = baselineTag;
+    outputs[`${key}_baseline_tag`] = baseline?.tag ?? '';
   }
 
   if (outPath) {

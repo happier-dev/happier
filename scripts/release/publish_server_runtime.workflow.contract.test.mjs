@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -24,21 +25,28 @@ test('publish-server-runtime workflow exists and does not manage deploy branches
 
 test('publish-server-runtime workflow publishes rolling server-preview tag via release bot', async () => {
   const raw = await loadWorkflow('publish-server-runtime.yml');
+  const parsed = YAML.parse(raw);
 
   assert.match(raw, /actions\/create-github-app-token@v1/);
   assert.match(raw, /RELEASE_BOT_APP_ID/);
   assert.match(raw, /RELEASE_BOT_PRIVATE_KEY/);
 
-  assert.match(raw, /node scripts\/pipeline\/run\.mjs publish-server-runtime/);
+  const finalizeRun = parsed.jobs.finalize_publish.steps.map((step) => step.run ?? '').join('\n');
+  assert.match(finalizeRun, /publish-server-runtime\.mjs/);
+  assert.match(finalizeRun, /--authorized-sha/);
+  assert.match(finalizeRun, /--prepared-artifacts/);
 });
 
 test('publish-server-runtime supports dev and resolves auto source_ref from the selected channel', async () => {
   const raw = await loadWorkflow('publish-server-runtime.yml');
+  const parsed = YAML.parse(raw);
 
-  assert.match(raw, /options:[\s\S]*?- preview[\s\S]*?- dev[\s\S]*?- stable/);
+  assert.deepEqual(parsed.on.workflow_dispatch.inputs.channel.options, ['preview', 'dev', 'stable']);
   assert.match(raw, /node scripts\/pipeline\/release\/resolve-public-release-channel-meta\.mjs/);
   assert.match(raw, /id:\s*channel_meta/);
-  assert.match(raw, /ref:\s*\$\{\{\s*steps\.channel_meta\.outputs\.source_ref\s*\}\}/);
+  const sourceCheckout = parsed.jobs.build_candidate.steps.find((step) => step.name === 'Checkout source without persisted credentials');
+  assert.match(sourceCheckout.with.ref, /steps\.channel_meta\.outputs\.source_ref/);
+  assert.match(sourceCheckout.with.ref, /inputs\.authorized_sha/);
   assert.doesNotMatch(
     raw,
     /if \[ "\$src" = "auto" \]; then[\s\S]*?src="dev"[\s\S]*?src="preview"[\s\S]*?src="main"/,

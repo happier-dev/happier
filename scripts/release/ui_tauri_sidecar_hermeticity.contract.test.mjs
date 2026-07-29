@@ -21,11 +21,22 @@ test('ui tauri workflows build the bootstrap sidecar before dev/build and cargo 
     const tauriConfig = await readJson('apps/ui/src-tauri/tauri.conf.json');
     const buildRs = await readFile(join(repoRoot, 'apps', 'ui', 'src-tauri', 'build.rs'), 'utf8');
     const bootstrapBuildBinaryScript = await readFile(join(repoRoot, 'apps', 'bootstrap', 'scripts', 'buildBinary.mjs'), 'utf8');
+    const bootstrapBuildSharedScript = await readFile(join(repoRoot, 'apps', 'bootstrap', 'scripts', 'buildSharedDeps.mjs'), 'utf8');
 
-    assert.match(
+    assert.equal(
         String(bootstrapPackageJson?.scripts?.['build:binary'] ?? ''),
-        /\bbuild:shared\b/,
-        'bootstrap build:binary should build its shared workspace dependencies first'
+        'yarn -s build:shared && yarn -s build && node scripts/buildBinary.mjs',
+        'bootstrap build:binary should build its shared workspace dependencies first',
+    );
+    assert.equal(
+        String(bootstrapPackageJson?.scripts?.['build:shared'] ?? ''),
+        'node scripts/buildSharedDeps.mjs',
+        'bootstrap should route shared workspace package admission through one script',
+    );
+    assert.match(
+        bootstrapBuildSharedScript,
+        /ensureWorkspacePackagesBuiltForComponent/,
+        'bootstrap shared dependency preparation should delegate to the canonical workspace build owner',
     );
 
     assert.match(

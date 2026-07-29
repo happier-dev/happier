@@ -4,6 +4,10 @@ import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
 import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
 import { resolveDockerTagSpec } from './resolve-tag-spec.mjs';
+import {
+  resolveDockerReleaseArtifactInputs,
+  dockerReleaseArtifactInputsToBuildArgs,
+} from './resolve-release-artifact-build-args.mjs';
 import { maybeTrackSentryRelease } from '../sentry/track-release.mjs';
 import { runCommandWithEnv } from './runCommandWithEnv.mjs';
 
@@ -507,6 +511,7 @@ async function main() {
   const buildRelay = parseBool(values['build-relay'], '--build-relay');
   const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
   const dryRun = values['dry-run'] === true;
+  const sourceRef = String(values['source-ref'] ?? '').trim();
 
   const shaRaw = String(values.sha ?? '').trim();
   const sha = shaRaw || run('git', ['rev-parse', 'HEAD'], { dryRun: false, stdio: 'pipe' }).trim();
@@ -622,6 +627,17 @@ async function main() {
   }
 
   const useGhaCache = String(process.env.GITHUB_ACTIONS ?? '').toLowerCase() === 'true';
+  const releaseArtifactInputs = buildRelay || buildDevBox
+    ? await resolveDockerReleaseArtifactInputs({
+      channel,
+      repoRoot: process.cwd(),
+      dryRun,
+      sourceRef,
+      env: process.env,
+      includeRelay: buildRelay,
+      includeDevBox: buildDevBox,
+    })
+    : null;
 
   if (buildRelay) {
     const defaultSentryRelease = String(process.env.SENTRY_RELEASE ?? '').trim() || sha;
@@ -629,6 +645,7 @@ async function main() {
     const extraArgs = [
       '--build-arg',
       `HAPPIER_EMBEDDED_POLICY_ENV=${policyEnv}`,
+      ...dockerReleaseArtifactInputsToBuildArgs(releaseArtifactInputs, 'relay'),
       ...optionalBuildArgs,
     ];
 
@@ -664,11 +681,13 @@ async function main() {
   }
 
   if (buildDevBox) {
+    const extraArgs = dockerReleaseArtifactInputsToBuildArgs(releaseArtifactInputs, 'dev-box');
     for (const tagSet of devBoxTagSets) {
       await runBuildxForTags(tagSet.tags, {
         target: '',
         file: 'docker/dev-box/Dockerfile',
         cacheScope: 'dev-box',
+        extraArgs,
         allowFailure: allowGhcrFailure && tagSet.registry === 'ghcr',
       });
     }

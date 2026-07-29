@@ -8,7 +8,7 @@
   },
   "scripts": {
     "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
-    "build:shared": "yarn -s workspace @happier-dev/protocol build && yarn -s workspace @happier-dev/cli-common build && yarn -s workspace @happier-dev/release-runtime build",
+    "build:shared": "node scripts/buildSharedDeps.mjs",
     "build": "node ../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json && node scripts/writeDistBinWrappers.mjs",
     "build:binary": "yarn -s build:shared && yarn -s build && node scripts/buildBinary.mjs",
     "typecheck": "node ./scripts/runTsc.mjs --noEmit -p tsconfig.json",

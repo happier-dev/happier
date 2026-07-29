@@ -13,7 +13,7 @@ function createPackageJsonText(): string {
     {
       scripts: {
         test: 'yarn -s test:unit',
-        'test:unit': 'yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/peer-mediation test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/support test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/plugin-sdk test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
+        'test:unit': 'yarn workspace @happier-dev/protocol test && yarn workspace @happier-dev/peer-mediation test && yarn workspace @happier-dev/transfers test && yarn workspace @happier-dev/agents test && yarn workspace @happier-dev/cli-common test && yarn workspace @happier-dev/support test && yarn workspace @happier-dev/connection-supervisor test && yarn workspace @happier-dev/bootstrap test && yarn workspace @happier-dev/plugin-sdk test && yarn workspace @happier-dev/plugin-ui test && yarn workspace @happier-dev/app test && yarn workspace @happier-dev/cli test:unit && yarn --cwd apps/server test:unit && yarn --cwd packages/relay-server test && yarn --cwd apps/stack test:unit',
         'test:integration': 'yarn workspace @happier-dev/app test:integration && yarn workspace @happier-dev/cli test:integration && yarn --cwd apps/server test:integration && yarn --cwd apps/stack test:integration',
         'test:e2e:core:fast': 'yarn workspace @happier-dev/tests test:core:fast',
         'test:e2e:core:slow': 'yarn workspace @happier-dev/tests test:core:slow',
@@ -22,7 +22,7 @@ function createPackageJsonText(): string {
         'test:e2e:ui:wsrepl:lima': 'yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima',
         'test:e2e:ui:wsrepl:lima:self': 'yarn workspace @happier-dev/tests test:ui:e2e:wsrepl:lima:self',
         'test:e2e:mobile': 'yarn workspace @happier-dev/tests test:mobile:e2e:android',
-        'test:providers': 'yarn workspace @happier-dev/tests test:providers',
+        'test:agents': 'yarn workspace @happier-dev/tests test:agents',
         'test:stress': 'yarn workspace @happier-dev/tests test:stress',
         'test:db-contract:docker': 'yarn -s test:db-contract:postgres:docker && yarn -s test:db-contract:mysql:docker',
         'test:wiring:self': 'node --experimental-strip-types --test scripts/testing/lib/*.test.ts scripts/testing/validateTestWiring.test.ts',
@@ -55,6 +55,7 @@ jobs:
       - run: yarn workspace @happier-dev/connection-supervisor test
       - run: yarn workspace @happier-dev/bootstrap test
       - run: yarn workspace @happier-dev/plugin-sdk test
+      - run: yarn workspace @happier-dev/plugin-ui test
       - run: yarn workspace @happier-dev/app test:unit
       - run: yarn workspace @happier-dev/app test:integration
       - run: yarn workspace @happier-dev/cli test:unit
@@ -88,7 +89,7 @@ yarn test:e2e:desktop:native
 yarn test:e2e:ui:wsrepl:lima
 yarn test:e2e:ui:wsrepl:lima:self
 yarn test:e2e:mobile
-yarn test:providers
+yarn test:agents
 yarn test:stress
 yarn test:db-contract:docker
 yarn test:wiring:self
@@ -115,7 +116,7 @@ function createFeatureGatingConfigTexts(): Record<string, string> {
     'apps/server/vitest.dbcontract.config.ts': "import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';\nexclude: [...resolveVitestFeatureTestExcludeGlobs()]",
     'packages/tests/vitest.core.config.ts': "import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';\nexclude: [...resolveVitestFeatureTestExcludeGlobs()]",
     'packages/tests/vitest.core.fast.config.ts': "import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';\nexclude: [...resolveVitestFeatureTestExcludeGlobs()]",
-    'packages/tests/vitest.providers.config.ts': "import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';\nexclude: [...resolveVitestFeatureTestExcludeGlobs()]",
+    'packages/tests/vitest.agents.config.ts': "import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';\nexclude: [...resolveVitestFeatureTestExcludeGlobs()]",
     'packages/tests/vitest.stress.config.ts': "import { resolveVitestFeatureTestExcludeGlobs } from '../../scripts/testing/featureTestGating';\nexclude: [...resolveVitestFeatureTestExcludeGlobs()]",
   };
 }
@@ -257,11 +258,21 @@ test('wires shared SDK packages into the default root validation lanes', () => {
   };
   const workflowText = readFileSync(join(ROOT_DIR, '.github/workflows/tests.yml'), 'utf8');
 
+  assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/voice-modelpacks test/);
+  assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/terminal-native test/);
+  assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/sherpa-native test/);
   assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/support test/);
   assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/peer-mediation test/);
   assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/plugin-sdk test/);
+  assert.match(packageJson.scripts?.['test:unit'] ?? '', /yarn workspace @happier-dev\/plugin-ui test/);
+  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/terminal-native typecheck/);
   assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/support typecheck/);
+  assert.match(packageJson.scripts?.['typecheck:inner'] ?? '', /yarn workspace @happier-dev\/plugin-ui typecheck/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/voice-modelpacks test/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/terminal-native test/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/sherpa-native test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/support test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/peer-mediation test/);
   assert.match(workflowText, /yarn workspace @happier-dev\/plugin-sdk test/);
+  assert.match(workflowText, /yarn workspace @happier-dev\/plugin-ui test/);
 });

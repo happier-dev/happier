@@ -290,6 +290,7 @@ await createDeterministicArchive({
       encoding: 'utf-8',
       env: {
         ...process.env,
+        HAPPIER_RELEASE_ARCHIVE_BACKEND: 'tar',
         LOG_PATH: logPath,
         PATH: `${fakeBinDir}:${process.env.PATH ?? ''}`,
         TEST_ARTIFACT_PATH: artifactPath,

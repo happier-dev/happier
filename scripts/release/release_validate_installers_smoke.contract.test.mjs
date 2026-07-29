@@ -6,6 +6,11 @@ import {
   resolveInstallersSmokeLifecycleSteps,
   resolveInstallersSmokeLifecycleStepTimeoutMs,
   resolveInstallersSmokePlan,
+  resolveInstallersSmokePowerShellInvocation,
+  resolveInstallersSmokePredecessorEnv,
+  resolveInstallersSmokeStepEnv,
+  resolveInstallersSmokeUpdateLifecycleSteps,
+  resolveInstallersSmokeUpdatePlan,
 } from '../pipeline/release-validation/executors/installers-smoke.mjs';
 
 test('installers-smoke resolves published channel installer plans by platform', () => {
@@ -97,19 +102,20 @@ test('installers-smoke resolves published rolling and versioned tags to the matc
   );
 });
 
-test('installers-smoke resolves local-build plans when an explicit release channel is provided', () => {
+test('installers-smoke resolves exact candidate plans from the supplied local-build ref', () => {
   assert.deepEqual(
     resolveInstallersSmokePlan({
       platform: 'linux',
-      source: { kind: 'local-build', ref: '.' },
-      releaseChannel: 'preview',
+      source: { kind: 'local-build', ref: '/candidate/candidate.json' },
+      releaseChannel: 'dev',
     }),
     {
       platform: 'linux',
       tag: null,
-      installer: 'install-preview.sh',
-      binaryName: 'hprev',
-      releaseChannel: 'preview',
+      installer: 'install-dev.sh',
+      binaryName: 'hdev',
+      releaseChannel: 'publicdev',
+      candidateManifestPath: '/candidate/candidate.json',
       installerEnv: {
         HAPPIER_WITH_DAEMON: '0',
       },
@@ -119,7 +125,7 @@ test('installers-smoke resolves local-build plans when an explicit release chann
   assert.deepEqual(
     resolveInstallersSmokePlan({
       platform: 'win32',
-      source: { kind: 'local-build', ref: '.' },
+      source: { kind: 'local-build', ref: 'candidate/candidate.json' },
       releaseChannel: 'dev',
     }),
     {
@@ -128,6 +134,7 @@ test('installers-smoke resolves local-build plans when an explicit release chann
       installer: 'install-dev.ps1',
       binaryName: 'hdev.exe',
       releaseChannel: 'publicdev',
+      candidateManifestPath: 'candidate/candidate.json',
       installerEnv: {
         HAPPIER_WITH_DAEMON: '0',
       },
@@ -180,7 +187,132 @@ test('installers-smoke lifecycle steps include reinstall/check/uninstall where s
     'install',
     'version',
     'help',
+    'reinstall',
   ]);
+});
+
+test('installers-smoke plans a real released-dev predecessor to exact candidate update and rollback', () => {
+  assert.deepEqual(resolveInstallersSmokeUpdatePlan({
+    platform: 'darwin',
+    update: {
+      from: { kind: 'published-channel', ref: 'dev' },
+      to: { kind: 'local-build', ref: '/candidate/candidate.json' },
+    },
+    releaseChannel: 'dev',
+  }), {
+    mode: 'update-rollback',
+    from: {
+      platform: 'darwin',
+      tag: 'cli-dev',
+      installer: 'install-dev.sh',
+      binaryName: 'hdev',
+      releaseChannel: 'publicdev',
+      installerEnv: {
+        HAPPIER_WITH_DAEMON: '0',
+      },
+    },
+    to: {
+      platform: 'darwin',
+      tag: null,
+      installer: 'install-dev.sh',
+      binaryName: 'hdev',
+      releaseChannel: 'publicdev',
+      candidateManifestPath: '/candidate/candidate.json',
+      installerEnv: {
+        HAPPIER_WITH_DAEMON: '0',
+      },
+    },
+    lifecycleSteps: resolveInstallersSmokeUpdateLifecycleSteps({
+      platform: 'darwin',
+    }),
+  });
+  assert.deepEqual(
+    resolveInstallersSmokeUpdateLifecycleSteps({ platform: 'darwin' }),
+    [
+      'predecessor-install',
+      'predecessor-version',
+      'candidate-update',
+      'candidate-version',
+      'rollback',
+      'rollback-version',
+      'candidate-reinstall',
+      'candidate-version',
+      'check',
+      'uninstall',
+    ],
+  );
+  assert.deepEqual(
+    resolveInstallersSmokeUpdateLifecycleSteps({ platform: 'win32' }),
+    [
+      'predecessor-install',
+      'predecessor-version',
+      'candidate-update',
+      'candidate-version',
+      'rollback',
+      'rollback-version',
+      'candidate-reinstall',
+      'candidate-version',
+    ],
+  );
+  assert.throws(
+    () => resolveInstallersSmokeUpdatePlan({
+      platform: 'linux',
+      update: {
+        from: { kind: 'published-channel', ref: 'preview' },
+        to: { kind: 'local-build', ref: '/candidate/candidate.json' },
+      },
+      releaseChannel: 'dev',
+    }),
+    /published-channel dev predecessor/u,
+  );
+});
+
+test('installers-smoke forwards the Windows reinstall action through the executed step environment', () => {
+  const baseEnv = { PATH: 'C:\\Windows\\System32' };
+  assert.deepEqual(
+    resolveInstallersSmokeStepEnv({
+      baseEnv,
+      platform: 'win32',
+      step: 'candidate-reinstall',
+    }),
+    {
+      PATH: 'C:\\Windows\\System32',
+      HAPPIER_INSTALLER_ACTION: 'reinstall',
+    },
+  );
+  assert.equal(
+    resolveInstallersSmokeStepEnv({
+      baseEnv,
+      platform: 'win32',
+      step: 'candidate-update',
+    }),
+    baseEnv,
+  );
+});
+
+test('installers-smoke predecessor inherits the isolated home/PATH fences but not candidate assets', () => {
+  assert.deepEqual(resolveInstallersSmokePredecessorEnv({
+    candidateEnv: {
+      HOME: '/tmp/isolated-home',
+      HAPPIER_NO_PATH_UPDATE: '1',
+      HAPPIER_RELEASE_ASSETS_DIR: '/candidate/native',
+      HAPPIER_MINISIGN_PUBKEY: 'candidate-key',
+      HAPPIER_INSTALL_VERSION: '0.2.10',
+      PATH: '/candidate/tools:/usr/bin',
+    },
+    predecessorPlan: {
+      releaseChannel: 'publicdev',
+      installerEnv: {
+        HAPPIER_WITH_DAEMON: '0',
+      },
+    },
+  }), {
+    HOME: '/tmp/isolated-home',
+    HAPPIER_NO_PATH_UPDATE: '1',
+    HAPPIER_CHANNEL: 'dev',
+    HAPPIER_WITH_DAEMON: '0',
+    PATH: '/candidate/tools:/usr/bin',
+  });
 });
 
 test('installers-smoke resolves the managed binary path for each native installer surface', () => {
@@ -263,5 +395,57 @@ test('installers-smoke applies a larger default install timeout for win32 local-
       step: 'version',
     }),
     300_000,
+  );
+});
+
+test('installers-smoke runs the Windows installer through Windows PowerShell when pwsh is unavailable', () => {
+  const invocation = resolveInstallersSmokePowerShellInvocation({
+    installerPath: 'C:\\Users\\lee\\AppData\\Local\\Temp\\happier smoke\\install-dev.ps1',
+    installerArgs: ['--check'],
+    commandResolver: (command) => command === 'powershell.exe'
+      ? 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
+      : null,
+  });
+
+  assert.deepEqual(invocation, {
+    command: 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    args: [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      'C:\\Users\\lee\\AppData\\Local\\Temp\\happier smoke\\install-dev.ps1',
+      '--check',
+    ],
+  });
+});
+
+test('installers-smoke preserves pwsh preference when both PowerShell hosts are available', () => {
+  const resolvedCandidates = [];
+  const invocation = resolveInstallersSmokePowerShellInvocation({
+    installerPath: 'C:\\install.ps1',
+    installerArgs: [],
+    commandResolver: (command) => {
+      resolvedCandidates.push(command);
+      return `C:\\tools\\${command}`;
+    },
+  });
+
+  assert.equal(invocation.command, 'C:\\tools\\pwsh.exe');
+  assert.deepEqual(
+    resolvedCandidates,
+    ['pwsh.exe'],
+    'the smoke must admit a real executable rather than a bare pwsh name that could resolve to a cmd shim',
+  );
+});
+
+test('installers-smoke fails clearly when no supported PowerShell host is available', () => {
+  assert.throws(
+    () => resolveInstallersSmokePowerShellInvocation({
+      installerPath: 'C:\\install.ps1',
+      commandResolver: () => null,
+    }),
+    /requires PowerShell.*pwsh.*powershell\.exe/i,
   );
 });

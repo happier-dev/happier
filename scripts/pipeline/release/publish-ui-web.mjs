@@ -19,6 +19,8 @@ import {
   resolveRollingVersionSuffix,
 } from './lib/public-release-rings.mjs';
 import { withCurrentVersionLine } from './lib/rolling-release-notes.mjs';
+import { resolveRollingRecoveryVersion } from './lib/rolling-version-allocation.mjs';
+import { resolveGitHubRepoSlug } from '../github/resolve-github-repo-slug.mjs';
 
 function fail(message) {
   console.error(message);
@@ -118,7 +120,7 @@ async function preflightMinisignKey({ dryRun }) {
   if (!keyRaw) {
     fail('[pipeline] MINISIGN_SECRET_KEY is required to publish signed ui-web release artifacts.');
   }
-  const { prepareMinisignSecretKeyFile } = await import('./lib/binary-release.mjs');
+  const { prepareMinisignSecretKeyFile } = await import('./lib/minisign-secret-key.mjs');
   const prepared = await prepareMinisignSecretKeyFile(keyRaw);
   if (prepared.temp) {
     await rm(prepared.cleanupPath ?? prepared.path, { recursive: true, force: true });
@@ -134,6 +136,9 @@ async function main() {
       'release-message': { type: 'string', default: '' },
       'run-contracts': { type: 'string', default: 'auto' },
       'check-installers': { type: 'string', default: 'true' },
+      phase: { type: 'string', default: 'publish' },
+      version: { type: 'string', default: '' },
+      'authorized-sha': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -154,14 +159,36 @@ async function main() {
   const runContracts = resolveAutoBool(values['run-contracts'], '--run-contracts', process.env.GITHUB_ACTIONS === 'true');
   const checkInstallers = parseBool(values['check-installers'], '--check-installers');
   const releaseMessage = String(values['release-message'] ?? '').trim();
+  const phase = String(values.phase ?? 'publish').trim();
+  if (!['publish', 'promote-rolling'].includes(phase)) fail('--phase must be publish|promote-rolling');
+  const explicitVersion = String(values.version ?? '').trim();
+  const authorizedSha = String(values['authorized-sha'] ?? '').trim().toLowerCase();
+  if (phase === 'promote-rolling' && !explicitVersion) fail('--version is required for same-version rolling promotion');
+  if (phase === 'promote-rolling' && !/^[a-f0-9]{40}$/.test(authorizedSha)) {
+    fail('--authorized-sha must be a full 40-character commit id for rolling recovery');
+  }
+  const repoSlug = resolveGitHubRepoSlug({ repoRoot });
+  if (!repoSlug) fail('Unable to resolve GitHub repo slug. Set GH_REPO=owner/repo or configure a github.com origin remote.');
 
   const opts = { dryRun };
 
-  const pkg = JSON.parse(fs.readFileSync(withinRepo(repoRoot, 'apps/ui/package.json'), 'utf8'));
-  const baseVersion = String(pkg.version ?? '').trim();
-  if (!baseVersion) fail('Unable to resolve apps/ui version');
   const releaseRing = getPublicReleaseRingEntry(channel);
-  const uiVersion = computeUiVersion(channel, baseVersion);
+  const uiVersion = phase === 'promote-rolling'
+    ? (
+        await resolveRollingRecoveryVersion({
+          repoRoot,
+          productId: 'ui-web',
+          channel,
+          explicitVersion,
+          env: process.env,
+        })
+      ).version
+    : (() => {
+        const pkg = JSON.parse(fs.readFileSync(withinRepo(repoRoot, 'apps/ui/package.json'), 'utf8'));
+        const baseVersion = String(pkg.version ?? '').trim();
+        if (!baseVersion) fail('Unable to resolve apps/ui version');
+        return computeUiVersion(channel, baseVersion);
+      })();
 
   const tag = `ui-web-${resolveRollingReleaseTagSuffix(channel)}`;
   const title = `Happier UI Web Bundle ${resolveRollingReleaseLabel(channel)}`;
@@ -171,7 +198,9 @@ async function main() {
   const versionTag = `ui-web-v${uiVersion}`;
   const versionTitle = `Happier UI Web Bundle v${uiVersion}`;
   const versionNotes = `UI web bundle ${releaseRing.publicLabel} build v${uiVersion}.`;
-  const targetSha = run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
+  const targetSha = phase === 'promote-rolling'
+    ? authorizedSha
+    : run(opts, 'git', ['rev-parse', 'HEAD'], { cwd: repoRoot, stdio: 'pipe' }).trim() || 'UNKNOWN_SHA';
 
   const appEnv = resolveExpoAppEnvironmentForChannel(channel);
   const embeddedPolicy = resolveEmbeddedPolicyForChannel(channel);
@@ -179,7 +208,7 @@ async function main() {
 
   console.log(`[pipeline] ui-web: channel=${formatPublicReleaseChannel(channel)} tag=${tag} version=${uiVersion}`);
 
-  await preflightMinisignKey(opts);
+  if (phase !== 'promote-rolling') await preflightMinisignKey(opts);
 
   if (runContracts) {
     run(opts, 'yarn', ['-s', 'test:release:contracts'], { cwd: repoRoot, env: { ...process.env, HAPPIER_EMBEDDED_POLICY_ENV: embeddedPolicy } });
@@ -189,6 +218,23 @@ async function main() {
   }
 
   ensureMinisign(repoRoot, opts);
+
+  if (phase === 'promote-rolling') {
+    run(opts, process.execPath, [
+      'scripts/pipeline/github/promote-rolling-release.mjs',
+      '--source-tag', versionTag,
+      '--rolling-tag', tag,
+      '--title', title,
+      '--target-sha', targetSha,
+      '--prerelease', prerelease,
+      '--notes', notes,
+      '--release-message', releaseMessage,
+      '--repo', repoSlug,
+      '--public-key', 'scripts/release/installers/happier-release.pub',
+      ...(dryRun ? ['--dry-run'] : []),
+    ], { cwd: repoRoot });
+    return;
+  }
 
   run(
     opts,
@@ -246,39 +292,6 @@ async function main() {
     [
       'scripts/pipeline/github/publish-release.mjs',
       '--tag',
-      tag,
-      '--title',
-      title,
-      '--target-sha',
-      targetSha,
-      '--prerelease',
-      prerelease,
-      '--rolling-tag',
-      'true',
-      '--generate-notes',
-      'false',
-      '--notes',
-      notes,
-      '--assets-dir',
-      path.relative(repoRoot, artifactsDir),
-      '--clobber',
-      'true',
-      '--prune-assets',
-      'true',
-      '--release-message',
-      releaseMessage,
-      ...(dryRun ? ['--dry-run'] : []),
-    ],
-    { cwd: repoRoot },
-  );
-
-  // Version tag (immutable) — published alongside rolling tags for traceability.
-  run(
-    opts,
-    process.execPath,
-    [
-      'scripts/pipeline/github/publish-release.mjs',
-      '--tag',
       versionTag,
       '--title',
       versionTitle,
@@ -295,15 +308,29 @@ async function main() {
       '--assets-dir',
       path.relative(repoRoot, artifactsDir),
       '--clobber',
-      'true',
+      'false',
       '--prune-assets',
-      'true',
+      'false',
       '--release-message',
       releaseMessage,
       ...(dryRun ? ['--dry-run'] : []),
     ],
     { cwd: repoRoot },
   );
+
+  run(opts, process.execPath, [
+    'scripts/pipeline/github/promote-rolling-release.mjs',
+    '--source-tag', versionTag,
+    '--rolling-tag', tag,
+    '--title', title,
+    '--target-sha', targetSha,
+    '--prerelease', prerelease,
+    '--notes', notes,
+    '--release-message', releaseMessage,
+    '--repo', repoSlug,
+    '--public-key', 'scripts/release/installers/happier-release.pub',
+    ...(dryRun ? ['--dry-run'] : []),
+  ], { cwd: repoRoot });
 }
 
 main().catch((error) => {

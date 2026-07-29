@@ -50,11 +50,14 @@ for (const { channel, rollingTag, versionSuffix } of [
       },
     );
 
-    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b`));
-    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b[^\\n]*--generate-notes\\s+false\\b`));
+    assert.match(out, new RegExp(`promote-rolling-release\\.mjs[^\\n]*--rolling-tag\\s+${rollingTag}\\b`));
     assert.match(out, /--tag\s+server-v/);
     assert.match(out, new RegExp(`server-v[^\\s"]*${versionSuffix.replace('.', '\\.')}[^\\s"]*`));
     assert.match(out, /--tag\s+server-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.ok(
+      out.indexOf('publish-release.mjs --tag server-v') < out.indexOf('promote-rolling-release.mjs'),
+      'immutable release must be published before rolling projection',
+    );
     assert.match(out, /clean artifacts dir: dist\/release-assets\/server|ensure clean artifacts dir: dist\/release-assets\/server/i);
   });
 }

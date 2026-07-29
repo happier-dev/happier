@@ -5,25 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
-  parseTrailingJsonObjectForTests,
   resolveSigningEnvForTests,
 } from '../pipeline/release-validation/executors/installers-smoke-local-build.mjs';
-
-test('installers-smoke local-build parser reads the trailing JSON payload after noisy build output', () => {
-  const parsed = parseTrailingJsonObjectForTests(`
-yarn run v1.22.22
-$ node scripts/pipeline/release/build-cli-binaries.mjs --channel preview --targets darwin-arm64
-warning package.json: No license field
-{"outDir":"/tmp/out","artifacts":["happier-v1.2.3-preview.4-darwin-arm64.tar.gz"],"checksums":"/tmp/out/checksums.txt","signature":"/tmp/out/checksums.txt.minisig"}
-  `);
-
-  assert.deepEqual(parsed, {
-    outDir: '/tmp/out',
-    artifacts: ['happier-v1.2.3-preview.4-darwin-arm64.tar.gz'],
-    checksums: '/tmp/out/checksums.txt',
-    signature: '/tmp/out/checksums.txt.minisig',
-  });
-});
 
 test('installers-smoke local-build bootstrap still returns a minisign dir when GITHUB_PATH is set', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installers-smoke-local-build-test-'));

@@ -206,6 +206,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       - name: Checkout source ref
         uses: actions/checkout@v4
@@ -238,6 +241,9 @@ jobs:
         uses: ./.github/actions/install-yarn-dependencies
         with:
           args: --frozen-lockfile --ignore-engines
+
+      - name: Verify generated Mermaid WebView bundle
+        run: yarn --cwd apps/ui verify:mermaid-webview-bundle
 
       - name: Bump app version (source ref)
         id: bump_app

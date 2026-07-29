@@ -15,9 +15,10 @@ export const COMMAND_HELP_DOCKER = {
   'docker-publish': {
     summary: 'Build and publish multi-arch Docker images (Docker Hub + optional GHCR).',
     usage:
-      'node scripts/pipeline/run.mjs docker-publish --channel <dev|preview|stable> [--registries <csv>] [--sha <sha>] [--dry-run]',
+      'node scripts/pipeline/run.mjs docker-publish --channel <dev|preview|stable> [--source-ref <ref>] [--registries <csv>] [--sha <sha>] [--dry-run]',
     options: [
       '--channel <dev|preview|stable>    Required.',
+      '--source-ref <ref>                Optional; checked-out source ref. Non-channel refs require explicit HAPPIER_DOCKER_*_VERSION env.',
       '--registries <csv>               e.g. dockerhub,ghcr (default: env/auto).',
       '--sha <sha>                      Optional; override tag SHA.',
       '--push-latest <bool>             true|false (default: true).',

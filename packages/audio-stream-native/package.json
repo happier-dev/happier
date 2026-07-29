@@ -13,6 +13,7 @@
     "README.md"
   ],
   "scripts": {
+    "tsc": "node ../../scripts/workspaces/runTypeScriptCli.mjs",
     "test": "node ../../node_modules/vitest/vitest.mjs run --config ../../vitest.config.ts src",
     "typecheck": "node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json --noEmit"
   },

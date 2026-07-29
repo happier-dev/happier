@@ -246,6 +246,14 @@ jobs:
         with:
           args: --frozen-lockfile --ignore-engines
 
+      - name: Run Voice identity rolling-upgrade contract (MySQL)
+        env:
+          HAPPIER_DB_PROVIDER: mysql
+          DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier
+        run: |
+          yarn --cwd apps/server generate:mysql
+          yarn --cwd apps/server test:mysql-voice-identity-upgrade-contract
+
       - name: Migrate (MySQL)
         env:
           DATABASE_URL: mysql://root:happier@127.0.0.1:${{ job.services.mysql.ports[3306] }}/happier

@@ -13,6 +13,7 @@ import {
   packagePreparedTargetBinary,
   parseArgs,
   parseCsv,
+  prepareUiWebDist,
   readVersionFromPackageJson,
   resolveRepoRoot,
   resolveTargets,
@@ -32,8 +33,18 @@ async function main() {
   // Never share a single temp directory across invocations, or concurrent builds will race on rm/mkdir.
   const tempBaseDir = join(repoRoot, 'dist', 'release-assets', '.tmp-server-binaries');
   const tempDir = join(tempBaseDir, `build-${process.pid}-${randomUUID()}`);
+  const serverComponent = String(kv.get('--server-component') ?? 'happier-server-light').trim();
+  if (serverComponent !== 'happier-server' && serverComponent !== 'happier-server-light') {
+    throw new Error(`Unsupported --server-component: ${serverComponent}`);
+  }
   const entrypoint = String(kv.get('--entrypoint') ?? '').trim()
-    || join(repoRoot, 'apps', 'server', 'sources', 'main.light.ts');
+    || join(
+      repoRoot,
+      'apps',
+      'server',
+      'sources',
+      serverComponent === 'happier-server' ? 'main.ts' : 'main.light.ts',
+    );
   const externals = parseCsv(kv.get('--externals') ?? process.env.HAPPIER_SERVER_BUN_EXTERNALS ?? 'redis');
   const targets = resolveTargets({
     availableTargets: SERVER_TARGETS,
@@ -46,6 +57,7 @@ async function main() {
   const buildDbProviders = String(
     process.env.HAPPIER_BUILD_DB_PROVIDERS ?? process.env.HAPPY_BUILD_DB_PROVIDERS ?? 'all',
   ).trim() || 'all';
+  const uiWebDistPath = await prepareUiWebDist({ repoRoot });
 
   const artifacts = [];
   for (const target of targets) {
@@ -53,7 +65,9 @@ async function main() {
     await buildServerBinaryArtifactPayload({
       repoRoot,
       payloadDir: stageDir,
+      uiWebDistPath,
       target,
+      serverComponent,
       entrypoint,
       externals,
       buildDbProviders,
@@ -88,6 +102,7 @@ async function main() {
     version,
     outDir,
     entrypoint,
+    serverComponent,
     artifacts: artifacts.map((artifact) => artifact.name),
     checksums: checksumsPath,
     signature: signaturePath,

@@ -45,6 +45,11 @@ on:
         required: true
         default: false
         type: boolean
+      qualified_v4_activation_approval:
+        description: "Qualified V4 migration — I verified backup/restore readiness, all old API and worker writers are stopped, they will remain stopped if migration fails, and old-server or old-daemon rollback is prohibited"
+        required: true
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       environment:
@@ -78,6 +83,11 @@ on:
         type: string
       publish_runtime_release:
         description: "Publish — Build + publish server runtime binaries/manifests to GitHub Releases (server-preview/server-stable)"
+        required: false
+        default: false
+        type: boolean
+      qualified_v4_activation_approval:
+        description: "Qualified V4 migration — caller attests backup/restore readiness, all old API and worker writers are stopped, they will remain stopped if migration fails, and no old-server or old-daemon rollback"
         required: false
         default: false
         type: boolean
@@ -158,6 +168,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       - name: Checkout source ref
         uses: actions/checkout@v4
@@ -172,6 +185,30 @@ jobs:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
+
+      - name: Admit irreversible Qualified V4 activation
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          QUALIFIED_V4_ACTIVATION_APPROVED: ${{ inputs.qualified_v4_activation_approval }}
+        run: |
+          set -euo pipefail
+          deploy_branch="deploy/${DEPLOY_ENVIRONMENT}/server"
+          baseline_ref="refs/remotes/origin/${deploy_branch}"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
+          baseline_status=$?
+          set -e
+          case "$baseline_status" in
+            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
+            2) ;;
+            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
+          esac
+          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
+            --baseline-ref "$baseline_ref" \
+            --candidate-ref HEAD \
+            --approval-kind explicit-checkbox \
+            --approval-value "$QUALIFIED_V4_ACTIVATION_APPROVED" \
+            --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Enable Corepack (Yarn)
         run: |

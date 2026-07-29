@@ -1,9 +1,11 @@
 // @ts-check
 
-import { access, chmod, copyFile, mkdtemp } from 'node:fs/promises';
+import { access, chmod, copyFile, mkdtemp, rm } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { delimiter, join, resolve, win32 as pathWin32 } from 'node:path';
 import { tmpdir } from 'node:os';
+
+import { resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 import {
   resolvePublishedInstallerAsset,
@@ -11,7 +13,7 @@ import {
   resolvePublishedInstallerChannelForTag,
 } from '../../release/installers/catalog.mjs';
 import { normalizePublicReleaseChannel } from '../../release/lib/public-release-rings.mjs';
-import { prepareInstallersSmokeLocalBuildAssets } from './installers-smoke-local-build.mjs';
+import { prepareInstallersSmokeCandidateAssets } from './installers-smoke-local-build.mjs';
 
 function assertNativePlatform(platform) {
   if (platform !== process.platform) {
@@ -61,6 +63,9 @@ export function resolveInstallersSmokePlan({ platform, source, releaseChannel })
     }
     throw new Error('installers-smoke currently supports only published-channel, published-tag, or local-build sources');
   }
+  if (source.kind === 'local-build' && localBuildChannel !== 'publicdev') {
+    throw new Error('installers-smoke exact local candidate requires --release-channel dev');
+  }
   const { tag, installer } = resolved;
   return {
     platform,
@@ -68,6 +73,9 @@ export function resolveInstallersSmokePlan({ platform, source, releaseChannel })
     installer,
     binaryName: resolveCliSmokeBinaryName(platform, installer),
     releaseChannel: /** @type {'stable' | 'preview' | 'publicdev'} */ (localBuildChannel),
+    ...(source.kind === 'local-build'
+      ? { candidateManifestPath: source.ref }
+      : {}),
     installerEnv: {
       HAPPIER_WITH_DAEMON: '0',
     },
@@ -77,10 +85,21 @@ export function resolveInstallersSmokePlan({ platform, source, releaseChannel })
 /**
  * @param {{ platform: 'linux' | 'darwin' | 'win32'; source: { kind: string; ref: string } | null; releaseChannel?: string }} params
  */
-export function resolveInstallersSmokeExecution({ platform, source, releaseChannel }) {
+export function resolveInstallersSmokeExecution({
+  platform,
+  source,
+  update = null,
+  releaseChannel,
+}) {
   return {
     type: 'installers-smoke',
-    plan: resolveInstallersSmokePlan({ platform, source, releaseChannel }),
+    plan: update
+      ? resolveInstallersSmokeUpdatePlan({
+          platform,
+          update,
+          releaseChannel,
+        })
+      : resolveInstallersSmokePlan({ platform, source, releaseChannel }),
   };
 }
 
@@ -89,9 +108,124 @@ export function resolveInstallersSmokeExecution({ platform, source, releaseChann
  */
 export function resolveInstallersSmokeLifecycleSteps({ platform }) {
   if (platform === 'win32') {
-    return ['install', 'version', 'help'];
+    return ['install', 'version', 'help', 'reinstall'];
   }
-  return ['install', 'version', 'help', 'check', 'reinstall', 'check', 'uninstall'];
+  return [
+    'install',
+    'version',
+    'help',
+    'check',
+    'reinstall',
+    'check',
+    'uninstall',
+  ];
+}
+
+/**
+ * @param {{ platform: 'linux' | 'darwin' | 'win32' }} params
+ */
+export function resolveInstallersSmokeUpdateLifecycleSteps({ platform }) {
+  const common = [
+    'predecessor-install',
+    'predecessor-version',
+    'candidate-update',
+    'candidate-version',
+    'rollback',
+    'rollback-version',
+    'candidate-reinstall',
+    'candidate-version',
+  ];
+  return platform === 'win32'
+    ? common
+    : [...common, 'check', 'uninstall'];
+}
+
+/**
+ * @param {{
+ *   platform: 'linux' | 'darwin' | 'win32';
+ *   update: {
+ *     from: { kind: string; ref: string };
+ *     to: { kind: string; ref: string };
+ *   };
+ *   releaseChannel?: string;
+ * }} params
+ */
+export function resolveInstallersSmokeUpdatePlan({
+  platform,
+  update,
+  releaseChannel,
+}) {
+  const predecessorChannel = update?.from?.kind === 'published-channel'
+    ? normalizePublicReleaseChannel(update.from.ref)
+    : null;
+  if (
+    update?.from?.kind !== 'published-channel'
+    || predecessorChannel !== 'publicdev'
+    || update?.to?.kind !== 'local-build'
+  ) {
+    throw new Error(
+      'installers-smoke update rollback requires a published-channel dev predecessor and exact local candidate',
+    );
+  }
+  return {
+    mode: 'update-rollback',
+    from: resolveInstallersSmokePlan({
+      platform,
+      source: { ...update.from, ref: predecessorChannel },
+    }),
+    to: resolveInstallersSmokePlan({
+      platform,
+      source: update.to,
+      releaseChannel,
+    }),
+    lifecycleSteps: resolveInstallersSmokeUpdateLifecycleSteps({ platform }),
+  };
+}
+
+/**
+ * @param {{
+ *   baseEnv: NodeJS.ProcessEnv;
+ *   platform: 'linux' | 'darwin' | 'win32';
+ *   step: string;
+ * }} params
+ */
+export function resolveInstallersSmokeStepEnv({ baseEnv, platform, step }) {
+  if (
+    platform === 'win32'
+    && (step === 'reinstall' || step === 'candidate-reinstall')
+  ) {
+    return {
+      ...baseEnv,
+      HAPPIER_INSTALLER_ACTION: 'reinstall',
+    };
+  }
+  return baseEnv;
+}
+
+/**
+ * @param {{
+ *   candidateEnv: NodeJS.ProcessEnv;
+ *   predecessorPlan: {
+ *     releaseChannel: 'stable' | 'preview' | 'publicdev';
+ *     installerEnv: NodeJS.ProcessEnv;
+ *   };
+ * }} params
+ */
+export function resolveInstallersSmokePredecessorEnv({
+  candidateEnv,
+  predecessorPlan,
+}) {
+  const predecessorEnv = {
+    ...candidateEnv,
+    HAPPIER_CHANNEL: predecessorPlan.releaseChannel === 'publicdev'
+      ? 'dev'
+      : predecessorPlan.releaseChannel,
+    ...predecessorPlan.installerEnv,
+  };
+  delete predecessorEnv.HAPPIER_RELEASE_ASSETS_DIR;
+  delete predecessorEnv.HAPPIER_MINISIGN_PUBKEY;
+  delete predecessorEnv.HAPPIER_INSTALL_VERSION;
+  return predecessorEnv;
 }
 
 /**
@@ -107,6 +241,34 @@ export function resolveInstallersSmokeBinaryPath({ platform, installDir, request
     return pathWin32.join(installDir, 'bin', binaryName);
   }
   return join(requestedBinDir, binaryName);
+}
+
+/**
+ * @param {{
+ *   installerPath: string;
+ *   installerArgs?: string[];
+ *   env?: NodeJS.ProcessEnv;
+ *   commandResolver?: (command: string) => string | null;
+ * }} params
+ */
+export function resolveInstallersSmokePowerShellInvocation({
+  installerPath,
+  installerArgs = [],
+  env = process.env,
+  commandResolver = (command) => resolveWindowsCommandOnPath(command, env),
+}) {
+  let command = null;
+  for (const candidate of ['pwsh.exe', 'powershell.exe']) {
+    command = commandResolver(candidate);
+    if (command) break;
+  }
+  if (!command) {
+    throw new Error('installers-smoke requires PowerShell (pwsh or Windows PowerShell powershell.exe)');
+  }
+  return {
+    command,
+    args: ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', installerPath, ...installerArgs],
+  };
 }
 
 /**
@@ -176,24 +338,39 @@ export function resolveInstallersSmokeLifecycleStepTimeoutMs({
  *   releaseChannel?: string;
  * }} params
  */
-export async function runInstallersSmokeValidation({ repoRoot, platform, source, releaseChannel }) {
+export async function runInstallersSmokeValidation({
+  repoRoot,
+  platform,
+  source,
+  update = null,
+  releaseChannel,
+}) {
   assertNativePlatform(platform);
 
-  const plan = resolveInstallersSmokePlan({ platform, source, releaseChannel });
+  const updatePlan = update
+    ? resolveInstallersSmokeUpdatePlan({ platform, update, releaseChannel })
+    : null;
+  const plan = updatePlan?.to
+    ?? resolveInstallersSmokePlan({ platform, source, releaseChannel });
+  const predecessorPlan = updatePlan?.from ?? null;
   const token = String(process.env.GITHUB_TOKEN ?? process.env.HAPPIER_GITHUB_TOKEN ?? '').trim() || undefined;
-  if (plan.tag) {
+  for (const taggedPlan of [predecessorPlan, plan].filter((candidate) => candidate?.tag)) {
     const repoSlug = String(process.env.GITHUB_REPOSITORY ?? '').trim();
     if (!repoSlug) {
       throw new Error('GITHUB_REPOSITORY is required for published installers-smoke validation');
     }
-    const tagExists = await checkGitHubReleaseTagExists({ tag: plan.tag, repoSlug, token });
+    const tagExists = await checkGitHubReleaseTagExists({
+      tag: taggedPlan.tag,
+      repoSlug,
+      token,
+    });
     if (!tagExists) {
       const skipped = {
         ok: true,
         skipped: true,
-        reason: `release tag not found: ${plan.tag}`,
-        tag: plan.tag,
-        installer: plan.installer,
+        reason: `release tag not found: ${taggedPlan.tag}`,
+        tag: taggedPlan.tag,
+        installer: taggedPlan.installer,
       };
       console.log(JSON.stringify(skipped, null, 2));
       return skipped;
@@ -203,17 +380,27 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
   const scratch = await mkdtemp(join(tmpdir(), 'happier-installers-smoke-'));
   const installDir = join(scratch, '.happier');
   const requestedBinDir = join(scratch, '.local', 'bin');
-  const installerSourcePath = resolve(repoRoot, 'apps', 'website', 'public', plan.installer);
-  const installerScratchPath = join(scratch, plan.installer);
-  await copyFile(installerSourcePath, installerScratchPath);
-
-  const localBuildAssets = source?.kind === 'local-build'
-    ? await prepareInstallersSmokeLocalBuildAssets({
+  const candidateSource = update?.to ?? source;
+  const localBuildAssets = candidateSource?.kind === 'local-build'
+    ? await prepareInstallersSmokeCandidateAssets({
         repoRoot,
         platform,
-        releaseChannel: plan.releaseChannel,
+        candidateManifestPath: candidateSource.ref,
       })
     : null;
+  const installerSourcePath = localBuildAssets?.installerPath
+    ?? resolve(repoRoot, 'apps', 'website', 'public', plan.installer);
+  const installerScratchPath = join(scratch, `candidate-${plan.installer}`);
+  await copyFile(installerSourcePath, installerScratchPath);
+  const predecessorInstallerScratchPath = predecessorPlan
+    ? join(scratch, `predecessor-${predecessorPlan.installer}`)
+    : null;
+  if (predecessorPlan && predecessorInstallerScratchPath) {
+    await copyFile(
+      resolve(repoRoot, 'apps', 'website', 'public', predecessorPlan.installer),
+      predecessorInstallerScratchPath,
+    );
+  }
 
   /** @type {NodeJS.ProcessEnv} */
   const env = {
@@ -233,26 +420,34 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
     }
     env.PATH = prependPathEntries(localBuildAssets.envPathEntries);
   }
-
-  const lifecycleSteps = resolveInstallersSmokeLifecycleSteps({ platform });
+  const lifecycleSteps = updatePlan?.lifecycleSteps
+    ?? resolveInstallersSmokeLifecycleSteps({ platform });
 
   /**
+   * @param {string} selectedInstallerPath
    * @param {string[]} args
+   * @param {number} timeoutMs
+   * @param {NodeJS.ProcessEnv} [stepEnv]
    */
-  function runInstaller(args = [], timeoutMs) {
+  function runInstaller(selectedInstallerPath, args = [], timeoutMs, stepEnv = env) {
     if (platform === 'win32') {
-      execFileSync('pwsh', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', installerScratchPath, ...args], {
+      const invocation = resolveInstallersSmokePowerShellInvocation({
+        installerPath: selectedInstallerPath,
+        installerArgs: args,
+        env: stepEnv,
+      });
+      execFileSync(invocation.command, invocation.args, {
         cwd: repoRoot,
-        env,
+        env: stepEnv,
         stdio: 'inherit',
         timeout: timeoutMs,
       });
       return;
     }
 
-    execFileSync('bash', [installerScratchPath, ...args], {
+    execFileSync('bash', [selectedInstallerPath, ...args], {
       cwd: repoRoot,
-      env,
+      env: stepEnv,
       stdio: 'inherit',
       timeout: timeoutMs,
     });
@@ -264,7 +459,16 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
     env.HOME = scratch;
     env.HAPPIER_NO_PATH_UPDATE = env.HAPPIER_NO_PATH_UPDATE ?? '1';
     await chmod(installerScratchPath, 0o755);
+    if (predecessorInstallerScratchPath) {
+      await chmod(predecessorInstallerScratchPath, 0o755);
+    }
   }
+  const predecessorEnv = predecessorPlan
+    ? resolveInstallersSmokePredecessorEnv({
+        candidateEnv: env,
+        predecessorPlan,
+      })
+    : null;
 
   const binaryPath = resolveInstallersSmokeBinaryPath({
     platform,
@@ -274,6 +478,116 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
   });
 
   try {
+    if (updatePlan) {
+      if (!predecessorInstallerScratchPath || !predecessorEnv) {
+        throw new Error('installers-smoke update predecessor was not prepared');
+      }
+      const stepTimeout = (step, sourceKind) => resolveInstallersSmokeLifecycleStepTimeoutMs({
+        env,
+        platform,
+        sourceKind,
+        step,
+      });
+      const readInstalledVersion = (step, stepEnv) => {
+        const timeoutMs = stepTimeout(step, 'local-build');
+        const output = execFileSync(binaryPath, ['--version'], {
+          cwd: repoRoot,
+          env: stepEnv,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'inherit'],
+          timeout: timeoutMs,
+        });
+        return String(output ?? '').trim();
+      };
+      runInstaller(
+        predecessorInstallerScratchPath,
+        [],
+        stepTimeout('predecessor-install', 'published-channel'),
+        predecessorEnv,
+      );
+      const predecessorVersionOutput = readInstalledVersion(
+        'predecessor-version',
+        predecessorEnv,
+      );
+      runInstaller(
+        installerScratchPath,
+        [],
+        stepTimeout('candidate-update', 'local-build'),
+        env,
+      );
+      const candidateVersionOutput = readInstalledVersion('candidate-version', env);
+      if (
+        predecessorVersionOutput === candidateVersionOutput
+        || !candidateVersionOutput.includes(String(localBuildAssets?.installVersion ?? ''))
+      ) {
+        throw new Error(
+          'installers-smoke candidate update did not load the exact distinct candidate version',
+        );
+      }
+      runInstaller(
+        installerScratchPath,
+        platform === 'win32' ? ['-Rollback'] : ['--rollback'],
+        stepTimeout('rollback', 'local-build'),
+        env,
+      );
+      const rollbackVersionOutput = readInstalledVersion('rollback-version', env);
+      if (rollbackVersionOutput !== predecessorVersionOutput) {
+        throw new Error(
+          'installers-smoke rollback did not restore the exact predecessor version',
+        );
+      }
+      runInstaller(
+        installerScratchPath,
+        platform === 'win32' ? [] : ['--reinstall'],
+        stepTimeout('candidate-reinstall', 'local-build'),
+        resolveInstallersSmokeStepEnv({
+          baseEnv: env,
+          platform,
+          step: 'candidate-reinstall',
+        }),
+      );
+      const reinstalledCandidateVersionOutput = readInstalledVersion(
+        'candidate-version',
+        env,
+      );
+      if (reinstalledCandidateVersionOutput !== candidateVersionOutput) {
+        throw new Error(
+          'installers-smoke candidate reinstall did not restore the exact candidate version',
+        );
+      }
+      if (platform !== 'win32') {
+        runInstaller(
+          installerScratchPath,
+          ['--check'],
+          stepTimeout('check', 'local-build'),
+          env,
+        );
+        runInstaller(
+          installerScratchPath,
+          ['--uninstall'],
+          stepTimeout('uninstall', 'local-build'),
+          env,
+        );
+      }
+      const result = {
+        ok: true,
+        skipped: false,
+        mode: 'update-rollback',
+        predecessorTag: predecessorPlan?.tag ?? null,
+        candidateManifestPath: plan.candidateManifestPath,
+        binaryPath,
+        lifecycleSteps,
+        versionEvidence: {
+          predecessor: predecessorVersionOutput,
+          candidate: candidateVersionOutput,
+          rollback: rollbackVersionOutput,
+          reinstalledCandidate: reinstalledCandidateVersionOutput,
+        },
+      };
+      console.log(JSON.stringify(result, null, 2));
+      return result;
+    }
+
     for (const step of lifecycleSteps) {
       const stepTimeoutMs = resolveInstallersSmokeLifecycleStepTimeoutMs({
         env,
@@ -283,25 +597,34 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
       });
       if (step === 'install') {
         console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
-        runInstaller([], stepTimeoutMs);
+        runInstaller(installerScratchPath, [], stepTimeoutMs);
         console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'check') {
         console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
-        runInstaller(['--check'], stepTimeoutMs);
+        runInstaller(installerScratchPath, ['--check'], stepTimeoutMs);
         console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'reinstall') {
         console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
-        runInstaller(['--reinstall'], stepTimeoutMs);
+        runInstaller(
+          installerScratchPath,
+          platform === 'win32' ? [] : ['--reinstall'],
+          stepTimeoutMs,
+          resolveInstallersSmokeStepEnv({
+            baseEnv: env,
+            platform,
+            step,
+          }),
+        );
         console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
       if (step === 'uninstall') {
         console.log(`[installers-smoke] step start: ${step} (timeout=${stepTimeoutMs}ms)`);
-        runInstaller(['--uninstall'], stepTimeoutMs);
+        runInstaller(installerScratchPath, ['--uninstall'], stepTimeoutMs);
         console.log(`[installers-smoke] step done: ${step}`);
         continue;
       }
@@ -353,6 +676,9 @@ export async function runInstallersSmokeValidation({ repoRoot, platform, source,
     console.log(JSON.stringify(result, null, 2));
     return result;
   } finally {
-    await localBuildAssets?.cleanup();
+    await Promise.allSettled([
+      localBuildAssets?.cleanup(),
+      rm(scratch, { recursive: true, force: true }),
+    ]);
   }
 }

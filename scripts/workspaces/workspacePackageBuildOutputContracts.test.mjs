@@ -13,6 +13,7 @@ for (const packagePath of [
   'packages/peer-mediation',
   'packages/release-runtime',
   'packages/transfers',
+  'packages/voice-modelpacks',
 ]) {
   test(`${packagePath} build honors the workspace staged output directory`, () => {
     const outputRoot = mkdtempSync(join(tmpdir(), `${basename(packagePath)}-staged-dist-`));

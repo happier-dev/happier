@@ -49,7 +49,9 @@ test('binary release packaging retries transient tar failures', async () => {
   spawnSync('chmod', ['755', stubTarPath]);
 
   const originalPath = process.env.PATH ?? '';
+  const originalArchiveBackend = process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND;
   process.env.PATH = `${binDir}:${originalPath}`;
+  process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND = 'tar';
 
   try {
     const mod = await import(`../pipeline/release/lib/binary-release.mjs?cachebust=${Date.now()}`);
@@ -67,7 +69,11 @@ test('binary release packaging retries transient tar failures', async () => {
     assert.match(listing.stdout, /\/happier(?:\n|$)/);
   } finally {
     process.env.PATH = originalPath;
+    if (originalArchiveBackend === undefined) {
+      delete process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND;
+    } else {
+      process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND = originalArchiveBackend;
+    }
     await rm(workspace, { recursive: true, force: true });
   }
 });
-

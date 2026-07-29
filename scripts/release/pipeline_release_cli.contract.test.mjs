@@ -9,7 +9,7 @@ import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './rel
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI can run release deploy dry-run (promote deploy branches + trigger webhooks)', async () => {
+test('pipeline CLI release dry-run reports hosted deploy inputs without predicting deploy jobs', async () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const out = execFileSync(
@@ -28,8 +28,6 @@ test('pipeline CLI can run release deploy dry-run (promote deploy branches + tri
         '--repository',
         'happier-dev/happier',
         '--dry-run',
-        '--secrets-source',
-        'env',
       ],
       {
         cwd: repoRoot,
@@ -51,8 +49,10 @@ test('pipeline CLI can run release deploy dry-run (promote deploy branches + tri
     );
 
     assert.match(out, /\[pipeline\] release: environment=preview confirm=release dev to preview/);
-    assert.match(out, /\[pipeline\] dry-run: would run/);
-    assert.match(out, /- runDeployServer: true/);
+    assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
+    assert.match(out, /- deploy_targets: server/);
+    assert.match(out, /- force_deploy: true/);
+    assert.doesNotMatch(out, /runDeployServer|runPublish/);
   } finally {
     stub.cleanup();
   }

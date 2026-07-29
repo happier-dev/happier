@@ -49,18 +49,34 @@ test('release workflow only promotes/bumps on production and routes source_ref b
   assert.match(raw, /VERSIONED_CLI_CHANGED:\s*\$\{\{\s*steps\.versioned_plan\.outputs\.changed_cli\s*\}\}/);
 });
 
-test('release workflow forwards stack npm publishing through the shared publish_npm lane', async () => {
+test('unified release records qualified V4 activation admission before branch promotion', async () => {
+  const raw = await loadWorkflow('release.yml');
+  const admission = raw.indexOf('qualified-connected-accounts-v4-activation-admission.mjs');
+  const previewPromotion = raw.indexOf('\n  promote_preview:');
+  const productionPromotion = raw.indexOf('\n  promote_main:');
+
+  assert.ok(admission >= 0, 'release planning must run the qualified V4 activation admission check');
+  assert.ok(previewPromotion > admission, 'activation admission must precede preview branch promotion');
+  assert.ok(productionPromotion > admission, 'activation admission must precede production branch promotion');
+  assert.match(raw, /qualified_v4_activation_approval:\s*true/);
+  assert.match(raw, /backup\/restore readiness/i);
+  assert.match(raw, /old-server or old-daemon rollback/i);
+  assert.match(raw, /old API and worker writers are stopped/i);
+  assert.match(raw, /remain stopped if migration fails/i);
+});
+
+test('release workflow excludes stack npm from full-release signoff', async () => {
   const raw = await loadWorkflow('release.yml');
 
-  assert.match(
+  assert.doesNotMatch(
     raw,
-    /publish_npm:[\s\S]*?\(needs\.plan\.outputs\.publish_cli == 'true' \|\| needs\.plan\.outputs\.publish_stack == 'true' \|\| needs\.plan\.outputs\.publish_server == 'true'\)/,
-    'release.yml should invoke release-npm when stack publishing is requested',
+    /publish_npm:[\s\S]*?publish_stack:/,
+    'release workflow should not treat stack publishing as a required npm signoff input',
   );
-  assert.match(
+  assert.doesNotMatch(
     raw,
-    /publish_npm:[\s\S]*?with:[\s\S]*?publish_cli:\s*\$\{\{\s*needs\.plan\.outputs\.publish_cli == 'true'\s*\}\}[\s\S]*?publish_stack:\s*\$\{\{\s*needs\.plan\.outputs\.publish_stack == 'true'\s*\}\}[\s\S]*?publish_server:\s*\$\{\{\s*needs\.plan\.outputs\.publish_server == 'true'\s*\}\}/,
-    'release.yml should forward stack publishing into release-npm instead of dropping the stack path',
+    /publish_npm:[\s\S]*?needs\.plan\.outputs\.publish_stack/,
+    'release workflow should not depend on stack publication when deciding npm publish eligibility',
   );
 });
 
@@ -322,17 +338,18 @@ test('release workflow can pass a top-level release message down to promote-ui f
   assert.match(raw, /expo_update_message:\s*\$\{\{\s*inputs\.release_message\s*\}\}/);
 });
 
-test('local release planning fetches branches plus immutable version tags without syncing rolling tags', async () => {
+test('local release planning delegates remote identity resolution without mutating refs', async () => {
   const run = await loadFile('scripts/pipeline/run.mjs');
 
   assert.match(
     run,
-    /execFileSync\(\s*'git',\s*\[\s*'fetch',\s*'origin',\s*'main',\s*'dev',\s*'preview',\s*'--prune',\s*'--no-tags'[\s\S]*?refs\/tags\/cli-v\*:refs\/tags\/cli-v\*[\s\S]*?refs\/tags\/stack-v\*:refs\/tags\/stack-v\*[\s\S]*?refs\/tags\/server-v\*:refs\/tags\/server-v\*[\s\S]*?refs\/tags\/ui-web-v\*:refs\/tags\/ui-web-v\*/,
-    'local release planning should fetch branches plus immutable version tags while avoiding rolling tag sync',
+    /import \{ resolveRemoteReleasePlanningRefs \} from '\.\/release\/lib\/release-planning-remote-refs\.mjs'/,
+    'release planning must use the canonical remote-ref resolver',
   );
+  assert.match(run, /resolveRemoteReleasePlanningRefs\(\{/);
   assert.doesNotMatch(
     run,
-    /const fetchTagsArg = dryRun \? '--no-tags' : '--tags';/,
-    'local release planning should not switch to --tags during mutating runs',
+    /execFileSync\(\s*'git',\s*\[\s*'fetch'[\s\S]*?--prune/,
+    'release planning must not restore the old ref-pruning fetch path',
   );
 });

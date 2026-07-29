@@ -6,6 +6,11 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runCliUpdateValidation } from '../pipeline/release-validation/executors/cli-update.mjs';
+import {
+  runBinarySmokeValidation,
+  runCandidateBinarySmoke,
+  runCandidateHostPayloadSmoke,
+} from '../pipeline/release-validation/executors/binary-smoke.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -111,7 +116,7 @@ test('release-validate resolves an installers-smoke published-tag dry-run reques
   });
 });
 
-test('release-validate resolves a local-build installers-smoke dry-run request when release-channel is provided', async () => {
+test('release-validate resolves an exact candidate installers-smoke dry-run request', async () => {
   const raw = execFileSync(
     process.execPath,
     [
@@ -123,9 +128,9 @@ test('release-validate resolves a local-build installers-smoke dry-run request w
       '--source',
       'local-build',
       '--ref',
-      '.',
+      'candidate/r447/candidate.json',
       '--release-channel',
-      'preview',
+      'dev',
       '--dry-run',
     ],
     {
@@ -144,7 +149,7 @@ test('release-validate resolves a local-build installers-smoke dry-run request w
     platform: 'linux',
     source: {
       kind: 'local-build',
-      ref: '.',
+      ref: 'candidate/r447/candidate.json',
     },
     update: null,
     execution: {
@@ -152,15 +157,64 @@ test('release-validate resolves a local-build installers-smoke dry-run request w
       plan: {
         platform: 'linux',
         tag: null,
-        installer: 'install-preview.sh',
-        binaryName: 'hprev',
-        releaseChannel: 'preview',
+        installer: 'install-dev.sh',
+        binaryName: 'hdev',
+        releaseChannel: 'publicdev',
+        candidateManifestPath: 'candidate/r447/candidate.json',
         installerEnv: {
           HAPPIER_WITH_DAEMON: '0',
         },
       },
     },
   });
+});
+
+test('release-validate plans released-dev to exact-candidate installer update and rollback', async () => {
+  const raw = execFileSync(
+    process.execPath,
+    [
+      scriptPath,
+      '--suite',
+      'installers-smoke',
+      '--platform',
+      'win32',
+      '--from-source',
+      'published-channel',
+      '--from-ref',
+      'dev',
+      '--to-source',
+      'local-build',
+      '--to-ref',
+      'candidate/r447/candidate.json',
+      '--release-channel',
+      'dev',
+      '--dry-run',
+    ],
+    {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: 30_000,
+    },
+  );
+  const parsed = JSON.parse(raw);
+  assert.equal(parsed.suite, 'installers-smoke');
+  assert.deepEqual(parsed.update, {
+    from: { kind: 'published-channel', ref: 'publicdev' },
+    to: { kind: 'local-build', ref: 'candidate/r447/candidate.json' },
+  });
+  assert.equal(parsed.execution.type, 'installers-smoke');
+  assert.equal(parsed.execution.plan.mode, 'update-rollback');
+  assert.deepEqual(parsed.execution.plan.lifecycleSteps, [
+    'predecessor-install',
+    'predecessor-version',
+    'candidate-update',
+    'candidate-version',
+    'rollback',
+    'rollback-version',
+    'candidate-reinstall',
+    'candidate-version',
+  ]);
 });
 
 test('release-validate resolves explicit from/to dry-run updates', async () => {
@@ -582,7 +636,8 @@ test('release-validate rejects invalid explicit artifact verify release channels
   );
 });
 
-test('release-validate plans the centralized binary smoke lane for local Linux builds', async () => {
+test('release-validate plans binary smoke against the exact supplied candidate on every native platform', async () => {
+  const platform = 'linux';
   const raw = execFileSync(
     process.execPath,
     [
@@ -590,11 +645,11 @@ test('release-validate plans the centralized binary smoke lane for local Linux b
       '--suite',
       'binary-smoke',
       '--platform',
-      'linux',
+      platform,
       '--source',
       'local-build',
       '--ref',
-      'HEAD',
+      'candidate/r447/candidate.json',
       '--dry-run',
     ],
     {
@@ -609,71 +664,175 @@ test('release-validate plans the centralized binary smoke lane for local Linux b
   assert.equal(parsed.ok, true);
   assert.equal(parsed.dryRun, true);
   assert.equal(parsed.suite, 'binary-smoke');
-  assert.equal(parsed.platform, 'linux');
+  assert.equal(parsed.platform, platform);
   assert.deepEqual(parsed.source, {
     kind: 'local-build',
-    ref: 'HEAD',
+    ref: 'candidate/r447/candidate.json',
   });
   assert.equal(parsed.update, null);
   assert.deepEqual(parsed.execution, {
-    type: 'commands',
-    steps: [
-      {
-        name: 'self-host-binary-smoke',
-        command: 'timeout',
-        args: [
-          '--signal=KILL',
-          '--kill-after=30s',
-          '25m',
-          process.execPath,
-          '--test',
-          resolve(repoRoot, 'apps', 'stack', 'scripts', 'self_host_binary_smoke.integration.test.mjs'),
-        ],
-        cwd: repoRoot,
-      },
-      {
-        name: 'release-binary-smoke',
-        command: 'timeout',
-        args: [
-          '--signal=KILL',
-          '--kill-after=30s',
-          '45m',
-          process.execPath,
-          '--test',
-          resolve(repoRoot, 'apps', 'stack', 'scripts', 'release_binary_smoke.integration.test.mjs'),
-        ],
-        cwd: repoRoot,
-      },
+    type: 'command',
+    command: process.execPath,
+    args: [
+      resolve(
+        repoRoot,
+        'scripts',
+        'pipeline',
+        'release-validation',
+        'executors',
+        'binary-smoke.mjs',
+      ),
+      '--candidate',
+      resolve(repoRoot, 'candidate/r447/candidate.json'),
     ],
+    cwd: repoRoot,
   });
+  for (const plannedPlatform of ['darwin', 'win32']) {
+    const platformRaw = execFileSync(
+      process.execPath,
+      [
+        scriptPath,
+        '--suite',
+        'binary-smoke',
+        '--platform',
+        plannedPlatform,
+        '--source',
+        'local-build',
+        '--ref',
+        'candidate/r447/candidate.json',
+        '--dry-run',
+      ],
+      {
+        cwd: repoRoot,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 30_000,
+      },
+    );
+    assert.equal(JSON.parse(platformRaw).platform, plannedPlatform);
+  }
 });
 
-test('release-validate rejects binary-smoke planning on non-linux platforms when GNU timeout is required', async () => {
+test('binary smoke rejects a requested platform that differs from its native host', () => {
+  const mismatchedPlatform = process.platform === 'linux' ? 'darwin' : 'linux';
   assert.throws(
-    () =>
-      execFileSync(
-        process.execPath,
-        [
-          scriptPath,
-          '--suite',
-          'binary-smoke',
-          '--platform',
-          'darwin',
-          '--source',
-          'local-build',
-          '--ref',
-          'HEAD',
-          '--dry-run',
-        ],
-        {
-          cwd: repoRoot,
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'pipe'],
-          timeout: 30_000,
-        },
-      ),
-    /binary-smoke currently supports only --platform linux/i,
+    () => runBinarySmokeValidation({
+      repoRoot,
+      platform: mismatchedPlatform,
+      source: {
+        kind: 'local-build',
+        ref: 'candidate/r447/candidate.json',
+      },
+    }),
+    /must run natively/i,
   );
+});
+
+test('binary smoke uses shared minisign and runs exact-candidate Voice/notarization host payload checks', async () => {
+  const calls = [];
+  const hostOs = process.platform === 'win32' ? 'windows' : process.platform;
+  const hostArchivePath =
+    `/candidate/native/happier-v1.2.3-${hostOs}-${process.arch}.tar.gz`;
+  await runCandidateBinarySmoke('/candidate/candidate.json', {
+    loadCandidateImpl: async () => ({
+      standaloneCli: {
+        archives: [
+          {
+            os: hostOs,
+            arch: process.arch,
+            archivePath: hostArchivePath,
+          },
+        ],
+        checksums: {
+          filePath: '/candidate/native/checksums-happier-v1.2.3.txt',
+        },
+        signature: {
+          filePath: '/candidate/native/checksums-happier-v1.2.3.txt.minisig',
+        },
+        notarization: hostOs === 'darwin'
+          ? [{
+              target: `${hostOs}-${process.arch}`,
+              evidence: {
+                filePath: `/candidate/native/${hostOs}-${process.arch}.cli.json`,
+              },
+            }]
+          : [],
+      },
+      installers: {
+        publicKey: {
+          filePath: '/candidate/installers/happier-release.pub',
+        },
+      },
+    }),
+    prepareMinisignEnvImpl: async () => ({
+      env: {
+        PATH: '/tmp/repository-minisign:/usr/bin',
+      },
+      cleanup: async () => {
+        calls.push('cleanup');
+      },
+    }),
+    execFileSyncImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+    },
+    runCandidateHostPayloadSmokeImpl: async (params) => {
+      calls.push({
+        kind: 'host-payload-smoke',
+        archivePath: params.archivePath,
+        notarizationEvidencePath:
+          params.notarizationEvidence?.filePath ?? null,
+      });
+    },
+  });
+  assert.equal(calls[0].options.env.PATH, '/tmp/repository-minisign:/usr/bin');
+  assert.deepEqual(calls[1], {
+    kind: 'host-payload-smoke',
+    archivePath: hostArchivePath,
+    notarizationEvidencePath: hostOs === 'darwin'
+      ? `/candidate/native/${hostOs}-${process.arch}.cli.json`
+      : null,
+  });
+  assert.deepEqual(calls.at(-1), 'cleanup');
+});
+
+test('candidate host payload smoke loads deferred Voice and verifies exact Darwin evidence', async () => {
+  const calls = [];
+  await runCandidateHostPayloadSmoke({
+    archivePath: '/candidate/native/happier-v1.2.3-darwin-x64.tar.gz',
+    archiveName: 'happier-v1.2.3-darwin-x64.tar.gz',
+    notarizationEvidence: {
+      filePath: '/candidate/native/darwin-x64.cli.json',
+    },
+    target: 'darwin-x64',
+    env: { PATH: '/usr/bin' },
+  }, {
+    extractArchivePayloadToDirectoryImpl: async ({ extractDir }) => {
+      const payloadRoot = resolve(extractDir, 'happier-v1.2.3-darwin-x64');
+      const loaderPath = resolve(
+        payloadRoot,
+        'scripts',
+        'runtime',
+        'loadVoiceInferenceRuntime.mjs',
+      );
+      mkdirSync(dirname(loaderPath), { recursive: true });
+      writeFileSync(loaderPath, 'export {};\n');
+    },
+    execFileSyncImpl: (command, args, options) => {
+      calls.push({ command, args, options });
+    },
+  });
+  assert.equal(calls.length, 2);
+  assert.equal(
+    calls[0].args[0].endsWith('/scripts/runtime/loadVoiceInferenceRuntime.mjs'),
+    true,
+  );
+  assert.deepEqual(calls[1].args.slice(-5), [
+    '--verify-evidence',
+    '--payload',
+    calls[0].options.cwd,
+    '--evidence',
+    '/candidate/native/darwin-x64.cli.json',
+  ]);
 });
 
 test('release-validate plans docker release-assets against a published channel through the centralized executor', async () => {

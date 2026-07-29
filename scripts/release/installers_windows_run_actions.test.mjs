@@ -61,12 +61,12 @@ test('install.ps1 applies setup-relay default relay-host arguments for both shor
   );
   assert.match(
     raw,
-    /function Filter-SetupRelayDefaultArgsByHelp[\s\S]*relay", "host", "install", "--help"/i,
+    /function Get-SupportedSetupRelayDefaultArgs[\s\S]*relay host install --help/i,
     'expected PowerShell installer to filter setup-relay defaults against relay host install help',
   );
   assert.match(
     invokePostInstallAction[0],
-    /Filter-SetupRelayDefaultArgsByHelp\s+-CliPath\s+\$CliPath\s+-DefaultArgs\s+\$setupRelayDefaultArgs/i,
+    /Get-SupportedSetupRelayDefaultArgs\s+-CliPath\s+\$CliPath/i,
     'expected PowerShell setup-relay invocation to filter unsupported default args before invoking older CLIs',
   );
 });

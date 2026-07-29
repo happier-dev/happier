@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { lstat, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -20,21 +20,31 @@ export function resolveHappyCliRuntimeInputGroups({
   cliDir,
   existsSyncImpl = existsSync,
 } = {}) {
-  const repoRoot = resolve(cliDir, '..', '..');
-  const runtimePackages = collectHappyCliRuntimePackageDirs({ cliDir, repoRoot });
+  const lexicalCliDir = resolve(cliDir);
+  let resolvedCliDir = lexicalCliDir;
+  try {
+    resolvedCliDir = realpathSync.native(lexicalCliDir);
+  } catch {
+    // Descriptor construction also supports not-yet-materialized fixture paths.
+  }
+  const repoRoot = resolve(resolvedCliDir, '..', '..');
+  const runtimePackages = collectHappyCliRuntimePackageDirs({
+    cliDir: resolvedCliDir,
+    repoRoot,
+  });
   const groups = [
     {
       id: 'daemon:cli',
       target: 'daemon',
       paths: [
-        join(cliDir, 'src'),
-        join(cliDir, 'bin'),
-        join(cliDir, 'codex'),
-        join(cliDir, 'scripts'),
-        join(cliDir, 'package.json'),
-        join(cliDir, 'tsconfig.json'),
-        join(cliDir, 'tsconfig.build.json'),
-        join(cliDir, 'pkgroll.config.mjs'),
+        join(resolvedCliDir, 'src'),
+        join(resolvedCliDir, 'bin'),
+        join(resolvedCliDir, 'codex'),
+        join(resolvedCliDir, 'scripts'),
+        join(resolvedCliDir, 'package.json'),
+        join(resolvedCliDir, 'tsconfig.json'),
+        join(resolvedCliDir, 'tsconfig.build.json'),
+        join(resolvedCliDir, 'pkgroll.config.mjs'),
       ],
     },
     {

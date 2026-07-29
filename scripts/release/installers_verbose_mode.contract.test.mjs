@@ -36,7 +36,7 @@ function assertInstallerVerboseMode(script, name) {
   // In verbose mode, do not suppress tar warnings (useful for diagnostics).
   assert.match(
     script,
-    /tar_extract_gz\(\)[\s\S]*if \[\[ "\$\{VERBOSE_MODE\}" == "1" \]\]; then\s+tar -xzf /,
+    /tar_extract_gz\(\)[\s\S]*if \[\[ "\$\{VERBOSE_MODE\}" == "1" \]\]; then\s+tar --no-same-owner -xzf /,
     `${name} tar_extract_gz should not filter in verbose mode`,
   );
 
@@ -46,6 +46,26 @@ function assertInstallerVerboseMode(script, name) {
     `${name} should keep TMP_DIR in verbose/debug mode`,
   );
 }
+
+test('installer extraction never restores archive-supplied uid or gid under root', async () => {
+  const installSh = await readFile(installShPath, 'utf8');
+  const functionStart = installSh.indexOf('tar_extract_gz() {');
+  const functionEnd = installSh.indexOf('\n}\n', functionStart);
+  assert.ok(functionStart >= 0 && functionEnd > functionStart, 'expected tar_extract_gz function');
+  const extractionFunction = installSh.slice(functionStart, functionEnd + 3);
+
+  const safeExtractions = extractionFunction.match(/tar --no-same-owner -xzf /g) ?? [];
+  assert.equal(
+    safeExtractions.length,
+    2,
+    'both verbose and filtered extraction paths must force process-owned files instead of archive ownership',
+  );
+  assert.doesNotMatch(
+    extractionFunction,
+    /(?:^|\s)tar -xzf /m,
+    'plain extraction would preserve archive uid/gid when the installer runs as root',
+  );
+});
 
 test('installers support a --verbose flag without enabling set -x', async () => {
   const installSh = await readFile(installShPath, 'utf8');

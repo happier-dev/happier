@@ -5,12 +5,83 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { pathToFileURL } from 'node:url';
 import { resolvePackedTarball } from '../npm/resolvePackedTarball.mjs';
 import { resolveInstalledBinPath } from './resolveInstalledBinPath.mjs';
+
+const EXPECTED_PROVIDER_PROJECTIONS = Object.freeze([
+  Object.freeze({
+    packageName: '@happier-dev/plugins-cliproxyapi',
+    pluginId: 'happier.provider.cliproxyapi',
+    localId: 'cliproxyapi',
+    providerId: 'cliproxyapi',
+  }),
+  Object.freeze({
+    packageName: '@happier-dev/plugins-deepseek',
+    pluginId: 'happier.provider.deepseek',
+    localId: 'deepseek',
+    providerId: 'deepseek',
+  }),
+  Object.freeze({
+    packageName: '@happier-dev/plugins-lmstudio',
+    pluginId: 'happier.provider.lmstudio',
+    localId: 'lmstudio',
+    providerId: 'lmstudio',
+  }),
+  Object.freeze({
+    packageName: '@happier-dev/plugins-ollama',
+    pluginId: 'happier.provider.ollama',
+    localId: 'ollama',
+    providerId: 'ollama',
+  }),
+  Object.freeze({
+    packageName: '@happier-dev/plugins-openai-models',
+    pluginId: 'happier.provider.openai',
+    localId: 'openai',
+    providerId: 'openai',
+  }),
+  Object.freeze({
+    packageName: '@happier-dev/plugins-openrouter',
+    pluginId: 'happier.provider.openrouter',
+    localId: 'openrouter',
+    providerId: 'openrouter',
+  }),
+  Object.freeze({
+    packageName: '@happier-dev/plugins-zai',
+    pluginId: 'happier.provider.zai',
+    localId: 'zai',
+    providerId: 'zai',
+  }),
+]);
+
+const EXPECTED_PROVIDER_MATERIALIZERS = Object.freeze([
+  Object.freeze({
+    agentId: 'claude',
+    packageName: '@happier-dev/plugins-claude',
+    protocol: 'anthropic',
+    materialization: 'spawnEnv',
+  }),
+  Object.freeze({
+    agentId: 'codex',
+    packageName: '@happier-dev/plugins-codex',
+    protocol: 'openai-responses',
+    materialization: 'engineConfig',
+  }),
+  Object.freeze({
+    agentId: 'opencode',
+    packageName: '@happier-dev/plugins-opencode',
+    protocol: 'openai-chat',
+    materialization: 'configFile',
+  }),
+]);
 
 function fail(message) {
   console.error(message);
   process.exit(1);
+}
+
+function assertSmoke(condition, message) {
+  if (!condition) throw new Error(message);
 }
 
 function asNonEmptyString(value) {
@@ -253,7 +324,9 @@ function npmPack(pkgDir, destDir, opts) {
       env: { ...process.env },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'inherit'],
-      timeout: 10 * 60_000,
+      // The helper first publishes the artifact closure and then gives npm pack its own bounded
+      // ten-minute budget. The parent must cover both stages instead of pre-empting a healthy pack.
+      timeout: 20 * 60_000,
     }).trim();
     const { tgzPath } = resolvePackedTarball(raw, {
       cwd: pkgDir,
@@ -304,7 +377,242 @@ function resolveInstalledBin(prefixDir) {
   fail(`Unable to locate installed CLI binary under prefix ${prefixDir} (looked for: happier)`);
 }
 
-function main() {
+function readJsonFile(filePath) {
+  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+}
+
+function resolveInstalledCliPackageRoot(prefixDir, binPath) {
+  const candidates = [];
+  try {
+    candidates.push(path.dirname(path.dirname(fs.realpathSync(binPath))));
+  } catch {
+    // The Windows npm command shim is not a symlink to the package bin entry.
+  }
+  candidates.push(
+    path.join(prefixDir, 'lib', 'node_modules', '@happier-dev', 'cli'),
+    path.join(prefixDir, 'node_modules', '@happier-dev', 'cli'),
+  );
+
+  for (const candidate of candidates) {
+    const packageJsonPath = path.join(candidate, 'package.json');
+    try {
+      if (readJsonFile(packageJsonPath).name === '@happier-dev/cli') return candidate;
+    } catch {
+      // Try the next npm global-prefix layout.
+    }
+  }
+  throw new Error(`Unable to locate the installed @happier-dev/cli package under ${prefixDir}`);
+}
+
+function findSingleGeneratedRegistryChunk(distDir) {
+  const matches = fs.readdirSync(distDir)
+    .filter((name) => /^createResolvedContributionRegistry-.*\.mjs$/.test(name));
+  assertSmoke(
+    matches.length === 1,
+    `Expected exactly one installed generated contribution-registry chunk, found ${matches.length}`,
+  );
+  return path.join(distDir, matches[0]);
+}
+
+function hasExactProperty(value, propertyName, seen = new Set()) {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null) return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Object.prototype.hasOwnProperty.call(value, propertyName)) return true;
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+    if ('value' in descriptor && hasExactProperty(descriptor.value, propertyName, seen)) return true;
+  }
+  return false;
+}
+
+function compareProviderProjection(left, right) {
+  const leftKey = `${left.pluginId}/${left.localId}`;
+  const rightKey = `${right.pluginId}/${right.localId}`;
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
+async function verifyInstalledProviderArtifact({ prefixDir, binPath, dryRun }) {
+  if (dryRun) {
+    console.log(`[dry-run] verify installed Provider artifact under ${prefixDir}`);
+    console.log('[dry-run] activate installed Agent plugins and materialize registered Provider bindings');
+    return;
+  }
+
+  const cliPackageRoot = resolveInstalledCliPackageRoot(prefixDir, binPath);
+  console.log(`[smoke] Installed CLI package root: ${cliPackageRoot}`);
+  const cliPackageJson = readJsonFile(path.join(cliPackageRoot, 'package.json'));
+  const dependencies = cliPackageJson.dependencies ?? {};
+  const bundledDependencies = new Set(cliPackageJson.bundledDependencies ?? []);
+
+  for (const provider of EXPECTED_PROVIDER_PROJECTIONS) {
+    assertSmoke(
+      Object.prototype.hasOwnProperty.call(dependencies, provider.packageName),
+      `Installed CLI dependency metadata is missing ${provider.packageName}`,
+    );
+    assertSmoke(
+      bundledDependencies.has(provider.packageName),
+      `Installed CLI bundledDependencies is missing ${provider.packageName}`,
+    );
+    const providerPackageRoot = path.join(cliPackageRoot, 'node_modules', ...provider.packageName.split('/'));
+    assertSmoke(
+      fs.statSync(path.join(providerPackageRoot, 'package.json')).isFile(),
+      `Installed CLI is missing bundled Provider package ${provider.packageName}`,
+    );
+    assertSmoke(
+      fs.statSync(path.join(providerPackageRoot, 'dist', 'manifest.js')).isFile(),
+      `Installed Provider package ${provider.packageName} is missing its compiled manifest`,
+    );
+    const providerManifestModule = await import(
+      pathToFileURL(path.join(providerPackageRoot, 'dist', 'manifest.js')).href
+    );
+    const providerManifest = providerManifestModule.PLUGIN_MANIFEST;
+    assertSmoke(
+      providerManifest?.id === provider.pluginId,
+      `Installed Provider package ${provider.packageName} has unexpected plugin id ${providerManifest?.id}`,
+    );
+    const contributedProviders = providerManifest.contributes?.providers ?? [];
+    assertSmoke(
+      contributedProviders.length === 1 && contributedProviders[0]?.id === provider.providerId,
+      `Installed Provider package ${provider.packageName} has unexpected Provider contributions`,
+    );
+  }
+
+  const registryChunk = findSingleGeneratedRegistryChunk(path.join(cliPackageRoot, 'dist'));
+  const registryModule = await import(pathToFileURL(registryChunk).href);
+  const getResolvedContributionRegistry = Object.values(registryModule).find((value) => (
+    typeof value === 'function' && value.name === 'getResolvedContributionRegistry'
+  ));
+  assertSmoke(
+    typeof getResolvedContributionRegistry === 'function',
+    'Installed generated registry chunk does not expose the CLI contribution projection owner',
+  );
+  const registry = getResolvedContributionRegistry();
+  const actualProviders = registry.providers.map((entry) => ({
+    packageName: EXPECTED_PROVIDER_PROJECTIONS.find((candidate) => (
+      candidate.pluginId === entry.pluginId && candidate.localId === entry.identity?.localId
+    ))?.packageName ?? null,
+    pluginId: entry.pluginId,
+    localId: entry.identity?.localId,
+    providerId: entry.definition?.id,
+  })).sort(compareProviderProjection);
+  const expectedProviders = [...EXPECTED_PROVIDER_PROJECTIONS].sort(compareProviderProjection);
+  assertSmoke(
+    JSON.stringify(actualProviders) === JSON.stringify(expectedProviders),
+    `Installed CLI Provider projection mismatch: ${JSON.stringify(actualProviders)}`,
+  );
+  assertSmoke(
+    registry.providers.every((entry) => (
+      entry.provenance === 'first_party' && entry.source?.kind === 'bundled'
+    )),
+    'Installed CLI Provider projection contains a non-bundled or non-first-party contribution',
+  );
+  assertSmoke(
+    !hasExactProperty(registry, 'providerSupport'),
+    'Installed CLI generated projection contains retired providerSupport output',
+  );
+
+  const installedPluginSdkTesting = await import(pathToFileURL(path.join(
+    cliPackageRoot,
+    'node_modules',
+    '@happier-dev',
+    'plugin-sdk',
+    'dist',
+    'testing',
+    'index.js',
+  )).href);
+  const createPluginTestkit = installedPluginSdkTesting.createPluginTestkit;
+  assertSmoke(
+    typeof createPluginTestkit === 'function',
+    'Installed CLI Plugin SDK testing surface does not expose createPluginTestkit',
+  );
+
+  for (const materializer of EXPECTED_PROVIDER_MATERIALIZERS) {
+    const agent = registry.agents.find((entry) => entry.id === materializer.agentId);
+    assertSmoke(agent, `Installed CLI projection is missing Agent ${materializer.agentId}`);
+    assertSmoke(
+      agent.definition?.providerRequirements?.materialization === materializer.materialization,
+      `Installed CLI Agent ${materializer.agentId} has stale providerRequirements`,
+    );
+    assertSmoke(
+      !Object.prototype.hasOwnProperty.call(agent.definition ?? {}, 'providerSupport'),
+      `Installed CLI Agent ${materializer.agentId} contains retired providerSupport output`,
+    );
+
+    const agentPackageRoot = path.join(
+      cliPackageRoot,
+      'node_modules',
+      ...materializer.packageName.split('/'),
+    );
+    assertSmoke(
+      fs.statSync(path.join(agentPackageRoot, 'package.json')).isFile(),
+      `Installed CLI is missing bundled Agent package ${materializer.packageName}`,
+    );
+    const agentPluginModule = await import(pathToFileURL(path.join(
+      agentPackageRoot,
+      'dist',
+      'index.js',
+    )).href);
+    assertSmoke(
+      typeof agentPluginModule.activate === 'function' && agentPluginModule.PLUGIN_MANIFEST,
+      `Installed ${materializer.agentId} plugin activation exports are unavailable`,
+    );
+
+    let activation = null;
+    try {
+      activation = await createPluginTestkit({
+        manifest: agentPluginModule.PLUGIN_MANIFEST,
+        module: { activate: agentPluginModule.activate },
+      });
+      const adapter = activation.registration('agents', materializer.agentId)?.providerBinding;
+      assertSmoke(
+        adapter?.v === 1,
+        `Installed ${materializer.agentId} activation did not register its Provider adapter`,
+      );
+
+      const agentTargetKey = `backend:${materializer.agentId}`;
+      const connectionId = 'pc_provider_artifact_smoke';
+      const prepared = adapter.prepare({ v: 1, agentTargetKey, connectionId });
+      const materialized = await adapter.materialize({
+        binding: {
+          v: 1,
+          agentTargetKey,
+          selection: {
+            connectionId,
+            model: { id: 'provider-artifact-smoke-model' },
+          },
+          contributionKey: null,
+          endpoint: {
+            endpointTemplateId: 'provider-artifact-smoke',
+            normalizedUrl: 'https://example.invalid/v1',
+            protocol: materializer.protocol,
+            publicHeaders: {},
+          },
+          runtimeCredentialTransport: null,
+          compatibilityFingerprint: 'provider-artifact-smoke',
+        },
+        prepared,
+        credential: { kind: 'none' },
+      });
+      assertSmoke(
+        prepared.materialization === materializer.materialization
+          && materialized?.kind === materializer.materialization,
+        `Installed ${materializer.agentId} Provider materializer returned an unexpected shape`,
+      );
+      assertSmoke(
+        JSON.stringify(materialized).includes('https://example.invalid/v1'),
+        `Installed ${materializer.agentId} Provider materializer did not consume the resolved endpoint`,
+      );
+    } finally {
+      await activation?.dispose();
+    }
+  }
+
+  console.log(
+    `[smoke] Installed Provider artifact verified: ${EXPECTED_PROVIDER_PROJECTIONS.length} projections/packages and ${EXPECTED_PROVIDER_MATERIALIZERS.length} materializers.`,
+  );
+}
+
+async function main() {
   const repoRoot = path.resolve(process.cwd());
   const { values } = parseArgs({
     options: {
@@ -350,6 +658,7 @@ function main() {
     fs.writeFileSync(npmUserConfigPath, '', 'utf8');
   }
   const tgzPath = npmPack(absPkgDir, packDir, opts);
+  console.log(`[smoke] Packed CLI artifact: ${tgzPath}`);
 
   run(opts, 'npm', [
     'install',
@@ -385,7 +694,10 @@ function main() {
     }
   }
 
+  run(opts, binPath, ['providers', '--help'], { cwd: repoRoot, env: baseEnv, stdio: ['ignore', 'pipe', 'inherit'], timeoutMs: 10_000 });
+  await verifyInstalledProviderArtifact({ prefixDir, binPath, dryRun: opts.dryRun });
+
   console.log('[smoke] CLI smoke test passed.');
 }
 
-main();
+await main();

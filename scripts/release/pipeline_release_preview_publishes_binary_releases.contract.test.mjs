@@ -9,7 +9,7 @@ import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './rel
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('release dev to preview dry-runs CLI binary releases without hstack release signoff', async () => {
+test('release dev to preview dry-run reports CLI and stack facts without predicting binary publisher jobs', async () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const out = execFileSync(
@@ -25,11 +25,7 @@ test('release dev to preview dry-runs CLI binary releases without hstack release
         'preview',
         '--deploy-targets',
         'cli,stack',
-        '--npm-mode',
-        'pack',
         '--dry-run',
-        '--secrets-source',
-        'env',
       ],
       {
         cwd: repoRoot,
@@ -45,9 +41,10 @@ test('release dev to preview dry-runs CLI binary releases without hstack release
     );
 
     assert.match(out, /\[pipeline\] rolling version suffix: preview\./);
-    assert.match(out, /\[pipeline\] dry-run: would run/);
-    assert.match(out, /- runPublishCliBinaries: true/);
-    assert.match(out, /- runPublishHstackBinaries: false/);
+    assert.match(out, /\[pipeline\] dry-run: hosted dispatch inputs/);
+    assert.match(out, /- deploy_targets: cli,stack/);
+    assert.match(out, /- publish_cli=true publish_stack=true/);
+    assert.doesNotMatch(out, /runPublishCliBinaries|runPublishHstackBinaries/);
   } finally {
     stub.cleanup();
   }

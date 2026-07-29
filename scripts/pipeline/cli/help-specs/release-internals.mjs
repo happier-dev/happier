@@ -113,7 +113,7 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
   'release-build-cli-binaries': {
     summary: 'Build CLI binary artifacts + minisign checksums (advanced helper).',
     usage:
-      `node scripts/pipeline/run.mjs release-build-cli-binaries --channel <${publicReleaseChannelChoices}> [--version <ver>] [--targets <csv>] [--externals <csv>]`,
+      `node scripts/pipeline/run.mjs release-build-cli-binaries --channel <${publicReleaseChannelChoices}> [--version <ver>] [--targets <csv>] [--externals <csv>] [--cliproxyapi-managed-runtime-executable <path>] [--macos-signing-identity <identity> --macos-notarization-output <path>]`,
     options: [
       '--deploy-environment <env>        Wrapper flag (default: production).',
       '--secrets-source <auto|env|keychain>  Wrapper flag.',
@@ -124,6 +124,9 @@ export const COMMAND_HELP_RELEASE_INTERNALS = {
       '--version <ver>                   Script flag; defaults to apps/cli package.json.',
       '--targets <csv>                   Script flag.',
       '--externals <csv>                 Script flag; bun externals.',
+      '--cliproxyapi-managed-runtime-executable <path>  Script flag; one prebuilt wrapper for one target.',
+      '--macos-signing-identity <identity>  Script flag; Developer ID identity for one Darwin target.',
+      '--macos-notarization-output <path>  Script flag; required with macOS signing identity.',
     ],
     bullets: ['Requires bun + minisign (for signatures).'],
     examples: ['node scripts/pipeline/run.mjs release-build-cli-binaries --channel preview --targets linux-x64,linux-arm64'],

@@ -202,6 +202,9 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       - name: Checkout source ref
         uses: actions/checkout@v4
@@ -209,6 +212,34 @@ jobs:
           ref: ${{ steps.resolve_source.outputs.ref }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
+
+      - name: Admit Qualified V4 npm CLI payload publication
+        if: inputs.publish_cli
+        env:
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          case "$RELEASE_CHANNEL" in
+            production|stable) deploy_environment="production" ;;
+            preview|dev) deploy_environment="preview" ;;
+            *) echo "Unsupported npm CLI release channel: $RELEASE_CHANNEL" >&2; exit 1 ;;
+          esac
+          deploy_branch="deploy/${deploy_environment}/server"
+          baseline_ref="refs/qualified-v4-payload-baseline"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
+          baseline_status=$?
+          set -e
+          case "$baseline_status" in
+            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
+            2) ;;
+            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
+          esac
+          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
+            --admission-kind payload-publication \
+            --baseline-ref "$baseline_ref" \
+            --candidate-ref HEAD \
+            --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -437,14 +468,6 @@ jobs:
             if [ "${INPUT_PUBLISH_SERVER}" = "true" ]; then
               echo "- server runner: \`${server_version}\`"
             fi
-            echo ""
-            echo "### GitHub Releases (mirror)"
-            echo ""
-            if [ "${INPUT_CHANNEL}" = "preview" ]; then
-              if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then echo "- \`cli-preview\` (rolling prerelease)"; fi
-            else
-              if [ "${INPUT_PUBLISH_CLI}" = "true" ]; then echo "- \`cli-v${cli_version}\`"; fi
-            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish-cli:
@@ -471,6 +494,36 @@ jobs:
         with:
           node-version: 22.x
           registry-url: https://registry.npmjs.org
+
+      - name: Re-admit Qualified V4 npm CLI payload publication
+        env:
+          CANDIDATE_SHA: ${{ needs.release.outputs.sha }}
+          RELEASE_CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$CANDIDATE_SHA"
+          git update-ref refs/qualified-v4-payload-candidate FETCH_HEAD
+          case "$RELEASE_CHANNEL" in
+            production|stable) deploy_environment="production" ;;
+            preview|dev) deploy_environment="preview" ;;
+            *) echo "Unsupported npm CLI release channel: $RELEASE_CHANNEL" >&2; exit 1 ;;
+          esac
+          deploy_branch="deploy/${deploy_environment}/server"
+          baseline_ref="refs/qualified-v4-payload-baseline"
+          set +e
+          git ls-remote --exit-code --heads origin "refs/heads/${deploy_branch}" >/dev/null
+          baseline_status=$?
+          set -e
+          case "$baseline_status" in
+            0) git fetch --no-tags origin "refs/heads/${deploy_branch}:${baseline_ref}" ;;
+            2) ;;
+            *) echo "Unable to resolve deployed server migration baseline ${deploy_branch}." >&2; exit "$baseline_status" ;;
+          esac
+          node scripts/release/qualified-connected-accounts-v4-activation-admission.mjs \
+            --admission-kind payload-publication \
+            --baseline-ref "$baseline_ref" \
+            --candidate-ref refs/qualified-v4-payload-candidate \
+            --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: npm publish (cli tarball) (pipeline)
         env:
@@ -548,61 +601,3 @@ jobs:
           node scripts/pipeline/run.mjs npm-publish \
             --channel "${{ inputs.channel }}" \
             --tarball-dir "dist/release-assets/server"
-
-  mirror-cli-stable:
-    if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}
-    needs: release
-    uses: ./.github/workflows/publish-github-release.yml
-    secrets: inherit
-    with:
-      tag: cli-v${{ needs.release.outputs.cli_version }}
-      title: Happier CLI v${{ needs.release.outputs.cli_version }}
-      target_sha: ${{ needs.release.outputs.sha }}
-      prerelease: false
-      rolling_tag: false
-      generate_notes: true
-      clobber: true
-      assets_artifact: npm-pack-cli
-      assets_artifact_path: dist/release-assets/cli
-      assets_dir: dist/release-assets/cli
-      release_message: ${{ inputs.release_message }}
-
-  mirror-cli-stable-rolling:
-    if: ${{ needs.release.outputs.channel == 'production' && needs.release.outputs.cli_version != 'SKIP' }}
-    needs: release
-    uses: ./.github/workflows/publish-github-release.yml
-    secrets: inherit
-    with:
-      tag: cli-stable
-      title: Happier CLI Stable
-      target_sha: ${{ needs.release.outputs.sha }}
-      prerelease: false
-      rolling_tag: true
-      generate_notes: false
-      notes: "Rolling stable build (npm dist-tag: latest)."
-      clobber: true
-      prune_assets: true
-      assets_artifact: npm-pack-cli
-      assets_artifact_path: dist/release-assets/cli
-      assets_dir: dist/release-assets/cli
-      release_message: ${{ inputs.release_message }}
-
-  mirror-cli-preview:
-    if: ${{ needs.release.outputs.channel == 'preview' && needs.release.outputs.cli_version != 'SKIP' }}
-    needs: release
-    uses: ./.github/workflows/publish-github-release.yml
-    secrets: inherit
-    with:
-      tag: cli-preview
-      title: Happier CLI Preview
-      target_sha: ${{ needs.release.outputs.sha }}
-      prerelease: true
-      rolling_tag: true
-      generate_notes: false
-      notes: "Rolling preview build (npm dist-tag: next)."
-      clobber: true
-      prune_assets: true
-      assets_artifact: npm-pack-cli
-      assets_artifact_path: dist/release-assets/cli
-      assets_dir: dist/release-assets/cli
-      release_message: ${{ inputs.release_message }}

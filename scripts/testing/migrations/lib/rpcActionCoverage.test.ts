@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { ACTION_SPEC_RPC_EXCEPTIONS } from '../../../../apps/cli/src/rpc/handlers/actionSpecRpcExceptions.ts';
 import { validateRpcActionCoverage } from './rpcActionCoverage.ts';
@@ -520,5 +520,38 @@ test('validateRpcActionCoverage rejects duplicate generic and exception ownershi
   assert.equal(
     result.errors.some((error) => error.code === 'duplicate-action-rpc-method-coverage'),
     true,
+  );
+});
+
+test('validateRpcActionCoverage accepts L76 action-bound RPC registry coverage', () => {
+  const result = validateRpcActionCoverage();
+  const l76Methods = new Set([
+    'plugins.permissions.grants.list',
+    'plugins.permissions.grants.request',
+    'plugins.permissions.grants.grant',
+    'plugins.permissions.grants.revoke',
+    'plugins.permissions.grants.dismissRequest',
+    'reviews.comments.create',
+    'reviews.comments.list',
+    'reviews.comments.get',
+    'reviews.comments.transition',
+    'reviews.comments.edit',
+    'reviews.comments.reply',
+    'reviews.comments.redact',
+    'reviews.comments.setDisposition',
+    'reviews.comments.attachEvidence',
+    'reviews.comments.bulkTransition',
+    SESSION_RPC_METHODS.SESSION_CHECKPOINT_CODE_ROLLBACK,
+  ]);
+
+  assert.deepEqual(
+    result.errors
+      .filter((error) => error.method && l76Methods.has(error.method))
+      .map((error) => ({
+        code: error.code,
+        actionId: error.actionId,
+        method: error.method,
+      })),
+    [],
   );
 });

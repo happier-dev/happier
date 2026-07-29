@@ -9,6 +9,14 @@ import YAML from 'yaml';
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 const workflowsDir = join(repoRoot, '.github', 'workflows');
+const reviewedCheckoutV4Uses = new Set([
+  'actions/checkout@v4',
+  'actions/checkout@11d5960a326750d5838078e36cf38b85af677262',
+]);
+const reviewedSetupNodeV4Uses = new Set([
+  'actions/setup-node@v4',
+  'actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020',
+]);
 
 /**
  * @param {unknown} value
@@ -67,18 +75,23 @@ test('workflows running pipeline scripts check out code and set up Node first', 
       const firstPipelineIndex = Math.min(...pipelineStepIndexes);
       const prereqSteps = steps.slice(0, firstPipelineIndex).filter(isStepLike);
 
-      const hasCheckout = prereqSteps.some((step) => typeof step.uses === 'string' && step.uses.includes('actions/checkout@v4'));
-      const hasSetupNode = prereqSteps.some((step) => typeof step.uses === 'string' && step.uses.includes('actions/setup-node@v4'));
+      const hasCheckout = prereqSteps.some(
+        (step) => typeof step.uses === 'string'
+          && reviewedCheckoutV4Uses.has(step.uses),
+      );
+      const hasSetupNode = prereqSteps.some(
+        (step) => typeof step.uses === 'string'
+          && reviewedSetupNodeV4Uses.has(step.uses),
+      );
 
       assert.ok(
         hasCheckout,
-        `${file} job '${jobId}' runs pipeline scripts but does not run actions/checkout@v4 before the first pipeline step`,
+        `${file} job '${jobId}' runs pipeline scripts but does not run the reviewed actions/checkout v4 action before the first pipeline step`,
       );
       assert.ok(
         hasSetupNode,
-        `${file} job '${jobId}' runs pipeline scripts but does not run actions/setup-node@v4 before the first pipeline step`,
+        `${file} job '${jobId}' runs pipeline scripts but does not run the reviewed actions/setup-node v4 action before the first pipeline step`,
       );
     }
   }
 });
-

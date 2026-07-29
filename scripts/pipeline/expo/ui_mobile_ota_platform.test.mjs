@@ -18,8 +18,8 @@ test('ui-mobile OTA forwards platform and splits all-platform fingerprint runtim
   assert.match(runSrc, /runExpoOtaUpdate[\s\S]*'--platform'[\s\S]*platform/);
   assert.match(runSrc, /const otaPlatforms = platform === 'all' \? \['android', 'ios'\] : \[platform\]/);
   assert.match(runSrc, /runtimeVersion && platform === 'all'/);
-  assert.match(runSrc, /uiExpoAction === 'ota'[\s\S]*const platforms = uiExpoPlatform === 'all' \? \['android', 'ios'\] : \[uiExpoPlatform\]/);
-  assert.match(runSrc, /uiExpoAction === 'ota'[\s\S]*'--platform'[\s\S]*p/);
+  assert.match(runSrc, /if \(action === 'ota'\)[\s\S]*const otaPlatforms = platform === 'all' \? \['android', 'ios'\] : \[platform\]/);
+  assert.match(runSrc, /if \(action === 'ota'\)[\s\S]*'--platform'[\s\S]*otaPlatform/);
 
   assert.match(otaSrc, /platform:\s*\{\s*type:\s*'string'/);
   assert.match(otaSrc, /fingerprint:generate[\s\S]*'--platform'[\s\S]*platform[\s\S]*'--build-profile'/);

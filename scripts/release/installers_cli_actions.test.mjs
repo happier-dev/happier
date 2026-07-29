@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -217,6 +217,55 @@ exit 0
   await rm(root, { recursive: true, force: true });
 });
 
+test('install.sh --uninstall does not deadlock when the managed install root is absent', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-uninstall-absent-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'missing-install-home');
+  const outBinDir = join(root, 'out-bin');
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    '#!/usr/bin/env bash\necho "curl should not run in --uninstall" >&2\nexit 88\n',
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_CHANNEL: 'stable',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_WITH_DAEMON: '0',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--uninstall'], {
+    env,
+    encoding: 'utf8',
+    timeout: 2_000,
+  });
+  assert.equal(
+    res.status,
+    0,
+    `absent-root uninstall failed or deadlocked:\n${String(res.stdout ?? '')}\n${String(res.stderr ?? '')}`,
+  );
+  await assert.rejects(stat(join(installDir, 'cli')), { code: 'ENOENT' });
+  await assert.rejects(stat(join(outBinDir, 'happier')), { code: 'ENOENT' });
+
+  await rm(root, { recursive: true, force: true });
+});
+
 test('install.sh --rollback restores the previous CLI version without network or current binary execution', async () => {
   const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-'));
   const homeDir = join(root, 'home');
@@ -296,6 +345,268 @@ exit 0
   assert.equal((await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(), previousVersion);
   assert.equal((await readFile(join(cliRoot, 'previous.version'), 'utf8')).trim(), currentVersion);
   assert.equal(await readFile(tracePath, 'utf8').catch(() => ''), '', 'expected rollback to avoid invoking the broken current binary');
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh --rollback restores the original pointers and markers when publication fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-failure-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  const cliRoot = join(installDir, 'cli');
+  const currentVersion = '2.0.0';
+  const previousVersion = '1.2.3';
+  const lnInvocationCountPath = join(root, 'ln-invocation-count');
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', currentVersion), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', previousVersion), { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+
+  for (const version of [currentVersion, previousVersion]) {
+    const binaryPath = join(cliRoot, 'versions', version, 'happier');
+    await writeFile(binaryPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+    await chmod(binaryPath, 0o755);
+  }
+  await symlink(`versions/${currentVersion}`, join(cliRoot, 'current'));
+  await symlink(`versions/${previousVersion}`, join(cliRoot, 'previous'));
+  await writeFile(join(cliRoot, 'current.version'), `${currentVersion}\n`, 'utf8');
+  await writeFile(join(cliRoot, 'previous.version'), `${previousVersion}\n`, 'utf8');
+
+  const lnStubPath = join(binDir, 'ln');
+  await writeFile(
+    lnStubPath,
+    `#!/usr/bin/env bash
+set -euo pipefail
+count=0
+if [[ -f ${JSON.stringify(lnInvocationCountPath)} ]]; then
+  count="$(cat ${JSON.stringify(lnInvocationCountPath)})"
+fi
+count=$((count + 1))
+printf '%s\\n' "$count" > ${JSON.stringify(lnInvocationCountPath)}
+if [[ "$count" = "2" ]]; then
+  exit 73
+fi
+exec /bin/ln "$@"
+`,
+    'utf8',
+  );
+  await chmod(lnStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_CHANNEL: 'stable',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--rollback'], { env, encoding: 'utf8' });
+  assert.notEqual(res.status, 0, 'expected injected previous-pointer publication failure');
+  assert.equal((await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(), currentVersion);
+  assert.equal((await readFile(join(cliRoot, 'previous.version'), 'utf8')).trim(), previousVersion);
+  assert.equal(
+    String(spawnSync('readlink', [join(cliRoot, 'current')], { encoding: 'utf8' }).stdout ?? '').trim(),
+    `versions/${currentVersion}`,
+  );
+  assert.equal(
+    String(spawnSync('readlink', [join(cliRoot, 'previous')], { encoding: 'utf8' }).stdout ?? '').trim(),
+    `versions/${previousVersion}`,
+  );
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh --rollback replaces a legacy physical current payload without leaving divergent previous state', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-legacy-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  const cliRoot = join(installDir, 'cli');
+  const previousVersion = '1.2.3';
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(cliRoot, 'current'), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', previousVersion), { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+  await writeFile(join(cliRoot, 'current', 'happier'), 'legacy-current', 'utf8');
+  const previousBinaryPath = join(cliRoot, 'versions', previousVersion, 'happier');
+  await writeFile(previousBinaryPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  await chmod(previousBinaryPath, 0o755);
+  await symlink(`versions/${previousVersion}`, join(cliRoot, 'previous'));
+  await writeFile(join(cliRoot, 'previous.version'), `${previousVersion}\n`, 'utf8');
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_CHANNEL: 'stable',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+
+  const res = spawnSync('bash', [installerPath, '--rollback'], { env, encoding: 'utf8' });
+  assert.equal(res.status, 0, `legacy rollback failed:\n${String(res.stdout ?? '')}\n${String(res.stderr ?? '')}`);
+  assert.equal(
+    String(spawnSync('readlink', [join(cliRoot, 'current')], { encoding: 'utf8' }).stdout ?? '').trim(),
+    `versions/${previousVersion}`,
+  );
+  assert.equal((await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(), previousVersion);
+  await assert.rejects(readFile(join(cliRoot, 'previous.version'), 'utf8'), { code: 'ENOENT' });
+  assert.equal(
+    spawnSync('bash', ['-lc', `test ! -e "${join(cliRoot, 'previous').replaceAll('"', '\\"')}"`]).status,
+    0,
+  );
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh --rollback waits for the shared first-party payload mutation lock before reading markers', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-rollback-lock-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  const cliRoot = join(installDir, 'cli');
+  const currentVersion = '2.0.0';
+  const previousVersion = '1.2.3';
+  const lockPath = `${cliRoot}.mutation.lock`;
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(installDir, 'bin'), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', currentVersion), { recursive: true });
+  await mkdir(join(cliRoot, 'versions', previousVersion), { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+  for (const version of [currentVersion, previousVersion]) {
+    const binaryPath = join(cliRoot, 'versions', version, 'happier');
+    await writeFile(binaryPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+    await chmod(binaryPath, 0o755);
+  }
+  await symlink(`versions/${currentVersion}`, join(cliRoot, 'current'));
+  await symlink(`versions/${previousVersion}`, join(cliRoot, 'previous'));
+  await writeFile(join(cliRoot, 'current.version'), `${currentVersion}\n`, 'utf8');
+  await writeFile(join(cliRoot, 'previous.version'), `${previousVersion}\n`, 'utf8');
+  await mkdir(lockPath);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_CHANNEL: 'stable',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+  };
+  const child = spawn('bash', [installerPath, '--rollback'], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const stdout = [];
+  const stderr = [];
+  child.stdout.on('data', (chunk) => stdout.push(String(chunk)));
+  child.stderr.on('data', (chunk) => stderr.push(String(chunk)));
+  const exitPromise = new Promise((resolveExit) => child.once('exit', resolveExit));
+
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 400));
+  assert.equal(
+    (await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(),
+    currentVersion,
+    'rollback mutated state before the shared lock was released',
+  );
+  await rm(lockPath, { recursive: true, force: true });
+  const exitCode = await exitPromise;
+  assert.equal(exitCode, 0, `locked rollback failed:\n${stdout.join('')}\n${stderr.join('')}`);
+  assert.equal((await readFile(join(cliRoot, 'current.version'), 'utf8')).trim(), previousVersion);
+
+  await rm(root, { recursive: true, force: true });
+});
+
+test('install.sh --uninstall waits for the shared first-party payload mutation lock before removing payload and shim', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-installer-cli-uninstall-lock-'));
+  const homeDir = join(root, 'home');
+  const binDir = join(root, 'bin');
+  const installDir = join(root, 'install');
+  const outBinDir = join(root, 'out-bin');
+  const cliRoot = join(installDir, 'cli');
+  const lockPath = `${cliRoot}.mutation.lock`;
+  const happierPath = join(cliRoot, 'current', 'happier');
+  const shimPath = join(outBinDir, 'happier');
+
+  await mkdir(homeDir, { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await mkdir(join(cliRoot, 'current'), { recursive: true });
+  await mkdir(outBinDir, { recursive: true });
+  await writeFile(happierPath, '#!/usr/bin/env bash\nexit 0\n', 'utf8');
+  await chmod(happierPath, 0o755);
+  await symlink(happierPath, shimPath);
+  await mkdir(lockPath);
+
+  const curlStubPath = join(binDir, 'curl');
+  await writeFile(
+    curlStubPath,
+    '#!/usr/bin/env bash\necho "curl should not run in --uninstall" >&2\nexit 88\n',
+    'utf8',
+  );
+  await chmod(curlStubPath, 0o755);
+
+  const installerPath = join(repoRoot, 'scripts', 'release', 'installers', 'install.sh');
+  const env = {
+    ...process.env,
+    HOME: homeDir,
+    SHELL: '/bin/bash',
+    PATH: `${binDir}:/usr/bin:/bin:/usr/sbin:/sbin`,
+    HAPPIER_PRODUCT: 'cli',
+    HAPPIER_CHANNEL: 'stable',
+    HAPPIER_INSTALL_DIR: installDir,
+    HAPPIER_BIN_DIR: outBinDir,
+    HAPPIER_NONINTERACTIVE: '1',
+    HAPPIER_WITH_DAEMON: '0',
+  };
+  const child = spawn('bash', [installerPath, '--uninstall'], {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const stdout = [];
+  const stderr = [];
+  child.stdout.on('data', (chunk) => stdout.push(String(chunk)));
+  child.stderr.on('data', (chunk) => stderr.push(String(chunk)));
+  const exitPromise = new Promise((resolveExit) => child.once('exit', resolveExit));
+
+  await new Promise((resolveDelay) => setTimeout(resolveDelay, 400));
+  assert.equal(
+    (await stat(cliRoot)).isDirectory(),
+    true,
+    'uninstall removed the payload before the shared lock was released',
+  );
+  assert.equal(
+    (await stat(shimPath)).isFile(),
+    true,
+    'uninstall removed the shim before the shared lock was released',
+  );
+
+  await rm(lockPath, { recursive: true, force: true });
+  const exitCode = await exitPromise;
+  assert.equal(exitCode, 0, `locked uninstall failed:\n${stdout.join('')}\n${stderr.join('')}`);
+  await assert.rejects(stat(cliRoot), { code: 'ENOENT' });
+  await assert.rejects(stat(shimPath), { code: 'ENOENT' });
+  await assert.rejects(stat(lockPath), { code: 'ENOENT' });
 
   await rm(root, { recursive: true, force: true });
 });

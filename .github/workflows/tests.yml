@@ -152,6 +152,82 @@ env:
   HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
 
 jobs:
+  cliproxyapi-managed-runtime:
+    name: CLIProxyAPI managed runtime (${{ matrix.platform_key }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform_key: linux-amd64
+            runner: ubuntu-24.04
+            go_target: linux-amd64
+            wrapper_name: happier-cliproxyapi-managed
+          - platform_key: darwin-arm64
+            runner: macos-15
+            go_target: darwin-arm64
+            wrapper_name: happier-cliproxyapi-managed
+          - platform_key: windows-amd64
+            runner: windows-2025
+            go_target: windows-amd64
+            wrapper_name: happier-cliproxyapi-managed.exe
+          - platform_key: windows-arm64
+            runner: windows-2025
+            go_target: windows-arm64
+            wrapper_name: happier-cliproxyapi-managed.exe
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+
+      - name: Enable Corepack
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+
+      - name: Setup pinned Go toolchain and module cache
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: packages/plugins/cliproxyapi/managed-runtime/go.mod
+          cache: true
+          cache-dependency-path: packages/plugins/cliproxyapi/managed-runtime/go.sum
+
+      - name: Run retained source conformance
+        shell: bash
+        working-directory: packages/plugins/cliproxyapi/managed-runtime
+        run: |
+          set -euo pipefail
+          go vet ./...
+          go test ./...
+
+      - name: Run Linux race and reachable vulnerability checks
+        if: matrix.platform_key == 'linux-amd64'
+        shell: bash
+        working-directory: packages/plugins/cliproxyapi/managed-runtime
+        run: |
+          set -euo pipefail
+          go test -race -count=1 ./...
+          go tool govulncheck ./...
+
+      - name: Build target through the one package-owned definition
+        shell: bash
+        env:
+          HAPPIER_VERSION: 0.0.0-ci
+          WRAPPER_NAME: ${{ matrix.wrapper_name }}
+        run: |
+          set -euo pipefail
+          node -e 'const fs=require("fs");const path=require("path");fs.appendFileSync(process.env.GITHUB_ENV,`WRAPPER_PATH=${path.join(process.env.RUNNER_TEMP,process.env.WRAPPER_NAME)}\n`)'
+          yarn workspace @happier-dev/plugins-cliproxyapi managed-runtime:build \
+            --target "${{ matrix.go_target }}" \
+            --output "${RUNNER_TEMP}/${WRAPPER_NAME}"
+          node -e 'const fs=require("fs");if(!fs.statSync(process.argv[1]).isFile())process.exit(1)' "${RUNNER_TEMP}/${WRAPPER_NAME}"
+
   ui-e2e:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || (github.event_name == 'workflow_call' && inputs.run_ui_e2e) }}
     name: UI E2E (Playwright)
@@ -490,11 +566,8 @@ jobs:
           yarn workspace @happier-dev/plugin-ui test
           yarn --cwd packages/relay-server test
 
-      - name: Run public plugin SDK freeze gates
-        run: |
-          bash .project/plans/runtime-unification-v2/_validation/verify-sdk-freeze-gate.sh .
-          bash .project/plans/runtime-unification-v2/_validation/verify-sdk-product-readiness.sh .
-          yarn workspace @happier-dev/tests test:plugin-sdk-consumers:all
+      - name: Run public plugin SDK consumer contracts
+        run: yarn workspace @happier-dev/tests test:plugin-sdk-consumers:all
 
   server:
     if: ${{ (github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call') || inputs.run_server }}

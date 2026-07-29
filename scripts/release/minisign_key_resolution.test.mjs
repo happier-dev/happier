@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { prepareMinisignSecretKeyFile } from '../pipeline/release/lib/binary-release.mjs';
+import { prepareMinisignSecretKeyFile } from '../pipeline/release/lib/minisign-secret-key.mjs';
 
 test('prepareMinisignSecretKeyFile accepts existing key path', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'happier-minisign-key-path-'));

@@ -14,7 +14,7 @@ export type LaneId =
   | 'test:e2e:ui:wsrepl:lima'
   | 'test:e2e:ui:wsrepl:lima:self'
   | 'test:e2e:mobile'
-  | 'test:providers'
+  | 'test:agents'
   | 'test:stress'
   | 'stack:test:unit'
   | 'stack:test:integration'
@@ -78,7 +78,7 @@ export const TEST_LANE_DEFINITIONS: readonly TestLaneDefinition[] = Object.freez
     packageLocalOnly: false,
   },
   { id: 'test:e2e:mobile', category: 'e2e', rootScriptName: 'test:e2e:mobile', rootCommand: 'yarn test:e2e:mobile', packageLocalOnly: false },
-  { id: 'test:providers', category: 'provider', rootScriptName: 'test:providers', rootCommand: 'yarn test:providers', packageLocalOnly: false },
+  { id: 'test:agents', category: 'provider', rootScriptName: 'test:agents', rootCommand: 'yarn test:agents', packageLocalOnly: false },
   { id: 'test:stress', category: 'stress', rootScriptName: 'test:stress', rootCommand: 'yarn test:stress', packageLocalOnly: false },
   { id: 'stack:test:unit', category: 'unit', rootScriptName: null, rootCommand: null, packageLocalOnly: true },
   { id: 'stack:test:integration', category: 'integration', rootScriptName: null, rootCommand: null, packageLocalOnly: true },
@@ -160,7 +160,7 @@ export function classifyTestFile(relativePath: string): LaneId | null {
       return 'test:e2e:ui:wsrepl:lima:self';
     }
     if (relativePath.includes('/suites/ui-e2e/')) return /\.spec\.ts$/.test(relativePath) ? 'test:e2e:ui' : null;
-    if (relativePath.includes('/suites/providers/')) return /\.test\.ts$/.test(relativePath) ? 'test:providers' : null;
+    if (relativePath.includes('/suites/agents/')) return /\.test\.ts$/.test(relativePath) ? 'test:agents' : null;
     if (relativePath.includes('/suites/stress/')) return /\.test\.ts$/.test(relativePath) ? 'test:stress' : null;
     if (relativePath.includes('/suites/core-e2e/')) {
       if (/\.slow\.e2e\.test\.ts$/.test(relativePath)) return 'test:e2e:core:slow';
@@ -188,8 +188,8 @@ export function collectLaneIssues(relativePath: string): string[] {
     issues.push('UI E2E tests must use *.spec.ts under packages/tests/suites/ui-e2e.');
   }
 
-  if (relativePath.startsWith('packages/tests/suites/providers/') && !/\.test\.ts$/.test(relativePath)) {
-    issues.push('Provider suite files must use *.test.ts under packages/tests/suites/providers.');
+  if (relativePath.startsWith('packages/tests/suites/agents/') && !/\.test\.ts$/.test(relativePath)) {
+    issues.push('Provider suite files must use *.test.ts under packages/tests/suites/agents.');
   }
 
   if (relativePath.startsWith('packages/tests/suites/stress/') && !/\.test\.ts$/.test(relativePath)) {

@@ -686,7 +686,7 @@ run_relay_upgrade_smoke() {
   if ! docker image inspect "$to_image" >/dev/null 2>&1; then
     echo "[npm-e2e-smoke] building local relay-server image for upgrade: $to_image" >&2
     docker build \
-      --target relay-server \
+      --target relay-server-local-source \
       --tag "$to_image" \
       --build-arg "HAPPIER_EMBEDDED_POLICY_ENV=preview" \
       "$repo_root" \

@@ -373,6 +373,29 @@ test('npm-e2e-smoke local mode prepares a local linux server binary for remote s
   );
 });
 
+test('npm-e2e-smoke local relay upgrade builds the explicit local-source relay image target', async () => {
+  const runnerPath = join(smokeDir, 'run.sh');
+  const dockerfilePath = join(repoRoot, 'Dockerfile');
+  const runnerRaw = await readFile(runnerPath, 'utf8');
+  const dockerfileRaw = await readFile(dockerfilePath, 'utf8');
+
+  assert.match(
+    runnerRaw,
+    /--target relay-server-local-source/,
+    'expected local relay-upgrade smoke to build a source-backed local relay image, not the artifact-based production relay target',
+  );
+  assert.match(
+    dockerfileRaw,
+    /FROM server AS relay-server-local-source/,
+    'expected Dockerfile to expose an explicit source-backed relay target for local candidate upgrade QA',
+  );
+  assert.match(
+    dockerfileRaw,
+    /COPY --from=webapp-builder[\s\S]+\/repo\/apps\/ui\/dist[\s\S]+\/opt\/happier\/ui-web/,
+    'expected local-source relay target to embed the locally built web UI',
+  );
+});
+
 test('npm-e2e-smoke remote server smoke forwards canonical server binary override to hstack remote setup', async () => {
   const remoteServerSmokePath = join(smokeDir, 'bin', 'remote-server-smoke.sh');
   const raw = await readFile(remoteServerSmokePath, 'utf8');
@@ -618,6 +641,18 @@ test('build-server-binaries stages Prisma postgres engine files for packaged ser
   );
 });
 
+test('build-server-binaries prepares ui-web exactly once before its multi-target loop', async () => {
+  const buildScriptPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-server-binaries.mjs');
+  const raw = await readFile(buildScriptPath, 'utf8');
+  const prepareMatches = raw.match(/await prepareUiWebDist\s*\(/g) ?? [];
+  const prepareIndex = raw.indexOf('await prepareUiWebDist');
+  const targetLoopIndex = raw.indexOf('for (const target of targets)');
+
+  assert.equal(prepareMatches.length, 1, 'expected exactly one ui-web preparation per server binary build');
+  assert.ok(prepareIndex >= 0 && prepareIndex < targetLoopIndex, 'expected ui-web preparation before the multi-target loop');
+  assert.match(raw, /buildServerBinaryArtifactPayload\s*\(\s*\{[\s\S]*?\buiWebDistPath\b/);
+});
+
 test('release binary scripts load cli-common artifact builders through the lazy dist loader', async () => {
   const cliBuildPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-cli-binaries.mjs');
   const serverBuildPath = join(repoRoot, 'scripts', 'pipeline', 'release', 'build-server-binaries.mjs');
@@ -639,8 +674,8 @@ test('release binary scripts load cli-common artifact builders through the lazy 
   );
   assert.match(
     binaryReleaseLibRaw,
-    /loadCliCommonDistModule/,
-    'expected binary-release helpers to lazy-load cli-common dist modules on demand'
+    /loadCliCommonDistModule\(\{[\s\S]*?\bforce:\s*true,[\s\S]*?\}\)/,
+    'expected binary-release helpers to force-admit cli-common before loading artifact helpers'
   );
   assert.match(
     binaryReleaseLibRaw,

@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
+  createDeterministicArchive,
   resolveArchiveBackend,
   resolveNodeArchiveExecutionTimeoutMs,
   resolveGzipExecutionTimeoutMs,
@@ -114,12 +119,52 @@ test('resolveArchiveBackend defaults to node backend on windows', () => {
   }), 'node');
 });
 
-test('resolveArchiveBackend defaults to tar backend on non-windows platforms', () => {
+test('resolveArchiveBackend defaults to deterministic platform backends', () => {
+  assert.equal(resolveArchiveBackend({
+    platform: 'darwin',
+    archiveStats: { totalBytes: 1_042_587_949, fileCount: 26_726 },
+    env: {},
+  }), 'node');
   assert.equal(resolveArchiveBackend({
     platform: 'linux',
     archiveStats: { totalBytes: 1_042_587_949, fileCount: 26_726 },
     env: {},
   }), 'tar');
+});
+
+test('createDeterministicArchive produces identical bytes when source mtimes differ', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-release-archive-mtime-'));
+  const previousArchiveBackend = process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND;
+  process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND = 'node';
+  try {
+    const archives = [];
+    for (const [index, timestamp] of [1_000, 2_000].entries()) {
+      const sourcePath = join(root, `source-${index}`);
+      const payloadPath = join(sourcePath, 'payload');
+      const filePath = join(payloadPath, 'example.txt');
+      const artifactPath = join(root, `archive-${index}.tar.gz`);
+      await mkdir(payloadPath, { recursive: true });
+      await writeFile(filePath, 'identical payload\n', 'utf8');
+      const date = new Date(timestamp * 1_000);
+      await utimes(filePath, date, date);
+      await utimes(payloadPath, date, date);
+      await createDeterministicArchive({
+        artifactPath,
+        sourcePath,
+        sourceName: 'payload',
+      });
+      const bytes = await readFile(artifactPath);
+      archives.push(createHash('sha256').update(bytes).digest('hex'));
+    }
+    assert.equal(archives[0], archives[1]);
+  } finally {
+    if (previousArchiveBackend == null) {
+      delete process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND;
+    } else {
+      process.env.HAPPIER_RELEASE_ARCHIVE_BACKEND = previousArchiveBackend;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('resolveArchiveBackend honors explicit backend override', () => {

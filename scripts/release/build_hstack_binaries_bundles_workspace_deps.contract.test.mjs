@@ -15,7 +15,7 @@ test('build-hstack-binaries prepares bundled workspace dependencies before compi
   assert.match(src, /bundleWorkspaceDeps/, 'expected build-hstack-binaries to import bundled workspace preparation');
   assert.match(
     src,
-    /await bundleWorkspaceDeps\(\{\s*repoRoot,\s*stackDir:\s*join\(repoRoot,\s*'apps',\s*'stack'\)\s*\}\)/,
-    'expected build-hstack-binaries to prepare apps/stack bundled workspace deps before bun compile',
+    /await bundleWorkspaceDeps\(\{\s*repoRoot,\s*stackDir:\s*join\(repoRoot,\s*'apps',\s*'stack'\),\s*publicationMode:\s*'artifact',\s*\}\)/,
+    'expected build-hstack-binaries to force-admit apps/stack bundled workspace deps before bun compile',
   );
 });

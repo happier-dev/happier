@@ -23,6 +23,10 @@ import {
 } from './parse-json-from-command-output.mjs';
 import { normalizeInteractiveOverride, resolveExpoInteractivity } from './resolve-expo-interactivity.mjs';
 import {
+  createNativeBuildLogRedactor,
+  formatNativeBuildCommand,
+} from './native-build-log-redaction.mjs';
+import {
   normalizeMobileReleaseEnvironment,
   normalizeMobileReleaseProfile,
   resolveMobileBuildNodeEnvironment,
@@ -147,7 +151,7 @@ function parseBool(value, name) {
  */
 function run(opts, cmd, args, extra) {
   const cwd = extra?.cwd ? path.resolve(extra.cwd) : process.cwd();
-  const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')}`;
+  const printable = formatNativeBuildCommand(cmd, args);
   if (opts.dryRun) {
     console.log(`[dry-run] (cwd: ${cwd}) ${printable}`);
     return '';
@@ -201,7 +205,7 @@ function isIgnorableEasLocalCleanupFailure({ error, artifactPath }) {
  */
 function runCaptureWithHeartbeat(opts, cmd, args, extra) {
   const cwd = extra?.cwd ? path.resolve(extra.cwd) : process.cwd();
-  const printable = `${cmd} ${args.map((a) => (a.includes(' ') ? JSON.stringify(a) : a)).join(' ')}`;
+  const printable = formatNativeBuildCommand(cmd, args);
   if (opts.dryRun) {
     console.log(`[dry-run] (cwd: ${cwd}) ${printable}`);
     return Promise.resolve('');
@@ -220,6 +224,24 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
     let lastOutputAt = Date.now();
     let stdout = '';
     let stderr = '';
+    const stdoutRedactor = createNativeBuildLogRedactor();
+    const stderrRedactor = createNativeBuildLogRedactor();
+
+    /**
+     * @param {'stdout' | 'stderr'} stream
+     * @param {string} text
+     */
+    const recordOutput = (stream, text) => {
+      if (!text) return;
+      if (stream === 'stdout') {
+        stdout += text;
+        if (echoOutput) process.stdout.write(text);
+        return;
+      }
+
+      stderr += text;
+      if (echoOutput) process.stderr.write(text);
+    };
 
     const timeoutId = setTimeout(() => {
       child.kill('SIGTERM');
@@ -233,17 +255,15 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
     }, heartbeatMs);
 
     child.stdout.on('data', (chunk) => {
-      const text = String(chunk);
-      stdout += text;
+      const text = stdoutRedactor.push(chunk);
       lastOutputAt = Date.now();
-      if (echoOutput) process.stdout.write(text);
+      recordOutput('stdout', text);
     });
 
     child.stderr.on('data', (chunk) => {
-      const text = String(chunk);
-      stderr += text;
+      const text = stderrRedactor.push(chunk);
       lastOutputAt = Date.now();
-      if (echoOutput) process.stderr.write(text);
+      recordOutput('stderr', text);
     });
 
     child.on('error', (error) => {
@@ -255,6 +275,8 @@ function runCaptureWithHeartbeat(opts, cmd, args, extra) {
     child.on('close', (code, signal) => {
       clearTimeout(timeoutId);
       clearInterval(heartbeatId);
+      recordOutput('stdout', stdoutRedactor.flush());
+      recordOutput('stderr', stderrRedactor.flush());
       if (code === 0) {
         resolve(stdout);
         return;

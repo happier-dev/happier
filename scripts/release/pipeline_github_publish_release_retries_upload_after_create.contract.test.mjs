@@ -71,6 +71,24 @@ if [ "$1" = "release" ] && [ "$2" = "upload" ]; then
   exit 0
 fi
 
+if [ "$1" = "release" ] && [ "$2" = "download" ]; then
+  destination=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--dir" ]; then
+      shift
+      destination="$1"
+      break
+    fi
+    shift
+  done
+  if [ "$upload_attempts" = "2" ] && [ -n "$destination" ]; then
+    cp ${JSON.stringify(asset)} "$destination/asset.txt"
+    exit 0
+  fi
+  echo "asset not materialized" >&2
+  exit 1
+fi
+
 if [ "$1" = "api" ]; then
   exit 0
 fi

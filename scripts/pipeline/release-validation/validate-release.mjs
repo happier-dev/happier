@@ -117,7 +117,12 @@ function resolveSource(kind, ref) {
 function resolveExecution({ suite, repoRoot, platform, source, update, executionOptions = {} }) {
   switch (suite.executorId) {
     case 'installers-smoke':
-      return resolveInstallersSmokeExecution({ platform, source, releaseChannel: executionOptions.releaseChannel });
+      return resolveInstallersSmokeExecution({
+        platform,
+        source,
+        update,
+        releaseChannel: executionOptions.releaseChannel,
+      });
     case 'artifact-verify':
       return resolveArtifactVerifyExecution({ repoRoot, source, options: executionOptions });
     case 'binary-smoke':
@@ -282,6 +287,7 @@ async function main() {
       repoRoot,
       platform,
       source,
+      update,
       releaseChannel: executionOptions.releaseChannel,
     });
     return;

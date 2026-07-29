@@ -75,3 +75,85 @@ test('extension import boundary validator allows intra-package relative imports'
   assert.equal(result.ok, true);
   assert.equal(result.errors.length, 0);
 });
+
+test('extension import boundary validator rejects direct protocol imports from plugin production source', () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  mkdirSync(join(rootDir, 'packages/plugins/acme/src/provider'), { recursive: true });
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/package.json'),
+    JSON.stringify({ name: '@happier-dev/plugins-acme', dependencies: { '@happier-dev/plugin-sdk': '0.0.0' } }),
+    'utf8',
+  );
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/src/provider/contribution.ts'),
+    "import { ProviderContributionV1Schema } from '@happier-dev/protocol';\nexport const ok = true;\n",
+    'utf8',
+  );
+
+  const result = validateExtensionImportBoundaries({ rootDir });
+  assert.equal(result.ok, false);
+  assert.ok(result.violations.some((violation) => (
+    violation.kind === 'forbidden-protocol-import'
+    && violation.filePath === 'packages/plugins/acme/src/provider/contribution.ts'
+    && violation.specifier === '@happier-dev/protocol'
+  )));
+});
+
+test('extension import boundary validator permits protocol imports in plugin tests', () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  mkdirSync(join(rootDir, 'packages/plugins/acme/src/provider'), { recursive: true });
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/package.json'),
+    JSON.stringify({ name: '@happier-dev/plugins-acme' }),
+    'utf8',
+  );
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/src/provider/contribution.test.ts'),
+    "import { ProviderContributionV1Schema } from '@happier-dev/protocol';\nexport const ok = true;\n",
+    'utf8',
+  );
+
+  const result = validateExtensionImportBoundaries({ rootDir });
+  assert.equal(result.ok, true);
+});
+
+test('extension import boundary validator rejects undeclared production dependencies', () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  mkdirSync(join(rootDir, 'packages/plugins/acme/src/agent'), { recursive: true });
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/package.json'),
+    JSON.stringify({ name: '@happier-dev/plugins-acme', dependencies: {} }),
+    'utf8',
+  );
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/src/agent/runtime.ts'),
+    "import { z } from 'zod';\nexport const ok = z.string();\n",
+    'utf8',
+  );
+
+  const result = validateExtensionImportBoundaries({ rootDir });
+  assert.equal(result.ok, false);
+  assert.ok(result.violations.some((violation) => (
+    violation.kind === 'undeclared-package-dependency'
+    && violation.filePath === 'packages/plugins/acme/src/agent/runtime.ts'
+    && violation.specifier === 'zod'
+  )));
+});
+
+test('extension import boundary validator accepts declared production dependencies and Node builtins', () => {
+  const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
+  mkdirSync(join(rootDir, 'packages/plugins/acme/src/agent'), { recursive: true });
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/package.json'),
+    JSON.stringify({ name: '@happier-dev/plugins-acme', dependencies: { zod: '^3.0.0' } }),
+    'utf8',
+  );
+  writeFileSync(
+    join(rootDir, 'packages/plugins/acme/src/agent/runtime.ts'),
+    "import fs from 'fs';\nimport { readFile } from 'node:fs/promises';\nimport { z } from 'zod';\nexport const ok = [fs, readFile, z.string()];\n",
+    'utf8',
+  );
+
+  const result = validateExtensionImportBoundaries({ rootDir });
+  assert.equal(result.ok, true);
+});

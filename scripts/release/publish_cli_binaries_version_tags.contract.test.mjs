@@ -59,16 +59,20 @@ for (const { channel, rollingTag, versionSuffix } of [
       },
     );
 
-    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b`));
-    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b[^\\n]*--generate-notes\\s+false\\b`));
+    assert.match(out, new RegExp(`promote-rolling-release\\.mjs[^\\n]*--rolling-tag\\s+${rollingTag}\\b`));
     assert.match(out, /--tag\s+cli-v/);
     assert.match(out, new RegExp(`cli-v[^\\s"]*${versionSuffix.replace('.', '\\.')}[^\\s"]*`));
     assert.match(out, /--tag\s+cli-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.ok(
+      out.indexOf('publish-release.mjs --tag cli-v') < out.indexOf('promote-rolling-release.mjs'),
+      'immutable release must be published before rolling projection',
+    );
     assert.match(out, /clean artifacts dir: dist\/release-assets\/cli|ensure clean artifacts dir: dist\/release-assets\/cli/i);
   });
 }
 
-test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_KEY is invalid', async () => {
+test('publish-cli-binaries rejects an invalid MINISIGN_SECRET_KEY before build without disclosing it', async () => {
+  const invalidSecret = 'RWQpH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1';
   const result = spawnSync(
     process.execPath,
     [
@@ -88,7 +92,7 @@ test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_
       cwd: repoRoot,
       env: {
         ...process.env,
-        MINISIGN_SECRET_KEY: 'RWQpH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1',
+        MINISIGN_SECRET_KEY: invalidSecret,
         MINISIGN_PASSPHRASE: 'x',
       },
       encoding: 'utf8',
@@ -97,11 +101,10 @@ test('publish-cli-binaries fails fast with helpful message when MINISIGN_SECRET_
     },
   );
 
-  assert.notEqual(result.status, 0, 'expected publish-cli-binaries to fail for invalid minisign key');
-  const stderr = String(result.stderr ?? '');
-  assert.match(stderr, /MINISIGN_SECRET_KEY/i);
-  assert.match(stderr, /truncated|dotenv|multiline|file|path/i);
-  assert.doesNotMatch(String(result.stdout ?? ''), /build-cli-binaries\.mjs/i, 'should fail before running the heavy build');
+  assert.equal(result.status, 1);
+  const output = `${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}`;
+  assert.doesNotMatch(output, new RegExp(invalidSecret));
+  assert.doesNotMatch(output, /build-cli-binaries\.mjs/i, 'should fail before running the heavy build');
 });
 
 test('publish-cli-binaries allocates dev versions from the published CLI channel instead of workflow run number', async () => {

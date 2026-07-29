@@ -2,7 +2,10 @@
 
 import { parseArgs } from 'node:util';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { buildRollingReleaseEditArgs } from './lib/gh-release-commands.mjs';
@@ -162,6 +165,34 @@ function listFilesRecursively(filePath) {
   return out;
 }
 
+async function fileSha256(filePath) {
+  const hash = createHash('sha256');
+  for await (const chunk of createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+async function assertRemoteAssetMatches({ tag, repo, name, expectedPath, env }) {
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'happier-immutable-release-audit-'));
+  try {
+    run('gh', [
+      'release', 'download', tag,
+      '--repo', repo,
+      '--pattern', name,
+      '--dir', scratch,
+      '--clobber',
+    ], { env });
+    const downloadedPath = path.join(scratch, name);
+    if (!fs.existsSync(downloadedPath)) fail(`Immutable release audit did not download expected asset: ${name}`);
+    const [expectedSha, downloadedSha] = await Promise.all([
+      fileSha256(expectedPath),
+      fileSha256(downloadedPath),
+    ]);
+    if (expectedSha !== downloadedSha) fail(`Immutable release asset differs from the authorized bytes: ${name}`);
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 /**
  * Resolve the current tag ref target SHA via the GitHub API.
  * Returns empty string when the ref is missing or cannot be read.
@@ -281,7 +312,7 @@ function ensureImmutableTagViaGithubApi(params) {
   return true;
 }
 
-function main() {
+async function main() {
   const { values } = parseArgs({
     options: {
       tag: { type: 'string' },
@@ -293,7 +324,7 @@ function main() {
       notes: { type: 'string', default: '' },
       assets: { type: 'string', default: '' },
       'assets-dir': { type: 'string', default: '' },
-      clobber: { type: 'string', default: 'true' },
+      clobber: { type: 'string', default: 'false' },
       'prune-assets': { type: 'string', default: 'false' },
       'release-message': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
@@ -502,6 +533,67 @@ function main() {
     }
   }
 
+  if (!rollingTag) {
+    if (clobber || pruneAssets) {
+      fail('Immutable version releases forbid --clobber true and --prune-assets true.');
+    }
+    const localByName = new Map();
+    for (const spec of uploadSpecs) {
+      const name = path.basename(spec);
+      if (localByName.has(name)) fail(`Duplicate immutable release asset name: ${name}`);
+      localByName.set(name, spec);
+    }
+    const existingAssetNames = run('gh', [
+      'release', 'view', tag,
+      '--repo', repo,
+      '--json', 'assets',
+      '--jq', '.assets[].name',
+    ], { env: ghEnv, dryRun }).trim()
+      .split(/\r?\n/)
+      .map((name) => name.trim())
+      .filter(Boolean);
+    const unexpected = existingAssetNames.filter((name) => !localByName.has(name));
+    if (unexpected.length > 0) {
+      fail(`Immutable release contains unexpected pre-existing asset(s): ${unexpected.join(', ')}`);
+    }
+    if (!dryRun) {
+      for (const name of existingAssetNames) {
+        await assertRemoteAssetMatches({
+          tag,
+          repo,
+          name,
+          expectedPath: /** @type {string} */ (localByName.get(name)),
+          env: ghEnv,
+        });
+      }
+    }
+    const existing = new Set(existingAssetNames);
+    for (const [name, spec] of localByName) {
+      if (existing.has(name)) continue;
+      let uploaded = false;
+      for (let attempt = 1; attempt <= uploadRetries; attempt += 1) {
+        try {
+          run('gh', ['release', 'upload', tag, spec], { env: ghEnv, dryRun });
+          uploaded = true;
+          break;
+        } catch (err) {
+          if (!dryRun && isTransientReleaseUploadError(err) && attempt < uploadRetries) {
+            sleepSync(uploadRetryDelayMs);
+            continue;
+          }
+          throw err;
+        }
+      }
+      if (!uploaded) fail(`Failed to upload immutable release asset: ${name}`);
+    }
+    if (!dryRun) {
+      for (const [name, expectedPath] of localByName) {
+        await assertRemoteAssetMatches({ tag, repo, name, expectedPath, env: ghEnv });
+      }
+    }
+    return;
+  }
+
   for (const spec of uploadSpecs) {
     let uploaded = false;
     for (let attempt = 1; attempt <= uploadRetries; attempt += 1) {
@@ -523,4 +615,7 @@ function main() {
   }
 }
 
-main();
+main().catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});

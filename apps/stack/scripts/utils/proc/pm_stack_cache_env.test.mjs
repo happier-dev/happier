@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { execFileSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -19,6 +19,35 @@ const CLI_DIST_BUILD_MANIFEST_MODULE_PATH = fileURLToPath(
   new URL('../../../../../packages/cli-common/cliDistBuildManifest.cjs', import.meta.url),
 );
 const { writeCliDistBuildManifest } = createRequire(import.meta.url)(CLI_DIST_BUILD_MANIFEST_MODULE_PATH);
+
+test('CLI runtime input identity is independent of relative, absolute, or aliased package paths', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-input-path-identity-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const cliDir = join(root, 'apps', 'cli');
+  const inputPath = join(cliDir, 'src', 'tracked.ts');
+  await mkdir(dirname(inputPath), { recursive: true });
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/cli',
+    private: true,
+    dependencies: {},
+  }), 'utf-8');
+  await writeFile(inputPath, 'export const value = 1;\n', 'utf-8');
+
+  const absolute = await readHappyCliRuntimeInputFreshness(cliDir);
+  const relativePath = relative(process.cwd(), cliDir);
+  const relativeInput = await readHappyCliRuntimeInputFreshness(relativePath);
+  const aliasDir = join(root, 'cli-alias');
+  await symlink(cliDir, aliasDir, process.platform === 'win32' ? 'junction' : 'dir');
+  const aliasedInput = await readHappyCliRuntimeInputFreshness(aliasDir);
+
+  assert.equal(relativeInput.fingerprint, absolute.fingerprint);
+  assert.equal(relativeInput.newestMtimeNs, absolute.newestMtimeNs);
+  assert.equal(aliasedInput.fingerprint, absolute.fingerprint);
+  assert.equal(aliasedInput.newestMtimeNs, absolute.newestMtimeNs);
+});
 
 test('CLI runtime input identity changes after a same-size rewrite with restored modification time', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'hs-pm-cli-input-identity-'));
@@ -333,7 +362,6 @@ async function writeYarnCanonicalCliInputChangeStub({ binDir, outputPath }) {
       '  if (!/^[a-f0-9]{64}$/.test(admittedFingerprint ?? "")) {',
       '    throw new Error("missing admitted CLI input fingerprint");',
       '  }',
-      '  let freshnessRead = 0;',
       '  try {',
       '    await buildCliDist({',
       '      packageRoot: process.cwd(),',
@@ -348,8 +376,8 @@ async function writeYarnCanonicalCliInputChangeStub({ binDir, outputPath }) {
       '        writeFileSync(join(stageDir, "index.mjs"), "export const mixed = true;\\n", "utf8");',
       '      },',
       '      readRuntimeInputFreshnessImpl: async () => ({',
-      '        fingerprint: freshnessRead++ === 0 ? admittedFingerprint : "f".repeat(64),',
-      '        newestMtimeNs: BigInt(freshnessRead),',
+      '        fingerprint: "f".repeat(64),',
+      '        newestMtimeNs: 1n,',
       '      }),',
       '    });',
       '  } catch (error) {',
@@ -1973,7 +2001,7 @@ test('ensureCliBuilt restores a valid release backup after the canonical CLI bui
 
   await assert.rejects(
     () => ensureCliBuilt(cliDir, { buildCli: true, quiet: true }),
-    /runtime inputs changed while this build was running/i,
+    /runtime inputs changed while package prebuild was preparing dependencies/i,
   );
 
   const distIndex = join(cliDir, 'dist', 'index.mjs');

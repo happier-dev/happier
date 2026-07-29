@@ -21,11 +21,7 @@ test('GitHub release titles are prefixed with Happier', async () => {
 
   const binaryProductSpecs = await loadFile('scripts/pipeline/release/publishing/product-specs.mjs');
   assert.match(binaryProductSpecs, /releaseTitleBase: 'Happier Server'/);
-
-  const releaseNpm = await loadWorkflow('release-npm.yml');
-  assert.match(releaseNpm, /title: Happier CLI v/);
-  assert.match(releaseNpm, /title: Happier CLI Stable/);
-  assert.match(releaseNpm, /title: Happier CLI Preview/);
+  assert.match(binaryProductSpecs, /releaseTitleBase: 'Happier CLI'/);
   assert.match(binaryProductSpecs, /releaseTitleBase: 'Happier Stack'/);
 
   const buildTauri = await loadWorkflow('build-tauri.yml');

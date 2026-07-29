@@ -313,7 +313,7 @@ async function main() {
         } else {
           run(opts, cmd, ['build'], { cwd: withinRepo(repoRoot, 'apps/cli') });
         }
-        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs'], { cwd: withinRepo(repoRoot, 'apps/cli') });
+        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs', '--artifact'], { cwd: withinRepo(repoRoot, 'apps/cli') });
       },
     });
   }
@@ -324,7 +324,7 @@ async function main() {
       dir: 'apps/stack',
       outDir: 'dist/release-assets/stack',
       prepare: () => {
-        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs'], { cwd: withinRepo(repoRoot, 'apps/stack') });
+        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs', '--artifact'], { cwd: withinRepo(repoRoot, 'apps/stack') });
       },
     });
   }
@@ -335,7 +335,7 @@ async function main() {
       dir: runnerDir,
       outDir: 'dist/release-assets/server',
       prepare: () => {
-        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs'], { cwd: withinRepo(repoRoot, runnerDir) });
+        run(opts, process.execPath, ['scripts/bundleWorkspaceDeps.mjs', '--artifact'], { cwd: withinRepo(repoRoot, runnerDir) });
       },
     });
   }

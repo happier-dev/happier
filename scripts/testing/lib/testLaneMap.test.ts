@@ -23,7 +23,7 @@ test('classifies representative lane paths', () => {
   assert.equal(classifyTestFile('packages/tests/suites/ui-e2e/login.spec.ts'), 'test:e2e:ui');
   assert.equal(classifyTestFile('packages/tests/scripts/wsrepl-lima-matrix.test.mjs'), 'test:e2e:ui:wsrepl:lima:self');
   assert.equal(classifyTestFile('packages/tests/scripts/lima-vm.test.mjs'), 'test:e2e:ui:wsrepl:lima:self');
-  assert.equal(classifyTestFile('packages/tests/suites/providers/auth.test.ts'), 'test:providers');
+  assert.equal(classifyTestFile('packages/tests/suites/agents/auth.test.ts'), 'test:agents');
   assert.equal(classifyTestFile('packages/tests/suites/stress/retry.test.ts'), 'test:stress');
   assert.equal(classifyTestFile('apps/stack/scripts/runtime.test.mjs'), 'stack:test:unit');
   assert.equal(classifyTestFile('apps/stack/scripts/runtime.integration.test.mjs'), 'stack:test:integration');

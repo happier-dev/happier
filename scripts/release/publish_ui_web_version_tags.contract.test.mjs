@@ -40,17 +40,21 @@ for (const { channel, rollingTag, versionSuffix } of [
       },
     );
 
-    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b`));
-    assert.match(out, new RegExp(`--tag\\s+${rollingTag}\\b[^\\n]*--generate-notes\\s+false\\b`));
+    assert.match(out, new RegExp(`promote-rolling-release\\.mjs[^\\n]*--rolling-tag\\s+${rollingTag}\\b`));
     assert.match(out, /--tag\s+ui-web-v/);
     assert.match(out, new RegExp(`ui-web-v[^\\s"]*${versionSuffix.replace('.', '\\.')}[^\\s"]*`));
     assert.match(out, /--tag\s+ui-web-v[^\s"]+[^\n]*--generate-notes\s+true\b/);
+    assert.ok(
+      out.indexOf('publish-release.mjs --tag ui-web-v') < out.indexOf('promote-rolling-release.mjs'),
+      'immutable release must be published before rolling projection',
+    );
     assert.doesNotMatch(out, /-preview\.0\.1\b/, 'local preview ui-web version must be non-trivial to avoid collisions');
   });
 }
 
-test('publish-ui-web fails fast with helpful message when MINISIGN_SECRET_KEY is invalid', async () => {
+test('publish-ui-web rejects an invalid MINISIGN_SECRET_KEY before Metro without disclosing it', async () => {
   const scriptPath = resolve(repoRoot, 'scripts', 'pipeline', 'release', 'publish-ui-web.mjs');
+  const invalidSecret = 'RWQpH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1';
   const result = spawnSync(
     process.execPath,
     [
@@ -68,7 +72,7 @@ test('publish-ui-web fails fast with helpful message when MINISIGN_SECRET_KEY is
       cwd: repoRoot,
       env: {
         ...process.env,
-        MINISIGN_SECRET_KEY: 'RWQpH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1vH1',
+        MINISIGN_SECRET_KEY: invalidSecret,
         MINISIGN_PASSPHRASE: 'x',
       },
       encoding: 'utf8',
@@ -77,9 +81,8 @@ test('publish-ui-web fails fast with helpful message when MINISIGN_SECRET_KEY is
     },
   );
 
-  assert.notEqual(result.status, 0, 'expected publish-ui-web to fail for invalid minisign key');
-  const stderr = String(result.stderr ?? '');
-  assert.match(stderr, /MINISIGN_SECRET_KEY/i);
-  assert.match(stderr, /truncated|dotenv|multiline|file|path/i);
-  assert.doesNotMatch(String(result.stdout ?? ''), /Starting Metro Bundler/i, 'should fail before running the heavy build');
+  assert.equal(result.status, 1);
+  const output = `${String(result.stdout ?? '')}\n${String(result.stderr ?? '')}`;
+  assert.doesNotMatch(output, new RegExp(invalidSecret));
+  assert.doesNotMatch(output, /Starting Metro Bundler/i, 'should fail before running the heavy build');
 });

@@ -35,6 +35,7 @@ RUN chmod +x /usr/local/bin/yarn-install-with-retry
 RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
     yarn config set registry https://registry.npmjs.org/ \
     && yarn-install-with-retry --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+COPY scripts/workspaces ./scripts/workspaces
 
 # Shared deps (alpine) for web UI export embeds.
 # We build the web export on the BUILDPLATFORM because the output is architecture-agnostic, and
@@ -68,6 +69,7 @@ RUN chmod +x /usr/local/bin/yarn-install-with-retry
 RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
     yarn config set registry https://registry.npmjs.org/ \
     && yarn-install-with-retry --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+COPY scripts/workspaces ./scripts/workspaces
 
 # Shared deps (debian) for server builds (needs toolchain for native deps)
 FROM node:${NODE_VERSION} AS deps-debian
@@ -99,6 +101,7 @@ RUN chmod +x /usr/local/bin/yarn-install-with-retry
 RUN --mount=type=cache,target=/tmp/.yarn-cache,sharing=locked \
     yarn config set registry https://registry.npmjs.org/ \
     && yarn-install-with-retry --frozen-lockfile --ignore-engines --network-timeout 600000 --prefer-offline --non-interactive
+COPY scripts/workspaces ./scripts/workspaces
 
 #
 # Targets
@@ -430,26 +433,96 @@ CMD ["run-server"]
 FROM server AS server-worker
 ENV SERVER_ROLE=worker
 
-# Relay server (self-host default: light + sqlite)
-FROM server AS relay-server
-# Embed the web UI bundle so self-hosted deployments can serve UI from the server.
-# Disable at runtime by clearing HAPPIER_SERVER_UI_DIR (e.g. `-e HAPPIER_SERVER_UI_DIR=`).
-COPY --from=webapp-builder --chown=node:node /repo/apps/ui/dist /repo/apps/ui/dist
-ARG SENTRY_RELEASE=""
-ENV SENTRY_RELEASE=$SENTRY_RELEASE
-ARG SENTRY_SERVER_CENTRAL_DSN=""
-ENV HAPPIER_SENTRY_CENTRAL_DSN=$SENTRY_SERVER_CENTRAL_DSN
-ENV HAPPIER_SENTRY_USE_CENTRAL_DSN=1
+# Local relay server image for source-backed release candidate upgrade QA.
+FROM server AS relay-server-local-source
+USER root
+RUN mkdir -p /opt/happier/ui-web \
+    && chown -R node:node /opt/happier
+COPY --from=webapp-builder --chown=node:node /repo/apps/ui/dist /opt/happier/ui-web
 ENV HAPPIER_SERVER_FLAVOR=light
 ENV HAPPY_SERVER_FLAVOR=light
 ENV HAPPIER_DB_PROVIDER=sqlite
 ENV HAPPY_DB_PROVIDER=sqlite
 ENV HAPPIER_SERVER_LIGHT_DATA_DIR=/data
 ENV HAPPY_SERVER_LIGHT_DATA_DIR=/data
-ENV HAPPIER_SERVER_UI_DIR=/repo/apps/ui/dist
+ENV HAPPIER_SERVER_UI_DIR=/opt/happier/ui-web
 ENV HAPPIER_SERVER_UI_PREFIX=/
 ENV HAPPIER_SERVER_UI_REQUIRED=1
+ENV HAPPIER_SQLITE_AUTO_MIGRATE=1
+USER node
+
+# Relay server (self-host default: light + sqlite)
+FROM debian:12-slim AS relay-artifacts
+ARG TARGETARCH
+ARG HAPPIER_RELEASE_BASE_URL="https://github.com/happier-dev/happier/releases/download"
+ARG HAPPIER_RELAY_SERVER_RELEASE_TAG=""
+ARG HAPPIER_RELAY_SERVER_VERSION=""
+ARG HAPPIER_RELAY_UI_WEB_RELEASE_TAG=""
+ARG HAPPIER_RELAY_UI_WEB_VERSION=""
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl tar minisign \
+    && rm -rf /var/lib/apt/lists/*
+COPY scripts/pipeline/docker/fetch-verified-release-artifact.sh /usr/local/bin/fetch-verified-release-artifact
+COPY scripts/release/installers/happier-release.pub /tmp/happier-release.pub
+RUN chmod +x /usr/local/bin/fetch-verified-release-artifact
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) artifact_arch="x64" ;; \
+      arm64) artifact_arch="arm64" ;; \
+      *) echo "Unsupported TARGETARCH: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    fetch-verified-release-artifact \
+      --base-url "$HAPPIER_RELEASE_BASE_URL" \
+      --release-tag "$HAPPIER_RELAY_SERVER_RELEASE_TAG" \
+      --product happier-server \
+      --version "$HAPPIER_RELAY_SERVER_VERSION" \
+      --os linux \
+      --arch "$artifact_arch" \
+      --dest /opt/happier/server \
+      --pubkey /tmp/happier-release.pub; \
+    fetch-verified-release-artifact \
+      --base-url "$HAPPIER_RELEASE_BASE_URL" \
+      --release-tag "$HAPPIER_RELAY_UI_WEB_RELEASE_TAG" \
+      --product happier-ui-web \
+      --version "$HAPPIER_RELAY_UI_WEB_VERSION" \
+      --os web \
+      --arch any \
+      --dest /opt/happier/ui-web \
+      --pubkey /tmp/happier-release.pub
+
+FROM debian:12-slim AS relay-server
+WORKDIR /opt/happier/server
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl sqlite3 \
+    && rm -rf /var/lib/apt/lists/*
+RUN useradd -m -s /bin/bash happier \
+    && mkdir -p /data /opt/happier/server /opt/happier/ui-web \
+    && chown -R happier:happier /data /opt/happier
+COPY --from=relay-artifacts --chown=happier:happier /opt/happier/server /opt/happier/server
+COPY --from=relay-artifacts --chown=happier:happier /opt/happier/ui-web /opt/happier/ui-web
+ARG SENTRY_RELEASE=""
+ENV SENTRY_RELEASE=$SENTRY_RELEASE
+ARG SENTRY_SERVER_CENTRAL_DSN=""
+ENV HAPPIER_SENTRY_CENTRAL_DSN=$SENTRY_SERVER_CENTRAL_DSN
+ENV HAPPIER_SENTRY_USE_CENTRAL_DSN=1
+ENV NODE_ENV=production
+ENV PORT=3005
+ENV HAPPIER_SERVER_FLAVOR=light
+ENV HAPPY_SERVER_FLAVOR=light
+ENV HAPPIER_DB_PROVIDER=sqlite
+ENV HAPPY_DB_PROVIDER=sqlite
+ENV HAPPIER_SERVER_LIGHT_DATA_DIR=/data
+ENV HAPPY_SERVER_LIGHT_DATA_DIR=/data
+ENV HAPPIER_SERVER_UI_DIR=/opt/happier/ui-web
+ENV HAPPIER_SERVER_UI_PREFIX=/
+ENV HAPPIER_SERVER_UI_REQUIRED=1
+ENV HAPPIER_SQLITE_AUTO_MIGRATE=1
+ENV HAPPIER_SQLITE_MIGRATIONS_DIR=/opt/happier/server/prisma/sqlite/migrations
+ENV HAPPY_SQLITE_MIGRATIONS_DIR=/opt/happier/server/prisma/sqlite/migrations
+USER happier
+EXPOSE 3005
 VOLUME ["/data"]
+CMD ["/opt/happier/server/happier-server"]
 
 # Default target when building without --target
 FROM server AS default

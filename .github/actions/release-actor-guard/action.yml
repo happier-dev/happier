@@ -34,6 +34,7 @@ runs:
       env:
         INPUT_ORG: ${{ inputs.org }}
         INPUT_TEAM_SLUG: ${{ inputs.team_slug }}
+        INPUT_TRUSTED_ACTORS: ${{ inputs.trusted_actors }}
       run: |
         set -euo pipefail
 
@@ -54,16 +55,29 @@ runs:
         echo "org=${org}" >> "$GITHUB_OUTPUT"
         echo "team_slug=${team_slug}" >> "$GITHUB_OUTPUT"
 
+        trusted_actor=false
+        IFS=',' read -r -a trusted <<< "${INPUT_TRUSTED_ACTORS:-}"
+        for raw in "${trusted[@]}"; do
+          candidate="$(echo "${raw}" | xargs)"
+          if [ -n "${candidate}" ] && [ "${candidate}" = "${actor}" ]; then
+            trusted_actor=true
+            break
+          fi
+        done
+        echo "trusted_actor=${trusted_actor}" >> "$GITHUB_OUTPUT"
+
         echo "Authorizing actor '${actor}' against team '${org}/${team_slug}'."
 
     - name: Create GitHub App token for guard checks
       id: app_token
-      uses: actions/create-github-app-token@v1
-      if: ${{ inputs.app_id != '' && inputs.private_key != '' }}
+      uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547 # v1.12.0
+      if: ${{ steps.params.outputs.trusted_actor != 'true' && inputs.app_id != '' && inputs.private_key != '' }}
       with:
         app-id: ${{ inputs.app_id }}
         private-key: ${{ inputs.private_key }}
         owner: ${{ steps.params.outputs.org }}
+        repositories: ${{ github.event.repository.name }}
+        permission-members: read
 
     - name: Verify triggering actor is in release admin team
       shell: bash

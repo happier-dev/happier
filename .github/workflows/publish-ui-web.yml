@@ -27,6 +27,16 @@ on:
         required: false
         default: ""
         type: string
+      retry_version:
+        description: "Recovery — exact immutable version to re-project to the rolling channel"
+        required: false
+        default: ""
+        type: string
+      authorized_sha:
+        description: "Caller-bound source SHA"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       channel:
@@ -44,23 +54,63 @@ on:
         required: false
         default: ""
         type: string
+      retry_version:
+        required: false
+        default: ""
+        type: string
+      authorized_sha:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-ui-web-${{ inputs.channel }}-${{ github.ref }}
+  group: publish-ui-web-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trust called workflow repository and ref
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject cross-repository or untrusted workflow control
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+        run: |
+          set -euo pipefail
+          case "$CHANNEL" in
+            stable|preview|dev) ;;
+            *) echo "Noncanonical UI-web publisher channel: $CHANNEL" >&2; exit 1 ;;
+          esac
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-ui-web.yml@refs/heads/main") ;;
+            *) echo "Untrusted UI-web publisher control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
     name: Release actor guard
+    needs: [trusted_ref_guard]
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -69,6 +119,7 @@ jobs:
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
   publish:
+    if: ${{ inputs.retry_version == '' }}
     needs: [release_actor_guard]
     runs-on: ubuntu-latest
     environment: release-shared
@@ -84,7 +135,10 @@ jobs:
       - name: Checkout workflow repo
         uses: actions/checkout@v4
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -108,14 +162,36 @@ jobs:
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+
+      - name: Create release-notes assets token
+        id: release_notes_assets_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: happier-assets
+          permission-contents: write
 
       - name: Checkout source ref
         uses: actions/checkout@v4
         with:
+          repository: ${{ job.workflow_repository }}
           ref: ${{ steps.channel_meta.outputs.source_ref }}
           fetch-depth: 0
           token: ${{ steps.app_token.outputs.token }}
           persist-credentials: false
+
+      - name: Enforce caller-authorized source SHA
+        if: ${{ inputs.authorized_sha != '' }}
+        env:
+          AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$AUTHORIZED_SHA"
 
       - name: Enable Corepack (Yarn)
         run: |
@@ -150,7 +226,7 @@ jobs:
 
       - name: Publish release notes assets
         env:
-          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_TOKEN: ${{ steps.release_notes_assets_token.outputs.token }}
           GH_REPO: happier-dev/happier-assets
         run: |
           set -euo pipefail
@@ -179,3 +255,69 @@ jobs:
 
     permissions:
       contents: write
+
+  promote_existing:
+    name: Recover rolling UI web projection
+    if: ${{ inputs.retry_version != '' }}
+    needs: [release_actor_guard]
+    runs-on: ubuntu-latest
+    environment: release-shared
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install minisign
+        uses: ./.github/actions/bootstrap-minisign
+      - name: Install dependencies
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Create scoped release token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Bind exact immutable tag SHA
+        id: source
+        env:
+          RETRY_VERSION: ${{ inputs.retry_version }}
+        run: |
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "refs/tags/ui-web-v${RETRY_VERSION}" \
+            --remote origin \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Recover rolling projection from immutable bytes
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/publish-ui-web.mjs \
+            --channel "${{ inputs.channel }}" \
+            --allow-stable "${{ inputs.allow_stable }}" \
+            --release-message "${{ inputs.release_message }}" \
+            --phase promote-rolling \
+            --version "$RETRY_VERSION" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --run-contracts false \
+            --check-installers true

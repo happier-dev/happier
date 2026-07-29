@@ -103,6 +103,9 @@ jobs:
         with:
           app-id: ${{ env.RELEASE_BOT_APP_ID }}
           private-key: ${{ env.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
 
       - name: Configure git remote auth (release bot)
         if: ${{ steps.app_token.outcome == 'success' && steps.app_token.outputs.token != '' }}

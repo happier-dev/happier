@@ -31,7 +31,7 @@ function isUiTestPolicyFile(filePath: string): boolean {
 }
 
 function isProviderProbeTestFile(filePath: string): boolean {
-  return filePath.startsWith('packages/tests/suites/providers/') || filePath.includes('.realProbe.');
+  return filePath.startsWith('packages/tests/suites/agents/') || filePath.includes('.realProbe.');
 }
 
 function summarizeInlineMockFamilies(

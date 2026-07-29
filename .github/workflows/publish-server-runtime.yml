@@ -8,22 +8,29 @@ on:
         required: true
         type: choice
         default: preview
-        options:
-          - preview
-          - dev
-          - stable
+        options: [preview, dev, stable]
       source_ref:
         description: "Source ref to publish (auto => dev:dev, preview:preview, stable:main)"
         required: true
         default: auto
         type: string
       allow_stable:
-        description: "Safety — allow publishing stable artifacts (disabled by default)"
+        description: "Safety — allow publishing stable artifacts"
         required: true
         default: false
         type: boolean
       release_message:
-        description: "Release message — Optional note to include at the top of the GitHub rolling release notes"
+        description: "Optional rolling release note"
+        required: false
+        default: ""
+        type: string
+      retry_version:
+        description: "Recovery — exact immutable version to re-project"
+        required: false
+        default: ""
+        type: string
+      authorized_sha:
+        description: "Caller-bound source SHA"
         required: false
         default: ""
         type: string
@@ -44,23 +51,62 @@ on:
         required: false
         default: ""
         type: string
+      retry_version:
+        required: false
+        default: ""
+        type: string
+      authorized_sha:
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: publish-server-runtime-${{ inputs.channel }}-${{ github.ref }}
+  group: publish-server-runtime-${{ github.repository }}-${{ inputs.channel }}
   cancel-in-progress: false
 
 jobs:
+  trusted_ref_guard:
+    name: Trust called workflow repository and ref
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Reject cross-repository or untrusted workflow control
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          CALLER_REPOSITORY: ${{ github.repository }}
+          WORKFLOW_REPOSITORY: ${{ job.workflow_repository }}
+          WORKFLOW_REF: ${{ job.workflow_ref }}
+        run: |
+          set -euo pipefail
+          case "$CHANNEL" in
+            stable|preview|dev) ;;
+            *) echo "Noncanonical server-runtime publisher channel: $CHANNEL" >&2; exit 1 ;;
+          esac
+          test "$CALLER_REPOSITORY" = "$WORKFLOW_REPOSITORY"
+          case "$WORKFLOW_REF" in
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/dev"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/preview"|\
+            "$WORKFLOW_REPOSITORY/.github/workflows/publish-server-runtime.yml@refs/heads/main") ;;
+            *) echo "Untrusted server-runtime publisher control ref: $WORKFLOW_REF" >&2; exit 1 ;;
+          esac
+
   release_actor_guard:
     name: Release actor guard
+    needs: [trusted_ref_guard]
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout trusted workflow bytes
         uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
       - name: Authorize release actor
         uses: ./.github/actions/release-actor-guard
         with:
@@ -68,29 +114,36 @@ jobs:
           app_id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private_key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
 
-  publish:
+  build_candidate:
+    name: Build unsigned server candidate
+    if: ${{ inputs.retry_version == '' }}
     needs: [release_actor_guard]
-    runs-on: ubuntu-latest
-    environment: release-shared
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      embedded_policy_env: ${{ steps.channel_meta.outputs.embedded_policy_env }}
     steps:
       - name: Enforce stable publishing gate
         if: ${{ inputs.channel == 'stable' && inputs.allow_stable != true }}
         run: |
-          echo "Stable server runtime publishing is disabled. Re-run with allow_stable=true if intentional." >&2
+          echo "Stable server runtime publishing is disabled." >&2
           exit 1
-
-      - name: Checkout workflow repo
+      - name: Checkout trusted workflow control bytes
         uses: actions/checkout@v4
         with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
           fetch-depth: 1
-
+          persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
           cache: yarn
           cache-dependency-path: yarn.lock
-
       - name: Resolve channel metadata
         id: channel_meta
         run: |
@@ -99,62 +152,203 @@ jobs:
             --channel "${{ inputs.channel }}" \
             --source-ref "${{ inputs.source_ref }}" \
             --github-output "$GITHUB_OUTPUT"
+      - name: Checkout source without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ inputs.authorized_sha != '' && inputs.authorized_sha || steps.channel_meta.outputs.source_ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Freeze and verify source SHA
+        id: source
+        env:
+          CALLER_SHA: ${{ inputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          source_sha="$(git rev-parse HEAD)"
+          if [ -n "$CALLER_SHA" ]; then test "$source_sha" = "$CALLER_SHA"; fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - name: Install dependencies
+        env:
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Allocate immutable version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/publish-server-runtime.mjs \
+            --channel "${{ inputs.channel }}" \
+            --allow-stable "${{ inputs.allow_stable }}" \
+            --resolve-version-only \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Build unsigned server archives
+        env:
+          MINISIGN_SECRET_KEY: ""
+          MINISIGN_PASSPHRASE: ""
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/build-server-binaries.mjs \
+            --channel "${{ inputs.channel }}" \
+            --version "${{ steps.version.outputs.version }}"
+          find dist/release-assets/server -type f ! -name '*.tar.gz' -delete
+          test "$(find dist/release-assets/server -maxdepth 1 -type f -name '*.tar.gz' | wc -l | tr -d ' ')" -gt 0
+      - name: Upload unsigned candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-runtime-candidate-${{ steps.version.outputs.version }}
+          path: dist/release-assets/server/*.tar.gz
+          if-no-files-found: error
+          retention-days: 2
 
-      - name: Create GitHub App token
+  finalize_publish:
+    name: Sign and publish exact server candidate
+    if: ${{ inputs.retry_version == '' }}
+    needs: [build_candidate]
+    runs-on: ubuntu-24.04
+    environment: release-shared
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: |
+          corepack enable
+          corepack prepare yarn@1.22.22 --activate
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.5
+      - name: Install minisign
+        uses: ./.github/actions/bootstrap-minisign
+      - name: Install dependencies
+        env:
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Download exact unsigned candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: server-runtime-candidate-${{ needs.build_candidate.outputs.version }}
+          path: dist/release-assets/server
+      - name: Create scoped release token
         id: app_token
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
           private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
-
-      - name: Checkout source ref
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ steps.channel_meta.outputs.source_ref }}
-          fetch-depth: 0
-          token: ${{ steps.app_token.outputs.token }}
-          persist-credentials: false
-
-      - name: Enable Corepack (Yarn)
-        run: |
-          set -euo pipefail
-          corepack enable
-          corepack prepare yarn@1.22.22 --activate
-
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.5
-
-      - name: Install minisign (signing + verification)
-        uses: ./.github/actions/bootstrap-minisign
-
-      - name: Install dependencies
-        env:
-          YARN_PRODUCTION: "false"
-          npm_config_production: "false"
-          # Speed up installs: server runtime publishing does not require UI web-only vendored assets.
-          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
-        uses: ./.github/actions/install-yarn-dependencies
-        with:
-          args: --frozen-lockfile --ignore-engines
-
-      - name: Publish server runtime (pipeline)
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Finalize immutable Release then rolling projection
         env:
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
           MINISIGN_PASSPHRASE: ${{ secrets.MINISIGN_PASSPHRASE }}
-          HAPPIER_EMBEDDED_POLICY_ENV: ${{ steps.channel_meta.outputs.embedded_policy_env }}
+          HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.build_candidate.outputs.embedded_policy_env }}
         run: |
           set -euo pipefail
-          node scripts/pipeline/run.mjs publish-server-runtime \
+          node scripts/pipeline/release/publish-server-runtime.mjs \
             --channel "${{ inputs.channel }}" \
             --allow-stable "${{ inputs.allow_stable }}" \
             --release-message "${{ inputs.release_message }}" \
-            --run-contracts "true" \
-            --check-installers "true"
+            --version "${{ needs.build_candidate.outputs.version }}" \
+            --authorized-sha "${{ needs.build_candidate.outputs.source_sha }}" \
+            --prepared-artifacts \
+            --run-contracts true \
+            --check-installers true
 
+  promote_existing:
+    name: Recover rolling server projection
+    if: ${{ inputs.retry_version != '' }}
+    needs: [release_actor_guard]
+    runs-on: ubuntu-24.04
+    environment: release-shared
     permissions:
       contents: write
+    steps:
+      - name: Checkout trusted workflow control bytes
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: yarn
+          cache-dependency-path: yarn.lock
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install minisign
+        uses: ./.github/actions/bootstrap-minisign
+      - name: Install dependencies
+        env:
+          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines
+      - name: Create scoped release token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_BOT_APP_ID }}
+          private-key: ${{ secrets.RELEASE_BOT_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      - name: Bind exact immutable tag SHA
+        id: source
+        env:
+          RETRY_VERSION: ${{ inputs.retry_version }}
+        run: |
+          node scripts/pipeline/github/resolve-authorized-release-source.mjs \
+            --source-ref "refs/tags/server-v${RETRY_VERSION}" \
+            --remote origin \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Recover rolling projection from immutable bytes
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          RETRY_VERSION: ${{ inputs.retry_version }}
+          AUTHORIZED_SHA: ${{ steps.source.outputs.authorized_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/release/publish-server-runtime.mjs \
+            --channel "${{ inputs.channel }}" \
+            --allow-stable "${{ inputs.allow_stable }}" \
+            --release-message "${{ inputs.release_message }}" \
+            --phase promote-rolling \
+            --version "$RETRY_VERSION" \
+            --authorized-sha "$AUTHORIZED_SHA" \
+            --run-contracts false \
+            --check-installers true

@@ -81,3 +81,27 @@ test('publish-manifests emits signature URL when minisign asset exists', async (
     );
   });
 });
+
+test('publish-manifests fails closed on malformed checksum lines', async () => {
+  await withTempDir(async (dir) => {
+    const artifactsDir = join(dir, 'artifacts');
+    const outDir = join(dir, 'out');
+    await mkdir(artifactsDir, { recursive: true });
+    await writeFile(join(artifactsDir, 'happier-v1.2.3-linux-x64.tar.gz'), 'archive', 'utf-8');
+    await writeFile(
+      join(artifactsDir, 'checksums-happier-v1.2.3.txt'),
+      [
+        'malformed checksum line',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  happier-v1.2.3-linux-x64.tar.gz',
+        '',
+      ].join('\n'),
+      'utf-8'
+    );
+    await writeFile(join(artifactsDir, 'checksums-happier-v1.2.3.txt.minisig'), 'signature', 'utf-8');
+
+    const result = runPublishManifests({ artifactsDir, outDir });
+    const combinedOutput = `${result.stdout ?? ''}\n${result.stderr ?? ''}`;
+    assert.notEqual(result.status, 0);
+    assert.match(combinedOutput, /invalid checksum line/i);
+  });
+});

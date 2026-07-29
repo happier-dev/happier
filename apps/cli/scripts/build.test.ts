@@ -221,15 +221,14 @@ describe('buildCliDist', () => {
     }
   });
 
-  it('keeps the Stack-admitted input fingerprint when shared prebuild inputs have already moved', async () => {
+  it('rejects a Stack-admitted fingerprint when package prebuild moved canonical runtime inputs', async () => {
     const packageRoot = createTempDirSync('happier-cli-build-prebuild-fingerprint-');
     try {
       writeBuildPackageManifest(packageRoot);
       const admittedFingerprint = 'a'.repeat(64);
-      const postPrebuildFingerprint = 'b'.repeat(64);
-      let finalizedInputFingerprint: string | undefined;
+      let finalized = false;
 
-      await buildCliDist({
+      await expect(buildCliDist({
         packageRoot,
         repoRoot: packageRoot,
         skipLock: true,
@@ -242,16 +241,14 @@ describe('buildCliDist', () => {
         }),
         runTypecheckImpl: () => {},
         runPkgrollBuildImpl: () => {},
-        readRuntimeInputFreshnessImpl: async () => ({
-          fingerprint: postPrebuildFingerprint,
-          newestMtimeNs: 2n,
-        }),
-        finalizeDistImpl: (options: { inputFingerprint?: string }) => {
-          finalizedInputFingerprint = options.inputFingerprint;
+        finalizeDistImpl: () => {
+          finalized = true;
         },
-      });
+      })).rejects.toThrow(
+        '[cli-build-inputs] runtime inputs changed while package prebuild was preparing dependencies; refusing to build a mixed CLI closure',
+      );
 
-      expect(finalizedInputFingerprint).toBe(admittedFingerprint);
+      expect(finalized).toBe(false);
     } finally {
       rmSync(packageRoot, { recursive: true, force: true });
     }

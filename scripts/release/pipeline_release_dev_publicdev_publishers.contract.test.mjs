@@ -9,7 +9,7 @@ import { createReleaseCliDryRunEnv, RELEASE_CLI_DRY_RUN_TIMEOUT_MS } from './rel
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
 
-test('pipeline CLI release can dry-run the public dev lane from the nightly dev release mapping', async () => {
+test('pipeline CLI release can inspect public dev release facts without predicting nightly publisher jobs', async () => {
   const stub = createReleaseCliDryRunEnv();
   try {
     const out = execFileSync(
@@ -27,11 +27,7 @@ test('pipeline CLI release can dry-run the public dev lane from the nightly dev 
         'true',
         '--repository',
         'happier-dev/happier',
-        '--npm-mode',
-        'pack+publish',
         '--dry-run',
-        '--secrets-source',
-        'env',
       ],
       {
         cwd: repoRoot,
@@ -50,17 +46,10 @@ test('pipeline CLI release can dry-run the public dev lane from the nightly dev 
 
     assert.match(out, /\[pipeline\] release: environment=dev confirm=release dev to dev/);
     assert.match(out, /\[pipeline\] rolling version suffix: dev\./);
-    assert.match(out, /\[pipeline\] dry-run: would run/);
-    assert.match(out, /- runPublishUiWeb: true/);
-    assert.match(out, /- runPublishServerRuntime: true/);
-    assert.match(out, /- runPublishDocker: true/);
-    assert.match(out, /- runPublishCliBinaries: true/);
-    assert.match(out, /- runPublishHstackBinaries: false/);
-    assert.match(out, /- runPublishNpm: true/);
-    assert.match(out, /- runDeployUi: false/);
-    assert.match(out, /- runDeployServer: false/);
-    assert.match(out, /- runDeployWebsite: false/);
-    assert.match(out, /- runDeployDocs: false/);
+    assert.match(out, /\[pipeline\] dry-run: hosted dispatch is owned by nightly-dev\.yml/);
+    assert.match(out, /- deploy_targets: ui,server,server_runner,cli,stack/);
+    assert.match(out, /- force_deploy: true/);
+    assert.doesNotMatch(out, /runPublish|runDeploy/);
   } finally {
     stub.cleanup();
   }
