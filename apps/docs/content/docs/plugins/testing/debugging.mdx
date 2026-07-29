@@ -11,7 +11,7 @@ description: Diagnose plugin manifest, activation, runtime, and agent integratio
 - missing permission grant
 - untrusted source
 - activation exception
-- stale runtime generation
+- stale development build or daemon source observation
 - agent binary unavailable
 - managed server health check failure
 - agent auth unavailable
@@ -21,7 +21,7 @@ description: Diagnose plugin manifest, activation, runtime, and agent integratio
 ## Debugging approach
 
 1. Validate manifest projection first.
-2. Confirm the daemon loaded the expected plugin generation.
+2. Confirm the daemon is observing the expected development source and build output.
 3. Confirm activation registrations match manifest ids.
 4. Run the smallest handler or agent runtime flow.
 5. Inspect daemon/plugin logs.

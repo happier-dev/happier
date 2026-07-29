@@ -3,7 +3,7 @@
   "pages": [
     "index",
     "local-development",
-    "install-reload",
+    "install-trust",
     "versioning-compat",
     "pack",
     "marketplace"

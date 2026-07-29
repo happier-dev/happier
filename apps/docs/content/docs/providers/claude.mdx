@@ -40,7 +40,7 @@ For the full workflow, see [Features → Attach to a running session](/docs/feat
 
 Happier uses:
 
-- a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`)
+- an **Agent-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`)
 - a separate Claude **session mode** surface (including **Plan**)
 
 For the full user guide (CLI flags, UI picker, defaults, and apply timing), see:
@@ -102,7 +102,7 @@ Anthropic currently supports both install paths. Prefer the native installer flo
 
 ### Install via hstack (best-effort)
 
-If you use hstack, you can run the provider installer (uses the upstream native installer by default):
+If you use hstack, you can run its legacy-named `providers` installer (uses the upstream native installer by default):
 
 ```bash
 hstack providers install claude
@@ -179,7 +179,7 @@ Important notes:
 
 - machine-local Claude login still matters for native Claude CLI workflows
 - connected services can make cross-machine continuity easier because the credential is account-managed instead of machine-local only
-- direct-session handoff support is provider-dependent, but Claude is one of the supported providers
+- direct-session handoff support is Agent-dependent, and Claude is one of the supported Agents
 
 See:
 
@@ -194,7 +194,7 @@ In the app:
 2. **Agents**
 3. **Claude (remote)**
 
-Most settings below affect **Claude remote mode only**.  
+Most settings below affect **Claude remote mode only**.
 The one exception is **Experimental: local permission bridge**, which affects **local mode**.
 
 ## Settings reference (Claude remote)
@@ -248,7 +248,7 @@ When a Claude session has an active team, the session composer shows a **“To:�
 - pick a specific teammate, or
 - pick **Broadcast**.
 
-Routed messages are stored as a provider-agnostic structured message kind (`participant_message.v1`) so Happier can render them as a distinct card in the transcript (instead of looking like a normal bubble).
+Routed messages are stored as an Agent-agnostic structured message kind (`participant_message.v1`) so Happier can render them as a distinct card in the transcript (instead of looking like a normal bubble).
 
 The important user-visible rule is:
 

@@ -3,7 +3,7 @@ title: Kilo (experimental)
 description: Configure Kilo in Happier, including install, machine-local login, and current limitations.
 ---
 
-Happier supports **Kilo** as a local CLI-backed provider.
+Happier supports **Kilo** as a local CLI-backed Agent.
 
 ## Requirements
 
@@ -19,7 +19,7 @@ npm install -g @kilocode/cli@latest
 kilo --version
 ```
 
-If you use hstack, you can install Kilo with the providers installer:
+If you use hstack, you can install Kilo with its legacy-named `providers` installer:
 
 ```bash
 hstack providers install kilo
@@ -43,7 +43,7 @@ For the shared user guide, see [Agent authentication](/docs/features/provider-au
 
 ## Enable Kilo in Happier (experimental)
 
-Kilo is behind Happier’s experimental providers rollout.
+Kilo is behind Happier’s experimental Agent rollout.
 
 In the app:
 
@@ -55,7 +55,7 @@ In the app:
 
 - Kilo runs locally on your machine through the real Kilo CLI.
 - Session capabilities such as resume, models, modes, and permissions remain capability-driven and can evolve with the installed runtime.
-- When in doubt, treat Kilo’s own CLI configuration as the source of truth for provider-native behavior.
+- When in doubt, treat Kilo’s own CLI configuration as the source of truth for Agent-native behavior.
 
 ## Troubleshooting
 

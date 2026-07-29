@@ -7,32 +7,25 @@ Actions are the canonical executable operation model. Tools and commands are con
 
 ## Actions
 
-Declare actions in the manifest, then bind handlers with `api.registerAction(...)`.
+Declare actions in the manifest, then bind handlers with `api.actions.register(...)`.
 
 ```ts
-export async function activate(host) {
-  host.registerAction({
-    id: 'echo',
-    handler: async (request) => ({
-      ok: true,
-      data: { input: request.input }
-    })
-  });
+export async function activate(api) {
+  api.actions.register('echo', async (input) => ({ input }));
 }
 ```
 
-Action results use a typed success/error shape:
+Action handlers return JSON-safe values. Throw a typed plugin error when the operation cannot complete:
 
 ```js
-{ ok: true, data: { value: 1 } }
-{ ok: false, error: { code: 'invalid_input', message: 'Invalid input' } }
+{ value: 1 }
 ```
 
 Prefer stable error codes over parsing text.
 
 ## Tools
 
-Tools expose plugin operations to tool-capable surfaces. The manifest owns tool metadata; runtime registration binds only the manifest-declared tool id and handler.
+Tools expose plugin actions to tool-capable surfaces. The manifest owns tool metadata and references the action that supplies executable behavior; tools do not have a second runtime registration path.
 
 Use tools when the operation is meant to be called by agents or MCP-compatible tool clients.
 
@@ -42,11 +35,10 @@ Declare the tool under `contributes.tools[]`. The `surfaces` list makes it avail
 
 ```json
 {
-  "uses": ["tools"],
   "contributes": {
     "tools": [
       {
-        "id": "com.example.session-notes.notes.add",
+        "id": "notes.add",
         "name": "session_notes_add",
         "title": "Add session note",
         "description": "Store a note for the current plugin.",
@@ -59,46 +51,35 @@ Declare the tool under `contributes.tools[]`. The `surfaces` list makes it avail
           },
           "required": ["note"]
         },
-        "handler": {
-          "target": "plugin",
-          "registrationId": "com.example.session-notes.notes.add"
-        }
+        "action": "notes.add"
       }
     ]
   }
 }
 ```
 
-Bind the handler during activation. Tool handlers receive the existing action-style request object; `request.context` includes plugin-scoped `storage`, `settings`, `logger`, and `events`.
+Bind the referenced action during activation. Action handlers receive JSON-safe input and a `PluginInvocationContext` with plugin-scoped services.
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
-const ADD_NOTE_TOOL_ID = 'com.example.session-notes.notes.add';
+const ADD_NOTE_ACTION_ID = 'notes.add';
 
 export function activate(api: PluginApi): void {
-  api.registerTool({
-    id: ADD_NOTE_TOOL_ID,
-    handler: async (request) => {
-      const services = request.context;
-      const note = String((request.input as { note?: unknown }).note ?? '');
-      const existing = await services.storage.local.get<string[]>('notes');
-      const notes = [...(existing ?? []), note];
-      await services.storage.local.set('notes', notes);
-      services.logger.info('Stored session note', { count: notes.length });
-      await services.events.emit({
-        id: 'com.example.session-notes.note-added',
-        payload: { count: notes.length },
-      });
-      return { ok: true, data: { note, count: notes.length } };
-    },
+  api.actions.register(ADD_NOTE_ACTION_ID, async (input, context) => {
+    const note = String((input as { note?: unknown }).note ?? '');
+    const existing = await context.services.storage.local.get<string[]>('notes');
+    const notes = [...(existing ?? []), note];
+    await context.services.storage.local.set('notes', notes);
+    context.services.logger.info('Stored session note', { count: notes.length });
+    return { note, count: notes.length };
   });
 }
 ```
 
 ## Commands
 
-Commands expose CLI-facing entries. Command declarations should specify visibility, feature gates, and the action they trigger when applicable.
+Commands expose CLI-facing entries. Command declarations specify their path, visibility, availability, and canonical action reference; they do not register a parallel command handler.
 
 ## Approvals
 

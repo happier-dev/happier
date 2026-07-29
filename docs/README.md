@@ -8,6 +8,7 @@ This folder documents how Happier works internally, with a focus on protocol, ba
 - api.md: HTTP endpoints and authentication flows.
 - encryption.md: Encryption boundaries, on-wire encoding, and session storage modes.
 - feature-gating.md: Canonical feature catalog, payload, policy, and gate-consumption contracts.
+- compatibility.md: Released and live `remote-dev` predecessor baselines, mixed-version seams, rollout directions, and compatibility-path lifecycle.
 - testing.md: Repository test lanes, placement rules, and e2e conventions.
 - binary-runtime.md: Binary-safe runtime rules and bundled internal workspace packaging.
 - backend-architecture.md: Internal backend structure, data flow, and key subsystems.

@@ -1,32 +1,26 @@
 ---
 title: Managed servers
-description: Supervise plugin-owned local servers through ctx.managedServer.
+description: Supervise plugin-owned local servers through context.services.managed.
 ---
 
-`ctx.managedServer` is for plugin-owned local services such as provider loopback servers.
+Use `context.services.managed.servers.supervise(...)` for plugin-owned loopback services. Declare managed dependencies and executable access in the cold manifest first.
 
-## What the host manages
+The service can own process launch, explicit managed-spawn or external-attach mode, port and base URL projection, health checks, startup timeout, bounded credentials, durable log policy, snapshots, and cleanup.
 
-The managed-server service owns:
+```ts
+const server = await context.services.managed.servers.supervise(spec, {
+  signal: context.signal
+});
 
-- process launch
-- port resolution
-- loopback binding
-- health checks
-- startup timeout
-- credentials
-- durable logs
-- process cleanup
-- snapshots and diagnostics
+await server.waitUntilHealthy({ signal: context.signal });
+```
 
-## Use case
-
-OpenCode server mode uses `ctx.managedServer.supervise(...)` to start a loopback server, wait for `/global/health`, inject credentials, and dispose the server with the session runtime.
+Dispose the returned handle with its activation, Agent runtime, or session owner.
 
 ## Good practices
 
-- Bind to `127.0.0.1` unless the feature explicitly requires otherwise.
-- Use generated credentials for local HTTP servers.
-- Redact durable logs.
-- Fail closed when post-start health or auth handshake validation fails.
+- Bind managed servers to loopback.
+- Generate narrow credentials for local HTTP services.
 - Keep external-attach and managed-spawn modes explicit.
+- Redact durable logs.
+- Fail closed when post-start health or authentication validation fails.

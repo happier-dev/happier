@@ -1,38 +1,26 @@
 ---
-title: Lifecycle handlers
-description: Handle plugin activation and deactivation lifecycle events safely.
+title: Activation cleanup
+description: Release resources created by a successful plugin activation.
 ---
 
-Lifecycle handlers are plugin-owned callbacks for plugin generation events.
+Return at most one cleanup function from `activate(api)`:
 
-## Activation lifecycle
-
-Activation runs when the daemon loads a plugin generation. Register handlers and disposables during `activate(api)`.
-
-## Deactivation lifecycle
-
-Deactivation runs when a plugin generation is replaced or disposed. Use it to close plugin-owned resources, abort background work, release handles, and flush plugin-owned state.
-
-## Registering lifecycle handlers
-
-```js
+```ts
 export async function activate(api) {
-  api.registerLifecycleHandler({
-    id: 'cleanup',
-    event: 'deactivating',
-    handler: async (request) => {
-      // Clean up resources owned by request.generation.
-    }
-  });
+  const resource = await acquirePluginOwnedResource();
+  api.actions.register('use-resource', (input) => resource.use(input));
+  return async () => resource.close();
 }
 ```
 
-Handler ids should be stable and manifest-declared when projected.
+The callback owns only resources the plugin acquired after activation began
+successfully. Happier invokes it at most once when that activation is no longer
+serving or when later validation fails.
 
-## Safety rules
+If activation rejects before returning, use local `try`/`finally` for anything
+acquired directly. Happier can release host-tracked registrations and dynamic
+host resources, but it cannot reclaim arbitrary timers, sockets, processes, or
+native resources created directly by trusted code.
 
-- Make cleanup idempotent.
-- Do not dispose host-owned resources.
-- Do not keep references to old `ctx` services after deactivation.
-- Do not assume deactivation means Happier is shutting down; reload also deactivates old generations.
-- Abort long-running provider operations through the runtime-owned cancellation path when possible.
+Make cleanup idempotent, honor cancellation in long-running operations, and do
+not dispose host-owned session, transcript, or process state.

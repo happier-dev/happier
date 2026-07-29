@@ -4,6 +4,7 @@
     "index",
     "claude",
     "codex",
+    "grok",
     "custom-acp",
     "gemini",
     "opencode",

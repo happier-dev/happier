@@ -8,7 +8,7 @@ Happier supports two user-facing session modes:
 - **Happier**: the session is managed by Happier and available across your devices
 - **Direct**: the session stays linked to the provider on a specific machine
 
-This page explains how to choose between them, how provider-session browsing works, and when to use **Take over** vs **Take over + Sync**.
+This page explains how to choose between them, how provider-session browsing works, and when linked or imported takeover is available.
 
 ## The difference in one sentence
 
@@ -116,31 +116,47 @@ The chip is available only when:
 
 Direct support currently focuses on providers where Happier can reliably browse and follow provider-native sessions.
 
-## Take over vs Take over + Sync
+## Takeover depends on Agent and session safety
 
-When you open a direct session, Happier can offer two control paths:
+When you open a direct session, Happier may offer **Take over**. The available choices depend on the Agent, the current session state, and whether Happier can prove that another writer will not keep changing the session. If that safety cannot be established, the affected takeover choice stays unavailable and the session remains read-only.
 
-### Take over
+Stop the external CLI when prompted and use **Re-check**. There is no “take over anyway” option.
 
-Choose **Take over** when you want to control the session from Happier but keep it **Direct**.
+### Continue linked
 
-This means:
+Choose **Continue linked** when it is available and you want Happier to control the session without importing its history.
 
-- Happier takes control of the provider session
-- the provider transcript remains the source of truth
-- the session stays machine-bound
+- The provider transcript remains the source of truth.
+- The session stays linked to its machine.
+- Happier disables managed input if it later detects another external writer.
 
-### Take over + Sync
+Some Agents cannot offer this mode because they cannot safely prevent or detect a competing writer.
 
-Choose **Take over + Sync** when you want to convert the workflow into a Happier-managed session.
+### Import and take over
 
-This means:
+Choose **Import and take over** when it is available and you want to convert the session into a Happier-managed session.
 
-- Happier imports the transcript from the provider
-- the session switches into the **Happier** mode
-- Happier becomes the canonical transcript going forward
+- Happier imports the provider history through a recoverable operation.
+- The session changes to **Happier** only after the required safety and authority checks succeed.
+- Happier becomes the canonical transcript for future work.
 
-Use this when you want long-term Happier continuity instead of a provider-linked session.
+Use this for long-term Happier continuity instead of a provider-linked transcript.
+
+### If import or takeover is interrupted
+
+Import and takeover are durable, recoverable operations rather than one uninterrupted step. After a restart or interruption, the progress card can show **Awaiting your resume** and may ask you to:
+
+- **Resume** or **Retry** after a restart, interruption, or temporary failure
+- **Cancel** while cancellation is safe
+- **Discard partial session** when an initial import has published only an incomplete session
+
+Happier never resumes effectful work merely because the app reconnects or you reopen the session. If an Agent fails to start after the session has already become Happier-managed, the session remains hosted but offline and offers **Retry start**; it does not silently return control to the external session.
+
+If Happier cannot reconcile the saved operation with the current session, it shows **Reconciliation required** instead of guessing. If the source changes or disappears, an initial partial import stays incomplete and unshareable. A failed update to an already complete snapshot keeps the last complete snapshot available and leaves the unfinished additions unpublished.
+
+### Sharing after import
+
+A direct session cannot be shared until it has a complete published import. Sharing can also be temporarily unavailable with `metadata_privacy_upgrade_required` when the session still uses an older metadata privacy layout. The session owner must complete the privacy upgrade, then try sharing again; Happier does not expose the older private metadata to recipients in the meantime.
 
 ## Common workflows
 
@@ -154,7 +170,7 @@ This is the lowest-friction path because Happier does not need to import the tra
 
 If the session should remain provider-backed and the machine stays online, keep it **Direct**.
 
-If you want Happier to own the session moving forward, use **Take over + Sync**.
+If you want Happier to own the session moving forward, use **Import and take over** when that choice is available.
 
 ### I only want to inspect the transcript
 
@@ -164,7 +180,7 @@ This is useful when you want visibility without changing the session’s ownersh
 
 ### I want a session that feels fully native to Happier
 
-Start it as **Happier**, or open it direct first and then use **Take over + Sync**.
+Start it as **Happier**, or open it direct first and then use **Import and take over** when that choice is available.
 
 ## Handing off direct sessions between machines
 
@@ -294,7 +310,7 @@ The important mental model is:
 - **Direct** = transcript managed by the provider on the machine
 
 Direct sessions are not the same as “unsaved”.
-They simply are not synced into Happier until you explicitly choose **Take over + Sync**.
+They simply are not synced into Happier until you complete an import or **Import and take over** operation.
 
 ## Related guides
 

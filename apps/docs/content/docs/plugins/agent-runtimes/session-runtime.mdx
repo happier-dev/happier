@@ -1,43 +1,30 @@
 ---
-title: Session runtime
-description: Implement live agent sessions through SessionRuntimeV1.
+title: Agent session runtime
+description: Implement native Agent sessions with AgentSessionRuntime.
 ---
 
-`SessionRuntimeV1` is the plugin-facing runtime contract for a live agent session.
-
-## Required shape
+`AgentSessionRuntime` is the public live-session contract from
+`@happier-dev/plugin-sdk/agent-runtime`.
 
 ```ts
-type SessionRuntimeV1 = Readonly<{
-  identity: {
-    read(): { providerSessionId: string | null };
-  };
-  events: {
-    subscribe(handler): () => void;
-  };
-  send(input, options?): Promise<RuntimeSendResultV1>;
-  dispose(reason?): Promise<void>;
-}>;
+interface AgentSessionRuntime extends Disposable {
+  send(request, options?): Promise<AgentSessionSendResult>;
+  cancel?(request, options?): Promise<AgentSessionCancelResult>;
+  updateConfiguration?(request, options?): Promise<AgentSessionConfigurationResult>;
+  compact?(request, options?): Promise<AgentSessionCompactResult>;
+  watch(listener): Disposable;
+}
 ```
 
-Optional methods include `cancel`, `updateConfig`, permission response handling, agent prompt-acceptance callbacks, connected-service auth generation, runtime identity reads, and undeliverable prompt callbacks.
+The session factory receives a typed create, resume, or fork request plus a
+bounded `AgentSessionRuntimeContext`. The host supplies authorized launch
+environment, timestamped scalar configuration, connected-account references,
+MCP launch data, and supported session services when applicable.
 
-## Runtime input
+`send` receives the canonical host delivery request. Publish strict canonical
+events through `watch`; keep raw provider payloads inside the Agent adapter.
+Unsupported optional operations return the documented typed unsupported or
+unavailable result rather than silently dropping behavior.
 
-`send(...)` receives a typed runtime input payload, not only a string. The payload can contain text plus structured input metadata such as image inputs, vendor plugin mentions, skills, or other host-supported structured selections.
-
-Agent leaves must encode structured input into the native wire format. They should return an explicit unsupported, unavailable, or rejected result when input would be lost.
-
-## Runtime events
-
-Session runtimes publish host-observable facts as `RuntimeEventV1`, including message deltas, tool events, turn lifecycle, provider session id publication, descriptor updates, token counts, context compaction events, agent errors, and subagent lifecycle.
-
-Raw native payloads should stay inside agent adapters.
-
-## Permission responses
-
-If an agent requires interactive permissions, implement the shared permission response contract instead of maintaining an agent-local UI state machine.
-
-## Disposal
-
-`dispose(...)` must clean up agent-owned resources idempotently. It should not delete host-owned session state or transcript state.
+`dispose` is idempotent and releases only Agent-owned session resources. It
+does not delete host session state, queued input, or transcript state.

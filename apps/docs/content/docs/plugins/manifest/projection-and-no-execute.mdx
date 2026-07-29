@@ -14,14 +14,14 @@ Happier should project these from manifest/protocol data:
 - settings forms
 - agent settings forms
 - action, tool, and command catalogs
-- hook and lifecycle declarations
+- hook declarations
 - event declarations and payload schema metadata
 - agent catalogs
 - agent runtime capabilities and selectable runtime targets
-- agent runtime surface declarations
+- Agent capability declarations and separately owned auxiliary contributions
 - UI surface descriptors
 - MCP server and discovery descriptors
-- generated artifacts and integrity metadata
+- declared UI inputs and the host-generated artifact graph
 
 ## Why this matters
 
@@ -32,11 +32,11 @@ No-execute projection lets Happier:
 - validate manifests deterministically
 - build catalogs without filesystem scanning
 - reject invalid contribution ids before runtime
-- keep plugin reload safe when activation fails
+- reject invalid executable bindings before they serve requests
 
 ## Handler binding happens later
 
-Executable handlers are bound during daemon activation or runtime invocation. For example, an action is declared in the manifest, then `api.registerAction({ id, handler })` binds behavior for that id.
+Executable handlers are bound during daemon activation or runtime invocation. For example, an action is declared in the manifest, then `api.actions.register(id, handler)` binds behavior for that id.
 
 ## Avoid split-brain declarations
 

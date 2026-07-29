@@ -7,7 +7,7 @@ This page documents how Happier integrates with **Codex** and what Codex-specifi
 
 ## Install Codex
 
-If you use hstack, you can install Codex with the providers installer:
+If you use hstack, you can install Codex with its legacy-named `providers` installer:
 
 ```bash
 hstack providers install codex
@@ -68,8 +68,8 @@ Notes:
 
 Codex-connected-service selection can also affect **session browsing** and the **Resume ID** picker. See:
 
-- [Browse and import provider sessions](/docs/features/browse-and-import-sessions)
-- [Resume a provider session (Resume ID)](/docs/features/resume-provider-sessions)
+- [Browse and import Agent sessions](/docs/features/browse-and-import-sessions)
+- [Resume an Agent session (Resume ID)](/docs/features/resume-provider-sessions)
 
 ## Session handoff
 
@@ -110,7 +110,7 @@ Important Codex behavior:
 
 If you manually switch Codex to plain `mcp` in settings, new sessions can still run, but vendor resume is not available on that plain MCP path.
 
-Codex local control is exclusive. When the Codex TUI owns the session, Happier watches Codex turn boundaries and process state so it can tell when it is safe to resume remote processing. Completed turns, aborted turns, and provider process exit are treated as safe boundaries for handing control back to Happier.
+Codex local control is exclusive. When the Codex TUI owns the session, Happier watches Codex turn boundaries and process state so it can tell when it is safe to resume remote processing. Completed turns, aborted turns, and Agent process exit are treated as safe boundaries for handing control back to Happier.
 
 Codex model availability depends on the active Codex backend, installed runtime, and account state. The new-session engine picker can show the currently available Codex models, model-specific options such as reasoning effort, and favorite Codex model shortcuts when those models are available for the selected backend.
 
@@ -207,7 +207,7 @@ Resume is strict: Happier does not silently replace a failed Codex resume with a
 
 ## Permissions and modes
 
-Happier uses a **provider-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`) and applies it to Codex in the best available way.
+Happier uses an **Agent-agnostic permission mode** (`default`, `read-only`, `safe-yolo`, `yolo`) and applies it to Codex in the best available way.
 
 For the full user guide (CLI flags, UI picker, defaults, apply timing), see:
 
@@ -218,7 +218,7 @@ For the full user guide (CLI flags, UI picker, defaults, apply timing), see:
 
 Codex enforcement is a combination of:
 - **Happier tool-approval gating** (what Happier will auto-approve vs deny vs prompt for), and
-- **provider-native sandbox/policy** (what the Codex backend enforces internally).
+- **Agent-native sandbox/policy** (what the Codex runtime enforces internally).
 
 Important notes:
 

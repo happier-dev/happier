@@ -1,50 +1,48 @@
 ---
 title: Activation
-description: Bind executable plugin behavior to manifest-declared contributions.
+description: Bind executable plugin behavior to manifest-declared local ids.
 ---
 
-Activation is the daemon-side entry point for executable plugin code.
+Every executable daemon module exports a named `activate` function:
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
 
-export async function activate(host: PluginApi) {
-  host.registerAction({
-    id: 'echo',
-    handler: async (request) => ({
-      ok: true,
-      data: request.input
-    })
-  });
-
-  host.onDispose(async () => {
-    // Dispose handles owned by this plugin generation.
+export function activate(api: PluginApi): void {
+  api.actions.register('echo', async (input, context) => {
+    await context.ui.notify('Echoed', { severity: 'info' });
+    return input;
   });
 }
 ```
 
-## What activation can do
+Activation is registration-only. It receives `PluginApi`, not invocation or
+session services, and binds only ids declared in the matching manifest family.
+Missing, undeclared, duplicate, or wrong-family registrations fail validation.
 
-Activation can register executable handlers and disposables. It should be fast, deterministic, and free of expensive provider startup work.
+Static manifest-declared registration methods return `void`. Dynamic watches
+or subscriptions may return `Disposable` when their documented lifetime is
+genuinely author-owned.
 
-## What activation cannot do
+## Cleanup
 
-Activation does not receive `PluginContextV1`. It should not:
+`activate` may return one cleanup function after successful registration:
 
-- spawn agent processes
-- read session state
-- fetch secrets
-- write transcript rows
-- perform agent auth flows
-- query broad host read models
-- create static contribution identity by side effect
+```ts
+export async function activate(api: PluginApi) {
+  const connection = await openPluginOwnedConnection();
+  api.actions.register('query', (input) => connection.query(input));
+  return async () => connection.close();
+}
+```
 
-Those operations belong to invoked handlers that receive handler-scoped services, or to agent runtimes that receive `PluginContextV1`.
+Happier calls the returned function at most once when that successful
+activation is retired or later validation fails. If activation throws before
+returning, no cleanup function exists yet. Protect directly acquired timers,
+sockets, processes, and other trusted-code resources with local
+`try`/`finally`; Happier can automatically unwind only registrations and
+resources acquired through host APIs.
 
-## Registration ids
-
-Registration ids bind to manifest-declared ids. If a contribution is descriptor-only, it should not need an activation registration method. If a contribution needs executable behavior, its handler should be registered by id.
-
-## Disposables
-
-Use `api.onDispose(...)` for resources owned by the current activation generation. Dispose handlers should be idempotent because reload and shutdown can race with in-flight operations.
+Do not perform user-visible effects, start Agent sessions, read secrets, or
+write transcripts during activation. Those operations belong to invoked
+handlers or native Agent session operations.

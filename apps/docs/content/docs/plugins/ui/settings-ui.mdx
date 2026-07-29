@@ -1,28 +1,19 @@
 ---
-title: Settings UI
-description: Render plugin and agent settings from descriptors.
+title: Host-rendered plugin UI
+description: Use declarative settings, status, and actions without shipping renderer code.
 ---
 
-Plugin settings UI is host-rendered from descriptors. Plugins should not ship custom code for normal settings forms.
+Host-rendered UI is the simplest choice for settings, setup, status, and
+actions. The manifest supplies typed descriptors; Happier renders accessible
+controls with the current platform's native components.
 
-## Descriptor fields
+Use this mode when the UI can be expressed as fields, groups, options, status,
+and actions. It avoids a separate executable UI bundle and inherits host focus,
+keyboard, screen-reader, contrast, Dynamic Type/zoom, RTL, and reduced-motion
+behavior.
 
-Settings descriptors can include:
-
-- field id
-- kind and value schema
-- control type
-- display and description keys
-- group and order
-- redaction
-- hidden state
-- default values
-- gates
-
-## Runtime access
-
-Plugin handlers read and write values through `request.context.settings` or hook `context.settings`. Agent runtimes use `ctx.settings`. Secret values should use `ctx.secrets` from `PluginContextV1`; handler-scoped services intentionally expose only non-secret settings.
-
-## Agent settings
-
-Agent settings are plugin-owned descriptors projected into agent settings screens. Generic settings UI should not branch on `agentId`; it should render the descriptors supplied by projection.
+Invoked handlers read or update settings through
+`context.services.settings`. Secret values use the host-owned secrets service,
+not a plain settings or storage field. Agent-targeted configuration is declared
+through the canonical typed settings model and materialized by the host for the
+native `AgentRuntime` session request.

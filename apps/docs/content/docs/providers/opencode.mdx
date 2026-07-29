@@ -12,7 +12,7 @@ This page documents how Happier integrates with **OpenCode** and what matters fo
 
 ## Install OpenCode
 
-If you use Happier's provider installer, you can install OpenCode from the CLI:
+If you use Happier's legacy-named `provider` installer, you can install OpenCode from the CLI:
 
 ```bash
 happier install provider opencode
@@ -79,7 +79,7 @@ When you start OpenCode this way:
 - the Happier app can still see the same transcript and send messages into the same OpenCode session,
 - messages typed directly into the OpenCode TUI also show up in Happier.
 
-This is useful when you want the provider TUI first, but still want the app to stay attached to the same session.
+This is useful when you want the Agent TUI first, but still want the app to stay attached to the same session.
 
 ### Detach from the app
 
@@ -173,7 +173,7 @@ For the full user-facing MCP guide in Happier, see:
 
 ## Permissions, modes, and models
 
-Happier uses the same provider-agnostic permission picker for OpenCode as it does for other agents.
+Happier uses the same Agent-agnostic permission picker for OpenCode as it does for other Agents.
 
 Important OpenCode notes:
 
@@ -181,7 +181,7 @@ Important OpenCode notes:
 - Happier maps that intent to the closest OpenCode session permission ruleset,
 - some OpenCode behavior still depends on the installed OpenCode runtime.
 
-OpenCode can also expose provider-native session modes and model choices. When those are available, Happier surfaces them in the session UI.
+OpenCode can also expose Agent-native session modes and model choices. When those are available, Happier surfaces them in the session UI.
 
 For the full user guide, see:
 

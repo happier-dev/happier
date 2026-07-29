@@ -92,3 +92,57 @@ For the server, database migrations should be automated as part of the deploymen
 - Run `prisma migrate deploy` at container startup (entrypoint) or via an explicit platform “pre-deploy” hook.
 - Running migrations from *both* API and worker is acceptable as long as you expect contention and handle it (Prisma uses a DB lock to serialize migrations; the non-holder should wait/retry).
 - Avoid running migrations at image build-time (Dockerfile), since migrations require a live DB connection.
+
+### Irreversible Qualified Connected Accounts V4 activation
+
+`20260725100000_activate_qualified_connected_accounts_v4` is an explicit
+no-rollback boundary for old server binaries. Before its first promotion into
+each deployed server environment:
+
+1. Release validation must confirm the exact migration exists in the
+   PostgreSQL, MySQL, and SQLite migration trees and that their final schemas
+   agree.
+2. Refresh and record the current `../remote-dev` predecessor `HEAD`, dirty
+   state, schema, readers, and writers. The supported predecessor cannot create
+   rows under the activated schema or read novel rows with nullable legacy
+   identity.
+3. Start a maintenance window in the hosting control plane. Stop or scale to
+   zero **every existing API and worker server instance that can write the
+   target database**, then verify that no old server process or container
+   remains. Removing API traffic alone is insufficient because the worker also
+   writes database state.
+4. A release approver must verify backup and restore readiness, attest that all
+   old API and worker writers are stopped and will remain stopped if migration
+   fails, and explicitly accept that old-server rollback is prohibited after
+   activation.
+5. Use the unified release confirmation, or the direct server-promotion
+   `qualified_v4_activation_approval` checkbox. The promotion workflow records
+   the named migration and acknowledgement in its job summary before changing
+   a release or deploy branch.
+6. Keep the maintenance window in force while the candidate API and worker
+   deployments start. Do not end it until the activation migration has a
+   successful `finished_at` entry in Prisma's `_prisma_migrations` table and
+   the current-version API and worker instances are ready.
+
+The current hosted deployment path is not itself a quiescence mechanism. A
+deploy-branch push calls independent API and worker deployment webhooks, API
+first, and each new container runs `prisma migrate deploy` in its entrypoint
+before starting its server role. Normal rolling replacement can therefore
+leave predecessor API or worker writers alive while the first candidate
+container migrates. Prisma's migration lock serializes migration runners; it
+does not stop application writes. Complete step 3 before dispatching the
+promotion rather than relying on the rollout or entrypoint to drain writers.
+
+If migration, build, or candidate startup fails, stop the candidate deployment
+or restart loop and keep both old server roles stopped. Do not restart the
+predecessor image or retry the normal rolling deployment. Preserve the
+database, inspect its schema and Prisma migration record, and obtain an
+approved provider-specific recovery procedure before any manual DDL or
+`prisma migrate resolve` action.
+
+The release admission check rejects a PostgreSQL/MySQL/SQLite split-brain and
+any candidate that removes the activation from an already-activated
+environment. After the deployed baseline contains the migration, the check
+does not require recurring approval; Prisma's existing `_prisma_migrations`
+history remains the sole applied-state record. Do not add a runtime feature
+flag, product setting, or second migration ledger for this boundary.

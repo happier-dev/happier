@@ -1,0 +1,197 @@
+---
+title: Remote development targets
+description: Mirror one checkout to Linux, macOS, or Windows machines and run native development daemons from yarn dev or yarn tui.
+---
+
+Remote development targets let one local Stack checkout drive native Happier daemon builds on other
+machines. Stack uses [Mutagen](https://mutagen.io/) for one-way source synchronization and reuses
+the existing Stack development lifecycle on every target.
+
+This is intended for maintainers who want macOS, Linux, and Windows daemons connected to the same
+development server while editing one checkout.
+
+## Prerequisites
+
+On the computer running `yarn dev` or `yarn tui`:
+
+- install Mutagen and make `mutagen` available on `PATH`;
+- configure non-interactive OpenSSH access to every target;
+- accept each target's SSH host key before starting the TUI.
+
+On every target:
+
+- run an OpenSSH server;
+- install Node.js and Corepack;
+- allow enough disk space for a source mirror, target-local dependencies, and build output.
+
+Stack deliberately does not install or update the host's SSH server, Node.js, Corepack, or Mutagen
+CLI. Those are machine prerequisites. Mutagen automatically installs its own small synchronization
+agent over SSH when a project starts.
+
+Verify a target without changing it:
+
+```bash
+hstack dev-targets doctor linux --stack=repo-dev
+```
+
+`doctor` checks the local Mutagen CLI, passwordless SSH, and remote Node.js/Corepack availability.
+Omit the target name to check every target configured for the stack.
+
+## Add and manage targets
+
+Target configuration is stack-scoped and stored at:
+
+```text
+~/.happier/stacks/<stack>/dev-targets.json
+```
+
+Use the command rather than editing the JSON directly:
+
+```bash
+hstack dev-targets path --stack=repo-dev
+hstack dev-targets list --stack=repo-dev
+hstack dev-targets show linux --stack=repo-dev
+```
+
+Add a Linux or macOS target:
+
+```bash
+hstack dev-targets add linux \
+  --stack=repo-dev \
+  --platform=posix \
+  --ssh=happier-stack-linux \
+  --repo-dir=/home/dev/happier \
+  --cli-home-dir=/home/dev/.happier/dev-targets/repo-dev-linux
+```
+
+Add a Windows target using forward-slash paths:
+
+```bash
+hstack dev-targets add windows \
+  --stack=repo-dev \
+  --platform=windows \
+  --ssh=happier-stack-windows \
+  --repo-dir=C:/Users/dev/happier \
+  --cli-home-dir=C:/Users/dev/.happier/dev-targets/repo-dev-windows
+```
+
+`--ssh` can be a normal OpenSSH alias or `user@host`. If a target uses a generated or isolated SSH
+configuration, pass its absolute path:
+
+```bash
+hstack dev-targets add linux \
+  --stack=repo-dev \
+  --platform=posix \
+  --ssh=lima-happier \
+  --ssh-config-file=/absolute/path/to/lima/ssh.config \
+  --lima-instance=happier-linux \
+  --lima-home=/absolute/path/to/lima-home \
+  --repo-dir=/home/dev/happier \
+  --cli-home-dir=/home/dev/.happier/dev-targets/repo-dev-linux
+```
+
+When both Lima options are present, Stack runs `limactl start` before SSH preparation. It does not
+stop the VM when the TUI exits, so target-local dependency and build caches remain warm.
+
+Adding a target with an existing name replaces that target's configuration. Remove one with:
+
+```bash
+hstack dev-targets remove windows --stack=repo-dev
+```
+
+From a source checkout, the equivalent repo-local shortcuts are:
+
+```bash
+yarn dev-targets list
+yarn dev-targets add ...
+yarn dev-targets show linux
+yarn dev-targets doctor
+yarn dev-targets remove linux
+```
+
+The repo-local wrapper selects that checkout's Stack automatically.
+
+## What starts automatically
+
+When at least one target is configured, `yarn dev` and `yarn tui` start the local server, daemon,
+and Expo first. Remote preparation then runs independently in the background:
+
+1. validate the locally installed Mutagen CLI;
+2. create the Mutagen `one-way-replica` project with every session paused;
+3. independently start any target's configured Lima instance and create its directories over SSH;
+4. resume and flush that target's Mutagen session;
+5. install its target-local dependencies with the synchronized lockfile;
+6. copy the current Stack daemon access key into a target-specific CLI home;
+7. open an SSH reverse tunnel to the already-running local Stack server;
+8. start the remote checkout through the existing daemon-only `hstack dev --watch` lifecycle.
+
+An unavailable or slow target does not delay Expo, stop the local Stack, or delay another ready
+target. Its failure is reported in the target pane while the local Stack and other targets remain
+available. Windows dependency installation retries transient package-manager failures before
+reporting the target as failed.
+
+Each remote daemon builds from source on its own operating system and receives its own machine
+identity. It connects to the same Stack server as the local daemon; Stack does not copy the local
+machine identity or general settings.
+
+The TUI adds:
+
+- a `mutagen sync` pane for synchronization output and status;
+- one `remote <name>` pane per target for dependency, build, daemon, and reconnect output.
+
+Stopping the TUI stops its remote workers and terminates the generated Mutagen project. Target-local
+dependencies and build caches remain for the next run.
+
+To run only the local Stack:
+
+```bash
+yarn dev --no-dev-targets
+yarn tui --no-dev-targets
+```
+
+## Synchronization policy
+
+The local checkout is authoritative. Do not edit the remote mirror: Mutagen may overwrite target
+changes.
+
+Stack excludes source-control metadata and target-local artifacts such as `.git`, `node_modules`,
+`dist`, `.project`, `.happier`, coverage output, Rust targets, CocoaPods, and known review/build
+artifacts. Dependencies and build output are produced independently on every operating system.
+
+The initial synchronization and dependency installation can take time. After startup, source
+changes are incremental and every remote daemon watches and builds its own target-local mirror.
+
+## Platform notes
+
+### Lima
+
+Use Lima's generated SSH config with `--ssh-config-file`. Add `--lima-instance` and `--lima-home`
+when Stack should start that instance automatically. The VM still needs Node.js and Corepack;
+`hstack dev-targets doctor` verifies them before the full TUI starts.
+
+### Windows
+
+Use Windows OpenSSH Server and forward-slash target paths. The Stack sends encoded PowerShell
+commands, so spaces in paths are supported.
+
+For administrator accounts, Windows OpenSSH may read
+`C:\ProgramData\ssh\administrators_authorized_keys` instead of the user's
+`.ssh\authorized_keys`. Confirm that the exact configured alias works non-interactively:
+
+```bash
+ssh -o BatchMode=yes happier-stack-windows "echo ok"
+```
+
+Mutagen documents possible slow or stalled streams with Windows OpenSSH Server. Validate the real
+target with `doctor` and one complete `yarn tui` synchronization before relying on it for unattended
+QA.
+
+## Troubleshooting
+
+- **Mutagen not found:** install Mutagen locally and confirm `mutagen version`.
+- **SSH authentication fails:** make the configured alias work with `BatchMode=yes`; the TUI cannot
+  answer password or host-key prompts.
+- **Node.js/Corepack check fails:** install them on the target, then rerun `doctor`.
+- **A target should not start today:** use `--no-dev-targets`, or remove it from this stack's config.
+- **Synchronization diagnostics:** inspect the `mutagen sync` TUI pane and use the normal `mutagen`
+  CLI. Stack intentionally leaves Mutagen under user control.

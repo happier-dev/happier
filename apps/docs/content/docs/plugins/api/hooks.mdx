@@ -14,14 +14,10 @@ Declare hook contributions in the manifest. Include the hook id, scope, filters,
 Bind the executable handler during activation:
 
 ```ts
-export async function activate(host) {
-  host.registerHook({
-    hookId: 'session.input.transform',
-    priority: 100,
-    handler: async (payload, context) => {
-      if (context.signal?.aborted) return;
-      return payload;
-    }
+export async function activate(api) {
+  api.hooks.register('transform-session-input', async (payload, context) => {
+    if (context.signal.aborted) return;
+    return payload;
   });
 }
 ```

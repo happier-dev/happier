@@ -1,21 +1,20 @@
 ---
 title: Filesystem service
-description: Use scoped filesystem helpers for plugin-owned runtime files.
+description: Use typed, scoped paths for plugin runtime files.
 ---
 
-`ctx.fs` exposes scoped filesystem helpers for runtime work. Use it when plugin code needs atomic writes, temporary files, scoped path listing, or file metadata.
+Use `context.services.fs` for host-mediated file access. A `PluginPath` names a supported root plus a relative path:
 
-## Common operations
+- `pluginData`
+- `workspace`
+- `project` with a project id
 
-- create temporary directories
-- write text or JSON atomically
-- write temporary text files
-- stat files
-- list scoped paths with diagnostics
+The service exposes `readFile`, `writeFile`, `stat`, `list`, and `remove`. Methods are abortable, reads can be byte-bounded, and listings are cursor-bounded.
 
 ## Rules
 
-- Do not write Happier session, transcript, or daemon state files directly.
-- Do not store secrets in regular plugin storage.
-- Use atomic writes for state files that must survive process interruption.
-- Validate paths and avoid preserving absolute build-machine paths in packaged plugins.
+- Do not write Happier session, transcript, daemon, or registry state files directly.
+- Do not store secrets in ordinary files or plugin storage.
+- Use the owning SDK path type instead of concatenating host filesystem roots.
+- Avoid preserving absolute build-machine paths in a package.
+- Treat direct ambient filesystem access by trusted code as outside the host-mediated access contract, not as permission granted by a manifest row.

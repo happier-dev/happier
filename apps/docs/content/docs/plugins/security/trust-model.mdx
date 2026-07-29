@@ -1,30 +1,36 @@
 ---
 title: Trust model
-description: How Happier decides whether plugin code can execute.
+description: Understand Happier's whole-package Install & Trust boundary.
 ---
 
-Plugin source and install policy determine whether executable code can run.
+Plugins are trusted code packages, not sandboxed extensions. A plugin can contain daemon code and React Native client code with the privileges of the Happier process or client realm in which it runs.
 
-## Source classes
+## Install & Trust
 
-Common source classes include local path plugins, local archives, remote archives, package/catalog sources, and bundled plugins.
-
-## Trust behavior
-
-Local trusted sources can execute after validation. Prompt or untrusted sources must go through an install/trust flow before daemon code is imported.
-
-A `--dev` install grants `trustPolicy:'local_trusted'` only when the plugin directory is inside the workspace root of the install invocation; otherwise the plugin stays `prompt` and its daemon code will not load. Approve a pending local plugin explicitly with:
+Happier validates and projects the cold manifest before importing executable code. Installing executable code requires an explicit **Install & Trust** decision for the whole package:
 
 ```bash
-happier plugins trust <pluginId>
+happier plugins install <archive-path> --kind archive
 ```
 
-This flips the installed plugin's stored `trustPolicy` to `local_trusted` (the same trust signal a local install records) and clears the pending `plugin_trust_approval_required` diagnostic. Until it is approved, `happier plugins call <actionId>` on that plugin fails with a `plugin_trust_approval_required` error naming the plugin and the exact `happier plugins trust` command to run.
+The interactive flow presents the exact package facts and records the approving
+user's decision. A headless installation that still needs trust stops for
+review. A manifest contribution, action, command, or runtime registration
+cannot approve or widen package trust.
 
-## Reload safety
+Trust the package only after reviewing its source, build inputs, dependencies, declared host access, executable entrypoints, and UI artifacts. Updating the package can change any of those surfaces and deserves the same scrutiny.
 
-Reload builds a new runtime registry generation. If activation fails and a previous working generation exists, the host can keep the last known good runtime registry.
+## Development sources
 
-## No-execute projection
+`happier plugins dev` starts the supported local development loop from the
+plugin directory. It inspects the project, prepares author dependencies,
+observes source changes, and asks the running daemon to apply the development
+source. Development convenience does not turn untrusted code into a sandbox.
 
-Catalogs, settings, permissions, and install previews should be projected before executable code runs.
+## Static projection
+
+The host can show identity, contributions, settings, requested access, and installation review information from `.happier-plugin/plugin.json` before activation. Keep that file JSON-only and side-effect free.
+
+## UI isolation
+
+Hosted web content has an isolated UI bridge. React Native UI runs as trusted client code. Neither boundary changes the package-level trust decision, and hosted web isolation does not sandbox the plugin's daemon entrypoint.

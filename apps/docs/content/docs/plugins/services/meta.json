@@ -10,8 +10,6 @@
     "storage",
     "auth-connected-services",
     "sessions-transcripts",
-    "projects-account",
-    "notifications",
-    "reviews"
+    "notifications"
   ]
 }

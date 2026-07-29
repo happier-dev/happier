@@ -1,21 +1,29 @@
 ---
 title: Plugin manifest
-description: The manifest is the static source of truth for plugin identity, uses, permissions, and projected contributions.
+description: The strict cold JSON source of truth for plugin identity and contributions.
 ---
 
-The plugin manifest is the contract Happier reads before executing plugin code. It is used for install validation, trust decisions, catalogs, settings UI, action/tool/command projection, agent projection, permissions, and generated artifacts.
-
-## File location
-
-Installable plugins use:
+Every external plugin is described by:
 
 ```text
 .happier-plugin/plugin.json
 ```
 
-TypeScript-authored first-party or in-repo plugins may export a `PLUGIN_MANIFEST` wrapped with `definePluginManifest(...)`, but that helper is a type-preserving authoring convenience. Host ingestion still validates the resulting manifest with the canonical protocol schemas.
+Happier reads and validates this file before importing plugin code. The same
+canonical schema is used by the scaffold, development loop, build, pack, and
+install paths. Unknown behavior keys reject with a path-specific diagnostic;
+only an explicitly documented metadata extension point may accept unknown JSON.
 
-## Top-level shape
+The canonical publication URL for editors and authoring tools is the
+[Plugin Manifest v2 JSON Schema](https://happier.dev/schemas/plugin-manifest-v2.json).
+The repository's website artifact is generated from the same Protocol owner,
+but deployment of that route remains a preview release gate. Until it is live,
+use the scaffolded protocol-generated copy beside `plugin.json` at
+`plugin.schema.json`.
+
+## Minimal shape
+
+The default scaffold emits one action and two executable entrypoints:
 
 ```json
 {
@@ -23,46 +31,57 @@ TypeScript-authored first-party or in-repo plugins may export a `PLUGIN_MANIFEST
   "id": "com.example.plugin",
   "version": "0.1.0",
   "displayName": "Example plugin",
-  "description": "Optional description",
-  "engines": {
-    "happier": "^0.0.0"
-  },
-  "uses": ["actions"],
+  "description": "Local Happier plugin scaffold for Example plugin.",
+  "engines": { "happier": "^0.2.0" },
+  "runtime": { "apiVersion": 1 },
   "entrypoints": {
-    "main": "./dist/index.js",
-    "dev": "./src/index.ts"
+    "daemon": "./dist/index.js",
+    "development": "./src/index.ts"
   },
-  "permissions": {
-    "required": [],
-    "optional": []
-  },
-  "contributes": {}
+  "contributes": {
+    "actions": [
+      {
+        "id": "save-note",
+        "title": "Save note",
+        "description": "Returns the supplied note from one minimal plugin action.",
+        "scopes": ["global"],
+        "surfaces": ["agent", "cli", "mcp"],
+        "placement": "commandPalette",
+        "dangerLevel": "safe",
+        "inputSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "note": { "type": "string" } },
+          "required": ["note"]
+        },
+        "resultSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "note": { "type": "string" } },
+          "required": ["note"]
+        }
+      }
+    ]
+  }
 }
 ```
 
-## Stable identity
+Ordinary contributions activate on demand.
 
-`id` is the stable plugin id. It is used for:
+## Authority and identity
 
-- namespacing plugin-owned events
-- qualifying action/tool/command ids
-- trust and install records
-- reload ownership
-- permissions and capability grants
-- diagnostics and provenance
+- Authors declare a plugin id and contribution-local ids.
+- Happier owns structured `{ pluginId, localId }` identity.
+- Use `<pluginId>/<localId>` only at global CLI, wire, and display boundaries.
+- Do not dot-concatenate the two ids or repeat the plugin id inside a local id.
 
-Do not change a published plugin id to rename display text. Use `displayName` for user-facing naming.
+`entrypoints.daemon` names the compiled, self-contained installed module.
+`entrypoints.development` names the TypeScript source module selected by
+`happier plugins dev`. Static discovery, review, and catalog projection do not
+import either module.
 
-## Entrypoints
+## TypeScript
 
-`entrypoints.main` points at the packaged executable activation entry. `entrypoints.dev` may point at a TypeScript source entry and is used only for linked `local_trusted` installs. Executable plugin code is daemon-local. Static projection must not depend on importing either file.
-
-## Manifest-first rule
-
-If Happier needs to show, validate, authorize, or route a contribution before running code, it belongs in the manifest. Activation then binds executable handlers to declared ids.
-
-This applies to actions, tools, commands, hooks, lifecycle handlers, agent runtimes, agent runtime surface handlers, request interceptors, settings, UI artifacts, MCP servers, MCP discovery contributions, managed dependencies, and plugin-owned events.
-
-## Public import path
-
-Plugin source should import Happier authoring helpers and types from `@happier-dev/plugin-sdk`. Do not import host internals, provider internals, or another plugin's source files.
+`PluginManifest` is exported from `@happier-dev/plugin-sdk/manifest` for typed
+fixtures and tools. External discovery still reads JSON; there is no supported
+executable TypeScript manifest path.

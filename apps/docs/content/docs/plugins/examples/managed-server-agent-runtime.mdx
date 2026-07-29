@@ -1,19 +1,14 @@
 ---
-title: Managed server agent runtime example
-description: An agent runtime that starts and supervises an agent-owned loopback server.
+title: Managed server Agent runtime example
+description: Supervise an Agent-owned loopback server through public services.
 ---
 
-Use `ctx.managedServer` when an agent needs a local HTTP or protocol server.
+Use `context.services.managed.servers` when an Agent needs a local HTTP or protocol server.
 
-## Pattern
+1. Declare the managed dependency and required host access in the cold manifest.
+2. Resolve external-attach or managed-spawn mode.
+3. Call `context.services.managed.servers.supervise(spec, { signal })`.
+4. Wait for `handle.waitUntilHealthy(...)` before creating the Agent client.
+5. Dispose the handle with the owning Agent runtime or session.
 
-1. Resolve endpoint mode: external attach or managed spawn.
-2. If external, run a health check through `ctx.fetch`.
-3. If managed, call `ctx.managedServer.supervise(...)`.
-4. Wait until healthy.
-5. Create the agent client against the resolved base URL.
-6. Dispose the managed server with the session runtime.
-
-## Safety
-
-Use loopback binding, generated credentials, startup timeouts, redacted durable logs, and fail-closed post-start validation.
+Use loopback binding, narrow generated credentials, startup timeouts, redacted durable logs, and fail-closed health validation. The returned handle is the lifecycle owner for the supervised instance; do not build a second watcher or process registry.

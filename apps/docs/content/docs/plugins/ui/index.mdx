@@ -1,76 +1,95 @@
 ---
 title: Plugin UI
-description: Contribute host-rendered, hosted web, and React Native surfaces.
+description: Choose a host-rendered, hosted web, or React Native plugin surface.
 ---
 
-Plugin UI is descriptor and artifact based. The host projects UI contributions from the manifest and serves verified artifact trees at runtime.
+Happier has three public Plugin UI models. Choose the narrowest one that fits the experience:
 
-## Which mode do I use?
+- **Declarative host-rendered UI** for settings, actions, and other forms the host can render from manifest descriptors.
+- **Hosted web UI** for an isolated web application that communicates through the public host API.
+- **React Native UI** for a trusted, host-integrated component that needs the app's native UI model.
 
-Two authoring modes remain — pick by what you're building, not by target platform:
+These models have different trust and isolation properties. A hosted web surface is an isolated UI boundary. React Native plugin code is trusted package code and runs in the client realm; it is not a sandbox.
 
-- **`reactNative` — the default and recommended path.** Write one React Native UI
-  (`import { View, Text } from 'react-native'`, one `sourceEntry`). It ships to
-  ios/android via a Re.Pack bundle **and** to web via a Vite +
-  react-native-web build of the *same* source — one authoring model, every
-  client. Use this unless you're specifically embedding an existing web app.
-- **`hostedWeb` — only to embed an existing, already-deployed web UI** you
-  don't want to (or can't) rewrite in RN. Works everywhere: a browser iframe
-  on web, a native `WebView` on ios/android, over the same postMessage
-  host-API bridge either way.
+## Host API
 
-That's it. `embeddedWeb` is **retired** from the authoring story (see below)
-— its "in-process web rendering" capability is a strict subset of what
-`reactNative` mode now offers (same react-native-web rendering, plus native
-support), for identical runtime cost.
+Hosted web constructs its host API from the injected transport bootstrap:
 
-One residual gotcha: `hostedWeb` on native only loads **production `https://`
-endpoints** by default. A local `hostedWeb` dev server (`http://localhost:…`)
-is blocked unless the contribution declares
-`security.mixedContent: 'devLoopbackOnly'` **and** is installed on the
-`development` channel **and** the host is a dev build — all three, or it
-stays blocked. If your on-device `hostedWeb` preview shows "unavailable,"
-check those three before assuming the mode itself doesn't work on native.
+```ts
+import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
 
-### Real example: the Plugin Inspector
+const host = await createPluginUiHostApiClient();
+const context = await host.context();
+```
 
-`packages/plugins/inspector` (`happier.inspector`) is the first real,
-dogfooded `reactNative`-mode consumer: one source
-(`src/ui/renderSurface.tsx`, plain `View`/`Text`/`Pressable`/`ScrollView`)
-built for web via `vite.config.ts` (`defineReactNativeWebViteBuildPreset`).
-It replaced the plugin's earlier `hostedWeb` contribution outright — one UI
-owner, not two.
+React Native does not use that bootstrap client. Its exported
+`PluginUiRenderSurface` receives a `PluginUiRenderContext` with `hostApi`,
+surface context, plugin/view identity, and cancellation directly:
 
-Inside `renderSurface`, `context.hostApi.dispatchAction({ actionId, input })`
-is the same object every `reactNative` surface gets, native or web. A plugin
-component that needs host-API access **without** prop-drilling through a deep
-tree can instead `import { createPluginUiHostApiClient } from
-'@happier-dev/plugin-sdk/ui/hostApiClient'` and call
-`createPluginUiHostApiClient({ surface })` — same transport, resolved through
-the surface's registered handler rather than through props.
+```tsx
+import type { PluginUiRenderSurface } from '@happier-dev/plugin-sdk/ui';
 
-Known gap found while wiring the inspector: `contributes.reactNativeBundles[]`
-binds exactly one `bundle.platform` per contribution id today, and the CLI
-registry/projection layer resolves strictly by that declared platform — there
-is no way yet for one `reactNative` surface placement to serve ios **and**
-web simultaneously from sibling contributions sharing an id (the
-per-platform-per-contributionId story described above is proven at the
-*build artifact* manifest layer, not yet at the *contribution declaration*
-layer). The inspector currently targets `platform: 'web'` for this reason.
+export const renderSurface: PluginUiRenderSurface = ({
+  hostApi,
+  surface,
+  signal,
+}) => {
+  // Render native UI and call hostApi methods from event handlers.
+  return null;
+};
+```
 
-## UI families
+Authors do not construct or import a Happier-internal transport in either
+model.
 
-- hosted web surfaces
-- React Native surfaces (renders on web too — see above)
-- host-rendered settings and agent settings forms
-- session header actions
-- structured message renderers
-- UI artifacts and translations
+## Accessibility, currentness, and offline behavior
 
-## Runtime modes
+Executable UI authors own the semantics inside their renderer while it is
+interactive. Treat accessibility and environment support as part of the
+renderer contract:
 
-Stable mode ids are `host`, `declarative`, `structured`, `action`, `hostedWeb`, and `reactNative`. `embeddedWeb` is retired from authoring: `defineSurfaceContribution` no longer accepts it, and the SDK no longer exports an `embeddedWeb` build preset. The bundle suffix `reactNativeBundle` names an artifact kind (including its web-target artifacts), not a runtime mode.
+- use semantic controls with localized names, roles, state, reading order, and
+  visible keyboard focus
+- support keyboard operation, screen readers, Dynamic Type or 200% zoom,
+  high contrast, RTL and expanded strings, and reduced motion
+- keep touch targets at least 44×44 points on iOS and 48×48 dp on Android
+- consume `surface.locale`, `direction`, `colorScheme`, `contrast`,
+  `textScale`, `reducedMotion`, `screenReaderEnabled`, and `safeAreaInsets`
+  instead of guessing host settings
 
-## Rule
+The host owns installed-generation currentness and host API availability.
+Authors must not cache a separate “current” generation or implement a
+functional offline mode. Handle unavailable host operations and cancellation,
+and let a replacement render context or hosted-web `watchContext` update the
+environment.
 
-The manifest declares UI identity and policy. The artifact build emits portable files. The daemon verifies the artifact digest before serving the UI.
+When the daemon disconnects, Happier may keep the last mounted renderer as a
+visual, non-interactive snapshot. Its actions, focus, and host mutations are
+blocked. Because arbitrary executable subtrees cannot safely expose controls
+as read-only semantics, the host announces a localized static summary from the
+surface's declared display metadata. Give every executable surface a meaningful
+localized title, and keep the last rendered visual state understandable without
+requiring an action. Reconnection revalidates generation, policy, and context;
+it does not create a second trust prompt.
+
+## Build artifacts
+
+Executable UI is built into `dist/happier-plugin-ui` and described by `ui-artifacts.json`. Use the public build helpers from `@happier-dev/plugin-sdk/ui/build`; the host verifies emitted artifacts before serving or loading them.
+
+Start from a generated UI project when possible:
+
+```bash
+happier plugins scaffold ./my-plugin \
+  --id com.example.my-plugin \
+  --name "My plugin" \
+  --ui reactNative
+```
+
+Use `--ui hostedWeb` for the hosted web template.
+
+## Boundaries
+
+- Keep placement, identity, compatibility, and requested host access in the cold manifest.
+- Use only public SDK paths. Do not import app, daemon, or protocol internals.
+- Treat the whole installed package as the trust unit, including client code.
+- Use `context.ui` from daemon invocations for host-owned prompts, notifications, status, widgets, title, and composer controls; it is separate from executable surface rendering.

@@ -1,72 +1,51 @@
 ---
 title: Local development
-description: Use scaffolded local path plugins, TypeScript dev entries, and automatic reloads.
+description: Use the managed TypeScript development loop and daemon-owned activation.
 ---
 
-Local development uses a trusted path install. The daemon loads `entrypoints.dev`
-directly for that local plugin and watches the plugin source tree for changes.
-
 ```bash
-happier plugins scaffold /absolute/path/to/plugin --id com.example.plugin --name "Example"
-cd /absolute/path/to/plugin
-npm install
-happier plugins install /absolute/path/to/plugin --dev
+happier plugins create my-plugin
+cd my-plugin
+happier plugins dev
 ```
 
-The SDK is not public on npm during the pre-publication period. When scaffold is
-run from a Happier checkout, it writes `@happier-dev/plugin-sdk` as a local
-`file:` dependency pointing at that checkout's `packages/plugin-sdk`, so the
-`npm install` command above is the working install path.
-
-`--dev` records the install as a linked `local_trusted` source and enables
-dev-watch for that plugin. The watcher observes the plugin root, the manifest
-directory, and the active source entry directory. A source edit is debounced and
-sent through the same reload controller as `happier plugins reload`, so a broken
-edit rolls back to the last known good generation.
-
-## Edit loop
-
-1. Edit `.happier-plugin/plugin.json` or `src/index.ts`.
-2. Wait for the automatic reload, or run `happier plugins reload com.example.plugin`.
-3. Exercise the plugin action, hook, command, agent runtime, or UI surface.
-4. Check reload diagnostics with `happier plugins list --json` or
-   `happier plugins reload com.example.plugin --json`.
-5. Fix syntax or activation errors; the next valid edit replaces the rollback
-   generation.
-
-## Agent-driven loop
-
-The same loop is available through manifest-declared actions:
-
-1. `plugins.scaffold` creates the local plugin from the template.
-2. `plugins.install` installs it with `dev: true`.
-3. The agent edits `src/index.ts` or the manifest through normal file tools.
-4. The watcher reloads automatically, or the agent calls `plugins.reload`.
-5. Diagnostics return through `plugins.reload` and `plugins.list`.
-6. The agent calls the new action, tool, hook, command, or agent runtime in the same session.
-
-## TypeScript dev entry
-
-Scaffolded plugins define both entries:
+The scaffold declares both entries:
 
 ```json
 {
   "entrypoints": {
-    "main": "./dist/index.js",
-    "dev": "./src/index.ts"
+    "daemon": "./dist/index.js",
+    "development": "./src/index.ts"
   }
 }
 ```
 
-The TypeScript `dev` entry is only used for linked, locally trusted installs.
-Packaged or non-trusted sources continue to use the compiled `main` entry and
-must not rely on local TypeScript loading.
+The development entry is source input, not an installable production artifact.
+Keep both entrypoint values relative to the plugin root and use portable `/`
+separators. Absolute paths, paths that escape the root, unsupported extensions,
+and missing development files are rejected before dependency materialization.
+`plugins dev` performs static manifest/source inspection and dependency
+materialization in the CLI, then watches the selected closure. The daemon owns
+module import, named activation, registration validation, and replacement of
+the serving plugin.
 
-## Watcher control
+## Trust
 
-Dev-watch is on for `plugins install --dev` and follows the daemon setting
-`plugins.devWatch`. Set it to `false` to keep linked plugins installed without
-automatic reloads; explicit `happier plugins reload <pluginId>` still works.
+The first use presents **Install & Trust** for the canonical local source.
+Daemon and React Native plugin code is trusted arbitrary code, not sandboxed
+code. Approval covers the displayed package identity, executable realms,
+source identity, and current access disclosures. Ordinary edits under the same
+approved development identity take effect without another prompt; relevant
+identity, realm, root, or required-access changes are reviewed again.
 
-Rapid edits are coalesced into one reload per plugin. The watcher only watches
-source locations, not generated install artifacts, to avoid reload loops.
+## Edit loop
+
+1. Edit `.happier-plugin/plugin.json` or a selected source file.
+2. Read static or daemon activation diagnostics printed by `plugins dev`.
+3. Exercise the contribution through its real UI, CLI, Agent, or MCP surface.
+4. Fix a rejected edit and save again.
+
+A rejected edit does not replace the serving plugin. Authors consume the
+diagnostic and fix the source; the daemon owns safe replacement and cleanup.
+Transient candidate-submission failures are reported without ending the watch
+loop, so reconnecting the daemon and saving again retries the current source.

@@ -2,6 +2,18 @@
 
 Happier uses one canonical feature gating system. New code must use it instead of ad-hoc env checks, direct payload poking, or feature-specific inference logic.
 
+## Decide whether a gate is appropriate
+
+Fail-closed behavior answers what happens after a gate exists; it does not justify creating the gate.
+
+- Refactors and replacements of existing behavior are performed in place at the canonical owner. Do not add an off-by-default flag, inverted default, hard-coded admission constant, or parallel implementation merely to de-risk a requested refactor. Manage that risk with RED → GREEN, a composed live gate, and recoverable Git history.
+- Gates are appropriate for genuinely new or experimental user-facing capabilities. Use the canonical Happier feature system and name the live consumer, activation/validation condition, intended default, and graduation or removal condition.
+- A time-bounded prepare/expand → activate/migrate → contract sequence is appropriate only when supported released components, persisted data, independent rollout, coexistence, or rollback makes it necessary. Name the exact compatibility direction and old-path removal condition; do not preserve undeployed internal architecture.
+- An emergency kill switch may select between two coherent, complete behaviors when operational risk justifies it. It must have an owner, observable state, tested fail-closed behavior, and a removal/review condition.
+- A gated program must not weave dormant consumer branches into live runtime paths before every enabled producer and the activation lifecycle are proven. Live-path corrections needed during gated work land as independent consumed verticals, not as partial activation of the dormant replacement.
+
+An off-by-default parallel implementation of existing behavior is a split-brain finding unless the user explicitly requested staged rollout or the compatibility analysis proves it necessary.
+
 ## Canonical sources
 
 - Feature catalog: `packages/protocol/src/features/catalog.ts`.
@@ -21,6 +33,16 @@ Happier uses one canonical feature gating system. New code must use it instead o
 - Dependencies are declared only in the protocol feature catalog.
 - Enforce dependencies through `applyFeatureDependencies(...)`.
 - Do not duplicate dependency logic at call sites.
+
+### External Sessions feature id
+
+**External Sessions** is the product and UI name. Its deployed feature id remains exactly `sessions.direct`.
+
+The feature catalog has no alias or canonicalization seam, so `sessions.external` is not a valid alias and must not be added as a second id. Doing so would create two independent gates for one capability. Use `sessions.direct` in feature decisions, local policy, test names, and dependency declarations; use External Sessions in user-facing copy.
+
+The catalog entry is client-represented, has `defaultFailMode: 'fail_closed'`, and declares no dependencies. Consumers must resolve it through the canonical feature decision runtime rather than reading a server bit or inferring availability from an Agent registration.
+
+Features that declare `sessions.direct` as a dependency, including the current Claude unified-terminal and Codex app-server feature rows, are disabled by `applyFeatureDependencies(...)` when External Sessions is disabled or unknown. Call sites must not reproduce or bypass that dependency closure.
 
 ### Provider feature dependencies
 

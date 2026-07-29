@@ -1,35 +1,24 @@
 ---
 title: Exec service
-description: Launch processes and protocol clients through the binary-safe host runtime.
+description: Launch declared processes and protocol clients through the binary-safe host runtime.
 ---
 
-`ctx.exec` is the supported way for plugins to launch agent CLIs, system tools, protocol clients, and managed runtime-dependent commands.
+Use `context.services.exec` to resolve system tools, check Agent CLI readiness, run or spawn declared executables, and create supported protocol clients.
 
-## Why use ctx.exec
+Happier ships binary installers and must work without a system Node.js runtime or package manager. The exec service centralizes managed executable resolution, bounded output, cancellation, lifecycle, and binary-safe platform behavior.
 
-Happier ships binary installers and must work on machines without system `node`, `npm`, `npx`, `pnpm`, `yarn`, or `bunx`. `ctx.exec` lets the host resolve launch sources, environment, logging, cancellation, and binary-safe policy centrally.
+## Main surfaces
 
-## Launch classes
-
-The exec service can support:
-
-- agent CLI launches
-- binary launches
-- managed installable launches
-- IPC/protocol clients
-- JSON-RPC clients
-- JSON stream clients
-- strict-LF JSON stream clients
-- framed byte clients
-- loopback WebSocket clients
+- `agentCli.checkReadiness(...)`
+- `systemTools.resolve(...)`
+- `run(request, options?)` for bounded execution
+- `spawn(request, options?)` for a disposable process handle
+- `clients.spawn(spec, options?)` for JSON-RPC, JSON stream, framed byte, or loopback WebSocket clients
 
 ## Rules
 
-- Prefer `kind: 'agent-cli'` for agent CLI launches.
-- Do not spawn raw `node` or package managers from product runtime paths.
-- Use host-provided diagnostics rather than logging secrets or raw command lines.
-- Dispose process handles when runtime work completes.
-
-## Agent launch example
-
-An OpenCode managed server launches through an agent CLI launch with host-owned supervision rather than a raw process spawn.
+- Reference declared managed executables; do not construct ambient executable paths.
+- Never spawn raw Node.js or package-manager commands from shipped plugin runtime paths.
+- Bound captured output and do not log secrets or raw credential-bearing command lines.
+- Honor abort signals and dispose process or protocol-client handles with their owning runtime.
+- Treat `wait()` as observed process evidence; do not publish host-owned terminal session state directly.

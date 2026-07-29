@@ -1,24 +1,90 @@
 ---
 title: External session source example
-description: An agent runtime that exposes native sessions for browsing and import.
+description: Register an Agent's native session discovery and transcript contribution.
 ---
 
-Use an external session surface when the agent has its own session store.
+Use External Sessions when an Agent has its own session store.
 
 ## Manifest
 
-Declare `surfaces.externalSession.sources[]` with:
+Declare the Agent local ID and the `externalSessions` capability right in
+`contributes.agents`. The same Agent entry supplies its source descriptor:
 
-- `sourceKind`
-- source schema fields
-- canonical key segments
+```json
+{
+  "id": "example",
+  "title": "Example Agent",
+  "capabilities": {
+    "surfaces": ["externalSessions"]
+  },
+  "surfaces": {
+    "externalSession": {
+      "sources": [{
+        "sourceKind": "exampleStore",
+        "schema": {
+          "fields": [{
+            "name": "kind",
+            "kind": "literal",
+            "value": "exampleStore"
+          }]
+        },
+        "key": {
+          "segments": [{
+            "kind": "literal",
+            "value": "exampleStore"
+          }]
+        },
+        "instances": [{
+          "kind": "default",
+          "constants": {}
+        }]
+      }]
+    }
+  }
+}
+```
 
-Declare `surfaceHandlers[]` for operations such as list candidates, page transcript, read after, and resolve link identity.
+## Activation
 
-## Agent implementation
+Register the exact six-method contribution on that same local ID:
 
-Agent code can read native transcript files or server APIs, then return bounded pages and typed identities to the host.
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type {
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+
+const externalSessions = {
+  resolveSource: ({ source }) => ({ ok: true, value: { source } }),
+  listCandidates: () => ({
+    ok: true,
+    value: { candidates: [], nextCursor: null },
+  }),
+  resolveLinkIdentity: ({ source, remoteSessionId }) => ({
+    ok: true,
+    value: { source, remoteSessionId, linkData: {} },
+  }),
+  resolveLinkedIdentity: ({ source, remoteSessionId, linkData }) => ({
+    ok: true,
+    value: { source, remoteSessionId, linkData },
+  }),
+  pageTranscript: () => ({
+    ok: true,
+    value: { items: [], nextCursor: null },
+  }),
+  readAfterTranscript: () => ({
+    ok: true,
+    value: { outcome: 'already_current' },
+  }),
+} satisfies AgentExternalSessionsContribution;
+
+export function activate(api: PluginApi): void {
+  api.agents.registerExternalSessions('example', externalSessions);
+}
+```
 
 ## Host boundary
 
-The host owns user flow, link records, imports, transcript projection, and takeover orchestration.
+See the [External Sessions guide](../surfaces/external-sessions) for the
+incubation status, operation contract, optional sibling facets, and host
+ownership boundaries.

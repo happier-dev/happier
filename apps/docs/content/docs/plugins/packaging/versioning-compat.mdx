@@ -1,33 +1,53 @@
 ---
 title: Versioning and compatibility
-description: Understand plugin manifest compatibility, Happier engine ranges, SDK semver, passthrough policy, and publication probes.
+description: Developer Preview compatibility policy for the manifest, host, and plugin SDK.
 ---
 
-Plugin compatibility has three independent axes.
+Plugin compatibility has three independent axes:
 
-| Axis | Where it appears | What it means |
+| Axis | Author field | Meaning |
 | --- | --- | --- |
-| Manifest version | Author manifests use `schemaVersion`; installation records also carry manifest-version metadata. | Selects the manifest schema family. Current public authoring examples use v2. |
-| Happier engine range | `engines.happier` | npm-style semver range for compatible Happier hosts. Unsupported ranges fail validation with diagnostics. |
-| SDK semver | `@happier-dev/plugin-sdk` package version | TypeScript authoring contract for imports such as `PluginApi`, `PluginContext`, and `AgentRuntime`. |
+| Manifest schema | `schemaVersion` | Selects the strict JSON manifest contract. |
+| Happier host | `engines.happier` | Selects compatible host releases. |
+| Runtime API | `runtime.apiVersion` | Selects the host/plugin ABI generation; every manifest must declare the currently supported value, `1`. |
 
-## Forward compatibility
+Package semver does not replace the host and runtime compatibility fields.
 
-The manifest root and contribution rows preserve unknown fields through the passthrough policy. Closed discriminated unions still reject unknown or retired contract keys when accepting them would create ambiguity.
+## `0.1.0` Developer Preview policy
 
-Do not use passthrough fields for behavior that must be projected or authorized before plugin code runs. Add a real contribution field instead.
+The entire `@happier-dev/plugin-sdk` package is Developer Preview until
+`1.0.0`.
 
-## Publication model
+- The eight normal package paths are the candidate supported-preview author
+  surface pending the consolidated G5 approval.
+- `experimental/*` is a separate incubation tier for APIs with incomplete
+  consumer proof or a higher expectation of redesign/removal.
+- Patch releases should not intentionally break authored plugins.
+- Documented `0.x` minor releases may make breaking public API changes and
+  include migration notes.
+- Developer Preview relaxes long-term compatibility promises. It does not
+  relax correctness, install safety, lifecycle behavior, documentation, or
+  evidence requirements.
 
-The SDK is published as a bundled tarball when release approval allows it. The packed tarball must be self-sufficient: consumers install `@happier-dev/plugin-sdk` without separately publishing internal workspaces such as `@happier-dev/protocol` or `@happier-dev/agents`.
+The normal paths are:
 
-Bundling solves installation. It does not make internal workspace imports public API. Plugin authors should import from `@happier-dev/plugin-sdk` stable or documented experimental subpaths only.
+```text
+@happier-dev/plugin-sdk
+@happier-dev/plugin-sdk/manifest
+@happier-dev/plugin-sdk/runtime
+@happier-dev/plugin-sdk/agent-runtime
+@happier-dev/plugin-sdk/ui
+@happier-dev/plugin-sdk/ui/client
+@happier-dev/plugin-sdk/ui/build
+@happier-dev/plugin-sdk/testing
+```
 
-## Consumer probes
+Normal and `experimental/*` paths are disjoint. Do not import internal source
+files or rely on an undocumented package subpath.
 
-Release validation should pack the SDK tarball and install it into out-of-repo consumers:
+## Current publication status
 
-- strict TypeScript with `moduleResolution: NodeNext`
-- a Vite consumer using the documented SDK subpaths
-
-Both probes should compile against the packed tarball, not workspace links.
+The workspace package is still private at `0.0.0` on a prepublication hold.
+That current implementation fact does not change the approved policy for its
+first public `0.1.0` release. Publication requires the consolidated public API,
+packed external consumer, platform, compatibility, and human approval gates.

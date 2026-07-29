@@ -1,6 +1,6 @@
 ---
 title: Pack plugins
-description: Create portable plugin archives for install and smoke testing.
+description: Create a selected-file npm-compatible Plugin Platform archive.
 ---
 
 Packing creates an installable archive from a local plugin directory.
@@ -9,10 +9,23 @@ Packing creates an installable archive from a local plugin directory.
 happier plugins pack /absolute/path/to/plugin --out ./plugin.happier-plugin.tgz
 ```
 
+The package must identify the manifest in `package.json`:
+
+```json
+{
+  "keywords": ["happier-plugin"],
+  "happier": { "manifest": ".happier-plugin/plugin.json" },
+  "files": [".happier-plugin", "dist"]
+}
+```
+
+Use a deliberate `files` inventory. Packing includes only selected regular
+files and rejects unsafe archive paths and package lifecycle assumptions.
+
 ## Include
 
 - `.happier-plugin/plugin.json`
-- daemon entry files
+- the compiled, self-contained daemon entry
 - runtime resources
 - built UI artifact tree
 - files needed by declared handlers
@@ -25,6 +38,12 @@ happier plugins pack /absolute/path/to/plugin --out ./plugin.happier-plugin.tgz
 - unrelated source-control metadata
 - agent CLI binaries
 
-## Smoke test
+## Validate the artifact
 
-Install the archive into a clean local environment before sharing it.
+The default `happier plugins test .` command is daemon-independent. Its
+`--packed` mode packs the selected files, installs and trusts the archive in an
+authenticated disposable daemon home, verifies activation and currentness
+across daemon restart, and invokes a safe empty-input CLI action when the
+manifest exposes one. It never reads or mutates the author's installed plugin
+state. Before distribution, also validate any claimed user flows that extend
+beyond this canonical packed smoke and verify uninstall on the relevant hosts.

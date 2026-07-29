@@ -1,50 +1,30 @@
 ---
-title: Capabilities and permissions
-description: Understand runtime families, declarative capabilities, permission grants, and contribution-local capability objects.
+title: Capabilities and host access
+description: Distinguish contribution support facts from runtime authority requests.
 ---
 
-The word "capability" appears in several plugin surfaces. These surfaces are intentionally
-different and must not be treated as interchangeable.
+Manifest V2 derives runtime families from `contributes`; it has no top-level `uses` or `declares` lists. Adding an action, hook, Agent, MCP descriptor, or other contribution is sufficient to declare that family.
 
-## Runtime families
+## Host access
 
-```json
-{
-  "uses": ["actions", "tools", "mcp"]
-}
-```
-
-`uses[]` declares the plugin runtime families that can be activated and projected. It is not a
-permission grant.
-
-## Declarative capabilities
+Host integration needs are declared under `hostAccess.required[]` or
+`hostAccess.optional[]`. Every request has a stable id, a capability-specific
+scope, and a user-readable reason:
 
 ```json
 {
-  "declares": {
-    "capabilities": [
-      {
-        "capability": "storage.local",
-        "reason": "Stores plugin-local settings."
-      }
-    ]
-  }
-}
-```
-
-`declares.capabilities[]` is metadata for non-authority capabilities. It does not unlock host
-operations.
-
-## Permission grants
-
-```json
-{
-  "permissions": {
+  "hostAccess": {
     "required": [
       {
+        "id": "service-api",
         "capability": "network",
-        "scope": "https://api.example.com",
-        "reason": "Calls the plugin service API."
+        "reason": "Calls the plugin service API.",
+        "scope": {
+          "targets": [
+            { "kind": "fixedOrigin", "origin": "https://api.example.com" }
+          ],
+          "methods": ["GET", "POST"]
+        }
       }
     ],
     "optional": []
@@ -52,49 +32,36 @@ operations.
 }
 ```
 
-`permissions.required[]` and `permissions.optional[]` are for host operations with implemented
-runtime enforcement. See [Permissions](/docs/plugins/security/permissions) for the enforced v1
-matrix.
+Current capability families are `network`, `network.intercept`, `network.client`, `filesystem`, `process`, `environment`, `secrets`, `connectedAccounts`, `sessions`, `terminal`, `browser`, `clipboard`, `externalLinks`, `storage.synced`, and `mcp`. Their `scope` objects are capability-specific and strict.
 
-## Contribution-local capabilities
+These declarations do not all mean the same thing:
 
-```json
-{
-  "contributes": {
-    "agents": [
-      {
-        "id": "example.agent",
-        "capabilities": {
-          "executionRun": {
-            "supported": true
-          },
-          "session": {
-            "media": {
-              "acceptsImageInput": {
-                "supported": false
-              }
-            }
-          }
-        }
-      }
-    ]
-  }
-}
-```
+- filesystem, process, environment, and ordinary network rows disclose trusted
+  executable behavior and configure cooperative host facilities; they do not
+  sandbox equivalent direct Node or native access;
+- connected accounts, remote sessions, synced secrets, projects, repositories,
+  and MCP resources can be real host-owned selectable resources;
+- destructive or user-visible effects may require present intent or an OS
+  authorization at the operation boundary.
 
-Contribution-local capability objects describe what that contribution supports. They do not grant
-authority to the whole plugin.
+Contribution declarations reference a host-access request by its id when the operation needs that authority. For example, an action can declare `"hostAccess": ["service-api"]`.
+
+## Contribution capabilities
+
+Contribution-local capability objects describe what that contribution supports. Agent session and execution-run capabilities, SCM operations, Provider protocols, and UI host methods are support facts—not authority grants.
 
 ## Fail-closed behavior
 
-Missing, malformed, or unauthorized permission data should be treated as unavailable or disabled.
-Plugins should not infer permission from `uses[]`, `declares.capabilities[]`, contribution-local
-support facts, or agent support flags.
+Missing, malformed, or unauthorized access to a mediated facility or host-owned
+resource is unavailable. Plugins must not infer authority from the presence of
+a contribution, an Agent support flag, or a Provider capability. A denied
+cooperative facility is not a claim that trusted code cannot perform an
+equivalent direct local operation.
 
 ## Good authoring pattern
 
-- Use `uses[]` to declare which plugin families you activate.
-- Use `declares.capabilities[]` for non-authority metadata.
-- Use `permissions.required[]` or `permissions.optional[]` only for enforced runtime authority.
-- Use contribution-local `capabilities` to describe agent or UI behavior.
-- Keep reasons concrete and user-readable.
+- Put static identity and support facts under the owning `contributes` family.
+- Request only host capabilities with an implemented runtime checkpoint.
+- Use `required` only when the plugin cannot work without the capability.
+- Keep scopes narrow and reasons concrete.
+- Reference host-access ids from contributions that exercise them.

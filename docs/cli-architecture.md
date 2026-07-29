@@ -44,6 +44,9 @@ graph TB
 - **Daemon:** `src/daemon` runs in the background, spawns sessions, and maintains machine state.
 - **Persistence/config:** `src/persistence.ts` + `src/configuration.ts` manage local state in `~/.happy`.
 - **Agents:** `src/agent/catalog` projects agent commands from bundled plugin contributions; agent-specific runtime code lives behind catalog entries instead of top-level `src/<agent>` trees.
+- **Model Providers:** `src/providers` owns provider-neutral connection resolution, catalog assembly, probing, credential materialization, local discovery, and launch continuity. `src/cli/commands/providers` is the CLI adapter over those owners; it must not become a second settings or mutation implementation.
+
+Executable Agents and model Providers are different domains. `happier agents ...` manages Agent runtimes; `happier providers ...` manages configured model-source connections. Provider contributions, connections, grants, settings, and structured model selections are protocol-owned. See [Providers](./providers.md) for the complete ownership and safety contract.
 
 ## CLI entry flow
 

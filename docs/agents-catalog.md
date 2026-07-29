@@ -143,6 +143,35 @@ Instead:
 - explicit “resume inactive session” is **fail-closed**: if `loadSession` fails, we surface the error instead of silently starting a fresh vendor session
 - any ACP capability probing (e.g. `includeAcpCapabilities`) is reserved for opt-in diagnostics / e2e probes, not day-to-day UX
 
+## External Sessions auxiliary (experimental)
+
+External Sessions is an optional Agent auxiliary registered through the same manifest Agent identity and plugin generation as the primary runtime. The canonical public SDK owner is `@happier-dev/plugin-sdk/experimental/sessions`.
+
+`api.agents.registerExternalSessions(localId, contribution)` registers exactly six bounded source operations: `resolveSource`, `listCandidates`, `resolveLinkIdentity`, `resolveLinkedIdentity`, `pageTranscript`, and `readAfterTranscript`. It provides discovery, linking, and transcript source semantics; it does not own hosted runtime lifecycle, follow demand, materialization, or takeover admission.
+
+Three optional same-Agent siblings add narrower capabilities without creating another Agent or Provider catalog:
+
+- `registerExternalSessionObservation` supplies resource-scoped status evidence and content-free transcript-change signals. `watch_file_changes` and `observe_resource` can support live follow through the host owner; `reconcile_only` cannot.
+- `registerExternalSessionHooks` supplies installation variants plus bounded installation resolution and event mapping. The host owns consent, configuration mutation, durable cleanup custody, target resolution, and linking policy.
+- `registerExternalSessionTakeover` supplies only bounded launch hints after current linked-identity resolution. The host retains target selection, authority transfer, admission, environment authorization, and spawn.
+
+`services.sessions.external` is the opposite direction: an authorized plugin-to-host mapping to the canonical product operations. It is not an Agent capability declaration or a second source registry.
+
+### Built-in registrations in the current source tree
+
+These rows describe registered source capabilities, not a promise that the Agent executable, source, hook installation, platform path, or a live session is available on a particular machine.
+
+| Agent | Six source operations | Observation mode | Takeover launch hints | Session hooks |
+| --- | --- | --- | --- | --- |
+| Claude | Supported | `watch_file_changes` | Supported | Supported |
+| Codex | Supported | `watch_file_changes` | Supported | Supported |
+| OpenCode | Supported | `observe_resource` | Supported | Not registered |
+| Oh My Pi | Supported | `reconcile_only`; no live follow | Supported | Not registered |
+| Pi | Supported | `reconcile_only`; no live follow | Not registered | Not registered |
+| Antigravity CLI | Supported | `watch_file_changes` over CLI print transcripts | Not registered | Not registered |
+
+Auggie exposes no External Sessions registration in the current release and is intentionally reported unsupported until a stable vendor history/page/read-after contract exists. Cursor and Copilot also expose no External Sessions registration in the current source tree; do not present them as supported until their feasibility decisions and consumed implementations land. Absence of an auxiliary registration fails closed and must not be replaced by Agent-id branches or inferred from generic resume/ACP capability.
+
 ---
 
 ## Adding a new Agent (end-to-end)
@@ -247,6 +276,8 @@ If you need new daemon/app fields, add them to:
 - `packages/protocol/src/*`
 
 Then update both sides (CLI implementation + app consumer) to match the new stable contract.
+
+For External Sessions, keep Agent-native source parsing, cursor/revision semantics, media roots, observation evidence, and launch-hint derivation in the plugin leaf. Reuse the public auxiliary registrations above; do not add a host Agent-id branch, another source catalog, or a seventh source method.
 
 ### Step 6 — verify (repo-local and happy-stacks)
 

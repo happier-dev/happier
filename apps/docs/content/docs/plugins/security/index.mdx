@@ -3,13 +3,16 @@ title: Plugin security
 description: Trust, permission, secret, network, and sandboxing rules for plugins.
 ---
 
-Plugins are executable local code. Happier keeps plugin behavior reviewable by separating static projection from executable activation and by requiring declared permissions for privileged operations.
+Plugins are trusted executable packages. Happier keeps their behavior reviewable by separating cold static projection from executable activation and by requiring declared host access for mediated privileged operations.
 
 ## Security principles
 
 - Validate manifests before importing code.
-- Refuse untrusted executable plugin code.
+- Require an explicit whole-package Install & Trust decision before executable code runs.
 - Keep permissions explicit and scoped.
 - Keep secrets out of settings and logs.
 - Keep agent-specific logic in agent leaves.
-- Use host services for process, network, filesystem, and session operations.
+- Treat hosted web as isolated UI and React Native as trusted client code.
+- Use host services for mediated process, network, filesystem, and session operations.
+
+Host access declarations constrain host-mediated services; they are not an operating-system sandbox for arbitrary trusted code. Review source and dependencies before trusting a package.

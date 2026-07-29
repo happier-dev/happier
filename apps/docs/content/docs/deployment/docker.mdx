@@ -308,7 +308,7 @@ The DB provider is selected via:
 
 Supported values:
 
-- Full flavor: `postgres` (default), `mysql` (MySQL 8+)
+- Full flavor: `postgres` (default), `mysql` (MySQL 8.0.16+)
 - Light flavor: `pglite` (default), `sqlite`
 
 ## Quick start (single container)
@@ -333,7 +333,7 @@ docker run --rm -p 53288:53288 \
   happier-server
 ```
 
-### Full flavor (MySQL 8+)
+### Full flavor (MySQL 8.0.16+)
 
 ```bash
 docker run --rm -p 53288:53288 \
@@ -473,9 +473,9 @@ volumes:
   minio:
 ```
 
-### Full flavor (single process, MySQL 8+)
+### Full flavor (single process, MySQL 8.0.16+)
 
-This example uses MySQL 8+ + Minio.
+This example uses MySQL 8.0.16+ + Minio.
 
 ```yaml
 services:

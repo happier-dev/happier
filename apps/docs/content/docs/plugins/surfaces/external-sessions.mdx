@@ -1,37 +1,321 @@
 ---
 title: External sessions
-description: Browse, import, follow, link, and take over native agent sessions.
+description: Contribute Agent-native discovery and transcript access for sessions created outside Happier.
 ---
 
-External session surfaces let Happier work with sessions that were created outside a normal Happier session loop.
+External Sessions is an auxiliary Agent contribution. It is not an
+`AgentRuntime.surfaces` member. Declare `externalSessions` in the Agent's
+manifest `capabilities.surfaces`, declare its
+`surfaces.externalSession.sources`, and register the contribution for the same
+Agent local ID:
 
-## Supported operations
+> Incubation status: this authoring surface is exported only from
+> `@happier-dev/plugin-sdk/experimental/sessions`. It is not one of the eight
+> normal supported-preview paths and may be redesigned or removed in a
+> documented `0.x` release.
 
-An external session surface can support:
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type {
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
-- source resolution
-- candidate listing
-- activity reads
-- transcript paging
-- transcript read-after/follow
-- link identity resolution
-- linked identity resolution
-- takeover launch resolution
+declare const externalSessions: AgentExternalSessionsContribution;
 
-## Source declarations
+export function activate(api: PluginApi) {
+  api.agents.registerExternalSessions('example', externalSessions);
+}
+```
 
-External session sources should be declared in the agent manifest contribution. Source schemas define required fields, optional fields, passthrough behavior, and canonical key segments.
+The contribution has exactly six required methods:
 
-This lets the host validate and key sources without executing plugin code.
+- `resolveSource`
+- `listCandidates`
+- `resolveLinkIdentity`
+- `resolveLinkedIdentity`
+- `pageTranscript`
+- `readAfterTranscript`
 
-## Transcript access
+An auxiliary-only Agent may register this contribution without a primary
+runtime factory. When an Agent also has a native runtime, both registrations
+use the same manifest-declared local ID. The Agent leaf owns source-native
+discovery, identity translation, and transcript decoding. The host owns
+qualified identity, generation fencing, cancellation, deadlines, result
+bounds, link records, selection, transcript projection, and takeover
+lifecycle.
 
-Use bounded transcript paging and read-after/follow APIs. Avoid reading entire native transcript files for candidate lists or activity checks.
+## Optional session-hook facet
 
-## Linking
+An Agent with the six-method contribution may register one session-hook
+contribution on the same Agent aggregate. It declares a bounded immutable set
+of installation variants and exactly two callbacks:
 
-Link identity resolution maps a native remote session id and source into a Happier-understandable identity. The agent leaf owns agent-specific matching rules.
+```ts
+import type {
+  PluginApi,
+  PluginInvocationContext,
+} from '@happier-dev/plugin-sdk';
+import type {
+  AgentExternalSessionHooksContribution,
+  AgentExternalSessionHookResolveInstallationRequest,
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
 
-## Takeover
+declare const externalSessions: AgentExternalSessionsContribution;
+declare function resolveAgentSettingsPath(): string;
 
-Takeover launch resolution returns the agent-specific launch plan needed to continue or attach to a native session. The host owns the product flow around the launch.
+const hooks = {
+  installationVariants: [{
+    variantId: 'example-hooks-v1',
+    targets: [{
+      targetId: 'user-settings',
+      format: 'hook_event_json_arrays_v1',
+      collectionId: 'hooks',
+    }],
+    events: [{
+      eventId: 'session-start',
+      targetId: 'user-settings',
+      nativeEventName: 'SessionStart',
+      command: {
+        kind: 'happier_observation_v1',
+        shellDialect: 'posix',
+      },
+    }],
+  }],
+
+  async resolveInstallation(
+    request: AgentExternalSessionHookResolveInstallationRequest,
+    context: PluginInvocationContext,
+  ) {
+    if (request.signal.aborted || context.signal.aborted) {
+      return {
+        ok: false,
+        code: 'cancelled',
+        message: 'Hook installation resolution was cancelled.',
+      };
+    }
+    return {
+      ok: true,
+      value: {
+        kind: 'supported',
+        variantId: 'example-hooks-v1',
+        targets: [{
+          targetId: 'user-settings',
+          absolutePath: resolveAgentSettingsPath(),
+        }],
+        readiness: { kind: 'ready' },
+      },
+    };
+  },
+
+  async mapHookEvent(request) {
+    if (request.signal.aborted) {
+      return {
+        ok: false,
+        code: 'cancelled',
+        message: 'Hook event mapping was cancelled.',
+      };
+    }
+    return {
+      ok: true,
+      value: { kind: 'ignored' },
+    };
+  },
+} satisfies AgentExternalSessionHooksContribution;
+
+export function activate(api: PluginApi) {
+  api.agents.registerExternalSessions('example', externalSessions);
+  api.agents.registerExternalSessionHooks('example', hooks);
+}
+```
+
+`registerExternalSessionHooks` is optional to call, duplicate-rejecting, and
+may be called in any order relative to other same-Agent registrations. The
+same activation must register the exact-six External Sessions contribution and
+have its existing `externalSessions` manifest right. Hook registration adds no
+capability, manifest declaration, or separate contribution family.
+
+`installationVariants` is the complete registration-time snapshot. Each
+variant declares its configuration targets and every event the host must
+install. Every command selects the closed `posix` or `windows_cmd` shell
+dialect; plugins do not supply raw command fragments. The Agent leaf owns
+installed-version selection, concrete configuration paths, native event names,
+payload parsing, and source-native correlation. The host owns preview and
+consent, safe command serialization, configuration writes, durable custody,
+credentials, listener lifecycle, and cleanup—even when the plugin is no
+longer available.
+
+`resolveInstallation(request, context)` is read-only and is the only callback
+that receives `PluginInvocationContext`. It selects a declared variant,
+returns every concrete absolute target path, and reports either `ready`,
+generic `needs_attention`, or a typed unsupported result. On an installed
+configuration, the request may contain a host-derived `custody` projection.
+Each owned event-array occurrence includes its verified zero-based
+`entryIndex`; immediately before invoking the callback, the host rereads every
+target and rejects stale custody whose current input identity differs from the
+last verified post-install identity. Plugins cannot supply or persist that
+projection. Passive activation, daemon boot, and reload do not invoke
+readiness or launch an Agent.
+
+`mapHookEvent(request)` remains request-only. It receives one bounded,
+authenticated native JSON payload for the current installation and generation,
+then returns `ignored` or source-native identity plus content-free qualified
+facts. It never chooses a Happier session or link target. The host drops the
+raw payload after the call, resolves the source and linked identity through the
+six-method contribution, and admits only a current qualified result. Hook
+facts are observations: they do not authorize Agent control, transcript
+uploads, follow, takeover, sharing, or configuration changes.
+
+## Optional takeover launch facet
+
+An Agent with the six-method contribution may register one takeover launch
+facet on the same Agent aggregate. This facet derives only the Agent-native
+launch values needed to resume the freshly resolved linked session:
+
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type {
+  AgentExternalSessionsContribution,
+  AgentExternalSessionTakeoverContribution,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+
+declare const externalSessions: AgentExternalSessionsContribution;
+
+const takeover = {
+  async resolveLaunch(request) {
+    if (request.signal.aborted) {
+      return { ok: false, code: 'cancelled' };
+    }
+    if (!request.linkedDirectory) {
+      return {
+        ok: false,
+        code: 'unavailable',
+        message: 'This linked session has no working directory.',
+      };
+    }
+    return {
+      ok: true,
+      value: { directory: request.linkedDirectory },
+    };
+  },
+} satisfies AgentExternalSessionTakeoverContribution;
+
+export function activate(api: PluginApi) {
+  api.agents.registerExternalSessions('example', externalSessions);
+  api.agents.registerExternalSessionTakeover('example', takeover);
+}
+```
+
+`registerExternalSessionTakeover` is optional, duplicate-rejecting, and may be
+called in either order relative to the other same-Agent registrations. It uses
+the existing `externalSessions` manifest right: there is no takeover
+capability, contribution family, or additional manifest declaration. The same
+activation must also register that Agent's exact-six External Sessions
+contribution or the complete activation is rejected. A primary runtime factory
+is not required at activation, so auxiliary-only and declarative ACP Agents can
+register the facet; an actual takeover still requires a current spawnable
+primary runtime immediately before spawn.
+
+Immediately before `resolveLaunch`, the host calls the same current
+generation's `resolveLinkedIdentity` and uses that fresh successful result.
+The callback receives:
+
+- the host-owned `signal`, `deadlineAtMs`, and `maxSerializedBytes` invocation
+  controls;
+- `linkedSessionId` correlation, limited to 2,000 code units;
+- the freshly resolved `source`, `remoteSessionId`, and `linkData`; and
+- optional `linkedDirectory` context, limited to 10,000 code units.
+
+Persisted session metadata alone is never launch authority. The wrapper binds
+the call to the current Agent generation, combines caller cancellation with
+generation retirement, enforces a 15-second deadline and a 262,144-byte
+settled-result limit, and rejects malformed, oversized, cancelled, retired, or
+late results instead of truncating or admitting them. Cancellation is
+cooperative, so callbacks must honor `request.signal` and
+`request.deadlineAtMs`. `remoteSessionId` is limited to 2,000 code units, and
+`resolveLaunch` takes exactly this one request argument—there is no
+`PluginInvocationContext` second argument or plugin-controlled deadline.
+
+A successful callback returns the normal External Sessions result envelope
+with exactly:
+
+```ts
+{
+  ok: true,
+  value: {
+    directory: string;
+    backendModeHint?: string;
+    environmentVariables?: Readonly<Record<string, string>>;
+  };
+}
+```
+
+`directory` is required and limited to 10,000 code units.
+`backendModeHint`, when used, is the Agent's existing narrow backend-mode
+vocabulary and is limited to 256 code units. Environment variables are limited
+to 64 entries, 128 code units per key, and 16,384 code units per value. Every
+key must also pass that Agent's existing process-environment authorization and
+the host's reserved/custody-key denial; one invalid key rejects the whole plan.
+
+This callback does not choose the target Agent, existing/resume identity,
+transcript storage or authority, directory admission, Connected Services,
+Pending/admission behavior, runtime services, or spawn/control lifecycle. Do
+not return `SpawnSessionOptions`, `BackendSessionLaunchHintsV1`,
+`resumePlanOptions`, session-state updates, source/session identities,
+metadata, or other launch hints. The host privately maps the accepted fields,
+then rechecks both the originating generation and a current spawnable primary
+runtime immediately before the spawn effect. Retirement or replacement fails
+closed with no spawn.
+
+Takeover is a sibling facet, not a seventh External Sessions method. There is
+no alias, method-presence fallback, broader launch carrier, or plugin-selected
+takeover mode: the host retains quiescence, admission, transcript, and lifecycle
+authority for both linked and persisted takeover flows.
+
+Registering the facet does not by itself advertise external-linked takeover.
+That mode also requires the Agent manifest's
+`surfaces.externalSession.externalLinkedTakeover.writerSafety` to be
+`native_prevention`. Use `unsupported` when the native Agent cannot prove that
+another writer to the same native session is excluded. These are the only
+accepted values. Observation, quiet files, process presentation, and the
+defensive `external_writer_conflict` error are not writer-safety capability
+evidence; a future detection-based mode would require a separately approved
+contract and consumed host fence.
+
+## Optional observation facet
+
+An Agent with the six-method contribution may also register one observation
+facet on the same Agent aggregate:
+
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type {
+  AgentExternalSessionObservationContribution,
+  AgentExternalSessionsContribution,
+} from '@happier-dev/plugin-sdk/experimental/sessions';
+
+declare const externalSessions: AgentExternalSessionsContribution;
+declare const observation: AgentExternalSessionObservationContribution;
+
+export function activate(api: PluginApi) {
+  api.agents.registerExternalSessions('example', externalSessions);
+  api.agents.registerExternalSessionObservation('example', observation);
+}
+```
+
+The observation contribution has exactly three required operations:
+`describeResource`, `observeResource`, and `reconcileResource`.
+`describeResource` is grouping-only and returns exactly `{ resourceKey,
+linkKey }`; it grants no watch, read, or observation authority. The host obtains
+the authoritative descriptor set only through
+`reconcileResource({ purpose: 'resource_descriptors', ... })`. Those
+descriptors carry the required `changeObservation` disposition:
+`observe_resource`, `watch_file_changes`, or `reconcile_only`. A
+`watch_file_changes` descriptor supplies the strict
+`ExternalAgentObservationWatchFileChangesV1` shape.
+
+`observeResource` receives host-owned `requestReconcile()` and
+`requestTranscriptRefresh(linkKey)` callbacks. `reconcileResource` receives
+and returns the same required `purpose` discriminant:
+`observation_evidence` or `resource_descriptors`. There is no fourth
+operation, alias, or omitted-purpose default.

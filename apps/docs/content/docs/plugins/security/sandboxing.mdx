@@ -1,17 +1,24 @@
 ---
-title: Sandboxing and boundaries
-description: Understand what plugin code can and cannot isolate.
+title: Isolation and boundaries
+description: Know which Plugin Platform surfaces are isolated and which are trusted code.
 ---
 
-Daemon-side plugin code is local executable code. The primary safety boundaries are trust, manifest validation, permissions, host services, and scoped runtime APIs.
+Happier plugins are trusted code packages. The Plugin SDK is a supported interface, not a security sandbox.
 
-## Practical boundaries
+## Trusted executable code
 
-- UI artifacts are served with declared policies and verified digests.
-- Hosted web UI is not daemon executable code.
-- Agent runtime leaves should use host process services.
-- Settings, secrets, sessions, and transcripts are accessed through host APIs.
+- Daemon entrypoints run as trusted local code.
+- React Native plugin UI runs as trusted client code.
+- Dependencies and build outputs belong to the same package trust decision.
 
-## Not a security boundary
+Manifest host-access requests constrain host-mediated services. They do not prevent trusted code from using ambient process capabilities, so review package source and dependencies before selecting **Install & Trust**.
 
-Do not treat TypeScript types, file layout, or plugin conventions as isolation. Trust and permissions are the executable-code boundary.
+## Isolated UI
+
+Hosted web content runs behind an iframe or WebView boundary and uses the public Plugin UI host bridge. This limits the UI's direct access to Happier client internals. It does not sandbox daemon code or other executable code shipped by the same plugin.
+
+## Declarative surfaces
+
+Host-rendered settings and other declarative surfaces contain data the host validates and renders. Prefer them when arbitrary client code is unnecessary.
+
+TypeScript types, manifest validation, artifact digests, and package layout improve correctness and reviewability. They are not substitutes for package trust.

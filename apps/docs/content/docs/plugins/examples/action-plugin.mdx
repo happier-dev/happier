@@ -11,8 +11,11 @@ Declare the action under `contributes.actions[]`.
 
 ## Activation
 
-Bind the handler with `api.registerAction({ id, handler })`.
+Bind the handler with `api.actions.register(id, handler)`.
 
 ## Runtime services
 
-If the action needs plugin-owned state or diagnostics, use `request.context.storage`, `request.context.settings`, `request.context.logger`, or `request.context.events`. Do not read host internals directly.
+If the action needs plugin-owned state or diagnostics, use
+`context.services.storage`, `context.services.settings`,
+`context.services.logger`, or `context.services.events`. User interaction and
+presentation use `context.ui`. Do not read host internals directly.

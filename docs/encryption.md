@@ -574,6 +574,39 @@ Feature gates:
 
 Do not gate plaintext behavior on raw env vars or `capabilities` fields.
 
+## External Sessions secure refresh and publication
+
+External Sessions keeps live Agent-source content opaque to the server. Its canonical live-refresh path is:
+
+1. the daemon emits `external-session-transcript-invalidated`, a content-free event bound to the current machine, session, link, qualified Agent/source identity, contribution generation, and a non-reversible cursor identity;
+2. the client requests one bounded authoritative `readAfterTranscript` through the existing machine-encrypted RPC path; and
+3. only an exact-current `advanced` result may release items to the canonical transcript convergence owner.
+
+The invalidation contains no transcript content, title, preview, `linkData`, raw Agent cursor, or source path. The encrypted RPC response protects the complete read-after payload; External Sessions does not define per-item encryption envelopes. `already_current` applies nothing. Stale or mismatched bindings, gaps or expired cursors, source replacement, source unavailability, and read failure all apply zero items. A gap requests one bounded authoritative resync; replacement, unavailability, and failure retain the last accepted authority and surface recovery instead of accepting a truncated transcript.
+
+The default invalidation-to-`readAfterTranscript` path has a release-like p95 budget of less than one second and must preserve dedupe, gaps, anchors, and scroll continuity with at most one bounded read per coalesced invalidation. A ciphertext fast path is not an unconditional second protocol. It may be added only after a recorded failure of that latency budget or a mandatory continuity property, and then only inside an existing encrypted socket/RPC owner with the same canonical payload and cursor semantics, server opacity, and authoritative read-after fallback on gaps.
+
+External transcript authority is separate from the session's `e2ee | plain` content-storage mode:
+
+| `currentStorageState` | Read authority and publication ceiling | Sharing |
+| --- | --- | --- |
+| `machine_only` | The linked Agent source is authoritative while reachable; server transcript readers expose no rows. | Not shareable; persisted import is required. |
+| `server_partial` | The linked Agent source remains authoritative while reachable. An offline incomplete initial import is fenced at `acceptedThroughServerSeq`, and the UI may select that subset only while the matching public operation projection proves the same initial-partial fence. | Not shareable. |
+| `snapshot_complete` | The Agent source remains live authority while reachable. Offline server reads are capped at `publishedThroughServerSeq` and require a complete publication tuple. | Shareable as a complete published snapshot. |
+| `hosted` | The hosted transcript is authoritative; no External Sessions publication ceiling applies. | Shareable under the normal hosted-session rules. |
+| `legacy_external_unknown` | Fails closed at sequence zero until a supported compatibility reader establishes authority. | Not shareable. |
+
+The server applies the publication ceiling before ordinary pagination and derived projections, including counts, list previews, latest-turn/attention state, exports, notifications, and friend/public/share readers. Operation-private staging is never public. A failed or cancelled catch-up leaves the prior complete publication visible; only canonical publication advances the public ceiling.
+
+Server-readable publication metadata is limited to an opaque publication id, source observation time, and published server sequence. Raw Agent-source cursors and paths remain local or E2EE-owned, and content-derived watermark digests are not publication identities.
+
+Canonical owners:
+
+- secure refresh schema and application decision: `packages/protocol/src/sessions/external/secureRefreshV1.ts`
+- storage/publication state: `packages/protocol/src/sessions/external/operationV1.ts`
+- server publication and sharing fence: `apps/server/sources/app/session/sessionTranscriptPublicationPolicy.ts`
+- client read-authority selection: `apps/ui/sources/sync/runtime/external/externalSessionTranscriptAuthority.ts`
+
 ## Implementation references
 - Client crypto: `apps/cli/src/api/encryption.ts`
 - Session message format: `apps/cli/src/api/types.ts`

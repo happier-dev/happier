@@ -1,22 +1,15 @@
 ---
 title: Notifications
-description: Register notification channels and send host-mediated notifications.
+description: Send host-mediated notifications and register declared delivery channels.
 ---
 
-Plugins can contribute notification categories and channels, then send notifications through `ctx.notifications`.
+Invoked handlers send notifications through `context.services.notifications`. Activation registers executable delivery channels through `api.notifications.registerChannel(localId, sender)` for matching manifest-declared ids.
 
-## Notification services
-
-Plugins can:
-
-- send a notification
-- list channels
-- list categories
-- read user preferences for a category
+Use the service to send or inspect the supported notification categories, channels, and preferences exposed by the installed SDK version. Use `context.ui.notify(...)` instead when the intent belongs to the current present-user invocation rather than the notification system.
 
 ## Rules
 
-- Declare categories and channels in the manifest or activation registration path expected by the host.
-- Respect user notification preferences.
-- Do not send notifications directly through platform APIs from agent leaves.
-- Keep payloads free of secrets and raw provider tokens.
+- Declare categories and channels in the cold manifest.
+- Respect user preferences and host availability results.
+- Do not call platform notification APIs directly from an Agent leaf.
+- Keep titles, bodies, and data free of secrets and raw Provider tokens.

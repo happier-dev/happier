@@ -1,35 +1,224 @@
 ---
-title: Auth and connected services
-description: Use host-managed auth identity and connected-service materialization from plugins.
+title: Connected accounts
+description: Select and materialize host-managed account credentials.
 ---
 
-`ctx.auth` exposes the current plugin auth identity and connected-service materialization.
+Use `context.services.connectedAccounts` for host-managed account connections. Access is purpose-bound: a plugin declares why one contribution needs an account, and the host/user binds that purpose to one compatible account or account group. Plugins cannot enumerate unrelated accounts or choose a group member.
 
-## Identity
+## Declare a purpose
 
-Plugins can read the current identity and subscribe to identity changes:
+An Agent declares purposes in its contribution:
 
-- account id
-- email when available
-- profile id when available
+```json
+{
+  "id": "example-agent",
+  "connectedAccounts": [
+    {
+      "purpose": "upstream",
+      "service": {
+        "pluginId": "example.accounts",
+        "localId": "api"
+      },
+      "materializationKinds": ["httpHeaders"]
+    }
+  ]
+}
+```
 
-## Materialization
+An action or hook uses the ID of its existing `connectedAccounts` HostAccess request as the purpose. Do not declare that purpose a second time. The request's `serviceRefs` are compatible alternatives for one binding, and its operations authorize methods:
 
-Connected-service materialization returns credential material for a declared service and reason:
+- `select` permits `requestSelection()`.
+- `use` permits `getBinding()` and `watch()`.
 
-- environment variables
-- HTTP headers
-- files
-- metadata
+Raw credential materialization additionally requires the declaration or
+HostAccess scope to list the exact requested `materializationKinds` value:
+`httpHeaders`, `environment`, or `files`. A `connectedAccounts` HostAccess
+scope may list these kinds only when its operations include `use`. Omitting
+`materializationKinds` still permits binding inspection and observation, but
+permits no raw credential materialization.
 
-The host owns credential storage, refresh, scoping, and redaction.
+## Inspect and select the binding
 
-## Runtime auth
+`getBinding(purpose, options?)` returns a redacted binding summary or `null` when the declared purpose is unbound. A summary contains the local purpose, selected service reference, target kind (`account` or `group`), and a display name. It does not expose internal account/group IDs, scheduler state, revisions, or credentials.
 
-Session runtime auth refresh and connected-service runtime identity should flow through session/runtime services rather than agent-local global state.
+`requestSelection({ purpose, reason }, options?)` opens the host-owned selection flow and returns the resulting binding. A purpose whose request lists several compatible services still selects exactly one service and one account or group. Declare separate purposes when one operation needs multiple services.
 
-## Rules
+Only `requestSelection()` requires an available current-session interaction owner. If the user cancels, it fails with `plugin_ui_cancelled`; if no interaction owner is available, it fails with `plugin_ui_unavailable`. An already-bound, currently authorized purpose can still use `getBinding()` and `watch()` outside a session, and can use `materialize()` there when its exact requested kind is authorized. The selection flow never returns the host-private account inventory to the plugin.
 
-- Do not persist materialized credentials in plugin storage.
-- Do not infer auth state by reading agent CLI files when a host auth adapter exists.
-- Fail closed when required connected-service materialization is unavailable.
+## Credential materialization
+
+`materialize(purpose, request, options?)` returns a point-in-time credential snapshot in only the requested and declared form:
+
+- HTTP headers for one origin and bounded header names
+- environment variables for bounded keys
+- files for bounded file ids
+
+```ts
+const binding = await context.services.connectedAccounts.getBinding('upstream');
+if (!binding) {
+  await context.services.connectedAccounts.requestSelection({
+    purpose: 'upstream',
+    reason: 'Choose the account used for this request',
+  });
+}
+
+const credential = await context.services.connectedAccounts.materialize(
+  'upstream',
+  {
+    kind: 'httpHeaders',
+    origin: 'https://api.example.com',
+    headerNames: ['authorization'],
+  },
+);
+```
+
+Materializing an unbound purpose fails with the host's canonical resource-not-selected error. For a group binding, each call resolves the current member; a plugin cannot select a member per request.
+
+The host owns credential storage, refresh, scoping, selection UX, and log redaction. Do not persist returned credentials in plugin storage or emit them in events, diagnostics, artifacts, or messages. The public service has no failure-reporting, refresh, receipt, generation, or scheduler API.
+
+## Observe invalidation
+
+`watch(purpose, listener)` installs a generation-local subscription and then schedules an initial opaque `{ kind: 'resync' }` event. Binding, current group member, credential, revocation, or producer changes may coalesce into another resync. On every resync, discard reliance on the previous snapshot and call `getBinding()` or `materialize()` again.
+
+The subscription does not deliver every intermediate change, expose a cursor, or make copied bytes revocable. Dispose it when no longer needed. The host also disposes it when the invoking plugin generation retires; a replacement generation must receive fresh authorization and materialize again.
+
+Fail closed when a required account is unavailable, expired, or denied. Agent session authentication refresh uses the session runtime's host services rather than Agent-global state.
+
+## Produce a connected account service
+
+A producer contribution declares one service with one or more named
+authentication modes. The default names the mode initially offered by the
+host; it does not create a separate service or account namespace:
+
+```json
+{
+  "id": "forge",
+  "title": "Forge",
+  "authentication": {
+    "defaultModeId": "device",
+    "modes": [
+      {
+        "id": "device",
+        "kind": "oauthDeviceCode",
+        "title": "Sign in with a device code",
+        "outcomeReconciliation": "providerCheck",
+        "scopes": ["repository.read"]
+      },
+      {
+        "id": "token",
+        "kind": "manual",
+        "title": "Use an access token",
+        "outcomeReconciliation": "none",
+        "fields": [
+          {
+            "id": "token",
+            "title": "Access token",
+            "schema": { "type": "string", "minLength": 1 },
+            "secret": true
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Register exactly the same mode IDs and kinds under the existing activation
+API:
+
+```ts
+api.connectedAccounts.register('forge', {
+  authentication: {
+    modes: {
+      device: {
+        kind: 'oauthDeviceCode',
+        begin,
+        poll,
+        cancel,
+        reconcile,
+      },
+      token: {
+        kind: 'manual',
+        complete,
+      },
+    },
+  },
+  refresh,
+  revoke,
+  status,
+  quota,
+  materialize,
+});
+```
+
+The host rejects missing or extra runtime modes, kind mismatches, and
+reconciliation mismatches. `providerCheck` requires one safe `reconcile`
+implementation for the original transaction. `lateEvidence` and `none`
+forbid it. Do not implement reconciliation by repeating `begin`, `complete`,
+or another possibly effective provider exchange. When a remote effect may
+have happened but cannot yet be proved, return `outcomeUnknown`.
+
+Authentication context distinguishes a first connect from reconnecting one
+exact qualified account. On first connect, include the successful result's
+optional top-level `accountId` only when the provider supplies a truthful
+immutable service-local identity. Otherwise omit it and the host mints an
+opaque canonical ID that is independent of the authentication attempt and is
+reused for ambiguous settlement rereads. Reconnect remains bound to the exact
+admitted account. Provider account ID/email, display name, and scopes are
+mutable metadata:
+
+```ts
+return {
+  status: 'connected',
+  ...(providerResponse.immutableServiceLocalId
+    ? { accountId: providerResponse.immutableServiceLocalId }
+    : {}),
+  providerIdentity: {
+    accountId: providerResponse.subject,
+    email: providerResponse.email,
+  },
+  displayName: providerResponse.displayName,
+  scopes: providerResponse.scopes,
+};
+```
+
+OAuth modes may declare descriptor-driven configuration:
+
+```json
+{
+  "configuration": {
+    "scope": "service",
+    "changeBehavior": "reconnect",
+    "fields": [
+      {
+        "id": "baseUrl",
+        "title": "Base URL",
+        "schema": { "type": "string", "minLength": 1 },
+        "required": true,
+        "presentation": { "control": "text" }
+      }
+    ]
+  }
+}
+```
+
+Configuration fields reuse the Plugin Settings field vocabulary but cannot
+use `presentation.binding`: they are already bound to their exact service or
+account target. Runtime leaves receive one daemon-normalized snapshot with
+that target and mode, its revision, non-secret `values`, and bounded
+`getSecret(fieldId)`. Descriptors and UI projection contain the field schema
+and whether each field is secret, never secret values.
+
+For a first connect, required account-scoped values may need to exist before
+the producer returns a canonical account ID. That authentication call receives
+an operation-local `attempt` configuration target containing only the attempt,
+service, and mode identities. It never receives a fake or provisional account
+ID. Successful connection promotes the staged configuration to the producer's
+returned exact account; reconnect and established operations use the canonical
+account target.
+
+Public producer descriptors do not declare host adapters, origins,
+permissions, purposes, or HostAccess IDs. Network calls use
+`context.services.fetch` only when the plugin's existing `network` HostAccess
+request authorizes the exact `connectedAccountOrigin`; final-fetch policy
+remains authoritative.

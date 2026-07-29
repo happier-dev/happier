@@ -3,15 +3,125 @@ title: Agent runtime plugins
 description: Add AI agents through manifest-declared agent contributions and executable agent runtimes.
 ---
 
-An agent runtime plugin adds one or more selectable AI agents to Happier. Agents can run normal sessions, execution-runs, external session browsing, terminal transcript binding, handoff, fork, checkpoint, or other agent runtime surfaces depending on their manifest declaration and `AgentRuntime`.
+An Agent runtime plugin adds one or more selectable AI Agents to Happier.
+Native `AgentRuntime` supplies sessions and/or execution-runs plus only the
+optional typed capabilities it declares. Auxiliary features such as External
+Sessions remain separate contributions with host-owned lifecycles.
 
 ## Runtime layers
 
 1. The manifest declares `contributes.agents[]` entries. The declaration key is `id`.
-2. Activation registers an agent runtime factory with `api.registerAgentRuntime({ agentId, create })`.
+2. Activation registers an agent runtime factory with `api.agents.register(agentId, create, options)`.
 3. The factory returns `AgentRuntime`.
-4. The host resolves that runtime for sessions, execution-runs, and agent runtime surfaces.
+4. The host resolves that runtime for sessions, execution-runs, and declared typed capabilities.
 5. Host bridges run the product lifecycle.
+
+## Native Agent contribution
+
+The cold manifest owns Agent identity, runtime kind, primary facility,
+capabilities, and optional provider-neutral CLI/install/auth facts. The
+activation module owns only the matching runtime factory.
+
+A custom session Agent that launches a declared system tool can use this shape:
+
+```json
+{
+  "hostAccess": {
+    "required": [{
+      "id": "example-agent-process",
+      "capability": "process",
+      "reason": "Runs the declared Example Agent CLI.",
+      "scope": {
+        "executables": [{ "kind": "systemTool", "id": "example-agent-cli" }]
+      }
+    }],
+    "optional": []
+  },
+  "contributes": {
+    "agents": [{
+      "id": "example",
+      "title": "Example Agent",
+      "runtime": { "kind": "custom" },
+      "primary": "sessions",
+      "capabilities": {
+        "sessions": {
+          "open": ["create", "resume"],
+          "delivery": ["newTurn", "steer", "followUp"],
+          "cancel": true,
+          "configuration": true
+        }
+      },
+      "cli": {
+        "executable": {
+          "binaryName": "example-agent",
+          "sourcePreference": "system-first"
+        },
+        "install": {
+          "managed": null,
+          "manual": {
+            "kind": "vendor_recipe",
+            "recipes": {
+              "darwin": [{
+                "cmd": "example-installer",
+                "args": ["install"]
+              }],
+              "linux": [{
+                "cmd": "example-installer",
+                "args": ["install"]
+              }],
+              "win32": [{
+                "cmd": "example-installer.exe",
+                "args": ["install"]
+              }]
+            }
+          },
+          "guideUrl": "https://example.com/install",
+          "docsUrl": "https://example.com/docs"
+        },
+        "auth": {
+          "support": "login_terminal",
+          "probe": {
+            "parser": "unknown",
+            "backgroundChecks": "manual_only",
+            "statusArgs": null
+          },
+          "loginLaunches": [{
+            "kind": "primary",
+            "args": ["login"]
+          }]
+        }
+      }
+    }],
+    "systemTools": [{
+      "id": "example-agent-cli",
+      "title": "Example Agent CLI",
+      "executableNames": ["example-agent"]
+    }]
+  }
+}
+```
+
+The strict `cli` block is data for Happier's existing executable resolver,
+setup UI, auth probe, and login action owners. It does not give plugin code a
+raw installer, shell, credential store, or login-command registry:
+
+- `executable` describes canonical binary names and source preference;
+- `install` selects supported managed metadata or bounded per-platform manual
+  recipes and documentation;
+- `auth.probe` selects one host-owned parser and whether background checks are
+  safe;
+- `auth.loginLaunches` supplies arguments for the already resolved executable.
+
+For an ACP Agent, use
+`runtime: { "kind": "acp", "transport": ... }` and declare a strict
+`systemTool` or `managedDependency` executable reference for stdio. A custom
+runtime keeps `runtime: { "kind": "custom" }` and implements the behavior in
+its registered native `AgentRuntime`.
+
+Declare only capabilities the runtime actually implements. Unsupported
+create/resume/fork, delivery, configuration, compaction, rollback, goal,
+catalog, usage-recovery, terminal, or external-session behavior must remain
+absent and fail closed through the host's typed unavailable path.
 
 ## What agent leaves own
 
@@ -22,15 +132,15 @@ Agent runtime leaves own agent-specific facts:
 - agent protocol clients
 - agent permission-mode translation
 - native transcript parsing
-- native event mapping into `RuntimeEventV1`
-- agent-specific external session source logic
+- native event mapping into strict `AgentSessionRuntimeEvent`
+- Agent-specific protocol and correlation logic for declared capabilities
 
 ## What Happier host owns
 
 The host owns:
 
 - agent runtime resolution
-- plugin context construction
+- bounded runtime-context construction
 - session and execution-run bridges
 - prompt/pending queue lifecycle
 - permission request lifecycle

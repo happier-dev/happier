@@ -1,7 +1,20 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { runDocsBuild } from './build.mjs';
+
+test('makes explicit Fumadocs generation authoritative after Next route type generation', () => {
+  const packageJsonPath = fileURLToPath(new URL('../package.json', import.meta.url));
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+
+  assert.deepEqual(packageJson.scripts['types:check'].split(' && '), [
+    'next typegen',
+    'fumadocs-mdx',
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit',
+  ]);
+});
 
 test('runs the native typecheck before invoking the local Next build CLI', () => {
   const calls = [];

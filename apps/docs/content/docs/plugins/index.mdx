@@ -3,17 +3,17 @@ title: Plugins
 description: Build Happier plugins, agents, UI surfaces, tools, hooks, and runtime integrations.
 ---
 
-Happier plugins extend the local runtime without changing Happier core source code. A plugin can contribute actions, tools, commands, hooks, UI surfaces, settings, MCP integrations, SCM integrations, and AI agents.
+Happier plugins extend the local runtime without changing Happier core source code. A plugin can contribute actions, tools, commands, hooks, UI surfaces, settings, MCP integrations, SCM integrations, and AI Agents.
 
-The plugin system is manifest-first. Static facts live in the plugin manifest so Happier can project catalogs, settings, permissions, marketplace listings, and UI surfaces without executing plugin code. Executable code is loaded only when the local daemon activates the plugin or invokes a plugin-owned handler.
+The plugin system is manifest-first. Static facts live in `.happier-plugin/plugin.json` so Happier can project catalogs, settings, requested host access, installation review, and UI surfaces without executing plugin code. Executable plugin code is trusted code, not sandboxed code.
 
 ## Core model
 
-- **Manifest**: declares identity, `uses`, permissions, and contribution descriptors.
-- **Activation API**: `activate(host)` binds executable handlers and disposables to manifest-declared contributions.
-- **Runtime context**: agent runtime factories receive `PluginContextV1`; action/tool/command/hook handlers receive handler-scoped `storage`, `settings`, `logger`, and `events` on their existing handler context.
-- **Agent runtime**: a plugin-owned `AgentRuntime` registered with `registerAgentRuntime({ agentId, create })`.
-- **Runtime host**: Happier-owned session and execution-run orchestration. Agent leaves map agent-specific behavior into shared runtime contracts.
+- **Manifest**: cold JSON declaring identity, entrypoints, host access, and contribution descriptors.
+- **Activation API**: `activate(api)` binds executable handlers through nested capability families.
+- **Invocation context**: action and hook handlers receive bounded identity, cancellation, and services.
+- **Agent runtime**: a plugin-owned `AgentRuntime` registered with `api.agents.register(agentId, factory)`.
+- **Runtime host**: Happier-owned session and execution-run orchestration. Agent leaves map Agent-specific behavior into shared runtime contracts.
 
 ## Start here
 
@@ -29,19 +29,24 @@ The plugin system is manifest-first. Static facts live in the plugin manifest so
   <Card title="Security and permissions" href="/docs/plugins/security" />
 </Cards>
 
-## Stable authoring rules
+## Preview authoring rules
 
-- Import Happier plugin types and helpers from `@happier-dev/plugin-sdk`.
+- The candidate public surface uses eight normal paths: the package root,
+  `/manifest`, `/runtime`, `/agent-runtime`, `/ui`, `/ui/client`, `/ui/build`,
+  and `/testing`. This checkout remains on prepublication hold pending the
+  consolidated API approval.
 - Do not import Happier internal packages from a plugin.
 - Keep static projected facts in the manifest.
-- Bind executable code through `activate(host)` and manifest-declared ids.
-- Use host-provided services for runtime capabilities: handler services on `request.context` or hook `context`, and `PluginContextV1` services inside agent runtime factories. Do not shell out or read host internals directly when a service exists.
-- Keep agent-specific behavior inside the plugin-owned agent runtime leaf.
+- Bind executable code through `activate(api)` and manifest-declared ids.
+- Use host-provided invocation and Agent runtime contexts. Do not shell out or read host internals directly when a service exists.
+- Keep Agent-specific behavior inside the plugin-owned Agent runtime leaf.
 - Do not write Happier transcript rows, session rows, or execution-run state directly from agent code.
+
+Every public path is Developer Preview until 1.0. Patch releases should not intentionally break documented contracts. A documented 0.x minor may break them when accompanied by migration notes. Preview status does not waive correctness, installability, lifecycle cleanup, security disclosure, or documentation.
 
 ## Where plugin code runs
 
-Executable plugin code runs in the local daemon process through `entrypoints.main` or trusted `entrypoints.dev`. Hosted UI artifacts are built into portable bundles and served by the daemon. Server-side executable plugins and arbitrary in-app executable plugins are not the public runtime model.
+Daemon plugin code runs through `entrypoints.daemon` or, in the development loop, `entrypoints.development`. React Native plugin UI runs as trusted code in a supported client realm. Hosted web UI runs behind an isolated public bridge. Declarative UI is rendered by the host. Installation is a whole-package trust decision across these surfaces.
 
 ## Related docs
 

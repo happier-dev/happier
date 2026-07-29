@@ -33,9 +33,9 @@ The Authentication section is machine-specific. If you switch to a different mac
 Depending on the Agent, Happier can show:
 
 - **Status** — Logged in, logged out, or unknown
-- **Logged in as** — an account email or label when the provider exposes one safely
+- **Logged in as** — an account email or label when the Agent exposes one safely
 - **Method** — for example API key, auth token, OAuth CLI login, credentials file, or Google ADC
-- **Source** — whether the result came from environment variables, local files, or a Agent CLI command
+- **Source** — whether the result came from environment variables, local files, or an Agent CLI command
 - **Issue** — why login could not be confirmed, such as missing credentials or expired credentials
 - **Last checked** — when Happier last refreshed that auth state
 
@@ -53,7 +53,7 @@ What happens:
 - if the Agent needs an in-terminal command such as `/login`, `/auth`, `/setup`, or `/connect`, Happier sends it for you
 - if the Agent prints a URL, Happier shows copy/open actions in the terminal UI
 
-When the login flow exits, Happier refreshes the provider auth state automatically.
+When the login flow exits, Happier refreshes the Agent auth state automatically.
 
 ### Check now
 
@@ -67,13 +67,13 @@ Use it when:
 
 ## What “unknown” means
 
-Some providers expose a safe, non-interactive way to confirm local auth. Others do not.
+Some Agents expose a safe, non-interactive way to confirm local auth. Others do not.
 
 If Happier shows **Unknown**, that usually means one of these:
 
 - the Agent does not expose a reliable non-interactive auth probe yet
 - the Agent CLI check timed out or failed
-- Happier intentionally avoided an interactive provider command during background detection
+- Happier intentionally avoided an interactive Agent command during background detection
 
 Unknown does **not** automatically mean “logged out”.
 

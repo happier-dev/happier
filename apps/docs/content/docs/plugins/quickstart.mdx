@@ -1,126 +1,123 @@
 ---
 title: Plugin quickstart
-description: Create a local plugin, declare a manifest, bind an action, install it in dev mode, and reload it.
+description: Create, develop, test, build, pack, and install a minimal Happier plugin.
 ---
 
-This quickstart shows the smallest useful local plugin. It uses a manifest for projection and an activation file for executable behavior.
+The default scaffold contains one strict JSON manifest, one action, one named
+activation module, one focused test, and the package metadata needed by the
+current author tools.
 
-## Create the scaffold
+> Release status: the workspace SDK is still private at `0.0.0`. The full
+> empty-directory flow remains a packed/live release gate until an approved
+> `0.1.0` preview artifact is available. Source and schema checks in this
+> repository do not prove public installation.
 
-During the pre-publication SDK period, run scaffold from a Happier checkout. The
-generated `package.json` uses a local `file:` dependency for
-`@happier-dev/plugin-sdk`, so `npm install` works without a public npm package.
+## Create and develop
 
 ```bash
-happier plugins scaffold /absolute/path/to/my-plugin --id com.example.echo --name "Echo plugin"
-cd /absolute/path/to/my-plugin
-npm install
+happier plugins create my-plugin
+cd my-plugin
+happier plugins dev
 ```
 
-## Package layout
+`plugins create` derives the display name and a local plugin id from the
+directory name. Use `--id com.example.my-plugin` when you need a durable
+publisher-owned id.
+
+`plugins dev` validates `.happier-plugin/plugin.json`, installs the declared
+development dependencies with Happier's managed toolchain, observes the source
+closure, and sends each valid change to the daemon. The daemon is the only
+process that imports the development module and calls `activate(api)`.
+
+The first use asks you to **Install & Trust** the local source. Normal edits
+under that approved source identity do not create a new trust prompt. A source
+root, plugin identity, executable realm, or required-access change is reviewed
+again.
+
+## Generated layout
 
 ```text
 my-plugin/
   .happier-plugin/
     plugin.json
+    plugin.schema.json
   src/
     index.ts
-  dist/
-    index.js
+  test/
+    index.test.mjs
+  package.json
+  tsconfig.json
 ```
 
-## Manifest
+The external source of truth is `.happier-plugin/plugin.json`. It is plain JSON
+and can be inspected without importing `src/index.ts`.
 
-```json
-{
-  "schemaVersion": 2,
-  "id": "com.example.echo",
-  "version": "0.1.0",
-  "displayName": "Echo plugin",
-  "engines": {
-    "happier": "^0.0.0"
-  },
-  "uses": ["actions"],
-  "entrypoints": {
-    "main": "./dist/index.js",
-    "dev": "./src/index.ts"
-  },
-  "permissions": {
-    "required": [],
-    "optional": []
-  },
-  "contributes": {
-    "actions": [
-      {
-        "id": "echo",
-        "title": "Echo",
-        "description": "Return the input payload.",
-        "scopes": ["session"],
-        "surfaces": ["cli", "mcp", "agent"],
-        "placement": "commandPalette",
-        "handler": {
-          "target": "plugin",
-          "registrationId": "echo"
-        },
-        "dangerLevel": "safe"
-      }
-    ]
-  }
-}
-```
-
-The manifest is the source of truth for the action identity. Happier can display and validate the action without importing `src/index.ts` or `dist/index.js`.
-
-## Activation
+The generated activation entry uses a named export:
 
 ```ts
 import type { PluginApi } from '@happier-dev/plugin-sdk';
+import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';
 
-export async function activate(host: PluginApi) {
-  host.registerAction({
-    id: 'echo',
-    handler: async (request) => ({
-      ok: true,
-      data: {
-        input: request.input
-      }
-    })
-  });
+export const saveNote: ActionHandler = async (input) => {
+  const note = typeof input === 'object' && input !== null && 'note' in input
+    && typeof input.note === 'string' ? input.note : '';
+  return { note };
+};
 
-  host.onDispose(async () => {
-    // Close plugin-owned handles here.
-  });
+export function activate(api: PluginApi): void {
+  api.actions.register('save-note', saveNote);
 }
 ```
 
-Activation binds executable behavior to the manifest-declared action. It does not create the action identity by side effect.
+The action id is local to the plugin. Happier owns its structured global
+identity and renders it as `com.example.my-plugin/save-note` only where a
+global CLI, wire, or display boundary needs qualification.
 
-## Install and reload
+## Test, build, and pack
 
-```bash
-happier plugins install /absolute/path/to/my-plugin --dev
-happier plugins list --json
-happier plugins reload com.example.echo
-```
-
-`--dev` records the path as `local_trusted`, uses `entrypoints.dev`, and enables source watching. On reload success, the new runtime registry replaces the old one. On reload failure, Happier keeps the previous working generation when one exists.
-
-## Call the action
-
-For a session-scoped smoke test:
+The normal test command runs the generated daemon-independent suite. The
+lower-level author commands remain available for focused checks:
 
 ```bash
-happier tools call \
-  --session-id <sessionId> \
-  --directory /absolute/path/to/repo \
-  --source happier \
-  --tool action_execute \
-  --args-json '{"actionId":"com.example.echo.echo","input":{"message":"hello"}}' \
-  --json
+happier plugins author typecheck .
+happier plugins author build .
+happier plugins test .
+happier plugins pack .
 ```
+
+You can also use `npm run typecheck`, `npm test`, `npm run build`, and
+`npm run pack:plugin` from the scaffold. `plugins test .` runs the generated
+`test/index.test.mjs` suite through Happier's managed JavaScript runtime. It
+activates `dist/index.js` with the public testkit and invokes the declared
+`save-note` action without starting a daemon or mutating installed plugin
+state. The reserved
+`happier plugins test . --packed` mode packs the project, installs and trusts
+it through an authenticated disposable daemon home, invokes a safe CLI action
+that accepts empty input when one is declared, restarts the daemon, and invokes
+the action again. It never reads or mutates the user's installed plugin state.
+
+`plugins pack` writes an npm-compatible `.tgz` and a SHA-256 sidecar. Install
+the emitted archive through the same reviewed daemon path used by other plugin
+sources:
+
+```bash
+happier plugins install ./happier-plugin-com-example-my-plugin-0.1.0.tgz --kind archive
+```
+
+In an interactive terminal, Happier shows the exact package, manifest,
+executable realms, contributions, requested host integration, and source facts
+before asking for **Install & Trust**. Use the archive path printed by
+`plugins pack`; the example filename above is illustrative.
 
 ## Next steps
 
-- Add manifest descriptors for settings, tools, hooks, or UI surfaces.
-- Use handler-scoped `request.context` or hook `context` services for `storage`, `settings`, `logger`, and `events` in action/tool/command/hook handlers. Use `PluginContextV1` from agent runtime factories when you need broader runtime services.
-- Use an agent runtime when the plugin contributes an AI agent.
+- Add contribution descriptors to the JSON manifest before registering their
+  executable local ids in `activate(api)`.
+- Use `PluginInvocationContext.services` and `context.ui` inside invoked
+  handlers.
+- Use native `AgentRuntime` factories for executable Agents; the host retains
+  session, turn, input, transcript, activity, persistence, and process
+  lifecycle ownership.
+- Choose React Native for trusted cross-platform plugin UI, hosted web for an
+  isolated web surface, or declarative settings/status/actions for UI rendered
+  entirely by Happier.

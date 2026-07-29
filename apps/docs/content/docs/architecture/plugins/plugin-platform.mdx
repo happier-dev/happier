@@ -1,6 +1,6 @@
 ---
 title: Plugin platform
-description: Manifest ingestion, contribution projection, runtime registry, and reload ownership.
+description: Manifest ingestion, contribution projection, activation, and reload ownership.
 ---
 
 The plugin platform owns the lifecycle around plugin packages.
@@ -15,8 +15,11 @@ The host projects contributions into catalogs and UI data without importing daem
 
 ## Activation
 
-The host imports daemon code only after trust and validation. Activation receives `PluginApiV1` and registers executable bindings.
+The host imports daemon code only after trust and validation. Activation receives `PluginApi` and registers executable bindings through its capability families.
 
-## Runtime registry
+## Reload
 
-The executable runtime registry is generation-based. Successful reload replaces the current generation; failed reload can keep the last known good generation.
+The daemon applies a fully validated replacement before it admits new calls to
+that plugin. A failed development edit or update leaves the previously working
+plugin active. Storage coordination, recovery, and byte-retirement details are
+host implementation concerns rather than author API concepts.

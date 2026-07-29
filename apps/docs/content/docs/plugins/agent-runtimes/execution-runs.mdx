@@ -1,44 +1,29 @@
 ---
 title: Execution-runs
-description: Reuse session runtime logic for bounded and long-lived agent runs.
+description: Implement bounded Agent execution through AgentExecutionRunRuntime.
 ---
 
-Execution-runs are host-owned product runs that use agent execution. They cover one-shot tasks, review engines, voice turns, automation, and other task-like AI execution flows.
-
-## Execution-run creation
-
-Agent runtimes expose execution-run support through `runtimeCore.createExecutionRunBackend(...)`.
+An `AgentRuntime` can expose an `executionRuns` factory for host-owned tasks that are not ordinary interactive sessions.
 
 ```ts
-runtimeCore: {
-  createExecutionRunBackend: (params) => createExampleExecutionRunBackend({ ctx, params })
-}
+import type { AgentRuntime } from '@happier-dev/plugin-sdk/agent-runtime';
+
+export const runtime: AgentRuntime = {
+  executionRuns: {
+    async open(request, context) {
+      return createExecutionRun({ request, context });
+    }
+  }
+};
 ```
 
-## Execution-run result forms
+`AgentExecutionRunRuntime` implements:
 
-An agent runtime can return:
+- `send(input, options?)`
+- `stop(options?)`
+- `watch(listener)` returning a `Disposable`
+- `dispose()`
 
-- `ExecutionRunBackendV1`: direct `run(input)` interface
-- `ExecutionRunHostBackendV1`: host-compatible session-backed interface
+Events carry a monotonically increasing sequence and one of the public run-start, progress, output, checkpoint, complete, failed, or cancelled shapes. Keep raw Agent protocol messages inside the adapter.
 
-Use the shared SDK adapter when an execution-run can be backed by a normal session runtime. This avoids maintaining separate session and execution-run implementations.
-
-## Host-owned state
-
-The execution-run host bridge owns:
-
-- public run state
-- markers and activity state
-- permission routing
-- cancellation
-- bounded run loops
-- run lifecycle hooks
-- status publication
-- session provisioning and resume when supported
-
-Agent runtime leaves should not maintain a parallel public run state system.
-
-## Validation expectation
-
-If normal sessions and execution-runs use the same native protocol, tests should prove both flows converge through the same runtime leaf or shared adapter.
+The host owns public run state, cancellation admission, status projection, and persistence. When sessions and execution-runs use the same Agent protocol, share the native adapter and parsing logic rather than maintaining competing protocol implementations.

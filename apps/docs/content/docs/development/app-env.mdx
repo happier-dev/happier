@@ -28,7 +28,7 @@ Example:
 EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY=voice,social.friends
 ```
 
-This is a comma-separated list of **feature ids** (for example `voice`, `social.friends`, `bugReports`, `connectedServices`, `connectedServices.quotas`).
+This is a comma-separated list of **feature ids** (for example `voice`, `social.friends`, `bugReports`, `connectedServices.quotas`).
 
 Setup/bootstrap examples:
 
@@ -39,17 +39,11 @@ EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY=setup.relay.allowLocalRelayHost,setup.re
 
 ### Connected services build gates
 
-Connected services also has explicit build-time gates:
+Optional Connected Accounts quota surfaces have an explicit build-time gate:
 
-- `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED` (default: `true`)
 - `EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED` (default: `false`)
 
 Examples:
-
-```bash
-# Completely disable Connected Services in the UI bundle
-EXPO_PUBLIC_HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED=0
-```
 
 ```bash
 # Enable Connected Services quota UI surfaces

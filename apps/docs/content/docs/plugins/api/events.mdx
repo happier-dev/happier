@@ -1,74 +1,49 @@
 ---
 title: Events
-description: Publish and subscribe to typed plugin and host events.
+description: Publish and observe manifest-declared plugin events.
 ---
 
-Events are live daemon-global pub/sub observations. They are not hooks, not transcript rows, and not history/replay APIs.
+The public events service is live daemon pub/sub for declared plugin events. It is not a hook, transcript store, history API, or Agent session event stream.
 
-## Event ids
+## Declare events
 
-Plugin-owned events use the plugin id as a namespace:
+Declare published events and subscriptions in the cold manifest. Each event has a plugin-local id and an optional payload schema. The host combines the trusted plugin id and local id into structured `{ pluginId, localId }` identity.
 
-```text
-<pluginId>/<event-path>
+## Emit an owned event
+
+`emit` accepts the current plugin's local event id:
+
+```ts
+await context.services.events.emit('build.completed', {
+  status: 'ok'
+});
 ```
 
-Reserved host events use:
+The event must be declared by the current plugin. Reserved host names, undeclared ids, and payloads that fail the declared schema are rejected.
 
-```text
-@happier/<namespace>/<event-path>
-```
+## Subscribe
 
-Plugins cannot emit reserved `@happier/*` events.
+Dynamic subscriptions use a structured contribution reference:
 
-## Declare plugin events
-
-Plugin-authored events should be declared in the manifest with local ids and payload schemas. The host derives the fully qualified event id from the trusted plugin id, yielding `<pluginId>/<localId>`.
-
-## Emit events
-
-```js
-await ctx.events.emit({
-  id: 'com.example.plugin/build.completed',
-  payload: {
-    status: 'ok'
+```ts
+const subscription = context.services.events.subscribe(
+  { pluginId: 'com.example.build', localId: 'build.completed' },
+  async (event) => {
+    const payload = event.payload;
   }
-});
+);
+
+subscription.dispose();
 ```
 
-For own-plugin events, the host can qualify the local id against the caller plugin. For host or cross-plugin events, use explicit selectors and required permissions.
+The target event and the caller's subscription must be declared. Cross-plugin observation also requires scoped `events.plugin.subscribe` host access for the target plugin.
 
-## Subscribe to events
+Manifest-declared subscription handlers bind during activation with `api.events.register(subscriptionLocalId, handler)`. The registered id is the subscription contribution's local id, not the publisher's event id.
 
-```js
-const subscription = ctx.events.subscribe('@happier/session/*', async (event) => {
-  const payload = event.payload;
-});
+## Agent session events
 
-subscription.unsubscribe();
-```
+Agent session evidence uses `AgentSessionRuntime.watch(...)` and its native strict event union. Do not publish raw Agent protocol messages on the general plugin event service.
 
-Subscription handlers receive a typed event object. The value field is `payload`.
+## Delivery
 
-## Runtime events are different
-
-Lower provider-to-host runtime subscriptions receive direct `RuntimeEventV1` payloads. Public `ctx.events.subscribe(...)` receives event envelopes with metadata and `payload`.
-
-## Permissions
-
-Emitting declared own-plugin events is not privileged. Observing reserved host namespaces or another plugin's events requires permission capabilities declared in the manifest.
-
-| Event family | Required permission |
-| --- | --- |
-| `@happier/runtime/*` | `events.runtime.subscribe` |
-| `@happier/lifecycle/*` | `events.lifecycle.subscribe` |
-| `@happier/session/*` | `events.session.subscribe` |
-| another plugin's `<pluginId>/*` | `events.plugin.subscribe` scoped to that plugin id |
-
-## Reload caveat
-
-The first-party Plugin Inspector currently observes reloads through the `plugin.reload.after` hook contribution registered with `api.registerHook(...)`. Startup activation receives `PluginApi`, not `PluginContextV1`, so that reload-live-update path does not use `ctx.events` yet.
-
-## Delivery model
-
-The event bus is live. It does not provide replay, history, global ordering, or transcript persistence by default. Subscriber failures should be isolated from the publisher.
+The event service has bounded live delivery. It does not promise replay, history, global ordering across publishers, or transcript persistence. Dispose dynamic subscriptions with their owner and isolate subscriber failures from publisher correctness.

@@ -143,6 +143,12 @@ Happier distinguishes:
 
 Installed-but-stopped detection and managed start are separate capabilities. Managed start additionally requires the `localServices.managed` feature; discovery alone never grants process ownership.
 
+### Managed subscription-backed gateways
+
+Managed subscription-backed routing is experimental and explicit. Upstream policy or enforcement can change and may make the route stop working. Happier surfaces an upstream policy or authentication rejection as an ordinary failure and does not conceal it, manufacture entitlement, or silently fall back to another credential.
+
+This product-risk posture is not a legal-compliance determination. It does not authorize request cloaking, prompt replacement for client impersonation, identity confusion, tracking-identity disguise, or other enforcement-evasion behavior. Managed gateways remain fail closed, and their security, privacy, credential-handling, platform, and correctness gates still apply.
+
 ## Model catalogs, visibility, and stale references
 
 The canonical model catalog merges sources in this order:
@@ -164,6 +170,8 @@ Model visibility has one owner, keyed by structured model reference:
 Visibility affects discovery in the picker, not the validity of an already-running session.
 
 Large catalogs must use the app's virtualized option-list path. OpenRouter-scale catalogs must not render hundreds of model rows through a direct `.map()` of pressables.
+
+Catalog and health refresh is demand-driven. Enabling a connection, a semantic connection-detail or model-picker read, an explicit Test/Refresh, or an eligible read of expired cached data may schedule work through the canonical Provider probe scheduler. Cache expiry makes that read schedule a refresh; it does not create a timer, background crawler, lease, or global refresh budget. The scheduler owns single-flight execution, concurrency, retry/backoff, and freshness. UI and plugin code must not add a second polling path.
 
 ## Session lifecycle
 
@@ -207,6 +215,8 @@ Migration descriptors are plugin-owned provider facts. New writes use provider c
 7. Test schema invariants, endpoint safety, compatibility, catalog merging, connection identity, secret/grant refusal ordering, and any real external integration behind an opt-in lane.
 
 Third-party plugins use the same `contributes.providers` family. Built-ins receive no privileged host path.
+
+External third-party Provider authoring is experimental until a packed plugin completes the generic install, trust, projection, runtime-use, reload/update, collision, and uninstall graduation suite. This does not make bundled Providers or in-app custom Provider connections experimental.
 
 ## Validation map
 

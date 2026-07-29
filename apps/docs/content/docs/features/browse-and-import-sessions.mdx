@@ -17,7 +17,7 @@ Happier can:
 - show those sessions in a searchable list
 - open them directly in Happier without importing them first
 - follow running transcripts from the provider
-- take control of the session in Happier
+- take control of the session in Happier when the Agent and session meet the safety requirements
 - import/sync the session into Happier when you want Happier to become the source of truth
 
 This works best with:
@@ -56,7 +56,7 @@ So this feature is specifically useful for sessions that:
 
 - were started outside Happier
 - already existed before you opened Happier
-- are still running locally in a Agent CLI or provider server
+- are still running locally in an Agent CLI or provider server
 
 ## Open directly vs import into Happier
 
@@ -69,13 +69,13 @@ Open the session as a **Direct** session when you want:
 - immediate access
 - no transcript import yet
 - the provider to remain the source of truth
-- a machine-bound session that Happier can inspect or control
+- a machine-bound session that Happier can inspect and, when safe takeover is supported, control
 
 This is the best option when you mainly want to browse, inspect, monitor, or lightly continue the provider session.
 
 ### Import or sync into Happier
 
-Use **Take over + Sync** when you want:
+When the Agent and session support safe takeover, use **Import and take over** when you want:
 
 - Happier to own the transcript moving forward
 - a session that behaves like a normal Happier-managed session
@@ -93,7 +93,7 @@ Use **Direct** when:
 - the machine will stay online
 - you do not want to import it yet
 
-Use **Take over + Sync** when:
+Consider **Import and take over**, when available, when:
 
 - you want Happier-native continuity
 - you want the session to feel like a normal Happier session afterward
@@ -101,31 +101,33 @@ Use **Take over + Sync** when:
 
 ## What users can do after browsing
 
-After you browse and open a provider session, users can usually:
+After you browse and open a provider session, you can usually:
 
 - read the transcript
 - load older transcript pages
 - follow new transcript entries
-- take over the session directly in Happier
-- take over and sync/import it into Happier
 
-Depending on the provider and session state, users may also be able to:
+Depending on the Agent, machine, and session state, you may also be able to:
 
+- continue the linked session from Happier without importing it
+- import the transcript and take over as a Happier-managed session
 - resume it from Happier once it is a Happier-managed session with valid resume metadata
 - continue sending prompts
 - move from observe-only mode into a controlled mode
 
-## How import works conceptually
+Takeover choices appear only when Happier can prove the required writer safety. A linked takeover keeps the provider transcript as the source of truth. If Happier cannot prevent or reliably detect another writer, that mode is unavailable and the session remains read-only.
 
-When a user chooses **Take over + Sync**:
+## How import and takeover work
 
-1. Happier reads the provider transcript
-2. Happier imports that history into the Happier session
-3. The session changes from **Direct** to **Happier**
-4. Future work continues as a Happier-managed session
+When you choose **Import and take over**, Happier uses a durable operation to read and import the provider history, verify the current source, transfer the session to Happier, and start the Agent. It does not assume those steps complete without interruption.
 
-This is why the feature is more than “view logs”.
-It is a real bridge from provider-native sessions into Happier-native sessions.
+After a restart or interruption, the progress card may show **Awaiting your resume** with **Resume**, **Retry**, or **Cancel**. **Discard partial session** is available only for an incomplete initial import that is safe to remove. Reopening the app never resumes the operation automatically.
+
+If the Agent cannot start after the session has already transferred to Happier, the session remains hosted but offline and offers **Retry start**. If saved and current state do not agree, Happier shows **Reconciliation required** rather than continuing automatically.
+
+A source change or disappearance can leave the initial import incomplete and unshareable. If a previously complete snapshot was being updated, Happier keeps that published snapshot available and leaves unfinished additions unpublished.
+
+Sharing becomes available only after a complete published import. It may remain temporarily unavailable with `metadata_privacy_upgrade_required` until the session owner completes the metadata privacy upgrade; recipients do not receive the older private metadata while that upgrade is pending.
 
 ## What providers are supported
 
@@ -178,7 +180,7 @@ In the Resume ID flow, the picker is intentionally locked to the machine/provide
 Open **Direct → Browse provider sessions**, select the machine and Codex, find the session, open it, then either:
 
 - keep it direct, or
-- choose **Take over + Sync**
+- choose **Import and take over** when it is available
 
 ### “I want to monitor a live Claude session from Happier”
 

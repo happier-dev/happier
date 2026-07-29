@@ -1,23 +1,26 @@
 ---
 title: Runtime architecture
-description: The final Happier runtime model for sessions, execution-runs, plugin backends, and provider leaves.
+description: The Happier runtime model for sessions, execution-runs, and plugin-owned Agent leaves.
 ---
 
 Happier runtime architecture separates product lifecycle from provider-specific execution.
 
 ## Layers
 
-1. UI and client flows choose an agent/backend target.
+1. UI and client flows choose an Agent.
 2. CLI daemon receives session or execution-run work.
-3. Engine registry resolves manifest contributions and executable backend engines.
-4. Host constructs `PluginContextV1`.
-5. Backend engine returns `runtimeCore`, facets, and surfaces.
+3. The Agent catalog resolves the manifest contribution and registered native runtime.
+4. The host constructs bounded Agent factory, session, or execution-run contexts.
+5. Native `AgentRuntime` supplies session and/or execution-run factories.
 6. Session or execution-run host bridge owns product lifecycle.
-7. Provider leaf maps provider wire behavior into shared runtime contracts.
+7. The Agent leaf maps Agent-native behavior into shared runtime contracts.
 
 ## Core invariant
 
-The host owns lifecycle, permissions, pending queue behavior, transcript projection, durable state, runtime identity publication, and user-facing status. Provider leaves own provider wire behavior and emit typed evidence.
+The host owns lifecycle, permissions, pending queue behavior, transcript
+projection, durable state, runtime identity publication, and user-facing
+status. Agent leaves own Agent-native commands, codecs, correlation, and
+authoritative evidence. Model Providers remain a separate domain.
 
 ## What to read next
 

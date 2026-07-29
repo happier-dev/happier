@@ -1,13 +1,16 @@
 ---
 title: Network access
-description: Use host-mediated fetch and scoped network permissions.
+description: Use host-mediated fetch and narrowly scoped network access.
 ---
 
-Plugins should use `ctx.fetch` for network requests. The host can apply permissions, request policies, diagnostics, retries, timeout, and redaction.
+Use `context.services.fetch.request(...)` for host-mediated HTTP requests. Declare external origins, methods, and any connected-account binding as narrowly as the manifest schema permits.
+
+The service bounds request and response sizes, redirect behavior, timeout, cancellation, and credential binding. It does not make arbitrary trusted daemon code a network sandbox.
 
 ## Rules
 
-- Declare network permission for external origins.
-- Use request interceptors only for plugin-authored fetch policy.
-- Do not route agent auth or Happier server traffic through plugin policy unless a future host-owned scope explicitly supports it.
-- Do not log authorization headers, tokens, cookies, or raw credentials.
+- Set redirect behavior explicitly.
+- Bind host-managed credentials through a connected-account reference instead of constructing authorization headers from plugin storage.
+- Use request interceptors only for declared plugin fetch policy.
+- Do not route Agent authentication or Happier server traffic through plugin policy unless the host explicitly exposes that scope.
+- Never log authorization headers, tokens, cookies, or raw credentials.

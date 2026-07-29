@@ -3,49 +3,36 @@ title: Plugin API
 description: Public daemon-side API surfaces for activating plugins and running plugin-owned handlers.
 ---
 
-The plugin API has two public objects:
+The plugin runtime has three principal public contexts:
 
-- `PluginApiV1`: registration-only API passed to `activate(host)`.
-- `PluginContextV1`: runtime capability object passed to agent runtime factories.
-- `PluginHandlerServicesV1`: handler-scoped `storage`, `settings`, `logger`, and `events` exposed on action/tool/command request contexts and hook handler contexts.
+- `PluginApi`: nested, registration-only API passed to `activate(api)`.
+- `PluginInvocationContext`: invocation-scoped identity, cancellation, and services passed to action and hook handlers.
+- `AgentRuntimeFactoryContext`: factory-scoped identity and lifecycle data passed to Agent runtime factories.
 
 ## Activation API
 
-Use `PluginApiV1` to register executable handlers for manifest-declared contributions:
+Use `PluginApi` to register executable handlers for manifest-declared contributions through the matching nested family:
 
 - agent runtimes
 - actions
-- tools
-- commands
 - hooks
-- lifecycle handlers
 - notification channels
 - SCM hosting and repository integrations
 - MCP servers and discovery contributions
 - request interceptors
-- disposables
+- supported Voice contributions declared by the installed SDK version
+- activation cleanup returned from the named `activate` function
 
 ## Runtime context
 
-Use `PluginContextV1` from agent runtime code for host capabilities:
+Use the services and `context.ui` on `PluginInvocationContext` from invoked handlers. Agent runtimes receive their own bounded factory/session contexts.
 
-- `ctx.exec`
-- `ctx.permissions`
-- `ctx.managedServer`
-- `ctx.mcp`
-- `ctx.settings`
-- `ctx.secrets`
-- `ctx.storage`
-- `ctx.events`
-- `ctx.sessions.current`
-- `ctx.sessions`
-- `ctx.transcripts`
-- `ctx.auth`
-- `ctx.account`
-- `ctx.projects`
-- `ctx.notifications`
-- `ctx.timeout`, `ctx.retry`, `ctx.abort`, and `ctx.progress`
+- `context.services.storage`
+- `context.services.settings`
+- `context.services.logger`
+- `context.services.events`
+- `context.services.availability(serviceId)`
 
 ## Rule of thumb
 
-If it declares an identity, put it in the manifest. If it binds executable behavior, use `api`. If it is an action/tool/command/hook handler, use the services on the existing handler context. If it is an agent runtime factory, use `PluginContextV1`.
+If it declares an identity, put it in the manifest. If it binds executable behavior, use the matching nested activation family. Tools and commands reference actions declaratively. Invoked handlers use their bounded invocation services; Agent runtime factories use their factory context.

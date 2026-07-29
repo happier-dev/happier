@@ -1,22 +1,72 @@
 ---
 title: Testing plugins
-description: Validate plugin manifests, activation, runtime behavior, and user flows.
+description: Run the generated daemon-independent suite and understand the packed-test boundary.
 ---
 
-Plugin tests should cover both static projection and executable behavior.
+After building the plugin, run its source-controlled suite through the normal
+CLI command:
+
+```bash
+happier plugins test .
+```
+
+The default delegates to the managed author-test owner and runs
+`test/index.test.mjs`. The generated suite imports `dist/index.js`, activates
+it through `createPluginTestkit`, and invokes the declared `save-note` action.
+It does not start a daemon or mutate installed plugin state. Plugin manifests
+have no reserved test target; the package's source-controlled test suite owns
+which declared contributions it exercises. Use
+`happier plugins author typecheck .` and `happier plugins author build .` for
+the other focused checks.
+
+`happier plugins test . --packed` is reserved for packed, real-host integration.
+It packs the project, starts a product-owned authenticated daemon with an
+isolated disposable home, completes Install and trust there, verifies the
+daemon-owned catalog, and invokes a safe CLI action that accepts `{}` when one
+is available. It then restarts the daemon, rejects the stopped incarnation,
+verifies that the plugin is still current, and invokes the action again. A
+plugin without a suitable action is still installed, activated, and checked
+across restart. The disposable home is removed afterward and the user's
+installed plugin state is never read or mutated.
+
+## Plugin testkit
+
+`createPluginTestkit` validates the cold manifest, activates the module through `PluginApi`, enforces manifest-declared registration ids, invokes registered actions, and disposes registration plus activation cleanup.
+
+```ts
+import { afterEach, expect, test } from 'vitest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import manifest from '../.happier-plugin/plugin.json';
+import * as module from '../src/index';
+
+let plugin: Awaited<ReturnType<typeof createPluginTestkit>> | undefined;
+
+afterEach(async () => {
+  await plugin?.dispose();
+  plugin = undefined;
+});
+
+test('runs the declared echo action', async () => {
+  plugin = await createPluginTestkit({ manifest, module });
+
+  await expect(plugin.invokeAction('echo', { text: 'hello' }))
+    .resolves.toEqual({ text: 'hello' });
+});
+```
+
+Pass explicit `services` or `ui` fixtures only for real host boundaries the handler uses. The defaults fail closed instead of silently faking those services.
 
 ## Test layers
 
-- manifest schema validation
-- no-execute projection
-- activation registration validation
-- action/tool/command handler behavior
-- hook and lifecycle behavior
-- agent runtime session runtime behavior
-- execution-run behavior
-- process cleanup
-- manual UI/CLI flows
+- cold manifest validation and no-execute projection
+- activation registration and cleanup
+- contribution behavior through its public boundary
+- Agent runtime session and execution-run behavior
+- cancellation, process cleanup, and failure paths
+- UI artifact build and packaged file inspection
+- install, trust, development, update, and uninstall flows in a real host
 
-## Principle
-
-Test observable behavior and stable contracts. Do not assert internal host implementation details unless the test is a host-runtime regression test.
+The in-process testkit and default CLI test do not prove real-host integration.
+Use `happier plugins test . --packed` for the canonical packed daemon smoke,
+then exercise any additional claimed user flows and uninstall behavior on the
+relevant supported hosts before distribution.

@@ -1,0 +1,97 @@
+---
+title: Grok Build (experimental)
+description: Configure the Grok Build CLI in Happier, including installation, authentication, models, questions, images, and resume.
+---
+
+Happier runs **Grok Build** as a native Agent plugin through the local `grok` CLI and the Agent Client Protocol (ACP). The Agent integration is separate from Happier's xAI voice provider.
+
+## Install Grok Build
+
+Open **Settings → Agents → Grok** to check the selected machine and run the built-in vendor installation recipe. You can also follow [xAI's Grok Build CLI guide](https://x.ai/cli) and verify the result directly:
+
+```bash
+grok --version
+```
+
+Happier checks `PATH` and common user installation locations, including `~/.grok/bin` and `~/.local/bin`. If the binary is elsewhere, set `HAPPIER_GROK_PATH` to its absolute path.
+
+Happier launches Grok in update-safe ACP mode:
+
+```bash
+grok --no-auto-update agent stdio
+```
+
+## Authenticate
+
+Grok supports either an xAI API key or its native cached login.
+
+### API key
+
+Set `XAI_API_KEY` in the Happier CLI or daemon environment. The Grok plugin declares that key only for the declared Grok process; it does not request access to other environment values.
+
+### Native login
+
+From **Settings → Agents → Grok**, start the normal login flow or the device-code flow for a headless or remote machine. The equivalent commands are:
+
+```bash
+grok login
+grok login --device-auth
+```
+
+Grok does not currently expose a reliable non-interactive cached-login probe. Happier may therefore show **Unknown** before a session starts; ACP startup still validates the advertised cached-account method before opening the session.
+
+## Models and reasoning effort
+
+Before a session starts, Happier can run `grok models` through its bounded Agent CLI executor and use the models in Grok's **Available models** output. Once ACP is running, the active provider session is authoritative. Happier does not invent a static or fallback Grok model.
+
+When an advertised model supports reasoning effort, the engine picker shows that model's provider-advertised choices, such as **Low**, **Medium**, and **High**. Model and effort changes remain provider-authoritative: Happier accepts only advertised effort values and updates the selected state only after Grok acknowledges the exact model.
+
+## Questions, permissions, and tools
+
+- Grok structured questions use Happier's native question UI. Zero-option questions accept freeform text; additional freeform text is translated to Grok's `Other` answer and notes annotation without flattening commas or newlines.
+- Permissions use Happier's shared permission flow.
+- Grok tool calls, results, file edits, and streaming updates use the shared ACP transcript projection.
+- Native MCP delivery is experimental. Happier passes its configured MCP servers when creating the Grok session. Grok's later MCP server-status notification is validated and acknowledged, but it does not replace Happier's MCP configuration.
+
+## Images
+
+Text-plus-image and image-only prompts use Happier's trusted attachment resolver and shared ACP content-block projection. Grok does not receive a separate filesystem reader or media store. Unsupported media and untrusted references are rejected before the provider call.
+
+## Sessions and completion
+
+Happier persists the provider session identity and can request resume after the Grok process restarts. Cancellation uses the shared ACP lifecycle, and the runtime accepts a later turn after cancellation instead of treating the whole Happier session as finished.
+
+Standard ACP prompt completion remains primary. Happier can also accept a correlated `x.ai/session/prompt_complete` notification for the current open, non-cancelled turn. The observed underscore alias is accepted for compatible Grok versions. Missing, stale, duplicate, foreign-session, or post-cancellation notifications cannot settle a turn.
+
+## Current limits
+
+- Session listing, fork, rollback, output media, and vendor-state handoff are not currently supported.
+- Resume, MCP, structured questions, images, completion extensions, and model controls still depend on the installed Grok Build version and the capabilities it advertises.
+- Happier does not guess a minimum Grok version or emulate capabilities the provider does not expose.
+
+Use a current Grok Build release. If an older CLI silently drops ACP requests, update it and retry.
+
+## Troubleshooting
+
+### Grok Build is not found
+
+1. Verify `grok --version` works on the selected machine.
+2. Restart Happier after installing the CLI.
+3. If the binary is outside the usual locations, set `HAPPIER_GROK_PATH`.
+
+### Authentication is unavailable
+
+1. Confirm `XAI_API_KEY` is available to the Happier CLI or daemon, or run one of the native login commands above.
+2. Retry the session so Happier can initialize ACP and select from Grok's advertised authentication methods.
+
+### Models or reasoning effort are missing
+
+1. Run `grok models` on the selected machine and confirm it returns an **Available models** section.
+2. Start a new session so Happier can refresh both the preflight inventory and Grok's live ACP model advertisement.
+3. If the chosen model does not advertise reasoning-effort values, Happier intentionally hides that control.
+
+### Resume, questions, or completion behave inconsistently
+
+Update Grok Build and retry with a new Happier session. Happier validates these provider extensions strictly and does not guess around malformed, stale, or uncorrelated provider messages.
+
+See [Agent authentication](/docs/features/provider-authentication) for the shared authentication model.

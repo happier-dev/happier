@@ -1,28 +1,26 @@
 ---
-title: Runtime tests
-description: Test agent runtimes, runtime events, execution-runs, and cleanup.
+title: Agent runtime tests
+description: Test native AgentRuntime session, execution-run, event, and cleanup contracts.
 ---
 
-Runtime tests should prove that agent leaves map into shared host contracts.
+Agent runtime tests should prove that the Agent-specific leaf maps its native behavior into the host-owned runtime contract.
 
-## Agent runtime tests
+## Registration and creation
 
-Cover:
+Cover the factory registered by `api.agents.register` and the native `AgentRuntime` it returns. A runtime supplies `sessions`, `executionRuns`, or both.
 
-- `api.registerAgentRuntime` binding
-- `runtimeCore.createSessionRuntime`
-- `runtimeCore.createExecutionRunBackend`
-- `SessionRuntimeV1.send`
-- runtime events
-- permission response behavior
-- cancellation and disposal
-- connected-service auth refresh
-- structured input support or explicit rejection
+For session-backed Agents, exercise `AgentSessionRuntimeFactory.open(...)` and the resulting `AgentSessionRuntime`:
 
-## Execution-run tests
+- `send(...)` admission and results
+- `watch(...)` events and subscription disposal
+- optional `cancel(...)`, `updateConfiguration(...)`, and `compact(...)`
+- continuation, rollback, goals, catalog, and other controls only when the Agent declares them
+- runtime and session disposal during startup, active work, failure, and host shutdown
 
-When execution-runs are session-backed, test the shared adapter instead of duplicating agent-specific run loops.
+For execution-run Agents, test the `executionRuns` factory through the same public boundary. Reuse a shared session-backed adapter when that is the canonical implementation rather than duplicating an Agent-specific run loop.
 
-## Cleanup tests
+## Ownership assertions
 
-Assert that dispose during startup, cancellation, reload, and failed health checks does not leak agent processes or managed servers.
+Assert Agent-native evidence and caller-visible outcomes. Do not give the test or Agent leaf authority over host-owned session state, transcript persistence, pending input, effective activity, or process-terminal facts.
+
+Mock only genuine boundaries such as the Agent executable, operating system process adapter, network service, clock, or persistent database. Run real internal parsers, reducers, normalization, and lifecycle logic.

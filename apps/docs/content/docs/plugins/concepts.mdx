@@ -5,61 +5,61 @@ description: Ownership boundaries used by Happier plugins and agent runtimes.
 
 ## Plugin
 
-A plugin is an installable package with a manifest and optional daemon executable code. It is the unit of trust, projection, reload, permissions, and executable registration.
+A plugin is an installable package with a cold manifest and optional executable daemon and client code. It is the unit of trust, projection, host-access review, and executable registration.
 
 ## Manifest
 
 The manifest declares stable projected facts:
 
 - plugin identity and version
-- `uses` runtime families
-- enforced permissions and declared metadata capabilities
+- daemon and development entrypoints
+- host-access disclosures and requests for independently owned resources
 - actions, tools, commands, hooks, settings, UI surfaces, events, MCP descriptors, agents, and managed dependencies
+- model Provider contributions, which describe model sources but do not contain configured connections, grants, or credentials
 - agent runtime capabilities and surface declarations
 
 Manifest data is validated before executable code runs.
 
 ## Activation
 
-Activation is daemon-side executable binding through `activate(host)`. The activation API is registration-only. It registers handlers for manifest-declared ids and disposables for runtime cleanup.
+Activation is daemon-side executable binding through the module's named `activate(api)` export. The `PluginApi` registers handlers for manifest-declared ids only. Static registration returns `void`; successful activation may return one cleanup function.
 
-Activation does not receive `ctx.exec`, `ctx.fetch`, `ctx.sessions.current`, or other runtime services. Agent runtime factories receive `PluginContextV1`; action/tool/command/hook handlers receive handler-scoped `storage`, `settings`, `logger`, and `events` on their existing request/context parameter.
+Activation does not receive invocation services. Action and hook handlers receive a bounded `PluginInvocationContext`; Agent session factories receive their own runtime context.
 
-## Runtime context
+## Invocation context
 
-`PluginContextV1` is the host-provided runtime capability object. It exposes focused services instead of raw host read models:
-
-- process and managed-server execution
-- MCP and local services
-- settings, secrets, storage, auth, account, and projects
-- sessions, transcripts, session-scoped services, permissions, and runtime auth
-- events, hooks, notifications, actions, reviews, progress, timeout, retry, abort, and diagnostics
+`PluginInvocationContext` supplies plugin/contribution identity, cancellation, and bounded services such as storage, settings, logging, events, and availability.
 
 ## Agent runtime
 
-`AgentRuntime` is the executable integration point for AI agents. It is registered with `registerAgentRuntime({ agentId, create })` and can expose:
+`AgentRuntime` is the executable integration point for AI agents. It is registered with `api.agents.register(agentId, factory, options)` and can expose:
 
-- `runtimeCore` for sessions and execution-runs
-- `facets` for lower runtime integrations
-- agent runtime surfaces such as terminal runtime, external sessions, attach, handoff, fork, and checkpoints
-- message metadata enrichment
-
-## Runtime core
-
-`runtimeCore` is intentionally small. It creates a session runtime and an execution-run runtime. The host bridge and session loop own product lifecycle and durable state around those created objects.
+- `sessions` for session creation and control
+- `executionRuns` for execution-run creation and control
+- optional typed Agent capabilities and message adapters
 
 ## Surfaces
 
-Agent runtime surfaces are user/product capability families exposed by an agent runtime, such as external session browsing, terminal runtime transcript binding, attach, handoff, fork, or checkpoint restore.
-
-## Facets
-
-Facets are lower runtime integration contracts attached to an engine, such as transcript source, transcript dispatch, session state, and runtime identity publication.
+Agent capabilities are the optional operations a native runtime actually
+supports. Auxiliary features such as External Sessions keep their own
+contribution and lifecycle owner; they are not folded into the primary
+`AgentRuntime`.
 
 ## Agent leaf
 
 An agent leaf is the plugin-owned code that knows a specific agent CLI, protocol, or runtime behavior. It maps native commands, events, permissions, transcripts, and auth into Happier contracts. Model providers are a separate domain.
 
+## Model Provider contribution
+
+A model Provider contribution is immutable plugin-authored metadata for a model source: endpoints, protocols, credential requirements, catalog facts, compatibility evidence, and optional bounded local discovery. A Provider connection is separate account-owned configuration. It holds the selected contribution or custom template, endpoint overrides, and identity used by grants and structured model selections. Plugins never store connection state or secret values in the contribution.
+
+External third-party model Provider authoring remains under `experimental/*`.
+Normal authoring docs do not promise that incubation surface. Bundled Providers
+and in-app custom Provider connections are separate product capabilities.
+
 ## Runtime host
 
-The runtime host is Happier-owned code that resolves agents, constructs plugin context, creates session runtimes, executes session loops, handles execution-runs, publishes runtime identity, routes permissions, and projects transcript/state changes.
+The runtime host is Happier-owned code that resolves Agents, constructs bounded
+invocation and Agent contexts, creates session runtimes, executes session
+loops, handles execution-runs, publishes runtime identity, routes permissions,
+and projects transcript/state changes.

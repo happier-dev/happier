@@ -3,89 +3,52 @@ title: Plugin authoring
 description: Compatibility entry point for Happier plugin development docs.
 ---
 
-The canonical plugin documentation now lives under [Plugins](/docs/plugins).
+The canonical author documentation lives under [Plugins](/docs/plugins).
 
-Use the plugin docs for the final public model:
+The candidate CLI flow is:
+
+```bash
+happier plugins create my-plugin
+cd my-plugin
+happier plugins dev
+```
+
+The workspace SDK remains private at `0.0.0`; use this flow with an approved
+preview artifact. The complete empty-directory and live-host proof remains a
+release gate.
+
+The external manifest is cold JSON at `.happier-plugin/plugin.json`.
+Executable daemon modules export a named `activate(api)` function. Invoked
+handlers use `PluginInvocationContext`; native Agents implement `AgentRuntime`.
+Happier owns session, turn, queued input, transcript, activity, persistence,
+and process lifecycle.
+
+Current author checks and packaging are:
+
+```bash
+happier plugins author typecheck .
+happier plugins author build .
+happier plugins test .
+happier plugins pack .
+happier plugins install <archive-path> --kind archive
+```
+
+`plugins test .` runs the daemon-independent built-entrypoint smoke through the
+public testkit, activates the plugin, and invokes the scaffold's declared
+action. `plugins test . --packed` packs, installs, trusts, activates, and
+optionally invokes the plugin through an authenticated disposable daemon, then
+repeats the currentness and invocation checks after daemon restart. Neither
+mode reads or mutates the user's installed plugin state. See
+[Testing plugins](/docs/plugins/testing) for the exact test layers and limits.
+
+## Reference
 
 - [Plugin quickstart](/docs/plugins/quickstart)
 - [Plugin manifest](/docs/plugins/manifest)
 - [Activation API](/docs/plugins/api/activation)
-- [Runtime context](/docs/plugins/api/context)
-- [Actions, tools, and commands](/docs/plugins/api/actions-tools-commands)
-- [Hooks](/docs/plugins/api/hooks)
-- [Events](/docs/plugins/api/events)
-- [Backend engines](/docs/plugins/backends/backend-engines)
-- [Runtime core](/docs/plugins/backends/runtime-core)
-- [Backend surfaces](/docs/plugins/surfaces)
-- [Runtime facets](/docs/plugins/facets)
-- [Runtime services](/docs/plugins/services)
-- [Security](/docs/plugins/security)
-- [Packaging and install](/docs/plugins/packaging)
-- [Testing plugins](/docs/plugins/testing)
-
-## Current model
-
-Happier plugins are manifest-first. The canonical manifest is schemaVersion 2:
-
-```json
-{
-  "schemaVersion": 2,
-  "id": "acme.sample",
-  "version": "0.1.0",
-  "displayName": "Acme Sample",
-  "engines": {
-    "happier": "^0.2.0"
-  },
-  "runtime": {
-    "apiVersion": 1,
-    "capabilities": ["lifecycle"]
-  },
-  "targets": {
-    "daemon": {
-      "entry": "./src/daemon.mjs"
-    }
-  },
-  "capabilities": {
-    "permissions": []
-  },
-  "contributes": {}
-}
-```
-
-The local executable trust path is explicit: a local plugin directory, manifest path, or `.happier-plugin` directory resolves as a `path` source with `trustPolicy: "local_trusted"` and `installPolicy: "link"`. Treat that as machine-local executable trust for plugin daemon code, and only install local paths that you control.
-
-The real local install and reload loop is:
-
-```bash
-happier plugins install /absolute/path/to/acme-sample
-happier plugins reload acme.sample
-```
-
-During live local authoring, edit the installed path in place and run `happier plugins reload [pluginId]` after changes. Omit the plugin id to reload all plugin runtime contributions.
-
-To start from the public SDK scaffold, run:
-
-```bash
-happier plugins scaffold /absolute/path/to/acme-sample --id acme.sample --name "Acme Sample"
-happier plugins install /absolute/path/to/acme-sample
-happier plugins reload acme.sample
-```
-
-To package a local plugin, validate and build an installable archive with the pack command:
-
-```bash
-happier plugins pack /absolute/path/to/acme-sample --out /absolute/path/to/acme-sample.happier-plugin.tgz
-happier plugins install /absolute/path/to/acme-sample.happier-plugin.tgz
-happier plugins reload acme.sample
-```
-
-The pack command validates through the same local plugin source resolver, writes the archive outside the plugin root, and emits a `.sha256` digest sidecar next to the archive.
-
-The manifest-first runtime model is:
-
-- `.happier-plugin/plugin.json` declares identity, capabilities, permissions, and projected contributions.
-- `activate(api)` binds executable handlers and disposables for manifest-declared ids.
-- invoked handlers and Agent runtimes receive `PluginContextV1` for host runtime capabilities.
-- Agent runtimes expose `AgentRuntimeV1` through `RegisterAgentRuntimeV1`, including optional `runtimeCore`, facets, and Agent surfaces.
-
-Older extension terminology and activation-time static provider/backend registration examples are not the recommended public authoring path.
+- [Invocation context](/docs/plugins/api/context)
+- [AgentRuntime](/docs/plugins/agent-runtimes/agent-runtime)
+- [Plugin UI](/docs/plugins/ui)
+- [Security and trust](/docs/plugins/security)
+- [Packaging](/docs/plugins/packaging)
+- [Testing](/docs/plugins/testing)

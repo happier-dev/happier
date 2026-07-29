@@ -32,6 +32,15 @@ Common run flags (root commands):
 - `--expo-tailscale`
 - `--bind=loopback|lan` (aliases: `--loopback`, `--lan`)
 
+Remote development targets:
+
+- Add: `hstack dev-targets add <name> --platform=posix|windows --ssh=<alias> --repo-dir=<path> --cli-home-dir=<path> [--ssh-config-file=<path>] [--stack=<name>]`
+- Inspect: `hstack dev-targets list|path [--stack=<name>]`, `hstack dev-targets show <name> [--stack=<name>]`
+- Preflight: `hstack dev-targets doctor [name] [--stack=<name>]`
+- Remove: `hstack dev-targets remove <name> [--stack=<name>]`
+
+See: `/docs/hstack/dev-targets`.
+
 ---
 
 ## Stacks

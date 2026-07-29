@@ -1,24 +1,42 @@
 ---
 title: Packaging and install
-description: Develop, install, reload, pack, and distribute plugins.
+description: Use the current author commands to develop, validate, pack, and install plugins.
 ---
 
-Plugin packaging turns a manifest, daemon entry, resources, and UI artifacts into an installable local path or archive.
-
-## Common commands
+## Normal development flow
 
 ```bash
-happier plugins scaffold /absolute/path/to/plugin --id com.example.plugin --name "Example"
-cd /absolute/path/to/plugin && npm install
-happier plugins install /absolute/path/to/plugin
-happier plugins reload com.example.plugin
-happier plugins pack /absolute/path/to/plugin --out ./example.happier-plugin.tgz
+happier plugins create my-plugin
+cd my-plugin
+happier plugins dev
 ```
 
-Pre-publication SDK note: `@happier-dev/plugin-sdk` is not yet installed from the
-public npm registry. Scaffolds created from a Happier checkout use a local
-`file:` dependency for the SDK so `npm install` works immediately.
+`plugins dev` installs declared development dependencies, observes the source
+closure, and asks the daemon to apply valid changes. It is the normal author
+loop; authors do not manage daemon replacement or recovery state.
 
-## Install model
+## Validation and artifact flow
 
-Happier validates the manifest and source trust before loading executable daemon code.
+```bash
+happier plugins author typecheck .
+happier plugins author build .
+happier plugins test .
+happier plugins pack .
+happier plugins install <archive-path> --kind archive
+```
+
+The author commands use Happier's managed toolchain. `plugins test` runs the
+scaffold's focused `test/index.test.mjs` suite, activates the built module with
+the public testkit, and invokes its declared action without starting a daemon
+or mutating installed plugin state. `plugins test . --packed` creates that
+selected-file archive, installs and trusts it in an authenticated disposable
+daemon home, verifies currentness across daemon restart, and invokes a safe
+empty-input CLI action when available. It never reads or mutates the user's
+installed plugin state. `plugins pack` creates an npm-compatible selected-file
+archive and digest sidecar. `plugins install`
+starts or reaches the active daemon, prepares the candidate without executing
+it, and requests **Install & Trust** when the source policy requires approval.
+
+The SDK remains on a prepublication hold in this checkout. Use the exact SDK
+version selected by the scaffold or the release artifact supplied for a
+preview; do not replace it with a workspace-internal import.

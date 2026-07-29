@@ -1,63 +1,128 @@
 ---
-title: Runtime context
-description: Runtime services available to plugin handlers and agent runtimes.
+title: Invocation context
+description: Use operation-scoped services and UI intent from invoked plugin handlers.
 ---
 
-`PluginContextV1` is the host-provided capability object for agent runtime factories. It is not passed to `activate(host)`.
+Action, hook, event, MCP, notification, SCM, and interceptor handlers receive a
+bounded `PluginInvocationContext` for the current operation:
 
-Action, tool, command, and hook handlers receive handler-scoped services on their existing handler context:
+```ts
+import type { ActionHandler } from '@happier-dev/plugin-sdk/runtime';
 
-- action, tool, and command handlers use `request.context.storage`, `request.context.settings`, `request.context.logger`, and `request.context.events`
-- hook handlers use `context.storage`, `context.settings`, `context.logger`, and `context.events`
+export const publish: ActionHandler = async (input, context) => {
+  const confirmed = await context.ui.confirm('Publish this result?', {
+    title: 'Confirm publish',
+  });
+  if (!confirmed) return;
 
-Those fields are the `PluginHandlerServicesV1` subset of the same plugin-scoped service instances used by `PluginContextV1`.
+  await context.ui.status.set('publish', 'Publishing…');
+  try {
+    context.signal.throwIfAborted();
+    return await publishWith(context.services.fetch, input);
+  } finally {
+    await context.ui.status.set('publish', null);
+  }
+};
+```
 
-## Service groups
+The context contains structured plugin/contribution identity, an optional
+surface and session identity, `AbortSignal`, `services`, and `ui`.
 
-| Service | Use |
+## `context.ui`
+
+The supported-preview UI-intent facade provides tool approval, structured questions,
+confirmation, notification, status, widget, title, and composer operations. The host
+owns the target, request identity, correlation, cancellation, currentness, reconnect
+state, and present-user custody. Authors supply UI intent and typed answers rather
+than transport or provider-specific interaction metadata.
+
+| Operation | Author-visible result |
 | --- | --- |
-| `ctx.logger` | Structured plugin diagnostics |
-| `ctx.config` | Safe host config snapshot |
-| `ctx.features` | Feature checks |
-| `ctx.permissions` | Permission inventory with `isGranted(id)` and `list()` |
-| `ctx.exec` | Binary-safe process and protocol client launch |
-| `ctx.managedServer` | Supervised local service/server lifecycle |
-| `ctx.localServices` | Plugin-owned local services |
-| `ctx.mcp` | MCP hosted/managed runtime support |
-| `ctx.terminalHost` | Terminal host resolution and attachment |
-| `ctx.sessionHooks` | Session hook server and transcript forwarding support |
-| `ctx.errors` | Runtime error classification |
-| `ctx.retry`, `ctx.timeout`, `ctx.abort` | Retry, timeout, and cancellation utilities |
-| `ctx.env` | Runtime environment view |
-| `ctx.fs` | Scoped filesystem helpers |
-| `ctx.actions` | Action execution and approvals |
-| `ctx.acp` | ACP agent runtime authoring/runtime substrate |
-| `ctx.connection` | Daemon link state |
-| `ctx.fetch` | Host-mediated fetch |
-| `ctx.storage`, `ctx.settings`, `ctx.secrets` | Plugin storage, settings, and secret services |
-| `ctx.events` | Typed event bus |
-| `ctx.auth` | Plugin auth and connected-service materialization |
-| `ctx.projects`, `ctx.account` | Workspace and account settings |
-| `ctx.accountUsage` | Agent account usage snapshots and adoption |
-| `ctx.reviews` | Review comment services |
-| `ctx.sessions.current`, `ctx.sessions`, `ctx.transcripts` | Current-session, cross-session, and transcript operations |
-| `ctx.telemetry`, `ctx.artifacts`, `ctx.notifications` | Optional observations, artifacts, and notifications |
-| `ctx.progress` | User-visible progress |
+| `requestApproval(request)` | `approved` with `once` or `session` persistence, `denied`, `cancelled`, or `unavailable` |
+| `askQuestions(questions, { title? })` | `answered` with typed answers, `cancelled`, or `unavailable` |
+| `confirm(message, { title? })` | resolves to `boolean`, or rejects with `PluginError` code `plugin_ui_cancelled` or `plugin_ui_unavailable` |
+| `notify(message, { severity? })` | completion or `PluginError` |
+| `status.set(key, textOrNull)` | completion or `PluginError` |
+| `widget.set(key, widgetOrNull)` | completion or `PluginError` |
+| `title.set(titleOrNull)` | completion or `PluginError` |
+| `composer.replace(text)` | completion or `PluginError` |
 
-## Focused read model
+Tool approvals use exactly this author-visible contract:
 
-Context services expose focused methods and subscriptions. They should not expose full host read models or raw database/session internals.
+```ts
+type PluginUiApprovalRequest = Readonly<{
+  title: string;
+  description?: string;
+  subject: Readonly<{
+    kind: 'tool';
+    name: string;
+    input: JsonValue;
+  }>;
+  allowSessionPersistence?: boolean;
+}>;
 
-## Capability ownership
+type PluginUiApprovalResult =
+  | Readonly<{ status: 'approved'; persistence: 'once' | 'session' }>
+  | Readonly<{ status: 'denied'; rationale?: string }>
+  | Readonly<{ status: 'cancelled'; diagnostic?: PluginDiagnosticData }>
+  | Readonly<{ status: 'unavailable'; diagnostic: PluginDiagnosticData }>;
+```
 
-Use the nearest host service instead of duplicating host behavior. For example:
+`allowSessionPersistence` is a ceiling, not a request for a particular decision.
+Without it, the host can approve only once. With it, the host may still approve
+once, deny, cancel, or report unavailability. Workspace/account persistence,
+provider request/session/turn identifiers, correlation, replay, currentness, and
+cancellation plumbing are not author inputs. Provider-specific decisions such as
+OpenCode `always` are translated at the provider boundary.
 
-- use `ctx.exec` rather than spawning raw binaries yourself
-- use `ctx.managedServer` for agent-owned loopback servers
-- use `ctx.settings` and `ctx.secrets` rather than reading files directly
-- use `ctx.events` rather than inventing a side channel
-- use `ctx.sessions.current`, `ctx.sessions`, and `ctx.transcripts` rather than reading Happier storage directly
+`askQuestions` accepts a non-empty question tuple. A question is exactly one of:
 
-## Cancellation
+```ts
+type PluginUiQuestion =
+  | Readonly<{
+      id: string;
+      prompt: string;
+      type: 'text';
+      required?: boolean;
+    }>
+  | Readonly<{
+      id: string;
+      prompt: string;
+      type: 'single' | 'multiple';
+      required?: boolean;
+      choices: readonly [
+        Readonly<{ id: string; label?: string; description?: string }>,
+        ...Readonly<{ id: string; label?: string; description?: string }>[],
+      ];
+      allowCustom?: boolean;
+    }>;
 
-Handlers should honor `AbortSignal` when a context method or request context provides one. Long-running runtime work should clean up agent resources when aborted or disposed.
+type Questions = readonly [PluginUiQuestion, ...PluginUiQuestion[]];
+```
+
+Text answers are `{ type: 'text', value }`. A single-choice answer is
+`{ type: 'single', answer }`; a multiple-choice answer contains a non-empty
+`answers` tuple. Each choice answer is either
+`{ type: 'choice', choiceId }` or `{ type: 'custom', value }`. The latter is
+the provider-neutral “Other” answer.
+
+An answered result is
+`{ status: 'answered', answers: Readonly<Record<string, PluginUiQuestionAnswer>> }`,
+keyed by question `id`. Cancellation is
+`{ status: 'cancelled', diagnostic?: PluginDiagnosticData }`; unavailability is
+`{ status: 'unavailable', diagnostic: PluginDiagnosticData }`.
+
+Some one-shot effects can fail with `PluginError` when the host cannot know
+whether an effect was applied. Do not blindly replay them.
+
+## Services
+
+Use `context.services.availability(serviceId)` when a host or lifetime may not
+provide a service. The normal roster includes logging, storage, settings,
+secrets, events, fetch, filesystem, execution, managed dependencies, sessions,
+resources, MCP, notifications, and connected accounts. Exact methods
+and availability come from `@happier-dev/plugin-sdk/runtime`.
+
+Agent runtime factories receive an immutable `AgentRuntimeFactoryContext`, not
+invocation services. Session and execution-run operations receive their own
+bounded native runtime contexts from `@happier-dev/plugin-sdk/agent-runtime`.

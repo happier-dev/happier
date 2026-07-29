@@ -13,14 +13,16 @@ Declare MCP servers and discovery contributions in the manifest when they should
 
 Bind executable MCP behavior during activation:
 
-- `api.registerMcpServer(...)`
-- `api.registerMcpDiscoveryProvider(...)`
+- `api.mcp.registerServer(...)`
+- `api.mcp.registerDiscoveryProvider(...)`
 
 Runtime-discovered per-session servers should be returned through the MCP runtime/discovery APIs, not promoted into the static plugin catalog by side effect.
 
 ## Session-scoped MCP
 
-Agent runtimes can resolve MCP servers for a session through `ctx.mcp` and session-scoped services. The host owns the session integration and transport exposure.
+Agent session runtimes resolve MCP servers through
+`context.session.services.mcp.resolveServers(...)`. The host owns session
+integration and transport exposure.
 
 ## Agent rule
 

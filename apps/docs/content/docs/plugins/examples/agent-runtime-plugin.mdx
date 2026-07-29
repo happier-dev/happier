@@ -9,7 +9,6 @@ An agent runtime plugin declares an agent and registers a runtime.
 
 Declare:
 
-- `uses: ["agents"]`
 - `contributes.agents[]`
 - agent id
 - catalog ids when applicable
@@ -19,16 +18,12 @@ Declare:
 ## Activation
 
 ```ts
-export async function activate(host) {
-  host.registerAgentRuntime({
-    agentId: 'example',
-    create: (ctx) => ({
-      runtimeCore: {
-        createSessionRuntime: async (params) => createRuntime(ctx, params),
-        createExecutionRunBackend: (params) => createExecutionRunBackend(ctx, params)
-      }
-    })
-  });
+export async function activate(api) {
+  api.agents.register('example', () => ({
+    sessions: {
+      open: (request, context) => createSessionRuntime(request, context)
+    }
+  }));
 }
 ```
 

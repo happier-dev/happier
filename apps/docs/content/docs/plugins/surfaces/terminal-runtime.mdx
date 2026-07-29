@@ -1,25 +1,10 @@
 ---
-title: Terminal runtime
-description: Integrate terminal-hosted agent runtimes and direct transcript bindings.
+title: Terminal surface
+description: Resolve an Agent-specific terminal launch plan.
 ---
 
-Terminal runtime surfaces describe agent behavior that runs through a terminal or TUI-like process.
+Implement `AgentRuntime.surfaces.terminal.resolveLaunch(request)` when the Agent can run in a host terminal.
 
-## Common uses
+The result contains the executable argument vector, optional launch environment, supported process presentation, and bounded result metadata. The Agent leaf owns its CLI arguments and native breadcrumbs. The host owns terminal selection, process presentation, liveness, input policy, session continuity, and public state.
 
-- resolve a transcript binding for a terminal-hosted native session
-- project native session identity from terminal breadcrumbs
-- expose terminal launch metadata
-- coordinate terminal handoff and input readiness through host-owned runtime mechanics
-
-## Terminal host ownership
-
-The host owns terminal host resolution, liveness, diagnostics, input injection policy, and terminal turn state. Agent leaves own agent-specific breadcrumbs, transcript locations, and marker parsing.
-
-## Transcript binding
-
-Transcript binding should return typed native session projection information. It should not write Happier transcript rows directly.
-
-## Safety rule
-
-Terminal attach metadata does not imply write access. Input injection requires an explicit host capability and readiness decision.
+Terminal metadata does not grant write access to a running session. Do not write Happier transcript rows or session state directly; return the public launch plan and let the host apply supported result metadata.

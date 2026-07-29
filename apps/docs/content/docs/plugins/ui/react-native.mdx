@@ -1,64 +1,78 @@
 ---
 title: React Native UI
-description: Contribute React Native plugin UI when the host surface supports it.
+description: Build trusted, native-feeling plugin UI for supported Happier clients.
 ---
 
-React Native plugin UI surfaces use runtime mode `reactNative` and are packaged as portable artifact bundles for supported host platforms. The same `renderSurface` source renders on native (Re.Pack) and on web (Vite + react-native-web federation).
+React Native is the default executable UI model when a plugin needs a native-feeling, host-integrated surface. Its code is part of the trusted plugin package and runs in the supported client realm; it is not sandboxed.
 
 ## Scaffold
 
-`happier plugins scaffold <dir> --id <id> --name <name> --ui reactNative` emits a ready-to-build surface:
-
-```text
-my-plugin/
-  src/ui/renderSurface.tsx   # the surface component (named export `renderSurface`)
-  vite.config.mjs            # wired react-native-web Vite build (outDir = preset.output.root)
-  pluginUiBuild.mjs          # happier-plugin-build-ui config (managed bundler runner)
-  package.json               # pinned build deps + `build:ui` script
-```
-
-## Build
-
-Install dependencies, then run the generated build script:
-
 ```bash
-npm install
-npm run build:ui   # -> happier-plugin-build-ui --project-root .
+happier plugins scaffold ./my-plugin \
+  --id com.example.my-plugin \
+  --name "My plugin" \
+  --ui reactNative
+
+cd my-plugin
+happier plugins dev
 ```
 
-This produces the canonical artifact tree, including the digested manifest:
+The generated project includes the manifest contribution, React Native source, compatible build dependencies, and a public SDK build configuration. Keep the generated dependency and compatibility versions aligned unless a newer SDK release documents a migration.
 
-```text
-dist/happier-plugin-ui/
-  ui-artifacts.json
-  react-native-web/main-native/entry.mjs
+## Host API
+
+Export a `PluginUiRenderSurface`. Happier supplies its
+`PluginUiRenderContext`, including the already-bound `hostApi`, directly:
+
+```tsx
+import type { PluginUiRenderSurface } from '@happier-dev/plugin-sdk/ui';
+
+export const renderSurface: PluginUiRenderSurface = ({
+  hostApi,
+  surface,
+  signal,
+}) => {
+  // Use hostApi from event handlers, honor signal for asynchronous work,
+  // and render from the supplied accessibility/environment values.
+  return null;
+};
 ```
 
-## Build dependency version matrix
+`@happier-dev/plugin-sdk/ui/client` is the hosted-web bootstrap client; do not
+use it from a React Native renderer. Do not pass a host-internal surface or
+transport object, and do not import Happier app internals.
 
-The scaffold pins a compatible set. Pinning `@vitejs/plugin-react@^5` with `vite@^7` avoids the `ERESOLVE` trap where `@vitejs/plugin-react@6` peer-requires `vite@8` while the SDK preset targets `vite@7`.
+## Accessibility and offline snapshots
 
-| Dependency | Version | Kind |
-| --- | --- | --- |
-| `react` | `19.2.0` | dependency |
-| `react-dom` | `19.2.0` | dependency |
-| `react-native` | `0.83.4` | dependency |
-| `react-native-web` | `^0.21.2` | dependency |
-| `vite` | `^7.0.0` | devDependency |
-| `@vitejs/plugin-react` | `^5.0.0` | devDependency |
+Use React Native accessibility roles, labels, hints, state, and live regions,
+and preserve a logical reading and focus order. Render from the supplied
+`surface` values for locale, direction, color scheme, contrast, text scale,
+reduced motion, screen-reader state, and safe-area insets. Support Dynamic
+Type, RTL and long strings, high contrast, reduced motion, and 44×44-point iOS
+or 48×48-dp Android targets.
 
-## Vite config shape
+The host owns generation currentness. Do not retain a competing currentness
+flag or call host methods after `signal` aborts. If a host operation becomes
+unavailable, preserve useful rendered state and present a recoverable status
+instead of assuming the mutation succeeded.
 
-The `vite.config.mjs` the scaffold emits derives outputs from the SDK preset so authors never need host-repo access:
+While disconnected, Happier can retain the mounted visual tree as a
+non-interactive snapshot. It blocks pointer, touch, keyboard, focus,
+accessibility actions, and host API mutations, then exposes a localized
+host-owned static summary using the surface's declared display title. Provide
+a meaningful localized title and make the last rendered visual state
+understandable without requiring a control. Reconnect supplies a revalidated
+context before interaction resumes.
 
-- `defineReactNativeWebViteBuildPreset(...)` owns `build.outDir` (`preset.output.root`) and the `react-native` → `react-native-web` alias.
-- `createReactNativeWebVitePlugins()` intercepts the host-runtime externals (`react`, `react-native-web`, the host API client) so the built bundle never inlines them.
-- `@vitejs/plugin-react` runs in **classic** JSX mode (`react({ jsxRuntime: 'classic' })`) so the JSX transform routes through the externalized `react` specifier. The automatic runtime's `react/jsx-runtime` import is not externalized and would inline React, breaking host singleton sharing — keep classic mode and `import * as React from 'react'`.
+## Build output
 
-## Compatibility
+For a production artifact, `happier plugins author build .` writes the portable
+UI artifact tree under `dist/happier-plugin-ui`. React Native targets use
+public presets from `@happier-dev/plugin-sdk/ui/build`; supported web output
+uses React Native Web from the same authoring model.
 
-The contribution declares the host UI API version and React/React Native compatibility expected by the bundle. Keep the scaffold's manifest `compatibility` block aligned with the installed dependency versions above.
+The manifest declares surface identity, placement, compatibility, and artifact references. `ui-artifacts.json` describes the emitted files and digests. Authors do not hand-author the final content digest.
 
 ## Boundary
 
-The host owns app navigation, permissions, storage, and native capabilities. Plugin UI should use the exposed host UI API rather than importing app internals.
+The host owns navigation, permissions, app state, session lifecycle, and native services. Use the Plugin UI host API for supported interactions. Whole-package Install & Trust covers this client code, daemon code, dependencies, and build artifacts together.

@@ -13,13 +13,10 @@ dist/happier-plugin-ui/
   react-native-web/<contributionId>/...       # web, Vite + react-native-web-built
 ```
 
-A `reactNative`-mode contribution typically ships all three platform entries
-(`ios`, `android`, `web`) for the same `contributionId` — one manifest, three
-`tier: 'reactNative'` entries distinguished by `platform` and `builtWith.bundler`
-(`repack` for ios/android, `vite` for web). `embedded-web/` is retired: the
-manifest schema's `embeddedWeb` tier still parses (governs any already-installed
-embeddedWeb artifact's rendering), but no new `embeddedWeb` artifact can be
-authored — `reactNative`-on-web supersedes it.
+A React Native contribution can emit platform-specific entries distinguished by
+`platform` and `builtWith.bundler` (`repack` for iOS/Android and `vite` for
+React Native Web). Use the scaffold and public build presets rather than
+assuming that one declared contribution automatically targets every client.
 
 ## Build contract
 
@@ -36,24 +33,22 @@ The command discovers one of these config files at the plugin root:
 `happier-plugin-ui.config.ts`. It also accepts `--config <path>` and prints the
 same contract with `--help`.
 
-The recommended config shape mirrors the SDK examples:
+The generated config uses the public SDK build surface:
 
 ```ts
-export function definePluginUiBuildConfig(context) {
-  return {
-    surfaces: [
-      // defineHostedWebViteBuildPreset(...) or defineReactNativeWebViteBuildPreset(...)
-    ],
-    runBundler: createManagedRuntimeBundlerRunner({
-      exec: context.exec,
-      emittedRoot: context.emittedRoot,
-      listEmittedFiles: context.listEmittedFiles,
-    }),
-  };
-}
+import { definePluginUiBuildConfig } from '@happier-dev/plugin-sdk/ui/build';
+
+export default definePluginUiBuildConfig({
+  targets: [{
+    rendererId: 'main',
+    entry: 'src/ui/renderSurface.tsx',
+    kind: 'reactNative',
+    platforms: ['web'],
+  }],
+});
 ```
 
-If no config is found, the config is invalid, or it declares no surfaces, the
+If no config is found, the config is invalid, or it declares no targets, the
 command exits non-zero with an actionable error.
 
 ## Runtime verification
@@ -61,6 +56,12 @@ command exits non-zero with an actionable error.
 The daemon re-derives the digest when loading artifacts. Mismatched, missing, unsafe, or schema-invalid artifact trees fail closed.
 
 Artifact kinds may use bundle suffixes such as `reactNativeBundle`. Runtime mode ids do not: use `reactNative`.
+
+The daemon-selected installed generation is the only current artifact
+authority. A client cache may preserve a verified last-mounted snapshot during
+disconnection, but it does not authorize host calls or select current bytes.
+After reconnect, the client revalidates the complete graph, generation,
+compatibility, and policy before restoring interaction.
 
 ## Path safety
 

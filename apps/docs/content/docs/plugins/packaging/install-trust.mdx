@@ -1,0 +1,86 @@
+---
+title: Install and trust
+description: Review plugin code before execution and let the daemon own installed state.
+---
+
+`happier plugins install` validates package and manifest facts before executing
+plugin code. When approval is required, an interactive terminal presents one
+**Install & Trust** decision for the whole package and its declared executable
+realms.
+
+```bash
+happier plugins install <path-or-archive>
+happier plugins install @scope/package --kind npm --selector 0.1.0
+```
+
+The active daemon owns preparation, activation, validation, installed state,
+enable/disable, update, and uninstall. A client does not import the plugin to
+pre-validate it. If the displayed package, manifest, artifact, or source facts
+change before approval is applied, the operation fails and must be reviewed
+again.
+
+For local authoring, use `happier plugins dev`. The daemon owns replacement and
+validation while the author command observes the source.
+
+Plugin cleanup is an author callback returned by a successful `activate(api)`.
+Happier calls it when that activation is no longer serving. Plugin code does
+not persist or select installed state.
+
+## Install, update, rollback, and uninstall
+
+Install an archive emitted by `happier plugins pack`:
+
+```bash
+happier plugins install ./my-plugin-0.1.0.tgz --kind archive
+```
+
+Install an exact npm version:
+
+```bash
+happier plugins install @scope/my-plugin --kind npm --selector 0.1.0
+```
+
+There is no separate update command. Build and pack the new version, then run
+`plugins install` against the new archive or npm selector. The daemon
+recognizes the existing plugin identity, applies the source's update policy,
+and preserves the last applied generation if the candidate fails validation:
+
+```bash
+happier plugins pack . --out ./my-plugin-0.2.0.tgz
+happier plugins install ./my-plugin-0.2.0.tgz --kind archive
+```
+
+A new archive is a one-off source and requires review. An eligible trusted npm
+channel or approved development source can reuse its existing update policy
+only while the source identity and reviewed authority remain compatible.
+Source substitution, widened executable realms, or widened required host access
+requires review again.
+
+Restore the retained prior generation through the same daemon owner:
+
+```bash
+happier plugins rollback com.example.my-plugin
+```
+
+Rollback is available only while the prior immutable bytes are retained and
+still verify. It is distinct from automatic last-known-good recovery.
+
+Ordinary uninstall removes the installed plugin and preserves its storage,
+settings, and valid secret/account references:
+
+```bash
+happier plugins uninstall com.example.my-plugin
+```
+
+Irreversible data deletion is a separate explicit action:
+
+```bash
+happier plugins uninstall com.example.my-plugin --delete-data --yes
+```
+
+Inspect installed state after an `outcome_unknown` result instead of blindly
+replaying a mutation:
+
+```bash
+happier plugins show com.example.my-plugin
+```

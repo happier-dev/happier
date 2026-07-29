@@ -1,33 +1,12 @@
 ---
-title: Sessions and transcripts
-description: Work with sessions and transcript sources through focused host services.
+title: Sessions
+description: Observe and interact with sessions through host-owned services.
 ---
 
-`ctx.sessions`, `ctx.session`, and `ctx.transcripts` expose focused session and transcript operations.
+Use `context.services.sessions` for host-mediated session access. The root service can list, resolve, and watch session summaries. `sessions.current` exposes the current invocation session when available; `sessions.get(id)` returns a bounded service for another authorized session.
 
-## Sessions
+Supported session services can send user text, events, or structured messages; watch live summary, message, and activity events; manage declared subagent state; and work with external Agent sessions. Availability is explicit and calls remain subject to host access and encryption policy.
 
-Use session services for:
+Agent session operations additionally receive `AgentSessionRuntimeContext.session.services` for Agent-specific hooks, bounded transcript file following, account usage, authentication refresh, and MCP resolution.
 
-- listing or resolving sessions through focused filters
-- watching session changes
-- sending scoped messages or events
-- writing approved session metadata/state fields
-- permission decisions
-- session-scoped MCP and auth operations
-- subagent lifecycle updates
-
-## Transcripts
-
-Use transcript services for:
-
-- reading transcript pages
-- following transcript files through grants
-- resolving transcript source definitions
-- reading after a cursor
-
-## Host ownership
-
-The host owns durable transcript rows, encryption envelopes, ordering, pending queue state, permission lifecycle, and session state publication.
-
-Plugins should not write Happier transcript or session storage directly.
+The host owns durable transcript rows, encryption envelopes, ordering, queued input, session lifecycle, and public activity. Plugins consume or publish only through the public service that owns the specific operation; they do not write Happier storage directly.

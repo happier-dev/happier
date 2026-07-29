@@ -1,35 +1,36 @@
 ---
-title: Engine registry
-description: Resolve manifest contributions and executable backend engines into runtime adapters.
+title: Agent runtime registry
+description: Resolve manifest-declared Agents to registered native runtimes.
 ---
 
-The engine registry is the host-owned resolver for backend execution.
+The Agent runtime registry is the host-owned resolver for executable Agent
+contributions.
 
 ## Inputs
 
-- merged plugin contribution registry
-- executable plugin runtime registry
-- backend definitions
-- backend catalog entries
-- registered backend engine factories
+- normalized plugin Agent contributions
+- registered native `AgentRuntime` factories
+- Agent catalog entries
 - host runtime params such as happy home dir and daemon-local services
 
 ## Output
 
-The registry resolves an engine adapter for a backend id. The adapter can include:
+The registry resolves one native runtime for an Agent identity. A runtime can
+include:
 
-- `runtimeCore`
-- facets
-- discovery and control surfaces
-- runtime preferences
-- auth and connected-service adapters
-- message metadata enrichment
-- backend execution surfaces
+- session factories
+- execution-run factories
+- optional typed Agent surfaces
+- Agent-native message and provider-binding adapters
 
 ## Runtime context
 
-The registry creates `PluginContextV1` for backend engine factories. This keeps runtime capabilities out of discovery/projection and activation-time static facts.
+The host creates bounded factory, session, and execution-run contexts only
+after resolving the registered runtime. Invocation services stay out of cold
+manifest projection and registration-only activation.
 
 ## Resolution rule
 
-Selectable backends should resolve through the registry path. Production session and execution-run code should not instantiate provider engines directly.
+Selectable Agents resolve through this path. Production session and
+execution-run code does not instantiate Agent-specific engines directly or
+fall back to V1 runtime aliases.

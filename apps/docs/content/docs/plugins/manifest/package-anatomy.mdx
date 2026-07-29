@@ -1,52 +1,65 @@
 ---
 title: Package anatomy
-description: The expected local and packaged file layout for Happier plugins.
+description: Source and npm-compatible artifact layout for Happier plugins.
 ---
 
-## Local development layout
+## Development source
 
 ```text
 my-plugin/
   .happier-plugin/
     plugin.json
-  daemon.mjs
-  resources/
-  ui/
-  dist/
+    plugin.schema.json
+  src/
+    index.ts
+  package.json
+  tsconfig.json
 ```
 
-Only `.happier-plugin/plugin.json` and the files it references are required. Keep plugin runtime code self-contained. Do not import from sibling plugins or Happier source paths.
+Development source may have ordinary dependencies managed by
+`happier plugins dev`. It is not itself the installable production artifact.
+
+## Installable package
+
+An installable plugin is an npm-compatible tarball. Its `package.json` contains:
+
+- a valid package name and version;
+- `happier.manifest: ".happier-plugin/plugin.json"`;
+- the `happier-plugin` keyword;
+- a deliberate `files` inventory;
+- compiled, self-contained daemon and declared UI artifacts.
+
+The default scaffold uses `files: [".happier-plugin", "dist"]`. Production
+plugins must not depend on lifecycle scripts, runtime dependency installation,
+or a system package manager on the target machine.
 
 ## Daemon entry
 
-The daemon entry exports activation:
+The daemon module has a named activation export:
 
-```js
-export async function activate(api) {
-  api.onDispose(async () => {
-    // Dispose plugin-owned resources.
-  });
+```ts
+import type { PluginApi } from '@happier-dev/plugin-sdk';
+
+export function activate(api: PluginApi): void {
+  // Bind manifest-declared local ids here.
 }
 ```
 
-Use a named `activate` export. The activation API is registration-only.
+## UI choices
 
-## UI artifacts
+- React Native is trusted executable package code and is the default
+  cross-platform renderer.
+- Hosted web is an isolated UI-only web surface that talks to Happier through
+  `@happier-dev/plugin-sdk/ui/client`.
+- Declarative settings, status, and actions are rendered entirely by the host.
 
-Hosted web, embedded web, and React Native plugin UI surfaces are compiled into portable artifact trees. The build output includes a manifest with content digests derived from emitted bytes. The daemon verifies the artifact tree when loading it.
+Generated UI artifacts belong in the selected `dist` tree. Authors do not
+maintain executable artifact inventory rows or digests by hand.
 
-## Packaged archives
+## Exclude
 
-Packed plugins should contain the manifest, daemon entry, resources, and built UI artifacts needed to run on another machine. Archive install rejects unsafe extracted payloads such as symlinks.
-
-## Trust boundary
-
-Local path plugins are trusted local source. Remote archives and marketplace entries must pass the install/trust flow before daemon executable code can run.
-
-## What not to include
-
-- references to absolute build-machine paths
-- secrets or account tokens
-- agent CLI binaries
-- generated files that can be rebuilt and are not part of the runtime artifact
-- imports from `apps/`, `packages/agents`, `packages/protocol`, or another plugin package
+- secrets or account tokens;
+- absolute build-machine paths;
+- source, tests, or caches outside the deliberate package inventory;
+- imports from Happier internal workspaces or another plugin's source;
+- runtime dependence on Node/npm/pnpm/yarn executables supplied by the user.

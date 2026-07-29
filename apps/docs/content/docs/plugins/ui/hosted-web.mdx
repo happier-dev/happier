@@ -1,21 +1,68 @@
 ---
 title: Hosted web UI
-description: Build plugin-owned web UI as portable daemon-served artifacts.
+description: Build isolated plugin-owned web UI with the public host bridge.
 ---
 
-Hosted web UI surfaces are compiled into static artifacts served by the local daemon.
+Hosted web is the public option for an existing web application or a UI that should remain isolated from the Happier client realm. The host displays it in an iframe or WebView and mediates supported operations through the Plugin UI host API.
 
-## Authoring flow
+## Scaffold and build
 
-1. Declare the hosted-web contribution in the manifest.
-2. Build the UI into `dist/happier-plugin-ui`.
-3. Emit `ui-artifacts.json`.
-4. Let the daemon verify the artifact tree before serving it.
+```bash
+happier plugins scaffold ./my-plugin \
+  --id com.example.my-plugin \
+  --name "My plugin" \
+  --ui hostedWeb
 
-## Security policy
+cd my-plugin
+happier plugins dev
+```
 
-Hosted web descriptors should declare navigation policy, callback origins, connect origins, CSP source policy, source-map handling, and mixed-content behavior.
+The development command uses the managed toolchain and daemon-owned reload
+path. For a production artifact,
+`happier plugins author build .` writes a portable tree under
+`dist/happier-plugin-ui`. The package manifest remains cold JSON; it declares
+the hosted web contribution and artifact identity without importing the web
+application.
 
-## Runtime boundary
+## Host API
 
-Hosted web UI is not arbitrary host code. It communicates through declared host UI APIs and callback channels.
+```ts
+import { createPluginUiHostApiClient } from '@happier-dev/plugin-sdk/ui/client';
+
+const host = await createPluginUiHostApiClient();
+const context = await host.context();
+const subscription = host.watchContext((nextContext) => {
+  // Re-render from the updated locale, direction, contrast, text scale,
+  // motion, screen-reader, and safe-area values.
+});
+```
+
+The host injects the supported transport. The surface must not reach into parent-window, app, daemon, or protocol internals.
+
+## Accessibility and offline snapshots
+
+Use semantic HTML before ARIA, label every control, preserve logical DOM and
+focus order, and provide visible `:focus-visible` styling. Support keyboard
+operation, screen readers and polite live updates, 200% zoom, high contrast,
+RTL and long strings, reduced motion, and 44×44 CSS-pixel pointer targets where
+the platform contract requires them. Render from the supplied surface context
+rather than browser guesses.
+
+The host owns installed-generation currentness. Do not persist a second
+currentness bit or treat cached iframe/WebView content as an offline
+application. Handle unavailable/rejected host calls, stop work when the
+transport is disposed, and consume `watchContext` updates.
+
+When disconnected, Happier may preserve the last frame as a visual,
+non-interactive snapshot. The host makes the executable subtree inert, removes
+its controls from the accessibility tree, and exposes a localized static
+summary using the declared surface title. Provide a meaningful localized title
+and keep the last visual state understandable without requiring interaction.
+Reconnection revalidates the exact generation, policy, and context before
+controls become active again.
+
+## Security boundary
+
+Hosted web is isolated UI, not a daemon-code sandbox. The installed plugin package may also contain trusted daemon code, so installation remains a whole-package **Install & Trust** decision.
+
+Declare navigation, callback origins, network origins, content-security policy, source-map handling, and development mixed-content needs as narrowly as the contribution schema permits. Production hosted content should use HTTPS. Development loopback exceptions are development-only and fail closed when their declared conditions are not met.

@@ -1,13 +1,15 @@
 ---
 title: Voice
-description: Choose a voice mode, understand how voice conversations map to sessions, and configure ElevenLabs or local voice in Happier.
+description: Choose a voice mode, understand how voice conversations map to sessions, and configure realtime or local voice in Happier.
 ---
 
-Happier supports four voice modes in **Settings → Voice**:
+Happier supports these voice modes in **Settings → Voice**:
 
-- **Off**: disables all voice features.
+- **Off**: disables conversational Voice modes. Composer **Dictation** remains available when the Voice feature is enabled.
 - **Happier Voice**: realtime ElevenLabs voice using Happier-managed credentials and server-side quotas.
 - **Use my ElevenLabs**: realtime ElevenLabs voice using your own API key and agent.
+- **OpenAI Realtime**: WebRTC voice using either a saved Voice API key or an explicitly selected OpenAI Connected Service.
+- **Codex Live (experimental)**: WebRTC voice attached to an exact Codex session, with coding work, tools, and permissions remaining under that session's canonical owners.
 - **Local voice**: a configurable STT/TTS pipeline with device, self-hosted, Google, and local-neural providers.
 
 ## Start here
@@ -16,7 +18,11 @@ If you only need one rule of thumb:
 
 - choose **Happier Voice** for the simplest “just works” realtime voice experience
 - choose **Use my ElevenLabs** if you want full control over your own ElevenLabs account and agent
+- choose **OpenAI Realtime** for OpenAI WebRTC voice with an explicit saved-secret or Connected Service authentication source
+- choose **Codex Live** when you want an experimental realtime conversation attached to an existing or global hidden Codex session
 - choose **Local voice** if you want device speech, self-hosted endpoints, or on-device neural speech
+
+**Dictation** is separate from these conversational modes. Use the microphone in a session composer to transcribe one bounded utterance into the draft, including when the conversational Voice mode is **Off**.
 
 ## Common settings
 
@@ -50,19 +56,9 @@ You can also enable **Auto-expand on start** if you want the activity feed to op
 
 ### Privacy
 
-Happier includes privacy controls for what voice providers can see.
+Happier includes privacy controls for what voice providers can see, including session summaries, recent messages, tool names, device inventory, and permission requests.
 
-Defaults are intentionally conservative for sensitive data:
-
-- session summaries and recent messages can be shared
-- tool names and permission requests can be shared
-- file paths and tool arguments are **off by default**
-
-If you need stricter privacy, start by disabling:
-
-- **Share recent messages**
-- **Share file paths**
-- **Share tool arguments**
+Local file paths and tool arguments are always excluded from Voice provider context. Current settings do not offer controls to enable either one. For stricter privacy, disable the other context categories you do not want to share, such as **Share recent messages**.
 
 ## Voice conversations and session targeting
 
@@ -171,6 +167,27 @@ From the ElevenLabs section you can:
 
 This is the easiest way to keep your ElevenLabs agent aligned with Happier’s current tool and prompt wiring.
 
+## OpenAI Realtime
+
+**OpenAI Realtime** sends the live audio and conversation from your device to OpenAI over WebRTC. Choose exactly one authentication source:
+
+- **Saved Voice API key**: stored in Happier account secrets and materialized only while minting short-lived Realtime client authentication. This is the standalone option and does not require a daemon.
+- **OpenAI Connected Service**: uses the exact selected OpenAI profile or account group through the selected machine and its connected daemon.
+- **OpenAI Codex OAuth (experimental)**: uses the exact selected Codex OAuth profile or account group through the selected machine and its connected daemon.
+
+Happier does not fall back from one source, key, account, or provider to another. If the selected source is unavailable, the conversation fails with a setup or authentication error so you can fix that source explicitly.
+
+## Codex Live (experimental)
+
+**Codex Live** sends the live audio and Codex Live conversation from your device to OpenAI over WebRTC while the selected Codex session runs on the selected machine.
+
+- **Direct Voice** attaches to the exact Codex session you opened it from.
+- **Global Voice** uses the selected machine, directory, permission intent, and Connected Services account to create or reuse an exact matching hidden Codex session.
+- OpenAI may receive bounded startup and session context plus delegated Codex results so the conversation can continue and responses can be spoken.
+- Happier's server and relay do not carry Codex Live audio. The daemon and Codex app-server still participate in signaling, session lifecycle, delegation, tools, and permission control. Provider-operated network relays may participate.
+
+Codex Live uses the selected session's canonical authentication and never falls back to OpenAI Realtime, a different account, or a different provider.
+
 ## Local voice
 
 **Local voice** is the configurable voice pipeline.
@@ -250,7 +267,7 @@ Voice uses the same structured action system as the rest of Happier.
 Common voice actions include:
 
 - sending a message to a session
-- answering permission requests
+- announcing pending permission requests so you can review them in the session
 - answering user-action requests
 - changing the active target session
 - changing tracked sessions
@@ -258,6 +275,8 @@ Common voice actions include:
 - switching session mode when supported
 
 This is why voice is more reliable than a plain free-form speech interface: it can call typed actions instead of guessing.
+
+Voice cannot approve a true coding-session permission from spoken language such as “yes,” “approve,” or “allow.” The session's canonical permission UI remains authoritative for approve-once, approve-session, deny, and cancel decisions. Ending Voice does not settle or remove a pending permission.
 
 ## Practical setup recipes
 
@@ -272,6 +291,14 @@ Use **Use my ElevenLabs**.
 ### I want local or self-hosted speech services
 
 Use **Local voice**.
+
+### I want OpenAI realtime voice
+
+Use **OpenAI Realtime**, then explicitly choose either the standalone saved-secret source or a Connected Service source.
+
+### I want realtime voice attached to Codex
+
+Use **Codex Live (experimental)** and choose the exact session or global Voice account and machine you want to use.
 
 ### I want speech input without turning every utterance into a session message
 

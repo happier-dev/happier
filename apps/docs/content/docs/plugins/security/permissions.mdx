@@ -1,107 +1,60 @@
 ---
-title: Permissions
-description: Declare plugin permissions only for host operations enforced at runtime.
+title: Host access
+description: Declare privileged plugin operations through strict Manifest V2 host-access requests.
 ---
 
-Plugin permissions are runtime authority grants declared in `manifest.permissions.required[]` or
-`manifest.permissions.optional[]`.
+Manifest V2 represents runtime authority under `manifest.hostAccess.required[]` and `manifest.hostAccess.optional[]`. The retired `permissions` and `declares.capabilities` owners are rejected by the current schema.
 
-They are not advisory-only metadata. Each id in the enforced table has an observed runtime checkpoint. Ids without a checkpoint belong in `manifest.declares.capabilities[]` or are outside the stable v1 authoring surface.
+Each request contains:
 
-Only use `permissions` for operations with an implemented runtime checkpoint. If a plugin only
-describes metadata, contribution behavior, or host-rendered UI, declare that under
-`manifest.declares.capabilities[]` or the relevant `contributes` section instead.
+- `id`: stable manifest-local identity;
+- `capability`: one supported host operation family;
+- `reason`: user-readable justification;
+- `scope`: the strict, capability-specific boundary.
 
-## Permission rows
+Optional requests are not active authority until the host trusts a matching grant. Missing or malformed grants fail closed.
 
-Permission rows include:
-
-- `capability`: one of the enforced permission ids below
-- `scope`: optional, interpreted only by permissions that document scoped behavior
-- `reason`: optional, user-readable explanation for the authority request
-
-Optional permissions are not active authority until the host trusts a matching grant. Missing or
-malformed server grant data is treated as unavailable.
-
-## Enforced runtime permissions
-
-| Permission id | Runtime checkpoint | Scope behavior |
-| --- | --- | --- |
-| `network` | `ctx.fetch` refuses requests unless the plugin has `network`. | URL scopes restrict allowed origins. Omit or use `*` for any origin. |
-| `network.intercept` | Plugin API request-interceptor registration is refused without `network.intercept`. | Interceptor targets and URL origins are constrained by the contribution schema. |
-| `process.spawn` | `ctx.exec.run`/`ctx.exec.spawn` reject binary launches unless the executable path is allowed or a resolved system-tool grant exists. | Only absolute executable paths are accepted as permission scopes. Path-only scopes are ignored. |
-| `filesystem.read` | `ctx.fs` read/list/stat operations reject paths outside the plugin storage root and outside declared read scopes. | Relative paths are scoped under the plugin filesystem root. `*` or an empty scope means the full plugin filesystem root. |
-| `filesystem.write` | `ctx.fs` write/mkdir operations reject paths outside the plugin storage root and outside declared write scopes. | Relative paths are scoped under the plugin filesystem root. `*` or an empty scope means the full plugin filesystem root. |
-| `env` | `ctx.env` returns only explicitly scoped environment variable names. | Scope is an environment variable name. |
-| `events.runtime.subscribe` | `ctx.events.subscribe` refuses reserved `@happier/runtime/` events without this permission. | No extra scope check. |
-| `events.lifecycle.subscribe` | `ctx.events.subscribe` refuses reserved `@happier/lifecycle/` events without this permission. | No extra scope check. |
-| `events.session.subscribe` | `ctx.events.subscribe` refuses reserved `@happier/session/` events without this permission. | No extra scope check. |
-| `events.plugin.subscribe` | `ctx.events.subscribe` refuses other-plugin event ids without a matching declaration. | Scope must match the target plugin id. |
-| `reviews.comments.write.direct` | Direct plugin review-comment writes are rejected by the review-comment API unless the signed plugin principal has this grant. | Grant requests target a project scope. |
-| `session.hooks.control` | Session hook control operations require the `sessionHooks` runtime capability and `session.hooks.control`. | No extra scope check. |
-| `terminal.host.control` | Terminal-host control operations require the `terminalHost` runtime capability and `terminal.host.control`. | No extra scope check. |
-
-## Declarative capabilities
-
-These ids are accepted under `manifest.declares.capabilities[]`. They are not runtime authority
-grants and must not be placed in `manifest.permissions.required[]` or
-`manifest.permissions.optional[]`.
-
-| Capability id | Classification |
-| --- | --- |
-| `actions.execute` | Declarative action metadata. There is no v1 runtime grant check for a plugin to execute host actions. |
-| `ui.descriptors` | Declarative UI descriptor metadata. Projection is handled through `contributes` and runtime family availability. |
-| `secrets.read` | Declarative metadata only. Plugin-local secrets storage is not gated by this permission id. |
-| `secrets.write` | Declarative metadata only. Plugin-local secrets storage is not gated by this permission id. |
-| `storage.local` | Declarative metadata only. Plugin-local storage is available as a plugin-owned store, not a host permission grant. |
-| `storage.synced` | Declarative metadata only. Synced storage availability depends on the host account-settings adapter, not this permission id. |
-| `reload` | Declarative metadata for reload participation. It is not a runtime permission grant. |
-
-## De-scoped ids
-
-The following former ids are not part of the v1 stable authoring surface:
-
-| Former id | Status |
-| --- | --- |
-| `agent.request.mutate` | Experimental and unimplemented in v1. |
-| `actions.register` | De-scoped. Registering a manifest-declared action requires only the action's presence in `contributes.actions[]` (checked against `uses: ["actions"]`); no separate permission grant is needed. |
-| `tools.register` | De-scoped. Same rationale as `actions.register`, for `contributes.tools[]` (`uses: ["tools"]`). |
-| `commands.register` | De-scoped. Same rationale as `actions.register`, for `contributes.commands[]` (`uses: ["commands"]`). |
-| `notifications.register` | De-scoped. Same rationale as `actions.register`, for `contributes.notifications[]`/`notificationChannels[]` (`uses: ["notifications"]`). |
-| `hooks.register` | De-scoped. Same rationale as `actions.register`, for `contributes.hooks[]` (`uses: ["hooks"]`). |
-| `resources.register` | De-scoped. There is no plugin API `registerResource` runtime checkpoint in v1. |
-
-## Authoring pattern
+## Example
 
 ```json
 {
-  "uses": ["actions"],
-  "declares": {
-    "capabilities": [
-      {
-        "capability": "storage.local",
-        "reason": "Stores plugin-local settings."
-      }
-    ]
-  },
-  "permissions": {
+  "hostAccess": {
     "required": [
       {
-        "capability": "network",
-        "scope": "https://api.example.com",
-        "reason": "Calls the plugin service API."
+        "id": "git-process",
+        "capability": "process",
+        "reason": "Runs the declared Git executable.",
+        "scope": {
+          "executables": [{ "kind": "systemTool", "id": "git-cli" }],
+          "envKeys": ["GIT_CONFIG_GLOBAL"]
+        }
       }
     ],
     "optional": [
       {
-        "capability": "process.spawn",
-        "scope": "/usr/bin/git",
-        "reason": "Runs the user-selected Git binary."
+        "id": "service-api",
+        "capability": "network",
+        "reason": "Connects to the configured service.",
+        "scope": {
+          "targets": [{ "kind": "fixedOrigin", "origin": "https://api.example.com" }],
+          "methods": ["GET"]
+        }
       }
     ]
   }
 }
 ```
 
-Do not infer authority from `uses[]`, `declares.capabilities[]`, contribution-local capability
-objects, or agent support flags.
+The `git-cli` reference must resolve to a declared `contributes.systemTools[]` entry. Other capabilities similarly use typed references and scopes; raw wildcard strings and unscoped executable paths are not the current contract.
+
+## Authority versus declarations
+
+Actions, tools, commands, hooks, notifications, Agents, UI, and other contribution families are derived from `contributes`. Declaring or registering one does not create privileged host authority. Contribution-local capabilities describe support only.
+
+## Safety rules
+
+- Request only authority that has a host checkpoint.
+- Keep network origins, filesystem locations, executable references, account services, session targets, and other scopes minimal.
+- Treat optional access as unavailable until granted.
+- Do not infer authority from contribution presence, support flags, settings, or Provider compatibility.
+- Use host-mediated services; do not bypass them with ambient process, filesystem, environment, or network access.
