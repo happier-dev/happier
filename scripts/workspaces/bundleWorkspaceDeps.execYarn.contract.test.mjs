@@ -12,19 +12,19 @@ const bundleWorkspaceDepsScripts = [
   'packages/support/scripts/bundleWorkspaceDeps.mjs',
 ];
 
-test('bundleWorkspaceDeps scripts route workspace builds through the shared execYarn helper', () => {
+test('bundleWorkspaceDeps scripts delegate workspace dist admission to the canonical owner', () => {
   for (const relPath of bundleWorkspaceDepsScripts) {
     const raw = fs.readFileSync(path.join(repoRoot, relPath), 'utf8');
 
     assert.match(
       raw,
-      /scripts\/workspaces\/execYarnCommand\.mjs/,
-      `${relPath} should import the shared execYarn helper`,
+      /ensureWorkspacePackagesBuiltByName/,
+      `${relPath} should delegate missing workspace outputs to the canonical owner`,
     );
     assert.doesNotMatch(
       raw,
-      /execFileSync\(\s*['"]yarn['"]/,
-      `${relPath} should not invoke yarn directly via execFileSync`,
+      /execYarn|execFileSync\(\s*['"]yarn['"]/,
+      `${relPath} should not retain a direct Yarn workspace-build path`,
     );
   }
 });

@@ -1,13 +1,12 @@
 import { accessSync, constants as fsConstants, existsSync, statSync } from 'node:fs';
-import { chmod, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
+import { chmod, lstat, mkdir, open, readFile, rename, rm, stat } from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import { delimiter, dirname, join } from 'node:path';
 
-import { fetchGitHubLatestRelease, planArchiveExtraction } from '@happier-dev/release-runtime';
+import { fetchGitHubLatestRelease } from '@happier-dev/release-runtime';
+import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
 import { resolveWindowsCommandOnPath } from '../process/index.js';
-import { runCommandStreaming } from '../process/runCommandStreaming.js';
-import { extractArchivePayloadToDirectory } from '../firstPartyRuntime/extractArchivePayloadToDirectory.js';
 import { createManagedToolScratchDir } from './createManagedToolScratchDir.js';
 import { downloadGitHubReleaseAsset } from './downloadGitHubReleaseAsset.js';
 import { promoteManagedCurrentInstall } from './promoteManagedCurrentInstall.js';
@@ -178,27 +177,13 @@ async function extractManagedPnpmArchive(params: Readonly<{
 }>): Promise<void> {
   const binDir = dirname(params.outputPath);
   await mkdir(binDir, { recursive: true });
-  const extractionPlan = planArchiveExtraction({
+  await extractArchivePayloadToDirectory({
     archiveName: params.archiveName,
     archivePath: params.archivePath,
-    destDir: binDir,
-    os: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'darwin' : 'linux',
+    extractDir: binDir,
   });
-  if (extractionPlan.kind === 'command') {
-    await runCommandStreaming({
-      cmd: extractionPlan.command.cmd,
-      args: extractionPlan.command.args,
-      context: 'managed pnpm extract',
-    });
-  } else {
-    await extractArchivePayloadToDirectory({
-      archiveName: params.archiveName,
-      archivePath: params.archivePath,
-      extractDir: binDir,
-    });
-  }
 
-  const outputStat = await stat(params.outputPath).catch(() => null);
+  const outputStat = await lstat(params.outputPath).catch(() => null);
   if (!outputStat?.isFile()) {
     throw new Error(`Managed pnpm archive did not contain ${params.outputPath}`);
   }
@@ -231,8 +216,8 @@ async function installManagedPnpm(
       installDir: managedPnpmInstallDir(processEnv),
       prefix: 'bootstrap',
     });
+    const nextDir = join(managedPnpmInstallDir(processEnv), 'next');
     try {
-      const nextDir = join(managedPnpmInstallDir(processEnv), 'next');
       const nextBinPath = join(nextDir, 'bin', resolveManagedPnpmBinaryName());
       const downloadPath = join(scratchDir, asset.name);
 
@@ -265,7 +250,11 @@ async function installManagedPnpm(
       });
       return managedPnpmBinPath(processEnv);
     } finally {
-      await rm(scratchDir, { recursive: true, force: true });
+      try {
+        await rm(nextDir, { recursive: true, force: true });
+      } finally {
+        await rm(scratchDir, { recursive: true, force: true });
+      }
     }
   } finally {
     // Release lock

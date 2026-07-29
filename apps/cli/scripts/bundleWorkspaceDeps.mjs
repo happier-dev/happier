@@ -2,10 +2,13 @@ import { resolve } from 'node:path';
 import { dirname } from 'node:path';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { pathToFileURL } from 'node:url';
 
-import { execYarn } from '../../../scripts/workspaces/execYarnCommand.mjs';
-import { resolveWorkspaceDependencyBuildOrder } from '../../../scripts/workspaces/resolveWorkspaceDependencyBuildOrder.mjs';
+import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
+import {
+  loadCliCommonWorkspacesModule,
+} from '../../../scripts/workspaces/loadCliCommonWorkspacesModule.mjs';
+import { ensureWorkspacePackagesBuiltByName as ensureWorkspacePackagesBuiltByNameDefault } from '../../../scripts/workspaces/ensureWorkspacePackagesBuilt.mjs';
+import { resolveWorkspaceBundlePublicationMode } from '../../../scripts/workspaces/workspaceBundlePublication.mjs';
 import {
   resolveCliSharedDepsBuildLockPath,
   withOptionalCliSharedDepsBuildLock,
@@ -28,29 +31,7 @@ function findRepoRoot(startDir) {
   return resolve(startDir, '..', '..', '..');
 }
 
-async function loadCliCommonWorkspacesModule(repoRoot) {
-  const modulePath = resolve(repoRoot, 'packages', 'cli-common', 'dist', 'workspaces', 'index.js');
-  if (!existsSync(modulePath)) {
-    for (const workspaceName of resolveWorkspaceDependencyBuildOrder({
-      repoRoot,
-      seedPackageNames: ['@happier-dev/cli-common'],
-    })) {
-      execYarn(['-s', 'workspace', `@happier-dev/${workspaceName}`, 'build'], {
-        cwd: repoRoot,
-        stdio: 'inherit',
-      });
-      if (workspaceName === 'cli-common' && existsSync(modulePath)) {
-        break;
-      }
-    }
-  }
-
-  if (!existsSync(modulePath)) {
-    throw new Error(`Missing cli-common workspaces build helpers: ${modulePath}`);
-  }
-
-  return await import(pathToFileURL(modulePath).href);
-}
+export { loadCliCommonWorkspacesModule };
 
 function readJsonSync(path) {
   // Local helper to keep this script self-contained even when invoked against a sandbox repo.
@@ -126,17 +107,40 @@ export async function bundleWorkspaceDeps(opts = {}) {
   const happyCliDir = opts.happyCliDir ?? resolve(targetRepoRoot, 'apps', 'cli');
   const lockPath = opts.lockPath ?? resolveCliSharedDepsBuildLockPath(targetRepoRoot);
 
-  return withOptionalCliSharedDepsBuildLock(async () => {
+  const baseEnv = opts.env ?? process.env;
+  const publicationMode = opts.publicationMode ?? 'live';
+  const forceArtifactWorkspaceBuilds = publicationMode === 'artifact';
+  const ensureWorkspacePackagesBuiltByName = opts.ensureWorkspacePackagesBuiltByName
+    ?? ensureWorkspacePackagesBuiltByNameDefault;
+  return withOptionalCliSharedDepsBuildLock(async ({ heldLockValue } = {}) => {
+    const heldLockEnv = createWorkspaceChildBuildEnv({
+      env: baseEnv,
+      heldLockValue,
+    });
     const {
-      bundleWorkspacePackages,
+      bundleWorkspacePackagesWithRuntimeDependencies,
       readBundledWorkspacePackageNames,
       resolveWorkspaceBundlesFromPackageJson,
-      vendorBundledPackageRuntimeDependencies,
-    } = await loadCliCommonWorkspacesModule(SCRIPT_REPO_ROOT);
+    } = await loadCliCommonWorkspacesModule(
+      SCRIPT_REPO_ROOT,
+      heldLockEnv,
+      ensureWorkspacePackagesBuiltByName,
+      {
+        force: forceArtifactWorkspaceBuilds,
+        includeDevDependencies: false,
+      },
+    );
 
     const hostPackageJsonPath = resolve(happyCliDir, 'package.json');
     const hostPackageJsonRaw = readJsonSync(hostPackageJsonPath);
     const bundledDependencyNames = readBundledDependencyNames(hostPackageJsonRaw);
+    const runtimeDependencyNames = new Set(
+      hostPackageJsonRaw?.dependencies
+      && typeof hostPackageJsonRaw.dependencies === 'object'
+      && !Array.isArray(hostPackageJsonRaw.dependencies)
+        ? Object.keys(hostPackageJsonRaw.dependencies)
+        : [],
+    );
 
     // Guardrail: if plugin workspaces exist under `packages/plugins/*`, they must be explicitly
     // declared as bundled dependencies in `apps/cli/package.json`. Otherwise, they will not ship in
@@ -154,7 +158,21 @@ export async function bundleWorkspaceDeps(opts = {}) {
           `These packages exist under packages/plugins/* but are not declared in apps/cli/package.json#bundledDependencies:`,
           ...missingPluginPackages.map((name) => `- ${name}`),
           ``,
-          `Fix: node apps/cli/scripts/syncBundledPluginWorkspaces.mjs`,
+          `Fix: node --experimental-strip-types scripts/migrations/extensions/syncCliBundledExtensionPackaging.ts --mode write`,
+        ].join('\n'),
+      );
+    }
+    const missingRuntimePluginPackages = discoveredBundledPluginPackageNames.filter(
+      (packageName) => !runtimeDependencyNames.has(packageName),
+    );
+    if (missingRuntimePluginPackages.length > 0) {
+      throw new Error(
+        [
+          `[bundle-workspace-deps] Missing CLI runtime dependencies for bundled plugin workspaces`,
+          `These shippable packages must be declared in both apps/cli/package.json#bundledDependencies and #dependencies:`,
+          ...missingRuntimePluginPackages.map((name) => `- ${name}`),
+          ``,
+          `Fix: node --experimental-strip-types scripts/migrations/extensions/syncCliBundledExtensionPackaging.ts --mode write`,
         ].join('\n'),
       );
     }
@@ -163,18 +181,26 @@ export async function bundleWorkspaceDeps(opts = {}) {
       repoRoot: targetRepoRoot,
       hostPackageDir: happyCliDir,
     });
-    bundleWorkspacePackages({ bundles });
-
-    for (const b of bundles) {
-      vendorBundledPackageRuntimeDependencies({
-        srcPackageJsonPath: resolve(b.srcDir, 'package.json'),
-        destPackageDir: b.destDir,
-      });
-    }
+    await ensureWorkspacePackagesBuiltByName(
+      targetRepoRoot,
+      [...new Set(bundles.map((bundle) => String(bundle?.packageName ?? bundle?.name ?? '').trim()).filter(Boolean))],
+      {
+        quiet: false,
+        env: heldLockEnv,
+        includeDevDependencies: false,
+        ...(forceArtifactWorkspaceBuilds
+          ? { force: true }
+          : {}),
+      },
+    );
+    bundleWorkspacePackagesWithRuntimeDependencies({
+      bundles,
+      publicationMode,
+    });
   }, {
     repoRoot: targetRepoRoot,
     lockPath,
-    env: opts.env ?? process.env,
+    env: baseEnv,
     lockTimeoutMs: 240_000,
     lockPollIntervalMs: 250,
     lockStaleAfterMs: 240_000,
@@ -189,7 +215,12 @@ const invokedAsMain = (() => {
 
 if (invokedAsMain) {
   try {
-    await bundleWorkspaceDeps();
+    await bundleWorkspaceDeps({
+      publicationMode: resolveWorkspaceBundlePublicationMode({
+        argv: process.argv.slice(2),
+        env: process.env,
+      }),
+    });
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

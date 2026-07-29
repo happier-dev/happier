@@ -1,4 +1,18 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 
 import { vendorBundledPackageRuntimeDependenciesFallback } from './vendorBundledWorkspaceRuntimeDependenciesFallback.mjs';
@@ -15,6 +29,14 @@ function stripInternalBundledWorkspaceDependencies(value) {
   }
 
   return out;
+}
+
+function hasExternalRuntimeDependencies(rawPackageJson) {
+  for (const dependencies of [rawPackageJson?.dependencies, rawPackageJson?.optionalDependencies]) {
+    if (!dependencies || typeof dependencies !== 'object' || Array.isArray(dependencies)) continue;
+    if (Object.keys(dependencies).some((name) => !name.startsWith('@happier-dev/'))) return true;
+  }
+  return false;
 }
 
 function collectPackageJsonRelativeFileTargets(value, result) {
@@ -34,7 +56,6 @@ function collectPackageJsonRelativeFileTargets(value, result) {
 
 function syncBundledWorkspaceReferencedFiles({ srcPackageDir, destPackageDir, packageJsonRaw, fsOps = {} }) {
   const exists = fsOps.existsSync ?? existsSync;
-  const cp = fsOps.cpSync ?? cpSync;
   const mkdir = fsOps.mkdirSync ?? mkdirSync;
   const stat = fsOps.statSync ?? statSync;
 
@@ -54,13 +75,10 @@ function syncBundledWorkspaceReferencedFiles({ srcPackageDir, destPackageDir, pa
 
     try {
       mkdir(dirname(destPath), { recursive: true });
-      const stats = stat(srcPath);
-      if (stats.isDirectory()) {
-        cp(srcPath, destPath, { recursive: true, force: true });
-      } else {
-        cp(srcPath, destPath, { force: true });
-      }
-    } catch {
+      stat(srcPath);
+      copyDirSafeSync(srcPath, destPath, fsOps);
+    } catch (error) {
+      if (fsOps.strict === true) throw error;
       // Best-effort: keep local bundled deps usable even if extra file sync fails.
     }
   }
@@ -101,6 +119,11 @@ function sanitizeBundledPackageJsonFallback(raw) {
 let sanitizeBundledPackageJsonImpl = sanitizeBundledPackageJsonFallback;
 let readBundledWorkspacePackageNamesImpl = null;
 let vendorBundledPackageRuntimeDependenciesImpl = null;
+let bundleWorkspacePackageWithRuntimeDependenciesImpl = null;
+let resolveInternalWorkspacePackageNameClosureImpl = null;
+let atomicReplaceDirSyncImpl = null;
+let copyDirSafeSyncImpl = null;
+let rmDirSafeSyncImpl = null;
 
 try {
   const mod = await import('../../packages/cli-common/dist/workspaces/index.js');
@@ -112,6 +135,21 @@ try {
   }
   if (mod && typeof mod.vendorBundledPackageRuntimeDependencies === 'function') {
     vendorBundledPackageRuntimeDependenciesImpl = mod.vendorBundledPackageRuntimeDependencies;
+  }
+  if (mod && typeof mod.bundleWorkspacePackageWithRuntimeDependencies === 'function') {
+    bundleWorkspacePackageWithRuntimeDependenciesImpl = mod.bundleWorkspacePackageWithRuntimeDependencies;
+  }
+  if (mod && typeof mod.resolveInternalWorkspacePackageNameClosure === 'function') {
+    resolveInternalWorkspacePackageNameClosureImpl = mod.resolveInternalWorkspacePackageNameClosure;
+  }
+  if (mod && typeof mod.atomicReplaceDirSync === 'function') {
+    atomicReplaceDirSyncImpl = mod.atomicReplaceDirSync;
+  }
+  if (mod && typeof mod.copyDirSafeSync === 'function') {
+    copyDirSafeSyncImpl = mod.copyDirSafeSync;
+  }
+  if (mod && typeof mod.rmDirSafeSync === 'function') {
+    rmDirSafeSyncImpl = mod.rmDirSafeSync;
   }
 } catch {
   // Best-effort: local preflight sandboxes may not have `packages/cli-common/dist/**` available.
@@ -144,6 +182,11 @@ function resolveSyncSwapSuffix(syncId) {
 function isRetryableRmError(err) {
   const code = err && typeof err === 'object' ? err.code : null;
   return code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES' || code === 'EINTR';
+}
+
+function isRetryableCopyError(err) {
+  const code = err && typeof err === 'object' ? err.code : null;
+  return code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES' || code === 'EINTR';
 }
 
 function isStaleSwapDirName(name, targetBaseName) {
@@ -211,10 +254,10 @@ function removeStaleBundledWorkspaceSwapDirs(parentDir, targetBaseName, fsOps, o
   }
 }
 
-function readBundledWorkspacePackageNamesFromHostPackageJson(raw) {
-  if (readBundledWorkspacePackageNamesImpl) {
+function readBundledWorkspacePackageNamesFromHostPackageJson(raw, readPackageNames) {
+  if (readPackageNames) {
     try {
-      return readBundledWorkspacePackageNamesImpl(raw);
+      return readPackageNames(raw);
     } catch {
       // Fall through to the local implementation.
     }
@@ -230,16 +273,32 @@ function readBundledWorkspacePackageNamesFromHostPackageJson(raw) {
     .filter((value) => typeof value === 'string' && value.startsWith('@happier-dev/'));
 }
 
-function resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFileImpl = readFileSync) {
+function resolveDefaultBundledWorkspacePackageNames(
+  repoRoot,
+  hostPackageDirs,
+  readFileImpl = readFileSync,
+  cliCommonWorkspacesModule = null,
+) {
   const repo = String(repoRoot ?? '').trim();
   if (!repo) return [];
+  const readPackageNames =
+    typeof cliCommonWorkspacesModule?.readBundledWorkspacePackageNames === 'function'
+      ? cliCommonWorkspacesModule.readBundledWorkspacePackageNames
+      : readBundledWorkspacePackageNamesImpl;
+  const resolvePackageClosure =
+    typeof cliCommonWorkspacesModule?.resolveInternalWorkspacePackageNameClosure === 'function'
+      ? cliCommonWorkspacesModule.resolveInternalWorkspacePackageNameClosure
+      : resolveInternalWorkspacePackageNameClosureImpl;
 
   const out = new Set();
-  for (const hostApp of hostApps) {
+  for (const hostPackageDir of hostPackageDirs) {
     try {
-      const hostPackageJsonPath = resolve(repo, 'apps', String(hostApp ?? '').trim(), 'package.json');
+      const hostPackageJsonPath = resolve(String(hostPackageDir ?? '').trim(), 'package.json');
       const raw = JSON.parse(readFileImpl(hostPackageJsonPath, 'utf8'));
-      for (const packageName of readBundledWorkspacePackageNamesFromHostPackageJson(raw)) {
+      for (const packageName of readBundledWorkspacePackageNamesFromHostPackageJson(
+        raw,
+        readPackageNames,
+      )) {
         const leaf = String(packageName).split('/').pop();
         if (leaf) out.add(leaf);
       }
@@ -247,7 +306,19 @@ function resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFile
       // Best-effort: some host apps may not exist in certain sandboxes.
     }
   }
-  return [...out];
+  const packageNames = [...out].map((leaf) => `@happier-dev/${leaf}`);
+  if (!resolvePackageClosure) {
+    return [...out];
+  }
+
+  const declaredPackageNames = new Set(packageNames);
+  return resolvePackageClosure({
+    repoRoot: repo,
+    packageNames,
+  })
+    .filter((packageName) => declaredPackageNames.has(packageName))
+    .map((packageName) => packageName.split('/').pop())
+    .filter(Boolean);
 }
 
 function resolveBundledWorkspaceSourceDir({ repoRoot, workspaceLeaf }) {
@@ -262,7 +333,49 @@ function resolveBundledWorkspaceSourceDir({ repoRoot, workspaceLeaf }) {
   return resolve(repoRoot, 'packages', leaf);
 }
 
+function hasInjectedFileSystemOps(fsOps) {
+  return Boolean(
+    (fsOps.existsSync && fsOps.existsSync !== existsSync)
+      || (fsOps.lstatSync && fsOps.lstatSync !== lstatSync)
+      || (fsOps.mkdirSync && fsOps.mkdirSync !== mkdirSync)
+      || (fsOps.readlinkSync && fsOps.readlinkSync !== readlinkSync)
+      || (fsOps.readdirSync && fsOps.readdirSync !== readdirSync)
+      || (fsOps.renameSync && fsOps.renameSync !== renameSync)
+      || (fsOps.rmSync && fsOps.rmSync !== rmSync)
+      || (fsOps.statSync && fsOps.statSync !== statSync)
+      || (fsOps.symlinkSync && fsOps.symlinkSync !== symlinkSync)
+      || (fsOps.unlinkSync && fsOps.unlinkSync !== unlinkSync)
+      || (fsOps.copyFileSync && fsOps.copyFileSync !== copyFileSync)
+  );
+}
+
+function hasInjectedPackageSyncOps(opts) {
+  return Boolean(
+    (opts.existsSync && opts.existsSync !== existsSync)
+      || (opts.mkdirSync && opts.mkdirSync !== mkdirSync)
+      || (opts.readFileSync && opts.readFileSync !== readFileSync)
+      || (opts.renameSync && opts.renameSync !== renameSync)
+      || (opts.rmSync && opts.rmSync !== rmSync)
+      || (opts.writeFileSync && opts.writeFileSync !== writeFileSync)
+      || opts.nowMs !== undefined
+      || opts.staleSwapDirAgeMs !== undefined
+      || typeof opts.isPidAlive === 'function'
+      || typeof opts.vendorBundledPackageRuntimeDependencies === 'function'
+  );
+}
+
 export function rmDirSafeSync(targetDir, fsOps = {}, { retries = 5, delayMs = 25 } = {}) {
+  if (rmDirSafeSyncImpl) {
+    rmDirSafeSyncImpl(targetDir, {
+      recursive: true,
+      force: true,
+      retries,
+      delayMs,
+      rmSyncImpl: fsOps.rmSync ?? rmSync,
+    });
+    return;
+  }
+
   const rm = fsOps.rmSync ?? rmSync;
   const path = String(targetDir ?? '').trim();
   if (!path) return;
@@ -279,6 +392,76 @@ export function rmDirSafeSync(targetDir, fsOps = {}, { retries = 5, delayMs = 25
   }
 }
 
+function copyDirSafeSync(srcDir, destDir, fsOps = {}, { retries = 5, delayMs = 25, dereference = false } = {}) {
+  if (copyDirSafeSyncImpl && !hasInjectedFileSystemOps(fsOps)) {
+    copyDirSafeSyncImpl(srcDir, destDir, {
+      recursive: true,
+      force: true,
+      dereference,
+      retries,
+      delayMs,
+      copyFileSyncImpl: copyFileSync,
+      existsSyncImpl: existsSync,
+      lstatSyncImpl: lstatSync,
+      mkdirSyncImpl: mkdirSync,
+      readlinkSyncImpl: readlinkSync,
+      readdirSyncImpl: (path) => readdirSync(path, { withFileTypes: true }),
+      statSyncImpl: statSync,
+      symlinkSyncImpl: symlinkSync,
+      unlinkSyncImpl: unlinkSync,
+    });
+    return;
+  }
+
+  // Bootstrap fallback for sandboxes where cli-common/dist is unavailable, and for
+  // tests that run against a virtual filesystem instead of real paths.
+  const explicitCp = fsOps.cpSync;
+  const copyFile = fsOps.copyFileSync ?? copyFileSync;
+  const exists = fsOps.existsSync ?? existsSync;
+  const lstat = fsOps.lstatSync ?? lstatSync;
+  const mkdir = fsOps.mkdirSync ?? mkdirSync;
+  const readDir = fsOps.readdirSync ?? readdirSync;
+  const readLink = fsOps.readlinkSync ?? readlinkSync;
+  const stat = fsOps.statSync ?? statSync;
+  const symlink = fsOps.symlinkSync ?? symlinkSync;
+  const unlink = fsOps.unlinkSync ?? unlinkSync;
+
+  const copyWithJsWalker = (sourcePath, targetPath) => {
+    const sourceStats = dereference ? stat(sourcePath) : lstat(sourcePath);
+    if (sourceStats.isDirectory()) {
+      mkdir(targetPath, { recursive: true });
+      for (const entry of readDir(sourcePath, { withFileTypes: true })) {
+        copyWithJsWalker(resolve(sourcePath, entry.name), resolve(targetPath, entry.name));
+      }
+      return;
+    }
+
+    mkdir(dirname(targetPath), { recursive: true });
+    if (!dereference && sourceStats.isSymbolicLink()) {
+      if (exists(targetPath)) unlink(targetPath);
+      symlink(readLink(sourcePath), targetPath);
+      return;
+    }
+
+    copyFile(sourcePath, targetPath);
+  };
+
+  const maxAttempts = Math.max(1, Number.isFinite(retries) ? retries + 1 : 1);
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    try {
+      if (typeof explicitCp === 'function') {
+        explicitCp(srcDir, destDir, { recursive: true, force: true });
+      } else {
+        copyWithJsWalker(srcDir, destDir);
+      }
+      return;
+    } catch (error) {
+      if (!isRetryableCopyError(error) || attempt === maxAttempts - 1) throw error;
+      sleepSync(delayMs);
+    }
+  }
+}
+
 function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
   const outDir = String(targetDir ?? '').trim();
   const sourceDir = String(srcDir ?? '').trim();
@@ -286,6 +469,24 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
 
   const parentDir = dirname(outDir);
   removeStaleBundledWorkspaceSwapDirs(parentDir, basename(outDir), fsOps, options);
+  if (atomicReplaceDirSyncImpl && !hasInjectedFileSystemOps(fsOps)) {
+    atomicReplaceDirSyncImpl({
+      destDir: outDir,
+      buildInto(tempDir) {
+        copyDirSafeSync(sourceDir, tempDir, fsOps, { retries: 5, delayMs: 25 });
+      },
+      fsOps: {
+        existsSync,
+        mkdirSync,
+        renameSync,
+        rmSync,
+      },
+    });
+    return;
+  }
+
+  // Bootstrap fallback for sandboxes where cli-common/dist is unavailable, and for
+  // tests that run against a virtual filesystem instead of real paths.
   const suffix = resolveSyncSwapSuffix(options.syncSuffix);
   const stagingDir = `${outDir}.__sync_tmp__.${suffix}`;
   const backupDir = `${outDir}.__sync_backup__.${suffix}`;
@@ -293,7 +494,7 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
   fsOps.mkdirSync(parentDir, { recursive: true });
   rmDirSafeSync(stagingDir, fsOps);
   rmDirSafeSync(backupDir, fsOps);
-  fsOps.cpSync(sourceDir, stagingDir, { recursive: true, force: true });
+  copyDirSafeSync(sourceDir, stagingDir, fsOps, { retries: 5, delayMs: 25 });
 
   let movedExistingDir = false;
   try {
@@ -316,12 +517,80 @@ function replaceDirFromSourceSync(targetDir, srcDir, fsOps, options = {}) {
   }
 }
 
+export function bundleWorkspacePackageFallbackTransactionally({
+  srcPackageDir,
+  destPackageDir,
+  syncId,
+  dereferenceRootDir = srcPackageDir,
+  vendorBundledPackageRuntimeDependencies =
+    vendorBundledPackageRuntimeDependenciesImpl ?? vendorBundledPackageRuntimeDependenciesFallback,
+}) {
+  const srcPackageJsonPath = resolve(srcPackageDir, 'package.json');
+  const srcDistDir = resolve(srcPackageDir, 'dist');
+  if (!existsSync(srcPackageJsonPath)) {
+    throw new Error(`Missing bundled workspace package manifest: ${srcPackageJsonPath}`);
+  }
+  if (!existsSync(srcDistDir)) {
+    throw new Error(`Missing bundled workspace package dist: ${srcDistDir}`);
+  }
+
+  const suffix = resolveSyncSwapSuffix(syncId);
+  const preparedDir = resolve(
+    dirname(destPackageDir),
+    `.${basename(destPackageDir)}.__sync_package__.${suffix}`,
+  );
+  rmDirSafeSync(preparedDir);
+
+  try {
+    mkdirSync(preparedDir, { recursive: true });
+    copyDirSafeSync(srcDistDir, resolve(preparedDir, 'dist'));
+
+    const raw = JSON.parse(readFileSync(srcPackageJsonPath, 'utf8'));
+    syncBundledWorkspaceReferencedFiles({
+      srcPackageDir,
+      destPackageDir: preparedDir,
+      packageJsonRaw: raw,
+      fsOps: { strict: true },
+    });
+    if (hasExternalRuntimeDependencies(raw)) {
+      vendorBundledPackageRuntimeDependencies({
+        srcPackageJsonPath,
+        destPackageDir: preparedDir,
+        dereferenceRootDir,
+      });
+    }
+    writeFileSync(
+      resolve(preparedDir, 'package.json'),
+      `${JSON.stringify(sanitizeBundledWorkspacePackageJson(raw), null, 2)}\n`,
+      'utf8',
+    );
+
+    replaceDirFromSourceSync(
+      destPackageDir,
+      preparedDir,
+      {
+        existsSync,
+        mkdirSync,
+        renameSync,
+        rmSync,
+      },
+      { syncSuffix: `${suffix}.publish` },
+    );
+  } finally {
+    rmDirSafeSync(preparedDir);
+  }
+}
+
 export function syncBundledWorkspacePackages(opts = {}) {
   const repoRoot = String(opts.repoRoot ?? '').trim();
   if (!repoRoot) return;
 
+  const cliCommonWorkspacesModule =
+    opts.cliCommonWorkspacesModule && typeof opts.cliCommonWorkspacesModule === 'object'
+      ? opts.cliCommonWorkspacesModule
+      : null;
   const exists = opts.existsSync ?? existsSync;
-  const cp = opts.cpSync ?? cpSync;
+  const cp = opts.cpSync;
   const mkdir = opts.mkdirSync ?? mkdirSync;
   const rename = opts.renameSync ?? renameSync;
   const rm = opts.rmSync ?? rmSync;
@@ -329,16 +598,33 @@ export function syncBundledWorkspacePackages(opts = {}) {
   const writeFile = opts.writeFileSync ?? writeFileSync;
   const syncId = opts.syncId;
   const replaceExisting = opts.replaceExisting !== false;
+  const bundleWorkspacePackageWithRuntimeDependencies =
+    typeof cliCommonWorkspacesModule?.bundleWorkspacePackageWithRuntimeDependencies === 'function'
+      ? cliCommonWorkspacesModule.bundleWorkspacePackageWithRuntimeDependencies
+      : bundleWorkspacePackageWithRuntimeDependenciesImpl;
+  const useCanonicalPackageBundle =
+    bundleWorkspacePackageWithRuntimeDependencies
+    && !hasInjectedPackageSyncOps(opts);
   const vendorBundledPackageRuntimeDependencies =
     typeof opts.vendorBundledPackageRuntimeDependencies === 'function'
       ? opts.vendorBundledPackageRuntimeDependencies
+      : typeof cliCommonWorkspacesModule?.vendorBundledPackageRuntimeDependencies === 'function'
+        ? cliCommonWorkspacesModule.vendorBundledPackageRuntimeDependencies
       : vendorBundledPackageRuntimeDependenciesImpl ?? vendorBundledPackageRuntimeDependenciesFallback;
   const hostApps = Array.isArray(opts.hostApps) && opts.hostApps.length > 0
     ? opts.hostApps
     : ['cli', 'stack'];
+  const hostPackageDirs = Array.isArray(opts.hostPackageDirs) && opts.hostPackageDirs.length > 0
+    ? opts.hostPackageDirs.map((dir) => resolve(String(dir)))
+    : hostApps.map((hostApp) => resolve(repoRoot, 'apps', hostApp));
   const packages = Array.isArray(opts.packages) && opts.packages.length > 0
     ? opts.packages
-    : resolveDefaultBundledWorkspacePackageNames(repoRoot, hostApps, readFile);
+    : resolveDefaultBundledWorkspacePackageNames(
+      repoRoot,
+      hostPackageDirs,
+      readFile,
+      cliCommonWorkspacesModule,
+    );
 
   for (const pkg of packages) {
     const srcPackageDir = resolveBundledWorkspaceSourceDir({ repoRoot, workspaceLeaf: pkg });
@@ -347,8 +633,35 @@ export function syncBundledWorkspacePackages(opts = {}) {
     const srcPackageJsonPath = resolve(srcPackageDir, 'package.json');
     if (!exists(srcPackageJsonPath)) continue;
 
-    for (const hostApp of hostApps) {
-      const destPackageDir = resolve(repoRoot, 'apps', hostApp, 'node_modules', '@happier-dev', pkg);
+    for (const hostPackageDir of hostPackageDirs) {
+      const destPackageDir = resolve(hostPackageDir, 'node_modules', '@happier-dev', pkg);
+      if (useCanonicalPackageBundle) {
+        bundleWorkspacePackageWithRuntimeDependencies({
+          packageName: `@happier-dev/${pkg}`,
+          srcDir: srcPackageDir,
+          destDir: destPackageDir,
+          dereferenceRootDir: repoRoot,
+          preserveDestinationPath: true,
+          pruneStale: false,
+        });
+        continue;
+      }
+
+      if (!hasInjectedPackageSyncOps(opts)) {
+        // Bootstrap-only production fallback for a checkout where cli-common/dist is unavailable.
+        // Build and vendor the entire package off-path, then publish it as one rollback-safe unit.
+        bundleWorkspacePackageFallbackTransactionally({
+          srcPackageDir,
+          destPackageDir,
+          syncId,
+          dereferenceRootDir: repoRoot,
+          vendorBundledPackageRuntimeDependencies,
+        });
+        continue;
+      }
+
+      // Virtual filesystem adapters are retained for the script-level test harness. Production
+      // callers take either the canonical publisher above or the complete transactional fallback.
       const destDist = resolve(destPackageDir, 'dist');
       if (exists(srcDist)) {
         try {
@@ -359,7 +672,33 @@ export function syncBundledWorkspacePackages(opts = {}) {
             // Note: this does *not* delete removed files; it is "presence-only" to make sure the
             // bundled tree is usable (and to avoid transient ENOENT during directory swaps).
             mkdir(destDist, { recursive: true });
-            cp(srcDist, destDist, { recursive: true, force: true });
+            try {
+              copyDirSafeSync(srcDist, destDist, {
+                copyFileSync,
+                cpSync: cp,
+                existsSync: exists,
+                lstatSync,
+                mkdirSync: mkdir,
+                readlinkSync,
+                readdirSync,
+                statSync,
+                symlinkSync,
+                unlinkSync,
+              });
+            } catch {
+              replaceDirFromSourceSync(destDist, srcDist, {
+                existsSync: exists,
+                cpSync: cp,
+                mkdirSync: mkdir,
+                renameSync: rename,
+                rmSync: rm,
+              }, {
+                syncSuffix: syncId,
+                staleSwapDirAgeMs: opts.staleSwapDirAgeMs,
+                nowMs: opts.nowMs,
+                isPidAlive: opts.isPidAlive,
+              });
+            }
           } else {
             replaceDirFromSourceSync(destDist, srcDist, {
               existsSync: exists,
@@ -384,17 +723,21 @@ export function syncBundledWorkspacePackages(opts = {}) {
         mkdir(destPackageDir, { recursive: true });
         const raw = JSON.parse(readFile(srcPackageJsonPath, 'utf8'));
         const sanitized = sanitizeBundledWorkspacePackageJson(raw);
-        writeFile(destPackageJsonPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
         syncBundledWorkspaceReferencedFiles({
           srcPackageDir: dirname(srcPackageJsonPath),
           destPackageDir,
           packageJsonRaw: raw,
           fsOps: { existsSync: exists, cpSync: cp, mkdirSync: mkdir, statSync },
         });
-        vendorBundledPackageRuntimeDependencies({
-          srcPackageJsonPath,
-          destPackageDir,
-        });
+        if (hasExternalRuntimeDependencies(raw)) {
+          vendorBundledPackageRuntimeDependencies({
+            srcPackageJsonPath,
+            destPackageDir,
+            dereferenceRootDir: repoRoot,
+          });
+        }
+        // Publish the manifest only after every target it can expose has been installed.
+        writeFile(destPackageJsonPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
       } catch {
         // Best-effort: keep local bundled deps usable even if package.json sync fails.
       }

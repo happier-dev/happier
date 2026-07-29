@@ -59,6 +59,29 @@ export function resolveYarnCommandInvocation(args = [], options = {}) {
   return { command: invocation.command, args: commandArgs };
 }
 
+export function resolveNpmCommandInvocation(args = [], options = {}) {
+  const platform = options.platform ?? process.platform;
+  const npmExecPath = String(options.npmExecPath ?? '').trim();
+  const processExecPath = String(options.processExecPath ?? process.execPath).trim();
+  const npmCommand = platform === 'win32' ? 'npm.cmd' : 'npm';
+
+  if (npmExecPath && /(^|[\\/])npm-cli\.js$/i.test(npmExecPath)) {
+    return {
+      command: processExecPath,
+      args: [npmExecPath, ...args],
+    };
+  }
+
+  if (platform === 'win32') {
+    return buildWindowsCmdShimInvocation(npmCommand, args, { comspec: options.comspec });
+  }
+
+  return {
+    command: npmCommand,
+    args: [...args],
+  };
+}
+
 export function execYarn(args, options = {}) {
   const execFileSync = options.execFileSync ?? defaultExecFileSync;
   const { execFileSync: _execFileSync, npmExecPath, platform: _platform, comspec, processExecPath: _processExecPath, ...childOptions } = options;

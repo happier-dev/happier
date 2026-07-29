@@ -1,29 +1,10 @@
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
-
-function readJson(path) {
-  return JSON.parse(readFileSync(path, 'utf8'));
-}
-
-function collectExternalRuntimeDepNamesFromPackageJson(rawPackageJson) {
-  const dependencies = rawPackageJson?.dependencies && typeof rawPackageJson.dependencies === 'object'
-    ? rawPackageJson.dependencies
-    : {};
-  const optionalDependencies = rawPackageJson?.optionalDependencies && typeof rawPackageJson.optionalDependencies === 'object'
-    ? rawPackageJson.optionalDependencies
-    : {};
-
-  const required = Object.keys(dependencies)
-    .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
-    .map((name) => ({ name, optional: false }));
-  const optional = Object.keys(optionalDependencies)
-    .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
-    .map((name) => ({ name, optional: true }));
-
-  return [...required, ...optional];
-}
+import {
+  copyDirDereferenceContainedSync,
+  publishStagedDirectoryMountedSync,
+  vendorRuntimeDependencyTree,
+} from '../../packages/cli-common/workspaceRuntimeDependencies.mjs';
 
 function sleepSync(ms) {
   if (!ms || ms <= 0) return;
@@ -77,123 +58,29 @@ function atomicReplaceBuiltDirSync(targetDir, buildInto) {
 
   const syncSuffix = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
   const stagingDir = `${outDir}.__sync_tmp__.${syncSuffix}`;
-  const backupDir = `${outDir}.__sync_backup__.${syncSuffix}`;
+  const rollbackDir = `${outDir}.__sync_backup__.${syncSuffix}`;
 
   mkdirSync(parentDir, { recursive: true });
   rmDirSafeSync(stagingDir);
-  rmDirSafeSync(backupDir);
-  buildInto(stagingDir);
+  rmDirSafeSync(rollbackDir);
 
-  let movedExistingDir = false;
   try {
+    buildInto(stagingDir);
     if (existsSync(outDir)) {
-      renameSync(outDir, backupDir);
-      movedExistingDir = true;
+      publishStagedDirectoryMountedSync({
+        stagedDir: stagingDir,
+        liveDir: outDir,
+        rollbackDir,
+        pruneStale: false,
+      });
+      rmDirSafeSync(stagingDir);
+      return;
     }
 
     renameSync(stagingDir, outDir);
-    if (movedExistingDir) {
-      rmDirSafeSync(backupDir);
-    }
   } catch (error) {
     rmDirSafeSync(stagingDir);
-    if (movedExistingDir && existsSync(backupDir) && !existsSync(outDir)) {
-      renameSync(backupDir, outDir);
-    }
     throw error;
-  }
-}
-
-function resolveInstalledPackage({ require, packageName }) {
-  const searchPaths = require.resolve.paths(packageName) ?? [];
-  let aliasInstalledPackage = null;
-
-  for (const searchPath of searchPaths) {
-    const packageJsonPath = resolve(searchPath, ...packageName.split('/'), 'package.json');
-    if (!existsSync(packageJsonPath)) continue;
-
-    const packageJson = readJson(packageJsonPath);
-    if (packageJson?.name === packageName) {
-      return {
-        packageDir: dirname(packageJsonPath),
-        packageJsonPath,
-      };
-    }
-
-    if (!aliasInstalledPackage) {
-      aliasInstalledPackage = {
-        packageDir: dirname(packageJsonPath),
-        packageJsonPath,
-      };
-    }
-  }
-
-  if (aliasInstalledPackage) {
-    return aliasInstalledPackage;
-  }
-
-  let resolvedEntry = '';
-  try {
-    resolvedEntry = require.resolve(`${packageName}/package.json`);
-  } catch {
-    resolvedEntry = require.resolve(packageName);
-  }
-
-  let dir = dirname(resolvedEntry);
-  for (let i = 0; i < 50; i += 1) {
-    const packageJsonPath = resolve(dir, 'package.json');
-    if (existsSync(packageJsonPath)) {
-      const packageJson = readJson(packageJsonPath);
-      if (packageJson?.name === packageName) {
-        return {
-          packageDir: dir,
-          packageJsonPath,
-        };
-      }
-    }
-
-    const parent = resolve(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  throw new Error(`Failed to locate installed package.json for ${packageName} (resolved: ${resolvedEntry})`);
-}
-
-function vendorRuntimeDependencyTreeFallback({
-  packageJsonPath,
-  resolveFromPackageJsonPath = packageJsonPath,
-  destNodeModulesDir,
-  visited = new Set(),
-}) {
-  const pkgJson = readJson(packageJsonPath);
-  const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson);
-  const require = createRequire(pathToFileURL(resolveFromPackageJsonPath).href);
-
-  mkdirSync(destNodeModulesDir, { recursive: true });
-
-  for (const dep of roots) {
-    let resolved;
-    try {
-      resolved = resolveInstalledPackage({ require, packageName: dep.name });
-    } catch (error) {
-      if (dep.optional) continue;
-      throw error;
-    }
-
-    const depDestDir = resolve(destNodeModulesDir, ...dep.name.split('/'));
-    if (visited.has(depDestDir)) continue;
-    visited.add(depDestDir);
-
-    rmDirSafeSync(depDestDir);
-    cpSync(resolved.packageDir, depDestDir, { recursive: true, dereference: true });
-
-    vendorRuntimeDependencyTreeFallback({
-      packageJsonPath: resolved.packageJsonPath,
-      resolveFromPackageJsonPath: resolved.packageJsonPath,
-      destNodeModulesDir: resolve(depDestDir, 'node_modules'),
-      visited,
-    });
   }
 }
 
@@ -201,6 +88,7 @@ export function vendorBundledPackageRuntimeDependenciesFallback({
   srcPackageJsonPath,
   resolveFromPackageJsonPath = srcPackageJsonPath,
   destPackageDir,
+  dereferenceRootDir,
 }) {
   if (!existsSync(srcPackageJsonPath)) {
     throw new Error(`Missing package.json: ${srcPackageJsonPath}`);
@@ -208,10 +96,26 @@ export function vendorBundledPackageRuntimeDependenciesFallback({
 
   const destNodeModulesDir = resolve(destPackageDir, 'node_modules');
   atomicReplaceBuiltDirSync(destNodeModulesDir, (tempNodeModulesDir) => {
-    vendorRuntimeDependencyTreeFallback({
+    vendorRuntimeDependencyTree({
       packageJsonPath: srcPackageJsonPath,
       resolveFromPackageJsonPath,
       destNodeModulesDir: tempNodeModulesDir,
+      dereferenceRootDir,
+      copyResolvedPackage: ({
+        sourcePackageDir,
+        destPackageDir: dependencyDestDir,
+        dereferenceRootDir: dependencyDereferenceRootDir,
+      }) => {
+        rmDirSafeSync(dependencyDestDir);
+        copyDirDereferenceContainedSync({
+          sourceDir: sourcePackageDir,
+          destDir: dependencyDestDir,
+          dereferenceRootDir: dependencyDereferenceRootDir,
+        });
+      },
     });
   });
+  if (existsSync(destNodeModulesDir) && readdirSync(destNodeModulesDir).length === 0) {
+    rmDirSafeSync(destNodeModulesDir);
+  }
 }

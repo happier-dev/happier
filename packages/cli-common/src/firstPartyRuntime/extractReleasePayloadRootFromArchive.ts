@@ -1,7 +1,7 @@
 import { lstat, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { extractArchivePayloadToDirectory } from './extractArchivePayloadToDirectory.js';
+import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
 export async function extractReleasePayloadRootFromArchive(params: Readonly<{
   archivePath: string;

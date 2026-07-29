@@ -19,19 +19,19 @@ test('resolveYarnCommandInvocation wraps Windows yarn.cmd through cmd.exe and ig
   assert.doesNotMatch(invocation.args.join(' '), /npm-cli\.js/);
 });
 
-test('resolveYarnCommandInvocation executes Yarn npm_execpath through node with the requested args', async () => {
+test('resolveYarnCommandInvocation executes a Windows Yarn npm_execpath with spaces through node', async () => {
   const mod = await import('./execYarnCommand.mjs');
 
   assert.equal(typeof mod.resolveYarnCommandInvocation, 'function');
 
   const invocation = mod.resolveYarnCommandInvocation(['-s', 'build'], {
-    platform: 'linux',
-    npmExecPath: '/opt/yarn-v1.22.22/lib/cli.js',
-    processExecPath: '/usr/local/bin/node',
+    platform: 'win32',
+    npmExecPath: 'C:\\Program Files\\Corepack\\yarn\\lib\\cli.js',
+    processExecPath: 'C:\\Program Files\\nodejs\\node.exe',
   });
 
   assert.deepEqual(invocation, {
-    command: '/usr/local/bin/node',
-    args: ['/opt/yarn-v1.22.22/lib/cli.js', '-s', 'build'],
+    command: 'C:\\Program Files\\nodejs\\node.exe',
+    args: ['C:\\Program Files\\Corepack\\yarn\\lib\\cli.js', '-s', 'build'],
   });
 });

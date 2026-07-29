@@ -4,6 +4,7 @@ import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { resolveWorkspacePackageBuildLockPath } from '../../../scripts/workspaces/workspacePackageBuildLock.mjs';
 import { createPackageDistBuildPlan } from './packageDistBuildPlan.mjs';
 import {
   cleanupPackageDistBuildArtifacts,
@@ -31,17 +32,10 @@ function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
-function workspacePackageLockSlug(packageDir, packageJson) {
-  const raw = String(packageJson?.name ?? '').trim() || resolve(packageDir);
-  const slug = raw.replace(/^@/, '').replace(/[^a-zA-Z0-9_.-]+/g, '-').replace(/^-+|-+$/g, '');
-  return slug || 'cli-common';
-}
-
 export function resolveCliCommonDistBuildLockPath(packageDir) {
   const resolvedPackageDir = resolve(packageDir);
-  const repoRoot = resolve(resolvedPackageDir, '..', '..');
   const packageJson = readJson(join(resolvedPackageDir, 'package.json'));
-  return join(repoRoot, '.project', 'tmp', 'workspace-dist-builds', `${workspacePackageLockSlug(resolvedPackageDir, packageJson)}.lock`);
+  return resolveWorkspacePackageBuildLockPath(resolvedPackageDir, packageJson);
 }
 
 export async function withWorkspaceDistBuildLock(fn, options) {
@@ -145,6 +139,14 @@ export async function buildPackageDistAtomically(options = {}) {
     pid: options.pid ?? process.pid,
     now: options.now ?? Date.now(),
   });
+  const workspaceOutputDir = String(commandEnv.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR ?? '').trim();
+  const publicationPlan = workspaceOutputDir
+    ? Object.freeze({
+        ...buildPlan,
+        distDir: resolve(workspaceOutputDir),
+        backupDir: `${resolve(workspaceOutputDir)}.hstack-backup.${options.pid ?? process.pid}.${options.now ?? Date.now()}`,
+      })
+    : buildPlan;
   const lockPath = options.lockPath ?? buildPlan.lockPath;
   const lockTimeoutMs = options.lockTimeoutMs
     ?? parsePositiveInteger(commandEnv.HAPPIER_PACKAGE_DIST_BUILD_LOCK_TIMEOUT_MS, 240_000);
@@ -178,15 +180,17 @@ export async function buildPackageDistAtomically(options = {}) {
 
       try {
         const swapResult = await swapStagedPackageDistIntoPlace({
-          buildPlan,
+          buildPlan: publicationPlan,
           stageDistDir: stagedBuild.stageDistDir,
         });
         distMovedToBackup = Boolean(swapResult?.distMovedToBackup);
-        verifyPackageExportTargets({ packageDir, packageJson });
+        if (!workspaceOutputDir) {
+          verifyPackageExportTargets({ packageDir, packageJson });
+        }
       } catch (error) {
-        distMovedToBackup = distMovedToBackup || existsSync(buildPlan.backupDir);
+        distMovedToBackup = distMovedToBackup || existsSync(publicationPlan.backupDir);
         await restorePackageDistFromBackup({
-          buildPlan,
+          buildPlan: publicationPlan,
           distMovedToBackup,
         });
         throw error;
@@ -194,13 +198,13 @@ export async function buildPackageDistAtomically(options = {}) {
     } finally {
       if (stageRoot) {
         await cleanupPackageDistBuildArtifacts({
-          buildPlan,
+          buildPlan: publicationPlan,
           stageRoot,
         }).catch(() => {});
       }
     }
 
-    const indexPath = join(buildPlan.distDir, 'index.js');
+    const indexPath = join(publicationPlan.distDir, 'index.js');
     const marker = readFileSync(indexPath, 'utf8');
     if (!marker.trim()) {
       throw new Error(`cli-common build produced an empty dist entrypoint: ${relative(packageDir, indexPath)}`);

@@ -16,9 +16,15 @@ function readJson(path, { readFileSync = defaultReadFileSync } = {}) {
   return JSON.parse(String(readFileSync(path, 'utf8')));
 }
 
-function collectInternalDependencyNames(pkgJson, currentPackageName) {
+function collectInternalDependencyNames(
+  pkgJson,
+  currentPackageName,
+  { includeDevDependencies = true } = {},
+) {
   const dependencies = new Set();
-  for (const field of [pkgJson?.dependencies, pkgJson?.optionalDependencies, pkgJson?.devDependencies]) {
+  const dependencyFields = [pkgJson?.dependencies, pkgJson?.optionalDependencies];
+  if (includeDevDependencies) dependencyFields.push(pkgJson?.devDependencies);
+  for (const field of dependencyFields) {
     if (!field || typeof field !== 'object') continue;
     for (const dependencyName of Object.keys(field)) {
       if (!dependencyName.startsWith('@happier-dev/')) continue;
@@ -50,6 +56,7 @@ function resolveWorkspacePackageJsonPath({ repoRoot, workspaceName, existsSync }
 export function resolveWorkspaceDependencyBuildOrder({
   repoRoot,
   seedPackageNames,
+  includeDevDependencies = true,
   existsSync = defaultExistsSync,
   readFileSync = defaultReadFileSync,
 } = {}) {
@@ -82,7 +89,11 @@ export function resolveWorkspaceDependencyBuildOrder({
     }
 
     const currentPackageName = typeof packageJson?.name === 'string' ? packageJson.name : '';
-    for (const dependencyName of collectInternalDependencyNames(packageJson, currentPackageName)) {
+    for (const dependencyName of collectInternalDependencyNames(
+      packageJson,
+      currentPackageName,
+      { includeDevDependencies },
+    )) {
       visit(dependencyName);
     }
 
@@ -125,6 +136,7 @@ export function resolveBundledWorkspaceDependencyBuildOrder({
   return resolveWorkspaceDependencyBuildOrder({
     repoRoot,
     seedPackageNames: bundledDependencies,
+    includeDevDependencies: false,
     existsSync,
     readFileSync,
   });

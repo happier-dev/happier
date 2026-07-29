@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,6 +85,12 @@ describe('bundleWorkspaceDeps', () => {
          }
          export function vendorBundledPackageRuntimeDependencies({ destPackageDir }) {
            writeFileSync(resolve(destPackageDir, 'vendor.txt'), 'vendored\\n', 'utf8');
+         }
+         export function bundleWorkspacePackagesWithRuntimeDependencies({ bundles }) {
+           bundleWorkspacePackages({ bundles });
+           for (const bundle of bundles) {
+             vendorBundledPackageRuntimeDependencies({ destPackageDir: bundle.destDir });
+           }
          }`,
         'utf8',
       );
@@ -89,6 +103,89 @@ describe('bundleWorkspaceDeps', () => {
         expect(readFileSync(resolve(bundledDir, 'package.json'), 'utf8')).toContain(`"@happier-dev/${workspaceName}"`);
         expect(existsSync(resolve(bundledDir, 'vendor.txt'))).toBe(true);
       }
+
+      const releaseRuntimeDir = resolve(sandbox, 'packages', 'release-runtime');
+      const releaseRuntimeSourcePath = resolve(releaseRuntimeDir, 'src', 'index.ts');
+      const releaseRuntimeDistPath = resolve(releaseRuntimeDir, 'dist', 'index.js');
+      mkdirSync(dirname(releaseRuntimeSourcePath), { recursive: true });
+      writeFileSync(releaseRuntimeSourcePath, 'export const generation = "current";\n', 'utf8');
+      writeFileSync(releaseRuntimeDistPath, 'export const generation = "stale";\n', 'utf8');
+      const now = Date.now();
+      utimesSync(releaseRuntimeSourcePath, new Date(now), new Date(now));
+      utimesSync(releaseRuntimeDistPath, new Date(now + 10_000), new Date(now + 10_000));
+
+      const liveAdmissionCalls: Array<{ packageNames: string[]; force: boolean | undefined }> = [];
+      await bundleWorkspaceDeps({
+        repoRoot: sandbox,
+        supportDir: resolve(sandbox, 'packages', 'support'),
+        publicationMode: 'live',
+        ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
+          liveAdmissionCalls.push({ packageNames, force: options?.force });
+          return { ok: true, built: [], skipped: packageNames };
+        },
+      });
+      expect(
+        readFileSync(
+          resolve(
+            sandbox,
+            'packages',
+            'support',
+            'node_modules',
+            '@happier-dev',
+            'release-runtime',
+            'dist',
+            'index.js',
+          ),
+          'utf8',
+        ),
+      ).toBe('export const generation = "stale";\n');
+      expect(liveAdmissionCalls.every(({ force }) => force === undefined)).toBe(true);
+
+      const artifactAdmissionCalls: Array<{ packageNames: string[]; force: boolean | undefined }> = [];
+      await bundleWorkspaceDeps({
+        repoRoot: sandbox,
+        supportDir: resolve(sandbox, 'packages', 'support'),
+        publicationMode: 'artifact',
+        ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
+          artifactAdmissionCalls.push({ packageNames, force: options?.force });
+          if (options?.force === true && packageNames.includes('@happier-dev/release-runtime')) {
+            writeFileSync(releaseRuntimeDistPath, 'export const generation = "current";\n', 'utf8');
+          }
+          return { ok: true, built: options?.force === true ? packageNames : [], skipped: [] };
+        },
+      });
+      expect(
+        readFileSync(
+          resolve(
+            sandbox,
+            'packages',
+            'support',
+            'node_modules',
+            '@happier-dev',
+            'release-runtime',
+            'dist',
+            'index.js',
+          ),
+          'utf8',
+        ),
+      ).toBe('export const generation = "current";\n');
+      expect(
+        artifactAdmissionCalls.some(
+          ({ packageNames, force }) => (
+            packageNames.length === 1
+            && packageNames[0] === '@happier-dev/cli-common'
+            && force === true
+          ),
+        ),
+      ).toBe(true);
+      expect(
+        artifactAdmissionCalls.some(
+          ({ packageNames, force }) => (
+            packageNames.includes('@happier-dev/release-runtime')
+            && force === true
+          ),
+        ),
+      ).toBe(true);
     } finally {
       rmSync(sandbox, { recursive: true, force: true });
     }

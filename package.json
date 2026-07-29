@@ -2,6 +2,7 @@
   "name": "monorepo",
   "private": true,
   "scripts": {
+    "tsc": "node scripts/workspaces/runTypeScriptCli.mjs",
     "postinstall": "node scripts/pipeline/expo/eas-postinstall.mjs",
     "build:packages": "yarn workspace @happier-dev/protocol build && yarn workspace @happier-dev/peer-mediation build && yarn workspace @happier-dev/transfers build && yarn workspace @happier-dev/agents build && yarn workspace @happier-dev/connection-supervisor build",
     "dev": "node ./apps/stack/scripts/repo_local.mjs dev",
@@ -208,11 +209,15 @@
   "resolutions": {
     "@tauri-apps/api": "2.8.0",
     "react": "19.2.0",
-    "react-dom": "19.2.0"
+    "react-dom": "19.2.0",
+    "tar": "7.5.22"
   },
   "devDependencies": {
     "@sentry/cli": "^3.2.2",
-    "freeport-async": "^2.0.0"
+    "@typescript/native": "npm:typescript@7.0.2",
+    "freeport-async": "^2.0.0",
+    "tar": "7.5.22",
+    "typescript": "5.9.3"
   },
   "packageManager": "yarn@1.22.22"
 }

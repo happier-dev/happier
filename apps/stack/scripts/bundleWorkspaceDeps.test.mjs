@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync, statSync, unlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -22,6 +22,19 @@ import { dirname, resolve } from 'node:path';
 
 function readJson(path) {
   return JSON.parse(String(readFileSync(path, 'utf8')));
+}
+
+function collectPackageJsonRelativeFileTargets(value, result = new Set()) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('./') && !trimmed.includes('*')) result.add(trimmed.slice(2));
+    return result;
+  }
+  if (!value || typeof value !== 'object') return result;
+  for (const nested of Array.isArray(value) ? value : Object.values(value)) {
+    collectPackageJsonRelativeFileTargets(nested, result);
+  }
+  return result;
 }
 
 function findRepoRoot(startDir) {
@@ -63,8 +76,46 @@ export function bundleWorkspacePackages({ bundles }) {
     delete pkgJson.scripts;
     pkgJson.private = true;
 
+    rmSync(b.destDir, { recursive: true, force: true });
     mkdirSync(b.destDir, { recursive: true });
     cpSync(distSrc, resolve(b.destDir, 'dist'), { recursive: true });
+    for (const relativePath of collectPackageJsonRelativeFileTargets(pkgJson.exports)) {
+      const sourcePath = resolve(b.srcDir, relativePath);
+      if (existsSync(sourcePath) && !relativePath.startsWith('dist/')) {
+        cpSync(sourcePath, resolve(b.destDir, relativePath));
+      }
+    }
+    writeFileSync(resolve(b.destDir, 'package.json'), \`\${JSON.stringify(pkgJson, null, 2)}\\n\`, 'utf8');
+  }
+}
+
+export function bundleWorkspacePackagesWithRuntimeDependencies({ bundles, publicationMode = 'live' }) {
+  for (const b of bundles) {
+    const distSrc = resolve(b.srcDir, 'dist');
+    if (!existsSync(distSrc)) {
+      throw new Error(\`Missing dist/ for \${b.name}\`);
+    }
+
+    const pkgJsonPath = resolve(b.srcDir, 'package.json');
+    const pkgJson = readJson(pkgJsonPath);
+    delete pkgJson.scripts;
+    pkgJson.private = true;
+
+    if (publicationMode === 'artifact') {
+      rmSync(b.destDir, { recursive: true, force: true });
+    }
+    mkdirSync(b.destDir, { recursive: true });
+    cpSync(distSrc, resolve(b.destDir, 'dist'), { recursive: true });
+    for (const relativePath of collectPackageJsonRelativeFileTargets(pkgJson.exports)) {
+      const sourcePath = resolve(b.srcDir, relativePath);
+      if (existsSync(sourcePath) && !relativePath.startsWith('dist/')) {
+        cpSync(sourcePath, resolve(b.destDir, relativePath));
+      }
+    }
+    vendorBundledPackageRuntimeDependencies({
+      srcPackageJsonPath: pkgJsonPath,
+      destPackageDir: b.destDir,
+    });
     writeFileSync(resolve(b.destDir, 'package.json'), \`\${JSON.stringify(pkgJson, null, 2)}\\n\`, 'utf8');
   }
 }
@@ -228,7 +279,15 @@ function createBundleFixture(prefix = 'happy-stack-bundle-workspace-deps-') {
   writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.js'), 'export const release = 1;\n', 'utf8');
   writeFileSync(resolve(releaseRuntimeDir, 'dist', 'index.d.ts'), 'export declare const release: number;\n', 'utf8');
 
-  return { repoRoot, stackDir, agentsDir, cliCommonDir, connectionSupervisorDir, protocolDir };
+  return {
+    repoRoot,
+    stackDir,
+    agentsDir,
+    cliCommonDir,
+    connectionSupervisorDir,
+    protocolDir,
+    releaseRuntimeDir,
+  };
 }
 
 test('bundleWorkspaceDeps copies dist + writes a sanitized package.json without install scripts', async () => {
@@ -287,6 +346,170 @@ test('bundleWorkspaceDeps records bundled workspace package names in the freshne
   }
 });
 
+test('bundleWorkspaceDeps admits resolved workspace bundles before copying source-newer dist', async () => {
+  const {
+    repoRoot,
+    stackDir,
+    releaseRuntimeDir,
+  } = createBundleFixture('happy-stack-bundle-workspace-deps-owner-admission-');
+  try {
+    const sourcePath = resolve(releaseRuntimeDir, 'src', 'index.ts');
+    const distPath = resolve(releaseRuntimeDir, 'dist', 'index.js');
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'export const generation = "new";\n', 'utf8');
+    writeFileSync(distPath, 'export const generation = "old";\n', 'utf8');
+    const now = Date.now();
+    utimesSync(distPath, new Date(now - 10_000), new Date(now - 10_000));
+    utimesSync(sourcePath, new Date(now), new Date(now));
+
+    let admittedPackageNames = null;
+    let admissionEnv = null;
+    let admissionForce = null;
+    await bundleWorkspaceDeps({
+      repoRoot,
+      stackDir,
+      env: { HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: '/parent-stage' },
+      ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
+        admittedPackageNames = packageNames;
+        admissionEnv = options?.env;
+        admissionForce = options?.force;
+        writeFileSync(distPath, 'export const generation = "new";\n', 'utf8');
+        return { ok: true, built: ['@happier-dev/release-runtime'], skipped: [] };
+      },
+    });
+
+    assert.equal(
+      readFileSync(
+        resolve(stackDir, 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
+        'utf8',
+      ),
+      'export const generation = "new";\n',
+    );
+    assert.deepEqual(admittedPackageNames, [
+      '@happier-dev/agents',
+      '@happier-dev/cli-common',
+      '@happier-dev/connection-supervisor',
+      '@happier-dev/protocol',
+      '@happier-dev/release-runtime',
+    ]);
+    assert.match(String(admissionEnv?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? ''), /"path"/);
+    assert.equal(admissionEnv?.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, undefined);
+    assert.equal(admissionForce, undefined);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps artifact mode rebuilds newer stale workspace output from current source', async () => {
+  const {
+    repoRoot,
+    stackDir,
+    releaseRuntimeDir,
+  } = createBundleFixture('happy-stack-bundle-workspace-deps-artifact-admission-');
+  try {
+    const sourcePath = resolve(releaseRuntimeDir, 'src', 'index.ts');
+    const distPath = resolve(releaseRuntimeDir, 'dist', 'index.js');
+    mkdirSync(dirname(sourcePath), { recursive: true });
+    writeFileSync(sourcePath, 'export const generation = "current";\n', 'utf8');
+    writeFileSync(distPath, 'export const generation = "stale";\n', 'utf8');
+    const now = Date.now();
+    utimesSync(sourcePath, new Date(now), new Date(now));
+    utimesSync(distPath, new Date(now + 10_000), new Date(now + 10_000));
+
+    const admissionCalls = [];
+    await bundleWorkspaceDeps({
+      repoRoot,
+      stackDir,
+      publicationMode: 'artifact',
+      ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
+        admissionCalls.push({ packageNames, force: options?.force });
+        if (options?.force === true && packageNames.includes('@happier-dev/release-runtime')) {
+          writeFileSync(distPath, 'export const generation = "current";\n', 'utf8');
+        }
+        return { ok: true, built: options?.force === true ? packageNames : [], skipped: [] };
+      },
+    });
+
+    assert.equal(
+      readFileSync(
+        resolve(stackDir, 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
+        'utf8',
+      ),
+      'export const generation = "current";\n',
+    );
+    assert.equal(
+      admissionCalls.some(
+        ({ packageNames, force }) => (
+          packageNames.length === 1
+          && packageNames[0] === '@happier-dev/cli-common'
+          && force === true
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      admissionCalls.some(
+        ({ packageNames, force }) => (
+          packageNames.includes('@happier-dev/release-runtime')
+          && force === true
+        ),
+      ),
+      true,
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps admits a stale-present cli-common helper before its first import', async () => {
+  const {
+    repoRoot,
+    stackDir,
+    cliCommonDir,
+  } = createBundleFixture('happy-stack-bundle-workspace-deps-cli-common-admission-');
+  try {
+    const workspacesModulePath = resolve(cliCommonDir, 'dist', 'workspaces', 'index.js');
+    writeFileSync(
+      workspacesModulePath,
+      [
+        "import { readFileSync } from 'node:fs';",
+        "import { resolve } from 'node:path';",
+        'export function resolveWorkspaceBundlesFromPackageJson({ repoRoot, hostPackageDir }) {',
+        "  const host = JSON.parse(readFileSync(resolve(hostPackageDir, 'package.json'), 'utf8'));",
+        '  return (host.bundledDependencies ?? []).map((name) => ({',
+        '    packageName: name,',
+        "    srcDir: resolve(repoRoot, 'packages', name.slice('@happier-dev/'.length)),",
+        "    destDir: resolve(hostPackageDir, 'node_modules', ...name.split('/')),",
+        '  }));',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    let cliCommonAdmissionCount = 0;
+    await bundleWorkspaceDeps({
+      repoRoot,
+      stackDir,
+      ensureWorkspacePackagesBuiltByName: async (_root, packageNames) => {
+        if (packageNames.length === 1 && packageNames[0] === '@happier-dev/cli-common') {
+          cliCommonAdmissionCount += 1;
+          writeCliCommonWorkspacesStub(cliCommonDir);
+        }
+        return { ok: true, built: packageNames, skipped: [] };
+      },
+    });
+
+    assert.equal(cliCommonAdmissionCount >= 1, true);
+    assert.equal(
+      existsSync(resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js')),
+      true,
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('bundleWorkspaceDeps bundles internal deps required by the stack host package closure', async () => {
   const { repoRoot, stackDir } = createBundleFixture('happy-stack-bundle-workspace-deps-internal-closure-');
   try {
@@ -309,7 +532,10 @@ test('bundleWorkspaceDeps throws when cli-common dist/ is missing', async () => 
       version: '0.0.0',
       main: './dist/index.js',
     });
-    await assert.rejects(bundleWorkspaceDeps({ repoRoot, stackDir }), /Missing dist\/ for @happier-dev\/cli-common/);
+    await assert.rejects(
+      bundleWorkspaceDeps({ repoRoot, stackDir }),
+      /Missing cli-common workspaces build helpers/,
+    );
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }
@@ -508,22 +734,75 @@ test('bundleWorkspaceDeps skips rebundling when the existing bundle is already f
   }
 });
 
+test('bundleWorkspaceDeps rebuilds a fresh live bundle in exact artifact mode', async () => {
+  const { repoRoot, stackDir } = createBundleFixture('happy-stack-bundle-workspace-deps-artifact-refresh-');
+  try {
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+    const bundledProtocolDir = resolve(stackDir, 'node_modules', '@happier-dev', 'protocol');
+    const retainedTargetPath = resolve(bundledProtocolDir, 'dist', 'retained.js');
+    writeFileSync(retainedTargetPath, 'export const retained = true;\n', 'utf8');
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir, publicationMode: 'artifact' });
+
+    assert.equal(existsSync(retainedTargetPath), false);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('bundleWorkspaceDeps refreshes the bundle when the source dist changes', async () => {
   const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-source-');
   try {
     await bundleWorkspaceDeps({ repoRoot, stackDir });
 
     const manifestPath = resolve(stackDir, 'node_modules', '@happier-dev', '.workspace-bundle-manifest.json');
+    const bundledCliCommonDir = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common');
     const bundledCliCommonIndexPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'dist', 'index.js');
     const firstMtimeMs = statSync(manifestPath).mtimeMs;
+    const livePackageDirInode = statSync(bundledCliCommonDir).ino;
 
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
     writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export const z = 42;\n', 'utf8');
 
     await bundleWorkspaceDeps({ repoRoot, stackDir });
 
+    assert.equal(
+      statSync(bundledCliCommonDir).ino,
+      livePackageDirInode,
+      'workspace refreshes must keep the live package directory mounted for concurrent resolvers',
+    );
     assert.match(readFileSync(bundledCliCommonIndexPath, 'utf8'), /42/);
     assert.ok(statSync(manifestPath).mtimeMs > firstMtimeMs);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps refreshes the bundle when an exported package-root file changes', async () => {
+  const { repoRoot, stackDir, cliCommonDir } = createBundleFixture('happy-stack-bundle-workspace-deps-refresh-root-export-');
+  try {
+    const packageJsonPath = resolve(cliCommonDir, 'package.json');
+    const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+    packageJson.exports['./workspaceBundleLock'] = { default: './workspaceBundleLock.mjs' };
+    writeJson(packageJsonPath, packageJson);
+    const sourcePath = resolve(cliCommonDir, 'workspaceBundleLock.mjs');
+    const bundledPath = resolve(stackDir, 'node_modules', '@happier-dev', 'cli-common', 'workspaceBundleLock.mjs');
+    const fixedSourceTime = new Date('2020-01-02T03:04:05.000Z');
+    writeFileSync(sourcePath, 'export const lockVersion = 1;\n', 'utf8');
+    utimesSync(sourcePath, fixedSourceTime, fixedSourceTime);
+
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+    assert.match(readFileSync(bundledPath, 'utf8'), /lockVersion = 1/);
+
+    const originalSourceStat = statSync(sourcePath);
+    writeFileSync(sourcePath, 'export const lockVersion = 2;\n', 'utf8');
+    utimesSync(sourcePath, fixedSourceTime, fixedSourceTime);
+    const rewrittenSourceStat = statSync(sourcePath);
+    assert.equal(rewrittenSourceStat.size, originalSourceStat.size);
+    assert.equal(Math.trunc(rewrittenSourceStat.mtimeMs), Math.trunc(originalSourceStat.mtimeMs));
+    await bundleWorkspaceDeps({ repoRoot, stackDir });
+
+    assert.match(readFileSync(bundledPath, 'utf8'), /lockVersion = 2/);
   } finally {
     rmSync(repoRoot, { recursive: true, force: true });
   }

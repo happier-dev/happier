@@ -1,8 +1,11 @@
-import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { describe, expect, it, vi } from 'vitest';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-import { bundleWorkspaceDeps } from '../bundleWorkspaceDeps.mjs';
+import {
+  bundleWorkspaceDeps,
+  loadCliCommonWorkspacesModule,
+} from '../bundleWorkspaceDeps.mjs';
 import {
   createPackageLayoutSandbox,
   writeCliBundledHostPackage,
@@ -11,6 +14,41 @@ import {
 } from './testkit/packageLayoutSandbox';
 
 describe('bundleWorkspaceDeps', () => {
+  it('admits an existing cli-common dist before importing the implementation helper', async () => {
+    const { repoRoot, cleanup } = createPackageLayoutSandbox('happy-bundle-workspace-helper-admission-');
+
+    try {
+      const cliCommonDir = writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/cli-common',
+        packageName: '@happier-dev/cli-common',
+        files: {
+          'dist/workspaces/index.js': 'export const implementationMarker = "stale";\n',
+        },
+      });
+      const implementationPath = resolve(cliCommonDir, 'dist', 'workspaces', 'index.js');
+      const ensureWorkspacePackagesBuiltByName = vi.fn(async () => {
+        expect(readFileSync(implementationPath, 'utf8')).toContain('"stale"');
+        writeFileSync(implementationPath, 'export const implementationMarker = "fresh";\n', 'utf8');
+      });
+
+      const implementation = await loadCliCommonWorkspacesModule(
+        repoRoot,
+        {},
+        ensureWorkspacePackagesBuiltByName,
+      );
+
+      expect(ensureWorkspacePackagesBuiltByName).toHaveBeenCalledWith(
+        repoRoot,
+        ['@happier-dev/cli-common'],
+        { quiet: false, env: {}, includeDevDependencies: false },
+      );
+      expect(implementation.implementationMarker).toBe('fresh');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('copies dist + writes a sanitized package.json without install scripts', async () => {
     const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-workspace-deps-');
 
@@ -46,6 +84,9 @@ describe('bundleWorkspaceDeps', () => {
           '@happier-dev/transfers',
           '@happier-dev/release-runtime',
         ],
+        dependencies: {
+          '@happier-dev/plugins-claude': '0.0.0',
+        },
       });
 
     writeWorkspacePackageFixture({
@@ -116,7 +157,7 @@ describe('bundleWorkspaceDeps', () => {
       manifestOverrides: { scripts: { postinstall: 'echo should-not-run' } },
       files: {
         'dist/index.js': 'export const bundledPlugin = true;\n',
-        'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+        'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { apiVersion: 1 }, contributes: {} });\n',
         'src/agent/definition.ts': 'export const AGENT_DEFINITION = Object.freeze({ id: "claude" });\n',
       },
     });
@@ -379,7 +420,7 @@ describe('bundleWorkspaceDeps', () => {
         manifestOverrides: { exports: { '.': { default: './dist/index.js' } } },
         files: {
           'dist/index.js': 'export const bundledPlugin = true;\n',
-          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "acme", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "acme", runtime: { apiVersion: 1 }, contributes: {} });\n',
           'src/agent/definition.ts': 'export const AGENT_DEFINITION = Object.freeze({ id: "acme" });\n',
         },
       });
@@ -387,6 +428,123 @@ describe('bundleWorkspaceDeps', () => {
       await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).rejects.toThrow(
         'Missing bundled plugin workspace dependencies',
       );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('fails fast if a bundled plugin workspace is absent from CLI dependencies', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-missing-plugin-runtime-dep-');
+
+    try {
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies: ['@happier-dev/plugins-grok'],
+        dependencies: {},
+      });
+
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugins/grok',
+        packageName: '@happier-dev/plugins-grok',
+        files: {
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "grok", runtime: { apiVersion: 1 }, contributes: {} });\n',
+          'src/agent/definition.ts': 'export const AGENT_DEFINITION = Object.freeze({ id: "grok" });\n',
+        },
+      });
+
+      await expect(bundleWorkspaceDeps({ repoRoot, happyCliDir })).rejects.toThrow(
+        'Missing CLI runtime dependencies for bundled plugin workspaces',
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('materializes Inspector UI artifacts and the Grok internal runtime closure into the artifact tree', async () => {
+    const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('happy-bundle-plugin-closure-');
+
+    try {
+      const bundledDependencies = [
+        '@happier-dev/plugin-sdk',
+        '@happier-dev/plugins-grok',
+        '@happier-dev/plugins-inspector',
+      ];
+      writeCliBundledHostPackage({
+        happyCliDir,
+        bundledDependencies,
+        dependencies: {
+          '@happier-dev/plugins-grok': '0.0.0',
+          '@happier-dev/plugins-inspector': '0.0.0',
+        },
+      });
+
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugin-sdk',
+        packageName: '@happier-dev/plugin-sdk',
+        files: {
+          'dist/index.js': 'export const sdk = true;\n',
+          'dist/index.d.ts': 'export declare const sdk: true;\n',
+        },
+      });
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugins/grok',
+        packageName: '@happier-dev/plugins-grok',
+        manifestOverrides: {
+          dependencies: {
+            '@happier-dev/plugin-sdk': '0.0.0',
+          },
+        },
+        files: {
+          'dist/index.js': "export { sdk } from '@happier-dev/plugin-sdk';\n",
+          'dist/index.d.ts': "export { sdk } from '@happier-dev/plugin-sdk';\n",
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "grok", runtime: { apiVersion: 1 }, contributes: {} });\n',
+        },
+      });
+      writeWorkspacePackageFixture({
+        repoRoot,
+        workspacePath: 'packages/plugins/inspector',
+        packageName: '@happier-dev/plugins-inspector',
+        manifestOverrides: {
+          dependencies: {
+            '@happier-dev/plugin-sdk': '0.0.0',
+          },
+          scripts: {
+            'build:ui': 'happier-plugin-build-ui',
+          },
+        },
+        files: {
+          'dist/index.js': "export { sdk } from '@happier-dev/plugin-sdk';\n",
+          'dist/index.d.ts': "export { sdk } from '@happier-dev/plugin-sdk';\n",
+          'dist/happier-plugin-ui/ui-artifacts.json': '{"version":1,"entries":[]}\n',
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "inspector", runtime: { apiVersion: 1 }, contributes: {} });\n',
+        },
+      });
+
+      await bundleWorkspaceDeps({ repoRoot, happyCliDir, publicationMode: 'artifact' });
+
+      const bundledScopeDir = resolve(happyCliDir, 'node_modules', '@happier-dev');
+      expect(existsSync(resolve(bundledScopeDir, 'plugin-sdk', 'dist', 'index.js'))).toBe(true);
+      expect(existsSync(resolve(bundledScopeDir, 'plugins-grok', 'dist', 'index.js'))).toBe(true);
+      expect(
+        existsSync(resolve(
+          bundledScopeDir,
+          'plugins-inspector',
+          'dist',
+          'happier-plugin-ui',
+          'ui-artifacts.json',
+        )),
+      ).toBe(true);
+
+      for (const packageName of ['plugins-grok', 'plugins-inspector']) {
+        const packageJson = JSON.parse(
+          readFileSync(resolve(bundledScopeDir, packageName, 'package.json'), 'utf8'),
+        ) as { dependencies?: Record<string, string>; scripts?: Record<string, string> };
+        expect(packageJson.dependencies?.['@happier-dev/plugin-sdk']).toBeUndefined();
+        expect(packageJson.scripts).toBeUndefined();
+      }
     } finally {
       cleanup();
     }
@@ -450,6 +608,9 @@ describe('bundleWorkspaceDeps', () => {
       writeCliBundledHostPackage({
         happyCliDir,
         bundledDependencies: ['@happier-dev/plugins-scm-github'],
+        dependencies: {
+          '@happier-dev/plugins-scm-github': '0.0.0',
+        },
       });
 
       writeWorkspacePackageFixture({
@@ -457,7 +618,7 @@ describe('bundleWorkspaceDeps', () => {
         workspacePath: 'packages/plugins/scm-github',
         packageName: '@happier-dev/plugins-scm-github',
         files: {
-          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "scm-github", runtime: { capabilities: ["scmHostingProviders"] } });\n',
+          'src/manifest.ts': 'export const PLUGIN_MANIFEST = Object.freeze({ id: "scm-github", runtime: { apiVersion: 1 } });\n',
         },
       });
 

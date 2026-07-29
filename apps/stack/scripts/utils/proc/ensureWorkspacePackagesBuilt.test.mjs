@@ -1,10 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { chmod, cp, mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { ensureWorkspacePackagesBuiltForComponent } from './pm.mjs';
+import { buildBundledWorkspaceDependenciesForCli } from '../../../../cli/scripts/buildSharedDeps.mjs';
 
 async function waitForFile(path, { timeoutMs = 5_000 } = {}) {
   const startedAt = Date.now();
@@ -185,9 +187,11 @@ test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based worksp
     exports: {
       '.': { default: './dist/index.js', types: './dist/index.d.ts' },
       './rpcErrors': { default: './dist/rpcErrors.js', types: './dist/rpcErrors.d.ts' },
+      './runtime': { require: './runtime.cjs', default: './dist/index.js' },
     },
     scripts: { build: 'tsc -p tsconfig.json' },
   });
+  await writeFile(join(protocolDir, 'runtime.cjs'), 'module.exports = {};\n', 'utf-8');
   await writeJson(join(protocolDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist' } });
 
   const binDir = join(root, 'bin');
@@ -205,12 +209,230 @@ test('ensureWorkspacePackagesBuiltForComponent builds internal dist-based worksp
   const out = await readFile(outputPath, 'utf-8');
   assert.match(out, /packages\/protocol :: -s build/);
   assert.equal(Boolean(await readFile(join(protocolDir, 'dist', 'rpcErrors.js'), 'utf-8')), true);
+  const preservedOutputTime = new Date(Date.now() - 60_000);
+  await utimes(join(protocolDir, 'dist', 'index.d.ts'), preservedOutputTime, preservedOutputTime);
 
-  // Second run should be a no-op (no additional build).
+  // A valid output is a read-only admission path. Make the package-lock directory impossible to
+  // create so this second call fails if it tries to acquire the mutation lock before checking.
+  const workspaceLockDir = join(root, '.project', 'tmp', 'workspace-dist-builds');
+  await rm(workspaceLockDir, { recursive: true, force: true });
+  await mkdir(join(root, '.project', 'tmp'), { recursive: true });
+  await writeFile(workspaceLockDir, 'lock-directory-must-not-be-touched\n', 'utf-8');
+
+  // Second run should be a no-op (no additional build or lock acquisition).
   await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
   const out2 = await readFile(outputPath, 'utf-8');
   const occurrences = out2.split('\n').filter((l) => l.includes('/packages/protocol :: -s build')).length;
   assert.equal(occurrences, 1);
+
+  // Source freshness is part of output validity, not an adapter concern.
+  await rm(workspaceLockDir, { force: true });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await mkdir(join(protocolDir, 'src'), { recursive: true });
+  await writeFile(join(protocolDir, 'src', 'index.ts'), 'export const changed = true;\n', 'utf-8');
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+  const out3 = await readFile(outputPath, 'utf-8');
+  const occurrencesAfterSourceChange = out3.split('\n').filter((l) => l.includes('/packages/protocol :: -s build')).length;
+  assert.equal(occurrencesAfterSourceChange, 2);
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  const protocolPackage = JSON.parse(await readFile(join(protocolDir, 'package.json'), 'utf-8'));
+  await writeJson(join(protocolDir, 'package.json'), { ...protocolPackage, description: 'changed package input' });
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await writeJson(join(protocolDir, 'tsconfig.json'), { compilerOptions: { outDir: 'dist', strict: true } });
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await writeFile(join(protocolDir, 'src', 'rpc.test.ts'), 'export const testOnly = true;\n', 'utf-8');
+  await ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env });
+  const finalOut = await readFile(outputPath, 'utf-8');
+  const finalOccurrences = finalOut.split('\n').filter((l) => l.includes('/packages/protocol :: -s build')).length;
+  assert.equal(finalOccurrences, 4, 'source/config/package changes rebuild, while test-only source does not');
+});
+
+test('ensureWorkspacePackagesBuiltForComponent uses inherited Yarn JS entrypoint when PATH has no Yarn shim', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-inherited-yarn-entrypoint-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  const uiDir = join(root, 'apps', 'ui');
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(uiDir, { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await mkdir(protocolDir, { recursive: true });
+  await writeJson(join(root, 'package.json'), {
+    private: true,
+    workspaces: ['apps/*', 'packages/*'],
+  });
+  await writeJson(join(uiDir, 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+    },
+  });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), {
+    name: '@happier-dev/cli',
+    private: true,
+  });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), {
+    name: '@happier-dev/server',
+    private: true,
+  });
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    main: './dist/index.js',
+    types: './dist/index.d.ts',
+    scripts: {
+      build: 'unused-by-fake-yarn',
+    },
+  });
+
+  const binDir = join(root, 'path-without-yarn');
+  const corepackMarkerPath = join(root, 'corepack-was-invoked');
+  await mkdir(binDir, { recursive: true });
+  const corepackTrapPath = join(binDir, process.platform === 'win32' ? 'corepack.cmd' : 'corepack');
+  await writeFile(
+    corepackTrapPath,
+    process.platform === 'win32'
+      ? `@echo off\r\n> ${JSON.stringify(corepackMarkerPath)} echo invoked\r\nexit /b 91\r\n`
+      : `#!/bin/sh\nprintf invoked > ${JSON.stringify(corepackMarkerPath)}\nexit 91\n`,
+    'utf-8',
+  );
+  await chmod(corepackTrapPath, 0o755);
+
+  const yarnEntrypointDir = join(root, 'inherited package manager');
+  const yarnEntrypointPath = join(yarnEntrypointDir, 'yarn entrypoint.cjs');
+  const invocationLogPath = join(root, 'yarn-invocations.jsonl');
+  await mkdir(yarnEntrypointDir, { recursive: true });
+  await writeFile(
+    yarnEntrypointPath,
+    [
+      "const { appendFileSync, mkdirSync, writeFileSync } = require('node:fs');",
+      "const { join } = require('node:path');",
+      'const args = process.argv.slice(2);',
+      'appendFileSync(process.env.YARN_INVOCATION_LOG, `${JSON.stringify(args)}\\n`, "utf-8");',
+      'if (args.length === 1 && args[0] === "--version") {',
+      '  process.stdout.write("1.22.22\\n");',
+      '  process.exit(0);',
+      '}',
+      'if (args.length === 2 && args[0] === "-s" && args[1] === "build") {',
+      '  const outDir = process.env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR || join(process.cwd(), "dist");',
+      '  mkdirSync(outDir, { recursive: true });',
+      '  writeFileSync(join(outDir, "index.js"), "export const inheritedYarnBuild = true;\\n", "utf-8");',
+      '  writeFileSync(join(outDir, "index.d.ts"), "export declare const inheritedYarnBuild: boolean;\\n", "utf-8");',
+      '  process.exit(0);',
+      '}',
+      'process.exit(92);',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+
+  const env = {
+    ...process.env,
+    PATH: binDir,
+    npm_execpath: yarnEntrypointPath,
+    YARN_INVOCATION_LOG: invocationLogPath,
+  };
+  delete env.HAPPIER_STACK_ENV_FILE;
+
+  const isolatedNodeDir = join(root, 'isolated node runtime');
+  const isolatedNodePath = join(isolatedNodeDir, process.platform === 'win32' ? 'node.exe' : 'node');
+  await mkdir(isolatedNodeDir, { recursive: true });
+  if (process.platform === 'win32') {
+    await cp(process.execPath, isolatedNodePath);
+    await chmod(isolatedNodePath, 0o755);
+  } else {
+    // A copied dynamically linked Node binary can lose its loader-relative runtime libraries.
+    // A symlink still exercises an executable path containing spaces without breaking the runtime.
+    await symlink(process.execPath, isolatedNodePath);
+  }
+  const pmModuleUrl = new URL('./pm.mjs', import.meta.url).href;
+  const result = spawnSync(
+    isolatedNodePath,
+    [
+      '--input-type=module',
+      '-e',
+      `const { ensureWorkspacePackagesBuiltForComponent } = await import(${JSON.stringify(pmModuleUrl)}); await ensureWorkspacePackagesBuiltForComponent(${JSON.stringify(uiDir)}, { quiet: true, env: process.env });`,
+    ],
+    {
+      cwd: root,
+      env,
+      encoding: 'utf-8',
+      timeout: 15_000,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+
+  assert.deepEqual(
+    (await readFile(invocationLogPath, 'utf-8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line)),
+    [
+      ['--version'],
+      ['-s', 'build'],
+    ],
+  );
+  assert.equal(
+    await readFile(join(protocolDir, 'dist', 'index.js'), 'utf-8'),
+    'export const inheritedYarnBuild = true;\n',
+  );
+  await assert.rejects(readFile(corepackMarkerPath, 'utf-8'), { code: 'ENOENT' });
+});
+
+test('ensureWorkspacePackagesBuiltForComponent treats source-exporting workspaces as live source instead of stale build output', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-source-workspace-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'package.json'), {
+    private: true,
+    workspaces: ['apps/*', 'packages/*'],
+  });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), {
+    name: '@happier-dev/app',
+    private: true,
+    dependencies: { '@happier-dev/audio-stream-native': '0.0.0' },
+  });
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), { name: '@happier-dev/cli', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const audioDir = join(root, 'packages', 'audio-stream-native');
+  await mkdir(join(audioDir, 'src'), { recursive: true });
+  await writeJson(join(audioDir, 'package.json'), {
+    name: '@happier-dev/audio-stream-native',
+    version: '0.0.0',
+    main: './src/index.ts',
+    types: './src/index.ts',
+  });
+  await writeFile(join(audioDir, 'src', 'index.ts'), "export * from './runtime';\n", 'utf-8');
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  await writeFile(join(audioDir, 'src', 'runtime.ts'), 'export const current = true;\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  await writeYarnWorkspaceBuildStub({ binDir, outputPath });
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  await assert.doesNotReject(
+    ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'ui'), { quiet: true, env: process.env }),
+  );
+  assert.doesNotMatch(await readFile(outputPath, 'utf-8'), /packages\/audio-stream-native :: -s build/);
 });
 
 test('ensureWorkspacePackagesBuiltForComponent walks the full internal workspace dependency closure before building', async (t) => {
@@ -527,6 +749,116 @@ test('ensureWorkspacePackagesBuiltForComponent does not run concurrent builds fo
 
   const lockOut = await readFile(lockOutputPath, 'utf-8');
   assert.match(lockOut, /packages\/cli-common :: .*\/\.project\/tmp\/workspace-dist-builds\/happier-dev-cli-common\.lock/);
+});
+
+test('CLI shared dependency preparation waits for the canonical workspace package publication owner', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'hs-ensure-workspaces-built-cli-owner-'));
+  t.after(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+
+  await mkdir(join(root, 'apps', 'cli'), { recursive: true });
+  await mkdir(join(root, 'apps', 'ui'), { recursive: true });
+  await mkdir(join(root, 'apps', 'server'), { recursive: true });
+  await writeJson(join(root, 'package.json'), {
+    private: true,
+    workspaces: ['apps/*', 'packages/*'],
+  });
+  await writeFile(join(root, 'yarn.lock'), '# yarn\n', 'utf-8');
+  await writeJson(join(root, 'apps', 'cli', 'package.json'), {
+    name: '@happier-dev/cli',
+    private: true,
+    dependencies: { '@happier-dev/protocol': '0.0.0' },
+  });
+  await writeJson(join(root, 'apps', 'ui', 'package.json'), { name: '@happier-dev/app', private: true });
+  await writeJson(join(root, 'apps', 'server', 'package.json'), { name: '@happier-dev/server', private: true });
+
+  const protocolDir = join(root, 'packages', 'protocol');
+  await mkdir(join(protocolDir, 'src'), { recursive: true });
+  await mkdir(join(protocolDir, 'dist'), { recursive: true });
+  await writeJson(join(protocolDir, 'package.json'), {
+    name: '@happier-dev/protocol',
+    version: '0.0.0',
+    type: 'module',
+    exports: { '.': { default: './dist/index.js', types: './dist/index.d.ts' } },
+    scripts: { build: 'tsc -p tsconfig.json' },
+  });
+  await writeFile(join(protocolDir, 'src', 'index.ts'), 'export const next = true;\n', 'utf-8');
+  await writeFile(join(protocolDir, 'dist', 'index.js'), "import './missing.js';\n", 'utf-8');
+  await writeFile(join(protocolDir, 'dist', 'index.d.ts'), 'export declare const previous: boolean;\n', 'utf-8');
+
+  const binDir = join(root, 'bin');
+  const outputPath = join(root, 'argv.txt');
+  const buildStartedPath = join(root, 'build-started');
+  const buildReleasePath = join(root, 'build-release');
+  await mkdir(binDir, { recursive: true });
+  await writeFile(
+    join(binDir, 'yarn'),
+    [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      'echo "$(pwd) :: $*" >> "${OUTPUT_PATH:?}"',
+      'if [[ "${1:-}" == "--version" ]]; then echo "1.22.22"; exit 0; fi',
+      'if [[ "${1:-}" == "-s" && "${2:-}" == "build" && "$(pwd)" == */packages/protocol ]]; then',
+      '  touch "${BUILD_STARTED_PATH:?}"',
+      '  while [[ ! -f "${BUILD_RELEASE_PATH:?}" ]]; do sleep 0.02; done',
+      '  out="${HAPPIER_WORKSPACE_DIST_OUTPUT_DIR:-dist}"',
+      '  mkdir -p "$out"',
+      "  printf '%s\\n' 'export const built = true;' > \"$out/index.js\"",
+      "  printf '%s\\n' 'export declare const built: boolean;' > \"$out/index.d.ts\"",
+      'fi',
+      'exit 0',
+    ].join('\n') + '\n',
+    'utf-8',
+  );
+  await chmod(join(binDir, 'yarn'), 0o755);
+  await writeFile(outputPath, '', 'utf-8');
+
+  applyEnvOverrides(t, {
+    PATH: `${binDir}:/usr/bin:/bin`,
+    OUTPUT_PATH: outputPath,
+    BUILD_STARTED_PATH: buildStartedPath,
+    BUILD_RELEASE_PATH: buildReleasePath,
+    HAPPIER_STACK_ENV_FILE: null,
+  });
+
+  const canonicalBuild = ensureWorkspacePackagesBuiltForComponent(join(root, 'apps', 'cli'), {
+    quiet: true,
+    env: process.env,
+  });
+  let bypassCompileStarted = false;
+  let cliPreparation;
+  let assertionError = null;
+  try {
+    await waitForFile(buildStartedPath);
+    cliPreparation = buildBundledWorkspaceDependenciesForCli({
+      repoRoot: root,
+      workspaceNames: ['protocol'],
+      syncWorkspaceBundledDependenciesForBuildImpl: () => {},
+      runWorkspaceArtifactBuildImpl: () => false,
+      runTscImpl: () => {
+        bypassCompileStarted = true;
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(
+      bypassCompileStarted,
+      false,
+      'CLI must not bypass the canonical per-package owner with its own direct compiler writer',
+    );
+  } catch (error) {
+    assertionError = error;
+  } finally {
+    await writeFile(buildReleasePath, 'release\n', 'utf-8');
+    await Promise.allSettled([canonicalBuild, cliPreparation]);
+  }
+  if (assertionError) throw assertionError;
+
+  const output = await readFile(outputPath, 'utf-8');
+  assert.equal(
+    output.split('\n').filter((line) => line.includes('/packages/protocol :: -s build')).length,
+    1,
+  );
 });
 
 test('ensureWorkspacePackagesBuiltForComponent rebuilds internal workspaces when exported entrypoints have missing local imports', async (t) => {

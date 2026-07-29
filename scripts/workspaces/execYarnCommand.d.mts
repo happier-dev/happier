@@ -29,6 +29,11 @@ export function resolveYarnCommandInvocation(
   options?: YarnCommandInvocationOptions,
 ): YarnCommandInvocation;
 
+export function resolveNpmCommandInvocation(
+  args?: readonly string[],
+  options?: YarnCommandInvocationOptions,
+): YarnCommandInvocation;
+
 export function execYarn(
   args: readonly string[],
   options?: ExecFileSyncOptions & YarnCommandInvocationOptions & {

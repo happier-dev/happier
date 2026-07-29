@@ -8,6 +8,36 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { withCliDistBuildLock } from './cliDistBuildLock.mjs';
 
+test('withCliDistBuildLock permits reentry only with the current owner lease', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-cli-dist-lock-reentry-'));
+  try {
+    const lockPath = join(root, 'cli-dist-build.lock');
+    const result = await withCliDistBuildLock(
+      async ({ heldLockValue }) =>
+        await withCliDistBuildLock(
+          async () => 'nested',
+          {
+            lockPath,
+            heldLockValue,
+            timeoutMs: 60,
+            pollIntervalMs: 10,
+            staleAfterMs: 1_000,
+          },
+        ),
+      {
+        lockPath,
+        timeoutMs: 2_000,
+        pollIntervalMs: 10,
+        staleAfterMs: 1_000,
+      },
+    );
+
+    assert.equal(result, 'nested');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('withCliDistBuildLock reclaims a fresh lock from a dead owner pid immediately', async () => {
   const root = await mkdtemp(join(tmpdir(), 'hstack-cli-dist-lock-'));
   const lockPath = join(root, 'cli-dist-build.lock');

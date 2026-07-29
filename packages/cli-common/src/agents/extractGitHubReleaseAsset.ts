@@ -1,7 +1,7 @@
 import { chmod, mkdir, readdir, rename } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 
-import { extractArchivePayloadToDirectory } from '../firstPartyRuntime/extractArchivePayloadToDirectory.js';
+import { extractArchivePayloadToDirectory } from '@happier-dev/release-runtime/archiveExtraction';
 
 function stripArchiveExtension(archiveName: string): string {
   const normalized = archiveName.trim();
@@ -55,6 +55,8 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
   archiveName: string;
   extractDir: string;
   outputPath: string;
+  maxFileBytes?: number;
+  skipTarLinks?: boolean;
 }>): Promise<void> {
   const archiveName = params.archiveName.toLowerCase();
 
@@ -64,6 +66,10 @@ export async function extractGitHubReleaseAsset(params: Readonly<{
       archiveName: params.archiveName,
       archivePath: params.archivePath,
       extractDir: params.extractDir,
+      ...(params.maxFileBytes !== undefined
+        ? { limits: { maxFileBytes: params.maxFileBytes } }
+        : {}),
+      tarLinkPolicy: params.skipTarLinks ? 'skip' : 'reject',
     });
     await moveExtractedEntryIntoPlace({
       archiveName: params.archiveName,

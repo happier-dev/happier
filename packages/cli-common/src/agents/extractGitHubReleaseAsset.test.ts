@@ -8,7 +8,7 @@ const { extractArchivePayloadToDirectoryMock } = vi.hoisted(() => ({
     extractArchivePayloadToDirectoryMock: vi.fn(async () => undefined),
 }));
 
-vi.mock('../firstPartyRuntime/extractArchivePayloadToDirectory.js', () => ({
+vi.mock('@happier-dev/release-runtime/archiveExtraction', () => ({
     extractArchivePayloadToDirectory: extractArchivePayloadToDirectoryMock,
 }));
 
@@ -42,8 +42,34 @@ describe('extractGitHubReleaseAsset', () => {
             outputPath,
         });
 
+        expect(extractArchivePayloadToDirectoryMock).toHaveBeenCalledWith(
+            expect.not.objectContaining({ limits: expect.anything() }),
+        );
         await expect(readFile(outputPath, 'utf8')).resolves.toBe('codex');
         await expect(readFile(join(rootDir, 'extract', 'codex-command-runner.exe'), 'utf8')).resolves.toBe('runner');
+    });
+
+    it('forwards an explicit per-file ceiling without changing the shared default', async () => {
+        const rootDir = await mkdtemp(join(tmpdir(), 'happier-extract-github-release-'));
+        tempDirs.push(rootDir);
+
+        extractArchivePayloadToDirectoryMock.mockImplementationOnce(async () => {
+            const extractDir = join(rootDir, 'extract');
+            await mkdir(extractDir, { recursive: true });
+            await writeFile(join(extractDir, 'codex-aarch64-apple-darwin'), 'codex', 'utf8');
+        });
+
+        await extractGitHubReleaseAsset({
+            archivePath: join(rootDir, 'codex.tar.gz'),
+            archiveName: 'codex-aarch64-apple-darwin.tar.gz',
+            extractDir: join(rootDir, 'extract'),
+            outputPath: join(rootDir, 'current', 'bin', 'codex'),
+            maxFileBytes: 320 * 1024 * 1024,
+        });
+
+        expect(extractArchivePayloadToDirectoryMock).toHaveBeenCalledWith(expect.objectContaining({
+            limits: { maxFileBytes: 320 * 1024 * 1024 },
+        }));
     });
 
     it('fails closed when multiple extracted entries do not contain an archive-stem match', async () => {

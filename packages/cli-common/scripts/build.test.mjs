@@ -199,6 +199,52 @@ describe('cli-common atomic build contract', () => {
     }
   });
 
+  it('publishes into the workspace staged-output directory without mutating live dist', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-outer-stage-'));
+    try {
+      const packageDir = join(root, 'packages', 'cli-common');
+      const distDir = join(packageDir, 'dist');
+      const outputDir = join(root, 'workspace-staged-dist');
+      const packageJson = {
+        name: '@happier-dev/cli-common',
+        version: '0.0.0',
+        type: 'module',
+        main: './dist/index.js',
+        types: './dist/index.d.ts',
+        exports: {
+          '.': {
+            default: './dist/index.js',
+            types: './dist/index.d.ts',
+          },
+        },
+      };
+
+      mkdirSync(distDir, { recursive: true });
+      writeFileSync(join(packageDir, 'package.json'), JSON.stringify(packageJson, null, 2), 'utf8');
+      writeFileSync(join(distDir, 'index.js'), 'export const version = "old";\n', 'utf8');
+      writeFileSync(join(distDir, 'index.d.ts'), 'export declare const version: string;\n', 'utf8');
+
+      await buildPackageDistAtomically({
+        packageDir,
+        packageJson,
+        env: {
+          ...process.env,
+          HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: outputDir,
+        },
+        buildIntoDistDir: async ({ stagingDistDir }) => {
+          mkdirSync(stagingDistDir, { recursive: true });
+          writeFileSync(join(stagingDistDir, 'index.js'), 'export const version = "new";\n', 'utf8');
+          writeFileSync(join(stagingDistDir, 'index.d.ts'), 'export declare const version: string;\n', 'utf8');
+        },
+      });
+
+      expect(readFileSync(join(outputDir, 'index.js'), 'utf8')).toContain('"new"');
+      expect(readFileSync(join(distDir, 'index.js'), 'utf8')).toContain('"old"');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('stages package-root export assets before verifying package exports', async () => {
     const root = mkdtempSync(join(tmpdir(), 'happier-cli-common-root-export-'));
     try {

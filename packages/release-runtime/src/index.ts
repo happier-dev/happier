@@ -1,7 +1,10 @@
 export { DEFAULT_MINISIGN_PUBLIC_KEY, verifyMinisign } from './minisign.js';
 export { lookupSha256 } from './checksums.js';
 export { resolveReleaseAssetBundle } from './assets.js';
-export { planArchiveExtraction } from './extractPlan.js';
+export {
+  extractArchivePayloadToDirectory,
+  inspectTarArchiveEntries,
+} from './archiveExtraction.js';
 export { downloadVerifiedReleaseAssetBundle } from './verifiedDownload.js';
 export { fetchGitHubLatestRelease, fetchGitHubReleaseByTag, fetchFirstGitHubReleaseByTags } from './github.js';
 export {

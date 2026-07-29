@@ -2,11 +2,11 @@ import {
   copyFileSync,
   type Dirent,
   existsSync,
-  linkSync,
   lstatSync,
   mkdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -15,14 +15,26 @@ import {
   unlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createRequire } from 'node:module';
-import { basename, dirname, extname, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import {
+  assertResolvedRuntimeDependencyMatchesDeclaration,
+  collectExternalRuntimeDependencies,
+  copyDirDereferenceContainedSync,
+  parsePackageNameSegments,
+  publishStagedDirectoryMountedSync,
+  resolveInstalledRuntimePackage,
+  vendorRuntimeDependencyTree as vendorRuntimeDependencyTreeCanonical,
+} from '../../workspaceRuntimeDependencies.mjs';
 
 const PLUGINS_PACKAGE_PREFIX = '@happier-dev/plugins-';
 const INTERNAL_PACKAGE_PREFIX = '@happier-dev/';
 
 type ReaddirWithFileTypesSync = (path: string) => Dirent[];
+type ResolvedPackageValidator = (resolved: Readonly<{
+  packageName: string;
+  packageDir: string;
+  packageJsonPath: string;
+}>) => void;
 
 export function findRepoRoot(startDir: string): string {
   let dir = startDir;
@@ -190,6 +202,12 @@ function resetDir(path: string): void {
   mkdirSync(path, { recursive: true });
 }
 
+function removeEmptyDirSync(path: string): void {
+  if (existsSync(path) && readdirSync(path).length === 0) {
+    rmSync(path, { recursive: true });
+  }
+}
+
 export function atomicReplaceDirSync(params: Readonly<{
   destDir: string;
   buildInto: (tempDir: string) => void;
@@ -231,44 +249,23 @@ export function atomicReplaceDirSync(params: Readonly<{
     params.buildInto(tempDir);
 
     if (params.preserveDestinationPath === true && exists(params.destDir)) {
-      const rollbackEntries: LiveReconciliationRollbackEntry[] = [];
-      let rollbackFailed = false;
       try {
-        reconcileStagedDirectoryIntoLiveDirectorySync({
+        publishStagedDirectoryMountedSync({
           stagedDir: tempDir,
           liveDir: params.destDir,
           rollbackDir: backupDir,
-          rollbackEntries,
-          exists,
-          lstat,
-          mkdir,
-          readDir,
-          rename,
-          rm,
           pruneStale: params.pruneStale !== false,
+          fsOps: {
+            existsSync: exists,
+            lstatSync: lstat,
+            mkdirSync: mkdir,
+            readdirSync: readDir,
+            renameSync: rename,
+            rmSync: rm,
+          },
         });
-      } catch (error) {
-        try {
-          rollbackLiveDirectoryReconciliationSync({
-            rollbackEntries,
-            exists,
-            mkdir,
-            rename,
-            rm,
-          });
-        } catch (rollbackError) {
-          rollbackFailed = true;
-          throw new AggregateError(
-            [error, rollbackError],
-            `Failed to publish and roll back live directory: ${params.destDir}`,
-          );
-        }
-        throw error;
       } finally {
         rmDirSafeSync(tempDir, { rmSyncImpl: rm });
-        if (!rollbackFailed) {
-          rmDirSafeSync(backupDir, { rmSyncImpl: rm });
-        }
       }
       return;
     }
@@ -336,232 +333,6 @@ export function atomicReplaceDirSync(params: Readonly<{
   }
 }
 
-type LiveReconciliationRollbackEntry = {
-  livePath: string;
-  backupPath: string | null;
-  mutated: boolean;
-};
-
-function recordLivePathForRollbackSync(params: Readonly<{
-  livePath: string;
-  liveStats: ReturnType<typeof lstatSync> | null;
-  rollbackDir: string;
-  rollbackEntries: LiveReconciliationRollbackEntry[];
-  exists: typeof existsSync;
-  lstat: typeof lstatSync;
-  mkdir: typeof mkdirSync;
-  readDir: ReaddirWithFileTypesSync;
-}>): LiveReconciliationRollbackEntry {
-  const backupPath = params.liveStats
-    ? resolve(params.rollbackDir, `entry-${params.rollbackEntries.length}`)
-    : null;
-
-  if (backupPath) {
-    if (params.liveStats?.isFile()) {
-      params.mkdir(dirname(backupPath), { recursive: true });
-      try {
-        // The rollback directory is a sibling on the same filesystem. A hard link preserves the
-        // old inode without copying package payload bytes or ever unmounting the live path.
-        linkSync(params.livePath, backupPath);
-      } catch {
-        copyFileSync(params.livePath, backupPath);
-      }
-    } else {
-      copyDirSafeSync(params.livePath, backupPath, {
-        existsSyncImpl: params.exists,
-        lstatSyncImpl: params.lstat,
-        mkdirSyncImpl: params.mkdir,
-        readdirSyncImpl: params.readDir,
-      });
-    }
-  }
-
-  const entry = {
-    livePath: params.livePath,
-    backupPath,
-    mutated: false,
-  };
-  params.rollbackEntries.push(entry);
-  return entry;
-}
-
-function rollbackLiveDirectoryReconciliationSync(params: Readonly<{
-  rollbackEntries: readonly LiveReconciliationRollbackEntry[];
-  exists: typeof existsSync;
-  mkdir: typeof mkdirSync;
-  rename: typeof renameSync;
-  rm: typeof rmSync;
-}>): void {
-  for (let index = params.rollbackEntries.length - 1; index >= 0; index -= 1) {
-    const entry = params.rollbackEntries[index];
-    if (!entry.mutated) continue;
-    rmDirSafeSync(entry.livePath, { rmSyncImpl: params.rm });
-    if (!entry.backupPath || !params.exists(entry.backupPath)) continue;
-
-    params.mkdir(dirname(entry.livePath), { recursive: true });
-    renameLivePathWithRetry({
-      sourcePath: entry.backupPath,
-      targetPath: entry.livePath,
-      rename: params.rename,
-    });
-  }
-}
-
-function reconcileStagedDirectoryIntoLiveDirectorySync(params: Readonly<{
-  stagedDir: string;
-  liveDir: string;
-  rollbackDir: string;
-  rollbackEntries: LiveReconciliationRollbackEntry[];
-  exists: typeof existsSync;
-  lstat: typeof lstatSync;
-  mkdir: typeof mkdirSync;
-  readDir: ReaddirWithFileTypesSync;
-  rename: typeof renameSync;
-  rm: typeof rmSync;
-  pruneStale: boolean;
-  deferredRemovals?: string[];
-}>): void {
-  const deferredRemovals = params.deferredRemovals ?? [];
-  const ownsDeferredRemovals = params.deferredRemovals === undefined;
-  params.mkdir(params.liveDir, { recursive: true });
-
-  const stagedEntries = params.readDir(params.stagedDir).sort((left, right) => {
-    if (left.name === 'package.json') return 1;
-    if (right.name === 'package.json') return -1;
-    return left.name.localeCompare(right.name);
-  });
-  const stagedNames = new Set(stagedEntries.map((entry) => entry.name));
-
-  for (const entry of stagedEntries) {
-    const stagedPath = resolve(params.stagedDir, entry.name);
-    const livePath = resolve(params.liveDir, entry.name);
-    let liveStats: ReturnType<typeof lstatSync> | null = null;
-    if (params.exists(livePath)) {
-      try {
-        liveStats = params.lstat(livePath);
-      } catch (error) {
-        if (!isMissingPathError(error)) throw error;
-      }
-    }
-
-    if (entry.isDirectory()) {
-      if (liveStats?.isDirectory()) {
-        reconcileStagedDirectoryIntoLiveDirectorySync({
-          ...params,
-          stagedDir: stagedPath,
-          liveDir: livePath,
-          deferredRemovals,
-        });
-        continue;
-      }
-
-      const rollbackEntry = recordLivePathForRollbackSync({
-        livePath,
-        liveStats,
-        rollbackDir: params.rollbackDir,
-        rollbackEntries: params.rollbackEntries,
-        exists: params.exists,
-        lstat: params.lstat,
-        mkdir: params.mkdir,
-        readDir: params.readDir,
-      });
-      if (liveStats) {
-        rollbackEntry.mutated = true;
-        rmDirSafeSync(livePath, { rmSyncImpl: params.rm });
-      }
-      params.rename(stagedPath, livePath);
-      rollbackEntry.mutated = true;
-      continue;
-    }
-
-    if (entry.isFile() && liveStats?.isFile() && fileContentsMatch(stagedPath, livePath)) {
-      rmDirSafeSync(stagedPath, { rmSyncImpl: params.rm });
-      continue;
-    }
-
-    const rollbackEntry = recordLivePathForRollbackSync({
-      livePath,
-      liveStats,
-      rollbackDir: params.rollbackDir,
-      rollbackEntries: params.rollbackEntries,
-      exists: params.exists,
-      lstat: params.lstat,
-      mkdir: params.mkdir,
-      readDir: params.readDir,
-    });
-
-    if (liveStats?.isDirectory()) {
-      rollbackEntry.mutated = true;
-      rmDirSafeSync(livePath, { rmSyncImpl: params.rm });
-    }
-
-    // The staged and live paths share a filesystem. Renaming a file over its predecessor gives
-    // readers either the complete old file or the complete new file, never a truncated copy.
-    renameLivePathWithRetry({
-      sourcePath: stagedPath,
-      targetPath: livePath,
-      rename: params.rename,
-    });
-    rollbackEntry.mutated = true;
-  }
-
-  if (params.pruneStale) {
-    for (const liveEntry of params.readDir(params.liveDir)) {
-      if (stagedNames.has(liveEntry.name)) continue;
-      deferredRemovals.push(resolve(params.liveDir, liveEntry.name));
-    }
-  }
-
-  if (ownsDeferredRemovals) {
-    // Install every target first, atomically publish the root package.json last, and only then
-    // prune paths referenced by the previous manifest. This keeps concurrent Node resolvers on
-    // either a complete old package view or a complete new one throughout a source-dev refresh.
-    for (const stalePath of deferredRemovals) {
-      let staleStats: ReturnType<typeof lstatSync> | null = null;
-      if (params.exists(stalePath)) {
-        try {
-          staleStats = params.lstat(stalePath);
-        } catch (error) {
-          if (!isMissingPathError(error)) throw error;
-        }
-      }
-      const rollbackEntry = recordLivePathForRollbackSync({
-        livePath: stalePath,
-        liveStats: staleStats,
-        rollbackDir: params.rollbackDir,
-        rollbackEntries: params.rollbackEntries,
-        exists: params.exists,
-        lstat: params.lstat,
-        mkdir: params.mkdir,
-        readDir: params.readDir,
-      });
-      rollbackEntry.mutated = true;
-      rmDirSafeSync(stalePath, { rmSyncImpl: params.rm });
-    }
-  }
-}
-
-function renameLivePathWithRetry(params: Readonly<{
-  sourcePath: string;
-  targetPath: string;
-  rename: typeof renameSync;
-  retries?: number;
-  delayMs?: number;
-}>): void {
-  const retries = Math.max(0, Number.isFinite(params.retries) ? Number(params.retries) : 5);
-  const delayMs = Math.max(0, Number.isFinite(params.delayMs) ? Number(params.delayMs) : 25);
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      params.rename(params.sourcePath, params.targetPath);
-      return;
-    } catch (error) {
-      if (!isRetryableRenameError(error) || attempt === retries) throw error;
-      sleepSync(delayMs);
-    }
-  }
-}
-
 function copyIfExists(src: string, dest: string): boolean {
   if (!existsSync(src)) return false;
   mkdirSync(dirname(dest), { recursive: true });
@@ -576,6 +347,7 @@ export function copyDirSafeSync(
     recursive?: boolean;
     force?: boolean;
     dereference?: boolean;
+    dereferenceRootDir?: string;
     retries?: number;
     delayMs?: number;
     copyFileSyncImpl?: typeof copyFileSync;
@@ -583,6 +355,7 @@ export function copyDirSafeSync(
     lstatSyncImpl?: typeof lstatSync;
     mkdirSyncImpl?: typeof mkdirSync;
     readlinkSyncImpl?: typeof readlinkSync;
+    realpathSyncImpl?: typeof realpathSync;
     readdirSyncImpl?: ReaddirWithFileTypesSync;
     statSyncImpl?: typeof statSync;
     symlinkSyncImpl?: typeof symlinkSync;
@@ -600,19 +373,87 @@ export function copyDirSafeSync(
     lstatSyncImpl = lstatSync,
     mkdirSyncImpl = mkdirSync,
     readlinkSyncImpl = readlinkSync,
+    realpathSyncImpl = realpathSync,
     statSyncImpl = statSync,
     symlinkSyncImpl = symlinkSync,
     unlinkSyncImpl = unlinkSync,
   } = opts;
   const readDirWithFileTypes = opts.readdirSyncImpl ?? ((path: string) => readdirSync(path, { withFileTypes: true }));
+  const maxAttempts = Math.max(1, Number.isFinite(retries) ? retries + 1 : 1);
+  const usesInjectedFileSystem = [
+    opts.copyFileSyncImpl,
+    opts.existsSyncImpl,
+    opts.lstatSyncImpl,
+    opts.mkdirSyncImpl,
+    opts.readlinkSyncImpl,
+    opts.realpathSyncImpl,
+    opts.readdirSyncImpl,
+    opts.statSyncImpl,
+    opts.symlinkSyncImpl,
+    opts.unlinkSyncImpl,
+  ].some((implementation) => implementation !== undefined);
+  if (dereference && recursive && force && !usesInjectedFileSystem) {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        copyDirDereferenceContainedSync({
+          sourceDir: srcDir,
+          destDir,
+          dereferenceRootDir: opts.dereferenceRootDir ?? srcDir,
+        });
+        return;
+      } catch (error) {
+        if (!isRetryableCopyError(error) || attempt === maxAttempts - 1) throw error;
+        sleepSync(delayMs);
+      }
+    }
+  }
+  const physicalDereferenceRoot = dereference
+    ? realpathSyncImpl(opts.dereferenceRootDir ?? srcDir)
+    : '';
 
-  const copyPath = (sourcePath: string, targetPath: string): void => {
-    const sourceStats = dereference ? statSyncImpl(sourcePath) : lstatSyncImpl(sourcePath);
+  const copyPath = (
+    sourcePath: string,
+    targetPath: string,
+    activePhysicalDirectories: ReadonlySet<string>,
+  ): void => {
+    const sourceLstat = lstatSyncImpl(sourcePath);
+    if (dereference && sourceLstat.isSymbolicLink()) {
+      const resolvedTargetPath = realpathSyncImpl(sourcePath);
+      const relativeTargetPath = relative(physicalDereferenceRoot, resolvedTargetPath);
+      if (
+        relativeTargetPath === '..'
+        || relativeTargetPath.startsWith(`..${sep}`)
+        || isAbsolute(relativeTargetPath)
+      ) {
+        throw new Error(
+          `Dereferenced symlink target escapes copy source root: `
+          + `${sourcePath} -> ${resolvedTargetPath} (root: ${physicalDereferenceRoot})`,
+        );
+      }
+    }
+    const sourceStats = dereference ? statSyncImpl(sourcePath) : sourceLstat;
     if (sourceStats.isDirectory()) {
       if (!recursive && sourcePath !== srcDir) return;
+      let nextActivePhysicalDirectories = activePhysicalDirectories;
+      if (dereference) {
+        const physicalSourceDirectory = realpathSyncImpl(sourcePath);
+        if (activePhysicalDirectories.has(physicalSourceDirectory)) {
+          throw new Error(
+            `Dereferenced directory symlink cycle detected while copying: ${sourcePath} (${physicalSourceDirectory})`,
+          );
+        }
+        nextActivePhysicalDirectories = new Set([
+          ...activePhysicalDirectories,
+          physicalSourceDirectory,
+        ]);
+      }
       mkdirSyncImpl(targetPath, { recursive: true });
       for (const entry of readDirWithFileTypes(sourcePath)) {
-        copyPath(resolve(sourcePath, entry.name), resolve(targetPath, entry.name));
+        copyPath(
+          resolve(sourcePath, entry.name),
+          resolve(targetPath, entry.name),
+          nextActivePhysicalDirectories,
+        );
       }
       return;
     }
@@ -630,10 +471,9 @@ export function copyDirSafeSync(
     copyFileSyncImpl(sourcePath, targetPath);
   };
 
-  const maxAttempts = Math.max(1, Number.isFinite(retries) ? retries + 1 : 1);
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      copyPath(srcDir, destDir);
+      copyPath(srcDir, destDir, new Set());
       return;
     } catch (error) {
       if (!isRetryableCopyError(error) || attempt === maxAttempts - 1) throw error;
@@ -721,6 +561,25 @@ function collectWorkspacePackageReferencedFiles(rawPackageJson: any): Set<string
   return referencedFiles;
 }
 
+function collectWorkspacePackageDeclaredFileEntries(rawPackageJson: any): string[] {
+  if (rawPackageJson?.files === undefined) return [];
+  if (!Array.isArray(rawPackageJson.files) || rawPackageJson.files.some((entry: unknown) => typeof entry !== 'string')) {
+    throw new Error('Bundled workspace package files must be an array of exact relative paths');
+  }
+  return [...new Set(rawPackageJson.files as string[])].filter((entry) => {
+    if (
+      !entry
+      || entry.includes('\\')
+      || entry.startsWith('/')
+      || entry.split('/').some((segment) => !segment || segment === '.' || segment === '..')
+      || /[*?{}[\]]/u.test(entry)
+    ) {
+      throw new Error(`Bundled workspace package file must be an exact relative path: '${entry}'`);
+    }
+    return entry !== 'package.json' && entry !== 'dist' && !entry.startsWith('dist/');
+  });
+}
+
 function copyBundledWorkspacePackageContents(params: Readonly<{
   srcDir: string;
   tempDir: string;
@@ -730,7 +589,9 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
   includeFiles?: string[];
 }>): void {
   resetDir(params.tempDir);
-  copyDirSafeSync(params.distDir, resolve(params.tempDir, 'dist'));
+  const bundledDistDir = resolve(params.tempDir, 'dist');
+  copyDirSafeSync(params.distDir, bundledDistDir);
+  removeTypeScriptIncrementalMetadata(bundledDistDir);
   writeJson(resolve(params.tempDir, 'package.json'), sanitizeBundledPackageJson(params.rawPackageJson));
 
   const files = params.includeFiles ?? ['README.md'];
@@ -739,7 +600,26 @@ function copyBundledWorkspacePackageContents(params: Readonly<{
   }
 
   for (const relativePath of [...params.referencedFiles].sort((left, right) => left.localeCompare(right))) {
-    copyIfExists(resolve(params.srcDir, relativePath), resolve(params.tempDir, relativePath));
+    const targetPath = resolve(params.tempDir, relativePath);
+    const relativeTargetPath = relative(params.tempDir, targetPath);
+    if (
+      relativeTargetPath === '..'
+      || relativeTargetPath.startsWith(`..${sep}`)
+      || isAbsolute(relativeTargetPath)
+    ) {
+      throw new Error(`Bundled workspace package referenced file escapes the package root: '${relativePath}'`);
+    }
+    // package.json is generated from the sanitized manifest above. An explicit package.json export
+    // must remain available, but copying its source target would restore scripts, dev dependencies,
+    // and internal workspace edges that the artifact boundary intentionally removed.
+    if (targetPath === resolve(params.tempDir, 'package.json')) continue;
+    copyIfExists(resolve(params.srcDir, relativePath), targetPath);
+  }
+
+  for (const relativePath of collectWorkspacePackageDeclaredFileEntries(params.rawPackageJson)) {
+    if (!copyIfExists(resolve(params.srcDir, relativePath), resolve(params.tempDir, relativePath))) {
+      throw new Error(`Bundled workspace package declared file is missing: '${relativePath}'`);
+    }
   }
 }
 
@@ -749,6 +629,7 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
   destDir: string;
   includeFiles?: string[];
   resolveFromPackageJsonPath?: string;
+  dereferenceRootDir?: string;
   preserveDestinationPath?: boolean;
   pruneStale?: boolean;
 }>): void {
@@ -768,13 +649,20 @@ export function bundleWorkspacePackageWithRuntimeDependencies(params: Readonly<{
         referencedFiles,
         includeFiles: params.includeFiles,
       });
+      const destNodeModulesDir = resolve(tempDir, 'node_modules');
       vendorRuntimeDependencyTree({
         packageJsonPath: packageDetails.srcPackageJsonPath,
         resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
-        destNodeModulesDir: resolve(tempDir, 'node_modules'),
+        destNodeModulesDir,
+        dereferenceRootDir: params.dereferenceRootDir,
       });
+      if (existsSync(destNodeModulesDir) && readdirSync(destNodeModulesDir).length === 0) {
+        rmSync(destNodeModulesDir, { recursive: true });
+      }
     },
   });
+
+  removeEmptyDirSync(resolve(params.destDir, 'node_modules'));
 }
 
 export function bundleWorkspacePackagesWithRuntimeDependencies(params: Readonly<{
@@ -785,6 +673,7 @@ export function bundleWorkspacePackagesWithRuntimeDependencies(params: Readonly<
     destDir: string;
     includeFiles?: string[];
     resolveFromPackageJsonPath?: string;
+    dereferenceRootDir?: string;
   }>;
 }>): void {
   const publicationMode = params.publicationMode ?? 'live';
@@ -815,6 +704,7 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
   packageName: string;
   srcDir: string;
   destDir: string;
+  dereferenceRootDir: string;
 }> {
   const hostPackageJsonPath = resolve(params.hostPackageDir, 'package.json');
   if (!existsSync(hostPackageJsonPath)) {
@@ -843,6 +733,7 @@ export function resolveWorkspaceBundlesFromPackageJson(params: Readonly<{
       packageName,
       srcDir: resolveWorkspaceSourceDir({ repoRoot: params.repoRoot, packageName }),
       destDir: resolve(params.hostPackageDir, 'node_modules', ...packageName.split('/')),
+      dereferenceRootDir: params.repoRoot,
     };
   });
 }
@@ -1043,10 +934,22 @@ function fileContentsMatch(leftPath: string, rightPath: string): boolean {
   }
 }
 
+function isTypeScriptIncrementalMetadataPath(relativePath: string): boolean {
+  return relativePath.replace(/\\/g, '/').endsWith('.tsbuildinfo');
+}
+
+function removeTypeScriptIncrementalMetadata(rootDir: string): void {
+  for (const relativePath of collectRelativeRegularFilePaths(rootDir)) {
+    if (isTypeScriptIncrementalMetadataPath(relativePath)) {
+      rmSync(resolve(rootDir, relativePath), { force: true });
+    }
+  }
+}
+
 function isRuntimePackageContentPath(relativePath: string): boolean {
   const normalized = relativePath.replace(/\\/g, '/');
   return !(
-    normalized.endsWith('.tsbuildinfo')
+    isTypeScriptIncrementalMetadataPath(normalized)
     || normalized.endsWith('.d.ts')
     || normalized.endsWith('.d.ts.map')
     || normalized.endsWith('.map')
@@ -1068,7 +971,21 @@ function hasBundledWorkspaceSourceContentParity(
   }
 
   const expectedOutputPaths = [...collectWorkspacePackageReferencedFiles(workspacePackageJson)]
-    .filter(isRuntimePackageContentPath);
+    .filter((relativePath) =>
+      relativePath.replace(/\\/g, '/') !== 'package.json'
+      && isRuntimePackageContentPath(relativePath),
+    );
+  for (const declaredEntry of collectWorkspacePackageDeclaredFileEntries(workspacePackageJson)) {
+    const sourcePath = resolve(workspacePackageDir, declaredEntry);
+    if (!existsSync(sourcePath)) return false;
+    if (statSync(sourcePath).isDirectory()) {
+      expectedOutputPaths.push(
+        ...collectRelativeRegularFilePaths(sourcePath, declaredEntry).filter(isRuntimePackageContentPath),
+      );
+    } else if (isRuntimePackageContentPath(declaredEntry)) {
+      expectedOutputPaths.push(declaredEntry);
+    }
+  }
   if (expectedOutputPaths.length === 0) expectedOutputPaths.push('dist/index.js');
 
   for (const relPath of expectedOutputPaths) {
@@ -1117,7 +1034,7 @@ function hasBundledWorkspaceRuntimeDependencyTreeHealthy(
   }
 
   const packageDir = dirname(packageJsonPath);
-  const deps = collectExternalRuntimeDepNamesFromPackageJson(pkg);
+  const deps = collectExternalRuntimeDependencies(pkg);
 
   for (const dep of deps) {
     const depPackageDir = resolve(packageDir, 'node_modules', ...dep.name.split('/'));
@@ -1129,6 +1046,16 @@ function hasBundledWorkspaceRuntimeDependencyTreeHealthy(
     const depPackageJsonPath = resolve(depPackageDir, 'package.json');
     if (!existsSync(depPackageJsonPath)) {
       if (dep.optional) continue;
+      return false;
+    }
+
+    try {
+      assertResolvedRuntimeDependencyMatchesDeclaration({
+        dependency: dep,
+        resolvedPackageJsonPath: depPackageJsonPath,
+        resolvedPackageJson: readJson(depPackageJsonPath),
+      });
+    } catch {
       return false;
     }
 
@@ -1176,128 +1103,37 @@ export function hasBundledWorkspacePackagesHealthy(params: Readonly<{
   );
 }
 
-function collectExternalRuntimeDepNamesFromPackageJson(packageJson: any): ReadonlyArray<{ name: string; optional: boolean }> {
-  const deps = packageJson?.dependencies ?? {};
-  const optionalDeps = packageJson?.optionalDependencies ?? {};
-
-  const required = Object.keys(deps)
-    .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
-    .map((name) => ({ name, optional: false }));
-  const optional = Object.keys(optionalDeps)
-    .filter((name) => typeof name === 'string' && !name.startsWith('@happier-dev/'))
-    .map((name) => ({ name, optional: true }));
-
-  return [...required, ...optional];
-}
-
-function resolveInstalledPackage(params: Readonly<{ require: NodeRequire; packageName: string }>): Readonly<{
-  packageDir: string;
-  packageJsonPath: string;
-  packageJson: any;
-}> {
-  const searchPaths = params.require.resolve.paths(params.packageName) ?? [];
-  let aliasInstalledPackage:
-    | Readonly<{
-        packageDir: string;
-        packageJsonPath: string;
-        packageJson: any;
-      }>
-    | undefined;
-  for (const searchPath of searchPaths) {
-    const packageJsonPath = resolve(searchPath, ...params.packageName.split('/'), 'package.json');
-    if (!existsSync(packageJsonPath)) continue;
-    const packageJson = readJson(packageJsonPath);
-    if (packageJson?.name === params.packageName) {
-      return {
-        packageDir: dirname(packageJsonPath),
-        packageJsonPath,
-        packageJson,
-      };
-    }
-
-    // npm alias installs keep the alias folder name on disk while package.json preserves
-    // the canonical upstream package name. Vendoring needs the on-disk folder, not an exact
-    // name match, so keep the first directly-installed alias candidate as a fallback.
-    if (!aliasInstalledPackage) {
-      aliasInstalledPackage = {
-        packageDir: dirname(packageJsonPath),
-        packageJsonPath,
-        packageJson,
-      };
-    }
-  }
-
-  if (aliasInstalledPackage) {
-    return aliasInstalledPackage;
-  }
-
-  let resolvedEntry = '';
-  try {
-    resolvedEntry = params.require.resolve(`${params.packageName}/package.json`);
-  } catch {
-    resolvedEntry = params.require.resolve(params.packageName);
-  }
-
-  let dir = dirname(resolvedEntry);
-
-  for (let i = 0; i < 50; i++) {
-    const pkgJsonPath = resolve(dir, 'package.json');
-    if (existsSync(pkgJsonPath)) {
-      const pkgJson = readJson(pkgJsonPath);
-      if (pkgJson?.name === params.packageName) {
-        return { packageDir: dir, packageJsonPath: pkgJsonPath, packageJson: pkgJson };
-      }
-    }
-
-    const parent = resolve(dir, '..');
-    if (parent === dir) break;
-    dir = parent;
-  }
-
-  throw new Error(`Failed to locate installed package.json for ${params.packageName} (resolved: ${resolvedEntry})`);
-}
-
 function vendorRuntimeDependencyTree(params: Readonly<{
   packageJsonPath: string;
   resolveFromPackageJsonPath?: string;
   destNodeModulesDir: string;
   visited?: Set<string>;
+  activeSourcePackageDirs?: ReadonlySet<string>;
+  validateResolvedPackage?: ResolvedPackageValidator;
+  dereferenceRootDir?: string;
 }>): void {
-  const pkgJson = readJson(params.packageJsonPath);
-  const roots = collectExternalRuntimeDepNamesFromPackageJson(pkgJson);
-  const require = createRequire(pathToFileURL(params.resolveFromPackageJsonPath ?? params.packageJsonPath).href);
-
-  const visited = params.visited ?? new Set<string>();
-  mkdirSync(params.destNodeModulesDir, { recursive: true });
-
-  for (const dep of roots) {
-    let resolved: Readonly<{ packageDir: string; packageJsonPath: string }>;
-    try {
-      resolved = resolveInstalledPackage({ require, packageName: dep.name });
-    } catch (error) {
-      if (dep.optional) continue;
-      throw error;
-    }
-
-    const depDestDir = resolve(params.destNodeModulesDir, ...dep.name.split('/'));
-    if (visited.has(depDestDir)) continue;
-    visited.add(depDestDir);
-
-    resetDir(depDestDir);
-    copyDirSafeSync(resolved.packageDir, depDestDir, { dereference: true });
-
-    vendorRuntimeDependencyTree({
-      packageJsonPath: resolved.packageJsonPath,
-      destNodeModulesDir: resolve(depDestDir, 'node_modules'),
-      visited,
-    });
-  }
+  vendorRuntimeDependencyTreeCanonical({
+    ...params,
+    copyResolvedPackage: ({
+      sourcePackageDir,
+      destPackageDir,
+      dereferenceRootDir,
+    }) => {
+      resetDir(destPackageDir);
+      copyDirDereferenceContainedSync({
+        sourceDir: sourcePackageDir,
+        destDir: destPackageDir,
+        dereferenceRootDir,
+      });
+    },
+  });
 }
 
 export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
   srcPackageJsonPath: string;
   resolveFromPackageJsonPath?: string;
   destPackageDir: string;
+  dereferenceRootDir?: string;
 }>): void {
   if (!existsSync(params.srcPackageJsonPath)) {
     throw new Error(`Missing package.json: ${params.srcPackageJsonPath}`);
@@ -1322,19 +1158,45 @@ export function vendorBundledPackageRuntimeDependencies(params: Readonly<{
         packageJsonPath: params.srcPackageJsonPath,
         resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
         destNodeModulesDir: tempNodeModulesDir,
+        dereferenceRootDir: params.dereferenceRootDir,
       });
     },
   });
+  removeEmptyDirSync(destNodeModulesDir);
 }
 
 export function bundleInstalledPackageWithRuntimeDependencies(params: Readonly<{
   packageName: string;
+  declaredSpec?: string;
   resolveFromPackageJsonPath: string;
   destNodeModulesDir: string;
+  validateResolvedPackage?: ResolvedPackageValidator;
+  dereferenceRootDir?: string;
 }>): void {
-  const require = createRequire(pathToFileURL(params.resolveFromPackageJsonPath).href);
-  const resolved = resolveInstalledPackage({ require, packageName: params.packageName });
-  const destPackageDir = resolve(params.destNodeModulesDir, ...params.packageName.split('/'));
+  const resolved = resolveInstalledRuntimePackage({
+    packageName: params.packageName,
+    resolveFromPackageJsonPath: params.resolveFromPackageJsonPath,
+    dereferenceRootDir: params.dereferenceRootDir,
+  });
+  const destPackageDir = resolve(
+    params.destNodeModulesDir,
+    ...parsePackageNameSegments(params.packageName),
+  );
+  params.validateResolvedPackage?.({
+    packageName: params.packageName,
+    packageDir: resolved.packageDir,
+    packageJsonPath: resolved.packageJsonPath,
+  });
+  assertResolvedRuntimeDependencyMatchesDeclaration({
+    dependency: {
+      name: params.packageName,
+      optional: false,
+      declaredSpec: params.declaredSpec ?? '',
+    },
+    resolvedPackageJsonPath: resolved.packageJsonPath,
+    resolvedPackageJson: resolved.packageJson,
+  });
+  const activeSourcePackageDirs = new Set([realpathSync(resolved.packageDir)]);
 
   atomicReplaceDirSync({
     destDir: destPackageDir,
@@ -1342,12 +1204,19 @@ export function bundleInstalledPackageWithRuntimeDependencies(params: Readonly<{
     pruneStale: false,
     buildInto: (tempDir) => {
       resetDir(tempDir);
-      copyDirSafeSync(resolved.packageDir, tempDir, { dereference: true });
+      copyDirDereferenceContainedSync({
+        sourceDir: resolved.packageDir,
+        destDir: tempDir,
+        dereferenceRootDir: params.dereferenceRootDir ?? resolved.packageDir,
+      });
 
       vendorRuntimeDependencyTree({
         packageJsonPath: resolved.packageJsonPath,
         resolveFromPackageJsonPath: resolved.packageJsonPath,
         destNodeModulesDir: resolve(tempDir, 'node_modules'),
+        activeSourcePackageDirs,
+        validateResolvedPackage: params.validateResolvedPackage,
+        dereferenceRootDir: params.dereferenceRootDir,
       });
     },
   });

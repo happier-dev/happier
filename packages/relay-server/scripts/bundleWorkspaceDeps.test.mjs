@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -103,6 +103,16 @@ export function vendorBundledPackageRuntimeDependencies({ srcPackageJsonPath, de
     vendorOne({ repoRoot, name, destNodeModulesDir, seen });
   }
 }
+
+export function bundleWorkspacePackagesWithRuntimeDependencies({ bundles }) {
+  bundleWorkspacePackages({ bundles });
+  for (const bundle of bundles) {
+    vendorBundledPackageRuntimeDependencies({
+      srcPackageJsonPath: resolve(bundle.srcDir, 'package.json'),
+      destPackageDir: bundle.destDir,
+    });
+  }
+}
 `, 'utf8');
 }
 
@@ -115,6 +125,171 @@ test('bundledDependencies are declared in dependencies', () => {
 
   for (const name of bundled) {
     assert.equal(Boolean(deps[name]), true, `Expected ${name} to be declared in dependencies`);
+  }
+});
+
+test('bundleWorkspaceDeps admits resolved workspace bundles before copying source-newer dist', async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happy-relay-bundle-workspace-deps-owner-admission-'));
+  try {
+    writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
+    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+
+    const relayDir = resolve(repoRoot, 'packages', 'relay-server');
+    const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
+    const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
+    mkdirSync(relayDir, { recursive: true });
+    mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(releaseRuntimeDir, 'src'), { recursive: true });
+    mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
+
+    writeJson(resolve(relayDir, 'package.json'), {
+      name: '@happier-dev/relay-server',
+      private: true,
+      bundledDependencies: ['@happier-dev/release-runtime'],
+      dependencies: { '@happier-dev/release-runtime': '0.0.0' },
+    });
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': './dist/index.js' },
+    });
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+    writeCliCommonWorkspacesStub(cliCommonDir);
+    writeJson(resolve(releaseRuntimeDir, 'package.json'), {
+      name: '@happier-dev/release-runtime',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': './dist/index.js' },
+    });
+    const sourcePath = resolve(releaseRuntimeDir, 'src', 'index.ts');
+    const distPath = resolve(releaseRuntimeDir, 'dist', 'index.js');
+    writeFileSync(sourcePath, 'export const generation = "new";\n', 'utf8');
+    writeFileSync(distPath, 'export const generation = "old";\n', 'utf8');
+    const now = Date.now();
+    utimesSync(distPath, new Date(now - 10_000), new Date(now - 10_000));
+    utimesSync(sourcePath, new Date(now), new Date(now));
+
+    let admittedPackageNames = null;
+    let admissionEnv = null;
+    let admissionForce = null;
+    await bundleWorkspaceDeps({
+      repoRoot,
+      relayDir,
+      env: { HAPPIER_WORKSPACE_DIST_OUTPUT_DIR: '/parent-stage' },
+      ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
+        admittedPackageNames = packageNames;
+        admissionEnv = options?.env;
+        admissionForce = options?.force;
+        writeFileSync(distPath, 'export const generation = "new";\n', 'utf8');
+        return { ok: true, built: ['@happier-dev/release-runtime'], skipped: [] };
+      },
+    });
+
+    assert.equal(
+      readFileSync(
+        resolve(relayDir, 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
+        'utf8',
+      ),
+      'export const generation = "new";\n',
+    );
+    assert.deepEqual(admittedPackageNames, ['@happier-dev/release-runtime']);
+    assert.match(String(admissionEnv?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? ''), /"path"/);
+    assert.equal(admissionEnv?.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, undefined);
+    assert.equal(admissionForce, undefined);
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
+test('bundleWorkspaceDeps artifact mode rebuilds newer stale workspace output from current source', async () => {
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happy-relay-bundle-workspace-deps-artifact-admission-'));
+  try {
+    writeJson(resolve(repoRoot, 'package.json'), { name: 'repo', private: true });
+    writeFileSync(resolve(repoRoot, 'yarn.lock'), '# lock\n', 'utf8');
+
+    const relayDir = resolve(repoRoot, 'packages', 'relay-server');
+    const cliCommonDir = resolve(repoRoot, 'packages', 'cli-common');
+    const releaseRuntimeDir = resolve(repoRoot, 'packages', 'release-runtime');
+    mkdirSync(relayDir, { recursive: true });
+    mkdirSync(resolve(cliCommonDir, 'dist'), { recursive: true });
+    mkdirSync(resolve(releaseRuntimeDir, 'src'), { recursive: true });
+    mkdirSync(resolve(releaseRuntimeDir, 'dist'), { recursive: true });
+
+    writeJson(resolve(relayDir, 'package.json'), {
+      name: '@happier-dev/relay-server',
+      private: true,
+      bundledDependencies: ['@happier-dev/release-runtime'],
+      dependencies: { '@happier-dev/release-runtime': '0.0.0' },
+    });
+    writeJson(resolve(cliCommonDir, 'package.json'), {
+      name: '@happier-dev/cli-common',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': './dist/index.js' },
+    });
+    writeFileSync(resolve(cliCommonDir, 'dist', 'index.js'), 'export {};\n', 'utf8');
+    writeCliCommonWorkspacesStub(cliCommonDir);
+    writeJson(resolve(releaseRuntimeDir, 'package.json'), {
+      name: '@happier-dev/release-runtime',
+      version: '0.0.0',
+      type: 'module',
+      main: './dist/index.js',
+      exports: { '.': './dist/index.js' },
+    });
+    const sourcePath = resolve(releaseRuntimeDir, 'src', 'index.ts');
+    const distPath = resolve(releaseRuntimeDir, 'dist', 'index.js');
+    writeFileSync(sourcePath, 'export const generation = "current";\n', 'utf8');
+    writeFileSync(distPath, 'export const generation = "stale";\n', 'utf8');
+    const now = Date.now();
+    utimesSync(sourcePath, new Date(now), new Date(now));
+    utimesSync(distPath, new Date(now + 10_000), new Date(now + 10_000));
+
+    const admissionCalls = [];
+    await bundleWorkspaceDeps({
+      repoRoot,
+      relayDir,
+      publicationMode: 'artifact',
+      ensureWorkspacePackagesBuiltByName: async (_root, packageNames, options) => {
+        admissionCalls.push({ packageNames, force: options?.force });
+        if (options?.force === true && packageNames.includes('@happier-dev/release-runtime')) {
+          writeFileSync(distPath, 'export const generation = "current";\n', 'utf8');
+        }
+        return { ok: true, built: options?.force === true ? packageNames : [], skipped: [] };
+      },
+    });
+
+    assert.equal(
+      readFileSync(
+        resolve(relayDir, 'node_modules', '@happier-dev', 'release-runtime', 'dist', 'index.js'),
+        'utf8',
+      ),
+      'export const generation = "current";\n',
+    );
+    assert.equal(
+      admissionCalls.some(
+        ({ packageNames, force }) => (
+          packageNames.length === 1
+          && packageNames[0] === '@happier-dev/cli-common'
+          && force === true
+        ),
+      ),
+      true,
+    );
+    assert.equal(
+      admissionCalls.some(
+        ({ packageNames, force }) => (
+          packageNames.includes('@happier-dev/release-runtime')
+          && force === true
+        ),
+      ),
+      true,
+    );
+  } finally {
+    rmSync(repoRoot, { recursive: true, force: true });
   }
 });
 
