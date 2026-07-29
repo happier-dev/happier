@@ -151,7 +151,7 @@ export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
         case 'minimax':
             return {
                 setupGuideUrl: 'https://platform.minimax.io/docs/api-reference/api-overview',
-                description: 'MiniMax M3 API proxied through Anthropic- and OpenAI-compatible interfaces (global endpoint)',
+                description: 'MiniMax M3 through the Anthropic-compatible endpoint (global). Use a key issued on api.minimax.io — China keys are not valid here.',
                 environmentVariables: [
                     {
                         name: 'MINIMAX_BASE_URL',
@@ -160,15 +160,9 @@ export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
                         isSecret: false,
                     },
                     {
-                        name: 'MINIMAX_OPENAI_BASE_URL',
-                        expectedValue: 'https://api.minimax.io/v1',
-                        description: 'MiniMax OpenAI-compatible API endpoint (global)',
-                        isSecret: false,
-                    },
-                    {
                         name: 'MINIMAX_AUTH_TOKEN',
                         expectedValue: '',
-                        description: 'Your MiniMax API key',
+                        description: 'Your MiniMax API key (global account)',
                         isSecret: true,
                     },
                     {
@@ -180,13 +174,25 @@ export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
                     {
                         name: 'MINIMAX_MODEL',
                         expectedValue: 'MiniMax-M3',
-                        description: 'Default model (1M context window; supports text, image, and video input)',
+                        description: 'Default model. M3 is natively 1M context, but the Anthropic-compatible endpoint currently advertises 200K, so Claude Code auto-compacts earlier.',
                         isSecret: false,
                     },
                     {
-                        name: 'MINIMAX_SMALL_FAST_MODEL',
+                        name: 'MINIMAX_OPUS_MODEL',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Model used when the session selects the Opus tier',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_SONNET_MODEL',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Model used when the session selects the Sonnet tier',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_HAIKU_MODEL',
                         expectedValue: 'MiniMax-M2.7',
-                        description: 'Fast model for quick responses',
+                        description: 'Fast model used for background tasks and the Haiku tier',
                         isSecret: false,
                     },
                     {
@@ -198,21 +204,22 @@ export Z_AI_HAIKU_MODEL="GLM-4.5-Air"`,
                 ],
                 shellConfigExample: `# Add to ~/.zshrc or ~/.bashrc:
 export MINIMAX_BASE_URL="https://api.minimax.io/anthropic"
-export MINIMAX_OPENAI_BASE_URL="https://api.minimax.io/v1"
 export MINIMAX_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
 export MINIMAX_API_TIMEOUT_MS="600000"
 export MINIMAX_MODEL="MiniMax-M3"
-export MINIMAX_SMALL_FAST_MODEL="MiniMax-M2.7"
+export MINIMAX_OPUS_MODEL="MiniMax-M3"
+export MINIMAX_SONNET_MODEL="MiniMax-M3"
+export MINIMAX_HAIKU_MODEL="MiniMax-M2.7"
 export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
 
 # Model selection guide:
-# - MiniMax-M3: Default model, best for general tasks (1M context, multimodal)
+# - MiniMax-M3: Default model, best for general tasks (multimodal)
 # - MiniMax-M2.7: Faster, lighter model for quick responses`,
             };
         case 'minimax-cn':
             return {
                 setupGuideUrl: 'https://platform.minimaxi.com/docs/api-reference/api-overview',
-                description: 'MiniMax M3 API proxied through Anthropic- and OpenAI-compatible interfaces (China endpoint)',
+                description: 'MiniMax M3 through the Anthropic-compatible endpoint (China). Use a key issued on api.minimaxi.com — global keys are not valid here.',
                 environmentVariables: [
                     {
                         name: 'MINIMAX_CN_BASE_URL',
@@ -221,15 +228,9 @@ export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
                         isSecret: false,
                     },
                     {
-                        name: 'MINIMAX_CN_OPENAI_BASE_URL',
-                        expectedValue: 'https://api.minimaxi.com/v1',
-                        description: 'MiniMax OpenAI-compatible API endpoint (China)',
-                        isSecret: false,
-                    },
-                    {
                         name: 'MINIMAX_CN_AUTH_TOKEN',
                         expectedValue: '',
-                        description: 'Your MiniMax API key',
+                        description: 'Your MiniMax API key (China account)',
                         isSecret: true,
                     },
                     {
@@ -241,13 +242,25 @@ export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
                     {
                         name: 'MINIMAX_CN_MODEL',
                         expectedValue: 'MiniMax-M3',
-                        description: 'Default model (1M context window; supports text, image, and video input)',
+                        description: 'Default model. M3 is natively 1M context, but the Anthropic-compatible endpoint currently advertises 200K, so Claude Code auto-compacts earlier.',
                         isSecret: false,
                     },
                     {
-                        name: 'MINIMAX_CN_SMALL_FAST_MODEL',
+                        name: 'MINIMAX_CN_OPUS_MODEL',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Model used when the session selects the Opus tier',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CN_SONNET_MODEL',
+                        expectedValue: 'MiniMax-M3',
+                        description: 'Model used when the session selects the Sonnet tier',
+                        isSecret: false,
+                    },
+                    {
+                        name: 'MINIMAX_CN_HAIKU_MODEL',
                         expectedValue: 'MiniMax-M2.7',
-                        description: 'Fast model for quick responses',
+                        description: 'Fast model used for background tasks and the Haiku tier',
                         isSecret: false,
                     },
                     {
@@ -259,11 +272,12 @@ export MINIMAX_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"
                 ],
                 shellConfigExample: `# Add to ~/.zshrc or ~/.bashrc:
 export MINIMAX_CN_BASE_URL="https://api.minimaxi.com/anthropic"
-export MINIMAX_CN_OPENAI_BASE_URL="https://api.minimaxi.com/v1"
 export MINIMAX_CN_AUTH_TOKEN="YOUR_MINIMAX_API_KEY"
 export MINIMAX_CN_API_TIMEOUT_MS="600000"
 export MINIMAX_CN_MODEL="MiniMax-M3"
-export MINIMAX_CN_SMALL_FAST_MODEL="MiniMax-M2.7"
+export MINIMAX_CN_OPUS_MODEL="MiniMax-M3"
+export MINIMAX_CN_SONNET_MODEL="MiniMax-M3"
+export MINIMAX_CN_HAIKU_MODEL="MiniMax-M2.7"
 export MINIMAX_CN_CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1"`,
             };
         case 'openai':
