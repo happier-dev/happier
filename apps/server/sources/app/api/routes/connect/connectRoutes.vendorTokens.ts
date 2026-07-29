@@ -4,9 +4,20 @@ import { type Fastify } from "../../types";
 import { encryptString } from "@/modules/encrypt";
 import { db } from "@/storage/db";
 import { parseIntEnv } from "@/config/env";
-import { isConnectedServiceCredentialMetadataV2 } from "./connectedServicesV2/credentialMetadataV2";
+import {
+    deleteLegacyConnectedServiceVendorToken,
+    mutateLegacyConnectedServiceVendorToken,
+} from "./credentials/mutation";
 import { ConnectedServiceCloudVendorKeySchema } from "@happier-dev/protocol";
 import { collectLegacyConnectedServiceVendorKeysFromRows } from "./legacyConnectedServiceVendors";
+import {
+    listAllQualifiedConnectedAccountsInTx,
+    listQualifiedConnectedAccounts,
+} from "./qualifiedConnectedAccounts/credentialRepository";
+import {
+    resolveLegacyQualifiedConnectedAccountService,
+    resolveLegacyServiceIdForQualifiedConnectedAccountService,
+} from "./qualifiedConnectedAccounts/identity";
 
 function resolveVendorTokenMaxLen(env: NodeJS.ProcessEnv): number {
     return parseIntEnv(env.VENDOR_TOKEN_MAX_LEN, 4096, { min: 256, max: 65536 });
@@ -32,21 +43,15 @@ export function connectVendorTokenRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
 
-        const existing = await db.serviceAccountToken.findUnique({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: request.params.vendor, profileId: "default" } },
-            select: { metadata: true },
+        const encrypted = encryptString(["user", userId, "vendors", request.params.vendor, "token"], request.body.token);
+        const result = await mutateLegacyConnectedServiceVendorToken({
+            accountId: userId,
+            vendor: request.params.vendor,
+            token: encrypted,
         });
-
-        if (existing && isConnectedServiceCredentialMetadataV2(existing.metadata)) {
+        if (result.status === "connected_credential_conflict") {
             return reply.code(409).send({ error: "connect_credential_conflict" });
         }
-
-        const encrypted = encryptString(["user", userId, "vendors", request.params.vendor, "token"], request.body.token);
-        await db.serviceAccountToken.upsert({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: request.params.vendor, profileId: "default" } },
-            update: { updatedAt: new Date(), token: encrypted },
-            create: { accountId: userId, vendor: request.params.vendor, profileId: "default", token: encrypted },
-        });
         reply.send({ success: true });
     });
 
@@ -58,11 +63,17 @@ export function connectVendorTokenRoutes(app: Fastify) {
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const token = await db.serviceAccountToken.findUnique({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: request.params.vendor, profileId: "default" } },
-            select: { id: true },
+        const accounts = await listQualifiedConnectedAccounts({
+            accountId: userId,
+            service: resolveLegacyQualifiedConnectedAccountService(
+                request.params.vendor,
+            ),
         });
-        return reply.send({ hasToken: Boolean(token) });
+        return reply.send({
+            hasToken: accounts.some(
+                (account) => account.ref.accountId === "default",
+            ),
+        });
     });
 
     app.delete("/v1/connect/:vendor", {
@@ -77,18 +88,13 @@ export function connectVendorTokenRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
 
-        const existing = await db.serviceAccountToken.findUnique({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: request.params.vendor, profileId: "default" } },
-            select: { metadata: true },
+        const result = await deleteLegacyConnectedServiceVendorToken({
+            accountId: userId,
+            vendor: request.params.vendor,
         });
-
-        if (existing && isConnectedServiceCredentialMetadataV2(existing.metadata)) {
+        if (result.status === "connected_credential_conflict") {
             return reply.code(409).send({ error: "connect_credential_conflict" });
         }
-
-        await db.serviceAccountToken.deleteMany({
-            where: { accountId: userId, vendor: request.params.vendor, profileId: "default" },
-        });
         reply.send({ success: true });
     });
 
@@ -108,15 +114,27 @@ export function connectVendorTokenRoutes(app: Fastify) {
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const tokens = await db.serviceAccountToken.findMany({
-            where: { accountId: userId, profileId: "default" },
-            select: { vendor: true, profileId: true },
+        const accounts = await listAllQualifiedConnectedAccountsInTx(db, {
+            accountId: userId,
         });
         return reply.send({
-            tokens: collectLegacyConnectedServiceVendorKeysFromRows(tokens).map((vendor) => ({
-                vendor,
-                hasToken: true,
-            })),
+            tokens: collectLegacyConnectedServiceVendorKeysFromRows(
+                accounts.flatMap((account) => {
+                    const vendor =
+                        resolveLegacyServiceIdForQualifiedConnectedAccountService(
+                            account.ref.service,
+                        );
+                    return vendor === null
+                        ? []
+                        : [{
+                            vendor,
+                            profileId: account.ref.accountId,
+                        }];
+                }),
+            ).map((vendor) => ({
+                    vendor,
+                    hasToken: true,
+                })),
         });
     });
 }

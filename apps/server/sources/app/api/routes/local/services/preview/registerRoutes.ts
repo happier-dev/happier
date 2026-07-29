@@ -11,12 +11,18 @@ import {
     type OpenLocalServicePreviewTunnel,
     type ProxyLocalServicePreviewHttpRequestResult,
 } from "@/app/local/services/preview/httpAdapter";
+import type { PeerMediationObservabilityEmitter } from "@/app/api/socket/peer/mediation/observability/events";
 import {
     proxyLocalServicePreviewWebSocketUpgrade,
-    type LocalServicePreviewWebSocketClient,
     type ProxyLocalServicePreviewWebSocketUpgradeInput,
     type ProxyLocalServicePreviewWebSocketUpgradeResult,
 } from "@/app/local/services/preview/websocketAdapter";
+import {
+    createLocalServicePreviewUpgradeClient,
+    type LocalServicePreviewUpgradeSocket,
+    writeLocalServicePreviewUpgradeError,
+} from "@/app/local/services/preview/upgradeClient";
+import { writeLocalServicePreviewDownstream } from "@/app/local/services/preview/downstream";
 import type {
     LocalServicePreviewRuntimeRegistrationInput,
     LocalServicePreviewRuntimeRegistrationResult,
@@ -26,11 +32,16 @@ type PreviewAccessValidationResult =
     | Readonly<{ ok: true }>
     | Readonly<{ ok: false; reasonCode: string }>;
 
+type PreviewAccessExchangeResult =
+    | Readonly<{ ok: true; rawToken: string; expiresAt: number }>
+    | Readonly<{ ok: false; reasonCode: string }>;
+
 export type LocalServicePreviewSessionAccessPurpose = "register" | "proxy" | "unregister";
 
 export type RegisterLocalServicePreviewRoutesOptions = Readonly<{
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     resolvePreviewByHost?: (hostname: string) => LocalServicePreviewResourceV1 | null | undefined;
+    hostOriginBaseDomain?: string | null;
     authorizeSessionAccess?: (input: Readonly<{
         userId: string;
         sessionId: string;
@@ -42,9 +53,17 @@ export type RegisterLocalServicePreviewRoutesOptions = Readonly<{
         sessionId: string;
         machineId: string;
     }>) => PreviewAccessValidationResult;
+    exchangeAccessToken?: (input: Readonly<{
+        previewId: string;
+        rawToken: string | null;
+        sessionId: string;
+        machineId: string;
+    }>) => PreviewAccessExchangeResult;
     registerPreview?: (input: LocalServicePreviewRuntimeRegistrationInput) => LocalServicePreviewRuntimeRegistrationResult;
     unregisterPreview?: (previewId: string) => Readonly<{ ok: true } | { ok: false; reasonCode: string }>;
     openTunnel?: OpenLocalServicePreviewTunnel;
+    observability?: PeerMediationObservabilityEmitter;
+    resolvePreviewAccountId?: (previewId: string) => string | null | undefined;
     featureEnabled?: () => boolean;
     proxyHttp?: (input: Parameters<typeof proxyLocalServicePreviewHttpRequest>[0]) => Promise<ProxyLocalServicePreviewHttpRequestResult>;
     proxyWebSocket?: (input: ProxyLocalServicePreviewWebSocketUpgradeInput) => Promise<ProxyLocalServicePreviewWebSocketUpgradeResult>;
@@ -61,13 +80,19 @@ type RouteRequest = Readonly<{
 
 type RouteReply = {
     code?: (statusCode: number) => RouteReply;
-    header?: (name: string, value: string) => RouteReply;
+    header?: (name: string, value: string | readonly string[]) => RouteReply;
     send?: (payload?: unknown) => unknown;
     raw?: {
-        writeHead?: (statusCode: number, statusMessage: string, headers: Record<string, string>) => void;
-        write?: (chunk: Uint8Array) => void;
+        writeHead?: (statusCode: number, statusMessage: string, headers: Record<string, string | readonly string[]>) => void;
+        write?: (chunk: Uint8Array) => unknown;
         end?: () => void;
         destroy?: (error?: unknown) => void;
+        once?: (event: "close" | "drain" | "error", listener: () => void) => unknown;
+        on?: (event: "close" | "drain" | "error", listener: () => void) => unknown;
+        off?: (event: "close" | "drain" | "error", listener: () => void) => unknown;
+        removeListener?: (event: "close" | "drain" | "error", listener: () => void) => unknown;
+        destroyed?: boolean;
+        writableEnded?: boolean;
     };
 };
 
@@ -77,11 +102,7 @@ type UpgradeRequest = Readonly<{
     rawHeaders?: readonly string[];
 }>;
 
-type UpgradeSocket = {
-    write?: (chunk: Uint8Array) => unknown;
-    end?: () => unknown;
-    destroy?: (error?: unknown) => unknown;
-};
+type UpgradeSocket = LocalServicePreviewUpgradeSocket;
 
 type PreviewTokenMaterial = Readonly<{
     rawToken: string | null;
@@ -95,6 +116,14 @@ const PREVIEW_RESOURCE_ROUTE_PATH = "/v1/local-services/preview/:previewId";
 const PREVIEW_HTTP_METHODS = ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] as const;
 const PREVIEW_UPGRADE_ROUTE_PREFIX = "/v1/local-services/preview/";
 const textEncoder = new TextEncoder();
+
+type AbortableRouteReplyRaw = NonNullable<RouteReply["raw"]> & {
+    on: NonNullable<NonNullable<RouteReply["raw"]>["on"]>;
+};
+
+function isAbortableRouteReplyRaw(raw: RouteReply["raw"]): raw is AbortableRouteReplyRaw {
+    return typeof raw?.on === "function";
+}
 
 function readString(value: unknown): string | null {
     return typeof value === "string" && value.trim().length > 0 ? value : null;
@@ -181,6 +210,19 @@ function normalizeHostname(value: string): string | null {
     }
 }
 
+function escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function hostOriginConstraint(hostOriginBaseDomain: string | null | undefined): RegExp | null {
+    if (!hostOriginBaseDomain) return null;
+    const normalized = normalizeHostname(hostOriginBaseDomain);
+    if (!normalized || normalized.includes("..")) return null;
+    const labels = normalized.split(".");
+    if (labels.length < 2 || labels.some((label) => label.length === 0)) return null;
+    return new RegExp(`^[^.]+\\.${escapeRegExp(normalized)}(?::\\d+)?$`, "iu");
+}
+
 function readHostHeader(headers: Record<string, unknown> | undefined): string | null {
     const rawHost = headers?.host;
     const host = Array.isArray(rawHost) ? rawHost[0] : rawHost;
@@ -264,6 +306,7 @@ function redirectPreviewTokenExchange(reply: RouteReply, target: PreviewHttpRout
 
 type PreviewUpgradeRoute = Readonly<{
     previewId: string;
+    preview?: LocalServicePreviewResourceV1;
     path: string;
     search: string;
     rawToken: string | null;
@@ -298,6 +341,7 @@ function parseHostPreviewUpgradeRoute(
     const rawToken = readPreviewTokenFromUrl(url) ?? readCookieToken(requestHeadersToRecord(request.headers));
     return {
         previewId: preview.previewId,
+        preview,
         path: url.pathname || "/",
         search: serializeUrlSearchWithoutPreviewToken(url),
         rawToken,
@@ -337,7 +381,7 @@ function createResponseSink(reply: RouteReply, setCookie?: string): LocalService
             }
         },
         write(chunk) {
-            reply.raw?.write?.(chunk);
+            return writeLocalServicePreviewDownstream(reply.raw, chunk);
         },
         end() {
             if (reply.raw?.end) {
@@ -352,7 +396,41 @@ function createResponseSink(reply: RouteReply, setCookie?: string): LocalService
     };
 }
 
-function createPreviewHttpRequest(request: RouteRequest, target: PreviewHttpRouteTarget): LocalServicePreviewHttpRequest {
+function createDownstreamAbortSignal(reply: RouteReply): AbortSignal | undefined {
+    const raw = reply.raw;
+    if (!isAbortableRouteReplyRaw(raw)) return undefined;
+    const abortableRaw: AbortableRouteReplyRaw = raw;
+
+    const controller = new AbortController();
+    if (abortableRaw.destroyed && !abortableRaw.writableEnded) {
+        controller.abort();
+        return controller.signal;
+    }
+
+    let cleaned = false;
+    function cleanup(): void {
+        if (cleaned) return;
+        cleaned = true;
+        abortableRaw.off?.("close", abort);
+        abortableRaw.off?.("error", abort);
+        abortableRaw.removeListener?.("close", abort);
+        abortableRaw.removeListener?.("error", abort);
+    }
+    function abort(): void {
+        cleanup();
+        if (!controller.signal.aborted) controller.abort();
+    }
+
+    abortableRaw.on("close", abort);
+    abortableRaw.on("error", abort);
+    return controller.signal;
+}
+
+function createPreviewHttpRequest(
+    request: RouteRequest,
+    target: PreviewHttpRouteTarget,
+    signal?: AbortSignal,
+): LocalServicePreviewHttpRequest {
     return {
         method: request.method ?? "GET",
         path: target.path,
@@ -367,18 +445,20 @@ function createPreviewHttpRequest(request: RouteRequest, target: PreviewHttpRout
             )),
         ),
         body: bodyChunks(request.body),
+        signal,
     };
 }
 
-function sendUpgradeError(socket: UpgradeSocket, statusCode: number, statusMessage: string): void {
-    socket.write?.(textEncoder.encode([
-        `HTTP/1.1 ${statusCode} ${statusMessage}`,
-        "Connection: close",
-        "Content-Length: 0",
-        "",
-        "",
-    ].join("\r\n")));
-    socket.destroy?.();
+function resolveObservabilityAccountId(
+    options: RegisterLocalServicePreviewRoutesOptions,
+    previewId: string,
+): string | undefined {
+    const accountId = options.resolvePreviewAccountId?.(previewId);
+    return typeof accountId === "string" && accountId.trim().length > 0 ? accountId.trim() : undefined;
+}
+
+async function sendUpgradeError(socket: UpgradeSocket, statusCode: number, statusMessage: string): Promise<void> {
+    await writeLocalServicePreviewUpgradeError(socket, statusCode, statusMessage);
 }
 
 function upgradeUrl(request: UpgradeRequest): URL | null {
@@ -415,30 +495,6 @@ function parsePreviewUpgradeRoute(request: UpgradeRequest): PreviewUpgradeRoute 
     };
 }
 
-async function* socketChunks(socket: UpgradeSocket): AsyncIterable<Uint8Array> {
-    const iterable = socket as UpgradeSocket & AsyncIterable<Uint8Array>;
-    if (typeof iterable[Symbol.asyncIterator] === "function") {
-        for await (const chunk of iterable) {
-            yield chunk instanceof Uint8Array ? chunk : textEncoder.encode(String(chunk));
-        }
-    }
-}
-
-function createUpgradeClient(socket: UpgradeSocket): LocalServicePreviewWebSocketClient {
-    return {
-        read: () => socketChunks(socket),
-        write(chunk) {
-            socket.write?.(chunk);
-        },
-        end() {
-            socket.end?.();
-        },
-        destroy(error) {
-            socket.destroy?.(error);
-        },
-    };
-}
-
 function sendError(reply: RouteReply, statusCode: number, error: string, reasonCode: string): void {
     reply.code?.(statusCode).send?.({ error, reasonCode });
 }
@@ -470,6 +526,21 @@ async function handlePreviewHttpRequest(
         return undefined;
     }
 
+    if (target.tokenMaterial.source === "query" && target.tokenMaterial.rawToken) {
+        const exchanged = options.exchangeAccessToken?.({
+            previewId: target.previewId,
+            rawToken: target.tokenMaterial.rawToken,
+            sessionId: target.preview.sessionId,
+            machineId: target.preview.machineId,
+        }) ?? { ok: false as const, reasonCode: "preview_token_exchange_unavailable" };
+        if (!exchanged.ok) {
+            sendError(reply, 401, "preview_access_denied", exchanged.reasonCode);
+            return undefined;
+        }
+        redirectPreviewTokenExchange(reply, target, exchanged.rawToken);
+        return undefined;
+    }
+
     const access = options.validateAccess({
         previewId: target.previewId,
         rawToken: target.tokenMaterial.rawToken,
@@ -481,11 +552,6 @@ async function handlePreviewHttpRequest(
         return undefined;
     }
 
-    if (target.tokenMaterial.source === "query" && target.tokenMaterial.rawToken) {
-        redirectPreviewTokenExchange(reply, target, target.tokenMaterial.rawToken);
-        return undefined;
-    }
-
     const proxyHttp = options.proxyHttp ?? proxyLocalServicePreviewHttpRequest;
     if (!options.openTunnel && !options.proxyHttp) {
         sendError(reply, 503, "preview_transport_unavailable", "pms_tunnel_unavailable");
@@ -494,9 +560,11 @@ async function handlePreviewHttpRequest(
 
     return await proxyHttp({
         preview: target.preview,
-        request: createPreviewHttpRequest(request, target),
+        request: createPreviewHttpRequest(request, target, createDownstreamAbortSignal(reply)),
         response: createResponseSink(reply),
         openTunnel: options.openTunnel as OpenLocalServicePreviewTunnel,
+        observability: options.observability,
+        observabilityAccountId: resolveObservabilityAccountId(options, target.previewId),
     });
 }
 
@@ -509,22 +577,23 @@ async function handlePreviewWebSocketUpgrade(
     const url = upgradeUrl(request);
     if (!url) return;
     const pathModeCandidate = url.pathname.startsWith(PREVIEW_UPGRADE_ROUTE_PREFIX);
-    if (!pathModeCandidate && !parseHostPreviewUpgradeRoute(request, options)) return;
+    const hostRouteCandidate = pathModeCandidate ? null : parseHostPreviewUpgradeRoute(request, options);
+    if (!pathModeCandidate && !hostRouteCandidate) return;
 
     if (options.featureEnabled && !options.featureEnabled()) {
-        sendUpgradeError(socket, 404, "Not Found");
+        await sendUpgradeError(socket, 404, "Not Found");
         return;
     }
 
-    const parsedRoute = parsePreviewUpgradeRoute(request) ?? parseHostPreviewUpgradeRoute(request, options);
+    const parsedRoute = parsePreviewUpgradeRoute(request) ?? hostRouteCandidate;
     if (!parsedRoute) {
-        sendUpgradeError(socket, 400, "Bad Request");
+        await sendUpgradeError(socket, 400, "Bad Request");
         return;
     }
 
-    const preview = options.resolvePreview(parsedRoute.previewId);
+    const preview = parsedRoute.preview ?? options.resolvePreview(parsedRoute.previewId);
     if (!preview) {
-        sendUpgradeError(socket, 404, "Not Found");
+        await sendUpgradeError(socket, 404, "Not Found");
         return;
     }
 
@@ -535,13 +604,13 @@ async function handlePreviewWebSocketUpgrade(
         machineId: preview.machineId,
     });
     if (!access.ok) {
-        sendUpgradeError(socket, 401, "Unauthorized");
+        await sendUpgradeError(socket, 401, "Unauthorized");
         return;
     }
 
     const proxyWebSocket = options.proxyWebSocket ?? proxyLocalServicePreviewWebSocketUpgrade;
     if (!options.openTunnel && !options.proxyWebSocket) {
-        sendUpgradeError(socket, 503, "Service Unavailable");
+        await sendUpgradeError(socket, 503, "Service Unavailable");
         return;
     }
 
@@ -562,12 +631,14 @@ async function handlePreviewWebSocketUpgrade(
                 ),
                 rawHeaders: request.rawHeaders ?? [],
                 head,
-                client: createUpgradeClient(socket),
+                client: createLocalServicePreviewUpgradeClient(socket),
             },
             openTunnel: options.openTunnel as OpenLocalServicePreviewTunnel,
+            observability: options.observability,
+            observabilityAccountId: resolveObservabilityAccountId(options, parsedRoute.previewId),
         });
     } catch {
-        sendUpgradeError(socket, 502, "Bad Gateway");
+        await sendUpgradeError(socket, 502, "Bad Gateway");
     }
 }
 
@@ -666,19 +737,28 @@ export function registerLocalServicePreviewRoutes(
         await handleUnregisterPreviewRequest(request as RouteRequest, reply as RouteReply, options);
     });
 
+    const hostRouteConstraint = hostOriginConstraint(options.hostOriginBaseDomain);
+
     for (const method of PREVIEW_HTTP_METHODS) {
         const handler = async (request: unknown, reply: unknown) => {
             await handlePreviewHttpRequest(request as RouteRequest, reply as RouteReply, options);
         };
         if (method === "GET") {
             app.get(PREVIEW_ROUTE_PATH, { exposeHeadRoute: false }, handler);
-            app.get(PREVIEW_HOST_ROUTE_PATH, { exposeHeadRoute: false }, handler);
+            if (hostRouteConstraint) {
+                app.get(PREVIEW_HOST_ROUTE_PATH, {
+                    exposeHeadRoute: false,
+                    constraints: { host: hostRouteConstraint },
+                }, handler);
+            }
             continue;
         }
         app[method.toLowerCase() as Lowercase<typeof method>](PREVIEW_ROUTE_PATH, handler);
-        if (method === "OPTIONS") {
+        if (method === "OPTIONS" || !hostRouteConstraint) {
             continue;
         }
-        app[method.toLowerCase() as Lowercase<typeof method>](PREVIEW_HOST_ROUTE_PATH, handler);
+        app[method.toLowerCase() as Lowercase<typeof method>](PREVIEW_HOST_ROUTE_PATH, {
+            constraints: { host: hostRouteConstraint },
+        }, handler);
     }
 }

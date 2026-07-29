@@ -1,4 +1,0 @@
-ALTER TABLE "UsageEvent"
-ADD COLUMN "invoiceCostUsd" DOUBLE PRECISION NOT NULL DEFAULT 0,
-ADD COLUMN "billingContext" TEXT,
-ADD COLUMN "costSource" TEXT;

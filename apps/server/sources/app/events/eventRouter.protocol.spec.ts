@@ -9,6 +9,7 @@ import {
     buildPublicShareDeletedUpdate,
     buildPublicShareUpdatedUpdate,
     buildPendingChangedUpdate,
+    buildSessionMetadataRecipientUpdate,
     buildUpdateSessionUpdate,
     buildSessionSharedUpdate,
     buildSessionShareRevokedUpdate,
@@ -25,6 +26,7 @@ describe("eventRouter payloads (protocol container)", () => {
                 sidechainId: null,
                 messageRole: "user",
                 content: { t: "encrypted", c: "abc" },
+                deliveryResolution: { v: 1, kind: "manual_handled" },
                 createdAt: new Date(1),
                 updatedAt: new Date(1),
             },
@@ -37,6 +39,7 @@ describe("eventRouter payloads (protocol container)", () => {
         expect((payload.body as any).sid).toBe("s1");
         expect((payload.body as any).id).toBe("s1");
         expect((payload.body as any).message.messageRole).toBe("user");
+        expect((payload.body as any).message.deliveryResolution).toEqual({ v: 1, kind: "manual_handled" });
         expect(Object.prototype.hasOwnProperty.call((payload.body as any).message ?? {}, "sidechainId")).toBe(false);
     });
 
@@ -50,6 +53,7 @@ describe("eventRouter payloads (protocol container)", () => {
                 agentState: null,
                 agentStateVersion: 1,
                 dataEncryptionKey: new Uint8Array([1, 2, 3]),
+                encryptionMode: "e2ee",
                 active: true,
                 lastActiveAt: new Date(1),
                 createdAt: new Date(1),
@@ -62,6 +66,32 @@ describe("eventRouter payloads (protocol container)", () => {
         expect(UpdateContainerSchema.safeParse(payload).success).toBe(true);
         expect((payload.body as any).id).toBe("s1");
         expect((payload.body as any).sid).toBe("s1");
+        expect((payload.body as any).encryptionMode).toBe("e2ee");
+    });
+
+    it("buildNewSessionUpdate emits explicit plaintext mode", () => {
+        const payload = buildNewSessionUpdate(
+            {
+                id: "s_plain",
+                seq: 1,
+                metadata: JSON.stringify({ name: "Plain session" }),
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 1,
+                dataEncryptionKey: null,
+                encryptionMode: "plain",
+                active: true,
+                lastActiveAt: new Date(1),
+                createdAt: new Date(1),
+                updatedAt: new Date(1),
+            },
+            103,
+            "upd-plain",
+        );
+
+        expect(UpdateContainerSchema.safeParse(payload).success).toBe(true);
+        expect((payload.body as any).encryptionMode).toBe("plain");
+        expect((payload.body as any).dataEncryptionKey).toBeNull();
     });
 
     it("buildUpdateSessionUpdate emits a full container", () => {
@@ -88,12 +118,17 @@ describe("eventRouter payloads (protocol container)", () => {
                     v: 1,
                     scope: "primary_session",
                     status: "failed",
-                    code: "provider_process_exit",
-                    source: "provider_process_exit",
+                    code: "agent_process_exit",
+                    source: "agent_process_exit",
                     occurredAt: 10,
-                    provider: "pi",
+                    agentId: "pi",
                     sanitizedPreview: "Provider process exited",
                 },
+                runtimeActivityState: "active",
+                runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: 3_333,
+                runtimeActivityRevision: 4,
+                meaningfulActivityAt: 5_555,
             },
         );
 
@@ -113,9 +148,92 @@ describe("eventRouter payloads (protocol container)", () => {
         expect((payload.body as any).latestTurnStatus).toBe("failed");
         expect((payload.body as any).latestTurnStatusObservedAt).toBe(2_222);
         expect((payload.body as any).lastRuntimeIssue).toMatchObject({
-            source: "provider_process_exit",
-            provider: "pi",
+            source: "agent_process_exit",
+            agentId: "pi",
         });
+        expect((payload.body as any).runtimeActivityState).toBe("active");
+        expect((payload.body as any).runtimeActivityActiveCount).toBe(1);
+        expect((payload.body as any).runtimeActivityObservedAt).toBe(3_333);
+        expect((payload.body as any).runtimeActivityRevision).toBe(4);
+        expect(payload.body).not.toHaveProperty("runtimeActivitySourceClass");
+        expect((payload.body as any).meaningfulActivityAt).toBe(5_555);
+    });
+
+    it("buildSessionMetadataRecipientUpdate serializes only the strict recipient tuple", () => {
+        const ownerPayload = buildSessionMetadataRecipientUpdate(
+            "s1",
+            104,
+            "upd-owner",
+            {
+                metadata: "shared-safe",
+                metadataVersion: 5,
+                metadataLayoutVersion: 1,
+                ownerMetadata:
+                    "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                agentState: "owner-state",
+                agentStateVersion: 9,
+            },
+        );
+        const sharedPayload = buildSessionMetadataRecipientUpdate(
+            "s1",
+            105,
+            "upd-shared",
+            {
+                metadata: "shared-safe",
+                metadataVersion: 5,
+                metadataLayoutVersion: 1,
+                agentState: null,
+                agentStateVersion: 9,
+            },
+        );
+
+        expect(UpdateContainerSchema.safeParse(ownerPayload).success).toBe(true);
+        expect(ownerPayload.body).toMatchObject({
+            metadata: { value: "shared-safe", version: 5 },
+            metadataLayoutVersion: 1,
+            ownerMetadata: {
+                value:
+                    "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            },
+            agentState: { value: "owner-state", version: 9 },
+        });
+        expect(sharedPayload.body).toMatchObject({
+            metadata: { value: "shared-safe", version: 5 },
+            metadataLayoutVersion: 1,
+            agentState: { value: null, version: 9 },
+        });
+        expect(sharedPayload.body).not.toHaveProperty("ownerMetadata");
+    });
+
+    it("buildSessionMetadataRecipientUpdate rejects a partial owner projection", () => {
+        expect(() => buildSessionMetadataRecipientUpdate(
+            "s1",
+            106,
+            "upd-invalid-owner",
+            // @ts-expect-error Intentionally malformed input proves the runtime
+            // parser rejects a partial owner projection.
+            {
+                metadata: "shared-safe",
+                metadataVersion: 5,
+                metadataLayoutVersion: 1,
+                ownerMetadata:
+                    "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            },
+        )).toThrow();
+    });
+
+    it("buildUpdateSessionUpdate rejects a partial runtime activity projection", () => {
+        expect(() => buildUpdateSessionUpdate(
+            "s1",
+            103,
+            "upd-partial-runtime",
+            undefined,
+            undefined,
+            {
+                runtimeActivityState: "active",
+                runtimeActivityRevision: 4,
+            },
+        )).toThrow(/runtime activity projection/i);
     });
 
     it("buildPendingChangedUpdate emits exact meaningful activity when supplied", () => {
@@ -125,6 +243,7 @@ describe("eventRouter payloads (protocol container)", () => {
             pendingCount: 1,
             changedByAccountId: "u1",
             meaningfulActivityAt: new Date(1_234),
+            pendingActivationRequestId: "pending-local-1",
         };
         const payload = buildPendingChangedUpdate(
             pendingChange,
@@ -136,6 +255,7 @@ describe("eventRouter payloads (protocol container)", () => {
         expect((payload.body as any).sessionId).toBe("s1");
         expect((payload.body as any).sid).toBe("s1");
         expect((payload.body as any).meaningfulActivityAt).toBe(1_234);
+        expect((payload.body as any).pendingActivationRequestId).toBe("pending-local-1");
     });
 
     it("buildDeleteSessionUpdate emits a full container", () => {

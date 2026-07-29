@@ -1,6 +1,7 @@
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE } from "@happier-dev/protocol";
 
-import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
+import { createDbMocks, createDbTransactionMock, installDbModuleMock } from "../../testkit/dbMocks";
 import { createEnvReset } from "../../testkit/env";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
@@ -9,16 +10,19 @@ const logSpy = vi.hoisted(() => vi.fn());
 vi.mock("@/utils/logging/log", () => ({ log: logSpy }));
 
 const dbMocks = createDbMocks({
-    voiceSessionLease: ["findFirst"],
-    voiceConversation: ["findUnique", "upsert"],
+    voiceSessionLease: ["findFirst", "updateMany"],
+    voiceConversation: ["findUnique", "findFirst", "create"],
 } as const);
 
 const leaseFindFirst = dbMocks.db.voiceSessionLease.findFirst;
-const conversationUpsert = dbMocks.db.voiceConversation.upsert;
+const leaseUpdateMany = dbMocks.db.voiceSessionLease.updateMany;
+const conversationCreate = dbMocks.db.voiceConversation.create;
 const conversationFindUnique = dbMocks.db.voiceConversation.findUnique;
+const conversationFindFirst = dbMocks.db.voiceConversation.findFirst;
+const dbTransactionMock = createDbTransactionMock(() => dbMocks.db);
 
 installDbModuleMock(() => ({
-    db: dbMocks.db,
+    db: dbTransactionMock.wrapDb(dbMocks.db),
 }));
 
 describe("voiceRoutes (session complete)", () => {
@@ -34,15 +38,19 @@ describe("voiceRoutes (session complete)", () => {
             ELEVENLABS_API_KEY: "el_key",
             ELEVENLABS_AGENT_ID: "agent_dev",
         });
+        const now = Date.now();
         leaseFindFirst.mockResolvedValue({
             id: "lease_1",
             accountId: "u1",
             elevenLabsAgentId: "agent_dev",
-            createdAt: new Date("2026-02-01T00:00:00.000Z"),
-            expiresAt: new Date("2026-02-01T01:00:00.000Z"),
+            providerBindingNonce: "nonce_lease_1",
+            createdAt: new Date(now - 60_000),
+            expiresAt: new Date(now + 60 * 60 * 1000),
         });
-        conversationUpsert.mockResolvedValue({ id: "vc_1" });
+        leaseUpdateMany.mockResolvedValue({ count: 1 });
+        conversationCreate.mockResolvedValue({ id: "vc_1" });
         conversationFindUnique.mockResolvedValue(null);
+        conversationFindFirst.mockResolvedValue(null);
         globalThis.fetch = vi.fn() as any;
     });
 
@@ -57,18 +65,38 @@ describe("voiceRoutes (session complete)", () => {
             .join(" ");
     }
 
-    it("fetches conversation details and stores duration for a valid lease", async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-                conversation_id: "conv_123",
-                agent_id: "agent_dev",
-                metadata: {
-                    start_time_unix_secs: 1769904632,
-                    call_duration_secs: 42,
-                },
-            }),
+    function providerJsonResponse(payload: unknown, status = 200): Response {
+        return new Response(JSON.stringify(payload), {
+            status,
+            headers: { "content-type": "application/json" },
         });
+    }
+
+    function providerConversationDetails(params: {
+        bindingNonce?: string;
+        durationSeconds: number;
+        startTimeUnixSecs?: number;
+        agentId?: string;
+    }) {
+        return {
+            conversation_id: "conv_123",
+            agent_id: params.agentId ?? "agent_dev",
+            metadata: {
+                start_time_unix_secs: params.startTimeUnixSecs ?? Math.floor(Date.now() / 1000),
+                call_duration_secs: params.durationSeconds,
+            },
+            conversation_initiation_client_data: {
+                dynamic_variables: {
+                    [HAPPIER_VOICE_BINDING_NONCE_DYNAMIC_VARIABLE]: params.bindingNonce ?? "nonce_lease_1",
+                },
+            },
+        };
+    }
+
+    it("fetches conversation details and stores duration for a valid lease", async () => {
+        (globalThis.fetch as any).mockResolvedValueOnce(
+            providerJsonResponse(providerConversationDetails({ durationSeconds: 42 })),
+        );
 
         const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
@@ -92,7 +120,7 @@ describe("voiceRoutes (session complete)", () => {
                 headers: expect.objectContaining({ "xi-api-key": "el_key" }),
             }),
         );
-        expect(conversationUpsert).toHaveBeenCalledTimes(1);
+        expect(conversationCreate).toHaveBeenCalledTimes(1);
     });
 
     it("returns 404 when Happier Voice is disabled", async () => {
@@ -117,18 +145,10 @@ describe("voiceRoutes (session complete)", () => {
     });
 
     it("returns 503 when persisting the conversation fails", async () => {
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-                conversation_id: "conv_123",
-                agent_id: "agent_dev",
-                metadata: {
-                    start_time_unix_secs: 1769904632,
-                    call_duration_secs: 42,
-                },
-            }),
-        });
-        conversationUpsert.mockRejectedValueOnce(new Error("db-down"));
+        (globalThis.fetch as any).mockResolvedValueOnce(
+            providerJsonResponse(providerConversationDetails({ durationSeconds: 42 })),
+        );
+        conversationCreate.mockRejectedValueOnce(new Error("db-down"));
 
         const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
@@ -150,21 +170,16 @@ describe("voiceRoutes (session complete)", () => {
     });
 
     it("returns 404 when the provider-reported duration exceeds the lease window", async () => {
-        const startedAt = new Date("2026-02-01T00:50:00.000Z");
+        const startedAt = new Date(Date.now() + 50 * 60 * 1000);
         const startedAtUnixSecs = Math.floor(startedAt.getTime() / 1000);
 
-        (globalThis.fetch as any).mockResolvedValueOnce({
-            ok: true,
-            json: async () => ({
-                conversation_id: "conv_123",
-                agent_id: "agent_dev",
-                metadata: {
-                    start_time_unix_secs: startedAtUnixSecs,
-                    // Lease expires at 01:00Z (+5m slack), so this pushes endedAt beyond the upper bound.
-                    call_duration_secs: 20 * 60,
-                },
-            }),
-        });
+        (globalThis.fetch as any).mockResolvedValueOnce(
+            providerJsonResponse(providerConversationDetails({
+                startTimeUnixSecs: startedAtUnixSecs,
+                // Lease expires at 01:00Z (+5m slack), so this pushes endedAt beyond the upper bound.
+                durationSeconds: 20 * 60,
+            })),
+        );
 
         const { voiceRoutes } = await import("./voiceRoutes");
         const route = createRouteTestBuilder({
@@ -181,6 +196,63 @@ describe("voiceRoutes (session complete)", () => {
 
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(res).toEqual({ ok: false, reason: "not_found" });
-        expect(conversationUpsert).not.toHaveBeenCalled();
+        expect(conversationCreate).not.toHaveBeenCalled();
+    });
+
+    it("returns 404 when provider conversation details do not echo the lease nonce", async () => {
+        (globalThis.fetch as any).mockResolvedValueOnce(
+            providerJsonResponse(providerConversationDetails({
+                bindingNonce: "attacker_nonce",
+                durationSeconds: 42,
+            })),
+        );
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/session/complete",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { response: res, reply } = await route.invoke({
+            userId: "u1",
+            body: { leaseId: "lease_1", providerConversationId: "conv_123" },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(404);
+        expect(res).toEqual({ ok: false, reason: "not_found" });
+        expect(conversationCreate).not.toHaveBeenCalled();
+    });
+
+    it("returns a safe bounded diagnostic when provider conversation data is malformed", async () => {
+        (globalThis.fetch as any).mockResolvedValueOnce(
+            providerJsonResponse({
+                metadata: {
+                    call_duration_secs: "private-provider-body",
+                    start_time_unix_secs: Math.floor(Date.now() / 1000),
+                },
+            }),
+        );
+
+        const { voiceRoutes } = await import("./voiceRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/voice/session/complete",
+            registerRoutes(app) {
+                voiceRoutes(app as any);
+            },
+        });
+        const { response: res, reply } = await route.invoke({
+            userId: "u1",
+            body: { leaseId: "lease_1", providerConversationId: "conv_123" },
+        });
+
+        expect(reply.code).toHaveBeenCalledWith(503);
+        expect(res).toEqual({ ok: false, reason: "upstream_error" });
+        expect(renderedLogs()).toContain("invalid_conversation_response");
+        expect(renderedLogs()).not.toContain("el_key");
+        expect(renderedLogs()).not.toContain("private-provider-body");
+        expect(conversationCreate).not.toHaveBeenCalled();
     });
 });

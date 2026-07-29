@@ -22,10 +22,21 @@ export async function recordConnectedServiceAccountProfileChange(params: Readonl
         hint: { connectedServices: true },
     });
     afterTx(params.tx, () => {
+        const payload = buildUpdateAccountUpdate(
+            params.accountId,
+            projection,
+            cursor,
+            randomUUID(),
+        );
+        eventRouter.emitUpdate({
+            userId: params.accountId,
+            recipientFilter: { type: "user-machine-scoped-only" },
+            payload,
+        });
         eventRouter.emitUpdate({
             userId: params.accountId,
             recipientFilter: { type: "user-scoped-only" },
-            payload: buildUpdateAccountUpdate(params.accountId, projection, cursor, randomUUID()),
+            payload,
         });
     });
     return cursor;

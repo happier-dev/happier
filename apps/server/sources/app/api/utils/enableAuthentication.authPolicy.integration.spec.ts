@@ -7,6 +7,7 @@ import { auth } from "@/app/auth/auth";
 import { enableAuthentication } from "./enableAuthentication";
 import { encryptString } from "@/modules/encrypt";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { buildClientCompatibilityHttpHeadersV1 } from "@happier-dev/protocol";
 
 describe("enableAuthentication (auth policy) (integration)", () => {
     let harness: LightSqliteHarness;
@@ -19,10 +20,14 @@ describe("enableAuthentication (auth policy) (integration)", () => {
         });
     }, 120_000);
 
-    const createAuthenticatedApp = async () => {
+    const createAuthenticatedApp = async (onSessionCreate = () => {}) => {
         const app = Fastify({ logger: false }) as any;
         enableAuthentication(app);
         app.get("/private", { preHandler: app.authenticate }, async () => ({ ok: true }));
+        app.post("/v1/sessions", { preHandler: app.authenticate }, async () => {
+            onSessionCreate();
+            return { ok: true };
+        });
         await app.ready();
         return app;
     };
@@ -54,6 +59,42 @@ describe("enableAuthentication (auth policy) (integration)", () => {
 
     afterAll(async () => {
         await harness.close();
+    });
+
+    it("rejects an old daemon before the session-create route can run", async () => {
+        harness.resetEnv({
+            HAPPIER_SESSION_SYNC_COMPATIBILITY__ENFORCEMENT: "required",
+            HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_PROTOCOL_VERSION: "2",
+            HAPPIER_SESSION_SYNC_COMPATIBILITY__MINIMUM_VERSIONS_JSON: JSON.stringify({
+                daemon: "0.2.10",
+                "session-runner": "0.2.10",
+            }),
+        });
+        const account = await db.account.create({ data: { publicKey: "pk_compat_session_create" } });
+        const token = await auth.createToken(account.id);
+        const routeEffect = vi.fn();
+        const app = await createAuthenticatedApp(routeEffect);
+        try {
+            const response = await app.inject({
+                method: "POST",
+                url: "/v1/sessions",
+                headers: {
+                    authorization: `Bearer ${token}`,
+                    ...buildClientCompatibilityHttpHeadersV1({
+                        v: 1,
+                        clientKind: "daemon",
+                        appVersion: "0.2.9",
+                        sessionSyncProtocolVersion: 2,
+                    }),
+                },
+            });
+
+            expect(response.statusCode).toBe(426);
+            expect(response.json()).toMatchObject({ error: "client-upgrade-required" });
+            expect(routeEffect).not.toHaveBeenCalled();
+        } finally {
+            await app.close();
+        }
     });
 
     it("blocks authenticated requests when GitHub is required but the account is not linked", async () => {

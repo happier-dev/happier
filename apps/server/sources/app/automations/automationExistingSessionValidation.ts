@@ -1,6 +1,10 @@
 import type { Tx } from "@/storage/inTx";
 import { evaluateExistingSessionAutomationEligibility } from "@happier-dev/agents";
 import { openPlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
+import {
+    isSessionOwnerMetadataCiphertextV1,
+    SESSION_METADATA_LAYOUT_VERSION_V1,
+} from "@happier-dev/protocol";
 
 import type { AutomationTargetType } from "./automationTypes";
 import { AutomationValidationError } from "./automationValidation";
@@ -67,15 +71,29 @@ export async function validateExistingSessionAutomationTargetTx(params: {
             id: true,
             encryptionMode: true,
             metadata: true,
+            metadataLayoutVersion: true,
+            ownerMetadata: true,
         },
-    });
-    const account = await params.tx.account.findUnique({
-        where: { id: params.accountId },
-        select: { settings: true },
     });
     if (!session) {
         throw new AutomationValidationError("existing session target does not exist");
     }
+    if (session.metadataLayoutVersion === SESSION_METADATA_LAYOUT_VERSION_V1) {
+        if (!isSessionOwnerMetadataCiphertextV1(session.ownerMetadata ?? "")) {
+            throw new AutomationValidationError("existing session target metadata privacy upgrade required");
+        }
+        // The server deliberately cannot open account-scoped owner metadata.
+        // A future owner-authenticated proof may supply this decision; shared
+        // metadata is never a resume/control authority substitute.
+        throw new AutomationValidationError("existing session target owner metadata is unavailable");
+    }
+    if (session.metadataLayoutVersion !== 0) {
+        throw new AutomationValidationError("existing session target metadata privacy upgrade required");
+    }
+    const account = await params.tx.account.findUnique({
+        where: { id: params.accountId },
+        select: { settings: true },
+    });
     if (isOpaqueStoredSessionMetadata({
         encryptionMode: session.encryptionMode,
         metadata: session.metadata,

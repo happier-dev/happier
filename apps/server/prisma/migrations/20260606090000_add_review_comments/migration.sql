@@ -27,6 +27,8 @@ CREATE TABLE "review_comments" (
     "suggested_fix_json" TEXT,
     "metadata_json" TEXT,
     "tombstone_json" TEXT,
+    "create_client_mutation_id" TEXT,
+    "create_request_fingerprint" TEXT,
     "server_revision" INTEGER NOT NULL,
     "created_at" BIGINT NOT NULL,
     "updated_at" BIGINT NOT NULL,
@@ -78,3 +80,6 @@ FOREIGN KEY ("account_id") REFERENCES "Account"("id") ON DELETE CASCADE ON UPDAT
 
 ALTER TABLE "review_comment_events" ADD CONSTRAINT "review_comment_events_comment_id_fkey"
 FOREIGN KEY ("comment_id") REFERENCES "review_comments"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+CREATE UNIQUE INDEX "review_comments_account_create_mutation_key"
+ON "review_comments"("account_id", "create_client_mutation_id");

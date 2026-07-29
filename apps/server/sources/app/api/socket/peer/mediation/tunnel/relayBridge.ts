@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
+
 import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } from "@happier-dev/protocol";
 
-import { getSocketRooms } from "@/app/api/socketRooms";
 import type {
     PeerTcpTunnelRelayTransport,
     PeerTcpTunnelRelayTransportFactory,
@@ -58,25 +59,28 @@ export function createPeerTcpTunnelRelayBridge(realIo: RelayBridgeIo): PeerTcpTu
         },
     };
 
-    function createTransport({ accountId }: Readonly<{ accountId: string }>): PeerTcpTunnelRelayTransport {
-        const userRoom = getSocketRooms({
-            userId: accountId,
-            clientType: "user-scoped",
-        })[0] ?? `user:${accountId}`;
+    function createTransport(_input: Readonly<{ accountId: string }>): PeerTcpTunnelRelayTransport {
+        const relaySocketId = `server_preview_relay_${randomUUID()}`;
         const unsubscribeCallbacks = new Set<() => void>();
         return {
+            relaySocketId,
             send(event, envelope) {
-                const machineId = envelope.recipient.kind === "machine" ? envelope.recipient.machineId : null;
-                if (!machineId) return;
-                const machineRoom = getSocketRooms({
-                    userId: accountId,
-                    clientType: "machine-scoped",
-                    machineId,
-                })[0] ?? `machine:${machineId}:${accountId}`;
-                bridgeIo.to(machineRoom).emit(event, envelope);
+                const recipient = envelope.recipient;
+                if (recipient.kind === "machine") {
+                    // Machine delivery is owned by the registered relay handler and its exact
+                    // coordinator attachment. Falling back to a machine room here would bypass it.
+                    return;
+                }
+                // User recipient: deliver to the exact viewer tab when its socket id is known,
+                // never the whole-user broadcast room. A user recipient without a socket id is
+                // dropped rather than over-broadcast (fail-closed; the prior code dropped ALL user
+                // recipients, which silently starved per-tab delivery).
+                if (recipient.socketId) {
+                    bridgeIo.to(recipient.socketId).emit(event, envelope);
+                }
             },
             subscribe(listener) {
-                const unsubscribe = subscribe(userRoom, listener);
+                const unsubscribe = subscribe(relaySocketId, listener);
                 unsubscribeCallbacks.add(unsubscribe);
                 return () => {
                     unsubscribeCallbacks.delete(unsubscribe);

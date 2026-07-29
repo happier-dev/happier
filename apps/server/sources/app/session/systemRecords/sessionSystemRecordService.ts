@@ -3,6 +3,8 @@ import { isDeepStrictEqual } from "node:util";
 
 import {
     isStoredContentKindAllowedForSessionByStoragePolicy,
+    SESSION_SYSTEM_RECORD_CATALOG,
+    SESSION_SYSTEM_RECORD_NAMESPACES,
     SessionSystemRecordLatestQuerySchema,
     SessionSystemRecordListQuerySchema,
     SessionSystemRecordLookupQuerySchema,
@@ -80,6 +82,8 @@ export type GetSessionSystemRecordResult =
 export type GetLatestSessionSystemRecordResult =
     | { ok: true; record: SessionSystemRecordRow | null }
     | { ok: false; error: "invalid-params" | "forbidden" | "session-not-found" | "internal" };
+
+type SessionRecordAccountScope = Readonly<{ accountId: string }>;
 
 const SESSION_SYSTEM_RECORD_SELECT = {
     id: true,
@@ -225,6 +229,20 @@ function buildStorageModeRejection(params: Readonly<{
     };
 }
 
+function resolveSystemRecordAccountScope(params: Readonly<{
+    namespace: SessionSystemRecordNamespace;
+    actorUserId: string;
+    sessionAccountId: string | undefined;
+}>): SessionRecordAccountScope {
+    // Memory records are actor-private. Activity workflow records are session-scoped projections
+    // referenced by session metadata, so every participant must read the same owner-owned row.
+    return {
+        accountId: params.namespace === "activity"
+            ? (params.sessionAccountId ?? params.actorUserId)
+            : params.actorUserId,
+    };
+}
+
 export async function upsertSessionSystemRecord(
     params: UpsertSessionSystemRecordParams,
 ): Promise<UpsertSessionSystemRecordResult> {
@@ -237,9 +255,14 @@ export async function upsertSessionSystemRecord(
         return await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: params.sessionId },
-                select: { encryptionMode: true },
+                select: { accountId: true, encryptionMode: true },
             });
             if (!session) return { ok: false, error: "session-not-found" };
+            const recordScope = resolveSystemRecordAccountScope({
+                namespace: params.namespace,
+                actorUserId: params.actorUserId,
+                sessionAccountId: typeof session.accountId === "string" ? session.accountId : undefined,
+            });
 
             const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
             const storageMode = buildStorageModeRejection({
@@ -254,7 +277,7 @@ export async function upsertSessionSystemRecord(
             const existing = await tx.sessionSystemRecord.findUnique({
                 where: {
                     accountId_sessionId_namespace_localId: {
-                        accountId: params.actorUserId,
+                        accountId: recordScope.accountId,
                         sessionId: params.sessionId,
                         namespace: params.namespace,
                         localId: params.localId,
@@ -283,7 +306,7 @@ export async function upsertSessionSystemRecord(
 
             const created = await tx.sessionSystemRecord.create({
                 data: {
-                    accountId: params.actorUserId,
+                    accountId: recordScope.accountId,
                     sessionId: params.sessionId,
                     namespace: params.namespace,
                     kind: params.kind,
@@ -316,25 +339,54 @@ export async function listSessionSystemRecords(
         return await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: params.sessionId },
-                select: { encryptionMode: true },
+                select: { accountId: true, encryptionMode: true },
             });
             if (!session) return { ok: false, error: "session-not-found" };
+            const sessionAccountId = typeof session.accountId === "string"
+                ? session.accountId
+                : undefined;
+            const publicRecordScopes = SESSION_SYSTEM_RECORD_NAMESPACES.flatMap((namespace) => {
+                if (params.namespace !== undefined && params.namespace !== namespace) return [];
+                const registeredKinds = Object.keys(
+                    SESSION_SYSTEM_RECORD_CATALOG[namespace].kinds,
+                );
+                const admittedKinds = params.kind === undefined
+                    ? registeredKinds
+                    : registeredKinds.includes(params.kind)
+                        ? [params.kind]
+                        : [];
+                if (admittedKinds.length === 0) return [];
+                return [{
+                    ...resolveSystemRecordAccountScope({
+                        namespace,
+                        actorUserId: params.actorUserId,
+                        sessionAccountId,
+                    }),
+                    namespace,
+                    kind: { in: admittedKinds },
+                }];
+            });
+            if (publicRecordScopes.length === 0) {
+                return { ok: true, records: [], nextCursor: null };
+            }
 
             const rows = await tx.sessionSystemRecord.findMany({
                 where: {
-                    accountId: params.actorUserId,
                     sessionId: params.sessionId,
-                    ...(params.namespace ? { namespace: params.namespace } : {}),
-                    ...(params.kind ? { kind: params.kind } : {}),
                     ...(params.localId ? { localId: params.localId } : {}),
                     ...(cursor
                         ? {
-                            OR: [
-                                { updatedAt: { lt: cursor.updatedAt } },
-                                { updatedAt: cursor.updatedAt, id: { lt: cursor.id } },
+                            AND: [
+                                { OR: publicRecordScopes },
+                                {
+                                    OR: [
+                                        { updatedAt: { lt: cursor.updatedAt } },
+                                        { updatedAt: cursor.updatedAt, id: { lt: cursor.id } },
+                                    ],
+                                },
                             ],
                         }
-                        : {}),
+                        : { OR: publicRecordScopes }),
                 },
                 orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
                 take: limit + 1,
@@ -367,14 +419,19 @@ export async function getSessionSystemRecord(
         return await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: params.sessionId },
-                select: { encryptionMode: true },
+                select: { accountId: true, encryptionMode: true },
             });
             if (!session) return { ok: false, error: "session-not-found" };
+            const recordScope = resolveSystemRecordAccountScope({
+                namespace: params.namespace,
+                actorUserId: params.actorUserId,
+                sessionAccountId: typeof session.accountId === "string" ? session.accountId : undefined,
+            });
 
             const row = await tx.sessionSystemRecord.findUnique({
                 where: {
                     accountId_sessionId_namespace_localId: {
-                        accountId: params.actorUserId,
+                        accountId: recordScope.accountId,
                         sessionId: params.sessionId,
                         namespace: params.namespace,
                         localId: params.localId,
@@ -404,13 +461,18 @@ export async function getLatestSessionSystemRecord(
         return await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: params.sessionId },
-                select: { encryptionMode: true },
+                select: { accountId: true, encryptionMode: true },
             });
             if (!session) return { ok: false, error: "session-not-found" };
+            const recordScope = resolveSystemRecordAccountScope({
+                namespace: params.namespace,
+                actorUserId: params.actorUserId,
+                sessionAccountId: typeof session.accountId === "string" ? session.accountId : undefined,
+            });
 
             const row = await tx.sessionSystemRecord.findFirst({
                 where: {
-                    accountId: params.actorUserId,
+                    accountId: recordScope.accountId,
                     sessionId: params.sessionId,
                     namespace: params.namespace,
                     kind: params.kind,

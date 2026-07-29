@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { createEnvPatcher } from "@/testkit/env";
+
 import {
     createSessionRouteTestBuilder,
     createSessionMessage,
@@ -40,7 +42,11 @@ function summaryPayload(overrides: Record<string, unknown> = {}) {
 }
 
 describe("sessionRoutes system records", () => {
+    const storagePolicyEnv = createEnvPatcher(["HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY"]);
+
     beforeEach(() => {
+        storagePolicyEnv.restore();
+        storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
         resetSessionRouteMocks();
     });
 
@@ -205,10 +211,14 @@ describe("sessionRoutes system records", () => {
 
         expect(txSessionSystemRecordFindMany).toHaveBeenCalledWith(expect.objectContaining({
             where: expect.objectContaining({
-                accountId: "u1",
                 sessionId: "s1",
-                namespace: "memory",
-                kind: "synopsis.v1",
+                OR: [
+                    {
+                        accountId: "u1",
+                        namespace: "memory",
+                        kind: { in: ["synopsis.v1"] },
+                    },
+                ],
                 localId: "memory:synopsis:v1:2",
             }),
             take: 26,

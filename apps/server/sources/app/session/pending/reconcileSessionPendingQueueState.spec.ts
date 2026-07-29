@@ -20,57 +20,65 @@ describe("reconcileSessionPendingQueueState", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
-        dbMocks.db.sessionPendingMessage.count.mockResolvedValue(2);
-        dbMocks.db.session.findUniqueOrThrow.mockResolvedValue({ pendingCount: 0, pendingVersion: 5 });
-        dbMocks.db.session.update.mockResolvedValue({ pendingCount: 2, pendingVersion: 8 });
+        dbMocks.db.sessionPendingMessage.count.mockImplementation(async (args: { where?: { deliveryState?: string } }) => (
+            args.where?.deliveryState === "blocked" ? 0 : 2
+        ));
+        dbMocks.db.session.findUniqueOrThrow.mockResolvedValue({ pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 5 });
+        dbMocks.db.session.update.mockResolvedValue({ pendingCount: 2, pendingBlockedCount: 0, pendingVersion: 8 });
         dbMocks.db.session.updateMany.mockResolvedValue({ count: 1 });
     });
 
     it("repairs stale pending counts from current DB state inside one transaction", async () => {
         const { reconcileSessionPendingQueueState } = await import("./reconcileSessionPendingQueueState");
         dbMocks.db.session.findUniqueOrThrow
-            .mockResolvedValueOnce({ pendingCount: 1, pendingVersion: 7 })
-            .mockResolvedValueOnce({ pendingCount: 2, pendingVersion: 8 });
+            .mockResolvedValueOnce({ pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 7 })
+            .mockResolvedValueOnce({ pendingCount: 2, pendingBlockedCount: 0, pendingVersion: 8 });
 
         await expect(reconcileSessionPendingQueueState({
             sessionId: "s1",
             pendingCount: 0,
+            pendingBlockedCount: 0,
             pendingVersion: 5,
         })).resolves.toEqual({
             pendingCount: 2,
+            pendingBlockedCount: 0,
             pendingVersion: 8,
             didRepair: true,
         });
         expect(inTxMock).toHaveBeenCalledTimes(1);
-        expect(dbMocks.db.sessionPendingMessage.count).toHaveBeenCalledWith({
+        expect(dbMocks.db.sessionPendingMessage.count).toHaveBeenNthCalledWith(1, {
             where: { sessionId: "s1", status: "queued" },
+        });
+        expect(dbMocks.db.sessionPendingMessage.count).toHaveBeenNthCalledWith(2, {
+            where: { sessionId: "s1", status: "queued", deliveryState: "blocked" },
         });
         expect(dbMocks.db.session.findUniqueOrThrow).toHaveBeenNthCalledWith(1, {
             where: { id: "s1" },
-            select: { pendingCount: true, pendingVersion: true },
+            select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
         });
         expect(dbMocks.db.session.updateMany).toHaveBeenCalledWith({
-            where: { id: "s1", pendingCount: 1, pendingVersion: 7 },
-            data: { pendingCount: 2, pendingVersion: { increment: 1 } },
+            where: { id: "s1", pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 7 },
+            data: { pendingCount: 2, pendingBlockedCount: 0, pendingVersion: { increment: 1 } },
         });
         expect(dbMocks.db.session.findUniqueOrThrow).toHaveBeenNthCalledWith(2, {
             where: { id: "s1" },
-            select: { pendingCount: true, pendingVersion: true },
+            select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
         });
         expect(dbMocks.db.session.update).not.toHaveBeenCalled();
     });
 
     it("keeps current DB state when queued rows already match current pending count", async () => {
-        dbMocks.db.sessionPendingMessage.count.mockResolvedValue(2);
-        dbMocks.db.session.findUniqueOrThrow.mockResolvedValue({ pendingCount: 2, pendingVersion: 9 });
+        dbMocks.db.session.findUniqueOrThrow.mockResolvedValue({ pendingCount: 2, pendingBlockedCount: 0, pendingVersion: 9 });
         const { reconcileSessionPendingQueueState } = await import("./reconcileSessionPendingQueueState");
 
         await expect(reconcileSessionPendingQueueState({
             sessionId: "s1",
             pendingCount: 0,
+            pendingBlockedCount: 0,
             pendingVersion: 5,
         })).resolves.toEqual({
             pendingCount: 2,
+            pendingBlockedCount: 0,
             pendingVersion: 9,
             didRepair: false,
         });
@@ -81,22 +89,24 @@ describe("reconcileSessionPendingQueueState", () => {
     it("returns latest DB state when optimistic repair loses a concurrent race", async () => {
         const { reconcileSessionPendingQueueState } = await import("./reconcileSessionPendingQueueState");
         dbMocks.db.session.findUniqueOrThrow
-            .mockResolvedValueOnce({ pendingCount: 1, pendingVersion: 7 })
-            .mockResolvedValueOnce({ pendingCount: 3, pendingVersion: 10 });
+            .mockResolvedValueOnce({ pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 7 })
+            .mockResolvedValueOnce({ pendingCount: 3, pendingBlockedCount: 0, pendingVersion: 10 });
         dbMocks.db.session.updateMany.mockResolvedValue({ count: 0 });
 
         await expect(reconcileSessionPendingQueueState({
             sessionId: "s1",
             pendingCount: 0,
+            pendingBlockedCount: 0,
             pendingVersion: 5,
         })).resolves.toEqual({
             pendingCount: 3,
+            pendingBlockedCount: 0,
             pendingVersion: 10,
             didRepair: false,
         });
         expect(dbMocks.db.session.updateMany).toHaveBeenCalledWith({
-            where: { id: "s1", pendingCount: 1, pendingVersion: 7 },
-            data: { pendingCount: 2, pendingVersion: { increment: 1 } },
+            where: { id: "s1", pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 7 },
+            data: { pendingCount: 2, pendingBlockedCount: 0, pendingVersion: { increment: 1 } },
         });
         expect(dbMocks.db.session.findUniqueOrThrow).toHaveBeenCalledTimes(2);
         expect(dbMocks.db.session.update).not.toHaveBeenCalled();

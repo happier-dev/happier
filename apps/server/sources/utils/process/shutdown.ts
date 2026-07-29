@@ -3,6 +3,7 @@ import { log } from "../logging/log";
 const shutdownHandlers = new Map<string, Array<() => Promise<void>>>();
 const shutdownController = new AbortController();
 let shutdownPromise: Promise<void> | null = null;
+const DEFAULT_SHUTDOWN_DEADLINE_MS = 5_000;
 
 export const shutdownSignal = shutdownController.signal;
 
@@ -33,6 +34,21 @@ export function onShutdown(name: string, callback: () => Promise<void>): () => v
 
 export function isShutdown() {
     return shutdownSignal.aborted;
+}
+
+function resolveShutdownDeadlineMs(env: NodeJS.ProcessEnv = process.env): number {
+    const raw = String(env.HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS ?? "").trim();
+    if (!raw) return DEFAULT_SHUTDOWN_DEADLINE_MS;
+    const parsed = Number.parseInt(raw, 10);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_SHUTDOWN_DEADLINE_MS;
+}
+
+function shutdownBucketPriority(name: string): number {
+    if (name === "api:socket") return 10;
+    if (name === "api:http") return 20;
+    if (name === "api") return 30;
+    if (name === "db") return 90;
+    return 50;
 }
 
 async function runShutdownHandlers(trigger: string): Promise<void> {
@@ -67,35 +83,49 @@ async function runShutdownHandlers(trigger: string): Promise<void> {
             bucket.push({ name, handlers });
         }
 
-        const runPhase = async (phase: Array<{ name: string; handlers: Array<() => Promise<void>> }>) => {
-            const allHandlers: Promise<void>[] = [];
-            let totalHandlers = 0;
-            for (const { name, handlers } of phase) {
-                totalHandlers += handlers.length;
+        const runBuckets = async (phase: Array<{ name: string; handlers: Array<() => Promise<void>> }>) => {
+            const orderedPhase = [...phase].sort((a, b) => {
+                const priorityDelta = shutdownBucketPriority(a.name) - shutdownBucketPriority(b.name);
+                return priorityDelta || a.name.localeCompare(b.name);
+            });
+            for (const { name, handlers } of orderedPhase) {
                 log(`Starting ${handlers.length} shutdown handlers for: ${name}`);
-                handlers.forEach((handler, index) => {
-                    const handlerPromise = handler().then(
+                const bucketHandlers = handlers.map((handler, index) =>
+                    handler().then(
                         () => {},
                         (error) => log(`Error in shutdown handler ${name}[${index}]:`, error),
-                    );
-                    allHandlers.push(handlerPromise);
-                });
-            }
-            if (totalHandlers > 0) {
-                log(`Waiting for ${totalHandlers} shutdown handlers to complete...`);
-                await Promise.all(allHandlers);
+                    ),
+                );
+                if (bucketHandlers.length > 0) {
+                    log(`Waiting for ${bucketHandlers.length} shutdown handlers to complete...`);
+                    await Promise.all(bucketHandlers);
+                }
             }
         };
 
         const totalHandlers = Array.from(handlersSnapshot.values()).reduce((acc, h) => acc + h.length, 0);
         if (totalHandlers > 0) {
             const startTime = Date.now();
-            await runPhase(keepAliveHandlers);
-            await runPhase(otherHandlers);
+            await runBuckets(keepAliveHandlers);
+            await runBuckets(otherHandlers);
             const duration = Date.now() - startTime;
             log(`All ${totalHandlers} shutdown handlers completed in ${duration}ms`);
         }
     })();
+
+    const deadlineMs = resolveShutdownDeadlineMs();
+    const deadlineTimer = setTimeout(() => {
+        log(
+            { module: "shutdown", level: "error", deadlineMs, trigger },
+            "Shutdown deadline exceeded; forcing process exit",
+        );
+        process.exit(0);
+    }, deadlineMs);
+    deadlineTimer.unref?.();
+
+    shutdownPromise = shutdownPromise.finally(() => {
+        clearTimeout(deadlineTimer);
+    });
 
     return await shutdownPromise;
 }

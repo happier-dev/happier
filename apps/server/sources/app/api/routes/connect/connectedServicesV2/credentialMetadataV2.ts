@@ -1,5 +1,6 @@
 import type { ConnectedServiceCredentialHealthV1 } from "@happier-dev/protocol";
 import { hasValidCredentialHealth, parseConnectedServiceCredentialHealth } from "../credentialHealthMetadata";
+import { isConnectedServiceCredentialRevision } from "../credentials/credentialRevision";
 
 export type ConnectedServiceCredentialMetadataV2 = Readonly<{
     v: 2;
@@ -7,6 +8,7 @@ export type ConnectedServiceCredentialMetadataV2 = Readonly<{
     kind: "oauth" | "token";
     providerEmail?: string | null;
     providerAccountId?: string | null;
+    credentialRevision?: string;
     health?: ConnectedServiceCredentialHealthV1;
 }>;
 
@@ -16,6 +18,7 @@ export function isConnectedServiceCredentialMetadataV2(raw: unknown): raw is Con
     return rec.v === 2
         && rec.format === "account_scoped_v1"
         && (rec.kind === "oauth" || rec.kind === "token")
+        && (rec.credentialRevision === undefined || isConnectedServiceCredentialRevision(rec.credentialRevision))
         && hasValidCredentialHealth(rec.health);
 }
 

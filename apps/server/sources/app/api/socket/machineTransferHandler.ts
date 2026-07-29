@@ -3,24 +3,16 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { readMachineAvailabilityState } from '@/app/machines/machineStateGuards';
 import { Server, Socket } from 'socket.io';
 
+import {
+  transferRelayLifecycle,
+  type TransferRelayLogicalIdentity,
+} from './transferRelayLifecycle';
+
 const MACHINE_TRANSFER_MAX_BYTES_ERROR = 'Server-routed machine transfer exceeds the configured max-bytes limit';
 const MACHINE_TRANSFER_MAX_ACTIVE_TRANSFERS_ERROR =
   'Server-routed machine transfer exceeds the configured active-transfer limit';
 
 type MachineTransferScopeKey = string;
-type MachineTransferKey = string;
-
-const globalActiveTransfersByScope = new Map<MachineTransferScopeKey, Set<MachineTransferKey>>();
-const globalTransferBytesByKey = new Map<MachineTransferKey, number>();
-const globalBlockedTransfers = new Set<MachineTransferKey>();
-const globalTransferScopeByKey = new Map<MachineTransferKey, MachineTransferScopeKey>();
-const globalTransferSocketsByKey = new Map<MachineTransferKey, Set<string>>();
-const globalTransferParticipantsByKey = new Map<MachineTransferKey, Readonly<{
-  userId: string;
-  sourceMachineId: string;
-  targetMachineId: string;
-  transferId: string;
-}>>();
 
 function buildMachineTransferScopeKey(params: Readonly<{
   userId: string;
@@ -29,29 +21,21 @@ function buildMachineTransferScopeKey(params: Readonly<{
   return `${params.userId}:${params.sourceMachineId}`;
 }
 
-function buildMachineTransferKey(params: Readonly<{
+function buildMachineTransferLogicalIdentity(params: Readonly<{
   userId: string;
   sourceMachineId: string;
   targetMachineId: string;
   transferId: string;
-}>): MachineTransferKey {
-  return `${params.userId}:${params.sourceMachineId}:${params.targetMachineId}:${params.transferId}`;
-}
-
-function clearMachineTransferKey(key: MachineTransferKey): void {
-  globalBlockedTransfers.delete(key);
-  globalTransferBytesByKey.delete(key);
-  globalTransferSocketsByKey.delete(key);
-  globalTransferParticipantsByKey.delete(key);
-  const scopeKey = globalTransferScopeByKey.get(key);
-  if (scopeKey) {
-    globalTransferScopeByKey.delete(key);
-    const active = globalActiveTransfersByScope.get(scopeKey);
-    active?.delete(key);
-    if (active && active.size === 0) {
-      globalActiveTransfersByScope.delete(scopeKey);
-    }
-  }
+}>): TransferRelayLogicalIdentity {
+  return {
+    namespace: 'machine-transfer-v1',
+    userId: params.userId,
+    transferId: params.transferId,
+    participants: [
+      `machine:${params.sourceMachineId}`,
+      `machine:${params.targetMachineId}`,
+    ],
+  };
 }
 
 function getServerRoutedChunkPayloadSizeBytes(raw: unknown): number | null {
@@ -112,7 +96,6 @@ export function machineTransferHandler(
 ) {
   // Cross-socket accounting. Prevents bypassing max-bytes/active-transfer budgets by opening
   // multiple machine-scoped sockets and splitting the same logical transfer across them.
-  const socketTransferKeys = new Set<MachineTransferKey>();
   const maxActiveTransfersPerSocket = (
     typeof ctx.serverRoutedTransferMaxActiveTransfersPerSocket === 'number'
       && Number.isFinite(ctx.serverRoutedTransferMaxActiveTransfersPerSocket)
@@ -182,11 +165,27 @@ export function machineTransferHandler(
     const transferId = parsed.data.envelope.transferId;
     const targetMachineId = parsed.data.targetMachineId;
     const scopeKey = buildMachineTransferScopeKey({ userId, sourceMachineId });
-    const transferKey = buildMachineTransferKey({ userId, sourceMachineId, targetMachineId, transferId });
+    const logicalIdentity = buildMachineTransferLogicalIdentity({
+      userId,
+      sourceMachineId,
+      targetMachineId,
+      transferId,
+    });
+    const sourceParticipantKey = `machine:${sourceMachineId}`;
+    const onParticipantDisconnect = () => {
+      emitMachineTransferAbort({
+        io: ctx.io,
+        userId,
+        deliverToMachineId: targetMachineId,
+        sourceMachineId,
+        targetMachineId,
+        transferId,
+        reason: 'machine_transfer_socket_disconnected',
+      });
+    };
 
     if (parsed.data.envelope.kind === 'finish' || parsed.data.envelope.kind === 'abort') {
-      clearMachineTransferKey(transferKey);
-      socketTransferKeys.delete(transferKey);
+      transferRelayLifecycle.terminateTransfer(logicalIdentity);
     } else if (parsed.data.envelope.kind === 'open' || parsed.data.envelope.kind === 'chunk') {
       if (parsed.data.envelope.kind === 'chunk' && payloadSizeBytes === null) {
         socket.emit(SOCKET_RPC_EVENTS.ERROR, {
@@ -196,7 +195,21 @@ export function machineTransferHandler(
         return;
       }
 
-      if (globalBlockedTransfers.has(transferKey)) {
+      const lifecycleResult = transferRelayLifecycle.trackTransferFrame({
+        identity: logicalIdentity,
+        scopeKey,
+        participant: sourceParticipantKey,
+        socketId: socket.id,
+        payloadSizeBytes: payloadSizeBytes ?? 0,
+        maxActiveTransfers: maxActiveTransfersPerSocket,
+        maxBytes: parsed.data.envelope.kind === 'chunk' && typeof ctx.serverRoutedTransferMaxBytes === 'number'
+          ? ctx.serverRoutedTransferMaxBytes
+          : null,
+        releaseActiveOnMaxBytes: false,
+        onParticipantDisconnect,
+      });
+
+      if (lifecycleResult.kind === 'blocked') {
         socket.emit(SOCKET_RPC_EVENTS.ERROR, {
           type: 'machine-transfer',
           error: MACHINE_TRANSFER_MAX_BYTES_ERROR,
@@ -204,65 +217,46 @@ export function machineTransferHandler(
         return;
       }
 
-      if (!globalTransferBytesByKey.has(transferKey)) {
-        const active = globalActiveTransfersByScope.get(scopeKey) ?? new Set<MachineTransferKey>();
-        if (!globalActiveTransfersByScope.has(scopeKey)) {
-          globalActiveTransfersByScope.set(scopeKey, active);
-        }
-        if (active.size >= maxActiveTransfersPerSocket) {
-          emitMachineTransferAbort({
-            io: ctx.io,
-            userId,
-            deliverToMachineId: targetMachineId,
-            sourceMachineId,
-            targetMachineId,
-            transferId,
-            reason: MACHINE_TRANSFER_MAX_ACTIVE_TRANSFERS_ERROR,
-          });
-          socket.emit(SOCKET_RPC_EVENTS.ERROR, {
-            type: 'machine-transfer',
-            error: MACHINE_TRANSFER_MAX_ACTIVE_TRANSFERS_ERROR,
-          });
-          return;
-        }
-        active.add(transferKey);
-        globalTransferScopeByKey.set(transferKey, scopeKey);
+      if (lifecycleResult.kind === 'active-limit-exceeded') {
+        emitMachineTransferAbort({
+          io: ctx.io,
+          userId,
+          deliverToMachineId: targetMachineId,
+          sourceMachineId,
+          targetMachineId,
+          transferId,
+          reason: MACHINE_TRANSFER_MAX_ACTIVE_TRANSFERS_ERROR,
+        });
+        socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+          type: 'machine-transfer',
+          error: MACHINE_TRANSFER_MAX_ACTIVE_TRANSFERS_ERROR,
+        });
+        return;
       }
 
-      const sockets = globalTransferSocketsByKey.get(transferKey) ?? new Set<string>();
-      sockets.add(socket.id);
-      globalTransferSocketsByKey.set(transferKey, sockets);
-      globalTransferParticipantsByKey.set(transferKey, {
-        userId,
-        sourceMachineId,
-        targetMachineId,
-        transferId,
+      if (lifecycleResult.kind === 'max-bytes-exceeded') {
+        emitMachineTransferAbort({
+          io: ctx.io,
+          userId,
+          deliverToMachineId: targetMachineId,
+          sourceMachineId,
+          targetMachineId,
+          transferId,
+          reason: MACHINE_TRANSFER_MAX_BYTES_ERROR,
+        });
+        socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+          type: 'machine-transfer',
+          error: MACHINE_TRANSFER_MAX_BYTES_ERROR,
+        });
+        return;
+      }
+    } else {
+      transferRelayLifecycle.observeTransferFrame({
+        identity: logicalIdentity,
+        participant: sourceParticipantKey,
+        socketId: socket.id,
+        onParticipantDisconnect,
       });
-      socketTransferKeys.add(transferKey);
-
-      const priorBytes = globalTransferBytesByKey.get(transferKey) ?? 0;
-      const nextBytes = parsed.data.envelope.kind === 'chunk' ? priorBytes + (payloadSizeBytes ?? 0) : priorBytes;
-      if (parsed.data.envelope.kind === 'chunk' && typeof ctx.serverRoutedTransferMaxBytes === 'number') {
-        if (nextBytes > ctx.serverRoutedTransferMaxBytes) {
-          globalBlockedTransfers.add(transferKey);
-          globalTransferBytesByKey.set(transferKey, nextBytes);
-          emitMachineTransferAbort({
-            io: ctx.io,
-            userId,
-            deliverToMachineId: targetMachineId,
-            sourceMachineId,
-            targetMachineId,
-            transferId,
-            reason: MACHINE_TRANSFER_MAX_BYTES_ERROR,
-          });
-          socket.emit(SOCKET_RPC_EVENTS.ERROR, {
-            type: 'machine-transfer',
-            error: MACHINE_TRANSFER_MAX_BYTES_ERROR,
-          });
-          return;
-        }
-      }
-      globalTransferBytesByKey.set(transferKey, nextBytes);
     }
 
     ctx.io
@@ -275,33 +269,6 @@ export function machineTransferHandler(
   });
 
   socket.on('disconnect', () => {
-    for (const transferKey of socketTransferKeys) {
-      if (globalBlockedTransfers.has(transferKey)) {
-        clearMachineTransferKey(transferKey);
-        continue;
-      }
-
-      const sockets = globalTransferSocketsByKey.get(transferKey);
-      if (!sockets) continue;
-      sockets.delete(socket.id);
-      if (sockets.size === 0) {
-        const transfer = globalTransferParticipantsByKey.get(transferKey);
-        if (transfer) {
-          emitMachineTransferAbort({
-            io: ctx.io,
-            userId: transfer.userId,
-            deliverToMachineId: transfer.targetMachineId,
-            sourceMachineId: transfer.sourceMachineId,
-            targetMachineId: transfer.targetMachineId,
-            transferId: transfer.transferId,
-            reason: 'machine_transfer_socket_disconnected',
-          });
-        }
-        clearMachineTransferKey(transferKey);
-      } else {
-        globalTransferSocketsByKey.set(transferKey, sockets);
-      }
-    }
-    socketTransferKeys.clear();
+    transferRelayLifecycle.disconnectSocket(socket.id);
   });
 }

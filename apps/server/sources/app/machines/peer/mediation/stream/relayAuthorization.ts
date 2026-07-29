@@ -35,6 +35,16 @@ export type MintMachineLiveStreamRelayAuthorizationV1Input = Readonly<{
     nowMs: number;
     ttlMs: number;
     serverGateEnabled: boolean;
+    /**
+     * Optional per-tab viewer socket id (C1). When the watcher is a user-scoped browser socket
+     * rather than a peer machine, the grant must be minted bound to that socket id so the server
+     * relay can deliver frames to the exact tab (`io.to(viewerSocketId)`) instead of a machine
+     * room the viewer never joins. It is part of the canonical-JSON signing input, so the minted
+     * payload MUST carry the same value the StartRequest will present (the protocol superRefine
+     * rejects a grant whose `viewerSocketId` differs from the start request). Omitted for the
+     * legacy machine→machine path.
+     */
+    viewerSocketId?: string;
     signingKey: Readonly<{
         keyId: string;
         secretKey: Uint8Array;
@@ -81,6 +91,7 @@ export function mintMachineLiveStreamRelayAuthorizationV1(
         routeKind: "server_relay",
         streamId: input.streamId,
         streamFamily: input.streamFamily,
+        ...(input.viewerSocketId ? { viewerSocketId: input.viewerSocketId } : {}),
         maxBitrateBps: parsedCaps.data.maxBitrateBps,
         maxFramesPerSecond: parsedCaps.data.maxFramesPerSecond,
         maxFrameBytes: parsedCaps.data.maxFrameBytes,

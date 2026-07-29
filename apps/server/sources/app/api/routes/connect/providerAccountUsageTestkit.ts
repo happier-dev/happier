@@ -1,19 +1,16 @@
-import { createHash } from "node:crypto";
-
 import Fastify from "fastify";
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
+
+import {
+    buildProviderAccountUsageRecordId,
+    ConnectedServiceQuotaSnapshotV1Schema,
+    ProviderAccountUsageSnapshotV1Schema,
+    type ProviderAccountUsageRecordKeyV1,
+} from "@happier-dev/protocol";
 
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
-
-export type ProviderAccountUsageRecordKeyV1 = Readonly<{
-    providerId: string;
-    accountSubjectId: string;
-    subjectKind: string;
-    quotaScope: string;
-    quotaScopeId?: string;
-}>;
 
 export function createProviderAccountUsageTestApp() {
     const app = Fastify();
@@ -36,58 +33,41 @@ export async function closeProviderAccountUsageTrackedApps(): Promise<void> {
     await closeTrackedApps();
 }
 
-function canonicalKeyJson(key: ProviderAccountUsageRecordKeyV1): string {
-    return JSON.stringify({
-        providerId: key.providerId,
-        accountSubjectId: key.accountSubjectId,
-        subjectKind: key.subjectKind,
-        quotaScope: key.quotaScope,
-        ...(key.quotaScopeId ? { quotaScopeId: key.quotaScopeId } : {}),
-    });
-}
-
-export function buildProviderAccountUsageTestRecordId(key: ProviderAccountUsageRecordKeyV1): string {
-    return `paug_v1_${createHash("sha256").update(canonicalKeyJson(key)).digest("base64url")}`;
+export function createProviderAccountUsageRecordKey(
+    overrides: Partial<ProviderAccountUsageRecordKeyV1> = {},
+): ProviderAccountUsageRecordKeyV1 {
+    return {
+        providerId: "codex",
+        accountSubjectId: "acct_provider_subject",
+        subjectKind: "account",
+        quotaScope: "account",
+        ...overrides,
+    };
 }
 
 export function createUsageSnapshot(params: Readonly<{
     fetchedAt: number;
     recordKey?: ProviderAccountUsageRecordKeyV1;
+    serviceId?: string;
+    profileId?: string;
     planLabel?: string | null;
     accountLabel?: string | null;
     diagnostics?: readonly unknown[];
+    recoveryCredits?: unknown;
 }> = { fetchedAt: Date.now() }) {
-    const recordKey = params.recordKey ?? {
-        providerId: "codex",
-        accountSubjectId: "acct_secret_provider_subject",
-        subjectKind: "account",
-        quotaScope: "account",
-    };
-    const recordId = buildProviderAccountUsageTestRecordId(recordKey);
-    return {
+    const recordKey = params.recordKey ?? createProviderAccountUsageRecordKey();
+    const serviceId = params.serviceId ?? "openai-codex";
+    const profileId = params.profileId ?? "work";
+    return ProviderAccountUsageSnapshotV1Schema.parse({
         v: 1,
-        recordId,
+        recordId: buildProviderAccountUsageRecordId(recordKey),
         recordKey,
         providerId: recordKey.providerId,
         accountSubject: {
-            kind: "providerSubject",
+            kind: recordKey.subjectKind === "unknown" ? "provisionalLocalSubject" : "providerSubject",
             id: recordKey.accountSubjectId,
+            ...(recordKey.subjectKind === "unknown" ? { mergeKey: `${serviceId}:${profileId}` } : {}),
         },
-        aliases: [
-            {
-                kind: "connectedServiceProfile",
-                providerId: recordKey.providerId,
-                serviceId: "openai-codex",
-                profileId: "work",
-                accountSubjectId: recordKey.accountSubjectId,
-            },
-            {
-                kind: "nativeCli",
-                providerId: recordKey.providerId,
-                localCredentialRef: "codex-home-main",
-                accountSubjectId: recordKey.accountSubjectId,
-            },
-        ],
         observedAtMs: params.fetchedAt,
         fetchedAtMs: params.fetchedAt,
         staleAfterMs: 60_000,
@@ -95,6 +75,7 @@ export function createUsageSnapshot(params: Readonly<{
         confidence: "confirmed",
         planLabel: params.planLabel ?? null,
         accountLabel: params.accountLabel ?? null,
+        ...(params.recoveryCredits ? { recoveryCredits: params.recoveryCredits } : {}),
         meters: [
             {
                 meterId: "weekly",
@@ -114,7 +95,7 @@ export function createUsageSnapshot(params: Readonly<{
             },
         ],
         ...(params.diagnostics ? { diagnostics: params.diagnostics } : {}),
-    };
+    });
 }
 
 export function createV3ProviderAccountUsagePayload(params: Readonly<{
@@ -133,17 +114,28 @@ export function createV3ProviderAccountUsagePayload(params: Readonly<{
     };
 }
 
-export function createLegacyQuotaSnapshot(params: Readonly<{ fetchedAt: number }>) {
-    return {
+export function createLegacyQuotaSnapshot(params: Readonly<{
+    fetchedAt: number;
+    serviceId?: string;
+    profileId?: string;
+    providerId?: string;
+    activeAccountId?: string;
+    planLabel?: string | null;
+    remaining?: number;
+}>) {
+    const serviceId = params.serviceId ?? "openai-codex";
+    const profileId = params.profileId ?? "work";
+    const remaining = params.remaining ?? 58;
+    return ConnectedServiceQuotaSnapshotV1Schema.parse({
         v: 1,
-        serviceId: "openai-codex",
-        profileId: "work",
+        serviceId,
+        profileId,
         fetchedAt: params.fetchedAt,
         staleAfterMs: 60_000,
-        planLabel: "team",
+        planLabel: params.planLabel ?? "team",
         accountLabel: "work",
-        providerId: "codex",
-        activeAccountId: "acct_legacy_connected_subject",
+        providerId: params.providerId ?? "codex",
+        activeAccountId: params.activeAccountId ?? "acct_legacy_connected_subject",
         fetchedAtMs: params.fetchedAt,
         staleAtMs: params.fetchedAt + 60_000,
         source: "provider_api",
@@ -152,13 +144,13 @@ export function createLegacyQuotaSnapshot(params: Readonly<{ fetchedAt: number }
             {
                 meterId: "weekly",
                 label: "Weekly",
-                used: 42,
+                used: 100 - remaining,
                 limit: 100,
-                remaining: 58,
-                remainingPct: 58,
-                usedPct: 42,
+                remaining,
+                remainingPct: remaining,
+                usedPct: 100 - remaining,
                 unit: "credits",
-                utilizationPct: 42,
+                utilizationPct: 100 - remaining,
                 resetsAt: null,
                 status: "ok",
                 limitScope: "account",
@@ -166,5 +158,5 @@ export function createLegacyQuotaSnapshot(params: Readonly<{ fetchedAt: number }
                 details: { limitCategory: "usage_limit" },
             },
         ],
-    };
+    });
 }

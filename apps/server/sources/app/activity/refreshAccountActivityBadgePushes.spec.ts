@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 
@@ -50,11 +50,16 @@ vi.mock("expo-server-sdk", () => {
 
 describe("refreshAccountActivityBadgePushes", () => {
     beforeEach(() => {
+        vi.useRealTimers();
         dbSessionFindMany.mockReset();
         dbAccountPushTokenFindMany.mockReset();
         dbAccountPushTokenDeleteMany.mockReset();
         sendPushNotificationsAsyncSpy.mockClear();
         getPushNotificationReceiptsAsyncSpy.mockClear();
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
     });
 
     it("sends a badge-only Expo push with the authoritative badge count for each requested account", async () => {
@@ -95,6 +100,38 @@ describe("refreshAccountActivityBadgePushes", () => {
             expect.objectContaining({ to: "ExponentPushToken[a2]", badge: 0, data: { type: "badge_refresh" } }),
         ]);
     }, 30_000);
+
+    it("does not publish badge attention for transcript rows above a partial import ceiling", async () => {
+        dbSessionFindMany.mockResolvedValue([
+            {
+                accountId: "a1",
+                seq: 9,
+                currentStorageState: "server_partial",
+                acceptedThroughServerSeq: 4,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: null,
+                publishedThroughServerSeq: null,
+                pendingCount: 0,
+                pendingBlockedCount: 0,
+                lastViewedSessionSeq: 4,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            },
+        ]);
+        dbAccountPushTokenFindMany.mockResolvedValue([
+            { accountId: "a1", token: "ExponentPushToken[a1]" },
+        ]);
+
+        const { refreshAccountActivityBadgePushes } = await import("./refreshAccountActivityBadgePushes");
+        await refreshAccountActivityBadgePushes({ accountIds: ["a1"] });
+
+        const [chunk] = sendPushNotificationsAsyncSpy.mock.calls.at(0) ?? [];
+        expect(chunk).toEqual([
+            expect.objectContaining({ to: "ExponentPushToken[a1]", badge: 0, data: { type: "badge_refresh" } }),
+        ]);
+    });
 
     it("counts never-viewed sessions with committed transcript activity as unread badge attention", async () => {
         dbSessionFindMany.mockResolvedValue([
@@ -155,6 +192,82 @@ describe("refreshAccountActivityBadgePushes", () => {
                 OR: [{ accountId: "a1", token: "ExponentPushToken[a1]" }],
             },
         });
+    });
+
+    it("does not fetch Expo receipts immediately after sending badge refresh pushes", async () => {
+        dbSessionFindMany.mockResolvedValue([
+            {
+                accountId: "a1",
+                seq: 5,
+                pendingCount: 0,
+                lastViewedSessionSeq: 1,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            },
+        ]);
+        dbAccountPushTokenFindMany.mockResolvedValue([
+            { accountId: "a1", token: "ExponentPushToken[a1]" },
+        ]);
+        sendPushNotificationsAsyncSpy.mockResolvedValueOnce([{ status: "ok", id: "ticket-1" }] as unknown as Array<{ status: string }>);
+
+        const { refreshAccountActivityBadgePushes } = await import("./refreshAccountActivityBadgePushes");
+        await refreshAccountActivityBadgePushes({ accountIds: ["a1"] });
+
+        expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
+        expect(getPushNotificationReceiptsAsyncSpy).not.toHaveBeenCalled();
+    });
+
+    it("coalesces session participant badge refresh requests out of band", async () => {
+        vi.useFakeTimers();
+        dbSessionFindMany.mockResolvedValue([
+            {
+                accountId: "a1",
+                seq: 5,
+                pendingCount: 0,
+                lastViewedSessionSeq: 1,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            },
+            {
+                accountId: "a2",
+                seq: 5,
+                pendingCount: 0,
+                lastViewedSessionSeq: 1,
+                pendingPermissionRequestCount: 0,
+                pendingUserActionRequestCount: 0,
+                active: true,
+                archivedAt: null,
+            },
+        ]);
+        dbAccountPushTokenFindMany.mockResolvedValue([
+            { accountId: "a1", token: "ExponentPushToken[a1]" },
+            { accountId: "a2", token: "ExponentPushToken[a2]" },
+        ]);
+
+        const { refreshSessionParticipantBadgePushes } = await import("./refreshAccountActivityBadgePushes");
+        await refreshSessionParticipantBadgePushes({
+            badgeAttentionChanged: true,
+            participantCursors: [{ accountId: "a1" }],
+        });
+        await refreshSessionParticipantBadgePushes({
+            badgeAttentionChanged: true,
+            participantCursors: [{ accountId: "a2" }, { accountId: "a1" }],
+        });
+
+        expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1_000);
+
+        expect(dbAccountPushTokenFindMany).toHaveBeenCalledTimes(1);
+        expect(dbAccountPushTokenFindMany).toHaveBeenCalledWith({
+            where: { accountId: { in: expect.arrayContaining(["a1", "a2"]) } },
+            select: { accountId: true, token: true },
+        });
+        expect(sendPushNotificationsAsyncSpy).toHaveBeenCalledTimes(1);
     });
 
     it("returns before computing badge counts when no push tokens exist", async () => {

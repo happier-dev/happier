@@ -13,6 +13,16 @@ import { createHash } from "crypto";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { tryParseEncryptedDataKeyV0 } from "./encryptedDataKeyValidation";
+import {
+    isSessionTranscriptShareable,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
+import {
+    createSessionMetadataPrivacyUpgradeRequiredResponse,
+    isSessionMetadataPrivacyUpgradeRequiredError,
+    projectSessionMetadataForRecipient,
+} from "@/app/session/metadata/sessionMetadataRecipientProjection";
 
 export function registerPublicShareOwnerRoutes(app: Fastify): void {
     /**
@@ -48,10 +58,38 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
         const result = await inTx(async (tx) => {
             const session = await tx.session.findUnique({
                 where: { id: sessionId },
-                select: { encryptionMode: true },
+                select: {
+                    accountId: true,
+                    encryptionMode: true,
+                    metadata: true,
+                    metadataVersion: true,
+                    metadataLayoutVersion: true,
+                    ownerMetadata: true,
+                    agentState: true,
+                    agentStateVersion: true,
+                    ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                },
             });
             if (!session) {
                 return { type: 'error' as const, error: 'session not found' as const };
+            }
+            if (!isSessionTranscriptShareable(session)) {
+                return {
+                    type: 'publication-error' as const,
+                    error: "Session transcript is not shareable" as const,
+                    code: "session_transcript_not_shareable" as const,
+                };
+            }
+            try {
+                projectSessionMetadataForRecipient({
+                    session,
+                    recipientAccountId: null,
+                });
+            } catch (error) {
+                if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
+                    return { type: "privacy-error" as const };
+                }
+                throw error;
             }
             const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
 
@@ -67,17 +105,23 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
                 if (shouldRotateToken && sessionEncryptionMode === "e2ee" && !encryptedDataKey) {
                     return { type: 'error' as const, error: 'encryptedDataKey required when rotating token' as const };
                 }
+                let encryptedDataKeyUpdate: { encryptedDataKey?: Uint8Array<ArrayBuffer> | null } = {};
+                if (sessionEncryptionMode === "plain") {
+                    encryptedDataKeyUpdate = { encryptedDataKey: null };
+                } else if (encryptedDataKey !== undefined) {
+                    const parsedEncryptedDataKey = tryParseEncryptedDataKeyV0(encryptedDataKey);
+                    if (parsedEncryptedDataKey.type === "error") {
+                        return parsedEncryptedDataKey;
+                    }
+                    encryptedDataKeyUpdate = { encryptedDataKey: parsedEncryptedDataKey.encryptedDataKey };
+                }
                 const nextTokenHash = shouldRotateToken ? createHash('sha256').update(token!, 'utf8').digest() : null;
 
                 publicShare = await tx.publicSessionShare.update({
                     where: { sessionId },
                     data: {
                         ...(nextTokenHash ? { tokenHash: nextTokenHash } : {}),
-                        ...(sessionEncryptionMode === "plain"
-                            ? { encryptedDataKey: null }
-                            : encryptedDataKey
-                                ? { encryptedDataKey: new Uint8Array(Buffer.from(encryptedDataKey, 'base64')) }
-                                : {}),
+                        ...encryptedDataKeyUpdate,
                         expiresAt: expiresAt ? new Date(expiresAt) : null,
                         maxUses: maxUses ?? null,
                         isConsentRequired: isConsentRequired ?? false,
@@ -92,16 +136,21 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
                     return { type: 'error' as const, error: 'encryptedDataKey required' as const };
                 }
                 const tokenHash = createHash('sha256').update(token, 'utf8').digest();
+                let encryptedDataKeyBytes: Uint8Array<ArrayBuffer> | null = null;
+                if (sessionEncryptionMode === "e2ee") {
+                    const parsedEncryptedDataKey = tryParseEncryptedDataKeyV0(encryptedDataKey!);
+                    if (parsedEncryptedDataKey.type === "error") {
+                        return parsedEncryptedDataKey;
+                    }
+                    encryptedDataKeyBytes = parsedEncryptedDataKey.encryptedDataKey;
+                }
 
                 publicShare = await tx.publicSessionShare.create({
                     data: {
                         sessionId,
                         createdByUserId: userId,
                         tokenHash,
-                        encryptedDataKey:
-                            sessionEncryptionMode === "plain"
-                                ? null
-                                : new Uint8Array(Buffer.from(encryptedDataKey!, 'base64')),
+                        encryptedDataKey: encryptedDataKeyBytes,
                         expiresAt: expiresAt ? new Date(expiresAt) : null,
                         maxUses: maxUses ?? null,
                         isConsentRequired: isConsentRequired ?? false
@@ -128,6 +177,12 @@ export function registerPublicShareOwnerRoutes(app: Fastify): void {
             return { type: 'ok' as const, publicShare };
         });
 
+        if (result.type === 'publication-error') {
+            return reply.code(409).send({ error: result.error, code: result.code });
+        }
+        if (result.type === "privacy-error") {
+            return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
+        }
         if (result.type === 'error') {
             return reply.code(400).send({ error: result.error });
         }

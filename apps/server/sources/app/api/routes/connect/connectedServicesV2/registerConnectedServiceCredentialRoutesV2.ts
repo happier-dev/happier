@@ -1,41 +1,32 @@
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
-
 import type { Fastify } from "../../../types";
-import { db } from "@/storage/db";
-import { inTx } from "@/storage/inTx";
 import {
   CONNECTED_SERVICE_ERROR_CODES,
+  ConnectedServiceCredentialMutationSupersededV1Schema,
   ConnectedServiceIdSchema,
   SealedConnectedServiceCredentialV1Schema,
   type ConnectedServiceId,
 } from "@happier-dev/protocol";
 
-import { encodeCredentialTokenBytes, decodeCredentialTokenString } from "./credentialTokenCodec";
+import { encodeCredentialTokenBytes } from "./credentialTokenCodec";
 import { ConnectedServiceProfileIdSchema } from "./profileIdSchema";
-import {
-  type ConnectedServiceCredentialMetadataV2,
-  isConnectedServiceCredentialMetadataV2,
-  normalizeConnectedServiceCredentialMetadataV2,
-} from "./credentialMetadataV2";
-import {
-  isConnectedServiceCredentialMetadataV3,
-  normalizeConnectedServiceCredentialMetadataV3,
-} from "../connectedServicesV3/credentialMetadataV3";
+import { type ConnectedServiceCredentialMetadataV2 } from "./credentialMetadataV2";
 import { NotFoundSchema } from "../../../schemas/notFoundSchema";
-import { deleteConnectedServiceCredentialInTx } from "../connectedServicesV3/authGroupRepository";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
-import { recordConnectedServiceAccountProfileChange } from "../connectedServicesAccountProfileChange";
-import { isConnectedServiceProviderIdentityMismatch } from "../credentialHealthMetadata";
-
-const DeleteConnectedServiceCredentialQuerySchema = z.object({
-  cleanupGroupReferences: z.preprocess((value) => {
-    if (typeof value !== "string") return value;
-    if (value === "true") return true;
-    if (value === "false") return false;
-    return value;
-  }, z.boolean().optional()),
-}).strict();
+import { mutateConnectedServiceCredential } from "../credentials/mutation";
+import {
+  connectedServiceCredentialMutationGuardFields,
+  validateConnectedServiceCredentialMutationGuard,
+} from "../credentials/mutationGuardSchema";
+import { ConnectedServiceCredentialDeleteQuerySchema } from "../credentials/credentialDeleteQuerySchema";
+import {
+  deleteQualifiedConnectedServiceCredentialForStorageMode,
+  readQualifiedConnectedServiceCredentialForLegacyProjection,
+} from "../qualifiedConnectedAccounts/credentialRepository";
+import {
+  classifyQualifiedConnectedAccountLegacyAuthenticationMode,
+  resolveLegacyQualifiedConnectedAccountService,
+} from "../qualifiedConnectedAccounts/identity";
 
 export function registerConnectedServiceCredentialRoutesV2(
   app: Fastify,
@@ -61,11 +52,20 @@ export function registerConnectedServiceCredentialRoutesV2(
         reconnect: z.object({
           allowProviderIdentityChange: z.boolean().optional().default(false),
         }).optional(),
-      }),
+        ...connectedServiceCredentialMutationGuardFields,
+      }).superRefine(validateConnectedServiceCredentialMutationGuard),
       response: {
-        200: z.object({ success: z.literal(true) }),
+        200: z.object({ success: z.literal(true), credentialRevision: z.string() }),
+        400: z.unknown(),
         413: z.object({ error: z.literal("connect_credential_invalid") }),
-        409: z.object({ error: z.literal(CONNECTED_SERVICE_ERROR_CODES.reconnectProviderIdentityMismatch) }),
+        409: z.union([
+          z.object({ error: z.literal(CONNECTED_SERVICE_ERROR_CODES.reconnectProviderIdentityMismatch) }),
+          z.object({
+            error: z.literal(CONNECTED_SERVICE_ERROR_CODES.credentialMutationSuperseded),
+            reason: z.enum(["revision_mismatch", "refresh_lease_lost"]),
+            credentialRevision: z.string().nullable(),
+          }),
+        ]),
       },
     },
   }, async (request, reply) => {
@@ -87,47 +87,34 @@ export function registerConnectedServiceCredentialRoutesV2(
       providerAccountId: meta?.providerAccountId ?? null,
     };
 
-    const existing = await db.serviceAccountToken.findUnique({
-      where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-      select: { metadata: true },
+    const result = await mutateConnectedServiceCredential({
+      accountId: userId,
+      serviceId,
+      profileId,
+      token: encodeCredentialTokenBytes(sealed.ciphertext),
+      metadata,
+      expiresAt: meta?.expiresAt ? new Date(meta.expiresAt) : null,
+      storageMode: "sealed",
+      incomingIdentity: metadata,
+      allowProviderIdentityChange: request.body.reconnect?.allowProviderIdentityChange === true,
+      ...(request.body.expectedCredentialRevision !== undefined
+        ? { expectedCredentialRevision: request.body.expectedCredentialRevision }
+        : {}),
+      ...(request.body.refreshLeaseOwnerId ? { refreshLeaseOwnerId: request.body.refreshLeaseOwnerId } : {}),
     });
-    const existingMetadata = isConnectedServiceCredentialMetadataV2(existing?.metadata)
-      ? normalizeConnectedServiceCredentialMetadataV2(existing.metadata)
-      : isConnectedServiceCredentialMetadataV3(existing?.metadata)
-        ? normalizeConnectedServiceCredentialMetadataV3(existing.metadata)
-        : null;
-    if (
-      existingMetadata
-      && isConnectedServiceProviderIdentityMismatch({ existing: existingMetadata, incoming: metadata })
-      && request.body.reconnect?.allowProviderIdentityChange !== true
-    ) {
+    if (result.status === "provider_identity_mismatch") {
       return reply.code(409).send({ error: CONNECTED_SERVICE_ERROR_CODES.reconnectProviderIdentityMismatch });
     }
-
-    const prismaMetadata: Prisma.InputJsonValue = metadata;
-
-    await inTx(async (tx) => {
-      await tx.serviceAccountToken.upsert({
-        where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-        update: {
-          updatedAt: new Date(),
-          token: encodeCredentialTokenBytes(sealed.ciphertext),
-          metadata: prismaMetadata,
-          expiresAt: meta?.expiresAt ? new Date(meta.expiresAt) : null,
-        },
-        create: {
-          accountId: userId,
-          vendor: serviceId,
-          profileId,
-          token: encodeCredentialTokenBytes(sealed.ciphertext),
-          metadata: prismaMetadata,
-          expiresAt: meta?.expiresAt ? new Date(meta.expiresAt) : null,
-        },
+    if (result.status === "storage_mode_mismatch") return reply.code(400).send({ error: "connect_credential_invalid" });
+    if (result.status === "superseded") {
+      return reply.code(409).send({
+        error: CONNECTED_SERVICE_ERROR_CODES.credentialMutationSuperseded,
+        reason: result.reason,
+        credentialRevision: result.credentialRevision,
       });
-      await recordConnectedServiceAccountProfileChange({ tx, accountId: userId });
-    });
+    }
 
-    return reply.send({ success: true });
+    return reply.send({ success: true, credentialRevision: result.credentialRevision });
   });
 
   app.get("/v2/connect/:serviceId/profiles/:profileId/credential", {
@@ -139,6 +126,7 @@ export function registerConnectedServiceCredentialRoutesV2(
       }),
       response: {
         200: z.object({
+          credentialRevision: z.string(),
           sealed: SealedConnectedServiceCredentialV1Schema,
           metadata: z.object({
             kind: z.enum(["oauth", "token"]),
@@ -155,27 +143,59 @@ export function registerConnectedServiceCredentialRoutesV2(
     const userId = request.userId;
     const serviceId = request.params.serviceId satisfies ConnectedServiceId;
     const profileId = request.params.profileId;
+    const service =
+      resolveLegacyQualifiedConnectedAccountService(serviceId);
 
-    const row = await db.serviceAccountToken.findUnique({
-      where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-      select: { token: true, metadata: true, expiresAt: true },
-    });
-    if (!row) return reply.code(404).send({ error: "connect_credential_not_found" });
-
-    if (!isConnectedServiceCredentialMetadataV2(row.metadata)) {
+    const result =
+      await readQualifiedConnectedServiceCredentialForLegacyProjection({
+        accountId: userId,
+        ref: {
+          service,
+          accountId: profileId,
+        },
+      });
+    if (result.status !== "resolved") {
+      if (result.status === "not_found") {
+        return reply.code(404).send({
+          error: "connect_credential_not_found",
+        });
+      }
+      return reply.code(409).send({
+        error: "connect_credential_unsupported_format",
+      });
+    }
+    const snapshot = result.credential;
+    if (
+      snapshot.content.t !== "encrypted"
+      || snapshot.authenticationModeId === null
+    ) {
       return reply.code(409).send({ error: "connect_credential_unsupported_format" });
     }
-
+    // Passive old-reader retrieval preserves the historical kind even when
+    // the mode is no longer supported for current profile selection.
+    const legacyMode =
+      classifyQualifiedConnectedAccountLegacyAuthenticationMode({
+        service,
+        authenticationModeId: snapshot.authenticationModeId,
+      });
+    if (!legacyMode) {
+      return reply.code(409).send({
+        error: "connect_credential_unsupported_format",
+      });
+    }
     return reply.send({
+      credentialRevision: snapshot.credentialRevision,
       sealed: {
-        format: row.metadata.format,
-        ciphertext: decodeCredentialTokenString(row.token),
+        format: "account_scoped_v1",
+        ciphertext: snapshot.content.c,
       },
       metadata: {
-        kind: row.metadata.kind,
-        providerEmail: row.metadata.providerEmail ?? null,
-        providerAccountId: row.metadata.providerAccountId ?? null,
-        expiresAt: row.expiresAt ? row.expiresAt.getTime() : null,
+        kind: legacyMode.credentialKind,
+        providerEmail:
+          snapshot.metadata.providerIdentity?.email ?? null,
+        providerAccountId:
+          snapshot.metadata.providerIdentity?.accountId ?? null,
+        expiresAt: snapshot.expiresAt,
       },
     });
   });
@@ -187,11 +207,15 @@ export function registerConnectedServiceCredentialRoutesV2(
         serviceId: ConnectedServiceIdSchema,
         profileId: ConnectedServiceProfileIdSchema,
       }),
-      querystring: DeleteConnectedServiceCredentialQuerySchema,
+      querystring: ConnectedServiceCredentialDeleteQuerySchema,
       response: {
         200: z.object({ success: z.literal(true) }),
+        400: z.object({ error: z.literal("connect_credential_invalid") }),
         404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
-        409: z.object({ error: z.literal("connect_credential_referenced_by_group") }),
+        409: z.union([
+          z.object({ error: z.literal("connect_credential_referenced_by_group") }),
+          ConnectedServiceCredentialMutationSupersededV1Schema,
+        ]),
       },
     },
   }, async (request, reply) => {
@@ -199,22 +223,34 @@ export function registerConnectedServiceCredentialRoutesV2(
     const serviceId = request.params.serviceId satisfies ConnectedServiceId;
     const profileId = request.params.profileId;
 
-    const result = await inTx(async (tx) => {
-      const deleteResult = await deleteConnectedServiceCredentialInTx(tx, {
+    const result =
+      await deleteQualifiedConnectedServiceCredentialForStorageMode({
         accountId: userId,
-        serviceId,
-        profileId,
-        allowReferencedGroupCleanup: request.query.cleanupGroupReferences === true
+        ref: {
+          service:
+            resolveLegacyQualifiedConnectedAccountService(serviceId),
+          accountId: profileId,
+        },
+        expectedStorageMode: "sealed",
+        ...(request.query.expectedCredentialRevision
+          ? { expectedCredentialRevision: request.query.expectedCredentialRevision }
+          : {}),
+        cleanupGroupReferences: request.query.cleanupGroupReferences === true
           || !isServerFeatureEnabledForRequest("connectedServices.accountGroups", process.env),
       });
-      if (deleteResult === "deleted") {
-        await recordConnectedServiceAccountProfileChange({ tx, accountId: userId });
-      }
-      return deleteResult;
-    });
-    if (result === "not_found") return reply.code(404).send({ error: "connect_credential_not_found" });
-    if (result === "referenced") {
+    if (result.status === "storage_mode_mismatch") {
+      return reply.code(400).send({ error: "connect_credential_invalid" });
+    }
+    if (result.status === "not_found") return reply.code(404).send({ error: "connect_credential_not_found" });
+    if (result.status === "referenced") {
       return reply.code(409).send({ error: "connect_credential_referenced_by_group" });
+    }
+    if (result.status === "superseded") {
+      return reply.code(409).send({
+        error: CONNECTED_SERVICE_ERROR_CODES.credentialMutationSuperseded,
+        reason: "revision_mismatch",
+        credentialRevision: result.credentialRevision,
+      });
     }
 
     return reply.send({ success: true });

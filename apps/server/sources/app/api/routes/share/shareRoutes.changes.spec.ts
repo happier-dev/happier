@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+    CRYPTO_GOLDEN_VECTORS,
+    encodeBase64,
+} from "@happier-dev/protocol";
 
 import { createDbMocks, installDbModuleMock } from "../../testkit/dbMocks";
 import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
@@ -59,6 +63,7 @@ const dbMocks = createDbMocks({
     sessionShare: ["upsert", "findFirst", "update"],
 } as const);
 const txDbMocks = createDbMocks({
+    session: ["findUnique"],
     sessionShare: ["upsert", "update", "findFirst", "delete"],
 } as const);
 
@@ -68,19 +73,41 @@ installDbModuleMock(() => ({
 
 vi.mock("@/storage/inTx", () => {
     const harness = createInTxHarness(() => ({
+            session: txDbMocks.db.session,
             sessionShare: txDbMocks.db.sessionShare,
         }));
     return { afterTx: harness.afterTx, inTx: harness.inTx };
 });
 
-const ENCRYPTED_DATA_KEY = Buffer.from(Uint8Array.from([0, ...new Array(73).fill(1)])).toString("base64");
+function bytesFromHex(hex: string): Uint8Array<ArrayBuffer> {
+    return Uint8Array.from(hex.match(/../g)?.map((pair) => Number.parseInt(pair, 16)) ?? []);
+}
+
+const ENCRYPTED_DATA_KEY = encodeBase64(
+    bytesFromHex(CRYPTO_GOLDEN_VECTORS.encryptedDataKeyEnvelopeV1.directSecretKey.envelope.hex),
+    "base64",
+);
+const MALFORMED_ENCRYPTED_DATA_KEY = encodeBase64(Uint8Array.from([0, ...new Array(73).fill(1)]), "base64");
 
 describe("shareRoutes (AccountChange integration)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
         dbMocks.reset();
         txDbMocks.reset();
-        dbMocks.db.session.findUnique.mockResolvedValue({ id: "s1", encryptionMode: "e2ee" });
+        dbMocks.db.session.findUnique.mockResolvedValue({
+            id: "s1",
+            encryptionMode: "e2ee",
+            currentStorageState: "hosted",
+            metadataLayoutVersion: 1,
+            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+        });
+        txDbMocks.db.session.findUnique.mockResolvedValue({
+            id: "s1",
+            encryptionMode: "e2ee",
+            currentStorageState: "hosted",
+            metadataLayoutVersion: 1,
+            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+        });
         dbMocks.db.account.findUnique.mockResolvedValue({ id: "recipient" });
 
         txDbMocks.db.sessionShare.upsert.mockResolvedValue({
@@ -150,8 +177,128 @@ describe("shareRoutes (AccountChange integration)", () => {
         );
     });
 
+    it("POST preserves released layout-zero direct sharing", async () => {
+        dbMocks.db.session.findUnique.mockResolvedValue({
+            id: "s1",
+            accountId: "owner",
+            encryptionMode: "e2ee",
+            currentStorageState: "hosted",
+            metadata: "legacy-whole-bag",
+            metadataVersion: 1,
+            metadataLayoutVersion: 0,
+            ownerMetadata: null,
+            agentState: "legacy-owner-state",
+            agentStateVersion: 3,
+        });
+        txDbMocks.db.session.findUnique.mockResolvedValue({
+            id: "s1",
+            accountId: "owner",
+            encryptionMode: "e2ee",
+            currentStorageState: "hosted",
+            metadata: "legacy-whole-bag",
+            metadataVersion: 1,
+            metadataLayoutVersion: 0,
+            ownerMetadata: null,
+            agentState: "legacy-owner-state",
+            agentStateVersion: 3,
+        });
+
+        const { shareRoutes } = await import("./shareRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/sessions/:sessionId/shares",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
+
+        const { reply, response } = await route.invoke({
+            userId: "owner",
+            params: { sessionId: "s1" },
+            body: {
+                userId: "recipient",
+                accessLevel: "edit",
+                encryptedDataKey: ENCRYPTED_DATA_KEY,
+            },
+        });
+
+        expect(reply.statusCode).toBe(200);
+        expect(response).toEqual({
+            share: expect.objectContaining({
+                id: "share-1",
+                accessLevel: "edit",
+                canApprovePermissions: false,
+            }),
+        });
+        expect(txDbMocks.db.session.findUnique).toHaveBeenCalledWith(expect.objectContaining({
+            where: { id: "s1" },
+            select: expect.objectContaining({
+                metadataLayoutVersion: true,
+                ownerMetadata: true,
+            }),
+        }));
+        expect(txDbMocks.db.sessionShare.upsert).toHaveBeenCalledTimes(1);
+        expect(markAccountChanged).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                accountId: "recipient",
+                kind: "session",
+                entityId: "s1",
+            }),
+        );
+        expect(emitUpdate).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(["machine_only", "server_partial"] as const)(
+        "POST rejects %s transcript storage before creating a friend share",
+        async (currentStorageState) => {
+            txDbMocks.db.session.findUnique.mockResolvedValue({
+                id: "s1",
+                encryptionMode: "e2ee",
+                metadataLayoutVersion: 1,
+                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+                currentStorageState,
+                acceptedThroughServerSeq: currentStorageState === "server_partial" ? 1 : null,
+                materializationPublicationId: null,
+                materializedThroughSourceAt: null,
+                publishedThroughServerSeq: null,
+            });
+
+            const { shareRoutes } = await import("./shareRoutes");
+            const route = createRouteTestBuilder({
+                method: "POST",
+                path: "/v1/sessions/:sessionId/shares",
+                registerRoutes(app) {
+                    shareRoutes(app as any);
+                },
+            });
+            const { reply } = await route.invoke({
+                userId: "owner",
+                params: { sessionId: "s1" },
+                body: {
+                    userId: "recipient",
+                    accessLevel: "view",
+                    encryptedDataKey: ENCRYPTED_DATA_KEY,
+                },
+            });
+
+            expect(reply.code).toHaveBeenCalledWith(409);
+            expect(reply.send).toHaveBeenCalledWith({
+                error: "Session transcript is not shareable",
+                code: "session_transcript_not_shareable",
+            });
+            expect(txDbMocks.db.sessionShare.upsert).not.toHaveBeenCalled();
+        },
+    );
+
     it("POST allows plaintext sessions without an encryptedDataKey", async () => {
-        dbMocks.db.session.findUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain" });
+        txDbMocks.db.session.findUnique.mockResolvedValue({
+            id: "s1",
+            encryptionMode: "plain",
+            metadataLayoutVersion: 1,
+            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            currentStorageState: "hosted",
+        });
         txDbMocks.db.sessionShare.upsert.mockImplementation(async (args: any) => ({
             id: "share-1",
             sessionId: "s1",
@@ -194,8 +341,41 @@ describe("shareRoutes (AccountChange integration)", () => {
         );
     });
 
+    it("POST rejects malformed E2EE encryptedDataKey envelopes before writing a share", async () => {
+        const { shareRoutes } = await import("./shareRoutes");
+        const route = createRouteTestBuilder({
+            method: "POST",
+            path: "/v1/sessions/:sessionId/shares",
+            registerRoutes(app) {
+                shareRoutes(app as any);
+            },
+        });
+
+        const { reply } = await route.invoke(
+            {
+                userId: "owner",
+                params: { sessionId: "s1" },
+                body: {
+                    userId: "recipient",
+                    accessLevel: "edit",
+                    encryptedDataKey: MALFORMED_ENCRYPTED_DATA_KEY,
+                },
+            },
+        );
+
+        expect(reply.code).toHaveBeenCalledWith(400);
+        expect(reply.send).toHaveBeenCalledWith({ error: "Invalid encryptedDataKey" });
+        expect(txDbMocks.db.sessionShare.upsert).not.toHaveBeenCalled();
+    });
+
     it("POST downgrade to view clears existing permission approval delegation on upsert", async () => {
-        dbMocks.db.session.findUnique.mockResolvedValue({ id: "s1", encryptionMode: "plain" });
+        txDbMocks.db.session.findUnique.mockResolvedValue({
+            id: "s1",
+            encryptionMode: "plain",
+            metadataLayoutVersion: 1,
+            ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
+            currentStorageState: "hosted",
+        });
         txDbMocks.db.sessionShare.upsert.mockImplementation(async (args: any) => ({
             id: "share-1",
             sessionId: "s1",

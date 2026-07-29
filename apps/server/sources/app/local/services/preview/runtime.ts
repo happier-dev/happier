@@ -37,6 +37,7 @@ export type LocalServicePreviewRuntimeRegistrationResult =
           ok: false;
           reasonCode:
               | "invalid_preview_resource"
+              | "preview_hostname_collision"
               | "preview_token_secret_missing"
               | "preview_public_base_url_missing"
               | LocalServicePreviewUrlFailureReason;
@@ -62,6 +63,10 @@ export type LocalServicePreviewRuntimeValidationResult =
               | LocalServicePreviewTokenFailureReason;
       }>;
 
+export type LocalServicePreviewRuntimeExchangeResult =
+    | Readonly<{ ok: true; rawToken: string; expiresAt: number }>
+    | Exclude<LocalServicePreviewRuntimeValidationResult, Readonly<{ ok: true }>>;
+
 export type LocalServicePreviewRuntime = Readonly<{
     registerPreview(input: LocalServicePreviewRuntimeRegistrationInput): LocalServicePreviewRuntimeRegistrationResult;
     resolvePreview(previewId: string): LocalServicePreviewResourceV1 | null;
@@ -73,6 +78,12 @@ export type LocalServicePreviewRuntime = Readonly<{
         sessionId: string;
         machineId: string;
     }>): LocalServicePreviewRuntimeValidationResult;
+    exchangeAccessToken(input: Readonly<{
+        previewId: string;
+        rawToken: string | null;
+        sessionId: string;
+        machineId: string;
+    }>): LocalServicePreviewRuntimeExchangeResult;
     unregisterPreview(previewId: string): Readonly<{ ok: true } | { ok: false; reasonCode: "preview_not_found" }>;
 }>;
 
@@ -182,12 +193,17 @@ export function createLocalServicePreviewRuntime(
         }
 
         const previousHostname = hostnameByPreviewId.get(parsed.data.previewId);
+        const hostname = parsed.data.originMode === "host" ? hostnameFromOrigin(resolvedUrl.origin) : null;
+        const hostnameOwner = hostname ? previewIdByHostname.get(hostname) : null;
+        if (hostname && hostnameOwner && hostnameOwner !== parsed.data.previewId) {
+            return { ok: false, reasonCode: "preview_hostname_collision" };
+        }
+
         if (previousHostname) {
             previewIdByHostname.delete(previousHostname);
             hostnameByPreviewId.delete(parsed.data.previewId);
         }
 
-        const hostname = parsed.data.originMode === "host" ? hostnameFromOrigin(resolvedUrl.origin) : null;
         if (hostname) {
             previewIdByHostname.set(hostname, parsed.data.previewId);
             hostnameByPreviewId.set(parsed.data.previewId, hostname);
@@ -255,7 +271,63 @@ export function createLocalServicePreviewRuntime(
             sessionId: input.sessionId,
             machineId: input.machineId,
             nowMs: nowMs(),
+            expectedExchangeMode: "cookie",
         });
+    }
+
+    function exchangeAccessToken(input: Readonly<{
+        previewId: string;
+        rawToken: string | null;
+        sessionId: string;
+        machineId: string;
+    }>): LocalServicePreviewRuntimeExchangeResult {
+        const entry = resources.get(input.previewId);
+        if (!entry) {
+            return { ok: false, reasonCode: "preview_not_found" };
+        }
+        if (!input.rawToken) {
+            return { ok: false, reasonCode: "preview_token_missing" };
+        }
+
+        const tokenSecret = nonEmptyString(runtimeInput.tokenSecret);
+        if (!tokenSecret) {
+            return { ok: false, reasonCode: "token_mismatch" };
+        }
+
+        const tokenValidation = validateLocalServicePreviewToken({
+            secret: tokenSecret,
+            rawToken: input.rawToken,
+            record: entry.tokenRecord,
+            previewId: input.previewId,
+            sessionId: input.sessionId,
+            machineId: input.machineId,
+            nowMs: nowMs(),
+            expectedExchangeMode: "url",
+        });
+        if (!tokenValidation.ok) {
+            return tokenValidation;
+        }
+
+        const { token, record } = createLocalServicePreviewToken({
+            secret: tokenSecret,
+            tokenId: generateTokenId(),
+            rawToken: generateRawToken(),
+            previewId: entry.resource.previewId,
+            sessionId: entry.resource.sessionId,
+            machineId: entry.resource.machineId,
+            issuedAt: nowMs(),
+            expiresAt: entry.tokenRecord.expiresAt,
+            exchangeMode: "cookie",
+        });
+        resources.set(entry.resource.previewId, {
+            ...entry,
+            tokenRecord: record,
+        });
+        return {
+            ok: true,
+            rawToken: token,
+            expiresAt: record.expiresAt,
+        };
     }
 
     function unregisterPreview(previewId: string): Readonly<{ ok: true } | { ok: false; reasonCode: "preview_not_found" }> {
@@ -277,6 +349,7 @@ export function createLocalServicePreviewRuntime(
         resolvePreviewByHost,
         resolvePreviewContext,
         validateAccess,
+        exchangeAccessToken,
         unregisterPreview,
     };
 }

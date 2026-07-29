@@ -53,6 +53,13 @@ vi.mock("@/storage/inTx", () => {
     return { afterTx, inTx };
 });
 
+const machineUpdateHandlerOptions = {
+    operationSocketBatchLimits: {
+        ok: true as const,
+        limits: { maxItems: 200, maxSerializedBytes: 524_288 },
+    },
+};
+
 describe("machineUpdateHandler (AccountChange integration)", () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -65,6 +72,9 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
             if (args?.select?.daemonStateVersion) {
                 return { daemonStateVersion: 2, daemonState: "old-state", revokedAt: machineRevokedAt };
             }
+            if (args?.select?.revokedAt && args?.select?.replacedByMachineId) {
+                return { revokedAt: machineRevokedAt, replacedByMachineId: null };
+            }
             return null;
         });
         txDbMocks.db.machine.updateMany.mockResolvedValue({ count: 1 });
@@ -76,7 +86,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         const socket = createFakeSocket({
             data: { clientType: "machine-scoped", machineId: "m1" },
         });
-        machineUpdateHandler("u1", socket as any);
+        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
         const handler = getSocketHandler(socket, "machine-update-metadata");
 
         const callback = vi.fn();
@@ -102,7 +112,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         const socket = createFakeSocket({
             data: { clientType: "machine-scoped", machineId: "m2" },
         });
-        machineUpdateHandler("u1", socket as any);
+        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
         const handler = getSocketHandler(socket, "machine-update-state");
 
         const callback = vi.fn();
@@ -138,7 +148,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         const socket = createFakeSocket({
             data: { clientType: "machine-scoped", machineId: "m3" },
         });
-        machineUpdateHandler("u1", socket as any);
+        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
         const handler = getSocketHandler(socket, "machine-update-state");
 
         const callback = vi.fn();
@@ -166,7 +176,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         const socket = createFakeSocket({
             data: { clientType: "machine-scoped", machineId: "m1" },
         });
-        machineUpdateHandler("u1", socket as any);
+        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
         const handler = getSocketHandler(socket, "machine-update-metadata");
 
         const callback = vi.fn();
@@ -178,27 +188,28 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
         expect(callback).toHaveBeenCalledWith(expect.objectContaining({ result: "error" }));
     });
 
-    it("rebroadcasts validated direct-session transcript delta ephemerals", async () => {
+    it("rebroadcasts only content-free qualified external-session invalidations", async () => {
         const { machineUpdateHandler } = await import("./machineUpdateHandler");
 
         const payload = {
-            type: "direct-session-transcript-delta",
-            sessionId: "sess-1",
-            items: [
-                {
-                    id: "a2",
-                    createdAtMs: 1_050,
-                    localId: "direct-2",
-                    raw: {
-                        type: "assistant",
-                        uuid: "a2",
-                        message: { model: "m", content: [{ type: "text", text: "hello from push" }] },
+            v: 1,
+            type: "external-session-transcript-invalidated",
+            binding: {
+                v: 1,
+                machineId: "m1",
+                sessionId: "sess-1",
+                link: { generation: "link-1", remoteSessionId: "remote-1" },
+                source: {
+                    qualifiedIdentity: {
+                        v: 1,
+                        agent: { pluginId: "happier.claude", localId: "claude" },
+                        source: { kind: "claudeConfig", contractVersion: 1 },
                     },
+                    generation: "source-1",
                 },
-            ],
-            nextCursor: "cursor-2",
-            truncated: false,
-            futureField: { preserved: true },
+                contributionGeneration: "contribution-1",
+                cursorIdentity: `external_session_cursor_binding_v1:${"a".repeat(64)}`,
+            },
         } satisfies EphemeralPayload;
 
         const socket = createFakeSocket({
@@ -207,15 +218,98 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
                 machineId: "m1",
             },
         });
-        machineUpdateHandler("u1", socket as any);
-        const handler = getSocketHandler(socket, "direct-session-transcript-delta");
+        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
+        const handler = getSocketHandler(socket, "external-session-transcript-invalidated");
 
         await handler(payload);
 
+        expect(JSON.stringify(payload)).not.toContain("happier_external_cursor_v1:");
+        expect(JSON.stringify(payload)).not.toContain("cursor-1");
         expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({
             userId: "u1",
             payload,
             recipientFilter: { type: "all-interested-in-session", sessionId: "sess-1" },
         }));
+        expect(socket.handlers.has("direct-session-transcript-delta")).toBe(false);
+    });
+
+    it("rejects transcript-bearing or cross-machine external-session invalidations", async () => {
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+        const payload = {
+            v: 1,
+            type: "external-session-transcript-invalidated",
+            binding: {
+                v: 1,
+                machineId: "m1",
+                sessionId: "sess-1",
+                link: { generation: "link-1", remoteSessionId: "remote-1" },
+                source: {
+                    qualifiedIdentity: {
+                        v: 1,
+                        agent: { pluginId: "happier.claude", localId: "claude" },
+                        source: { kind: "claudeConfig", contractVersion: 1 },
+                    },
+                    generation: "source-1",
+                },
+                contributionGeneration: "contribution-1",
+                cursorIdentity: `external_session_cursor_binding_v1:${"a".repeat(64)}`,
+            },
+        };
+        const socket = createFakeSocket({
+            data: {
+                clientType: "machine-scoped",
+                machineId: "m1",
+            },
+        });
+        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
+        const handler = getSocketHandler(socket, "external-session-transcript-invalidated");
+
+        await handler({
+            ...payload,
+            items: [{ id: "secret", raw: { text: "server-readable transcript" } }],
+        });
+        await handler({
+            ...payload,
+            binding: { ...payload.binding, machineId: "m2" },
+        });
+
+        expect(emitEphemeral).not.toHaveBeenCalled();
+    });
+
+    it("rejects external-session invalidations from a machine revoked after socket authentication", async () => {
+        machineRevokedAt = new Date("2026-07-23T00:00:00.000Z");
+        const { machineUpdateHandler } = await import("./machineUpdateHandler");
+        const payload = {
+            v: 1,
+            type: "external-session-transcript-invalidated",
+            binding: {
+                v: 1,
+                machineId: "m1",
+                sessionId: "sess-1",
+                link: { generation: "link-1", remoteSessionId: "remote-1" },
+                source: {
+                    qualifiedIdentity: {
+                        v: 1,
+                        agent: { pluginId: "happier.claude", localId: "claude" },
+                        source: { kind: "claudeConfig", contractVersion: 1 },
+                    },
+                    generation: "source-1",
+                },
+                contributionGeneration: "contribution-1",
+                cursorIdentity: `external_session_cursor_binding_v1:${"a".repeat(64)}`,
+            },
+        };
+        const socket = createFakeSocket({
+            data: {
+                clientType: "machine-scoped",
+                machineId: "m1",
+            },
+        });
+        machineUpdateHandler("u1", socket as any, machineUpdateHandlerOptions);
+        const handler = getSocketHandler(socket, "external-session-transcript-invalidated");
+
+        await handler(payload);
+
+        expect(emitEphemeral).not.toHaveBeenCalled();
     });
 });

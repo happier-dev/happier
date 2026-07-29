@@ -1,6 +1,6 @@
 import { Counter, Gauge, Histogram } from "prom-client";
 
-import { register } from "./registry";
+import { getOrCreateMetric, register } from "./registry";
 
 export type SocketConnectionType = "user-scoped" | "session-scoped" | "machine-scoped";
 export type SocketTransportName = "polling" | "websocket" | "webtransport" | "unknown";
@@ -46,120 +46,120 @@ const activeMachines = new Map<string, number>();
 const activeTransportCounts = new Map<SocketTransportName, number>();
 const recentDisconnectsByReconnectKey = new Map<string, number>();
 
-export const websocketConnectionsGauge = new Gauge({
+export const websocketConnectionsGauge = getOrCreateMetric("websocket_connections_total", () => new Gauge({
     name: "websocket_connections_total",
     help: "Deprecated: number of active WebSocket connections by client type",
     labelNames: ["type"] as const,
     registers: [register],
-});
+}));
 
-export const websocketConnectionsActiveGauge = new Gauge({
+export const websocketConnectionsActiveGauge = getOrCreateMetric("websocket_connections_active", () => new Gauge({
     name: "websocket_connections_active",
     help: "Number of active WebSocket connections by process role and client type",
     labelNames: ["role", "type"] as const,
     registers: [register],
-});
+}));
 
-export const websocketActiveEntitiesGauge = new Gauge({
+export const websocketActiveEntitiesGauge = getOrCreateMetric("websocket_active_entities", () => new Gauge({
     name: "websocket_active_entities",
     help: "Number of unique active websocket entities tracked by this process",
     labelNames: ["role", "entity_type"] as const,
     registers: [register],
-});
+}));
 
-export const websocketTransportConnectionsActiveGauge = new Gauge({
+export const websocketTransportConnectionsActiveGauge = getOrCreateMetric("websocket_transport_connections_active", () => new Gauge({
     name: "websocket_transport_connections_active",
     help: "Number of active websocket connections by process role and current transport",
     labelNames: ["role", "transport"] as const,
     registers: [register],
-});
+}));
 
-export const websocketEventsCounter = new Counter({
+export const websocketEventsCounter = getOrCreateMetric("websocket_events_total", () => new Counter({
     name: "websocket_events_total",
     help: "Total WebSocket events received by type",
     labelNames: ["event_type"] as const,
     registers: [register],
-});
+}));
 
-export const socketMessageAckCounter = new Counter({
+export const socketMessageAckCounter = getOrCreateMetric("socket_message_ack_total", () => new Counter({
     name: "socket_message_ack_total",
     help: "Total socket message acknowledgements by result",
     labelNames: ["result", "error"] as const,
     registers: [register],
-});
+}));
 
-export const socketAdapterModeInfo = new Gauge({
+export const socketAdapterModeInfo = getOrCreateMetric("socket_adapter_mode_info", () => new Gauge({
     name: "socket_adapter_mode_info",
     help: "Socket adapter mode currently configured for this process role",
     labelNames: ["adapter", "redis_enabled", "role"] as const,
     registers: [register],
-});
+}));
 
-export const websocketAuthHandshakesCounter = new Counter({
+export const websocketAuthHandshakesCounter = getOrCreateMetric("websocket_auth_handshakes_total", () => new Counter({
     name: "websocket_auth_handshakes_total",
     help: "Total socket authentication handshake outcomes",
     labelNames: ["role", "client_type", "transport", "result", "failure"] as const,
     registers: [register],
-});
+}));
 
-export const websocketAuthHandshakeDurationHistogram = new Histogram({
+export const websocketAuthHandshakeDurationHistogram = getOrCreateMetric("websocket_auth_handshake_duration_seconds", () => new Histogram({
     name: "websocket_auth_handshake_duration_seconds",
     help: "Socket authentication handshake duration in seconds",
     labelNames: ["role", "client_type", "result", "failure"] as const,
     buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 5],
     registers: [register],
-});
+}));
 
-export const websocketAuthHandshakeStageDurationHistogram = new Histogram({
+export const websocketAuthHandshakeStageDurationHistogram = getOrCreateMetric("websocket_auth_handshake_stage_duration_seconds", () => new Histogram({
     name: "websocket_auth_handshake_stage_duration_seconds",
     help: "Socket authentication handshake stage duration in seconds",
     labelNames: ["role", "client_type", "transport", "stage", "result"] as const,
     buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 5],
     registers: [register],
-});
+}));
 
-export const websocketAuthHandshakeExceptionsCounter = new Counter({
+export const websocketAuthHandshakeExceptionsCounter = getOrCreateMetric("websocket_auth_handshake_exceptions_total", () => new Counter({
     name: "websocket_auth_handshake_exceptions_total",
     help: "Unexpected exceptions during socket authentication handshake by stage and classification",
     labelNames: ["role", "client_type", "transport", "stage", "classification"] as const,
     registers: [register],
-});
+}));
 
-export const websocketConnectConvergenceCounter = new Counter({
+export const websocketConnectConvergenceCounter = getOrCreateMetric("websocket_connect_convergence_total", () => new Counter({
     name: "websocket_connect_convergence_total",
     help: "Total socket connect convergence lifecycle events observed by this process",
     labelNames: ["role", "client_type", "transport", "phase"] as const,
     registers: [register],
-});
+}));
 
-export const websocketConnectConvergenceDurationHistogram = new Histogram({
+export const websocketConnectConvergenceDurationHistogram = getOrCreateMetric("websocket_connect_convergence_duration_seconds", () => new Histogram({
     name: "websocket_connect_convergence_duration_seconds",
     help: "Socket connect convergence duration in seconds from connection callback entry to ready or pre-ready disconnect",
     labelNames: ["role", "client_type", "transport", "result"] as const,
     buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 5, 10, 30],
     registers: [register],
-});
+}));
 
-export const websocketDisconnectsCounter = new Counter({
+export const websocketDisconnectsCounter = getOrCreateMetric("websocket_disconnects_total", () => new Counter({
     name: "websocket_disconnects_total",
     help: "Total socket disconnects by reason",
     labelNames: ["role", "client_type", "transport", "reason"] as const,
     registers: [register],
-});
+}));
 
-export const websocketTransportUpgradeOutcomesCounter = new Counter({
+export const websocketTransportUpgradeOutcomesCounter = getOrCreateMetric("websocket_transport_upgrade_outcomes_total", () => new Counter({
     name: "websocket_transport_upgrade_outcomes_total",
     help: "Total transport upgrade outcomes observed by this process",
     labelNames: ["role", "from_transport", "to_transport", "result"] as const,
     registers: [register],
-});
+}));
 
-export const websocketReconnectionsCounter = new Counter({
+export const websocketReconnectionsCounter = getOrCreateMetric("websocket_reconnections_total", () => new Counter({
     name: "websocket_reconnections_total",
     help: "Total reconnects observed by this process within the configured reconnect window",
     labelNames: ["role", "client_type"] as const,
     registers: [register],
-});
+}));
 
 function resolveSocketMetricsRole(env: NodeJS.ProcessEnv = process.env): SocketRole {
     const role = env.SERVER_ROLE?.trim();

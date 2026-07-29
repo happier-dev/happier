@@ -3,7 +3,8 @@ import { createRequire } from "node:module";
 import type { Log } from "@sentry/node";
 
 import { parseOptionalBooleanEnv } from "@/config/env";
-import { redactSentryLogAttributes } from "./sentryLogRedaction";
+import { redactSentryEvent, redactSentryLog } from "./sentryLogRedaction";
+import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
 
 type ServerSentryConfig = {
     dsn: string;
@@ -152,7 +153,9 @@ export function initializeServerSentry(env: NodeJS.ProcessEnv): void {
         ...(resolved.environment ? { environment: resolved.environment } : null),
         ...(resolved.release ? { release: resolved.release } : null),
         sendDefaultPii: resolved.sendDefaultPii,
-        ...(resolved.enableLogs ? { enableLogs: true, beforeSendLog: (log) => ({ ...log, attributes: redactSentryLogAttributes(log.attributes) }) } : null),
+        beforeSend: redactSentryEvent,
+        beforeSendTransaction: redactSentryEvent,
+        ...(resolved.enableLogs ? { enableLogs: true, beforeSendLog: redactSentryLog } : null),
         ...(resolved.tracesSampleRate > 0 ? { tracesSampleRate: resolved.tracesSampleRate } : null),
         ...(resolved.profileSessionSampleRate > 0
             ? { profileSessionSampleRate: resolved.profileSessionSampleRate, profileLifecycle: resolved.profileLifecycle }
@@ -209,9 +212,24 @@ export function captureFastifyExceptionForSentry(error: unknown, request: {
 
     const method = typeof request.method === "string" ? request.method : "unknown";
     const url = typeof request.url === "string" ? request.url : "";
-    const path = url.includes("?") ? url.slice(0, url.indexOf("?")) : url;
+    const path = redactPublicShareCapabilityUrl(
+        url.includes("?") ? url.slice(0, url.indexOf("?")) : url,
+    );
     const ip = typeof request.ip === "string" ? request.ip : undefined;
     const userAgent = typeof request.headers?.["user-agent"] === "string" ? (request.headers["user-agent"] as string) : undefined;
+    const safeError = error instanceof Error
+        ? (() => {
+            const message = redactPublicShareCapabilityUrl(error.message);
+            const stack = typeof error.stack === "string"
+                ? redactPublicShareCapabilityUrl(error.stack)
+                : error.stack;
+            if (message === error.message && stack === error.stack) return error;
+            const redacted = new Error(message);
+            redacted.name = error.name;
+            redacted.stack = stack;
+            return redacted;
+        })()
+        : error;
 
     Sentry.withScope((scope) => {
         scope.setTag("runtime", "server");
@@ -227,6 +245,6 @@ export function captureFastifyExceptionForSentry(error: unknown, request: {
             }
         }
 
-        Sentry.captureException(error);
+        Sentry.captureException(safeError);
     });
 }

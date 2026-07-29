@@ -1,12 +1,32 @@
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 
 import { emitAutomationAssignmentUpdated, emitAutomationDelete, emitAutomationRunUpdated, emitAutomationRunUpdatedToMachineOnly, emitAutomationUpsert } from "./automationChangePublisher";
 import { replaceAutomationAssignmentsTx } from "./automationAssignmentService";
 import { enqueueImmediateRunTx, enqueueNextScheduledRunIfMissingTx, resolveScheduledRunDueAt } from "./automationRunQueueService";
 import { validateExistingSessionAutomationTargetTx } from "./automationExistingSessionValidation";
+import { assertAutomationTemplateEnvelopeForAccountMode } from "./automationValidation";
 import type { AutomationListItem, AutomationPatchInput, AutomationRunItem, AutomationScheduleInput, AutomationUpsertInput } from "./automationTypes";
+
+async function assertAutomationTemplateMatchesCurrentAccountModeTx(
+    tx: Tx,
+    params: Readonly<{ accountId: string; templateCiphertext: string }>,
+): Promise<void> {
+    const account = await tx.account.findUnique({
+        where: { id: params.accountId },
+        select: { publicKey: true, encryptionMode: true },
+    });
+    if (!account) {
+        throw new Error("Account not found");
+    }
+
+    assertAutomationTemplateEnvelopeForAccountMode(
+        params.templateCiphertext,
+        resolveEffectiveAccountEncryptionModeFromAccountRow(account),
+    );
+}
 
 function resolveScheduleDbFields(schedule: AutomationScheduleInput): Readonly<{
     scheduleKind: "cron" | "interval";
@@ -173,6 +193,11 @@ export async function createAutomation(params: {
     input: AutomationUpsertInput;
 }): Promise<AutomationListItem> {
     return await inTx(async (tx) => {
+        await assertAutomationTemplateMatchesCurrentAccountModeTx(tx, {
+            accountId: params.accountId,
+            templateCiphertext: params.input.templateCiphertext,
+        });
+
         await validateExistingSessionAutomationTargetTx({
             tx,
             accountId: params.accountId,
@@ -256,6 +281,13 @@ export async function updateAutomation(params: {
         });
         if (!existing) {
             return null;
+        }
+
+        if (typeof params.input.templateCiphertext === "string") {
+            await assertAutomationTemplateMatchesCurrentAccountModeTx(tx, {
+                accountId: params.accountId,
+                templateCiphertext: params.input.templateCiphertext,
+            });
         }
 
         const effectiveTargetType = params.input.targetType ?? existing.targetType;

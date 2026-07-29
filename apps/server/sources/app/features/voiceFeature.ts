@@ -1,5 +1,5 @@
 import type { FeaturesPayloadDelta } from "./types";
-import { resolveElevenLabsAgentId } from "@/voice/elevenLabsEnv";
+import { resolveElevenLabsAgentId } from "@/voice/providers/elevenLabs";
 import { readVoiceFeatureEnv } from "./catalog/readFeatureEnv";
 
 export function resolveVoiceFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta {

@@ -15,6 +15,7 @@ import {
     type PluginPermissionGrantRequestV1,
     type PluginPermissionGrantV1,
 } from "@happier-dev/protocol";
+import { createPluginPermissionGrantOperations } from "./operations";
 import { createSqlPluginPermissionGrantStore } from "./storage";
 
 function registerDefaultRoutes() {
@@ -145,7 +146,6 @@ describe("plugin permission grant durable storage", () => {
         await db.$executeRawUnsafe("DELETE FROM plugin_permission_grant_events").catch(() => undefined);
         await db.$executeRawUnsafe("DELETE FROM plugin_permission_grants").catch(() => undefined);
         await db.$executeRawUnsafe("DELETE FROM plugin_permission_grant_requests").catch(() => undefined);
-        await db.$executeRawUnsafe("DELETE FROM account_plugin_manifest_projections").catch(() => undefined);
         await harness.resetDbTables([
             () => db.userKVStore.deleteMany(),
             () => db.machine.deleteMany(),
@@ -166,16 +166,18 @@ describe("plugin permission grant durable storage", () => {
         expect(app.routes.has("POST /v1/plugins/permissions/grants/request")).toBe(true);
 
         const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
-        const requested = await requestGrant({
-            userId: account.id,
-            body: {
-                pluginId: CODERABBIT_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope: { kind: "project", projectId: "project-1" },
-                reason: "Publish approved review comments directly.",
-                requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID, sessionId: "session-1" },
-            },
-        }, createReplyStub()) as any;
+        const requestBody = {
+            pluginId: CODERABBIT_PLUGIN_ID,
+            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+            targetScope: { kind: "project" as const, projectId: "project-1" },
+            reason: "Publish approved review comments directly.",
+            requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID, sessionId: "session-1" },
+        };
+        const requested = await requestGrant(await createPublisherRouteRequest({
+            accountId: account.id,
+            path: "/v1/plugins/permissions/grants/request",
+            body: requestBody,
+        }), createReplyStub()) as any;
 
         expect(requested.pendingRequest).toMatchObject({
             accountId: account.id,
@@ -250,6 +252,11 @@ describe("plugin permission grant durable storage", () => {
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID },
         };
+        const missingPublisherReply = createReplyStub();
+        const missingPublisher = await requestGrant({ userId: account.id, body }, missingPublisherReply);
+        expect(missingPublisherReply.statusCode).toBe(400);
+        expect(missingPublisher).toMatchObject({ error: "plugin_permission_grant_publisher_proof_required" });
+
         const reply = createReplyStub();
 
         const result = await requestGrant(await createPublisherRouteRequest({
@@ -262,9 +269,91 @@ describe("plugin permission grant durable storage", () => {
         expect(result.pendingRequest).toMatchObject({
             accountId: account.id,
             pluginId: CODERABBIT_PLUGIN_ID,
-            authoritySource: { kind: "bundled" },
+            authoritySource: {
+                kind: "machine_installation",
+                machineId: expect.any(String),
+                installationId: expect.any(String),
+            },
             status: "pending",
         });
+    });
+
+    it("reuses one pending request for concurrent signed requests from the same machine installation and scope", async () => {
+        const account = await db.account.create({
+            data: {
+                id: "account-plugin-permission-concurrent-request",
+                publicKey: "pk-plugin-permission-concurrent-request",
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const keyPair = tweetnacl.sign.keyPair();
+        const machineId = "machine-plugin-permission-concurrent-request";
+        const installationId = "installation-plugin-permission-concurrent-request";
+        await createTrustedMachine({
+            accountId: account.id,
+            machineId,
+            installationId,
+            keyPair,
+        });
+        const path = "/v1/plugins/permissions/grants/request";
+        const body = {
+            pluginId: CODERABBIT_PLUGIN_ID,
+            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+            targetScope: { kind: "project" as const, projectId: "project-concurrent" },
+            reason: "Publish approved review comments directly.",
+            requester: {
+                kind: "plugin" as const,
+                pluginId: CODERABBIT_PLUGIN_ID,
+                sessionId: "session-concurrent",
+                requestId: "call-concurrent",
+            },
+        };
+        const requestGrant = getRouteHandler(registerDefaultRoutes(), "POST", path);
+        const routeRequest = (nonce: string) => ({
+            userId: account.id,
+            body,
+            method: "POST",
+            url: path,
+            headers: {
+                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
+                    keyPair,
+                    machineId,
+                    installationId,
+                    path,
+                    body,
+                    nonce,
+                }),
+            },
+        });
+
+        const [first, second] = await Promise.all([
+            requestGrant(routeRequest("nonce-concurrent-request-1"), createReplyStub()),
+            requestGrant(routeRequest("nonce-concurrent-request-2"), createReplyStub()),
+        ]) as any[];
+
+        expect(second.pendingRequest.id).toBe(first.pendingRequest.id);
+        const pendingRows = await db.$queryRaw<Array<{ id: string }>>`
+            SELECT id
+            FROM plugin_permission_grant_requests
+            WHERE account_id = ${account.id}
+              AND plugin_id = ${CODERABBIT_PLUGIN_ID}
+              AND capability = ${REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1}
+              AND scope_kind = 'project'
+              AND scope_project_id = 'project-concurrent'
+              AND authority_kind = 'machine_installation'
+              AND authority_machine_id = ${machineId}
+              AND authority_installation_id = ${installationId}
+              AND status = 'pending'
+        `;
+        expect(pendingRows).toEqual([{ id: first.pendingRequest.id }]);
+        const requestedEvents = await db.$queryRaw<Array<{ request_id: string }>>`
+            SELECT request_id
+            FROM plugin_permission_grant_events
+            WHERE account_id = ${account.id}
+              AND event_kind = 'requested'
+        `;
+        expect(requestedEvents).toEqual([{ request_id: first.pendingRequest.id }]);
     });
 
     it("revokes active grants and fails closed for non-matching scopes", async () => {
@@ -284,16 +373,18 @@ describe("plugin permission grant durable storage", () => {
         const list = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/list");
         const revoke = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/revoke");
 
-        const requested = await requestGrant({
-            userId: account.id,
-            body: {
-                pluginId: CODERABBIT_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope: { kind: "project", projectId: "project-1" },
-                reason: "Publish approved review comments directly.",
-                requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
-            },
-        }, createReplyStub()) as any;
+        const requestBody = {
+            pluginId: CODERABBIT_PLUGIN_ID,
+            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+            targetScope: { kind: "project" as const, projectId: "project-1" },
+            reason: "Publish approved review comments directly.",
+            requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const requested = await requestGrant(await createPublisherRouteRequest({
+            accountId: account.id,
+            path: "/v1/plugins/permissions/grants/request",
+            body: requestBody,
+        }), createReplyStub()) as any;
         const granted = await grant({
             userId: account.id,
             body: { requestId: requested.pendingRequest.id },
@@ -325,7 +416,7 @@ describe("plugin permission grant durable storage", () => {
         expect(projectList.grants).toEqual([]);
     });
 
-    it("does not use account grants for scoped project or workspace lookups", async () => {
+    it("rejects non-project scopes for the domain-specific direct-write capability", async () => {
         const account = await db.account.create({
             data: {
                 id: "account-plugin-permission-exact-scope",
@@ -336,53 +427,21 @@ describe("plugin permission grant durable storage", () => {
         });
         const app = registerDefaultRoutes();
         const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
-        const grant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/grant");
-        const list = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/list");
-
-        const requested = await requestGrant({
-            userId: account.id,
-            body: {
-                pluginId: CODERABBIT_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope: { kind: "account" },
-                reason: "Publish approved review comments directly.",
-                requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
-            },
-        }, createReplyStub()) as any;
-        const granted = await grant({
-            userId: account.id,
-            body: { requestId: requested.pendingRequest.id },
-        }, createReplyStub()) as any;
-
-        const accountList = await list({
-            userId: account.id,
-            body: {
-                pluginId: CODERABBIT_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope: { kind: "account" },
-            },
-        }, createReplyStub()) as any;
-        expect(accountList.grants).toEqual([granted.grant]);
-
-        const projectList = await list({
-            userId: account.id,
-            body: {
-                pluginId: CODERABBIT_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope: { kind: "project", projectId: "project-1" },
-            },
-        }, createReplyStub()) as any;
-        expect(projectList.grants).toEqual([]);
-
-        const workspaceList = await list({
-            userId: account.id,
-            body: {
-                pluginId: CODERABBIT_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope: { kind: "workspace", workspaceId: "workspace-1" },
-            },
-        }, createReplyStub()) as any;
-        expect(workspaceList.grants).toEqual([]);
+        const body = {
+            pluginId: CODERABBIT_PLUGIN_ID,
+            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+            targetScope: { kind: "account" as const },
+            reason: "Publish approved review comments directly.",
+            requester: { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID },
+        };
+        const reply = createReplyStub();
+        const rejected = await requestGrant(await createPublisherRouteRequest({
+            accountId: account.id,
+            path: "/v1/plugins/permissions/grants/request",
+            body,
+        }), reply);
+        expect(reply.statusCode).toBe(400);
+        expect(rejected).toMatchObject({ error: "plugin_permission_grant_plugin_not_trusted" });
     });
 
     it("rejects pending requests with mismatched plugin requester identity", async () => {
@@ -419,7 +478,7 @@ describe("plugin permission grant durable storage", () => {
         `).toEqual([]);
     });
 
-    it("rejects grant requests for plugins without trusted installed authority", async () => {
+    it("accepts non-reserved external plugin requests from an exact verified machine installation", async () => {
         const account = await db.account.create({
             data: {
                 id: "account-plugin-permission-uninstalled",
@@ -448,513 +507,18 @@ describe("plugin permission grant durable storage", () => {
             body,
         }), reply);
 
-        expect(reply.statusCode).toBe(400);
-        expect(result).toMatchObject({ error: "plugin_permission_grant_plugin_not_trusted" });
-        expect(await db.$queryRaw<Array<{ id: string }>>`
-            SELECT id FROM plugin_permission_grant_requests WHERE account_id = ${account.id}
-        `).toEqual([]);
-    });
-
-    it("trusts external plugin optional grants only after host-published installed manifest projection", async () => {
-        const account = await db.account.create({
-            data: {
-                id: "account-plugin-permission-external-installed",
-                publicKey: "pk-plugin-permission-external-installed",
-                encryptionMode: "plain",
-            },
-            select: { id: true },
-        });
-        const app = registerDefaultRoutes();
-        const upsertManifest = getRouteHandler(app, "POST", "/v1/plugins/installations/manifests/upsert");
-        const deleteManifest = getRouteHandler(app, "POST", "/v1/plugins/installations/manifests/delete");
-        const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
-        const grant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/grant");
-        const list = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/list");
-        const requestBody = {
-            pluginId: EXTERNAL_PLUGIN_ID,
-            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-            targetScope: { kind: "project", projectId: "project-1" },
-            reason: "Publish approved review comments directly.",
-            requester: { kind: "plugin", pluginId: EXTERNAL_PLUGIN_ID },
-        };
-        const projectionKeyPair = tweetnacl.sign.keyPair();
-        await createTrustedMachine({
-            accountId: account.id,
-            machineId: "machine-plugin-projection-owner",
-            installationId: "installation-plugin-projection-owner",
-            keyPair: projectionKeyPair,
-        });
-
-        const failBeforeProjectionReply = createReplyStub();
-        const failBeforeProjection = await requestGrant({
-            userId: account.id,
-            body: requestBody,
-            method: "POST",
-            url: "/v1/plugins/permissions/grants/request",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                    keyPair: projectionKeyPair,
-                    machineId: "machine-plugin-projection-owner",
-                    installationId: "installation-plugin-projection-owner",
-                    path: "/v1/plugins/permissions/grants/request",
-                    body: requestBody,
-                    nonce: "nonce-request-before-projection",
-                }),
-            },
-        }, failBeforeProjectionReply);
-        expect(failBeforeProjectionReply.statusCode).toBe(400);
-        expect(failBeforeProjection).toMatchObject({ error: "plugin_permission_grant_plugin_not_trusted" });
-
-        const projectionBody = {
-            pluginId: EXTERNAL_PLUGIN_ID,
-            manifestVersion: "1.2.3",
-            manifestDigest: "sha256:external-reviewbot",
-            displayName: "Acme ReviewBot",
-            requiredPermissions: [],
-            optionalPermissions: [{
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                reason: "Publish review comments directly when explicitly granted.",
-            }],
-            enabled: true,
-        };
-        const unauthenticatedPublisherReply = createReplyStub();
-        const unauthenticatedPublisher = await upsertManifest({
-            userId: account.id,
-            body: projectionBody,
-            method: "POST",
-            url: "/v1/plugins/installations/manifests/upsert",
-            headers: {},
-        }, unauthenticatedPublisherReply);
-        expect(unauthenticatedPublisherReply.statusCode).toBe(403);
-        expect(unauthenticatedPublisher).toMatchObject({ error: "plugin_installation_manifest_publisher_proof_required" });
-
-        const projected = await upsertManifest({
-            userId: account.id,
-            body: projectionBody,
-            method: "POST",
-            url: "/v1/plugins/installations/manifests/upsert",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                    keyPair: projectionKeyPair,
-                    machineId: "machine-plugin-projection-owner",
-                    installationId: "installation-plugin-projection-owner",
-                    path: "/v1/plugins/installations/manifests/upsert",
-                    body: projectionBody,
-                }),
-            },
-        }, createReplyStub()) as any;
-        expect(projected.manifest).toMatchObject({
-            accountId: account.id,
-            machineId: "machine-plugin-projection-owner",
-            pluginId: EXTERNAL_PLUGIN_ID,
-            manifestVersion: "1.2.3",
-            manifestDigest: "sha256:external-reviewbot",
-            enabled: true,
-        });
-
-        const missingPublisherReply = createReplyStub();
-        const missingPublisher = await requestGrant({
-            userId: account.id,
-            body: requestBody,
-        }, missingPublisherReply);
-        expect(missingPublisherReply.statusCode).toBe(400);
-        expect(missingPublisher).toMatchObject({ error: "plugin_permission_grant_publisher_proof_required" });
-
-        const requested = await requestGrant({
-            userId: account.id,
-            body: requestBody,
-            method: "POST",
-            url: "/v1/plugins/permissions/grants/request",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                    keyPair: projectionKeyPair,
-                    machineId: "machine-plugin-projection-owner",
-                    installationId: "installation-plugin-projection-owner",
-                    path: "/v1/plugins/permissions/grants/request",
-                    body: requestBody,
-                    nonce: "nonce-request-projection-owner",
-                }),
-            },
-        }, createReplyStub()) as any;
-        expect(requested.pendingRequest.authoritySource).toEqual({
-            kind: "machine_installation",
-            machineId: "machine-plugin-projection-owner",
-            installationId: "installation-plugin-projection-owner",
-        });
-        const granted = await grant({
-            userId: account.id,
-            body: { requestId: requested.pendingRequest.id },
-        }, createReplyStub()) as any;
-        expect(granted.grant.authoritySource).toEqual(requested.pendingRequest.authoritySource);
-        const projectList = await list({
-            userId: account.id,
-            body: {
-                pluginId: EXTERNAL_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+        expect(reply.statusCode).toBe(200);
+        expect(result).toMatchObject({
+            pendingRequest: {
+                pluginId: UNKNOWN_PLUGIN_ID,
                 targetScope: { kind: "project", projectId: "project-1" },
-            },
-        }, createReplyStub()) as any;
-        expect(projectList.grants).toEqual([granted.grant]);
-
-        const secondProjectionKeyPair = tweetnacl.sign.keyPair();
-        await createTrustedMachine({
-            accountId: account.id,
-            machineId: "machine-plugin-projection-second",
-            installationId: "installation-plugin-projection-second",
-            keyPair: secondProjectionKeyPair,
-        });
-        await upsertManifest({
-            userId: account.id,
-            body: projectionBody,
-            method: "POST",
-            url: "/v1/plugins/installations/manifests/upsert",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                    keyPair: secondProjectionKeyPair,
-                    machineId: "machine-plugin-projection-second",
-                    installationId: "installation-plugin-projection-second",
-                    path: "/v1/plugins/installations/manifests/upsert",
-                    body: projectionBody,
-                    nonce: "nonce-upsert-second-projection-owner",
-                }),
-            },
-        }, createReplyStub());
-        const secondMachineRequestBody = {
-            ...requestBody,
-            reason: "Publish approved review comments directly from a second trusted machine.",
-        };
-        const secondMachineRequested = await requestGrant({
-            userId: account.id,
-            body: secondMachineRequestBody,
-            method: "POST",
-            url: "/v1/plugins/permissions/grants/request",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                    keyPair: secondProjectionKeyPair,
-                    machineId: "machine-plugin-projection-second",
-                    installationId: "installation-plugin-projection-second",
-                    path: "/v1/plugins/permissions/grants/request",
-                    body: secondMachineRequestBody,
-                    nonce: "nonce-request-second-projection-owner",
-                }),
-            },
-        }, createReplyStub()) as any;
-        const secondMachineGranted = await grant({
-            userId: account.id,
-            body: { requestId: secondMachineRequested.pendingRequest.id },
-        }, createReplyStub()) as any;
-        expect(secondMachineGranted.grant).toMatchObject({
-            pluginId: EXTERNAL_PLUGIN_ID,
-            targetScope: { kind: "project", projectId: "project-1" },
-            authoritySource: {
-                kind: "machine_installation",
-                machineId: "machine-plugin-projection-second",
-                installationId: "installation-plugin-projection-second",
-            },
-        });
-        expect(secondMachineGranted.grant.id).not.toBe(granted.grant.id);
-
-        const deleteBody = { pluginId: EXTERNAL_PLUGIN_ID };
-        await deleteManifest({
-            userId: account.id,
-            body: deleteBody,
-            method: "POST",
-            url: "/v1/plugins/installations/manifests/delete",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                    keyPair: projectionKeyPair,
-                    machineId: "machine-plugin-projection-owner",
-                    installationId: "installation-plugin-projection-owner",
-                    path: "/v1/plugins/installations/manifests/delete",
-                    body: deleteBody,
-                    nonce: "nonce-delete-projection-owner",
-                }),
-            },
-        }, createReplyStub());
-        const secondRequestReply = createReplyStub();
-        const secondRequest = await requestGrant({
-            userId: account.id,
-            body: {
-                ...requestBody,
-                targetScope: { kind: "project", projectId: "project-2" },
-            },
-            method: "POST",
-            url: "/v1/plugins/permissions/grants/request",
-            headers: {
-                [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                    keyPair: projectionKeyPair,
-                    machineId: "machine-plugin-projection-owner",
-                    installationId: "installation-plugin-projection-owner",
-                    path: "/v1/plugins/permissions/grants/request",
-                    body: {
-                        ...requestBody,
-                        targetScope: { kind: "project", projectId: "project-2" },
-                    },
-                    nonce: "nonce-request-after-deleted-projection",
-                }),
-            },
-        }, secondRequestReply);
-        expect(secondRequestReply.statusCode).toBe(400);
-        expect(secondRequest).toMatchObject({ error: "plugin_permission_grant_plugin_not_trusted" });
-    });
-
-    it("revokes only the matching machine-scoped external grant authority", async () => {
-        const account = await db.account.create({
-            data: {
-                id: "account-plugin-permission-external-revoke-scope",
-                publicKey: "pk-plugin-permission-external-revoke-scope",
-                encryptionMode: "plain",
-            },
-            select: { id: true },
-        });
-        const app = registerDefaultRoutes();
-        const upsertManifest = getRouteHandler(app, "POST", "/v1/plugins/installations/manifests/upsert");
-        const requestGrant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/request");
-        const grant = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/grant");
-        const list = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/list");
-        const revoke = getRouteHandler(app, "POST", "/v1/plugins/permissions/grants/revoke");
-        const targetScope = { kind: "project" as const, projectId: "project-1" };
-        const projectionBody = {
-            pluginId: EXTERNAL_PLUGIN_ID,
-            manifestVersion: "1.2.3",
-            manifestDigest: "sha256:external-reviewbot-revoke-scope",
-            displayName: "Acme ReviewBot",
-            requiredPermissions: [],
-            optionalPermissions: [{
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                reason: "Publish review comments directly when explicitly granted.",
-            }],
-            enabled: true,
-        };
-        const createMachineGrant = async (params: Readonly<{
-            machineId: string;
-            installationId: string;
-            nonce: string;
-        }>) => {
-            const keyPair = tweetnacl.sign.keyPair();
-            await createTrustedMachine({
-                accountId: account.id,
-                machineId: params.machineId,
-                installationId: params.installationId,
-                keyPair,
-            });
-            await upsertManifest({
-                userId: account.id,
-                body: projectionBody,
-                method: "POST",
-                url: "/v1/plugins/installations/manifests/upsert",
-                headers: {
-                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                        keyPair,
-                        machineId: params.machineId,
-                        installationId: params.installationId,
-                        path: "/v1/plugins/installations/manifests/upsert",
-                        body: projectionBody,
-                        nonce: `${params.nonce}-manifest`,
-                    }),
+                authoritySource: {
+                    kind: "machine_installation",
+                    machineId: expect.any(String),
+                    installationId: expect.any(String),
                 },
-            }, createReplyStub());
-            const requestBody = {
-                pluginId: EXTERNAL_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope,
-                reason: "Publish approved review comments directly.",
-                requester: { kind: "plugin" as const, pluginId: EXTERNAL_PLUGIN_ID },
-            };
-            const requested = await requestGrant({
-                userId: account.id,
-                body: requestBody,
-                method: "POST",
-                url: "/v1/plugins/permissions/grants/request",
-                headers: {
-                    [PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1]: createSignedPublisherHeader({
-                        keyPair,
-                        machineId: params.machineId,
-                        installationId: params.installationId,
-                        path: "/v1/plugins/permissions/grants/request",
-                        body: requestBody,
-                        nonce: `${params.nonce}-request`,
-                    }),
-                },
-            }, createReplyStub()) as any;
-            return await grant({
-                userId: account.id,
-                body: { requestId: requested.pendingRequest.id },
-            }, createReplyStub()) as any;
-        };
-
-        const firstGrant = await createMachineGrant({
-            machineId: "machine-plugin-revoke-scope-one",
-            installationId: "installation-plugin-revoke-scope-one",
-            nonce: "nonce-revoke-scope-one",
+            },
         });
-        const secondGrant = await createMachineGrant({
-            machineId: "machine-plugin-revoke-scope-two",
-            installationId: "installation-plugin-revoke-scope-two",
-            nonce: "nonce-revoke-scope-two",
-        });
-
-        await revoke({
-            userId: account.id,
-            body: { grantId: firstGrant.grant.id, reason: "Remove one installation authority." },
-        }, createReplyStub());
-
-        const activeAfterRevoke = await list({
-            userId: account.id,
-            body: {
-                pluginId: EXTERNAL_PLUGIN_ID,
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                targetScope,
-            },
-        }, createReplyStub()) as any;
-        expect(activeAfterRevoke.grants).toEqual([secondGrant.grant]);
-
-        const grantRows = await db.$queryRaw<Array<{
-            id: string;
-            status: string;
-            authority_machine_id: string | null;
-        }>>`
-            SELECT id, status, authority_machine_id
-            FROM plugin_permission_grants
-            WHERE account_id = ${account.id}
-              AND plugin_id = ${EXTERNAL_PLUGIN_ID}
-              AND capability = ${REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1}
-            ORDER BY authority_machine_id ASC
-        `;
-        expect(grantRows).toEqual([
-            {
-                id: firstGrant.grant.id,
-                status: "revoked",
-                authority_machine_id: "machine-plugin-revoke-scope-one",
-            },
-            {
-                id: secondGrant.grant.id,
-                status: "active",
-                authority_machine_id: "machine-plugin-revoke-scope-two",
-            },
-        ]);
-
-        const revokeEvents = await db.$queryRaw<Array<{
-            grant_id: string | null;
-            authority_machine_id: string | null;
-            event_kind: string;
-        }>>`
-            SELECT grant_id, authority_machine_id, event_kind
-            FROM plugin_permission_grant_events
-            WHERE account_id = ${account.id}
-              AND event_kind = 'revoked'
-            ORDER BY created_at ASC
-        `;
-        expect(revokeEvents).toEqual([{
-            grant_id: firstGrant.grant.id,
-            authority_machine_id: "machine-plugin-revoke-scope-one",
-            event_kind: "revoked",
-        }]);
-    });
-
-    it("returns a stable validation error for malformed installed manifest projection payloads", async () => {
-        const account = await db.account.create({
-            data: {
-                id: "account-plugin-permission-malformed-projection",
-                publicKey: "pk-plugin-permission-malformed-projection",
-                encryptionMode: "plain",
-            },
-            select: { id: true },
-        });
-        const app = registerDefaultRoutes();
-        const upsertManifest = getRouteHandler(app, "POST", "/v1/plugins/installations/manifests/upsert");
-        const malformedBody = {
-            pluginId: EXTERNAL_PLUGIN_ID,
-            manifestVersion: "",
-            manifestDigest: "sha256:external-reviewbot",
-            displayName: "Acme ReviewBot",
-            requiredPermissions: [],
-            optionalPermissions: [],
-        };
-        const reply = createReplyStub();
-
-        const result = await upsertManifest(await createPublisherRouteRequest({
-            accountId: account.id,
-            path: "/v1/plugins/installations/manifests/upsert",
-            body: malformedBody,
-        }), reply);
-
-        expect(reply.statusCode).toBe(400);
-        expect(result).toMatchObject({ error: "plugin_installation_manifest_invalid_request" });
-    });
-
-    it("rejects external installed manifest projections for reserved first-party plugin ids", async () => {
-        const account = await db.account.create({
-            data: {
-                id: "account-plugin-permission-reserved-projection",
-                publicKey: "pk-plugin-permission-reserved-projection",
-                encryptionMode: "plain",
-            },
-            select: { id: true },
-        });
-        const upsertManifest = getRouteHandler(
-            registerDefaultRoutes(),
-            "POST",
-            "/v1/plugins/installations/manifests/upsert",
-        );
-        const reply = createReplyStub();
-
-        const body = {
-            pluginId: CODERABBIT_PLUGIN_ID,
-            manifestVersion: "1.0.0",
-            manifestDigest: "sha256:spoofed-first-party",
-            displayName: "Spoofed CodeRabbit",
-            requiredPermissions: [],
-            optionalPermissions: [{
-                capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
-                reason: "Spoof a first-party optional permission.",
-            }],
-        };
-        const result = await upsertManifest(await createPublisherRouteRequest({
-            accountId: account.id,
-            path: "/v1/plugins/installations/manifests/upsert",
-            body,
-        }), reply);
-
-        expect(reply.statusCode).toBe(400);
-        expect(result).toMatchObject({ error: "plugin_installation_manifest_reserved_plugin_id" });
-        expect(await db.$queryRaw<Array<{ plugin_id: string }>>`
-            SELECT plugin_id FROM account_plugin_manifest_projections WHERE account_id = ${account.id}
-        `).toEqual([]);
-    });
-
-    it("rejects grant requests for capabilities missing from the trusted plugin optional manifest permissions", async () => {
-        const account = await db.account.create({
-            data: {
-                id: "account-plugin-permission-undeclared",
-                publicKey: "pk-plugin-permission-undeclared",
-                encryptionMode: "plain",
-            },
-            select: { id: true },
-        });
-        const requestGrant = getRouteHandler(
-            registerDefaultRoutes(),
-            "POST",
-            "/v1/plugins/permissions/grants/request",
-        );
-        const reply = createReplyStub();
-
-        const result = await requestGrant({
-            userId: account.id,
-            body: {
-                pluginId: CODERABBIT_PLUGIN_ID,
-                capability: "env",
-                targetScope: { kind: "project", projectId: "project-1" },
-                reason: "Read environment variables directly.",
-                requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
-            },
-        }, reply);
-
-        expect(reply.statusCode).toBe(400);
-        expect(result).toMatchObject({ error: "plugin_permission_grant_capability_not_declared" });
-        expect(await db.$queryRaw<Array<{ id: string }>>`
-            SELECT id FROM plugin_permission_grant_requests WHERE account_id = ${account.id}
-        `).toEqual([]);
     });
 
     it("keeps one active grant per scope and revokes the canonical grant", async () => {
@@ -978,19 +542,30 @@ describe("plugin permission grant durable storage", () => {
             reason: "Publish approved review comments directly.",
             requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
         };
-
-        const firstRequest = await requestGrant({
-            userId: account.id,
+        const publisherRequest = await createPublisherRouteRequest({
+            accountId: account.id,
+            path: "/v1/plugins/permissions/grants/request",
             body: requestBody,
-        }, createReplyStub()) as any;
+        });
+
+        const firstRequest = await requestGrant(publisherRequest, createReplyStub()) as any;
+        await db.$executeRaw`
+            UPDATE plugin_permission_grant_requests
+            SET active_identity_key = NULL
+            WHERE account_id = ${account.id} AND id = ${firstRequest.pendingRequest.id}
+        `;
+        const legacyPendingReplay = await requestGrant(publisherRequest, createReplyStub()) as any;
+        expect(legacyPendingReplay.pendingRequest.id).toBe(firstRequest.pendingRequest.id);
         const firstGrant = await grant({
             userId: account.id,
             body: { requestId: firstRequest.pendingRequest.id },
         }, createReplyStub()) as any;
-        const secondRequest = await requestGrant({
-            userId: account.id,
-            body: requestBody,
-        }, createReplyStub()) as any;
+        await db.$executeRaw`
+            UPDATE plugin_permission_grants
+            SET active_identity_key = ${"legacy\u001Fraw\u001Factive-key"}
+            WHERE account_id = ${account.id} AND id = ${firstGrant.grant.id}
+        `;
+        const secondRequest = await requestGrant(publisherRequest, createReplyStub()) as any;
         const secondGrant = await grant({
             userId: account.id,
             body: { requestId: secondRequest.pendingRequest.id },
@@ -1034,9 +609,9 @@ describe("plugin permission grant durable storage", () => {
         const store = createSqlPluginPermissionGrantStore();
         const targetScope = { kind: "project" as const, projectId: "project-1" };
         const requester = { kind: "plugin" as const, pluginId: CODERABBIT_PLUGIN_ID };
-        const pendingRequests: PluginPermissionGrantRequestV1[] = [1, 2].map((index) => ({
+        const pendingRequest: PluginPermissionGrantRequestV1 = {
             v: 1,
-            id: `request-concurrent-${index}`,
+            id: "request-concurrent",
             accountId: account.id,
             pluginId: CODERABBIT_PLUGIN_ID,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
@@ -1046,9 +621,9 @@ describe("plugin permission grant durable storage", () => {
             reason: "Publish approved review comments directly.",
             status: "pending",
             createdByUserId: account.id,
-            createdAt: index,
-            updatedAt: index,
-        }));
+            createdAt: 1,
+            updatedAt: 1,
+        };
         const requestEvent = (pendingRequest: PluginPermissionGrantRequestV1, index: number): PluginPermissionGrantAuditEventV1 => ({
             v: 1,
             eventId: `event-request-concurrent-${index}`,
@@ -1063,10 +638,10 @@ describe("plugin permission grant durable storage", () => {
             nextState: { requestStatus: pendingRequest.status },
             createdAt: index,
         });
-        await Promise.all(pendingRequests.map((pendingRequest, index) => store.createPendingRequest({
+        await store.createPendingRequest({
             pendingRequest,
-            event: requestEvent(pendingRequest, index + 1),
-        })));
+            event: requestEvent(pendingRequest, 1),
+        });
 
         const grantFor = (pendingRequest: PluginPermissionGrantRequestV1, index: number): PluginPermissionGrantV1 => ({
             v: 1,
@@ -1104,7 +679,7 @@ describe("plugin permission grant durable storage", () => {
             createdAt: 20 + index,
         });
 
-        const results = await Promise.allSettled(pendingRequests.map((pendingRequest, index) => {
+        const results = await Promise.allSettled([1, 2].map((index) => {
             const grant = grantFor(pendingRequest, index + 1);
             return store.grantPendingRequest({
                 pendingRequest: {
@@ -1134,5 +709,124 @@ describe("plugin permission grant durable storage", () => {
             ORDER BY id ASC
         `;
         expect(activeRows).toHaveLength(1);
+    });
+
+    it("commits exactly one terminal decision when grant and dismiss race from the same pending read", async () => {
+        const account = await db.account.create({
+            data: {
+                id: "account-plugin-permission-terminal-race",
+                publicKey: "pk-plugin-permission-terminal-race",
+                encryptionMode: "plain",
+            },
+            select: { id: true },
+        });
+        const baseStore = createSqlPluginPermissionGrantStore();
+        const authoritySource = {
+            kind: "machine_installation" as const,
+            machineId: "machine-terminal-race",
+            installationId: "installation-terminal-race",
+        };
+        const pendingRequest: PluginPermissionGrantRequestV1 = {
+            v: 1,
+            id: "request-terminal-race",
+            accountId: account.id,
+            pluginId: CODERABBIT_PLUGIN_ID,
+            capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
+            targetScope: { kind: "project", projectId: "project-1" },
+            authoritySource,
+            requester: { kind: "plugin", pluginId: CODERABBIT_PLUGIN_ID },
+            reason: "Publish approved review comments directly.",
+            status: "pending",
+            createdByUserId: account.id,
+            createdAt: 1,
+            updatedAt: 1,
+        };
+        await baseStore.createPendingRequest({
+            pendingRequest,
+            event: {
+                v: 1,
+                eventId: "event-request-terminal-race",
+                accountId: account.id,
+                pluginId: pendingRequest.pluginId,
+                capability: pendingRequest.capability,
+                targetScope: pendingRequest.targetScope,
+                authoritySource,
+                eventKind: "requested",
+                actor: pendingRequest.requester,
+                requestId: pendingRequest.id,
+                nextState: { requestStatus: "pending" },
+                createdAt: 1,
+            },
+        });
+
+        let readCount = 0;
+        let releaseReads!: () => void;
+        const bothRead = new Promise<void>((resolve) => {
+            releaseReads = resolve;
+        });
+        const store = {
+            ...baseStore,
+            async getRequest(params: Parameters<typeof baseStore.getRequest>[0]) {
+                const request = await baseStore.getRequest(params);
+                readCount += 1;
+                if (readCount === 2) releaseReads();
+                await bothRead;
+                return request;
+            },
+        };
+        let idSequence = 0;
+        const operations = createPluginPermissionGrantOperations(
+            store,
+            {
+                now: () => 10,
+                createId: (prefix) => `${prefix}-terminal-race-${++idSequence}`,
+            },
+            (request) => request.machineId === authoritySource.machineId
+                && request.installationId === authoritySource.installationId
+                ? { pluginId: CODERABBIT_PLUGIN_ID, source: authoritySource }
+                : null,
+        );
+
+        const results = await Promise.allSettled([
+            operations.grant({
+                accountId: account.id,
+                userId: account.id,
+                input: { requestId: pendingRequest.id },
+            }),
+            operations.dismissRequest({
+                accountId: account.id,
+                userId: account.id,
+                input: { requestId: pendingRequest.id },
+            }),
+        ]);
+
+        expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+        expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
+        const storedRequest = await baseStore.getRequest({
+            accountId: account.id,
+            requestId: pendingRequest.id,
+        });
+        const terminalEvents = await db.$queryRaw<Array<{ event_kind: string }>>`
+            SELECT event_kind
+            FROM plugin_permission_grant_events
+            WHERE account_id = ${account.id}
+              AND request_id = ${pendingRequest.id}
+              AND event_kind IN ('granted', 'dismissed')
+        `;
+        expect(terminalEvents).toHaveLength(1);
+        if (storedRequest?.status === "granted") {
+            expect((await baseStore.list({
+                accountId: account.id,
+                pluginId: pendingRequest.pluginId,
+                capability: pendingRequest.capability,
+                targetScope: pendingRequest.targetScope,
+                authoritySource,
+                includeRevoked: false,
+                includeResolvedRequests: false,
+                limit: 10,
+            })).grants).toHaveLength(1);
+        } else {
+            expect(storedRequest?.status).toBe("dismissed");
+        }
     });
 });

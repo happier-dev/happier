@@ -15,6 +15,11 @@ import type { Server, Socket } from 'socket.io';
 import tweetnacl from 'tweetnacl';
 
 import { applyMachineLiveStreamRelayBackpressure } from '../../machines/peer/mediation/stream/metering';
+import type { PeerMediationViewerSocketOwnershipVerifier } from './viewerSocketOwnership';
+import {
+    createPeerMediationFlowEvent,
+    type PeerMediationObservabilityEmitter,
+} from './peer/mediation/observability/events';
 
 type MachineLiveStreamKey = string;
 
@@ -23,6 +28,11 @@ type MachineLiveStreamRelayState = {
     streamId: string;
     sourceMachineId: string;
     targetMachineId: string;
+    // Per-tab viewer target (C3). When set, the watcher is a user-scoped browser socket and
+    // relayed frames/controls are delivered directly to that socket (`io.to(viewerSocketId)`)
+    // rather than the `machine:<targetMachineId>:<userId>` room the viewer never joins. Empty
+    // string preserves the legacy machine→machine delivery path.
+    viewerSocketId: string;
     caps: MachineLiveStreamRelayCaps;
     maxWindowFrames: number;
     maxWindowBytes: number;
@@ -52,6 +62,7 @@ type RelayAuthorizationTrustRoot = Readonly<{
 }>;
 
 const streamStateByKey = new Map<MachineLiveStreamKey, MachineLiveStreamRelayState>();
+const VIEWER_SOCKET_REQUIRED_REASON = 'viewer_socket_required';
 
 function buildStreamKey(input: Readonly<{
     userId: string;
@@ -71,6 +82,36 @@ function readMachineId(socket: Socket): string {
     return data.clientType === 'machine-scoped' && typeof data.machineId === 'string' ? data.machineId : '';
 }
 
+function isUserScopedSocket(socket: Socket): boolean {
+    const data = socket.data as { clientType?: unknown };
+    return data.clientType === 'user-scoped';
+}
+
+function isLegacyTargetMachineSocket(input: Readonly<{
+    socketMachineId: string;
+    envelope: MachineLiveStreamRelayEnvelopeV1;
+}>): boolean {
+    return input.socketMachineId !== ''
+        && input.envelope.targetMachineId === input.socketMachineId
+        && !input.envelope.viewerSocketId;
+}
+
+function isConsumerControlSocketForState(input: Readonly<{
+    socketMachineId: string;
+    socketViewerId: string;
+    envelope: MachineLiveStreamRelayEnvelopeV1;
+    state: MachineLiveStreamRelayState | undefined;
+}>): boolean {
+    const state = input.state;
+    if (!state) return isLegacyTargetMachineSocket(input);
+    if (state.viewerSocketId) {
+        return input.socketViewerId !== ''
+            && input.socketViewerId === state.viewerSocketId
+            && input.envelope.viewerSocketId === state.viewerSocketId;
+    }
+    return isLegacyTargetMachineSocket(input);
+}
+
 function emitError(socket: Socket, error: string): void {
     socket.emit(SOCKET_RPC_EVENTS.ERROR, {
         type: 'machine-live-stream',
@@ -87,12 +128,86 @@ function emitToMachine(params: Readonly<{
     params.io.to(machineRoom(params.userId, params.machineId)).emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, params.envelope);
 }
 
+type EmitToConsumerResult =
+    | Readonly<{ delivered: true }>
+    | Readonly<{ delivered: false; reasonCode: typeof VIEWER_SOCKET_REQUIRED_REASON }>;
+
+// Deliver a consumer-bound envelope (frames + viewer-side controls) to whichever consumer the
+// stream was authorized for: a per-tab viewer socket (`io.to(viewerSocketId)`) when present,
+// otherwise the legacy target-machine room when it is a distinct peer machine. Socket.IO
+// auto-joins every socket to a private room named after its own id, so `io.to(viewerSocketId)`
+// reaches exactly that tab and nothing else.
+function emitToConsumer(params: Readonly<{
+    io: RelayIo;
+    userId: string;
+    sourceMachineId: string;
+    targetMachineId: string;
+    viewerSocketId: string;
+    envelope: MachineLiveStreamRelayEnvelopeV1;
+}>): EmitToConsumerResult {
+    if (params.viewerSocketId) {
+        params.io.to(params.viewerSocketId).emit(MACHINE_LIVE_STREAM_SOCKET_EVENT, params.envelope);
+        return { delivered: true };
+    }
+    if (params.targetMachineId === params.sourceMachineId) {
+        return { delivered: false, reasonCode: VIEWER_SOCKET_REQUIRED_REASON };
+    }
+    emitToMachine({
+        io: params.io,
+        userId: params.userId,
+        machineId: params.targetMachineId,
+        envelope: params.envelope,
+    });
+    return { delivered: true };
+}
+
+function emitViewerSocketRequired(input: Readonly<{
+    socket: Socket;
+    envelope: MachineLiveStreamRelayEnvelopeV1;
+    streamId: string;
+}>): void {
+    emitReceipt({
+        socket: input.socket,
+        envelope: input.envelope,
+        receipt: {
+            v: 1,
+            id: PEER_MEDIATION_RECEIPTS.streamPaused,
+            streamId: input.streamId,
+            routeKind: 'server_relay',
+            flowKind: 'live_stream',
+            reasonCode: VIEWER_SOCKET_REQUIRED_REASON,
+        },
+    });
+    emitError(input.socket, VIEWER_SOCKET_REQUIRED_REASON);
+}
+
 function createPauseControl(streamId: string, reasonCode: string): MachineLiveStreamControlV1 {
     return {
         v: 1,
         streamId,
         kind: 'pause',
         reasonCode,
+    };
+}
+
+function createStateStopControlEnvelope(
+    state: MachineLiveStreamRelayState,
+    reasonCode: string,
+): MachineLiveStreamRelayEnvelopeV1 {
+    return {
+        v: 1,
+        sourceMachineId: state.sourceMachineId,
+        targetMachineId: state.targetMachineId,
+        ...(state.viewerSocketId ? { viewerSocketId: state.viewerSocketId } : {}),
+        message: {
+            kind: 'control',
+            control: {
+                v: 1,
+                streamId: state.streamId,
+                kind: 'stop',
+                reasonCode,
+            },
+        },
     };
 }
 
@@ -104,6 +219,7 @@ function createControlEnvelope(
         v: 1,
         sourceMachineId: envelope.sourceMachineId,
         targetMachineId: envelope.targetMachineId,
+        ...(envelope.viewerSocketId ? { viewerSocketId: envelope.viewerSocketId } : {}),
         message: {
             kind: 'control',
             control,
@@ -172,6 +288,7 @@ function createState(input: Readonly<{
     streamId: string;
     sourceMachineId: string;
     targetMachineId: string;
+    viewerSocketId: string;
     caps: MachineLiveStreamRelayCaps;
     maxWindowFrames: number;
     maxWindowBytes: number;
@@ -185,6 +302,7 @@ function createState(input: Readonly<{
         streamId: input.streamId,
         sourceMachineId: input.sourceMachineId,
         targetMachineId: input.targetMachineId,
+        viewerSocketId: input.viewerSocketId,
         caps: input.caps,
         maxWindowFrames: input.maxWindowFrames,
         maxWindowBytes: input.maxWindowBytes,
@@ -197,6 +315,9 @@ function createState(input: Readonly<{
         lastBandwidthCappedReceiptAtMs: null,
         recentFrames: [],
         queuedFrames: [],
+        // Server relay owns the bounded viewer delivery window. It opens with one frame so a
+        // newly started viewer can render a keyframe, then socket-authorized viewer acks
+        // replenish the window in `applyAckControl`.
         availableWindowFrames: 1,
         availableWindowBytes: input.maxWindowBytes,
         nextSequenceToRelay: 1,
@@ -260,19 +381,38 @@ function emitCapFailure(input: Readonly<{
     socket: Socket;
     io: RelayIo;
     userId: string;
+    state: MachineLiveStreamRelayState;
     envelope: MachineLiveStreamRelayEnvelopeV1;
     reasonCode: string;
 }>): void {
-    const controlEnvelope = createControlEnvelope(input.envelope, createPauseControl(
-        input.envelope.message.kind === 'frame' ? input.envelope.message.frame.streamId : 'unknown',
-        input.reasonCode,
-    ));
-    emitToMachine({
+    const controlEnvelope: MachineLiveStreamRelayEnvelopeV1 = {
+        v: 1,
+        sourceMachineId: input.envelope.sourceMachineId,
+        targetMachineId: input.envelope.targetMachineId,
+        ...(input.state.viewerSocketId ? { viewerSocketId: input.state.viewerSocketId } : {}),
+        message: {
+            kind: 'control',
+            control: createPauseControl(
+                input.envelope.message.kind === 'frame' ? input.envelope.message.frame.streamId : 'unknown',
+                input.reasonCode,
+            ),
+        },
+    };
+    const delivered = emitToConsumer({
         io: input.io,
         userId: input.userId,
-        machineId: input.envelope.targetMachineId,
+        sourceMachineId: input.envelope.sourceMachineId,
+        targetMachineId: input.envelope.targetMachineId,
+        viewerSocketId: input.state.viewerSocketId,
         envelope: controlEnvelope,
     });
+    if (!delivered.delivered) {
+        emitViewerSocketRequired({
+            socket: input.socket,
+            envelope: controlEnvelope,
+            streamId: controlEnvelope.message.kind === 'control' ? controlEnvelope.message.control.streamId : 'unknown',
+        });
+    }
     emitToMachine({
         io: input.io,
         userId: input.userId,
@@ -350,6 +490,9 @@ function validateRelayAuthorization(input: Readonly<{
         || payload.maxFrameBytes !== input.startRequest.maxFrameBytes
         || payload.maxDurationMs !== input.startRequest.maxDurationMs
         || payload.maxTotalBytes !== input.startRequest.maxTotalBytes
+        // The viewer target is part of the signed grant: a daemon cannot re-point a grant
+        // minted for one tab at a different viewer socket.
+        || payload.viewerSocketId !== input.startRequest.viewerSocketId
     ) {
         return 'live_stream_authorization_mismatch';
     }
@@ -390,6 +533,7 @@ function createFrameEnvelope(
         v: 1,
         sourceMachineId: state.sourceMachineId,
         targetMachineId: state.targetMachineId,
+        ...(state.viewerSocketId ? { viewerSocketId: state.viewerSocketId } : {}),
         message: {
             kind: 'frame',
             frame,
@@ -404,24 +548,42 @@ function emitKeyframeRequired(input: Readonly<{
     state: MachineLiveStreamRelayState;
     envelope: MachineLiveStreamRelayEnvelopeV1;
 }>): void {
-    const controlEnvelope = createControlEnvelope(input.envelope, {
+    const controlEnvelope: MachineLiveStreamRelayEnvelopeV1 = {
         v: 1,
-        streamId: input.state.streamId,
-        kind: 'keyframe_required',
-        reasonCode: 'relay_window_pressure',
-    });
+        sourceMachineId: input.state.sourceMachineId,
+        targetMachineId: input.state.targetMachineId,
+        ...(input.state.viewerSocketId ? { viewerSocketId: input.state.viewerSocketId } : {}),
+        message: {
+            kind: 'control',
+            control: {
+                v: 1,
+                streamId: input.state.streamId,
+                kind: 'keyframe_required',
+                reasonCode: 'relay_window_pressure',
+            },
+        },
+    };
     emitToMachine({
         io: input.io,
         userId: input.userId,
-        machineId: input.envelope.sourceMachineId,
+        machineId: input.state.sourceMachineId,
         envelope: controlEnvelope,
     });
-    emitToMachine({
+    const delivered = emitToConsumer({
         io: input.io,
         userId: input.userId,
-        machineId: input.envelope.targetMachineId,
+        sourceMachineId: input.envelope.sourceMachineId,
+        targetMachineId: input.envelope.targetMachineId,
+        viewerSocketId: input.state.viewerSocketId,
         envelope: controlEnvelope,
     });
+    if (!delivered.delivered) {
+        emitViewerSocketRequired({
+            socket: input.socket,
+            envelope: controlEnvelope,
+            streamId: input.state.streamId,
+        });
+    }
 }
 
 function applyRelayWindowPressure(input: Readonly<{
@@ -486,6 +648,7 @@ function drainRelayQueue(input: Readonly<{
     userId: string;
     state: MachineLiveStreamRelayState;
     nowMs: number;
+    undeliverableSocket?: Socket;
 }>): void {
     while (
         input.state.queuedFrames.length > 0
@@ -496,16 +659,31 @@ function drainRelayQueue(input: Readonly<{
         const frameBytes = getFrameBytes(nextFrame);
         if (frameBytes > input.state.availableWindowBytes) return;
         input.state.queuedFrames.shift();
+        const envelope = createFrameEnvelope(input.state, nextFrame);
+        const delivered = emitToConsumer({
+            io: input.io,
+            userId: input.userId,
+            sourceMachineId: input.state.sourceMachineId,
+            targetMachineId: input.state.targetMachineId,
+            viewerSocketId: input.state.viewerSocketId,
+            envelope,
+        });
+        if (!delivered.delivered) {
+            input.state.framesDropped += 1;
+            input.state.bytesDropped += frameBytes;
+            if (input.undeliverableSocket) {
+                emitViewerSocketRequired({
+                    socket: input.undeliverableSocket,
+                    envelope,
+                    streamId: nextFrame.streamId,
+                });
+            }
+            return;
+        }
         input.state.availableWindowFrames -= 1;
         input.state.availableWindowBytes -= frameBytes;
         recordFrame(input.state, nextFrame, input.nowMs);
         input.state.nextSequenceToRelay = Math.max(input.state.nextSequenceToRelay, nextFrame.sequence + 1);
-        emitToMachine({
-            io: input.io,
-            userId: input.userId,
-            machineId: input.state.targetMachineId,
-            envelope: createFrameEnvelope(input.state, nextFrame),
-        });
     }
 }
 
@@ -536,6 +714,7 @@ function applyAckControl(input: Readonly<{
         userId: input.userId,
         state: input.state,
         nowMs: input.nowMs,
+        undeliverableSocket: input.socket,
     });
     return true;
 }
@@ -551,17 +730,109 @@ export function machineLiveStreamRelayHandler(
         relayWindowFrames?: number;
         relayWindowBytes?: number;
         nowMs?: () => number;
+        verifyViewerSocketOwnership?: PeerMediationViewerSocketOwnershipVerifier;
+        observability?: PeerMediationObservabilityEmitter;
     }>,
 ): void {
     const socketStreamKeys = new Set<MachineLiveStreamKey>();
+
+    const emitObservability = (input: Readonly<{
+        streamId: string;
+        sourceMachineId: string;
+        kind: Parameters<typeof createPeerMediationFlowEvent>[0]['kind'];
+        reasonCode?: string;
+        bytesIn?: number;
+        bytesOut?: number;
+        metadata?: Readonly<Record<string, unknown>>;
+    }>): void => {
+        ctx.observability?.emit(createPeerMediationFlowEvent({
+            accountId: userId,
+            machineId: input.sourceMachineId,
+            flowKind: 'live_stream',
+            flowId: input.streamId,
+            routeKind: 'server_relay',
+            kind: input.kind,
+            nowMs: ctx.nowMs?.() ?? Date.now(),
+            ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
+            ...(input.bytesIn !== undefined ? { bytesIn: input.bytesIn } : {}),
+            ...(input.bytesOut !== undefined ? { bytesOut: input.bytesOut } : {}),
+            ...(input.metadata ? { metadata: input.metadata } : {}),
+        }));
+    };
+
     const removeStream = (streamKey: MachineLiveStreamKey): void => {
         streamStateByKey.delete(streamKey);
         socketStreamKeys.delete(streamKey);
     };
 
+    // Centralized terminal close: read the server-authoritative byte facts off
+    // the relay state, emit the distinct close-kind observability event, then
+    // tear the stream down. Every terminal path (cap denial, expiry, explicit
+    // stop, disconnect) routes through here so the server's relayed/dropped
+    // byte facts reach the diagnostics tier instead of dying in per-stream state.
+    const closeStreamWithObservability = (input: Readonly<{
+        streamKey: MachineLiveStreamKey;
+        kind: Parameters<typeof createPeerMediationFlowEvent>[0]['kind'];
+        reasonCode?: string;
+    }>): void => {
+        const state = streamStateByKey.get(input.streamKey);
+        if (state) {
+            emitObservability({
+                streamId: state.streamId,
+                sourceMachineId: state.sourceMachineId,
+                kind: input.kind,
+                ...(input.reasonCode ? { reasonCode: input.reasonCode } : {}),
+                bytesIn: state.bytesRelayed + state.bytesDropped,
+                bytesOut: state.bytesRelayed,
+                metadata: {
+                    bytesRelayed: state.bytesRelayed,
+                    bytesDropped: state.bytesDropped,
+                    framesRelayed: state.framesRelayed,
+                    framesDropped: state.framesDropped,
+                    targetMachineId: state.targetMachineId,
+                },
+            });
+        }
+        removeStream(input.streamKey);
+    };
+
+    const closeStreamsForViewerSocket = (viewerSocketId: string): void => {
+        for (const [streamKey, state] of [...streamStateByKey.entries()]) {
+            if (state.userId !== userId || state.viewerSocketId !== viewerSocketId) continue;
+            emitToMachine({
+                io: ctx.io,
+                userId,
+                machineId: state.sourceMachineId,
+                envelope: {
+                    v: 1,
+                    sourceMachineId: state.sourceMachineId,
+                    targetMachineId: state.targetMachineId,
+                    viewerSocketId: state.viewerSocketId,
+                    message: {
+                        kind: 'control',
+                        control: {
+                            v: 1,
+                            streamId: state.streamId,
+                            kind: 'stop',
+                            reasonCode: 'viewer_disconnected',
+                        },
+                    },
+                },
+            });
+            closeStreamWithObservability({
+                streamKey,
+                kind: 'flow.aborted',
+                reasonCode: 'viewer_disconnected',
+            });
+        }
+    };
+
     socket.on(MACHINE_LIVE_STREAM_SOCKET_EVENT, async (raw: unknown) => {
         const socketMachineId = readMachineId(socket);
-        if (!socketMachineId) {
+        // C3: a per-tab viewer is a user-scoped browser socket (not machine-scoped). It may only
+        // send consumer-side control (ack/stop/etc.) for a stream minted against its own socket id.
+        const socketViewerId = isUserScopedSocket(socket) ? socket.id : '';
+        if (!socketMachineId && !socketViewerId) {
             emitError(socket, 'machine_scoped_socket_required');
             return;
         }
@@ -572,12 +843,19 @@ export function machineLiveStreamRelayHandler(
             return;
         }
         const envelope = parsed.data;
-        const isSourceSocket = envelope.sourceMachineId === socketMachineId;
-        const isTargetControlSocket = (
+        const isSourceSocket = socketMachineId !== '' && envelope.sourceMachineId === socketMachineId;
+        const isControlKind = (
             envelope.message.kind === 'control'
             || envelope.message.kind === 'sideband_control'
-        ) && envelope.targetMachineId === socketMachineId;
-        if (!isSourceSocket && !isTargetControlSocket) {
+        );
+        // Initial shape gate only. Once the stream state is loaded, controls are authorized against
+        // the minted state.viewerSocketId so a different tab cannot operate a stream by echoing its
+        // own socket id in the envelope.
+        const isPotentialTargetControlSocket = isControlKind && (
+            (socketMachineId !== '' && envelope.targetMachineId === socketMachineId)
+            || (socketViewerId !== '' && envelope.viewerSocketId === socketViewerId)
+        );
+        if (!isSourceSocket && !isPotentialTargetControlSocket) {
             emitError(socket, 'source_machine_mismatch');
             return;
         }
@@ -609,11 +887,40 @@ export function machineLiveStreamRelayHandler(
                 trustRoots: ctx.relayAuthorizationTrustRoots,
             });
             if (authorizationFailure) {
+                emitObservability({
+                    streamId: startRequest.streamId,
+                    sourceMachineId: envelope.sourceMachineId,
+                    kind: 'flow.denied',
+                    reasonCode: authorizationFailure,
+                });
                 emitError(socket, authorizationFailure);
                 return;
             }
+            const viewerSocketId = startRequest.viewerSocketId ?? '';
+            if (viewerSocketId) {
+                const viewerOwned = await ctx.verifyViewerSocketOwnership?.({
+                    accountId: userId,
+                    socketId: viewerSocketId,
+                });
+                if (viewerOwned !== true) {
+                    emitObservability({
+                        streamId: startRequest.streamId,
+                        sourceMachineId: envelope.sourceMachineId,
+                        kind: 'flow.denied',
+                        reasonCode: 'viewer_socket_not_owned',
+                    });
+                    emitError(socket, 'viewer_socket_not_owned');
+                    return;
+                }
+            }
             const expiresAtMs = startRequest.authorization?.payload.exp;
             if (!expiresAtMs) {
+                emitObservability({
+                    streamId: startRequest.streamId,
+                    sourceMachineId: envelope.sourceMachineId,
+                    kind: 'flow.denied',
+                    reasonCode: 'live_stream_authorization_required',
+                });
                 emitError(socket, 'live_stream_authorization_required');
                 return;
             }
@@ -622,6 +929,12 @@ export function machineLiveStreamRelayHandler(
                 relayCaps: ctx.relayCaps,
             });
             if (capsFailure) {
+                emitObservability({
+                    streamId: startRequest.streamId,
+                    sourceMachineId: envelope.sourceMachineId,
+                    kind: 'flow.denied',
+                    reasonCode: capsFailure,
+                });
                 emitError(socket, capsFailure);
                 return;
             }
@@ -638,6 +951,21 @@ export function machineLiveStreamRelayHandler(
             if (existingState && isRelayStateExpired(existingState, nowMs)) {
                 removeStream(streamKey);
             }
+            const currentState = streamStateByKey.get(streamKey);
+            if (currentState && currentState.viewerSocketId !== viewerSocketId) {
+                emitObservability({
+                    streamId: startRequest.streamId,
+                    sourceMachineId: envelope.sourceMachineId,
+                    kind: 'flow.denied',
+                    reasonCode: 'live_stream_viewer_mismatch',
+                });
+                emitError(socket, 'live_stream_viewer_mismatch');
+                return;
+            }
+            // A still-live state for this key means this start is an idempotent
+            // re-attach; only a genuinely new relay state emits the start/ready
+            // lifecycle so diagnostics are not duplicated on retried starts.
+            const isNewStream = !streamStateByKey.has(streamKey);
             if (!socketStreamKeys.has(streamKey)) {
                 const concurrencyFailure = canStartStream({
                     userId,
@@ -646,6 +974,12 @@ export function machineLiveStreamRelayHandler(
                     caps: ctx.relayCaps,
                 });
                 if (concurrencyFailure) {
+                    emitObservability({
+                        streamId: startRequest.streamId,
+                        sourceMachineId: envelope.sourceMachineId,
+                        kind: 'flow.denied',
+                        reasonCode: concurrencyFailure,
+                    });
                     emitError(socket, concurrencyFailure);
                     return;
                 }
@@ -656,6 +990,7 @@ export function machineLiveStreamRelayHandler(
                 streamId: startRequest.streamId,
                 sourceMachineId: envelope.sourceMachineId,
                 targetMachineId: envelope.targetMachineId,
+                viewerSocketId,
                 caps: buildEffectiveStreamCaps({
                     startRequest,
                     relayCaps: ctx.relayCaps,
@@ -668,6 +1003,18 @@ export function machineLiveStreamRelayHandler(
                 expiresAtMs,
             });
             socketStreamKeys.add(streamKey);
+            if (isNewStream) {
+                emitObservability({
+                    streamId: startRequest.streamId,
+                    sourceMachineId: envelope.sourceMachineId,
+                    kind: 'flow.started',
+                });
+                emitObservability({
+                    streamId: startRequest.streamId,
+                    sourceMachineId: envelope.sourceMachineId,
+                    kind: 'flow.ready',
+                });
+            }
             return;
         }
 
@@ -689,7 +1036,21 @@ export function machineLiveStreamRelayHandler(
             }
             const nowMs = ctx.nowMs?.() ?? Date.now();
             if (isRelayStateExpired(state, nowMs)) {
-                removeStream(streamKey);
+                if (state.viewerSocketId) {
+                    emitToConsumer({
+                        io: ctx.io,
+                        userId,
+                        sourceMachineId: state.sourceMachineId,
+                        targetMachineId: state.targetMachineId,
+                        viewerSocketId: state.viewerSocketId,
+                        envelope: createStateStopControlEnvelope(state, 'live_stream_authorization_expired'),
+                    });
+                }
+                closeStreamWithObservability({
+                    streamKey,
+                    kind: 'flow.errored',
+                    reasonCode: 'live_stream_authorization_expired',
+                });
                 emitError(socket, 'live_stream_authorization_expired');
                 return;
             }
@@ -704,10 +1065,15 @@ export function machineLiveStreamRelayHandler(
                     socket,
                     io: ctx.io,
                     userId,
+                    state,
                     envelope,
                     reasonCode: capFailure,
                 });
-                removeStream(streamKey);
+                closeStreamWithObservability({
+                    streamKey,
+                    kind: 'cap.exceeded',
+                    reasonCode: capFailure,
+                });
                 return;
             }
             enqueueRelayFrame({
@@ -724,6 +1090,7 @@ export function machineLiveStreamRelayHandler(
                 userId,
                 state,
                 nowMs,
+                undeliverableSocket: socket,
             });
             return;
         }
@@ -736,7 +1103,17 @@ export function machineLiveStreamRelayHandler(
                 streamId: envelope.message.control.streamId,
             });
             const state = streamStateByKey.get(streamKey);
+            const isTargetControlSocket = isConsumerControlSocketForState({
+                socketMachineId,
+                socketViewerId,
+                envelope,
+                state,
+            });
             if (envelope.message.control.kind === 'ack') {
+                if (!state && socketViewerId) {
+                    emitError(socket, 'live_stream_start_required');
+                    return;
+                }
                 if (!isTargetControlSocket) {
                     emitError(socket, 'target_machine_ack_required');
                     return;
@@ -747,7 +1124,11 @@ export function machineLiveStreamRelayHandler(
                 }
                 const nowMs = ctx.nowMs?.() ?? Date.now();
                 if (isRelayStateExpired(state, nowMs)) {
-                    removeStream(streamKey);
+                    closeStreamWithObservability({
+                        streamKey,
+                        kind: 'flow.errored',
+                        reasonCode: 'live_stream_authorization_expired',
+                    });
                     emitError(socket, 'live_stream_authorization_expired');
                     return;
                 }
@@ -768,23 +1149,52 @@ export function machineLiveStreamRelayHandler(
                 });
                 return;
             }
-            if (envelope.message.control.kind === 'stop') {
-                removeStream(streamKey);
+            if (!state && (socketViewerId || (isSourceSocket && envelope.targetMachineId !== envelope.sourceMachineId))) {
+                emitError(socket, 'live_stream_start_required');
+                return;
             }
-            emitToMachine({
-                io: ctx.io,
-                userId,
-                machineId: isSourceSocket ? envelope.targetMachineId : envelope.sourceMachineId,
-                envelope,
-            });
+            if (!isSourceSocket && !isTargetControlSocket) {
+                emitError(socket, 'target_machine_control_required');
+                return;
+            }
+            if (envelope.message.control.kind === 'stop') {
+                closeStreamWithObservability({
+                    streamKey,
+                    kind: 'flow.closed',
+                    reasonCode: envelope.message.control.reasonCode ?? 'stream_stopped',
+                });
+            }
+            if (isSourceSocket) {
+                // Source-initiated control flows to the consumer (per-tab viewer when the stream
+                // was minted with a viewerSocketId, otherwise the legacy target machine room).
+                const delivered = emitToConsumer({
+                    io: ctx.io,
+                    userId,
+                    sourceMachineId: envelope.sourceMachineId,
+                    targetMachineId: envelope.targetMachineId,
+                    viewerSocketId: state?.viewerSocketId ?? '',
+                    envelope,
+                });
+                if (!delivered.delivered) {
+                    emitViewerSocketRequired({
+                        socket,
+                        envelope,
+                        streamId: envelope.message.control.streamId,
+                    });
+                }
+            } else {
+                // Consumer-initiated control flows to the source machine.
+                emitToMachine({
+                    io: ctx.io,
+                    userId,
+                    machineId: envelope.sourceMachineId,
+                    envelope,
+                });
+            }
             return;
         }
 
         if (envelope.message.kind === 'sideband_control') {
-            if (!isTargetControlSocket) {
-                emitError(socket, 'target_machine_control_required');
-                return;
-            }
             const streamKey = buildStreamKey({
                 userId,
                 sourceMachineId: envelope.sourceMachineId,
@@ -792,13 +1202,31 @@ export function machineLiveStreamRelayHandler(
                 streamId: envelope.message.control.streamId,
             });
             const state = streamStateByKey.get(streamKey);
+            const isTargetControlSocket = isConsumerControlSocketForState({
+                socketMachineId,
+                socketViewerId,
+                envelope,
+                state,
+            });
+            if (!state && socketViewerId) {
+                emitError(socket, 'live_stream_start_required');
+                return;
+            }
+            if (!isTargetControlSocket) {
+                emitError(socket, 'target_machine_control_required');
+                return;
+            }
             if (!state) {
                 emitError(socket, 'live_stream_start_required');
                 return;
             }
             const nowMs = ctx.nowMs?.() ?? Date.now();
             if (isRelayStateExpired(state, nowMs)) {
-                removeStream(streamKey);
+                closeStreamWithObservability({
+                    streamKey,
+                    kind: 'flow.errored',
+                    reasonCode: 'live_stream_authorization_expired',
+                });
                 emitError(socket, 'live_stream_authorization_expired');
                 return;
             }
@@ -813,8 +1241,25 @@ export function machineLiveStreamRelayHandler(
     });
 
     socket.on('disconnect', () => {
+        const viewerSocketId = isUserScopedSocket(socket) ? socket.id : '';
+        if (viewerSocketId) closeStreamsForViewerSocket(viewerSocketId);
         for (const streamKey of socketStreamKeys) {
-            streamStateByKey.delete(streamKey);
+            const state = streamStateByKey.get(streamKey);
+            if (state?.viewerSocketId) {
+                emitToConsumer({
+                    io: ctx.io,
+                    userId,
+                    sourceMachineId: state.sourceMachineId,
+                    targetMachineId: state.targetMachineId,
+                    viewerSocketId: state.viewerSocketId,
+                    envelope: createStateStopControlEnvelope(state, 'socket_disconnected'),
+                });
+            }
+            closeStreamWithObservability({
+                streamKey,
+                kind: 'flow.aborted',
+                reasonCode: 'socket_disconnected',
+            });
         }
         socketStreamKeys.clear();
     });

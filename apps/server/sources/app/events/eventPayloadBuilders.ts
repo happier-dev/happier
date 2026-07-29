@@ -1,20 +1,44 @@
 import { AccountProfile } from "@/types";
 import { getPublicUrl } from "@/storage/blob/files";
 import { type UpdatePayload, type EphemeralPayload } from "./eventPayloadTypes";
-import type { PrimaryTurnStatusV1, SessionMessageRole, SessionRuntimeIssueV1 } from "@happier-dev/protocol";
+import {
+    parseSessionRuntimeActivityProjectionFields,
+    SessionMetadataRecipientProjectionV1Schema,
+    type PrimaryTurnStatusV1,
+    type SessionMessageDeliveryResolutionV1,
+    type SessionMessageAttentionImpact,
+    type SessionMetadataRecipientProjectionV1,
+    type SessionMessageRole,
+    type SessionRuntimeIssueV1,
+    type SessionTranscriptObservationProvenanceV1,
+} from "@happier-dev/protocol";
+import { applySessionTranscriptPublicationCeiling } from "@/app/session/sessionTranscriptPublicationPolicy";
 
 type UpdateMessagePayloadInput = Readonly<{
     id: string;
     seq: number;
+    currentStorageState?: unknown;
+    acceptedThroughServerSeq?: unknown;
+    materializationPublicationId?: unknown;
+    materializedThroughSourceAt?: unknown;
+    publishedThroughServerSeq?: unknown;
     messageRole?: SessionMessageRole | null;
     content: any;
     localId: string | null;
     sidechainId?: string | null;
+    deliveryResolution?: SessionMessageDeliveryResolutionV1 | null;
     createdAt: Date;
     updatedAt: Date;
+    sourceCreatedAt?: Date | null;
+    sourceUpdatedAt?: Date | null;
+    transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1 | null;
 }>;
 
-function serializeUpdateMessage(message: UpdateMessagePayloadInput) {
+type UpdateMessagePayloadOptions = Readonly<{
+    attentionImpact?: SessionMessageAttentionImpact;
+}>;
+
+function serializeUpdateMessage(message: UpdateMessagePayloadInput, options?: UpdateMessagePayloadOptions) {
     return {
         id: message.id,
         seq: message.seq,
@@ -22,9 +46,20 @@ function serializeUpdateMessage(message: UpdateMessagePayloadInput) {
         localId: message.localId,
         ...(typeof message.messageRole === "string" ? { messageRole: message.messageRole } : {}),
         ...(typeof message.sidechainId === "string" && message.sidechainId ? { sidechainId: message.sidechainId } : {}),
+        ...(message.deliveryResolution ? { deliveryResolution: message.deliveryResolution } : {}),
+        ...(options?.attentionImpact ? { attentionImpact: options.attentionImpact } : {}),
         createdAt: message.createdAt.getTime(),
         updatedAt: message.updatedAt.getTime(),
+        ...(message.sourceCreatedAt ? { sourceCreatedAt: message.sourceCreatedAt.getTime() } : {}),
+        ...(message.sourceUpdatedAt ? { sourceUpdatedAt: message.sourceUpdatedAt.getTime() } : {}),
+        ...(message.transcriptObservationProvenance
+            ? { transcriptObservationProvenance: message.transcriptObservationProvenance }
+            : {}),
     };
+}
+
+function normalizeSessionEncryptionMode(value: string | null | undefined): "e2ee" | "plain" {
+    return value === "plain" ? "plain" : "e2ee";
 }
 
 export function buildNewSessionUpdate(session: {
@@ -32,9 +67,12 @@ export function buildNewSessionUpdate(session: {
     seq: number;
     metadata: string;
     metadataVersion: number;
+    metadataLayoutVersion?: number;
+    ownerMetadata?: string | null;
     agentState: string | null;
     agentStateVersion: number;
     dataEncryptionKey: Uint8Array | null;
+    encryptionMode: string | null;
     active: boolean;
     lastActiveAt: Date;
     createdAt: Date;
@@ -49,12 +87,19 @@ export function buildNewSessionUpdate(session: {
             id: session.id,
             // Compatibility: some clients use `sid` for sessionId.
             sid: session.id,
-            seq: session.seq,
+            seq: applySessionTranscriptPublicationCeiling(session.seq, session),
             metadata: session.metadata,
             metadataVersion: session.metadataVersion,
+            ...(typeof session.metadataLayoutVersion === "number"
+                ? { metadataLayoutVersion: session.metadataLayoutVersion }
+                : {}),
+            ...(typeof session.ownerMetadata === "string"
+                ? { ownerMetadata: session.ownerMetadata }
+                : {}),
             agentState: session.agentState,
             agentStateVersion: session.agentStateVersion,
             dataEncryptionKey: session.dataEncryptionKey ? Buffer.from(session.dataEncryptionKey).toString('base64') : null,
+            encryptionMode: normalizeSessionEncryptionMode(session.encryptionMode),
             active: session.active,
             activeAt: session.lastActiveAt.getTime(),
             createdAt: session.createdAt.getTime(),
@@ -65,7 +110,13 @@ export function buildNewSessionUpdate(session: {
     };
 }
 
-export function buildNewMessageUpdate(message: UpdateMessagePayloadInput, sessionId: string, updateSeq: number, updateId: string): UpdatePayload {
+export function buildNewMessageUpdate(
+    message: UpdateMessagePayloadInput,
+    sessionId: string,
+    updateSeq: number,
+    updateId: string,
+    options?: UpdateMessagePayloadOptions,
+): UpdatePayload {
     return {
         id: updateId,
         seq: updateSeq,
@@ -74,13 +125,19 @@ export function buildNewMessageUpdate(message: UpdateMessagePayloadInput, sessio
             sid: sessionId,
             // Compatibility: some clients use `id` for sessionId.
             id: sessionId,
-            message: serializeUpdateMessage(message),
+            message: serializeUpdateMessage(message, options),
         },
         createdAt: Date.now()
     };
 }
 
-export function buildMessageUpdatedUpdate(message: UpdateMessagePayloadInput, sessionId: string, updateSeq: number, updateId: string): UpdatePayload {
+export function buildMessageUpdatedUpdate(
+    message: UpdateMessagePayloadInput,
+    sessionId: string,
+    updateSeq: number,
+    updateId: string,
+    options?: UpdateMessagePayloadOptions,
+): UpdatePayload {
     return {
         id: updateId,
         seq: updateSeq,
@@ -89,7 +146,7 @@ export function buildMessageUpdatedUpdate(message: UpdateMessagePayloadInput, se
             sid: sessionId,
             // Compatibility: some clients use `id` for sessionId.
             id: sessionId,
-            message: serializeUpdateMessage(message),
+            message: serializeUpdateMessage(message, options),
         },
         createdAt: Date.now()
     };
@@ -114,9 +171,26 @@ export function buildUpdateSessionUpdate(
         latestTurnStatus?: PrimaryTurnStatusV1 | null;
         latestTurnStatusObservedAt?: number | null;
         lastRuntimeIssue?: SessionRuntimeIssueV1 | null;
+        runtimeActivityState?: 'active' | 'idle' | 'unknown';
+        runtimeActivityActiveCount?: number;
+        runtimeActivityObservedAt?: number | null;
+        runtimeActivityRevision?: number;
+        meaningfulActivityAt?: number;
         archivedAt?: number | null;
     },
 ): UpdatePayload {
+    const runtimeActivity = parseSessionRuntimeActivityProjectionFields(projection);
+    if (runtimeActivity.kind === "invalid") {
+        throw new Error("Invalid Runtime Activity projection");
+    }
+    const runtimeActivityFields = runtimeActivity.kind === "valid"
+        ? {
+            runtimeActivityState: runtimeActivity.projection.state,
+            runtimeActivityActiveCount: runtimeActivity.projection.activeCount,
+            runtimeActivityObservedAt: runtimeActivity.projection.observedAt,
+            runtimeActivityRevision: runtimeActivity.projection.revision,
+        }
+        : {};
     return {
         id: updateId,
         seq: updateSeq,
@@ -151,6 +225,10 @@ export function buildUpdateSessionUpdate(
                 ? { latestTurnStatusObservedAt: projection.latestTurnStatusObservedAt ?? null }
                 : {}),
             ...(projection && 'lastRuntimeIssue' in projection ? { lastRuntimeIssue: projection.lastRuntimeIssue ?? null } : {}),
+            ...runtimeActivityFields,
+            ...(typeof projection?.meaningfulActivityAt === "number" && Number.isFinite(projection.meaningfulActivityAt)
+                ? { meaningfulActivityAt: projection.meaningfulActivityAt }
+                : {}),
             ...(typeof projection?.archivedAt === 'number' || projection?.archivedAt === null
                 ? { archivedAt: projection.archivedAt }
                 : {}),
@@ -159,13 +237,73 @@ export function buildUpdateSessionUpdate(
     };
 }
 
+/**
+ * Publishes the existing update-session event from the strict layout-v1
+ * recipient projection. Parsing here keeps the wire builder from accepting a
+ * partial owner tuple or an additive private field on the shared-only branch.
+ */
+export function buildSessionMetadataRecipientUpdate(
+    sessionId: string,
+    updateSeq: number,
+    updateId: string,
+    projection: SessionMetadataRecipientProjectionV1,
+): UpdatePayload {
+    const recipientProjection =
+        SessionMetadataRecipientProjectionV1Schema.parse(projection);
+    const agentState =
+        "agentState" in recipientProjection
+        && "agentStateVersion" in recipientProjection
+        && (
+            typeof recipientProjection.agentState === "string"
+            || recipientProjection.agentState === null
+        )
+        && typeof recipientProjection.agentStateVersion === "number"
+            ? {
+                value: recipientProjection.agentState,
+                version: recipientProjection.agentStateVersion,
+            }
+            : undefined;
+    const ownerMetadata =
+        "ownerMetadata" in recipientProjection
+        && typeof recipientProjection.ownerMetadata === "string"
+            ? {
+                ownerMetadata: {
+                    value: recipientProjection.ownerMetadata,
+                },
+            }
+            : {};
+
+    const payload = buildUpdateSessionUpdate(
+        sessionId,
+        updateSeq,
+        updateId,
+        {
+            value: recipientProjection.metadata,
+            version: recipientProjection.metadataVersion,
+        },
+        agentState,
+    );
+    const recipientBody: UpdatePayload["body"] = {
+        ...payload.body,
+        metadataLayoutVersion: recipientProjection.metadataLayoutVersion,
+        ...ownerMetadata,
+    };
+    if (agentState === undefined) delete recipientBody.agentState;
+    return {
+        ...payload,
+        body: recipientBody,
+    };
+}
+
 export function buildPendingChangedUpdate(
     data: {
         sessionId: string;
         pendingVersion: number;
         pendingCount: number;
+        pendingBlockedCount?: number;
         changedByAccountId?: string;
         meaningfulActivityAt?: Date | number;
+        pendingActivationRequestId?: string;
     },
     updateSeq: number,
     updateId: string,
@@ -183,7 +321,11 @@ export function buildPendingChangedUpdate(
             sessionId: data.sessionId,
             pendingVersion: data.pendingVersion,
             pendingCount: data.pendingCount,
+            ...(typeof data.pendingBlockedCount === "number" ? { pendingBlockedCount: data.pendingBlockedCount } : {}),
             ...(typeof data.changedByAccountId === "string" ? { changedByAccountId: data.changedByAccountId } : {}),
+            ...(typeof data.pendingActivationRequestId === "string"
+                ? { pendingActivationRequestId: data.pendingActivationRequestId }
+                : {}),
             ...(typeof meaningfulActivityAt === "number" && Number.isFinite(meaningfulActivityAt)
                 ? { meaningfulActivityAt }
                 : {}),

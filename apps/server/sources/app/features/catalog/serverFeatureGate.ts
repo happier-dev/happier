@@ -13,6 +13,10 @@ export function isServerFeatureEnabledForRequest(featureId: FeatureId, env: Node
     return readServerEnabledBit(payload, featureId) === true;
 }
 
+export function isResolvedServerFeatureEnabledForGating(payload: FeaturesResponse, featureId: FeatureId): boolean {
+    return readServerEnabledBit(payload, featureId) === true;
+}
+
 export function isPeerMediationGrantSigningAdvertisedForRequest(env: NodeJS.ProcessEnv): boolean {
     const payload = resolveServerFeaturesForGating(env);
     return payload.capabilities.machines.peerMediation.grantSigningKeys.length > 0;

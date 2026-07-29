@@ -1,6 +1,7 @@
 import pino from 'pino';
 import { mkdirSync } from 'fs';
 import { join } from 'path';
+import { redactPublicShareCapabilityUrl } from '@happier-dev/protocol';
 
 // Single log file name created once at startup
 let consolidatedLogFile: string | undefined;
@@ -80,6 +81,27 @@ export function createLoggingTransportTargets(): any[] {
     return transports;
 }
 
+export function serializeHttpRequestForLog(request: {
+    method?: unknown;
+    url?: unknown;
+    headers?: { host?: unknown } | undefined;
+    hostname?: unknown;
+    socket?: { remoteAddress?: unknown; remotePort?: unknown } | undefined;
+}): Record<string, unknown> {
+    const url = typeof request.url === 'string' ? request.url : '';
+    return {
+        method: typeof request.method === 'string' ? request.method : undefined,
+        url: redactPublicShareCapabilityUrl(url),
+        host: typeof request.headers?.host === 'string'
+            ? request.headers.host
+            : typeof request.hostname === 'string'
+                ? request.hostname
+                : undefined,
+        remoteAddress: typeof request.socket?.remoteAddress === 'string' ? request.socket.remoteAddress : undefined,
+        remotePort: typeof request.socket?.remotePort === 'number' ? request.socket.remotePort : undefined,
+    };
+}
+
 // Main server logger with local time formatting
 const transportTargets = createLoggingTransportTargets();
 export const logger = pino({
@@ -100,11 +122,14 @@ export const logger = pino({
             };
         }
     },
+    serializers: {
+        req: serializeHttpRequestForLog,
+    },
     timestamp: () => `,"time":${Date.now()},"localTime":"${formatLocalTime()}"`,
 });
 
 // Optional file-only logger for remote logs from CLI/mobile
-export const fileConsolidatedLogger = process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING && consolidatedLogFile ? 
+export const fileConsolidatedLogger = process.env.DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING && consolidatedLogFile ?
     pino({
         level: resolveServerLogLevelFromEnv(process.env),
         transport: {

@@ -18,8 +18,33 @@ import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
 import { auth } from "@/app/auth/auth";
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
+import { mutateConnectedServiceCredential, mutateLegacyConnectedServiceVendorToken } from "./credentials/mutation";
+import {
+    deleteQualifiedConnectedServiceCredentialForStorageMode,
+} from "./qualifiedConnectedAccounts/credentialRepository";
+import {
+    createServiceAccountTokenIdentityFields,
+    createQualifiedConnectedAccountGroupDigest,
+    resolveLegacyServiceAccountTokenIdentityFields,
+} from "./qualifiedConnectedAccounts/identity";
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
+const openAiCodexWorkIdentity = resolveLegacyServiceAccountTokenIdentityFields({
+    serviceId: "openai-codex",
+    profileId: "work",
+});
+const openAiCodexMainGroupIdentity = {
+    servicePluginId: openAiCodexWorkIdentity.servicePluginId,
+    serviceLocalId: openAiCodexWorkIdentity.serviceLocalId,
+    qualifiedServiceDigest: openAiCodexWorkIdentity.qualifiedServiceDigest,
+    qualifiedGroupDigest: createQualifiedConnectedAccountGroupDigest({
+        service: {
+            pluginId: openAiCodexWorkIdentity.servicePluginId,
+            localId: openAiCodexWorkIdentity.serviceLocalId,
+        },
+        groupId: "main",
+    }),
+};
 
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
@@ -109,7 +134,7 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
             payload: { content: { t: "plain", v: record } },
         });
         expect(register.statusCode).toBe(200);
-        expect(register.json()).toEqual({ success: true });
+        expect(register.json()).toEqual(expect.objectContaining({ success: true, credentialRevision: expect.any(String) }));
 
         const getOne = await app.inject({
             method: "GET",
@@ -117,7 +142,10 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
             headers: { "x-test-user-id": user.id },
         });
         expect(getOne.statusCode).toBe(200);
-        expect(getOne.json()).toEqual({ content: { t: "plain", v: expect.any(Object) } });
+        expect(getOne.json()).toEqual({
+            credentialRevision: expect.any(String),
+            content: { t: "plain", v: expect.any(Object) },
+        });
 
         const row = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
@@ -149,6 +177,76 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
                 }),
             }),
         }));
+    });
+
+    it("projects oauth null when V3 GET serves a canonical token credential that omitted it", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+            HAPPIER_FEATURE_ENCRYPTION__PLAIN_ACCOUNT_CREDENTIALS_AT_REST: "none",
+        });
+
+        const user = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const now = Date.now();
+        const record = {
+            v: 1,
+            serviceId: "openai",
+            profileId: "work",
+            kind: "token",
+            createdAt: now,
+            updatedAt: now,
+            expiresAt: null,
+            token: {
+                token: "sk-test",
+                providerAccountId: null,
+                providerEmail: null,
+                raw: null,
+            },
+        };
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: record.serviceId,
+                profileId: record.profileId,
+                ...resolveLegacyServiceAccountTokenIdentityFields({
+                    serviceId: record.serviceId,
+                    profileId: record.profileId,
+                }),
+                token: Buffer.from(JSON.stringify(record), "utf8"),
+                metadata: {
+                    v: 3,
+                    storage: "plain_json_v1",
+                    kind: "token",
+                    providerEmail: null,
+                    providerAccountId: null,
+                },
+            },
+        });
+
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const response = await app.inject({
+            method: "GET",
+            url: "/v3/connect/openai/profiles/work/credential",
+            headers: { "x-test-user-id": user.id },
+        });
+
+        expect(response.statusCode).toBe(200);
+        expect(response.json()).toEqual({
+            credentialRevision: expect.any(String),
+            content: {
+                t: "plain",
+                v: {
+                    ...record,
+                    oauth: null,
+                },
+            },
+        });
     });
 
     it("publishes a profile update when a plaintext credential is deleted", async () => {
@@ -223,6 +321,61 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
         }));
     });
 
+    it("does not delete a qualified credential whose legacy shadows claim another service", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+        });
+        const user = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const qualifiedIdentity = createServiceAccountTokenIdentityFields({
+            ref: {
+                service: {
+                    pluginId: "happier.voice.openai",
+                    localId: "openai",
+                },
+                accountId: "work",
+            },
+            authenticationModeId: "api-key",
+        });
+        const credential = await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai-codex",
+                profileId: "work",
+                ...qualifiedIdentity,
+                token: new Uint8Array([1]),
+                metadata: {
+                    v: 3,
+                    storage: "plain_json_v1",
+                    kind: "token",
+                    providerEmail: null,
+                    providerAccountId: null,
+                },
+            },
+            select: { id: true },
+        });
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const response = await app.inject({
+            method: "DELETE",
+            url: "/v3/connect/openai-codex/profiles/work/credential",
+            headers: { "x-test-user-id": user.id },
+        });
+
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toEqual({
+            error: "connect_credential_not_found",
+        });
+        await expect(db.serviceAccountToken.findUnique({
+            where: { id: credential.id },
+        })).resolves.not.toBeNull();
+    });
+
     it("rejects plaintext credential content for e2ee accounts", async () => {
         harness.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee" });
 
@@ -243,6 +396,20 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
         });
         expect(res.statusCode).toBe(400);
         expect(res.json()).toEqual({ error: "invalid-params" });
+    });
+
+    it("fences credential storage mode inside the canonical write transaction", async () => {
+        const plain = await db.account.create({ data: { publicKey: null, encryptionMode: "plain" }, select: { id: true } });
+        const e2ee = await db.account.create({ data: { publicKey: "pk-mode-fence", encryptionMode: "e2ee" }, select: { id: true } });
+        const base = {
+            serviceId: "openai-codex", profileId: "work", token: new Uint8Array([1]),
+            metadata: { v: 2, format: "account_scoped_v1", kind: "oauth", providerEmail: null, providerAccountId: null },
+            expiresAt: null, incomingIdentity: { providerEmail: null, providerAccountId: null }, allowProviderIdentityChange: false,
+        } as const;
+        await expect(mutateConnectedServiceCredential({ ...base, accountId: plain.id, storageMode: "sealed" })).resolves.toEqual({ status: "storage_mode_mismatch" });
+        await expect(mutateConnectedServiceCredential({ ...base, accountId: e2ee.id, storageMode: "plain" })).resolves.toEqual({ status: "storage_mode_mismatch" });
+        await expect(mutateLegacyConnectedServiceVendorToken({ accountId: e2ee.id, vendor: "anthropic", token: new Uint8Array([2]) })).resolves.toEqual({ status: "written" });
+        expect(await db.serviceAccountToken.count()).toBe(1);
     });
 
     it("does not return v3 plaintext credentials for e2ee accounts (defense-in-depth)", async () => {
@@ -280,6 +447,7 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
                 accountId: user.id,
                 vendor: "openai-codex",
                 profileId: "work",
+                ...openAiCodexWorkIdentity,
                 token: Buffer.from(JSON.stringify(record), "utf8"),
                 metadata: {
                     v: 3,
@@ -320,6 +488,7 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
                 accountId: user.id,
                 vendor: "openai-codex",
                 profileId: "work",
+                ...openAiCodexWorkIdentity,
                 token: Buffer.from("old", "utf8"),
                 metadata: {
                     v: 3,
@@ -386,6 +555,7 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
                 accountId: user.id,
                 vendor: "openai-codex",
                 profileId: "work",
+                ...openAiCodexWorkIdentity,
                 token: Buffer.from("old", "utf8"),
                 metadata: {
                     v: 3,
@@ -452,6 +622,7 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
                 accountId: user.id,
                 vendor: "openai-codex",
                 profileId: "work",
+                ...openAiCodexWorkIdentity,
                 token: Buffer.from("old", "utf8"),
                 metadata: {
                     v: 3,
@@ -576,6 +747,7 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
                 accountId: user.id,
                 vendor: "openai-codex",
                 profileId: "work",
+                ...openAiCodexWorkIdentity,
                 token: Buffer.from(JSON.stringify({
                     v: 1,
                     serviceId: "github",
@@ -679,7 +851,7 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
         });
 
         expect(health.statusCode).toBe(200);
-        expect(health.json()).toEqual({ success: true });
+        expect(health.json()).toEqual(expect.objectContaining({ success: true, credentialRevision: expect.any(String) }));
 
         const row = await db.serviceAccountToken.findUnique({
             where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
@@ -715,5 +887,197 @@ describe("connectRoutes (connected services v3) plaintext credential endpoints (
                 }),
             }),
         }));
+    });
+
+    it("fences credential deletion by account mode inside the transactional delete owner", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+        });
+        const user = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai-codex",
+                profileId: "work",
+                ...openAiCodexWorkIdentity,
+                token: new Uint8Array([1]),
+                metadata: { v: 3, storage: "plain_json_v1", kind: "token" },
+            },
+        });
+
+        const result =
+            await deleteQualifiedConnectedServiceCredentialForStorageMode({
+            accountId: user.id,
+            ref: {
+                service: {
+                    pluginId: openAiCodexWorkIdentity.servicePluginId,
+                    localId: openAiCodexWorkIdentity.serviceLocalId,
+                },
+                accountId: "work",
+            },
+            expectedStorageMode: "sealed",
+            cleanupGroupReferences: true,
+        });
+
+        expect(result).toEqual({ status: "storage_mode_mismatch" });
+        await expect(db.serviceAccountToken.findUnique({
+            where: {
+                accountId_vendor_profileId: {
+                    accountId: user.id,
+                    vendor: "openai-codex",
+                    profileId: "work",
+                },
+            },
+        })).resolves.not.toBeNull();
+    });
+
+    it("reports a group reference before storage-mode validation on non-cleanup deletion", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "optional",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "plain",
+        });
+        const user = await db.account.create({
+            data: { publicKey: null, encryptionMode: "plain" },
+            select: { id: true },
+        });
+        const credential = await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai-codex",
+                profileId: "work",
+                ...openAiCodexWorkIdentity,
+                token: new Uint8Array([1]),
+                metadata: { v: 3, storage: "plain_json_v1", kind: "token" },
+            },
+            select: { id: true },
+        });
+        const group = await db.connectedServiceAuthGroup.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai-codex",
+                ...openAiCodexMainGroupIdentity,
+                groupId: "main",
+                policyJson: "{}",
+            },
+            select: { id: true },
+        });
+        await db.connectedServiceAuthGroupMember.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai-codex",
+                groupId: "main",
+                groupDbId: group.id,
+                profileId: "work",
+                credentialId: credential.id,
+                qualifiedServiceDigest:
+                    openAiCodexWorkIdentity.qualifiedServiceDigest,
+                qualifiedGroupDigest:
+                    openAiCodexMainGroupIdentity.qualifiedGroupDigest,
+                qualifiedIdentityDigest:
+                    openAiCodexWorkIdentity.qualifiedIdentityDigest,
+            },
+        });
+
+        const result =
+            await deleteQualifiedConnectedServiceCredentialForStorageMode({
+            accountId: user.id,
+            ref: {
+                service: {
+                    pluginId: openAiCodexWorkIdentity.servicePluginId,
+                    localId: openAiCodexWorkIdentity.serviceLocalId,
+                },
+                accountId: "work",
+            },
+            expectedStorageMode: "sealed",
+            cleanupGroupReferences: false,
+        });
+
+        expect(result).toEqual({ status: "referenced" });
+    });
+
+    it("preserves the v3 not-found boundary for a sealed-account delete mode mismatch", async () => {
+        const user = await db.account.create({
+            data: { publicKey: "pk-v3-delete-mode", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await db.serviceAccountToken.create({
+            data: {
+                accountId: user.id,
+                vendor: "openai-codex",
+                profileId: "work",
+                ...openAiCodexWorkIdentity,
+                token: new Uint8Array([1]),
+                metadata: { v: 2, format: "account_scoped_v1", kind: "token" },
+            },
+        });
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const response = await app.inject({
+            method: "DELETE",
+            url: "/v3/connect/openai-codex/profiles/work/credential",
+            headers: { "x-test-user-id": user.id },
+        });
+
+        expect(response.statusCode).toBe(404);
+        expect(response.json()).toEqual({ error: "connect_credential_not_found" });
+        await expect(db.serviceAccountToken.count({ where: { accountId: user.id } })).resolves.toBe(1);
+    });
+
+    it("delegates a post storage-mode mismatch to the serializable mutation owner without a route-level account precheck", async () => {
+        const user = await db.account.create({
+            data: { publicKey: "pk-v3-post-mode", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        const routeLevelAccountRead = vi.spyOn(db.account, "findUnique").mockRejectedValue(
+            new Error("route-level account mode reads are stale outside the mutation transaction"),
+        );
+        const app = createTestApp();
+        connectRoutes(app as any);
+        await app.ready();
+
+        const response = await (async () => {
+            try {
+                const result = await app.inject({
+                    method: "POST",
+                    url: "/v3/connect/openai-codex/profiles/work/credential",
+                    headers: { "content-type": "application/json", "x-test-user-id": user.id },
+                    payload: {
+                        content: {
+                            t: "plain",
+                            v: {
+                                v: 1,
+                                serviceId: "openai-codex",
+                                profileId: "work",
+                                kind: "token",
+                                createdAt: 1_000,
+                                updatedAt: 1_000,
+                                expiresAt: null,
+                                oauth: null,
+                                token: {
+                                    token: "plain-token",
+                                    providerAccountId: null,
+                                    providerEmail: null,
+                                },
+                            },
+                        },
+                        expectedCredentialRevision: null,
+                    },
+                });
+                expect(routeLevelAccountRead).not.toHaveBeenCalled();
+                return result;
+            } finally {
+                routeLevelAccountRead.mockRestore();
+            }
+        })();
+
+        expect(response.statusCode).toBe(400);
+        expect(response.json()).toEqual({ error: "invalid-params" });
+        await expect(db.serviceAccountToken.count({ where: { accountId: user.id } })).resolves.toBe(0);
     });
 });

@@ -1,2 +1,2 @@
 -- AlterTable
-ALTER TABLE "AccountPushToken" ADD COLUMN IF NOT EXISTS "clientServerUrl" TEXT;
+ALTER TABLE "AccountPushToken" ADD COLUMN "clientServerUrl" TEXT;

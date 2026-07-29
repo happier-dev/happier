@@ -156,4 +156,188 @@ describe("registerKeyChallengeAuthRoute (lazy auth init) (integration)", () => {
         await app.close();
         harness.resetEnv();
     });
+
+    it("rejects a different signed content key for an existing account without mutating it", async () => {
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        const originalContentKey = tweetnacl.box.keyPair();
+        const replacementContentKey = tweetnacl.box.keyPair();
+        const publicKeyHex = privacyKit.encodeHex(new Uint8Array(signing.publicKey));
+        const originalBinding = Buffer.concat([
+            Buffer.from("Happy content key v1\u0000", "utf8"),
+            Buffer.from(originalContentKey.publicKey),
+        ]);
+        const originalSignature = tweetnacl.sign.detached(originalBinding, signing.secretKey);
+        const account = await db.account.create({
+            data: {
+                publicKey: publicKeyHex,
+                contentPublicKey: new Uint8Array(originalContentKey.publicKey),
+                contentPublicKeySig: new Uint8Array(originalSignature),
+            },
+            select: { id: true, updatedAt: true },
+        });
+
+        const challenge = crypto.randomBytes(32);
+        const signature = tweetnacl.sign.detached(challenge, signing.secretKey);
+        const replacementBinding = Buffer.concat([
+            Buffer.from("Happy content key v1\u0000", "utf8"),
+            Buffer.from(replacementContentKey.publicKey),
+        ]);
+        const replacementSignature = tweetnacl.sign.detached(replacementBinding, signing.secretKey);
+        const response = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: {
+                publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)),
+                challenge: privacyKit.encodeBase64(new Uint8Array(challenge)),
+                signature: privacyKit.encodeBase64(new Uint8Array(signature)),
+                contentPublicKey: privacyKit.encodeBase64(new Uint8Array(replacementContentKey.publicKey)),
+                contentPublicKeySig: privacyKit.encodeBase64(new Uint8Array(replacementSignature)),
+            },
+        });
+
+        expect(response.statusCode).toBe(409);
+        expect(response.json()).toEqual({ error: "content_public_key_mismatch" });
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+                updatedAt: true,
+            },
+        })).resolves.toEqual({
+            contentPublicKey: new Uint8Array(originalContentKey.publicKey),
+            contentPublicKeySig: new Uint8Array(originalSignature),
+            updatedAt: account.updatedAt,
+        });
+
+        await app.close();
+        harness.resetEnv();
+    });
+
+    it("fills a missing signature for the exact same content key after validating proof", async () => {
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        const contentKey = tweetnacl.box.keyPair();
+        const account = await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(new Uint8Array(signing.publicKey)),
+                contentPublicKey: new Uint8Array(contentKey.publicKey),
+                contentPublicKeySig: null,
+            },
+            select: { id: true },
+        });
+        const challenge = crypto.randomBytes(32);
+        const signature = tweetnacl.sign.detached(challenge, signing.secretKey);
+        const binding = Buffer.concat([
+            Buffer.from("Happy content key v1\u0000", "utf8"),
+            Buffer.from(contentKey.publicKey),
+        ]);
+        const contentSignature = tweetnacl.sign.detached(binding, signing.secretKey);
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: {
+                publicKey: privacyKit.encodeBase64(new Uint8Array(signing.publicKey)),
+                challenge: privacyKit.encodeBase64(new Uint8Array(challenge)),
+                signature: privacyKit.encodeBase64(new Uint8Array(signature)),
+                contentPublicKey: privacyKit.encodeBase64(new Uint8Array(contentKey.publicKey)),
+                contentPublicKeySig: privacyKit.encodeBase64(new Uint8Array(contentSignature)),
+            },
+        });
+
+        expect(response.statusCode).toBe(200);
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: { contentPublicKey: true, contentPublicKeySig: true },
+        })).resolves.toEqual({
+            contentPublicKey: new Uint8Array(contentKey.publicKey),
+            contentPublicKeySig: new Uint8Array(contentSignature),
+        });
+
+        await app.close();
+        harness.resetEnv();
+    });
+
+    it("does not mutate an existing exact signed content-key binding", async () => {
+        const app = createTestApp();
+        registerKeyChallengeAuthRoute(app);
+        await app.ready();
+
+        const signing = tweetnacl.sign.keyPair();
+        const contentKey = tweetnacl.box.keyPair();
+        const binding = Buffer.concat([
+            Buffer.from("Happy content key v1\u0000", "utf8"),
+            Buffer.from(contentKey.publicKey),
+        ]);
+        const contentSignature = tweetnacl.sign.detached(
+            binding,
+            signing.secretKey,
+        );
+        const account = await db.account.create({
+            data: {
+                publicKey: privacyKit.encodeHex(
+                    new Uint8Array(signing.publicKey),
+                ),
+                contentPublicKey:
+                    new Uint8Array(contentKey.publicKey),
+                contentPublicKeySig:
+                    new Uint8Array(contentSignature),
+            },
+            select: { id: true, updatedAt: true },
+        });
+        const challenge = crypto.randomBytes(32);
+        const signature = tweetnacl.sign.detached(
+            challenge,
+            signing.secretKey,
+        );
+
+        const response = await app.inject({
+            method: "POST",
+            url: "/v1/auth",
+            payload: {
+                publicKey: privacyKit.encodeBase64(
+                    new Uint8Array(signing.publicKey),
+                ),
+                challenge: privacyKit.encodeBase64(
+                    new Uint8Array(challenge),
+                ),
+                signature: privacyKit.encodeBase64(
+                    new Uint8Array(signature),
+                ),
+                contentPublicKey: privacyKit.encodeBase64(
+                    new Uint8Array(contentKey.publicKey),
+                ),
+                contentPublicKeySig: privacyKit.encodeBase64(
+                    new Uint8Array(contentSignature),
+                ),
+            },
+        });
+
+        expect(response.statusCode).toBe(200);
+        await expect(db.account.findUniqueOrThrow({
+            where: { id: account.id },
+            select: {
+                contentPublicKey: true,
+                contentPublicKeySig: true,
+                updatedAt: true,
+            },
+        })).resolves.toEqual({
+            contentPublicKey:
+                new Uint8Array(contentKey.publicKey),
+            contentPublicKeySig:
+                new Uint8Array(contentSignature),
+            updatedAt: account.updatedAt,
+        });
+
+        await app.close();
+        harness.resetEnv();
+    });
 });

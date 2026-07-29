@@ -21,7 +21,7 @@ export type CreateLocalServicePreviewTokenInput = Readonly<{
 
 export type LocalServicePreviewTokenValidationResult =
     | Readonly<{ ok: true }>
-    | Readonly<{ ok: false; reasonCode: "binding_mismatch" | "expired" | "not_yet_valid" | "revoked" | "token_mismatch" }>;
+    | Readonly<{ ok: false; reasonCode: "binding_mismatch" | "expired" | "not_yet_valid" | "revoked" | "token_mismatch" | "exchange_mode_mismatch" }>;
 
 export type ValidateLocalServicePreviewTokenInput = Readonly<{
     secret: string;
@@ -31,6 +31,7 @@ export type ValidateLocalServicePreviewTokenInput = Readonly<{
     sessionId: string;
     machineId: string;
     nowMs: number;
+    expectedExchangeMode?: "url" | "cookie";
 }>;
 
 function hashPreviewToken(secret: string, rawToken: string): string {
@@ -98,6 +99,9 @@ export function validateLocalServicePreviewToken(
     }
     if (input.nowMs >= input.record.expiresAt) {
         return { ok: false, reasonCode: "expired" };
+    }
+    if (input.expectedExchangeMode && input.record.exchangeMode !== input.expectedExchangeMode) {
+        return { ok: false, reasonCode: "exchange_mode_mismatch" };
     }
     if (!hashesMatch(input.record.tokenHash, hashPreviewToken(input.secret, input.rawToken))) {
         return { ok: false, reasonCode: "token_mismatch" };

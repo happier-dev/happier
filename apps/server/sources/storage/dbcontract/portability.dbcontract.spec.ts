@@ -1,5 +1,6 @@
 import { beforeAll, afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
+import { pruneExpiredVoiceSessionLeases } from "@/app/voice/pruneExpiredVoiceSessionLeases";
 import { db, initDbMysql, initDbPostgres, isPrismaErrorCode } from "@/storage/db";
 
 function resolveContractProviderFromEnv(): "postgres" | "mysql" {
@@ -143,5 +144,95 @@ describe("db portability contract", () => {
         });
 
         expect(reread.sessionId).toBeNull();
+    });
+
+    it("preserves exact Voice grant provenance while transactionally pruning an expired lease", async () => {
+        const account = await db.account.create({
+            data: { publicKey: uniq("contract-voice-grant-provenance-pubkey") },
+            select: { id: true },
+        });
+        const lease = await db.voiceSessionLease.create({
+            data: {
+                accountId: account.id,
+                periodKey: "2026-07",
+                grantedBy: "subscription",
+                elevenLabsAgentId: "contract-agent",
+                expiresAt: new Date("2026-07-01T00:00:00.000Z"),
+            },
+            select: { id: true },
+        });
+        const conversation = await db.voiceConversation.create({
+            data: {
+                accountId: account.id,
+                leaseId: lease.id,
+                providerId: "contract-provider",
+                providerConversationId: uniq("contract-voice-conversation"),
+                durationSeconds: 1,
+                grantedBy: null,
+                grantPeriodKey: null,
+            },
+            select: { id: true },
+        });
+
+        await expect(pruneExpiredVoiceSessionLeases({
+            accountId: account.id,
+            cutoff: new Date("2026-07-02T00:00:00.000Z"),
+        })).resolves.toBe(1);
+
+        await expect(db.voiceSessionLease.findUnique({
+            where: { id: lease.id },
+            select: { id: true },
+        })).resolves.toBeNull();
+        await expect(db.voiceConversation.findUniqueOrThrow({
+            where: { id: conversation.id },
+            select: { grantedBy: true, grantPeriodKey: true, leaseId: true },
+        })).resolves.toEqual({
+            grantedBy: "subscription",
+            grantPeriodKey: "2026-07",
+            leaseId: null,
+        });
+    });
+
+    it("preserves exact Voice grant provenance when an older writer directly deletes the lease", async () => {
+        const account = await db.account.create({
+            data: { publicKey: uniq("contract-legacy-voice-grant-provenance-pubkey") },
+            select: { id: true },
+        });
+        const lease = await db.voiceSessionLease.create({
+            data: {
+                accountId: account.id,
+                periodKey: "2026-06",
+                grantedBy: "free",
+                elevenLabsAgentId: "contract-agent",
+                expiresAt: new Date("2026-06-01T00:00:00.000Z"),
+            },
+            select: { id: true },
+        });
+        const conversation = await db.voiceConversation.create({
+            data: {
+                accountId: account.id,
+                leaseId: lease.id,
+                providerId: "contract-provider",
+                providerConversationId: uniq("contract-legacy-voice-conversation"),
+                durationSeconds: 1,
+                grantedBy: null,
+                grantPeriodKey: null,
+            },
+            select: { id: true },
+        });
+
+        await db.voiceSessionLease.delete({
+            where: { id: lease.id },
+            select: { id: true },
+        });
+
+        await expect(db.voiceConversation.findUniqueOrThrow({
+            where: { id: conversation.id },
+            select: { grantedBy: true, grantPeriodKey: true, leaseId: true },
+        })).resolves.toEqual({
+            grantedBy: "free",
+            grantPeriodKey: "2026-06",
+            leaseId: null,
+        });
     });
 });

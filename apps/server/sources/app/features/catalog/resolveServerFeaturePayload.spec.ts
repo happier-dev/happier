@@ -6,6 +6,7 @@ import { resolveMachineLiveStreamFeature } from "../machineLiveStreamFeature";
 import { resolveChannelBridgesFeature } from "../channelBridgesFeature";
 import { resolveSessionHandoffFeature } from "../sessionHandoffFeature";
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from "../serverUsageAnalyticsCapabilitiesFeature";
+import { resolveSharingFeature } from "../sharingFeature";
 import { resolveTerminalFeature } from "../terminalFeature";
 import { resolveServerFeaturePayload } from "./resolveServerFeaturePayload";
 import { resolveServerFeatureBuildPolicy } from "./serverFeatureBuildPolicy";
@@ -59,37 +60,10 @@ describe("resolveServerFeaturePayload", () => {
         expect(() => resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [])).toThrow(/resolvers/i);
     });
 
-    it("forces server feature gates disabled when build policy denies a represented feature", () => {
+    it("does not apply build policy to the compatibility-only Connected Accounts master bit", () => {
         const env = {
             HAPPIER_BUILD_FEATURES_DENY: "connectedServices",
         } as NodeJS.ProcessEnv;
-
-        const buildPolicy = resolveServerFeatureBuildPolicy(env);
-        expect(evaluateFeatureBuildPolicy(buildPolicy, "connectedServices")).toBe("deny");
-
-        const payload = resolveServerFeaturePayload(
-            env,
-            [
-                fromPartial({
-                    features: {
-                        connectedServices: { enabled: true, quotas: { enabled: true } },
-                    },
-                }),
-            ],
-        );
-
-        expect(payload.features.connectedServices.enabled).toBe(false);
-        expect(payload.features.connectedServices.quotas.enabled).toBe(false);
-    });
-
-    it("forces server feature gates disabled when build policy allowlist omits a represented feature", () => {
-        const env = {
-            HAPPIER_BUILD_FEATURES_ALLOW: "connectedServices",
-        } as NodeJS.ProcessEnv;
-
-        const buildPolicy = resolveServerFeatureBuildPolicy(env);
-        expect(evaluateFeatureBuildPolicy(buildPolicy, "connectedServices")).toBe("allow");
-        expect(evaluateFeatureBuildPolicy(buildPolicy, "connectedServices.quotas")).toBe("deny");
 
         const payload = resolveServerFeaturePayload(
             env,
@@ -103,10 +77,33 @@ describe("resolveServerFeaturePayload", () => {
         );
 
         expect(payload.features.connectedServices.enabled).toBe(true);
-        expect(payload.features.connectedServices.quotas.enabled).toBe(false);
+        expect(payload.features.connectedServices.quotas.enabled).toBe(true);
     });
 
-    it("forces represented features disabled when a represented dependency is disabled", () => {
+    it("keeps an allowlisted subordinate quota gate enabled independently", () => {
+        const env = {
+            HAPPIER_BUILD_FEATURES_ALLOW: "connectedServices.quotas",
+        } as NodeJS.ProcessEnv;
+
+        const buildPolicy = resolveServerFeatureBuildPolicy(env);
+        expect(evaluateFeatureBuildPolicy(buildPolicy, "connectedServices.quotas")).toBe("allow");
+
+        const payload = resolveServerFeaturePayload(
+            env,
+            [
+                fromPartial({
+                    features: {
+                        connectedServices: { enabled: true, quotas: { enabled: true } },
+                    },
+                }),
+            ],
+        );
+
+        expect(payload.features.connectedServices.enabled).toBe(true);
+        expect(payload.features.connectedServices.quotas.enabled).toBe(true);
+    });
+
+    it("does not let the compatibility-only master bit disable independent quota gates", () => {
         const payload = resolveServerFeaturePayload(
             {} as NodeJS.ProcessEnv,
             [
@@ -119,7 +116,64 @@ describe("resolveServerFeaturePayload", () => {
         );
 
         expect(payload.features.connectedServices.enabled).toBe(false);
-        expect(payload.features.connectedServices.quotas.enabled).toBe(false);
+        expect(payload.features.connectedServices.quotas.enabled).toBe(true);
+    });
+
+    it("applies dependency pruning to a fixed point when a dependency is pruned later in catalog order", () => {
+        const payload = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [
+                fromPartial({
+                    features: {
+                        localServices: {
+                            enabled: true,
+                            inventory: { enabled: true },
+                            managed: { enabled: true },
+                            preview: { enabled: true },
+                            launcher: { enabled: true },
+                        },
+                        browser: {
+                            enabled: false,
+                            viewTargets: { enabled: true },
+                        },
+                    },
+                }),
+            ],
+        );
+
+        expect(readOptionalPath(payload, ["features", "browser", "enabled"])).toBe(false);
+        expect(readOptionalPath(payload, ["features", "browser", "viewTargets", "enabled"])).toBe(false);
+        expect(readOptionalPath(payload, ["features", "localServices", "launcher", "enabled"])).toBe(false);
+    });
+
+    it("enforces transitive dependencies regardless of catalog declaration order (SD-3)", () => {
+        // Real out-of-order chain: `connectedServices.accountFallback` is declared BEFORE its
+        // dependency `sessions.usageLimitRecovery` in the catalog. A single-pass, order-dependent
+        // enforcement visits accountFallback while usageLimitRecovery still reads enabled (its own
+        // dependency `sessions` is disabled and only gets enforced later), leaving accountFallback
+        // incorrectly enabled. Enforcement must resolve to a fixpoint.
+        const payload = resolveServerFeaturePayload(
+            {} as NodeJS.ProcessEnv,
+            [
+                fromPartial({
+                    features: {
+                        sessions: { enabled: false, usageLimitRecovery: { enabled: true } },
+                        connectedServices: {
+                            enabled: true,
+                            accountGroups: { enabled: true },
+                            accountFallback: { enabled: true },
+                        },
+                    },
+                }),
+            ],
+        );
+
+        expect(payload.features.sessions.enabled).toBe(false);
+        expect(payload.features.sessions.usageLimitRecovery.enabled).toBe(false);
+        expect(payload.features.connectedServices.accountFallback.enabled).toBe(false);
+        // Independent siblings stay untouched.
+        expect(payload.features.connectedServices.enabled).toBe(true);
+        expect(payload.features.connectedServices.accountGroups.enabled).toBe(true);
     });
 
     it("keeps pets.sync enabled when pets.companion is disabled", () => {
@@ -290,7 +344,9 @@ describe("resolveServerFeaturePayload", () => {
         } as NodeJS.ProcessEnv, [resolveSessionHandoffFeature, resolveMachineTransferFeature]);
 
         expect(payload.capabilities.machines.peerMediation.grantSigningKeys).toEqual([]);
-        expect((payload.features.machines as unknown as { peerMediation?: unknown }).peerMediation).toBeUndefined();
+        expect(payload.capabilities.machines.peerMediation.directRouteGrantProofMintVersions).toEqual([]);
+        expect(payload.capabilities.machines.peerMediation.tcpTunnelRelayAuthorizationMintVersions).toEqual([]);
+        expect(readOptionalPath(payload, ["features", "machines", "peerMediation", "enabled"])).toBe(false);
     });
 
     it("does not advertise peer mediation signing capability when the configured public key mismatches", () => {
@@ -321,6 +377,8 @@ describe("resolveServerFeaturePayload", () => {
                 expiresAt: 1_900_000_000_000,
             },
         ]);
+        expect(payload.capabilities.machines.peerMediation.directRouteGrantProofMintVersions).toEqual([2]);
+        expect(payload.capabilities.machines.peerMediation.tcpTunnelRelayAuthorizationMintVersions).toEqual([2]);
     });
 
     it("advertises live-stream relay caps only when server-routed live stream is configured", () => {
@@ -441,6 +499,15 @@ describe("resolveServerFeaturePayload", () => {
 
         expect(readOptionalPath(payload, ["features", "setup", "relay", "allowCustomRelayUrl", "enabled"])).toBe(false);
         expect(readOptionalPath(payload, ["features", "setup", "relayAccess", "allowTailscale", "enabled"])).toBe(false);
+    });
+
+    it("advertises pending delivery-state support separately from the basic pending queue gate", () => {
+        const payload = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, [resolveSharingFeature]);
+
+        expect(readOptionalPath(payload, ["features", "sharing", "pendingQueueV2", "enabled"])).toBe(true);
+        expect(readOptionalPath(payload, ["features", "sharing", "pendingDeliveryState", "enabled"])).toBe(true);
+        expect(readOptionalPath(payload, ["capabilities", "sharing", "pendingQueueV2", "deliveryState"])).toBe(true);
+        expect(readOptionalPath(payload, ["capabilities", "sharing", "pendingQueueV2", "deliveryBlockedReason"])).toBe(true);
     });
 
     it("includes setup surface policy gates, and build-policy denies can disable them", () => {

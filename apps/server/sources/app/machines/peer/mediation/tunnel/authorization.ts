@@ -3,19 +3,21 @@ import { randomUUID } from "node:crypto";
 import {
     PEER_MEDIATION_RECEIPTS,
     PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1,
-    PeerTcpTunnelRelayAuthorizationPayloadV1Schema,
-    createPeerTcpTunnelRelayAuthorizationSigningInputV1,
+    PeerTcpTunnelRelayAuthorizationPayloadV2Schema,
+    createPeerTcpTunnelRelayAuthorizationSigningInputV2,
     type PeerTcpTunnelDestinationV1,
-    type PeerTcpTunnelRelayAuthorizationPayloadV1,
-    type PeerTcpTunnelRelayAuthorizationV1,
+    type PeerTcpTunnelRelayAuthorizationFlowKindV1,
+    type PeerTcpTunnelRelayAuthorizationPayloadV2,
+    type PeerTcpTunnelRelayAuthorizationV2,
     type TcpTunnelGrantScopeV1,
+    type VoiceMediaApplicationAuthorityV1,
 } from "@happier-dev/protocol";
 import tweetnacl from "tweetnacl";
 
-export type MintPeerTcpTunnelRelayAuthorizationV1Result =
+export type MintPeerTcpTunnelRelayAuthorizationV2Result =
     | Readonly<{
         ok: true;
-        relayAuthorization: PeerTcpTunnelRelayAuthorizationV1;
+        relayAuthorization: PeerTcpTunnelRelayAuthorizationV2;
         receipt: typeof PEER_MEDIATION_RECEIPTS.routeGrantMinted;
     }>
     | Readonly<{
@@ -30,9 +32,10 @@ export type MintPeerTcpTunnelRelayAuthorizationV1Result =
         receipt: typeof PEER_MEDIATION_RECEIPTS.routeGrantRejected;
     }>;
 
-export type MintPeerTcpTunnelRelayAuthorizationV1Input = Readonly<{
+export type MintPeerTcpTunnelRelayAuthorizationV2Input = Readonly<{
     accountId: string;
     targetMachineId: string;
+    relaySocketId: string;
     destination: PeerTcpTunnelDestinationV1;
     scope: TcpTunnelGrantScopeV1;
     nowMs: number;
@@ -45,6 +48,9 @@ export type MintPeerTcpTunnelRelayAuthorizationV1Input = Readonly<{
         maxIdleMs: number;
         maxDurationMs: number;
     }>;
+    capProfileId?: string;
+    flowKind?: PeerTcpTunnelRelayAuthorizationFlowKindV1;
+    applicationAuthority?: VoiceMediaApplicationAuthorityV1;
     signingKey: Readonly<{
         keyId: string;
         secretKey: Uint8Array;
@@ -75,9 +81,9 @@ function isLoopbackHost(host: string): boolean {
     return normalized === "localhost" || normalized === "::1" || isIpv4LoopbackHost(normalized);
 }
 
-export function mintPeerTcpTunnelRelayAuthorizationV1(
-    input: MintPeerTcpTunnelRelayAuthorizationV1Input,
-): MintPeerTcpTunnelRelayAuthorizationV1Result {
+export function mintPeerTcpTunnelRelayAuthorizationV2(
+    input: MintPeerTcpTunnelRelayAuthorizationV2Input,
+): MintPeerTcpTunnelRelayAuthorizationV2Result {
     if (!input.serverGateEnabled) {
         return {
             ok: false,
@@ -93,6 +99,17 @@ export function mintPeerTcpTunnelRelayAuthorizationV1(
         };
     }
     if (input.scope.kind !== "tcp_tunnel") {
+        return {
+            ok: false,
+            reasonCode: "invalid_scope",
+            receipt: PEER_MEDIATION_RECEIPTS.routeGrantRejected,
+        };
+    }
+    const flowKind = input.flowKind ?? "tcp_tunnel";
+    if (
+        (flowKind === "voice_media" && !input.applicationAuthority)
+        || (flowKind === "tcp_tunnel" && input.applicationAuthority)
+    ) {
         return {
             ok: false,
             reasonCode: "invalid_scope",
@@ -116,10 +133,11 @@ export function mintPeerTcpTunnelRelayAuthorizationV1(
             receipt: PEER_MEDIATION_RECEIPTS.routeGrantRejected,
         };
     }
+    const maxTotalBytes = input.scope.maxTotalBytes ?? input.serverCaps.maxBytes;
     if (
         input.scope.maxIdleMs > input.serverCaps.maxIdleMs
         || input.scope.maxDurationMs > input.serverCaps.maxDurationMs
-        || (typeof input.scope.maxTotalBytes === "number" && input.scope.maxTotalBytes > input.serverCaps.maxBytes)
+        || maxTotalBytes > input.serverCaps.maxBytes
     ) {
         return {
             ok: false,
@@ -128,26 +146,32 @@ export function mintPeerTcpTunnelRelayAuthorizationV1(
         };
     }
 
-    const payload: PeerTcpTunnelRelayAuthorizationPayloadV1 = PeerTcpTunnelRelayAuthorizationPayloadV1Schema.parse({
-        v: 1,
+    const payload: PeerTcpTunnelRelayAuthorizationPayloadV2 = PeerTcpTunnelRelayAuthorizationPayloadV2Schema.parse({
+        v: 2,
         grantId: `relay_grant_${randomUUID()}`,
         accountId: input.accountId,
         targetMachineId: input.targetMachineId,
-        flowKind: "tcp_tunnel",
+        flowKind,
         routeKind: "server_relay",
         tunnelId: input.scope.tunnelId,
+        ...(input.applicationAuthority ? {
+            applicationKind: input.applicationAuthority.applicationKind,
+            applicationAttemptId: input.applicationAuthority.applicationAttemptId,
+            applicationAuthorityDigest: input.applicationAuthority.applicationAuthorityDigest,
+        } : {}),
+        relaySocketId: input.relaySocketId,
         destination: input.destination,
-        capProfileId: "default",
+        capProfileId: input.capProfileId ?? "default",
         maxFrameBytes: input.serverCaps.maxFrameBytes,
         maxIdleMs: input.scope.maxIdleMs,
         maxDurationMs: input.scope.maxDurationMs,
-        ...(input.scope.maxTotalBytes ? { maxTotalBytes: input.scope.maxTotalBytes } : {}),
+        maxTotalBytes,
         iat: input.nowMs,
         exp: input.nowMs + input.ttlMs,
         aud: PEER_TCP_TUNNEL_RELAY_AUTHORIZATION_AUDIENCE_V1,
     });
     const signature = tweetnacl.sign.detached(
-        Buffer.from(createPeerTcpTunnelRelayAuthorizationSigningInputV1(payload), "utf8"),
+        Buffer.from(createPeerTcpTunnelRelayAuthorizationSigningInputV2(payload), "utf8"),
         input.signingKey.secretKey,
     );
 

@@ -67,6 +67,7 @@ describe("createServerRpcForwarder", () => {
         expect(emitWithAck).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, {
             method: "agent.run",
             params: { value: 1 },
+            timeoutMs: 30000,
         });
         expect(response).toEqual({
             ok: true,

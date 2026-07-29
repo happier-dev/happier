@@ -3,24 +3,26 @@ import { registerSessionCreateOrLoadRoute } from "./registerSessionCreateOrLoadR
 import { registerSessionDeleteRoute } from "./registerSessionDeleteRoute";
 import { registerSessionArchiveRoutes } from "./registerSessionArchiveRoutes";
 import { registerSessionListingRoutes } from "./registerSessionListingRoutes";
+import { registerSessionLookupByTagsRoute } from "./registerSessionLookupByTagsRoute";
 import { registerSessionMessageRoutes } from "./registerSessionMessageRoutes";
+import { registerSessionOrganizationRoutes } from "./registerSessionOrganizationRoutes";
 import { registerSessionPatchRoute } from "./registerSessionPatchRoute";
 import { registerSessionReadStateRoutes } from "./registerSessionReadStateRoutes";
-import { registerSessionFolderAssignmentRoutes } from "./registerSessionFolderAssignmentRoutes";
 import { registerSessionTurnMutationRoute } from "./registerSessionTurnMutationRoute";
-import { registerSessionEndRoute } from "./registerSessionEndRoute";
 import { registerSessionSystemRecordRoutes } from "./registerSessionSystemRecordRoutes";
+import { registerSessionSubagentCustodyRoutes } from "./registerSessionSubagentCustodyRoutes";
 
 export function sessionRoutes(app: Fastify) {
     registerSessionListingRoutes(app);
-    registerSessionFolderAssignmentRoutes(app);
+    registerSessionLookupByTagsRoute(app);
+    registerSessionOrganizationRoutes(app);
     registerSessionCreateOrLoadRoute(app);
     registerSessionArchiveRoutes(app);
     registerSessionMessageRoutes(app);
     registerSessionPatchRoute(app);
     registerSessionSystemRecordRoutes(app);
+    registerSessionSubagentCustodyRoutes(app);
     registerSessionTurnMutationRoute(app);
-    registerSessionEndRoute(app);
     registerSessionReadStateRoutes(app);
     registerSessionDeleteRoute(app);
 }

@@ -221,4 +221,53 @@ describe("machinesRoutes (contentPublicKey guard)", () => {
             }),
         );
     });
+
+    it("fills a missing signature for the exact same account content key after validating proof", async () => {
+        const signing = tweetnacl.sign.keyPair();
+        const contentKey = tweetnacl.box.keyPair();
+        const contentPublicKey = Buffer.from(contentKey.publicKey).toString("base64");
+        const binding = Buffer.concat([
+            Buffer.from("Happy content key v1\u0000", "utf8"),
+            Buffer.from(contentKey.publicKey),
+        ]);
+        const sig = tweetnacl.sign.detached(binding, signing.secretKey);
+        const contentPublicKeySig = Buffer.from(sig).toString("base64");
+        dbMocks.db.account.findUnique.mockResolvedValue({
+            contentPublicKey: new Uint8Array(contentKey.publicKey),
+            contentPublicKeySig: null,
+            publicKey: Buffer.from(signing.publicKey).toString("hex"),
+        });
+        dbMocks.db.account.updateMany.mockResolvedValueOnce({ count: 1 });
+
+        const route = await createMachinesRoute();
+        const { response, reply } = await route.invoke({
+            userId: "u1",
+            body: {
+                id: "m1",
+                metadata: "meta-old",
+                daemonState: undefined,
+                dataEncryptionKey: "AAECAw==",
+                contentPublicKey,
+                contentPublicKeySig,
+            },
+        });
+
+        expect(reply.code).not.toHaveBeenCalledWith(400);
+        expect(dbMocks.db.account.updateMany).toHaveBeenCalledWith({
+            where: {
+                id: "u1",
+                contentPublicKey: new Uint8Array(contentKey.publicKey),
+                contentPublicKeySig: null,
+            },
+            data: {
+                contentPublicKeySig: new Uint8Array(sig),
+            },
+        });
+        expect(txDbMocks.db.machine.update).toHaveBeenCalledTimes(1);
+        expect(response).toEqual(
+            expect.objectContaining({
+                machine: expect.objectContaining({ id: "m1" }),
+            }),
+        );
+    });
 });

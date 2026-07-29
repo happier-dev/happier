@@ -97,17 +97,40 @@ function generateProviderSchemaFromPostgres(
         .replace(/^\s+/, '')
         .replace(/(\w+)\(\s*sort\s*:\s*\w+\s*\)/g, '$1');
 
+    if (opts.provider === "sqlite") {
+        body = stripRelationMapArguments(body);
+    }
+
     if (opts.provider === "mysql") {
         // MySQL cannot create UNIQUE/INDEX keys on BLOB/TEXT columns without a key length.
         // `PublicSessionShare.tokenHash` stores a sha256 digest (32 bytes) and must be indexed.
         body = body.replace(/^(\s*tokenHash\s+Bytes\s+)@unique\b/gm, "$1@db.VarBinary(32) @unique");
 
+        // `recordId` already owns the canonical account-scoped provider-usage identity. The
+        // expanded semantic key is redundant and exceeds InnoDB's utf8mb4 key-size limit.
+        body = body.replace(/^\s*@@unique\(\[accountId, providerId, accountSubjectId, quotaScope, quotaScopeIdKey\], map: "paur_scope_key"\)\s*$/m, "");
+
+        body = annotateMySqlQualifiedConnectedAccountFields(body);
+
 	        // MySQL defaults `String` to VARCHAR(191), which is too small for our encrypted state blobs.
 	        body = body.replace(/^(\s*metadata\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*ownerMetadata\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*agentState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*daemonState\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*settings\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
 	        body = body.replace(/^(\s*settingsDbValue\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*policyJson\s+String\b)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+	        body = body.replace(/^(\s*stateJson\s+String\?)(?![^\n]*@db\.)/gm, "$1 @db.LongText");
+
+        body = annotateMySqlSessionSubagentCustodyFields(body);
+
+        body = annotateMySqlSessionSystemRecordFields(body);
+
+        body = annotateMySqlPluginPermissionIndexes(body);
+
+        body = annotateMySqlSessionOrganizationFields(body);
+
+        body = annotateMySqlVoiceIdentityFields(body);
 	    }
 
     const header = [
@@ -137,6 +160,168 @@ function generateProviderSchemaFromPostgres(
     ].join('\n');
 
     return normalizeSchemaText([header, '', generatorClient, '', datasourceDb, '', body].join('\n'));
+}
+
+function annotateMySqlSessionSystemRecordFields(schemaBody: string): string {
+    return schemaBody.replace(
+        /^model\s+SessionSystemRecord\s+\{[\s\S]*?^\}\s*$/gm,
+        (model) => model
+            .replace(/^(\s*namespace\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+            .replace(/^(\s*kind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)"),
+    );
+}
+
+function annotateMySqlPluginPermissionIndexes(schemaBody: string): string {
+    const scopeIndex = [
+        "accountId",
+        "pluginId",
+        "capability",
+        "scopeKind",
+        "scopeProjectId",
+        "scopeWorkspaceId",
+        "authorityKind",
+        "authorityMachineId",
+        "authorityInstallationId",
+        "status",
+    ].map((field) => `${field}(length: 64)`);
+    scopeIndex.push("updatedAt");
+
+    const eventIndex = ["accountId", "pluginId", "capability", "eventKind"]
+        .map((field) => `${field}(length: 64)`);
+    eventIndex.push("createdAt");
+
+    return schemaBody
+        .replace(
+            /@@index\(\[accountId, pluginId, capability, scopeKind, scopeProjectId, scopeWorkspaceId, authorityKind, authorityMachineId, authorityInstallationId, status, updatedAt\], map: "(plugin_permission_(?:grants|requests)_scope_idx)"\)/g,
+            (_match, mapName: string) => `@@index([${scopeIndex.join(", ")}], map: "${mapName}")`,
+        )
+        .replace(
+            /@@index\(\[accountId, pluginId, capability, eventKind, createdAt\], map: "plugin_permission_events_kind_idx"\)/g,
+            `@@index([${eventIndex.join(", ")}], map: "plugin_permission_events_kind_idx")`,
+        );
+}
+
+function annotateMySqlSessionOrganizationFields(schemaBody: string): string {
+    return schemaBody
+        .replace(
+            /^model\s+SessionOrganizationFolder\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*folderHash\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)")
+                .replace(/^(\s*parentHash\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)"),
+        )
+        .replace(
+            /^model\s+SessionOrganizationTag\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*tagHash\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)"),
+        )
+        .replace(
+            /^model\s+SessionOrganizationOrderEntry\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*scopeKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*scopeHash\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)")
+                .replace(/^(\s*itemKind\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(64)")
+                .replace(/^(\s*itemHash\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)"),
+        )
+        .replace(
+            /^model\s+SessionOrganizationLabel\s+\{[\s\S]*?^\}\s*$/gm,
+            (model) => model
+                .replace(/^(\s*scopeHash\s+String)(?![^\n]*@db\.)/m, "$1 @db.VarChar(71)"),
+        );
+}
+
+function annotateMySqlSessionSubagentCustodyFields(schemaBody: string): string {
+    return schemaBody.replace(
+        /(^model\s+SessionSubagentCustody\s+\{[\s\S]*?^\}\s*$)|(^model\s+SessionSubagentCustodyReceipt\s+\{[\s\S]*?^\}\s*$)/gm,
+        (model) => model
+            .replace(/^(\s*subagentId\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*groupId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*resultSubagentId\s+String)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*resultGroupId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*subagentKey\s+String)(?![^\n]*@db\.)/m, "$1 @db.Char(64)"),
+    );
+}
+
+function annotateMySqlVoiceIdentityFields(schemaBody: string): string {
+    return schemaBody.replace(
+        /(^model\s+VoiceSessionLease\s+\{[\s\S]*?^\}\s*$)|(^model\s+VoiceConversation\s+\{[\s\S]*?^\}\s*$)/gm,
+        (model) => model
+            .replace(/^(\s*sessionId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.VarChar(512)")
+            // The prepare/activate release retains the predecessor raw indexes.
+            // VARCHAR(512) would exceed InnoDB's key limit for the lease index.
+            .replace(/^(\s*providerConversationId\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.VarChar(191)")
+            // Old writers omit this value until the later contract release.
+            .replace(
+                /^(\s*providerConversationKey\s+String\?)(?![^\n]*@db\.)/m,
+                "$1 @db.Char(64)",
+            ),
+    );
+}
+
+function annotateMySqlQualifiedConnectedAccountFields(schemaBody: string): string {
+    return schemaBody.replace(
+        /(^model\s+ServiceAccountToken\s+\{[\s\S]*?^\}\s*$)|(^model\s+ConnectedServiceUsageSource\s+\{[\s\S]*?^\}\s*$)|(^model\s+ConnectedServiceAuthGroup\s+\{[\s\S]*?^\}\s*$)|(^model\s+ConnectedServiceAuthGroupMember\s+\{[\s\S]*?^\}\s*$)/gm,
+        (model) => model
+            .replace(/^(\s*servicePluginId\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*serviceLocalId\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*connectedAccountId\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.LongText")
+            .replace(/^(\s*qualifiedServiceDigest\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
+            .replace(/^(\s*qualifiedIdentityDigest\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
+            .replace(/^(\s*qualifiedGroupDigest\s+String\??)(?![^\n]*@db\.)/m, "$1 @db.Char(64)")
+            .replace(/^(\s*activeConnectedAccountId\s+String\?)(?![^\n]*@db\.)/m, "$1 @db.LongText"),
+    );
+}
+
+function stripRelationMapArguments(schemaBody: string): string {
+    return schemaBody.replace(/@relation\(([^)]*)\)/g, (_match, args: string) => {
+        const keptArgs = splitTopLevelArgs(args).filter((arg) => !/^\s*map\s*:/.test(arg));
+        return `@relation(${keptArgs.map((arg) => arg.trim()).join(", ")})`;
+    });
+}
+
+function splitTopLevelArgs(args: string): string[] {
+    const out: string[] = [];
+    let start = 0;
+    let bracketDepth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = 0; i < args.length; i += 1) {
+        const ch = args[i]!;
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (ch === "\\") {
+                escaped = true;
+                continue;
+            }
+            if (ch === '"') {
+                inString = false;
+            }
+            continue;
+        }
+        if (ch === '"') {
+            inString = true;
+            escaped = false;
+            continue;
+        }
+        if (ch === "[") {
+            bracketDepth += 1;
+            continue;
+        }
+        if (ch === "]") {
+            bracketDepth = Math.max(0, bracketDepth - 1);
+            continue;
+        }
+        if (ch === "," && bracketDepth === 0) {
+            out.push(args.slice(start, i));
+            start = i + 1;
+        }
+    }
+
+    out.push(args.slice(start));
+    return out.filter((arg) => arg.trim().length > 0);
 }
 
 function resolveRepoRoot(): string {

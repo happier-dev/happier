@@ -42,6 +42,7 @@ function createRelayHarness() {
         sent,
         close,
         createTransport: vi.fn(() => ({
+            relaySocketId: "server_preview_relay_test",
             send: (event: typeof PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, envelope: PeerTcpTunnelRelayEnvelope) => {
                 expect(event).toBe(PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT);
                 sent.push(envelope);
@@ -58,6 +59,53 @@ function createRelayHarness() {
             for (const handler of handlers) handler(envelope);
         },
     };
+}
+
+function daemonToClientAckCount(
+    envelopes: readonly PeerTcpTunnelRelayEnvelope[],
+    substreamId: string,
+): number {
+    return envelopes.filter((envelope) => {
+        if (envelope.v !== 2) return false;
+        const decoded = decodePeerTcpTunnelBinaryFrameV2({
+            frame: envelope.frame,
+            maxHeaderBytes: 64 * 1024,
+            maxPayloadBytes: 64 * 1024,
+        });
+        return decoded.ok
+            && decoded.header.kind === "ack"
+            && decoded.header.substreamId === substreamId
+            && decoded.header.direction === "daemon_to_client";
+    }).length;
+}
+
+function clientToDaemonDataPayloads(
+    envelopes: readonly PeerTcpTunnelRelayEnvelope[],
+    substreamId: string,
+): string[] {
+    return envelopes.flatMap((envelope) => {
+        if (envelope.v !== 2) return [];
+        const decoded = decodePeerTcpTunnelBinaryFrameV2({
+            frame: envelope.frame,
+            maxHeaderBytes: 64 * 1024,
+            maxPayloadBytes: 64 * 1024,
+        });
+        if (
+            !decoded.ok
+            || decoded.header.kind !== "data"
+            || decoded.header.substreamId !== substreamId
+            || decoded.header.direction !== "client_to_daemon"
+        ) {
+            return [];
+        }
+        return [new TextDecoder().decode(decoded.payload)];
+    });
+}
+
+async function flushAsyncIteratorResume(): Promise<void> {
+    await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+    });
 }
 
 describe("local service preview PMS tunnel opener", () => {
@@ -89,7 +137,7 @@ describe("local service preview PMS tunnel opener", () => {
         expect(relay.sent[0]).toMatchObject({
             v: 1,
             scopeUserId: "account_1",
-            sender: { kind: "user" },
+            sender: { kind: "user", socketId: "server_preview_relay_test" },
             recipient: { kind: "machine", machineId: "machine_1" },
             frame: {
                 kind: "open",
@@ -101,8 +149,10 @@ describe("local service preview PMS tunnel opener", () => {
                     allowV1Fallback: false,
                     relayAuthorization: {
                         payload: {
+                            v: 2,
                             accountId: "account_1",
                             targetMachineId: "machine_1",
+                            relaySocketId: "server_preview_relay_test",
                             destination: { host: "127.0.0.1", port: 5173 },
                         },
                     },
@@ -135,6 +185,8 @@ describe("local service preview PMS tunnel opener", () => {
         if (!decodedSubstreamOpen.ok) return;
         const tunnelId = decodedSubstreamOpen.header.tunnelId;
         const substreamId = decodedSubstreamOpen.header.substreamId!;
+        expect(stream.tunnelId).toBe(tunnelId);
+        expect(stream.substreamId).toBe(substreamId);
 
         await stream.write(new TextEncoder().encode("GET / HTTP/1.1\r\n\r\n"));
         const dataEnvelope = relay.sent[2];
@@ -182,18 +234,197 @@ describe("local service preview PMS tunnel opener", () => {
             done: false,
             value: responseBytes,
         });
-        expect(relay.sent.some((envelope) => {
-            if (envelope.v !== 2) return false;
-            const decoded = decodePeerTcpTunnelBinaryFrameV2({
+        expect(daemonToClientAckCount(relay.sent, substreamId)).toBe(0);
+
+        const pendingDone = read.next();
+        await flushAsyncIteratorResume();
+        expect(daemonToClientAckCount(relay.sent, substreamId)).toBe(1);
+
+        relay.receive({
+            v: 2,
+            scopeUserId: "account_1",
+            sender: { kind: "machine", machineId: "machine_1" },
+            recipient: { kind: "user" },
+            encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+            frame: encodePeerTcpTunnelBinaryFrameV2({
+                header: {
+                    version: 2,
+                    kind: "close",
+                    tunnelId,
+                    substreamId,
+                    halfClose: false,
+                    reasonCode: "upstream_closed",
+                    payloadLength: 0,
+                },
+            }),
+        });
+        await expect(pendingDone).resolves.toEqual({
+            done: true,
+            value: undefined,
+        });
+    });
+
+    it("opens parallel preview requests as distinct V2 substreams on one authorized relay tunnel", async () => {
+        const mod = await loadPreviewTunnelModule();
+        expect(mod?.createLocalServicePreviewTunnelOpener).toBeTypeOf("function");
+        if (!mod?.createLocalServicePreviewTunnelOpener) return;
+
+        const keyPair = tweetnacl.sign.keyPair();
+        const relay = createRelayHarness();
+        const generatedIds = ["tunnel_1", "sub_a", "sub_b"];
+        const openTunnel = mod.createLocalServicePreviewTunnelOpener({
+            env: {
+                [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: "true",
+                [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: "5173",
+                [FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxBytes]: `${64 * 1024 * 1024}`,
+                [FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxFrameBytes]: `${64 * 1024}`,
+                [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningKeyId]: "grant-key-1",
+                [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
+            } as NodeJS.ProcessEnv,
+            nowMs: () => 1_000,
+            resolvePreviewAccountId: () => "account_1",
+            createRelayTransport: relay.createTransport,
+            generateId: () => generatedIds.shift() ?? "extra",
+        });
+
+        const firstOpen = openTunnel({ preview });
+        const secondOpen = openTunnel({ preview });
+        const [firstStream, secondStream] = await Promise.all([firstOpen, secondOpen]);
+
+        expect(relay.createTransport).toHaveBeenCalledTimes(1);
+        expect(firstStream.tunnelId).toBe("preview_tunnel_tunnel_1");
+        expect(secondStream.tunnelId).toBe(firstStream.tunnelId);
+        expect(firstStream.substreamId).toBe("preview_substream_sub_a");
+        expect(secondStream.substreamId).toBe("preview_substream_sub_b");
+
+        const decodedOpens = relay.sent
+            .filter((envelope): envelope is Extract<PeerTcpTunnelRelayEnvelope, { v: 2 }> => envelope.v === 2)
+            .map((envelope) => decodePeerTcpTunnelBinaryFrameV2({
                 frame: envelope.frame,
                 maxHeaderBytes: 64 * 1024,
                 maxPayloadBytes: 64 * 1024,
-            });
-            return decoded.ok
-                && decoded.header.kind === "ack"
-                && decoded.header.substreamId === substreamId
-                && decoded.header.direction === "daemon_to_client";
-        })).toBe(true);
+            }))
+            .filter((decoded) => decoded.ok && decoded.header.kind === "open");
+
+        expect(decodedOpens.map((decoded) => decoded.ok ? decoded.header.substreamId : null)).toEqual([
+            "preview_substream_sub_a",
+            "preview_substream_sub_b",
+        ]);
+
+        await firstStream.write(new TextEncoder().encode("GET /first HTTP/1.1\r\n\r\n"));
+        await secondStream.write(new TextEncoder().encode("GET /second HTTP/1.1\r\n\r\n"));
+
+        const decodedData = relay.sent
+            .filter((envelope): envelope is Extract<PeerTcpTunnelRelayEnvelope, { v: 2 }> => envelope.v === 2)
+            .map((envelope) => decodePeerTcpTunnelBinaryFrameV2({
+                frame: envelope.frame,
+                maxHeaderBytes: 64 * 1024,
+                maxPayloadBytes: 64 * 1024,
+            }))
+            .filter((decoded) => decoded.ok && decoded.header.kind === "data");
+
+        expect(decodedData.map((decoded) => decoded.ok ? [
+            decoded.header.substreamId,
+            new TextDecoder().decode(decoded.payload),
+        ] : null)).toEqual([
+            ["preview_substream_sub_a", "GET /first HTTP/1.1\r\n\r\n"],
+            ["preview_substream_sub_b", "GET /second HTTP/1.1\r\n\r\n"],
+        ]);
+
+        await firstStream.close();
+        await secondStream.close();
+    });
+
+    it("does not send client data until a positive client window is advertised after zero-credit ACK wakeups", async () => {
+        const mod = await loadPreviewTunnelModule();
+        expect(mod?.createLocalServicePreviewTunnelOpener).toBeTypeOf("function");
+        if (!mod?.createLocalServicePreviewTunnelOpener) return;
+
+        const keyPair = tweetnacl.sign.keyPair();
+        const relay = createRelayHarness();
+        const openTunnel = mod.createLocalServicePreviewTunnelOpener({
+            env: {
+                [FEATURE_ENV_KEYS.machinesTunnelServerRoutedEnabled]: "true",
+                [FEATURE_ENV_KEYS.machinesTunnelAllowedPorts]: "5173",
+                [FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxBytes]: `${64 * 1024 * 1024}`,
+                [FEATURE_ENV_KEYS.machinesTunnelServerRoutedMaxFrameBytes]: `${64 * 1024}`,
+                [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningKeyId]: "grant-key-1",
+                [FEATURE_ENV_KEYS.peerMediationRouteGrantSigningPrivateKey]: toBase64Url(keyPair.secretKey),
+            } as NodeJS.ProcessEnv,
+            nowMs: () => 1_000,
+            resolvePreviewAccountId: () => "account_1",
+            createRelayTransport: relay.createTransport,
+        });
+
+        const stream = await openTunnel({ preview });
+        const substreamOpen = relay.sent[1];
+        expect(substreamOpen?.v).toBe(2);
+        if (!substreamOpen || substreamOpen.v !== 2) return;
+
+        const decodedSubstreamOpen = decodePeerTcpTunnelBinaryFrameV2({
+            frame: substreamOpen.frame,
+            maxHeaderBytes: 64 * 1024,
+            maxPayloadBytes: 64 * 1024,
+        });
+        expect(decodedSubstreamOpen.ok).toBe(true);
+        if (!decodedSubstreamOpen.ok) return;
+
+        const tunnelId = decodedSubstreamOpen.header.tunnelId;
+        const substreamId = decodedSubstreamOpen.header.substreamId!;
+        const zeroWindowAck = {
+            v: 2 as const,
+            scopeUserId: "account_1",
+            sender: { kind: "machine" as const, machineId: "machine_1" },
+            recipient: { kind: "user" as const },
+            encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
+            frame: encodePeerTcpTunnelBinaryFrameV2({
+                header: {
+                    version: 2,
+                    kind: "ack",
+                    tunnelId,
+                    substreamId,
+                    direction: "client_to_daemon",
+                    ack: 0,
+                    window: 0,
+                    payloadLength: 0,
+                },
+            }),
+        };
+        relay.receive(zeroWindowAck);
+
+        const payload = new TextEncoder().encode("PING");
+        let writeSettled = false;
+        const writePromise = Promise.resolve(stream.write(payload)).then(() => {
+            writeSettled = true;
+        });
+
+        await flushAsyncIteratorResume();
+        expect(clientToDaemonDataPayloads(relay.sent, substreamId)).toEqual([]);
+        expect(writeSettled).toBe(false);
+
+        relay.receive(zeroWindowAck);
+        await flushAsyncIteratorResume();
+        expect(clientToDaemonDataPayloads(relay.sent, substreamId)).toEqual([]);
+        expect(writeSettled).toBe(false);
+
+        relay.receive({
+            ...zeroWindowAck,
+            frame: encodePeerTcpTunnelBinaryFrameV2({
+                header: {
+                    version: 2,
+                    kind: "ack",
+                    tunnelId,
+                    substreamId,
+                    direction: "client_to_daemon",
+                    ack: 0,
+                    window: payload.byteLength,
+                    payloadLength: 0,
+                },
+            }),
+        });
+
+        await writePromise;
+        expect(clientToDaemonDataPayloads(relay.sent, substreamId)).toEqual(["PING"]);
     });
 
     it("keeps the relay transport alive until queued response bytes drain after upstream close", async () => {

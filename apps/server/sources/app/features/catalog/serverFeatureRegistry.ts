@@ -17,6 +17,10 @@ import { resolveMachineTunnelFeature } from '../machineTunnelFeature';
 import { resolveMachineLiveStreamFeature } from '../machineLiveStreamFeature';
 import { resolveMachineRpcFeature } from '../machineRpcFeature';
 import { resolveLocalServicesFeature } from '../localServicesFeature';
+import { resolveProvidersFeature } from '../providersFeature';
+import { resolveBrowserFeature } from '../browserFeature';
+import { resolvePluginsFeature } from '../pluginsFeature';
+import { resolveDevicesFeature } from '../devicesFeature';
 import { resolveSessionFoldersFeature } from '../sessionFoldersFeature';
 import { resolveSessionHandoffFeature } from '../sessionHandoffFeature';
 import { resolveSessionUsageLimitRecoveryFeature } from '../sessionUsageLimitRecoveryFeature';
@@ -27,10 +31,12 @@ import { resolveServerUrlCapabilitiesFeature } from '../serverUrlCapabilitiesFea
 import { resolveServerRetentionCapabilitiesFeature } from '../serverRetentionCapabilitiesFeature';
 import { resolveServerUsageAnalyticsCapabilitiesFeature } from '../serverUsageAnalyticsCapabilitiesFeature';
 import { resolveLiveActivityRemoteUpdatesFeature } from '../liveActivityRemoteUpdatesFeature';
+import { resolveClientCompatibilityFeature } from '../clientCompatibilityFeature';
 
 export type ServerFeatureResolver = (env: NodeJS.ProcessEnv) => FeaturesPayloadDelta;
 
-export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.freeze([
+export const serverFeatureRegistry = Object.freeze([
+    () => resolveClientCompatibilityFeature(),
     (env) => resolveServerUrlCapabilitiesFeature(env),
     (env) => resolveServerRetentionCapabilitiesFeature(env),
     () => resolveServerUsageAnalyticsCapabilitiesFeature(),
@@ -47,6 +53,10 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveMachineTransferFeature(env),
     (env) => resolveMachineTunnelFeature(env),
     (env) => resolveLocalServicesFeature(env),
+    (env) => resolveProvidersFeature(env),
+    (env) => resolveBrowserFeature(env),
+    (env) => resolvePluginsFeature(env),
+    (env) => resolveDevicesFeature(env),
     (env) => resolveMachineLiveStreamFeature(env),
     (env) => resolveMachineRpcFeature(env),
     (env) => resolveSessionFoldersFeature(env),
@@ -58,4 +68,4 @@ export const serverFeatureRegistry: readonly ServerFeatureResolver[] = Object.fr
     (env) => resolveAuthFeature(env),
     (env) => resolveEncryptionFeature(env),
     (env) => resolveE2eeFeature(env),
-]);
+] satisfies readonly ServerFeatureResolver[]);

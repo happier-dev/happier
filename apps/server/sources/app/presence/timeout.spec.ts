@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createDbMocks, installDbModuleMock } from "../api/testkit/dbMocks";
 
-const { emitEphemeral } = vi.hoisted(() => ({
+const { emitEphemeral, emitUpdate, expireSessionPublisherCandidates, refreshSessionParticipantBadgePushes } = vi.hoisted(() => ({
     emitEphemeral: vi.fn(),
+    emitUpdate: vi.fn(),
+    expireSessionPublisherCandidates: vi.fn(),
+    refreshSessionParticipantBadgePushes: vi.fn(),
 }));
 const dbMocks = createDbMocks({
     session: ["findMany", "updateMany", "updateManyAndReturn"],
@@ -19,9 +22,13 @@ vi.mock("@/app/events/eventRouter", async (importOriginal) => {
         eventRouter: {
             ...actual.eventRouter,
             emitEphemeral,
+            emitUpdate,
         },
     };
 });
+
+vi.mock("./sessionPublisherPresence", () => ({ expireSessionPublisherCandidates }));
+vi.mock("@/app/activity/refreshAccountActivityBadgePushes", () => ({ refreshSessionParticipantBadgePushes }));
 
 vi.mock("@/utils/logging/log", () => ({ warn: vi.fn(), log: vi.fn() }));
 
@@ -36,6 +43,10 @@ beforeEach(() => {
     dbMocks.db.machine.updateMany.mockResolvedValue({ count: 0 });
     dbMocks.db.session.updateManyAndReturn.mockResolvedValue([]);
     dbMocks.db.machine.updateManyAndReturn.mockResolvedValue([]);
+    expireSessionPublisherCandidates.mockReset();
+    expireSessionPublisherCandidates.mockResolvedValue([]);
+    refreshSessionParticipantBadgePushes.mockReset();
+    refreshSessionParticipantBadgePushes.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -89,31 +100,50 @@ describe("runPresenceTimeoutTick", () => {
         tickMs: 60 * 1000,
     };
 
-    it("marks timed-out sessions inactive with one batch update and emits returned rows after the update", async () => {
+    it("delegates exact session expiry and disseminates every committed participant cursor once", async () => {
         const { runPresenceTimeoutTick } = await importTimeoutModule();
         const oldActiveAt = new Date("2026-01-01T00:00:00.000Z");
         dbMocks.db.session.findMany.mockResolvedValue([
-            { id: "s1" },
-            { id: "s2" },
-        ]);
-        dbMocks.db.session.updateManyAndReturn.mockResolvedValue([
             { id: "s1", accountId: "u1", lastActiveAt: oldActiveAt },
             { id: "s2", accountId: "u2", lastActiveAt: oldActiveAt },
+        ]);
+        expireSessionPublisherCandidates.mockResolvedValue([
+            {
+                status: "expired",
+                sessionId: "s1",
+                activeAt: oldActiveAt,
+                participantCursors: [
+                    { accountId: "u1", cursor: 101 },
+                    { accountId: "u3", cursor: 103 },
+                ],
+                badgeAttentionChanged: true,
+            },
+            { status: "stale", sessionId: "s2" },
         ]);
 
         await runPresenceTimeoutTick(config);
 
-        expect(dbMocks.db.session.updateManyAndReturn).toHaveBeenCalledTimes(1);
-        expect(dbMocks.db.session.updateManyAndReturn).toHaveBeenCalledWith({
-            where: {
-                id: { in: ["s1", "s2"] },
-                active: true,
-            },
-            data: { active: false },
-            select: { id: true, accountId: true, lastActiveAt: true },
-        });
         expect(dbMocks.db.session.updateMany).not.toHaveBeenCalled();
-        expect(emitEphemeral).toHaveBeenCalledTimes(2);
+        expect(expireSessionPublisherCandidates).toHaveBeenCalledWith({
+            candidates: [
+                { sessionId: "s1", observedFence: oldActiveAt },
+                { sessionId: "s2", observedFence: oldActiveAt },
+            ],
+        });
+        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            userId: "u3",
+            recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
+        }));
+        expect(refreshSessionParticipantBadgePushes).toHaveBeenCalledTimes(1);
+        expect(refreshSessionParticipantBadgePushes).toHaveBeenCalledWith({
+            badgeAttentionChanged: true,
+            participantCursors: [
+                { accountId: "u1", cursor: 101 },
+                { accountId: "u3", cursor: 103 },
+            ],
+        });
+        expect(emitEphemeral).toHaveBeenCalledTimes(1);
         expect(emitEphemeral).toHaveBeenNthCalledWith(
             1,
             expect.objectContaining({
@@ -123,30 +153,22 @@ describe("runPresenceTimeoutTick", () => {
         );
     });
 
-    it("marks timed-out machines inactive with one batch update and emits returned rows after the update", async () => {
+    it("marks timed-out machines inactive only through their exact scanned fences", async () => {
         const { runPresenceTimeoutTick } = await importTimeoutModule();
         const oldActiveAt = new Date("2026-01-01T00:00:00.000Z");
         dbMocks.db.machine.findMany.mockResolvedValue([
-            { id: "m1" },
-            { id: "m2" },
-        ]);
-        dbMocks.db.machine.updateManyAndReturn.mockResolvedValue([
             { id: "m1", accountId: "u1", lastActiveAt: oldActiveAt },
             { id: "m2", accountId: "u2", lastActiveAt: oldActiveAt },
         ]);
+        dbMocks.db.machine.updateMany.mockResolvedValue({ count: 1 });
 
         await runPresenceTimeoutTick(config);
 
-        expect(dbMocks.db.machine.updateManyAndReturn).toHaveBeenCalledTimes(1);
-        expect(dbMocks.db.machine.updateManyAndReturn).toHaveBeenCalledWith({
-            where: {
-                id: { in: ["m1", "m2"] },
-                active: true,
-            },
+        expect(dbMocks.db.machine.updateMany).toHaveBeenCalledTimes(2);
+        expect(dbMocks.db.machine.updateMany).toHaveBeenNthCalledWith(1, {
+            where: { id: "m1", active: true, lastActiveAt: oldActiveAt },
             data: { active: false },
-            select: { id: true, accountId: true, lastActiveAt: true },
         });
-        expect(dbMocks.db.machine.updateMany).not.toHaveBeenCalled();
         expect(emitEphemeral).toHaveBeenCalledTimes(2);
         expect(emitEphemeral).toHaveBeenNthCalledWith(
             1,
@@ -160,39 +182,46 @@ describe("runPresenceTimeoutTick", () => {
     it("lets the next tick retry after a transient P2024 failure", async () => {
         const { runPresenceTimeoutTick } = await importTimeoutModule();
         const oldActiveAt = new Date("2026-01-01T00:00:00.000Z");
-        dbMocks.db.session.findMany.mockResolvedValue([{ id: "s1" }]);
-        dbMocks.db.session.updateManyAndReturn
+        dbMocks.db.session.findMany.mockResolvedValue([{ id: "s1", accountId: "u1", lastActiveAt: oldActiveAt }]);
+        expireSessionPublisherCandidates
             .mockRejectedValueOnce(Object.assign(new Error("pool exhausted"), { code: "P2024" }))
-            .mockResolvedValueOnce([{ id: "s1", accountId: "u1", lastActiveAt: oldActiveAt }]);
+            .mockResolvedValueOnce([{
+                status: "expired",
+                sessionId: "s1",
+                activeAt: oldActiveAt,
+                participantCursors: [{ accountId: "u1", cursor: 101 }],
+                badgeAttentionChanged: false,
+            }]);
 
         await runPresenceTimeoutTick(config);
         await runPresenceTimeoutTick(config);
 
-        expect(dbMocks.db.session.updateManyAndReturn).toHaveBeenCalledTimes(2);
+        expect(expireSessionPublisherCandidates).toHaveBeenCalledTimes(2);
         expect(emitEphemeral).toHaveBeenCalledTimes(1);
     });
 
-    it("uses conservative fallback semantics when exact changed session IDs are unavailable", async () => {
+    it("does not clear a replacement fence discovered after the timeout scan", async () => {
         const { runPresenceTimeoutTick } = await importTimeoutModule();
         const oldActiveAt = new Date("2026-01-01T00:00:00.000Z");
-        const sessionDelegate = dbMocks.db.session as Omit<typeof dbMocks.db.session, "updateManyAndReturn"> & {
-            updateManyAndReturn?: typeof dbMocks.db.session.updateManyAndReturn;
-        };
-        const updateManyAndReturn = sessionDelegate.updateManyAndReturn;
-        sessionDelegate.updateManyAndReturn = undefined;
         dbMocks.db.session.findMany.mockResolvedValue([
             { id: "s1", accountId: "u1", lastActiveAt: oldActiveAt },
             { id: "s2", accountId: "u2", lastActiveAt: oldActiveAt },
         ]);
-        dbMocks.db.session.updateMany.mockResolvedValue({ count: 1 });
+        expireSessionPublisherCandidates.mockResolvedValue([
+            { status: "stale", sessionId: "s1" },
+            {
+                status: "expired",
+                sessionId: "s2",
+                activeAt: oldActiveAt,
+                participantCursors: [{ accountId: "u2", cursor: 202 }],
+                badgeAttentionChanged: false,
+            },
+        ]);
 
-        try {
-            await runPresenceTimeoutTick(config);
-        } finally {
-            sessionDelegate.updateManyAndReturn = updateManyAndReturn;
-        }
+        await runPresenceTimeoutTick(config);
 
-        expect(dbMocks.db.session.updateMany).toHaveBeenCalledTimes(1);
-        expect(emitEphemeral).not.toHaveBeenCalled();
+        expect(dbMocks.db.session.updateMany).not.toHaveBeenCalled();
+        expect(emitEphemeral).toHaveBeenCalledTimes(1);
+        expect(emitEphemeral).toHaveBeenCalledWith(expect.objectContaining({ userId: "u2" }));
     });
 });

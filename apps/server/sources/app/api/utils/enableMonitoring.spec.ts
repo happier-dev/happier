@@ -137,6 +137,44 @@ describe("enableMonitoring", () => {
         }
     });
 
+    it("coalesces concurrent database readiness checks into a single probe", async () => {
+        register.resetMetrics();
+        const app = createMonitoringApp();
+        const query = { resolve: null as ((value: unknown) => void) | null };
+        const databaseReadinessProbe = vi.fn(() => new Promise((resolve) => {
+            query.resolve = resolve;
+        }));
+
+        try {
+            enableMonitoring(app, { databaseReadinessProbe });
+            await app.ready();
+
+            const first = app.inject({ method: "GET", url: "/ready" });
+            const second = app.inject({ method: "GET", url: "/ready" });
+
+            await vi.waitFor(() => {
+                expect(databaseReadinessProbe).toHaveBeenCalledTimes(1);
+            });
+
+            query.resolve?.([{ one: 1 }]);
+            const [firstRes, secondRes] = await Promise.all([first, second]);
+
+            expect(firstRes.statusCode).toBe(200);
+            expect(secondRes.statusCode).toBe(200);
+            expect(databaseReadinessProbe).toHaveBeenCalledTimes(1);
+            expect(await readMetricSamples("db_readiness_checks_total")).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        labels: { result: "ok", reason: "none" },
+                        value: 2,
+                    }),
+                ]),
+            );
+        } finally {
+            await app.close().catch(() => {});
+        }
+    });
+
     it("returns sanitized 503 readiness details and metrics when database readiness is unavailable", async () => {
         register.resetMetrics();
         const app = createMonitoringApp();
@@ -209,6 +247,96 @@ describe("enableMonitoring", () => {
             );
         } finally {
             vi.useRealTimers();
+            await app.close().catch(() => {});
+        }
+    });
+
+    it("uses a 15s default database readiness timeout", async () => {
+        register.resetMetrics();
+        vi.useFakeTimers();
+        const app = createMonitoringApp();
+
+        try {
+            enableMonitoring(app, {
+                env: {},
+                databaseReadinessProbe: () => new Promise(() => {}),
+            });
+            await app.ready();
+
+            const response = app.inject({ method: "GET", url: "/ready" });
+            let settled = false;
+            void response.finally(() => {
+                settled = true;
+            });
+
+            await vi.advanceTimersByTimeAsync(5_000);
+            expect(settled).toBe(false);
+
+            await vi.advanceTimersByTimeAsync(10_000);
+            const res = await response;
+            expect(res.statusCode).toBe(503);
+            expect(await readMetricSamples("db_readiness_checks_total")).toEqual(
+                expect.arrayContaining([
+                    expect.objectContaining({
+                        labels: { result: "timeout", reason: "db_timeout" },
+                        value: 1,
+                    }),
+                ]),
+            );
+        } finally {
+            vi.useRealTimers();
+            await app.close().catch(() => {});
+        }
+    });
+
+    it("returns 503 from /health during shutdown without querying the database", async () => {
+        vi.resetModules();
+        register.resetMetrics();
+        const app = createMonitoringApp();
+        const databaseReadinessProbe = vi.fn(async () => [{ one: 1 }]);
+
+        try {
+            const { enableMonitoring: enableMonitoringAfterReset } = await import("./enableMonitoring");
+            const { initiateShutdown } = await import("@/utils/process/shutdown");
+            enableMonitoringAfterReset(app, { databaseReadinessProbe });
+            await app.ready();
+            await initiateShutdown("test");
+
+            const res = await app.inject({ method: "GET", url: "/health" });
+            expect(res.statusCode).toBe(503);
+            const body = res.json() as { status?: string; service?: string; reason?: string };
+            expect(body.status).toBe("error");
+            expect(body.service).toBe("happier-server");
+            expect(body.reason).toBe("shutting_down");
+            expect(databaseReadinessProbe).not.toHaveBeenCalled();
+            expect(await readMetricSamples("db_readiness_checks_total")).toEqual([]);
+        } finally {
+            await app.close().catch(() => {});
+        }
+    });
+
+    it("returns 503 from /ready during shutdown without querying the database", async () => {
+        vi.resetModules();
+        register.resetMetrics();
+        const app = createMonitoringApp();
+        const databaseReadinessProbe = vi.fn(async () => [{ one: 1 }]);
+
+        try {
+            const { enableMonitoring: enableMonitoringAfterReset } = await import("./enableMonitoring");
+            const { initiateShutdown } = await import("@/utils/process/shutdown");
+            enableMonitoringAfterReset(app, { databaseReadinessProbe });
+            await app.ready();
+            await initiateShutdown("test");
+
+            const res = await app.inject({ method: "GET", url: "/ready" });
+            expect(res.statusCode).toBe(503);
+            const body = res.json() as { status?: string; service?: string; reason?: string };
+            expect(body.status).toBe("error");
+            expect(body.service).toBe("happier-server");
+            expect(body.reason).toBe("shutting_down");
+            expect(databaseReadinessProbe).not.toHaveBeenCalled();
+            expect(await readMetricSamples("db_readiness_checks_total")).toEqual([]);
+        } finally {
             await app.close().catch(() => {});
         }
     });

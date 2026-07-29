@@ -88,4 +88,34 @@ describe("sessionUpdateHandler version-mismatch responses", () => {
 
         expect(cb).toHaveBeenCalledWith({ result: "error" });
     });
+
+    it.each([
+        {
+            event: "update-metadata",
+            payload: { sid: "s1", metadata: "legacy-whole-bag", expectedVersion: 4 },
+            write: updateSessionMetadata,
+        },
+        {
+            event: "update-state",
+            payload: { sid: "s1", agentState: "legacy-owner-state", expectedVersion: 4 },
+            write: updateSessionAgentState,
+        },
+    ])("returns the typed privacy-upgrade acknowledgement from $event", async ({ event, payload, write }) => {
+        write.mockResolvedValueOnce({
+            ok: false,
+            error: "metadata_privacy_upgrade_required",
+        });
+
+        const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
+        const socket = createFakeSocket();
+        sessionUpdateHandler("u1", socket as any, { connectionType: "session-scoped", socket: socket as any, userId: "u1", sessionId: "s1" } as any);
+
+        const handler = getSocketHandler(socket, event);
+        const cb = vi.fn();
+        await handler(payload, cb);
+
+        expect(cb).toHaveBeenCalledWith({
+            result: "metadata_privacy_upgrade_required",
+        });
+    });
 });

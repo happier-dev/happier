@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { register } from "./index";
 
+function importDuplicateMetricModule(path: string): Promise<unknown> {
+    return import(/* @vite-ignore */ path);
+}
+
 describe("monitoring/metrics/index", () => {
     it("registers the modular Lane B metrics", () => {
         expect(register.getSingleMetric("http_requests_total")).toBeTruthy();
@@ -44,5 +48,29 @@ describe("monitoring/metrics/index", () => {
         expect(register.getSingleMetric("runtime_event_loop_lag_seconds")).toBeTruthy();
         expect(register.getSingleMetric("runtime_heap_used_bytes")).toBeTruthy();
         expect(register.getSingleMetric("database_records_total")).toBeTruthy();
+        expect(register.getSingleMetric("voice_provider_identity_backfill_remaining")).toBeTruthy();
+        expect(register.getSingleMetric("voice_provider_identity_backfill_processed_total")).toBeTruthy();
+        expect(register.getSingleMetric("voice_provider_identity_backfill_collisions_total")).toBeTruthy();
+        expect(register.getSingleMetric("voice_provider_identity_backfill_failures_total")).toBeTruthy();
+        expect(register.getSingleMetric("voice_provider_identity_backfill_last_success_unixtime_seconds")).toBeTruthy();
+    });
+
+    it("reuses already registered metrics when metric modules are evaluated again", async () => {
+        await expect(importDuplicateMetricModule("./authMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./httpMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./socketMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./redisMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./fanoutMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./rpcMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./presenceMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./runtimeMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./databaseMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./sessionWriteMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./sessionBindingMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./usageMetrics?duplicate-registration")).resolves.toBeTruthy();
+        await expect(importDuplicateMetricModule("./voiceProviderIdentityBackfillMetrics?duplicate-registration")).resolves.toBeTruthy();
+
+        expect(register.getSingleMetric("websocket_connections_total")).toBeTruthy();
+        expect(register.getSingleMetric("runtime_gc_events_total")).toBeTruthy();
     });
 });

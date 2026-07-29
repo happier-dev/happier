@@ -87,6 +87,19 @@ describe("resolveSessionReadCursorOperation", () => {
         });
     });
 
+    it("marks unread relative to the latest readable session sequence when raw seq is ahead", () => {
+        expect(resolveSessionReadCursorOperation({
+            sessionSeq: 742,
+            readableSessionSeq: 110,
+            currentLastViewedSessionSeq: 742,
+            operation: { kind: "mark-unread" },
+        })).toEqual({
+            nextLastViewedSessionSeq: 109,
+            didChange: true,
+            readState: "unread",
+        });
+    });
+
     it("keeps the cursor when mark-unread is already unread", () => {
         expect(resolveSessionReadCursorOperation({
             sessionSeq: 8,

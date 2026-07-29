@@ -2,6 +2,9 @@ import { Fastify } from "../types";
 import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
 import { enforceLoginEligibility } from "@/app/auth/enforceLoginEligibility";
+import { enforceSessionSyncCompatibilityForHttpRequest } from "@/app/clientCompatibility/httpEnforcement";
+import { isSessionSyncHttpRoute } from "@/app/clientCompatibility/routeInventory";
+import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
 
 function shouldLogAuthDecoratorDiagnostics(): boolean {
     return process.env.HAPPIER_AUTH_DECORATOR_DIAGNOSTIC_LOGS === "1"
@@ -15,7 +18,10 @@ export function enableAuthentication(app: Fastify) {
             // Never log bearer tokens or header contents.
             const logDiagnostics = shouldLogAuthDecoratorDiagnostics();
             if (logDiagnostics) {
-                log({ module: 'auth-decorator' }, `Auth check - path: ${request.url}, has header: ${!!authHeader}`);
+                log(
+                    { module: 'auth-decorator' },
+                    `Auth check - path: ${redactPublicShareCapabilityUrl(request.url)}, has header: ${!!authHeader}`,
+                );
             }
             if (!authHeader || !authHeader.startsWith('Bearer ')) {
                 log({ module: 'auth-decorator' }, `Auth failed - missing or invalid header`);
@@ -48,6 +54,11 @@ export function enableAuthentication(app: Fastify) {
                 log({ module: 'auth-decorator' }, `Auth success - user: ${verified.userId}`);
             }
             request.userId = verified.userId;
+            const routePath = request.routeOptions?.url ?? request.url.split('?', 1)[0];
+            if (typeof routePath === 'string' && isSessionSyncHttpRoute(routePath)) {
+                const accepted = await enforceSessionSyncCompatibilityForHttpRequest(request, reply, process.env);
+                if (!accepted) return;
+            }
         } catch (error) {
             return reply.code(401).send({ error: 'Authentication failed' });
         }

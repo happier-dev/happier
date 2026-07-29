@@ -1,8 +1,8 @@
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
 
 import { type Fastify } from "../../types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { db } from "@/storage/db";
 import {
     ConnectedServiceIdSchema,
@@ -11,35 +11,27 @@ import {
 } from "@happier-dev/protocol";
 import { NotFoundSchema } from "../../schemas/notFoundSchema";
 import { ConnectedServiceProfileIdSchema } from "./connectedServicesV2/profileIdSchema";
-import { persistQuotaSnapshotWithIdempotency } from "./connectedServiceQuotaSnapshotIdempotency";
 import { registerProviderAccountUsageRoutesV2 } from "./providerAccountUsageRoutesV2";
+import {
+    readExactQualifiedConnectedServiceUsageSource,
+    requestQualifiedConnectedAccountQuotaRefresh,
+    unlinkQualifiedConnectedAccountQuota,
+} from "./qualifiedConnectedAccounts/usageRepository";
+import { resolveLegacyQualifiedConnectedAccountService } from "./qualifiedConnectedAccounts/identity";
+import { readProviderAccountUsageRecord } from "./providerAccountUsage";
 
 const MAX_QUOTA_SNAPSHOT_CIPHERTEXT_CHARS = 200_000;
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return !!value && typeof value === "object" && !Array.isArray(value);
+function normalizeResponseStatus(status: string): "ok" | "unavailable" | "estimated" | "error" {
+    return status === "unavailable" || status === "estimated" || status === "error" ? status : "ok";
 }
 
-const quotaSnapshotEncoder = new TextEncoder();
-const quotaSnapshotDecoder = new TextDecoder();
-
-function toPrismaBytes(bytes: Uint8Array): Uint8Array<ArrayBuffer> {
-    if (bytes.buffer instanceof ArrayBuffer) {
-        const sliced = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
-        return new Uint8Array(sliced);
-    }
-    const buffer = new ArrayBuffer(bytes.byteLength);
-    const copy = new Uint8Array(buffer);
-    copy.set(bytes);
-    return copy;
-}
-
-function encodeQuotaSnapshotBytes(ciphertext: string): Uint8Array<ArrayBuffer> {
-    return toPrismaBytes(quotaSnapshotEncoder.encode(ciphertext));
-}
-
-function decodeQuotaSnapshotCiphertext(bytes: Uint8Array): string {
-    return quotaSnapshotDecoder.decode(bytes);
+async function readE2eeAccount(accountId: string) {
+    const account = await db.account.findUnique({
+        where: { id: accountId },
+        select: { publicKey: true, encryptionMode: true },
+    });
+    return account && resolveEffectiveAccountEncryptionModeFromAccountRow(account) === "e2ee" ? account : null;
 }
 
 export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
@@ -62,36 +54,17 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
                     staleAfterMs: z.number().int().nonnegative(),
                     status: z.enum(["ok", "unavailable", "estimated", "error"]),
                     materialFingerprint: z.string().min(1).max(256).optional(),
-                }),
-            }),
-            response: { 200: z.object({ success: z.literal(true) }) },
+                }).strict(),
+            }).strict(),
+            response: {
+                200: z.object({ success: z.literal(true) }),
+                400: z.object({ error: z.literal("invalid-params") }),
+            },
         },
     }, async (request, reply) => {
-        const userId = request.userId;
-        const serviceId = request.params.serviceId satisfies ConnectedServiceId;
-        const profileId = request.params.profileId;
-        const sealed = request.body.sealed;
-        const meta = request.body.metadata;
-
-        const metadata = {
-            v: 1,
-            format: sealed.format,
-            ...(meta.materialFingerprint ? { materialFingerprint: meta.materialFingerprint } : {}),
-        } satisfies Prisma.InputJsonObject;
-
-        await persistQuotaSnapshotWithIdempotency({
-            route: "v2",
-            accountId: userId,
-            vendor: serviceId,
-            profileId,
-            snapshot: encodeQuotaSnapshotBytes(sealed.ciphertext),
-            status: meta.status,
-            fetchedAtMs: meta.fetchedAt,
-            staleAfterMs: meta.staleAfterMs,
-            metadata,
-        });
-
-        return reply.send({ success: true });
+        const account = await readE2eeAccount(request.userId);
+        if (!account) return reply.code(400).send({ error: "invalid-params" });
+        return reply.code(400).send({ error: "invalid-params" });
     });
 
     app.get("/v2/connect/:serviceId/profiles/:profileId/quotas", {
@@ -120,39 +93,53 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
 
-        const row = await db.serviceAccountQuotaSnapshot.findUnique({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-            select: { snapshot: true, fetchedAt: true, staleAfterMs: true, status: true, metadata: true },
+        const account = await readE2eeAccount(userId);
+        if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
+
+        const ref = {
+            service:
+                resolveLegacyQualifiedConnectedAccountService(
+                    serviceId,
+                ),
+            accountId: profileId,
+        };
+        const exactSource =
+            await readExactQualifiedConnectedServiceUsageSource({
+            accountId: userId,
+            source: { ref, bindingKind: "account" },
         });
-        if (!row) return reply.code(404).send({ error: "connect_quotas_not_found" });
-
-        const rowMetadata = isRecord(row.metadata) ? row.metadata : null;
-        const format = rowMetadata?.format === "account_scoped_v1" ? "account_scoped_v1" : "account_scoped_v1";
-        const refreshRequestedAt =
-            typeof rowMetadata?.refreshRequestedAt === "number"
-                ? Math.max(0, Math.trunc(rowMetadata.refreshRequestedAt))
-                : undefined;
-        const status =
-            row.status === "ok" || row.status === "unavailable" || row.status === "estimated" || row.status === "error"
-                ? row.status
-                : "ok";
-
-        const ciphertext = decodeQuotaSnapshotCiphertext(row.snapshot);
-        if (!ciphertext.trim()) {
-            // A refresh request may have created a placeholder row before the daemon uploaded a real snapshot.
+        if (!exactSource) {
             return reply.code(404).send({ error: "connect_quotas_not_found" });
+        }
+        const record = await readProviderAccountUsageRecord({
+            accountId: userId,
+            recordId: exactSource.recordId,
+        });
+        const projection =
+            record?.metadata?.legacyQuotaCompatibilityProjections?.find(
+                (candidate) =>
+                    candidate.source.serviceId === serviceId
+                    && candidate.source.profileId === profileId
+                    && candidate.providerAccountUsageFetchedAt
+                        === record.fetchedAt,
+            );
+        if (
+            !record
+            || record.payloadMode !== "sealed_account_scoped_v1"
+            || !projection
+        ) {
+            return reply.code(404).send({
+                error: "connect_quotas_not_found",
+            });
         }
 
         return reply.send({
-            sealed: {
-                format,
-                ciphertext,
-            },
+            sealed: projection.sealed,
             metadata: {
-                fetchedAt: row.fetchedAt ? row.fetchedAt.getTime() : Date.now(),
-                staleAfterMs: typeof row.staleAfterMs === "number" ? row.staleAfterMs : 0,
-                status,
-                ...(refreshRequestedAt !== undefined ? { refreshRequestedAt } : {}),
+                fetchedAt: record.fetchedAt ?? 0,
+                staleAfterMs: record.staleAfterMs ?? 0,
+                status: normalizeResponseStatus(record.status),
+                ...(record.refreshRequestedAt !== undefined ? { refreshRequestedAt: record.refreshRequestedAt } : {}),
             },
         });
     });
@@ -167,6 +154,7 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
             }),
             response: {
                 200: z.object({ success: z.literal(true) }),
+                404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_quotas_not_found") })]),
             },
         },
     }, async (request, reply) => {
@@ -174,35 +162,23 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
 
-        const where = { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } };
-        const existing = await db.serviceAccountQuotaSnapshot.findUnique({ where, select: { metadata: true } });
+        const account = await readE2eeAccount(userId);
+        if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
 
-        const baseMetadata = isRecord(existing?.metadata) ? existing?.metadata : {};
-        const nextMetadata: Record<string, unknown> = {
-            ...baseMetadata,
-            v: 1,
-            format: "account_scoped_v1",
-            refreshRequestedAt: Date.now(),
-        };
-
-        await db.serviceAccountQuotaSnapshot.upsert({
-            where,
-            update: {
-                updatedAt: new Date(),
-                metadata: nextMetadata,
-            },
-            create: {
+        const result =
+            await requestQualifiedConnectedAccountQuotaRefresh({
                 accountId: userId,
-                vendor: serviceId,
-                profileId,
-                snapshot: encodeQuotaSnapshotBytes(""),
-                status: null,
-                fetchedAt: null,
-                staleAfterMs: 0,
-                metadata: nextMetadata,
-            },
-        });
-
+                ref: {
+                    service:
+                        resolveLegacyQualifiedConnectedAccountService(
+                            serviceId,
+                        ),
+                    accountId: profileId,
+                },
+            });
+        if (result === "not_found") {
+            return reply.code(404).send({ error: "connect_quotas_not_found" });
+        }
         return reply.send({ success: true });
     });
 
@@ -224,13 +200,23 @@ export function connectConnectedServicesQuotasV2Routes(app: Fastify) {
         const serviceId = request.params.serviceId satisfies ConnectedServiceId;
         const profileId = request.params.profileId;
 
-        const existing = await db.serviceAccountQuotaSnapshot.findUnique({
-            where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-            select: { id: true },
-        });
-        if (!existing) return reply.code(404).send({ error: "connect_quotas_not_found" });
+        const account = await readE2eeAccount(userId);
+        if (!account) return reply.code(404).send({ error: "connect_quotas_not_found" });
 
-        await db.serviceAccountQuotaSnapshot.delete({ where: { id: existing.id } });
+        const result =
+            await unlinkQualifiedConnectedAccountQuota({
+                accountId: userId,
+                ref: {
+                    service:
+                        resolveLegacyQualifiedConnectedAccountService(
+                            serviceId,
+                        ),
+                    accountId: profileId,
+                },
+            });
+        if (result === "not_found") {
+            return reply.code(404).send({ error: "connect_quotas_not_found" });
+        }
         return reply.send({ success: true });
     });
 }

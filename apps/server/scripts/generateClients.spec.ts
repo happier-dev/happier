@@ -5,8 +5,21 @@ import {
     prismaGenerateDatabaseUrlForProvider,
     resolveBuildDbProvidersFromEnv,
 } from "./generateClients";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { readFile } from "node:fs/promises";
+
+function extractPrismaModelBlock(schema: string, modelName: string): string {
+    const modelStart = schema.indexOf(`model ${modelName} {`);
+    if (modelStart === -1) {
+        throw new Error(`Missing Prisma model ${modelName}`);
+    }
+    const nextModelStart = schema.indexOf("\nmodel ", modelStart + 1);
+    return schema
+        .slice(modelStart, nextModelStart === -1 ? undefined : nextModelStart)
+        .replace(/\s+/g, " ")
+        .trim();
+}
 
 describe("resolveBuildDbProvidersFromEnv", () => {
     it("defaults to postgres+mysql+sqlite when unset", () => {
@@ -73,6 +86,21 @@ describe("prismaGenerateDatabaseUrlForProvider", () => {
 });
 
 describe("areRequestedPrismaOutputsCurrent", () => {
+    it("keeps the checked-in MySQL generated client synchronized with the MySQL schema", async () => {
+        const serverRoot = process.cwd();
+        const [sourceSchema, generatedSchema, generatedTypes] = await Promise.all([
+            readFile(join(serverRoot, "prisma", "mysql", "schema.prisma"), "utf8"),
+            readFile(join(serverRoot, "generated", "mysql-client", "schema.prisma"), "utf8"),
+            readFile(join(serverRoot, "generated", "mysql-client", "index.d.ts"), "utf8"),
+        ]);
+
+        expect(extractPrismaModelBlock(generatedSchema, "VoiceSessionLease")).toBe(
+            extractPrismaModelBlock(sourceSchema, "VoiceSessionLease"),
+        );
+        expect(generatedTypes).toContain("providerBindingNonce");
+        expect(generatedTypes).not.toContain("VoiceSessionLeaseProviderIdProviderConversationIdCompoundUniqueInput");
+    });
+
     it("returns true when the generated clients already match the requested schemas", async () => {
         const serverRoot = "/repo/apps/server";
         const sharedSchema = `

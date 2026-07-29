@@ -2,6 +2,7 @@ import { inTx } from "@/storage/inTx";
 
 export type ReconciledSessionPendingQueueState = Readonly<{
     pendingCount: number;
+    pendingBlockedCount: number;
     pendingVersion: number;
     didRepair: boolean;
 }>;
@@ -9,6 +10,7 @@ export type ReconciledSessionPendingQueueState = Readonly<{
 type PendingStateInput = Readonly<{
     sessionId: string;
     pendingCount: number;
+    pendingBlockedCount?: number;
     pendingVersion: number;
 }>;
 
@@ -16,18 +18,22 @@ export async function reconcileSessionPendingQueueState(
     params: PendingStateInput,
 ): Promise<ReconciledSessionPendingQueueState> {
     return await inTx(async (tx) => {
-        const queuedCount = await tx.sessionPendingMessage.count({
+        const pendingCount = await tx.sessionPendingMessage.count({
             where: { sessionId: params.sessionId, status: "queued" },
+        });
+        const blockedCount = await tx.sessionPendingMessage.count({
+            where: { sessionId: params.sessionId, status: "queued", deliveryState: "blocked" },
         });
 
         const current = await tx.session.findUniqueOrThrow({
             where: { id: params.sessionId },
-            select: { pendingCount: true, pendingVersion: true },
+            select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
         });
 
-        if (queuedCount === current.pendingCount) {
+        if (pendingCount === current.pendingCount && blockedCount === current.pendingBlockedCount) {
             return {
                 pendingCount: current.pendingCount,
+                pendingBlockedCount: current.pendingBlockedCount,
                 pendingVersion: current.pendingVersion,
                 didRepair: false,
             };
@@ -37,19 +43,21 @@ export async function reconcileSessionPendingQueueState(
             where: {
                 id: params.sessionId,
                 pendingCount: current.pendingCount,
+                pendingBlockedCount: current.pendingBlockedCount,
                 pendingVersion: current.pendingVersion,
             },
-            data: { pendingCount: queuedCount, pendingVersion: { increment: 1 } },
+            data: { pendingCount, pendingBlockedCount: blockedCount, pendingVersion: { increment: 1 } },
         });
 
         if (repair.count <= 0) {
             const latest = await tx.session.findUniqueOrThrow({
                 where: { id: params.sessionId },
-                select: { pendingCount: true, pendingVersion: true },
+                select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
             });
 
             return {
                 pendingCount: latest.pendingCount,
+                pendingBlockedCount: latest.pendingBlockedCount,
                 pendingVersion: latest.pendingVersion,
                 didRepair: false,
             };
@@ -57,11 +65,12 @@ export async function reconcileSessionPendingQueueState(
 
         const repaired = await tx.session.findUniqueOrThrow({
             where: { id: params.sessionId },
-            select: { pendingCount: true, pendingVersion: true },
+            select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
         });
 
         return {
             pendingCount: repaired.pendingCount,
+            pendingBlockedCount: repaired.pendingBlockedCount,
             pendingVersion: repaired.pendingVersion,
             didRepair: true,
         };

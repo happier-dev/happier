@@ -9,6 +9,7 @@ export async function markSessionParticipantsChanged(params: {
     sessionId: string;
     hint?: unknown;
     participantUserIds?: readonly string[];
+    hintForParticipant?: (accountId: string) => unknown;
 }): Promise<SessionParticipantCursor[]> {
     const participantUserIds = params.participantUserIds ?? await getSessionParticipantUserIds({
         sessionId: params.sessionId,
@@ -21,7 +22,9 @@ export async function markSessionParticipantsChanged(params: {
             accountId: participantUserId,
             kind: "session",
             entityId: params.sessionId,
-            hint: params.hint,
+            hint: params.hintForParticipant
+                ? params.hintForParticipant(participantUserId)
+                : params.hint,
         });
         participantCursors.push({ accountId: participantUserId, cursor });
     }

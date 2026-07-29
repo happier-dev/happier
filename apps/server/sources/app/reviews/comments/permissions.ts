@@ -1,6 +1,7 @@
 import {
     REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
     type ReviewCommentActorRefV1,
+    type ReviewCommentCurrentIntentV1,
     type ReviewCommentStateV1,
     type ReviewCommentV1,
 } from "@happier-dev/protocol";
@@ -11,6 +12,7 @@ export type ReviewCommentPrincipal = Readonly<{
     accountId: string;
     actor: ReviewCommentActorRefV1;
     grants?: readonly string[];
+    currentIntent?: ReviewCommentCurrentIntentV1;
     storageMode?: "plain" | "e2ee";
 }>;
 

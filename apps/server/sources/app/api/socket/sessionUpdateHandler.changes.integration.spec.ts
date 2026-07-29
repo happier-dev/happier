@@ -75,7 +75,7 @@ const { db, reset: resetDbMocks } = createDbMocks({
     sessionMessage: ["findFirst", "findUnique"],
 } as const);
 const txDbMocks = createDbMocks({
-    session: ["findUnique", "update"],
+    session: ["findUnique", "update", "updateMany"],
     sessionMessage: ["findUnique", "findFirst", "create", "update"],
 } as const);
 
@@ -151,6 +151,7 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
         });
         db.sessionShare.findUnique.mockResolvedValue(null);
         txDbMocks.db.session.update.mockResolvedValue({ seq: 55 });
+        txDbMocks.db.session.updateMany.mockResolvedValue({ count: 1 });
         txDbMocks.db.sessionMessage.findFirst.mockResolvedValue(null);
         txDbMocks.db.sessionMessage.findUnique.mockResolvedValue(null);
         db.sessionMessage.findUnique.mockResolvedValue(null);

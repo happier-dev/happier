@@ -1,10 +1,10 @@
 import {
     PrimaryTurnStatusV1Schema,
-    SessionRuntimeIssueV1Schema,
     SessionTurnMutationActionV1Schema,
     SessionTurnMutationDecisionV1Schema,
     SessionTurnRollbackStateV1Schema,
     SessionTurnTranscriptAnchorsV1Schema,
+    sanitizeSessionRuntimeIssueV1,
     type SessionRuntimeIssueV1,
     type SessionTurnMutationReceiptV1,
     type SessionTurnTranscriptAnchorsV1,
@@ -15,8 +15,8 @@ type StoredBigInt = bigint | number | null | undefined;
 
 export type SessionTurnStoredRow = Readonly<{
     turnId: string;
-    provider?: string | null;
-    providerTurnId?: string | null;
+    agentId?: string | null;
+    agentTurnId?: string | null;
     status: string;
     startedAt: StoredBigInt;
     updatedAt: StoredBigInt;
@@ -25,7 +25,7 @@ export type SessionTurnStoredRow = Readonly<{
     transcriptAnchorsJson?: string | null;
     rollbackState?: string | null;
     rollbackReason?: string | null;
-    providerRollbackOrdinal?: number | null;
+    agentRollbackOrdinal?: number | null;
     rollbackUpdatedAt?: StoredBigInt;
     lastMutationId?: string | null;
 }>;
@@ -56,8 +56,7 @@ function parseJsonObject(value: string | null | undefined): unknown {
 }
 
 export function parseStoredSessionRuntimeIssue(value: string | null | undefined): SessionRuntimeIssueV1 | null {
-    const parsed = SessionRuntimeIssueV1Schema.safeParse(parseJsonObject(value));
-    return parsed.success ? parsed.data : null;
+    return sanitizeSessionRuntimeIssueV1(parseJsonObject(value));
 }
 
 export function parseStoredSessionTurnTranscriptAnchors(value: string | null | undefined): SessionTurnTranscriptAnchorsV1 | undefined {
@@ -79,8 +78,8 @@ export function parseStoredSessionTurn(row: SessionTurnStoredRow): SessionTurnV1
 
     return {
         turnId: row.turnId,
-        ...(row.provider ? { provider: row.provider } : {}),
-        ...(row.providerTurnId ? { providerTurnId: row.providerTurnId } : {}),
+        ...(row.agentId ? { agentId: row.agentId } : {}),
+        ...(row.agentTurnId ? { agentTurnId: row.agentTurnId } : {}),
         status: status.data,
         startedAt,
         updatedAt,
@@ -92,7 +91,10 @@ export function parseStoredSessionTurn(row: SessionTurnStoredRow): SessionTurnV1
                 rollback: {
                     state: rollbackState.data,
                     ...(row.rollbackReason ? { reason: row.rollbackReason } : {}),
-                    ...(typeof row.providerRollbackOrdinal === "number" ? { providerRollbackOrdinal: row.providerRollbackOrdinal } : {}),
+                    ...(typeof row.agentRollbackOrdinal === "number" ? { agentRollbackOrdinal: row.agentRollbackOrdinal } : {}),
+                    ...(transcriptAnchors?.providerCheckpoint !== undefined
+                        ? { providerCheckpoint: transcriptAnchors.providerCheckpoint }
+                        : {}),
                     updatedAt: rollbackUpdatedAt,
                 },
             }

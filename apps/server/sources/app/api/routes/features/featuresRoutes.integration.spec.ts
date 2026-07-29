@@ -1,3 +1,4 @@
+import { readServerEnabledBit } from "@happier-dev/protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createEnvReset } from "../../testkit/env";
@@ -22,6 +23,8 @@ const resetEnv = createEnvReset({
     HAPPY_WEBAPP_URL: undefined,
     HAPPIER_RELAY_ACCESS_INFER_PUBLIC_URL: "0",
     HAPPIER_TAILSCALE_INFER_PUBLIC_URL: "0",
+    HAPPIER_BUILD_FEATURES_ALLOW: undefined,
+    HAPPIER_BUILD_FEATURES_DENY: undefined,
 });
 
 type ServerIdentityRouteModuleMock = Readonly<{
@@ -61,6 +64,27 @@ describe("featuresRoutes", () => {
         vi.doUnmock("@/app/serverIdentity/serverIdentity");
         resetPublicServerUrlInferenceCacheForTests();
         resetEnv();
+    });
+
+    it("returns the browser sidecar feature branch enabled in the live feature payload", async () => {
+        const { payload } = await getFeaturesPayload();
+
+        expect(payload.features.browser).toBeDefined();
+        expect(readServerEnabledBit(payload, "browser")).toBe(true);
+        expect(readServerEnabledBit(payload, "browser.internal")).toBe(true);
+        expect(readServerEnabledBit(payload, "browser.sidecar")).toBe(true);
+        expect(readServerEnabledBit(payload, "browser.diagnostics")).toBe(true);
+        expect(readServerEnabledBit(payload, "browser.automation")).toBe(true);
+        expect(readServerEnabledBit(payload, "browser.context")).toBe(true);
+        expect(readServerEnabledBit(payload, "browser.recording")).toBe(true);
+    });
+
+    it("publishes the external-session import publication fence in the live feature payload", async () => {
+        const { payload } = await getFeaturesPayload();
+
+        expect(payload.capabilities.compatibility.externalSessionImport).toEqual({
+            currentPublicationFenceVersion: 3,
+        });
     });
 
     describe("server identity", () => {
@@ -543,12 +567,12 @@ describe("featuresRoutes", () => {
             expect(payload.features.connectedServices.enabled).toBe(true);
         });
 
-        it("returns connectedServices.enabled=false when HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED is off", async () => {
+        it("keeps the compatibility-only connectedServices.enabled bit true when the retired env is off", async () => {
             resetEnv({
                 HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED: "0",
             });
             const { payload } = await getFeaturesPayload();
-            expect(payload.features.connectedServices.enabled).toBe(false);
+            expect(payload.features.connectedServices.enabled).toBe(true);
         });
 
         it("defaults connectedServices.quotas.enabled to true", async () => {
@@ -562,6 +586,18 @@ describe("featuresRoutes", () => {
             });
             const { payload } = await getFeaturesPayload();
             expect(payload.features.connectedServices.quotas.enabled).toBe(false);
+        });
+
+        it("prunes transitive dependents in the /v1/features payload when sessions are build-disabled", async () => {
+            resetEnv({
+                HAPPIER_BUILD_FEATURES_DENY: "sessions",
+            });
+
+            const { payload } = await getFeaturesPayload();
+
+            expect(payload.features.sessions.enabled).toBe(false);
+            expect(payload.features.sessions.usageLimitRecovery.enabled).toBe(false);
+            expect(payload.features.connectedServices.accountFallback.enabled).toBe(false);
         });
     });
 

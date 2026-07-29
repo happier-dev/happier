@@ -24,16 +24,13 @@ export function registerAccountProfileRoute(app: Fastify): void {
             }
         });
 
-        const connectedServicesEnabled = isServerFeatureEnabledForRequest("connectedServices", process.env);
         const connectedServiceAccountGroupsEnabled = isServerFeatureEnabledForRequest("connectedServices.accountGroups", process.env);
 
-        const connectedServiceProjection = connectedServicesEnabled
-            ? await buildAccountConnectedServicesProjection({
-                tx: db,
-                accountId: userId,
-                includeGroups: connectedServiceAccountGroupsEnabled,
-            })
-            : { connectedServices: [], connectedServicesV2: [] };
+        const connectedServiceProjection = await buildAccountConnectedServicesProjection({
+            tx: db,
+            accountId: userId,
+            includeGroups: connectedServiceAccountGroupsEnabled,
+        });
         const linkedProviders = await fetchLinkedProvidersForAccount({ tx: db as any, accountId: userId });
         return reply.send({
             id: userId,
@@ -45,6 +42,9 @@ export function registerAccountProfileRoute(app: Fastify): void {
             linkedProviders,
             connectedServices: connectedServiceProjection.connectedServices,
             connectedServicesV2: connectedServiceProjection.connectedServicesV2,
+            connectedServiceCredentialRevisionsV1: connectedServiceProjection.connectedServiceCredentialRevisionsV1,
+            connectedAccountsV4: connectedServiceProjection.connectedAccountsV4,
+            connectedAccountGroupsV4: connectedServiceProjection.connectedAccountGroupsV4,
         });
     });
 }

@@ -1,5 +1,5 @@
 import { resolveRelayAccessConfiguredCanonicalPublicServerUrl } from "@happier-dev/cli-common/relayAccess";
-import { resolveHappyHomeDirFromEnvironment } from "@happier-dev/cli-common/providers";
+import { resolveHappyHomeDirFromEnvironment } from "@happier-dev/cli-common/agents";
 import { inferAndApplyTailscaleServePublicServerUrl } from "@/app/integrations/tailscale/tailscaleServePublicUrlInference";
 import { inferAndApplyTailscaleFunnelPublicServerUrl } from "@/app/integrations/tailscale/tailscaleFunnelPublicUrlInference";
 import { parseBooleanEnv, parseIntEnv } from "@/config/env";

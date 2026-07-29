@@ -15,7 +15,7 @@ CREATE TABLE "SessionSystemRecord" (
 CREATE UNIQUE INDEX "SessionSystemRecord_accountId_sessionId_namespace_localId_key"
 ON "SessionSystemRecord"("accountId", "sessionId", "namespace", "localId");
 
-CREATE INDEX "SessionSystemRecord_accountId_sessionId_namespace_kind_updatedAt_id_idx"
+CREATE INDEX "ssr_account_session_kind_updated_id_idx"
 ON "SessionSystemRecord"("accountId", "sessionId", "namespace", "kind", "updatedAt" DESC, "id" DESC);
 
 CREATE INDEX "SessionSystemRecord_sessionId_namespace_kind_updatedAt_id_idx"

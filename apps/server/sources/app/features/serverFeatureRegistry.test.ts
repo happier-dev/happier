@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_BUG_REPORTS_CAPABILITIES, readServerEnabledBit } from '@happier-dev/protocol';
 import { featuresSchema } from './types';
 import { resolveServerFeaturePayload } from './catalog/resolveServerFeaturePayload';
+import { isResolvedServerFeatureEnabledForGating } from './catalog/serverFeatureGate';
 import { serverFeatureRegistry } from './catalog/serverFeatureRegistry';
 
 describe('features/serverFeatureRegistry', () => {
@@ -14,6 +15,13 @@ describe('features/serverFeatureRegistry', () => {
         const res = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
         const parsed = featuresSchema.safeParse(res);
         expect(parsed.success).toBe(true);
+    });
+
+    it('publishes terminal byte-stream as a represented server feature', () => {
+        const res = resolveServerFeaturePayload({} as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        expect(readServerEnabledBit(res, 'terminal.embeddedPty')).toBe(true);
+        expect(readServerEnabledBit(res, 'terminal.transport.byteStream')).toBe(true);
     });
 
     it('keeps current gate reads stable when a resolver emits newer unknown fields and malformed bugReports capabilities', () => {
@@ -46,11 +54,23 @@ describe('features/serverFeatureRegistry', () => {
         ]);
 
         expect(featuresSchema.safeParse(res).success).toBe(true);
-        expect(readServerEnabledBit(res, 'connectedServices')).toBe(true);
+        expect(res.features.connectedServices.enabled).toBe(true);
         expect(readServerEnabledBit(res, 'connectedServices.quotas')).toBe(true);
         expect(res.capabilities.bugReports).toEqual(DEFAULT_BUG_REPORTS_CAPABILITIES);
         expect((res as any).features.futureBridge).toBeUndefined();
         expect((res as any).capabilities.futureCapability).toBeUndefined();
+    });
+
+    it('reads resolved server feature gates through the fail-closed helper', () => {
+        const res = resolveServerFeaturePayload({
+            HAPPIER_FEATURE_VOICE__ENABLED: '1',
+            HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: '0',
+            ELEVENLABS_API_KEY: 'el_key',
+            ELEVENLABS_AGENT_ID: 'agent_dev',
+        } as NodeJS.ProcessEnv, serverFeatureRegistry);
+
+        expect(isResolvedServerFeatureEnabledForGating(res, 'voice.happierVoice')).toBe(true);
+        expect(isResolvedServerFeatureEnabledForGating({ features: { voice: { happierVoice: { enabled: 'yes' } } } } as any, 'voice.happierVoice')).toBe(false);
     });
 
     it('throws when a resolver returns an invalid features shape', () => {

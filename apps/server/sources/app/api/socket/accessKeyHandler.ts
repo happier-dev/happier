@@ -1,9 +1,10 @@
 import { Socket } from "socket.io";
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
-import { eventRouter } from "@/app/events/eventRouter";
+import type { ClientConnection } from "@/app/events/eventPayloadTypes";
+import { canReadAccessKeyFromSessionScopedSocket } from "./sessionScopedBinding";
 
-export function accessKeyHandler(userId: string, socket: Socket) {
+export function accessKeyHandler(userId: string, socket: Socket, connection: ClientConnection) {
     // Get access key via socket
     socket.on('access-key-get', async (data: { sessionId: string; machineId: string }, callback: (response: any) => void) => {
         try {
@@ -14,6 +15,15 @@ export function accessKeyHandler(userId: string, socket: Socket) {
                     callback({
                         ok: false,
                         error: 'Invalid parameters: sessionId and machineId are required'
+                    });
+                }
+                return;
+            }
+            if (!await canReadAccessKeyFromSessionScopedSocket({ socket, connection, sessionId, machineId })) {
+                if (callback) {
+                    callback({
+                        ok: false,
+                        error: 'Forbidden'
                     });
                 }
                 return;

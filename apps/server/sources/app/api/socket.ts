@@ -1,7 +1,10 @@
 import { onShutdown } from "@/utils/process/shutdown";
 import { Fastify } from "./types";
-import { buildMachineActivityEphemeral, ClientConnection, eventRouter } from "@/app/events/eventRouter";
-import { buildMachineOwnerConflictSocketPayload, readMachineDaemonOwnershipMetadataFromSocketAuth } from "@happier-dev/protocol";
+import { buildMachineActivityEphemeral, buildSessionActivityEphemeral, buildUpdateSessionUpdate, ClientConnection, eventRouter } from "@/app/events/eventRouter";
+import {
+    buildMachineOwnerConflictSocketPayload,
+    readMachineDaemonOwnershipMetadataFromSocketAuth,
+} from "@happier-dev/protocol";
 import { Server, Socket } from "socket.io";
 import { log } from "@/utils/logging/log";
 import { auth } from "@/app/auth/auth";
@@ -24,12 +27,20 @@ import { usageHandler } from "./socket/usageHandler";
 import { rpcHandler } from "./socket/rpcHandler";
 import { pingHandler } from "./socket/pingHandler";
 import { sessionUpdateHandler } from "./socket/sessionUpdateHandler";
+import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compatibility/registerReleasedUiV021SessionEndSocketEvent";
 import { machineUpdateHandler } from "./socket/machineUpdateHandler";
 import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { machineLiveStreamRelayHandler } from "./socket/machineLiveStreamRelayHandler";
+import { externalSessionStatusDemandHandler } from "./socket/externalSessionStatusDemandHandler";
 import { transferRelayV2Handler } from "./socket/transferRelayV2Handler";
 import { registerPeerTcpTunnelRelaySocketHandler } from "./socket/peer/mediation/tunnel/registerRelay";
 import { createPeerTcpTunnelRelayBridge } from "./socket/peer/mediation/tunnel/relayBridge";
+import { createPeerTcpTunnelRelayCoordinator } from "./socket/peer/mediation/tunnel/relayCoordinator";
+import { createPeerMediationObservabilityStore } from "./socket/peer/mediation/observability/store";
+import {
+    registerPeerMediationObservabilitySocketRoutes,
+    type PeerMediationObservabilityPrincipal,
+} from "./socket/peer/mediation/observability/routes";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { createServerRpcForwarder } from "./socket/serverRpcForwarder";
@@ -41,12 +52,32 @@ import { readSocketAdapterRuntimeConfigFromEnv } from "@/config/socketAdapter";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readMachineLiveStreamFeatureEnv, readMachineTransferFeatureEnv, readMachineTunnelFeatureEnv, readPeerMediationFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
-import { resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
+import { resolveFeaturesFromEnv } from "@/app/features/registry";
+import { readSessionScopedSocketBinding, resolveSessionScopedSocketBinding } from "./socket/sessionScopedBinding";
 import { createMachineSocketOwnershipRegistry } from "./socket/machineSocketOwnershipRegistry";
+import { createPeerMediationViewerSocketOwnershipVerifier } from "./socket/viewerSocketOwnership";
 import { activityCache } from "@/app/presence/sessionCache";
-import { PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, type PeerTcpTunnelRelayEnvelope } from "@happier-dev/protocol";
+import {
+    PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT,
+    EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_ITEMS_V1,
+    resolveExternalSessionOperationSocketBatchLimitsV1,
+    type ExternalSessionOperationSocketBatchLimitResolutionV1,
+    type PeerMediationObservabilityEventV1,
+    type PeerTcpTunnelRelayEnvelope,
+} from "@happier-dev/protocol";
+import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import {
+    buildSessionSyncSocketUpgradeError,
+    evaluateSessionSyncSocketCompatibility,
+    writeSessionSyncSocketCompatibility,
+} from "@/app/clientCompatibility/socketEnforcement";
 
 export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
+// Socket.IO adds its event name, acknowledgement id, and packet framing around the
+// serialized command. Keep that reserve beside the one live transport ceiling.
+export const EXTERNAL_SESSION_OPERATION_SOCKET_ENVELOPE_RESERVE_BYTES = 64 * 1024;
+export const EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_SERIALIZED_BYTES = 512 * 1024;
 
 export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string | undefined>): number {
     const raw = (env.HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE ?? env.HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE ?? '').trim();
@@ -54,6 +85,17 @@ export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE;
     return parsed;
+}
+
+export function resolveExternalSessionOperationSocketBatchLimitsForMaxHttpBufferSize(
+    socketMaxHttpBufferSize: number,
+): ExternalSessionOperationSocketBatchLimitResolutionV1 {
+    return resolveExternalSessionOperationSocketBatchLimitsV1({
+        socketMaxSerializedBytes: socketMaxHttpBufferSize,
+        envelopeOverheadBytes: EXTERNAL_SESSION_OPERATION_SOCKET_ENVELOPE_RESERVE_BYTES,
+        configuredMaxSerializedBytes: EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_SERIALIZED_BYTES,
+        configuredMaxItems: EXTERNAL_SESSION_OPERATION_SOCKET_MAX_BATCH_ITEMS_V1,
+    });
 }
 
 export const DEFAULT_SOCKET_FAST_DISCONNECT_LOG_THRESHOLD_MS = 1_000;
@@ -66,6 +108,30 @@ export function resolveSocketFastDisconnectLogThresholdMsFromEnv(env: Record<str
     return parsed;
 }
 
+export const DEFAULT_SOCKET_PLANNED_RESTART_RETRY_AFTER_MS = 10_000;
+
+export function resolveSocketPlannedRestartRetryAfterMsFromEnv(env: Record<string, string | undefined>): number {
+    const raw = (
+        env.HAPPIER_SOCKET_PLANNED_RESTART_RETRY_AFTER_MS
+        ?? env.HAPPY_SOCKET_PLANNED_RESTART_RETRY_AFTER_MS
+        ?? ''
+    ).trim();
+    if (!raw) return DEFAULT_SOCKET_PLANNED_RESTART_RETRY_AFTER_MS;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) return DEFAULT_SOCKET_PLANNED_RESTART_RETRY_AFTER_MS;
+    return parsed;
+}
+
+export function emitSocketPlannedRestart(
+    io: Readonly<{ emit: (event: string, payload: { retryAfterMs: number }) => unknown }>,
+    retryAfterMs: number,
+): void {
+    const normalizedRetryAfterMs = Number.isFinite(retryAfterMs) && retryAfterMs >= 0
+        ? Math.trunc(retryAfterMs)
+        : DEFAULT_SOCKET_PLANNED_RESTART_RETRY_AFTER_MS;
+    io.emit('server:restarting', { retryAfterMs: normalizedRetryAfterMs });
+}
+
 export function normalizeSocketHandshakeClientType(clientType: unknown): SocketClientType {
     if (
         clientType === 'user-scoped' ||
@@ -75,6 +141,21 @@ export function normalizeSocketHandshakeClientType(clientType: unknown): SocketC
         return clientType;
     }
     return 'user-scoped';
+}
+
+function resolvePeerMediationObservabilityPrincipal(input: Readonly<{
+    userId: string;
+    clientType: SocketClientType;
+    sessionId?: string;
+    machineId?: string;
+}>): PeerMediationObservabilityPrincipal {
+    if (input.clientType === "machine-scoped" && input.machineId) {
+        return { kind: "machineOwner", accountId: input.userId, machineId: input.machineId };
+    }
+    if (input.clientType === "session-scoped" && input.sessionId) {
+        return { kind: "sessionOwner", accountId: input.userId, sessionId: input.sessionId };
+    }
+    return { kind: "accountOwner", accountId: input.userId };
 }
 
 function classifySocketHandshakeException(error: unknown): SocketAuthHandshakeExceptionClassification {
@@ -94,6 +175,7 @@ function classifySocketHandshakeException(error: unknown): SocketAuthHandshakeEx
 }
 
 export function startSocket(app: Fastify) {
+    const sessionPublisherPresence = createSessionPublisherPresence();
     const socketAdapterConfig = readSocketAdapterRuntimeConfigFromEnv(process.env, "memory");
     const socketAdapter = socketAdapterConfig.adapter;
     const shouldEnableRedisAdapter = socketAdapterConfig.redisStreamsEnabled;
@@ -114,6 +196,10 @@ export function startSocket(app: Fastify) {
     const machineTunnelFeatureEnv = readMachineTunnelFeatureEnv(process.env);
     const peerMediationFeatureEnv = readPeerMediationFeatureEnv(process.env);
     const fastDisconnectLogThresholdMs = resolveSocketFastDisconnectLogThresholdMsFromEnv(process.env);
+    const plannedRestartRetryAfterMs = resolveSocketPlannedRestartRetryAfterMsFromEnv(process.env);
+    const socketMaxHttpBufferSize = resolveSocketMaxHttpBufferSizeFromEnv(process.env);
+    const externalSessionOperationSocketBatchLimits =
+        resolveExternalSessionOperationSocketBatchLimitsForMaxHttpBufferSize(socketMaxHttpBufferSize);
 
     const instanceId = process.env.HAPPIER_INSTANCE_ID?.trim() || process.env.HAPPY_INSTANCE_ID?.trim() || randomUUID();
     const roleToken = process.env.SERVER_ROLE?.trim();
@@ -132,7 +218,7 @@ export function startSocket(app: Fastify) {
         pingTimeout: 45000,
         pingInterval: 15000,
         path: '/v1/updates',
-        maxHttpBufferSize: resolveSocketMaxHttpBufferSizeFromEnv(process.env),
+        maxHttpBufferSize: socketMaxHttpBufferSize,
         allowUpgrades: true,
         upgradeTimeout: 10000,
         connectTimeout: 20000,
@@ -143,6 +229,12 @@ export function startSocket(app: Fastify) {
         adapter: socketAdapter,
         redisEnabled: shouldEnableRedisAdapter,
         role,
+    });
+    const tunnelRelayCoordinator = createPeerTcpTunnelRelayCoordinator({
+        io,
+        config: shouldEnableRedisAdapter
+            ? { mode: "redis", redis: getRedisClient() }
+            : { mode: "memory" },
     });
 
     function rejectSocket(params: { statusCode: number; error: string; provider?: string; data?: Record<string, unknown> }) {
@@ -163,8 +255,17 @@ export function startSocket(app: Fastify) {
     app.forwardRpcForUser = createServerRpcForwarder({
         io,
     });
+    const verifyPeerMediationViewerSocketOwnership = createPeerMediationViewerSocketOwnershipVerifier(io);
+    app.verifyPeerMediationViewerSocketOwnership = verifyPeerMediationViewerSocketOwnership;
     eventRouter.setIo(io);
     const tunnelRelayBridge = createPeerTcpTunnelRelayBridge(io);
+    const peerMediationObservabilityStore = createPeerMediationObservabilityStore();
+    const peerMediationObservabilityEmitter = {
+        emit: (event: PeerMediationObservabilityEventV1): void => {
+            peerMediationObservabilityStore.publish(event);
+        },
+    } as const;
+    app.peerMediationObservability = peerMediationObservabilityEmitter;
     const tunnelRelayAuthorizationTrustRoots = peerMediationFeatureEnv.grantSigningKeys.map((key) => ({
         keyId: key.keyId,
         publicKeyBase64Url: key.publicKey,
@@ -186,12 +287,15 @@ export function startSocket(app: Fastify) {
         maxIdleMs: machineTunnelFeatureEnv.maxIdleMs,
         maxDurationMs: machineTunnelFeatureEnv.maxDurationMs,
         allowedPorts: machineTunnelFeatureEnv.allowedPorts,
+        observability: peerMediationObservabilityEmitter,
+        coordinator: tunnelRelayCoordinator,
     } as const;
     app.createPeerTcpTunnelRelayTransport = ({ accountId }) => {
         const transport = tunnelRelayBridge.createTransport({ accountId });
         let relayHandler: ((payload?: unknown) => void | Promise<void>) | null = null;
         let disconnectHandler: (() => void | Promise<void>) | null = null;
         registerPeerTcpTunnelRelaySocketHandler(accountId, {
+            id: transport.relaySocketId,
             data: { clientType: "user-scoped" },
             on: (event, handler) => {
                 if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT) {
@@ -204,6 +308,7 @@ export function startSocket(app: Fastify) {
         }, tunnelRelayHandlerOptions);
 
         return {
+            relaySocketId: transport.relaySocketId,
             send: (event, envelope: PeerTcpTunnelRelayEnvelope) => {
                 if (event === PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT && relayHandler) {
                     void relayHandler(envelope);
@@ -291,6 +396,23 @@ export function startSocket(app: Fastify) {
             }
             observeHandshakeStage("ok");
 
+            const compatibility = evaluateSessionSyncSocketCompatibility(
+                socket.handshake.auth,
+                process.env,
+                clientType,
+            );
+            writeSessionSyncSocketCompatibility(socket, compatibility);
+            if (!compatibility.evaluation.accepted) {
+                recordSocketAuthHandshake({
+                    clientType,
+                    transport: handshakeTransport,
+                    durationMs: Date.now() - handshakeStartedAt,
+                    result: "error",
+                    failure: "client-upgrade-required",
+                });
+                return next(buildSessionSyncSocketUpgradeError(compatibility.evaluation));
+            }
+
             if (clientType === 'machine-scoped') {
                 setHandshakeStage("machine-lookup");
                 const machine = await db.machine.findFirst({
@@ -363,14 +485,14 @@ export function startSocket(app: Fastify) {
                         lastActiveAt: binding.cacheWarmState.machine.lastActiveAt,
                     });
                 }
-                (socket.data as any).sessionScopedBinding = binding.binding;
+                socket.data.sessionScopedBinding = binding.binding;
             }
 
-            (socket.data as any).userId = verified.userId;
-            (socket.data as any).clientType = clientType;
-            (socket.data as any).clientPurpose = clientPurpose;
-            (socket.data as any).sessionId = sessionId;
-            (socket.data as any).machineId = machineId;
+            socket.data.userId = verified.userId;
+            socket.data.clientType = clientType;
+            socket.data.clientPurpose = clientPurpose;
+            socket.data.sessionId = sessionId;
+            socket.data.machineId = machineId;
             recordSocketAuthHandshake({
                 clientType,
                 transport: handshakeTransport,
@@ -423,13 +545,13 @@ export function startSocket(app: Fastify) {
             { module: 'websocket', socketId: socket.id, remoteAddress, userAgent, transport },
             `New connection attempt from socket: ${socket.id} (remote=${remoteLabel}, transport=${transport ?? 'unknown'}, ua=${userAgentLabel})`,
         );
-        const userId = (socket.data as any).userId as string | undefined;
-        const clientType = normalizeSocketHandshakeClientType((socket.data as any).clientType);
-        const clientPurpose = (socket.data as any).clientPurpose as string | undefined;
+        const userId = socket.data.userId;
+        const clientType = normalizeSocketHandshakeClientType(socket.data.clientType);
+        const clientPurpose = socket.data.clientPurpose;
         const sessionId =
-            (socket.data as any).sessionScopedBinding?.sessionId as string | undefined
-            ?? (socket.data as any).sessionId as string | undefined;
-        const machineId = (socket.data as any).machineId as string | undefined;
+            socket.data.sessionScopedBinding?.sessionId
+            ?? socket.data.sessionId;
+        const machineId = socket.data.machineId;
         let connectConvergenceFinished = false;
         let connectReady = false;
 
@@ -535,6 +657,28 @@ export function startSocket(app: Fastify) {
                 reason: String(reason),
             });
 
+            if (connection.connectionType === "session-scoped") {
+                void sessionPublisherPresence.forgetDisconnectedPublisher({ socket }).then(async (disconnected) => {
+                    if (disconnected.status !== "applied") return;
+                    await Promise.all(disconnected.participantCursors.map(async ({ accountId, cursor }) => {
+                        eventRouter.emitUpdate({
+                            userId: accountId,
+                            payload: buildUpdateSessionUpdate(
+                                connection.sessionId,
+                                cursor,
+                                randomKeyNaked(12),
+                                undefined,
+                                undefined,
+                                disconnected.projection,
+                            ),
+                            recipientFilter: { type: "all-interested-in-session", sessionId: connection.sessionId },
+                        });
+                    }));
+                }).catch((error) => {
+                    log({ module: "session-publisher-presence", sessionId: connection.sessionId, error }, "Failed to forget disconnected session publisher");
+                });
+            }
+
             const durationMs = Math.max(0, Date.now() - connectedAtMs);
             const isFastDisconnect = fastDisconnectLogThresholdMs > 0 && durationMs <= fastDisconnectLogThresholdMs;
 
@@ -581,13 +725,22 @@ export function startSocket(app: Fastify) {
             );
         }
 
-        // Join the canonical Socket.IO rooms used for multi-replica fanout and RPC routing.
-        await socket.join(getSocketRooms({
+        // Start canonical fanout-room membership, but install the RPC listeners before yielding.
+        // Socket.IO does not buffer application events for listeners attached after delivery, and
+        // machine clients replay their rpc-register burst immediately from their connect callback.
+        const canonicalRoomJoin = socket.join(getSocketRooms({
             userId,
             clientType: metadata.clientType,
             sessionId,
             machineId,
         }));
+
+        rpcHandler(userId, socket, {
+            io,
+            sessionPublisherPresence,
+        });
+
+        await canonicalRoomJoin;
 
         // Broadcast daemon online status
         if (connection.connectionType === 'machine-scoped') {
@@ -601,13 +754,38 @@ export function startSocket(app: Fastify) {
         }
 
         // Handlers
-        rpcHandler(userId, socket, {
-            io,
-        });
-        usageHandler(userId, socket);
-        sessionUpdateHandler(userId, socket, connection);
+        usageHandler(userId, socket, connection);
+        const sessionBinding = connection.connectionType === "session-scoped"
+            ? readSessionScopedSocketBinding(socket)
+            : null;
+        if (connection.connectionType === "user-scoped") {
+            registerReleasedUiV021SessionEndSocketEvent({
+                socket,
+                accountId: userId,
+                connection,
+            });
+        }
+        sessionUpdateHandler(
+            userId,
+            socket,
+            connection,
+            sessionBinding?.proof === "machine-access-key" && sessionBinding.machineId
+                ? {
+                    presence: sessionPublisherPresence,
+                    binding: {
+                        accountId: userId,
+                        machineId: sessionBinding.machineId,
+                        sessionId: sessionBinding.sessionId,
+                    },
+                }
+                : undefined,
+        );
         pingHandler(socket);
-        machineUpdateHandler(userId, socket);
+        machineUpdateHandler(userId, socket, {
+            operationSocketBatchLimits: externalSessionOperationSocketBatchLimits,
+            sessionPublisherPresence,
+        });
+        externalSessionStatusDemandHandler(userId, socket, { io });
         machineTransferHandler(userId, socket, {
             io,
             serverRoutedTransferEnabled,
@@ -619,6 +797,8 @@ export function startSocket(app: Fastify) {
             serverRoutedLiveStreamEnabled,
             relayCaps: machineLiveStreamFeatureEnv.serverRoutedCaps,
             relayAuthorizationTrustRoots: tunnelRelayAuthorizationTrustRoots,
+            verifyViewerSocketOwnership: verifyPeerMediationViewerSocketOwnership,
+            observability: peerMediationObservabilityEmitter,
         });
         transferRelayV2Handler(userId, socket, {
             io,
@@ -629,8 +809,18 @@ export function startSocket(app: Fastify) {
         registerPeerTcpTunnelRelaySocketHandler(userId, socket, {
             ...tunnelRelayHandlerOptions,
         });
+        registerPeerMediationObservabilitySocketRoutes(socket, {
+            store: peerMediationObservabilityStore,
+            featurePayload: () => resolveFeaturesFromEnv(process.env),
+            principal: resolvePeerMediationObservabilityPrincipal({
+                userId,
+                clientType,
+                ...(sessionId ? { sessionId } : {}),
+                ...(machineId ? { machineId } : {}),
+            }),
+        });
         artifactUpdateHandler(userId, socket);
-        accessKeyHandler(userId, socket);
+        accessKeyHandler(userId, socket, connection);
 
         // Ready
         connectReady = true;
@@ -652,7 +842,16 @@ export function startSocket(app: Fastify) {
         );
     });
 
-    onShutdown('api', async () => {
+    onShutdown('api:socket', async () => {
+        try {
+            emitSocketPlannedRestart(io, plannedRestartRetryAfterMs);
+        } catch (error) {
+            log(
+                { module: 'websocket', error },
+                'Failed to broadcast planned socket restart before shutdown',
+            );
+        }
         await io.close();
+        await tunnelRelayCoordinator.close();
     });
 }

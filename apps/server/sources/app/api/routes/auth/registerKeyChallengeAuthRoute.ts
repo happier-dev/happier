@@ -8,6 +8,11 @@ import { type Fastify } from "../../types";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveEffectiveDefaultAccountEncryptionMode } from "@happier-dev/protocol";
 import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
+import {
+    admitAccountContentKey,
+    verifyAccountContentKeyBinding,
+    type VerifiedAccountContentKeyBinding,
+} from "@/app/encryption/accountContentKeyAdmission";
 
 export function registerKeyChallengeAuthRoute(app: Fastify): void {
     app.post('/v1/auth', {
@@ -73,28 +78,24 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
 
         const authPolicy = resolveAuthPolicyFromEnv(process.env);
 
-        let contentPublicKey: Uint8Array | null = null;
-        let contentPublicKeySig: Uint8Array | null = null;
+        let contentKeyBinding: VerifiedAccountContentKeyBinding | null = null;
         if (request.body.contentPublicKey && request.body.contentPublicKeySig) {
+            let contentPublicKey: Uint8Array;
+            let contentPublicKeySignature: Uint8Array;
             try {
                 contentPublicKey = privacyKit.decodeBase64(request.body.contentPublicKey);
-                contentPublicKeySig = privacyKit.decodeBase64(request.body.contentPublicKeySig);
+                contentPublicKeySignature = privacyKit.decodeBase64(
+                    request.body.contentPublicKeySig,
+                );
             } catch {
                 return reply.code(400).send({ error: 'Invalid content key encoding' });
             }
-            if (contentPublicKey.length !== tweetnacl.box.publicKeyLength) {
-                return reply.code(400).send({ error: 'Invalid contentPublicKey' });
-            }
-            if (contentPublicKeySig.length !== tweetnacl.sign.signatureLength) {
-                return reply.code(400).send({ error: 'Invalid contentPublicKeySig' });
-            }
-
-            const binding = Buffer.concat([
-                Buffer.from('Happy content key v1\u0000', 'utf8'),
-                Buffer.from(contentPublicKey)
-            ]);
-            const isContentKeyValid = tweetnacl.sign.detached.verify(binding, contentPublicKeySig, publicKey);
-            if (!isContentKeyValid) {
+            contentKeyBinding = verifyAccountContentKeyBinding({
+                accountSigningPublicKey: publicKey,
+                contentPublicKey,
+                contentPublicKeySignature,
+            });
+            if (!contentKeyBinding) {
                 return reply.code(400).send({ error: 'Invalid contentPublicKeySig' });
             }
         }
@@ -141,24 +142,46 @@ export function registerKeyChallengeAuthRoute(app: Fastify): void {
 
         // Important: avoid unnecessary writes during authentication. This route is hit on token refresh and during
         // reconnect flows; a write here can amplify SQLite lock contention and wedge the UI.
-        const wantsContentKeyUpdate = Boolean(contentPublicKey && contentPublicKeySig);
         const user =
-            existingAccount && !wantsContentKeyUpdate
+            existingAccount
                 ? existingAccount
                 : await db.account.upsert({
                       where: { publicKey: publicKeyHex },
-                      update: {
-                          ...(wantsContentKeyUpdate ? { updatedAt: new Date() } : {}),
-                          ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
-                          ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
-                      },
+                      update: {},
                       create: {
                           publicKey: publicKeyHex,
                           encryptionMode: effectiveDefaultEncryptionMode,
-                          ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
-                          ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
+                          ...(contentKeyBinding ? {
+                              contentPublicKey:
+                                  contentKeyBinding.contentPublicKey,
+                              contentPublicKeySig:
+                                  contentKeyBinding
+                                      .contentPublicKeySignature,
+                          } : {}),
                       },
                   });
+        if (contentKeyBinding) {
+            const admission = await admitAccountContentKey(db, {
+                accountId: user.id,
+                contentPublicKey:
+                    contentKeyBinding.contentPublicKey,
+                contentPublicKeySignature:
+                    contentKeyBinding.contentPublicKeySignature,
+            });
+            if (admission.status === "key_mismatch") {
+                return reply.code(409).send({
+                    error: "content_public_key_mismatch",
+                });
+            }
+            if (
+                admission.status === "account_not_found"
+                || admission.status === "invalid_binding"
+            ) {
+                return reply.code(400).send({
+                    error: "Invalid contentPublicKeySig",
+                });
+            }
+        }
 
         return reply.send({
             success: true,

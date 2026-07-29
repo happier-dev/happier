@@ -33,7 +33,7 @@ CREATE TABLE `ConnectedServiceAuthGroupMember` (
 
     INDEX `ConnectedServiceAuthGroupMember_groupDbId_idx`(`groupDbId`),
     INDEX `ConnectedServiceAuthGroupMember_accountId_vendor_profileId_idx`(`accountId`, `vendor`, `profileId`),
-    UNIQUE INDEX `ConnectedServiceAuthGroupMember_accountId_vendor_groupId_profileId_key`(`accountId`, `vendor`, `groupId`, `profileId`),
+    UNIQUE INDEX `csagm_account_vendor_group_profile_key`(`accountId`, `vendor`, `groupId`, `profileId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

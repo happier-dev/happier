@@ -143,7 +143,7 @@ describe("usageWriteService", () => {
             select: {
                 sessionId: true,
                 source: true,
-                providerId: true,
+                agentId: true,
                 totalTokens: true,
                 inputTokens: true,
                 outputTokens: true,
@@ -154,13 +154,53 @@ describe("usageWriteService", () => {
             {
                 sessionId: null,
                 source: "legacy_usage_report",
-                providerId: "legacy",
+                agentId: "legacy",
                 totalTokens: 7,
                 inputTokens: 4,
                 outputTokens: 3,
                 reportedCostUsd: 0.07,
             },
         ]);
+    });
+
+    it("does not bridge a legacy report when the session has a nearby native usage event", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-usage-service-native-dedup" },
+            select: { id: true },
+        });
+        const session = await db.session.create({
+            data: {
+                accountId: account.id,
+                tag: "usage-service-native-dedup",
+                encryptionMode: "e2ee",
+                metadata: "ciphertext",
+                active: true,
+            },
+            select: { id: true },
+        });
+        await db.usageEvent.create({
+            data: {
+                accountId: account.id,
+                sessionId: session.id,
+                observedAt: new Date(),
+                agentId: "codex",
+                source: "codex_app_server",
+                scope: "turn_delta",
+                isCumulative: false,
+                totalTokens: 9,
+            },
+        });
+
+        const result = await recordLegacyUsageReport({
+            accountId: account.id,
+            key: "legacy-native-dedup",
+            sessionId: session.id,
+            tokens: { total: 9 },
+            cost: { total: 0.09 },
+        });
+
+        expect(result).toMatchObject({ ok: true, changed: true, usageEventId: null });
+        expect(await db.usageEvent.count({ where: { accountId: account.id, sessionId: session.id } })).toBe(1);
     });
 
     it("canonicalizes duplicate account-level legacy usage reports before writing the next delta", async () => {
@@ -245,7 +285,7 @@ describe("usageWriteService", () => {
         const first = await recordUsageEvent(account.id, {
             sessionId: session.id,
             observedAt: 1_714_000_000_000,
-            providerId: "claude",
+            agentId: "claude",
             backendMode: "remote",
             modelId: "claude-sonnet",
             projectKey: null,
@@ -263,7 +303,7 @@ describe("usageWriteService", () => {
         const second = await recordUsageEvent(account.id, {
             sessionId: session.id,
             observedAt: 1_714_000_001_000,
-            providerId: "claude",
+            agentId: "claude",
             backendMode: "remote",
             modelId: "claude-sonnet",
             projectKey: null,
@@ -315,7 +355,7 @@ describe("usageWriteService", () => {
         const result = await recordUsageEvent(account.id, {
             sessionId: session.id,
             observedAt: 1_714_000_010_000,
-            providerId: "codex",
+            agentId: "codex",
             backendMode: "appServer",
             modelId: "gpt-5-codex",
             projectKey: null,
@@ -377,7 +417,7 @@ describe("usageWriteService", () => {
                 accountId: account.id,
                 sessionId: session.id,
                 observedAt: new Date(1_714_000_020_000),
-                providerId: "claude",
+                agentId: "claude",
                 backendMode: "remote",
                 modelId: "claude-sonnet",
                 projectKey: null,
@@ -411,7 +451,7 @@ describe("usageWriteService", () => {
         const retried = await recordUsageEvent(account.id, {
             sessionId: session.id,
             observedAt: 1_714_000_021_000,
-            providerId: "claude",
+            agentId: "claude",
             backendMode: "remote",
             modelId: "claude-sonnet",
             projectKey: null,
@@ -461,7 +501,7 @@ describe("usageWriteService", () => {
         const result = await recordUsageEvent(account.id, {
             sessionId: session.id,
             observedAt: 1_714_000_000_000,
-            providerId: "claude",
+            agentId: "claude",
             backendMode: "remote",
             modelId: "claude-sonnet",
             projectKey: null,

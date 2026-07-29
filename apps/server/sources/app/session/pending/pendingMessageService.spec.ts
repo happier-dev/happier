@@ -3,13 +3,30 @@ import { createEnvPatcher } from "@/testkit/env";
 
 let currentTx: any;
 
+const transactionHarness = vi.hoisted(() => {
+    class TransactionAcquisitionUnavailableError extends Error {
+        readonly code = "P2028";
+        constructor(readonly cause: unknown) {
+            super("Database transaction acquisition is temporarily unavailable");
+        }
+    }
+    return {
+        inTx: vi.fn(async (fn: any) => await fn(currentTx)),
+        TransactionAcquisitionUnavailableError,
+    };
+});
+
 vi.mock("@/storage/inTx", () => ({
-    inTx: async (fn: any) => await fn(currentTx),
+    inTx: transactionHarness.inTx,
+    TransactionAcquisitionUnavailableError: transactionHarness.TransactionAcquisitionUnavailableError,
+    isTransactionAcquisitionUnavailableError: (error: unknown) =>
+        error instanceof transactionHarness.TransactionAcquisitionUnavailableError,
 }));
 
 const resolveSessionPendingEditAccess = vi.fn(async (..._args: any[]) => ({ ok: true, isOwner: true }));
 vi.mock("@/app/session/pending/resolveSessionPendingAccess", () => ({
     resolveSessionPendingEditAccess: (...args: any[]) => resolveSessionPendingEditAccess(...args),
+    resolveSessionPendingOwnerAccess: (...args: any[]) => resolveSessionPendingEditAccess(...args),
     resolveSessionPendingViewAccess: vi.fn(async () => ({ ok: true, isOwner: true })),
 }));
 
@@ -23,7 +40,7 @@ vi.mock("@/app/session/pending/applyPendingSessionStateChange", () => ({
     applyPendingSessionStateChange: (...args: any[]) => applyPendingSessionStateChange(...args),
 }));
 
-import { enqueuePendingMessage, updatePendingMessage } from "./pendingMessageService";
+import { enqueuePendingMessage, resolveAcceptedPendingDelivery, updatePendingMessage } from "./pendingMessageService";
 
 const enqueuePendingMessageCompat = enqueuePendingMessage as unknown as (params: any) => Promise<any>;
 const updatePendingMessageCompat = updatePendingMessage as unknown as (params: any) => Promise<any>;
@@ -34,6 +51,8 @@ describe("pendingMessageService", () => {
     ]);
 
     beforeEach(() => {
+        transactionHarness.inTx.mockReset();
+        transactionHarness.inTx.mockImplementation(async (fn: any) => await fn(currentTx));
         resolveSessionPendingEditAccess.mockReset();
         resolveSessionPendingEditAccess.mockResolvedValue({ ok: true, isOwner: true });
         applyPendingSessionStateChange.mockReset();
@@ -50,6 +69,9 @@ describe("pendingMessageService", () => {
                 findUnique: vi.fn(),
                 update: vi.fn(async () => ({ pendingQueueSeq: 1 })),
             },
+            sessionMessage: {
+                findUnique: vi.fn(async () => null),
+            },
             sessionPendingMessage: {
                 findUnique: vi.fn(),
                 findFirst: vi.fn(),
@@ -57,6 +79,55 @@ describe("pendingMessageService", () => {
                 update: vi.fn(),
             },
         };
+    });
+
+    it("returns typed correlated transaction unavailability only for pre-callback acquisition failure", async () => {
+        const acquisitionError = Object.assign(
+            new Error("Transaction API error: Unable to start a transaction in the given time."),
+            { code: "P2028", meta: { error: "Unable to start a transaction in the given time." } },
+        );
+        transactionHarness.inTx.mockRejectedValueOnce(
+            new transactionHarness.TransactionAcquisitionUnavailableError(acquisitionError),
+        );
+
+        await expect(resolveAcceptedPendingDelivery({
+            actorUserId: "u1",
+            sessionId: "s1",
+            localId: "l1",
+            publisherAuthority: {
+                accountId: "u1",
+                machineId: "m1",
+                sessionId: "s1",
+                committedFence: new Date(1_000),
+            },
+            diagnosticCorrelationId: "accepted-settlement-1",
+        })).resolves.toEqual({
+            ok: false,
+            error: "transaction-unavailable",
+            retryAfterMs: 1_000,
+            correlationId: "accepted-settlement-1",
+        });
+    });
+
+    it("keeps transaction-body P2028 classified as an internal operation failure", async () => {
+        const operationError = Object.assign(
+            new Error("Transaction API error: Unable to start a transaction in the given time."),
+            { code: "P2028", meta: { error: "Unable to start a transaction in the given time." } },
+        );
+        transactionHarness.inTx.mockRejectedValueOnce(operationError);
+
+        await expect(resolveAcceptedPendingDelivery({
+            actorUserId: "u1",
+            sessionId: "s1",
+            localId: "l1",
+            publisherAuthority: {
+                accountId: "u1",
+                machineId: "m1",
+                sessionId: "s1",
+                committedFence: new Date(1_000),
+            },
+            diagnosticCorrelationId: "accepted-settlement-2",
+        })).resolves.toEqual({ ok: false, error: "internal" });
     });
 
     it("stores plain content when session encryptionMode is plain and storagePolicy is optional", async () => {
@@ -70,7 +141,10 @@ describe("pendingMessageService", () => {
             localId: "l1",
             content: { t: "plain", v: { type: "user", text: "hi" } },
             messageRole: "user",
+            requestedAction: { v: 1, kind: "enqueue" },
             status: "queued",
+            deliveryState: null,
+            deliveryBlockedReason: null,
             position: 1,
             createdAt,
             updatedAt: createdAt,
@@ -84,6 +158,7 @@ describe("pendingMessageService", () => {
             sessionId: "s1",
             localId: "l1",
             content: { t: "plain", v: { type: "user", text: "hi" } },
+            requestedAction: { v: 1, kind: "enqueue" },
         });
 
         expect(res.ok).toBe(true);
@@ -108,7 +183,10 @@ describe("pendingMessageService", () => {
             localId: "l1",
             content: { t: "encrypted", c: "cipher" },
             messageRole: "user",
+            requestedAction: { v: 1, kind: "enqueue" },
             status: "queued",
+            deliveryState: null,
+            deliveryBlockedReason: null,
             position: 1,
             createdAt,
             updatedAt: createdAt,
@@ -123,6 +201,7 @@ describe("pendingMessageService", () => {
             localId: "l1",
             ciphertext: "cipher",
             messageRole: "user",
+            requestedAction: { v: 1, kind: "enqueue" },
         });
 
         expect(res.ok).toBe(true);
@@ -144,7 +223,10 @@ describe("pendingMessageService", () => {
             localId: "l1",
             content: { t: "encrypted", c: "cipher" },
             messageRole: null,
+            requestedAction: { v: 1, kind: "enqueue" },
             status: "queued",
+            deliveryState: null,
+            deliveryBlockedReason: null,
             position: 1,
             createdAt,
             updatedAt: createdAt,
@@ -156,7 +238,10 @@ describe("pendingMessageService", () => {
             localId: "l1",
             content: { t: "encrypted", c: "cipher" },
             messageRole: "user",
+            requestedAction: { v: 1, kind: "enqueue" },
             status: "queued",
+            deliveryState: null,
+            deliveryBlockedReason: null,
             position: 1,
             createdAt,
             updatedAt: createdAt,
@@ -171,6 +256,7 @@ describe("pendingMessageService", () => {
             localId: "l1",
             ciphertext: "cipher",
             messageRole: "user",
+            requestedAction: { v: 1, kind: "enqueue" },
         });
 
         expect(res.ok).toBe(true);
@@ -205,6 +291,7 @@ describe("pendingMessageService", () => {
             sessionId: "s1",
             localId: "l1",
             ciphertext: "cipher",
+            requestedAction: { v: 1, kind: "enqueue" },
         });
 
         expect(res).toEqual({ ok: false, error: "invalid-params", code: "session_encryption_mode_mismatch" });
@@ -294,7 +381,10 @@ describe("pendingMessageService", () => {
         currentTx.sessionPendingMessage.create.mockImplementation(async ({ data }: { data: any }) => ({
             localId: data.localId,
             content: data.content,
+            requestedAction: data.requestedAction,
             status: data.status,
+            deliveryState: data.deliveryState ?? null,
+            deliveryBlockedReason: null,
             position: data.position,
             createdAt,
             updatedAt: createdAt,
@@ -309,12 +399,14 @@ describe("pendingMessageService", () => {
                 sessionId: "s1",
                 localId: "l1",
                 ciphertext: "cipher-1",
+                requestedAction: { v: 1, kind: "enqueue" },
             }),
             enqueuePendingMessageCompat({
                 actorUserId: "u1",
                 sessionId: "s1",
                 localId: "l2",
                 ciphertext: "cipher-2",
+                requestedAction: { v: 1, kind: "enqueue" },
             }),
         ]);
 

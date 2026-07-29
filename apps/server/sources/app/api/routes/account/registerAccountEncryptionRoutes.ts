@@ -6,6 +6,8 @@ import {
     AccountEncryptionModeUpdateRequestSchema,
 } from "@happier-dev/protocol";
 import { type Fastify } from "../../types";
+import { updateAccountEncryptionMode } from "./updateAccountEncryptionMode";
+import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 
 export function registerAccountEncryptionRoutes(app: Fastify): void {
     app.get(
@@ -29,7 +31,10 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                     return reply.code(500).send({ error: "internal" });
                 }
 
-                const mode = !user.publicKey ? "plain" : user.encryptionMode === "plain" ? "plain" : "e2ee";
+                const mode =
+                    resolveEffectiveAccountEncryptionModeFromAccountRow(
+                        user,
+                    );
                 return reply.send({ mode, updatedAt: user.encryptionModeUpdatedAt.getTime() });
             } catch {
                 return reply.code(500).send({ error: "internal" });
@@ -45,7 +50,13 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
                 body: AccountEncryptionModeUpdateRequestSchema,
                 response: {
                     200: AccountEncryptionModeResponseSchema,
-                    400: z.object({ error: z.enum(["invalid-params", "migration-required"]) }),
+                    400: z.object({
+                        error: z.enum([
+                            "invalid-params",
+                            "migration-required",
+                            "metadata_privacy_upgrade_required",
+                        ]),
+                    }),
                     404: z.object({ error: z.literal("not_found") }),
                     500: z.object({ error: z.literal("internal") }),
                 },
@@ -56,36 +67,28 @@ export function registerAccountEncryptionRoutes(app: Fastify): void {
             const mode = requestedMode === "plain" ? "plain" : "e2ee";
 
             try {
-                const account = await db.account.findUnique({
-                    where: { id: request.userId },
-                    select: { publicKey: true, settings: true },
+                const result = await updateAccountEncryptionMode({
+                    accountId: request.userId,
+                    mode,
                 });
-                if (!account) {
+                if (result.status === "account_not_found") {
                     return reply.code(500).send({ error: "internal" });
                 }
-
-                const hasSettings = typeof account.settings === "string" && account.settings.trim().length > 0;
-                const connectedServicesCount = await db.serviceAccountToken.count({ where: { accountId: request.userId } });
-                const automationsCount = await db.automation.count({ where: { accountId: request.userId } });
-                const requiresMigration = hasSettings || connectedServicesCount > 0 || automationsCount > 0;
-                if (requiresMigration) {
+                if (result.status === "migration_required") {
                     return reply.code(400).send({ error: "migration-required" });
                 }
-
-                if (mode === "e2ee") {
-                    if (!account.publicKey) {
-                        return reply.code(400).send({ error: "invalid-params" });
-                    }
+                if (
+                    result.status
+                    === "metadata_privacy_upgrade_required"
+                ) {
+                    return reply.code(400).send({
+                        error: "metadata_privacy_upgrade_required",
+                    });
                 }
-
-                const updated = await db.account.update({
-                    where: { id: request.userId },
-                    data: { encryptionMode: mode, encryptionModeUpdatedAt: new Date() },
-                    select: { encryptionMode: true, encryptionModeUpdatedAt: true },
-                });
-
-                const storedMode = updated.encryptionMode === "plain" ? "plain" : "e2ee";
-                return reply.send({ mode: storedMode, updatedAt: updated.encryptionModeUpdatedAt.getTime() });
+                if (result.status === "invalid_public_key") {
+                    return reply.code(400).send({ error: "invalid-params" });
+                }
+                return reply.send({ mode: result.mode, updatedAt: result.updatedAt });
             } catch {
                 return reply.code(500).send({ error: "internal" });
             }

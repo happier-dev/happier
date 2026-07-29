@@ -127,8 +127,17 @@ describe('startSocket transfer relay v2 registration', () => {
     expect(transferRelayV2HandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({ io: fakeServer }));
     expect(peerTcpTunnelRelayHandlerMock).toHaveBeenCalledTimes(1);
     expect(peerTcpTunnelRelayHandlerMock).toHaveBeenCalledWith('user-1', socket, expect.objectContaining({
-      io: fakeServer,
+      io: expect.objectContaining({
+        to: expect.any(Function),
+      }),
+      coordinator: expect.objectContaining({
+        admit: expect.any(Function),
+        routeMachineEnvelope: expect.any(Function),
+        release: expect.any(Function),
+        close: expect.any(Function),
+      }),
       serverRoutedEnabled: false,
+      maxBytes: 64 * 1024 * 1024,
       maxActiveTunnelsPerSocket: 8,
       maxFrameBytes: 64 * 1024,
     }));
@@ -186,7 +195,10 @@ describe('startSocket transfer relay v2 registration', () => {
     const connectionPromise = connectionHandler!(socket);
     await Promise.resolve();
 
-    expect(socket.join).toHaveBeenCalledWith(['machine:m-1:user-1']);
+    expect(socket.join).toHaveBeenCalledWith([
+      'user-machines:user-1',
+      'machine:m-1:user-1',
+    ]);
     expect(eventRouterEmitEphemeralMock).not.toHaveBeenCalled();
 
     resolveJoin();

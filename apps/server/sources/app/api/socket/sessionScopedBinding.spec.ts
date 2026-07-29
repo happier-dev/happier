@@ -20,6 +20,7 @@ vi.mock("@/app/monitoring/metrics/sessionBindingMetrics", () => ({
 }));
 
 import {
+    canReadAccessKeyFromSessionScopedSocket,
     canPublishFromSessionScopedSocket,
     resolveSessionScopedSocketBinding,
 } from "./sessionScopedBinding";
@@ -200,5 +201,59 @@ describe("resolveSessionScopedSocketBinding", () => {
                 requireMachineBinding: true,
             }),
         ).resolves.toBe(false);
+    });
+
+    it("keeps owner-session sockets authorized to read machine access keys within the bound session", async () => {
+        await expect(
+            canReadAccessKeyFromSessionScopedSocket({
+                socket: {
+                    data: {
+                        clientType: "session-scoped",
+                        sessionScopedBinding: {
+                            sessionId: "s1",
+                            machineId: null,
+                            proof: "owner-session",
+                        },
+                    },
+                } as any,
+                connection: {
+                    connectionType: "session-scoped",
+                    socket: {} as any,
+                    userId: "u1",
+                    sessionId: "s1",
+                },
+                sessionId: "s1",
+                machineId: "m2",
+            }),
+        ).resolves.toBe(true);
+
+        expect(accessKeyFindUniqueMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects machine-bound sockets that target a sibling machine access key in the same session", async () => {
+        await expect(
+            canReadAccessKeyFromSessionScopedSocket({
+                socket: {
+                    data: {
+                        clientType: "session-scoped",
+                        sessionScopedBinding: {
+                            sessionId: "s1",
+                            machineId: "m1",
+                            proof: "machine-access-key",
+                        },
+                    },
+                } as any,
+                connection: {
+                    connectionType: "session-scoped",
+                    socket: {} as any,
+                    userId: "u1",
+                    sessionId: "s1",
+                },
+                sessionId: "s1",
+                machineId: "m2",
+            }),
+        ).resolves.toBe(false);
+
+        expect(accessKeyFindUniqueMock).not.toHaveBeenCalled();
     });
 });

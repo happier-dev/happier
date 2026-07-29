@@ -1,11 +1,12 @@
 import { z } from "zod";
 
 import type { Fastify } from "../../../types";
-import { db } from "@/storage/db";
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/protocol";
 
 import { ConnectedServiceProfileIdSchema } from "./profileIdSchema";
 import { NotFoundSchema } from "../../../schemas/notFoundSchema";
+import { resolveLegacyQualifiedConnectedAccountService } from "../qualifiedConnectedAccounts/identity";
+import { acquireQualifiedConnectedServiceRefreshLease } from "../qualifiedConnectedAccounts/credentialRepository";
 
 function registerConnectedServiceRefreshLeaseRoute(
   app: Fastify,
@@ -24,11 +25,14 @@ function registerConnectedServiceRefreshLeaseRoute(
         machineId: z.string().min(1),
         ownerId: z.string().min(1).optional(),
         leaseMs: z.number().int().min(1),
+        expectedCredentialRevision: z.string().trim().min(1).max(128).optional(),
       }),
       response: {
         200: z.object({
           acquired: z.boolean(),
           leaseUntil: z.number().int().nonnegative(),
+          ownerId: z.string(),
+          credentialRevision: z.string(),
         }),
         404: z.union([NotFoundSchema, z.object({ error: z.literal("connect_credential_not_found") })]),
       },
@@ -41,38 +45,30 @@ function registerConnectedServiceRefreshLeaseRoute(
     const ownerId = request.body.ownerId?.trim() || machineId;
     const leaseMs = Math.min(request.body.leaseMs, refreshLeaseMaxMs);
 
-    const now = Date.now();
-    const nowDate = new Date(now);
-    const nextExpiry = new Date(now + leaseMs);
-
-    const acquired = await db.serviceAccountToken.updateMany({
-      where: {
-        accountId: userId,
-        vendor: serviceId,
-        profileId,
-        OR: [
-          { refreshLeaseExpiresAt: null },
-          { refreshLeaseExpiresAt: { lte: nowDate } },
-          { refreshLeaseOwnerMachineId: ownerId },
-        ],
+    const result = await acquireQualifiedConnectedServiceRefreshLease({
+      accountId: userId,
+      ref: {
+        service: resolveLegacyQualifiedConnectedAccountService(serviceId),
+        accountId: profileId,
       },
-      data: {
-        refreshLeaseOwnerMachineId: ownerId,
-        refreshLeaseExpiresAt: nextExpiry,
-      },
+      ownerId,
+      ttlMs: leaseMs,
+      ...(request.body.expectedCredentialRevision !== undefined
+        ? {
+          expectedCredentialRevision:
+            request.body.expectedCredentialRevision,
+        }
+        : {}),
     });
-
-    if (acquired.count === 1) {
-      return reply.send({ acquired: true, leaseUntil: nextExpiry.getTime() });
+    if (result.status === "not_found") {
+      return reply.code(404).send({ error: "connect_credential_not_found" });
     }
-
-    const row = await db.serviceAccountToken.findUnique({
-      where: { accountId_vendor_profileId: { accountId: userId, vendor: serviceId, profileId } },
-      select: { refreshLeaseExpiresAt: true },
+    return reply.send({
+      acquired: result.acquired,
+      leaseUntil: result.leaseUntil,
+      ownerId: result.ownerId,
+      credentialRevision: result.credentialRevision,
     });
-    if (!row) return reply.code(404).send({ error: "connect_credential_not_found" });
-
-    return reply.send({ acquired: false, leaseUntil: row.refreshLeaseExpiresAt?.getTime() ?? now });
   });
 }
 

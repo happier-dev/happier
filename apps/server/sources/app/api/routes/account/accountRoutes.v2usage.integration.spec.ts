@@ -314,7 +314,7 @@ describe("accountRoutes v2 usage", () => {
                     payload: {
                         sessionId: session.id,
                         observedAt: 1_714_000_000_000,
-                        providerId: "claude",
+                        agentId: "claude",
                         backendMode: "remote",
                         modelId: "claude-sonnet-4-6",
                         projectKey: "project:abc",
@@ -350,14 +350,37 @@ describe("accountRoutes v2 usage", () => {
                     success: true,
                     eventId: expect.any(String),
                 });
+                expect(buildUsageEphemeral).toHaveBeenCalledWith(
+                    session.id,
+                    "claude:claude-sonnet-4-6",
+                    {
+                        total: 15,
+                        input: 10,
+                        output: 5,
+                        reasoning: 0,
+                        cacheRead: 0,
+                        cacheWrite: 0,
+                    },
+                    {
+                        total: 0.12,
+                        reportedUsd: 0.12,
+                        estimatedUsd: 0,
+                        invoiceUsd: 0,
+                    },
+                );
+                expect(emitEphemeral).toHaveBeenCalledWith({
+                    userId: account.id,
+                    payload: { type: "usage" },
+                    recipientFilter: { type: "user-scoped-only" },
+                });
 
                 const query = await app.inject({
                     method: "POST",
                     url: "/v2/usage/query",
                     headers: { "content-type": "application/json", "x-test-user-id": account.id },
                     payload: {
-                        breakdowns: ["provider", "model"],
-                        filters: { sessionIds: [session.id], providerIds: ["claude"] },
+                        breakdowns: ["agent", "model"],
+                        filters: { sessionIds: [session.id], agentIds: ["claude"] },
                         includeSeries: true,
                     },
                 });
@@ -371,7 +394,7 @@ describe("accountRoutes v2 usage", () => {
                         cost: { reportedUsd: 0.12, estimatedUsd: 0, currency: "USD" },
                     },
                     breakdowns: {
-                        provider: [
+                        agent: [
                             expect.objectContaining({
                                 key: "claude",
                                 eventCount: 1,
@@ -436,7 +459,7 @@ describe("accountRoutes v2 usage", () => {
                     {
                         sessionId: sessionA.id,
                         observedAt: Date.UTC(2024, 3, 25, 13, 0, 0),
-                        providerId: "claude",
+                        agentId: "claude",
                         backendMode: "remote",
                         modelId: "claude-sonnet-4-6",
                         source: "claude_sdk",
@@ -447,7 +470,7 @@ describe("accountRoutes v2 usage", () => {
                     {
                         sessionId: sessionB.id,
                         observedAt: Date.UTC(2024, 3, 26, 14, 0, 0),
-                        providerId: "codex",
+                        agentId: "codex",
                         backendMode: "appServer",
                         modelId: "gpt-5-codex",
                         source: "codex_app_server",
@@ -494,7 +517,7 @@ describe("accountRoutes v2 usage", () => {
                         includeModelTimeline: true,
                         includeMessageStats: true,
                         activityResolution: "both",
-                        breakdowns: ["provider", "model", "session"],
+                        breakdowns: ["agent", "model", "session"],
                     },
                 });
 
@@ -529,7 +552,7 @@ describe("accountRoutes v2 usage", () => {
                         ],
                     },
                     leaders: {
-                        providers: expect.arrayContaining([
+                        agents: expect.arrayContaining([
                             expect.objectContaining({ key: "codex", eventCount: 1 }),
                             expect.objectContaining({ key: "claude", eventCount: 1 }),
                         ]),

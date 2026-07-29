@@ -3,9 +3,11 @@ import { z } from "zod";
 import { buildUpdateSessionUpdate, eventRouter } from "@/app/events/eventRouter";
 import { checkSessionAccess, requireAccessLevel } from "@/app/share/accessControl";
 import { markSessionParticipantsChanged } from "@/app/session/changeTracking/markSessionParticipantsChanged";
+import { clearSessionRuntimeActivityProjectionInTx } from "@/app/session/sessionWriteService";
 import { inTx } from "@/storage/inTx";
 import { didSessionActivityBadgeContributionChange } from "@/app/activity/accountActivityBadge";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
+import { SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { type Fastify } from "../../types";
 
@@ -36,7 +38,9 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 select: {
                     id: true,
                     seq: true,
+                    ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
+                    pendingBlockedCount: true,
                     lastViewedSessionSeq: true,
                     pendingPermissionRequestCount: true,
                     pendingUserActionRequestCount: true,
@@ -56,6 +60,7 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 data: { archivedAt: new Date() },
                 select: { archivedAt: true },
             });
+            const runtimeActivityClear = await clearSessionRuntimeActivityProjectionInTx({ tx, sessionId });
 
             const participantCursors = await markSessionParticipantsChanged({ tx, sessionId });
 
@@ -66,6 +71,10 @@ export function registerSessionArchiveRoutes(app: Fastify) {
             return {
                 ok: true as const,
                 archivedAt,
+                projection: {
+                    archivedAt,
+                    ...(runtimeActivityClear.didWrite ? runtimeActivityClear.projection : {}),
+                },
                 participantCursors,
                 badgeAttentionChanged: didSessionActivityBadgeContributionChange(session, {
                     ...session,
@@ -91,12 +100,17 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 randomKeyNaked(12),
                 undefined,
                 undefined,
-                { archivedAt: res.archivedAt },
+                res.projection,
             );
             eventRouter.emitUpdate({
                 userId: accountId,
                 payload,
                 recipientFilter: { type: "all-interested-in-session", sessionId },
+            });
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload,
+                recipientFilter: { type: "user-machine-scoped-only" },
             });
         }));
         return reply.send({ success: true, archivedAt: res.archivedAt });
@@ -127,7 +141,9 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 select: {
                     id: true,
                     seq: true,
+                    ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
                     pendingCount: true,
+                    pendingBlockedCount: true,
                     lastViewedSessionSeq: true,
                     pendingPermissionRequestCount: true,
                     pendingUserActionRequestCount: true,
@@ -177,6 +193,11 @@ export function registerSessionArchiveRoutes(app: Fastify) {
                 userId: accountId,
                 payload,
                 recipientFilter: { type: "all-interested-in-session", sessionId },
+            });
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload,
+                recipientFilter: { type: "user-machine-scoped-only" },
             });
         }));
         return reply.send({ success: true, archivedAt: null });

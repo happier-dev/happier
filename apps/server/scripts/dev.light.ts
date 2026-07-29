@@ -17,8 +17,11 @@ async function main() {
     await mkdir(filesDir, { recursive: true });
     await mkdir(dbDir, { recursive: true });
 
-    // Apply migrations (idempotent).
-    await runCommand('yarn', plan.migrateDeployArgs, env);
+    if (plan.shouldRunMigrateDeploy && plan.migrateDeployArgs) {
+        console.log(JSON.stringify({ happierStackTransition: 'migration_started' }));
+        await runCommand('yarn', plan.migrateDeployArgs, env);
+        console.log(JSON.stringify({ happierStackTransition: 'migration_completed' }));
+    }
 
     // Run the light flavor.
     await runCommand('yarn', plan.startLightArgs, env);

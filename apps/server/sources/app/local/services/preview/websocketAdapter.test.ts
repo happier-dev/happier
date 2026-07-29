@@ -35,6 +35,20 @@ async function* chunks(values: readonly string[]): AsyncIterable<Uint8Array> {
     }
 }
 
+const VALID_WEBSOCKET_ACCEPT = "3JXE6q0TVDdbiIJlVyvPfGkLkho=";
+
+function switchingProtocolsResponse(extraHeaders: readonly string[] = []): string {
+    return [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${VALID_WEBSOCKET_ACCEPT}`,
+        ...extraHeaders,
+        "",
+        "",
+    ].join("\r\n");
+}
+
 function createClient(overrides: Partial<{
     headers: Record<string, string | readonly string[] | undefined>;
     rawHeaders: readonly string[];
@@ -67,6 +81,19 @@ function createClient(overrides: Partial<{
     };
 }
 
+function previewTunnelIdentity() {
+    return {
+        tunnelId: "preview_tunnel_test",
+        substreamId: "preview_substream_test",
+    } as const;
+}
+
+async function flushAsyncWork(): Promise<void> {
+    await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+    });
+}
+
 describe("local service preview WebSocket adapter", () => {
     it("preserves WebSocket subprotocol and extension headers through the PMS tunnel", async () => {
         const mod = await loadWebSocketAdapterModule();
@@ -87,16 +114,16 @@ describe("local service preview WebSocket adapter", () => {
                 client,
             },
             openTunnel: async () => ({
+                ...previewTunnelIdentity(),
                 write: (bytes) => {
                     tunnelWrites.push(new TextDecoder().decode(bytes));
                 },
                 endWrite: vi.fn(),
                 read: () => chunks([
-                    "HTTP/1.1 101 Switching Protocols\r\n",
-                    "Upgrade: websocket\r\n",
-                    "Connection: Upgrade\r\n",
-                    "Sec-WebSocket-Protocol: vite-hmr\r\n",
-                    "Sec-WebSocket-Extensions: permessage-deflate\r\n\r\n",
+                    switchingProtocolsResponse([
+                        "Sec-WebSocket-Protocol: vite-hmr",
+                        "Sec-WebSocket-Extensions: permessage-deflate",
+                    ]),
                 ]),
                 close: vi.fn(),
                 abort: vi.fn(),
@@ -111,6 +138,375 @@ describe("local service preview WebSocket adapter", () => {
         expect(client.write.mock.calls.map((call) => new TextDecoder().decode(call[0])).join("")).toContain(
             "Sec-WebSocket-Protocol: vite-hmr\r\n",
         );
+    });
+
+    it("does not request additional tunnel response chunks until downstream WebSocket writes drain", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        let releaseFirstWrite: () => void = () => {
+            throw new Error("first downstream WebSocket write promise was not created");
+        };
+        let secondTunnelChunkRequested = false;
+        const client = createClient();
+        client.write.mockImplementationOnce(() => new Promise<void>((resolve) => {
+            releaseFirstWrite = resolve;
+        }));
+
+        const pending = mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/@vite/client",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                ...previewTunnelIdentity(),
+                write: vi.fn(),
+                endWrite: vi.fn(),
+                read: async function* () {
+                    yield new TextEncoder().encode(`${switchingProtocolsResponse()}a`);
+                    secondTunnelChunkRequested = true;
+                    yield new TextEncoder().encode("b");
+                },
+                close: vi.fn(),
+                abort: vi.fn(),
+            }),
+        });
+
+        await flushAsyncWork();
+        expect(client.write).toHaveBeenCalledTimes(1);
+        expect(secondTunnelChunkRequested).toBe(false);
+
+        releaseFirstWrite();
+        await expect(pending).resolves.toEqual({ ok: true });
+        expect(secondTunnelChunkRequested).toBe(true);
+        expect(client.write).toHaveBeenCalledTimes(2);
+        expect(client.end).toHaveBeenCalled();
+    });
+
+    it("does not allow client-supplied forwarding headers to spoof preview WebSocket authority", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const tunnelWrites: string[] = [];
+        const client = createClient({
+            headers: {
+                host: "preview.example.test",
+                upgrade: "websocket",
+                connection: "Upgrade",
+                "sec-websocket-key": "client-key",
+                "sec-websocket-version": "13",
+                "x-happier-preview-hops": "1",
+                forwarded: "for=198.51.100.10;host=attacker.example;proto=https",
+                "x-forwarded-for": "198.51.100.10",
+                "x-forwarded-host": "attacker.example",
+                "x-forwarded-proto": "https",
+                "x-forwarded-port": "443",
+                "x-real-ip": "198.51.100.10",
+            },
+            rawHeaders: [
+                "Host", "preview.example.test",
+                "Upgrade", "websocket",
+                "Connection", "Upgrade",
+                "Sec-WebSocket-Key", "client-key",
+                "Sec-WebSocket-Version", "13",
+                "X-Happier-Preview-Hops", "1",
+                "Forwarded", "for=198.51.100.10;host=attacker.example;proto=https",
+                "X-Forwarded-For", "198.51.100.10",
+                "X-Forwarded-Host", "attacker.example",
+                "X-Forwarded-Proto", "https",
+                "X-Forwarded-Port", "443",
+                "X-Real-IP", "198.51.100.10",
+            ],
+        });
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/socket",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                ...previewTunnelIdentity(),
+                write: (bytes) => {
+                    tunnelWrites.push(new TextDecoder().decode(bytes));
+                },
+                endWrite: vi.fn(),
+                read: () => chunks([switchingProtocolsResponse()]),
+                close: vi.fn(),
+                abort: vi.fn(),
+            }),
+        });
+
+        const serialized = tunnelWrites.join("");
+        expect(result).toEqual({ ok: true });
+        expect(serialized).toContain("X-Forwarded-Host: preview.example.test\r\n");
+        expect(serialized).toContain("X-Forwarded-Proto: http\r\n");
+        expect(serialized).toContain("x-happier-preview-hops: 2\r\n");
+        expect(serialized.match(/x-happier-preview-hops:/giu) ?? []).toHaveLength(1);
+        expect(serialized).not.toContain("attacker.example");
+        expect(serialized).not.toContain("198.51.100.10");
+        expect(serialized).not.toContain("X-Forwarded-Port:");
+        expect(serialized).not.toContain("X-Real-IP:");
+        expect(serialized).not.toContain("Forwarded:");
+    });
+
+    it("treats an incomplete upstream WebSocket handshake as a failed upgrade", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const client = createClient();
+        const abort = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/socket",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                ...previewTunnelIdentity(),
+                write: vi.fn(),
+                endWrite: vi.fn(),
+                read: () => chunks(["HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"]),
+                close: vi.fn(),
+                abort,
+            }),
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "upstream_response_invalid" });
+        expect(abort).toHaveBeenCalledWith("upstream_response_invalid");
+        expect(client.write).not.toHaveBeenCalled();
+        expect(client.end).not.toHaveBeenCalled();
+        expect(client.destroy).toHaveBeenCalled();
+    });
+
+    it("rejects upstream WebSocket handshakes that do not return switching protocols", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const client = createClient();
+        const abort = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/socket",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                ...previewTunnelIdentity(),
+                write: vi.fn(),
+                endWrite: vi.fn(),
+                read: () => chunks(["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]),
+                close: vi.fn(),
+                abort,
+            }),
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "upstream_response_invalid" });
+        expect(abort).toHaveBeenCalledWith("upstream_response_invalid");
+        expect(client.write).not.toHaveBeenCalled();
+        expect(client.end).not.toHaveBeenCalled();
+        expect(client.destroy).toHaveBeenCalled();
+    });
+
+    it("rejects upstream WebSocket handshakes missing required upgrade headers", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        for (const response of [
+            "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\n\r\n",
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n",
+        ]) {
+            const client = createClient();
+            const abort = vi.fn();
+
+            const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+                preview,
+                request: {
+                    path: "/socket",
+                    search: "",
+                    headers: client.headers,
+                    rawHeaders: client.rawHeaders,
+                    head: client.head,
+                    client,
+                },
+                openTunnel: async () => ({
+                    ...previewTunnelIdentity(),
+                    write: vi.fn(),
+                    endWrite: vi.fn(),
+                    read: () => chunks([response]),
+                    close: vi.fn(),
+                    abort,
+                }),
+            });
+
+            expect(result).toEqual({ ok: false, reasonCode: "upstream_response_invalid" });
+            expect(abort).toHaveBeenCalledWith("upstream_response_invalid");
+            expect(client.write).not.toHaveBeenCalled();
+            expect(client.end).not.toHaveBeenCalled();
+            expect(client.destroy).toHaveBeenCalled();
+        }
+    });
+
+    it("rejects upstream WebSocket handshakes with missing or incorrect accept headers", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        for (const response of [
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: wrong\r\n\r\n",
+        ]) {
+            const client = createClient();
+            const abort = vi.fn();
+
+            const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+                preview,
+                request: {
+                    path: "/socket",
+                    search: "",
+                    headers: client.headers,
+                    rawHeaders: client.rawHeaders,
+                    head: client.head,
+                    client,
+                },
+                openTunnel: async () => ({
+                    ...previewTunnelIdentity(),
+                    write: vi.fn(),
+                    endWrite: vi.fn(),
+                    read: () => chunks([response]),
+                    close: vi.fn(),
+                    abort,
+                }),
+            });
+
+            expect(result).toEqual({ ok: false, reasonCode: "upstream_response_invalid" });
+            expect(abort).toHaveBeenCalledWith("upstream_response_invalid");
+            expect(client.write).not.toHaveBeenCalled();
+            expect(client.end).not.toHaveBeenCalled();
+            expect(client.destroy).toHaveBeenCalled();
+        }
+    });
+
+    it("preserves invalid upstream handshake reason when downstream socket iteration throws after teardown", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        let destroyed = false;
+        const emitted: unknown[] = [];
+        const client = createClient({
+            read: async function* () {
+                while (!destroyed) {
+                    await new Promise<void>((resolve) => {
+                        setImmediate(resolve);
+                    });
+                }
+                throw new Error("socket destroyed");
+            },
+        });
+        client.destroy.mockImplementation(() => {
+            destroyed = true;
+        });
+        const abort = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/socket",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                ...previewTunnelIdentity(),
+                write: vi.fn(),
+                endWrite: vi.fn(),
+                read: () => chunks(["HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"]),
+                close: vi.fn(),
+                abort,
+            }),
+            observability: {
+                emit: (event) => emitted.push(event),
+            },
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "upstream_response_invalid" });
+        expect(abort).toHaveBeenCalledWith("upstream_response_invalid");
+        expect(emitted).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                kind: "websocket.aborted",
+                data: expect.objectContaining({ reasonCode: "upstream_response_invalid" }),
+            }),
+        ]));
+        expect(emitted).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "websocket.errored" }),
+        ]));
+    });
+
+    it("accepts fragmented upstream WebSocket handshakes with mixed-case upgrade headers", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const client = createClient();
+        const abort = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/socket",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                ...previewTunnelIdentity(),
+                write: vi.fn(),
+                endWrite: vi.fn(),
+                read: () => chunks([
+                    switchingProtocolsResponse([
+                        "uPgRaDe: WebSocket",
+                        "Connection: keep-alive, UpGrAdE",
+                    ]),
+                    "server-frame",
+                ]),
+                close: vi.fn(),
+                abort,
+            }),
+        });
+
+        expect(result).toEqual({ ok: true });
+        expect(abort).not.toHaveBeenCalled();
+        expect(client.write.mock.calls.map((call) => new TextDecoder().decode(call[0])).join("")).toContain("server-frame");
+        expect(client.end).toHaveBeenCalled();
     });
 
     it("propagates client close to the upstream tunnel write side", async () => {
@@ -134,9 +530,10 @@ describe("local service preview WebSocket adapter", () => {
                 client,
             },
             openTunnel: async () => ({
+                ...previewTunnelIdentity(),
                 write: vi.fn(),
                 endWrite,
-                read: () => chunks(["HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"]),
+                read: () => chunks([switchingProtocolsResponse()]),
                 close: vi.fn(),
                 abort: vi.fn(),
             }),
@@ -207,9 +604,10 @@ describe("local service preview WebSocket adapter", () => {
                 client,
             },
             openTunnel: async () => ({
+                ...previewTunnelIdentity(),
                 write: vi.fn(),
                 endWrite: vi.fn(),
-                read: () => chunks(["HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"]),
+                read: () => chunks([switchingProtocolsResponse()]),
                 close: vi.fn(),
                 abort,
             }),
@@ -246,12 +644,11 @@ describe("local service preview WebSocket adapter", () => {
                 client,
             },
             openTunnel: async () => ({
+                ...previewTunnelIdentity(),
                 write: vi.fn(),
                 endWrite: vi.fn(),
                 read: () => chunks([
-                    "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n",
-                    "\r\n",
-                    "abcd",
+                    `${switchingProtocolsResponse()}abcd`,
                 ]),
                 close: vi.fn(),
                 abort,
@@ -283,6 +680,7 @@ describe("local service preview WebSocket adapter", () => {
                 client,
             },
             openTunnel: async () => ({
+                ...previewTunnelIdentity(),
                 write: vi.fn(),
                 endWrite: vi.fn(),
                 read: () => chunks([oversizedHeader]),
@@ -294,5 +692,191 @@ describe("local service preview WebSocket adapter", () => {
         expect(result).toEqual({ ok: false, reasonCode: "response_header_too_large" });
         expect(abort).toHaveBeenCalledWith("response_header_too_large");
         expect(client.destroy).toHaveBeenCalled();
+    });
+
+    it("emits redacted PMS observability websocket metadata without payload bytes", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const emitted: unknown[] = [];
+        const client = createClient({
+            headers: {
+                connection: "Upgrade",
+                upgrade: "websocket",
+                "sec-websocket-key": "client-key",
+                "sec-websocket-version": "13",
+                authorization: "Bearer raw-session-token",
+                cookie: "happier_preview_token=raw-preview-token",
+            },
+            rawHeaders: [
+                "Connection", "Upgrade",
+                "Upgrade", "websocket",
+                "Sec-WebSocket-Key", "client-key",
+                "Sec-WebSocket-Version", "13",
+                "Sec-WebSocket-Protocol", "vite-hmr, bearer.raw-secret-subprotocol",
+                "Authorization", "Bearer raw-session-token",
+                "Cookie", "happier_preview_token=raw-preview-token",
+            ],
+            read: () => chunks(["secret-client"]),
+        });
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/hmr",
+                search: "?previewToken=raw-preview-token&ok=1",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                tunnelId: "preview_tunnel_1",
+                substreamId: "preview_substream_1",
+                write: vi.fn(),
+                endWrite: vi.fn(),
+                read: () => chunks([
+                    switchingProtocolsResponse(["Sec-WebSocket-Protocol: vite-hmr"]),
+                    "secret-server-frame",
+                ]),
+                close: vi.fn(),
+                abort: vi.fn(),
+            }),
+            observability: {
+                emit: (event) => emitted.push(event),
+            },
+        });
+
+        expect(result).toEqual({ ok: true });
+        expect(emitted).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "websocket.opened" }),
+            expect.objectContaining({ kind: "websocket.closed" }),
+        ]));
+        const serialized = JSON.stringify(emitted);
+        expect(serialized).not.toContain("raw-preview-token");
+        expect(serialized).not.toContain("raw-session-token");
+        expect(serialized).not.toContain("raw-secret-subprotocol");
+        expect(serialized).not.toContain("secret-client");
+        expect(serialized).not.toContain("secret-server-frame");
+        expect(serialized).toContain("\"path\":\"/hmr\"");
+        expect(serialized).not.toContain("vite-hmr");
+        expect(serialized).toContain("\"subprotocolCount\":2");
+        expect(emitted).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                flow: expect.objectContaining({
+                    flowId: "preview_tunnel_1",
+                    tunnelId: "preview_tunnel_1",
+                    substreamId: "preview_substream_1",
+                }),
+                data: expect.objectContaining({
+                    socketId: expect.stringContaining(`${preview.previewId}:ws:`),
+                }),
+            }),
+        ]));
+    });
+
+    it("emits PMS observability aborted lifecycle when the upstream WebSocket handshake fails", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const emitted: unknown[] = [];
+        const client = createClient();
+        const abort = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/hmr",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                tunnelId: "preview_tunnel_1",
+                substreamId: "preview_substream_1",
+                write: vi.fn(),
+                endWrite: vi.fn(),
+                read: () => chunks(["HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"]),
+                close: vi.fn(),
+                abort,
+            }),
+            observability: {
+                emit: (event) => emitted.push(event),
+            },
+            nowMs: () => 2_000,
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "upstream_response_invalid" });
+        expect(abort).toHaveBeenCalledWith("upstream_response_invalid");
+        expect(emitted).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "websocket.opened" }),
+            expect.objectContaining({
+                kind: "websocket.aborted",
+                data: expect.objectContaining({
+                    reasonCode: "upstream_response_invalid",
+                    socketId: expect.stringContaining(`${preview.previewId}:ws:`),
+                }),
+            }),
+        ]));
+        expect(emitted).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "websocket.closed" }),
+        ]));
+    });
+
+    it("emits PMS observability errored lifecycle when the WebSocket adapter throws", async () => {
+        const mod = await loadWebSocketAdapterModule();
+        expect(mod?.proxyLocalServicePreviewWebSocketUpgrade).toBeTypeOf("function");
+        if (!mod?.proxyLocalServicePreviewWebSocketUpgrade) return;
+
+        const emitted: unknown[] = [];
+        const client = createClient();
+        const abort = vi.fn();
+
+        const result = await mod.proxyLocalServicePreviewWebSocketUpgrade({
+            preview,
+            request: {
+                path: "/hmr",
+                search: "",
+                headers: client.headers,
+                rawHeaders: client.rawHeaders,
+                head: client.head,
+                client,
+            },
+            openTunnel: async () => ({
+                tunnelId: "preview_tunnel_1",
+                substreamId: "preview_substream_1",
+                write: vi.fn(() => {
+                    throw new Error("write failed");
+                }),
+                endWrite: vi.fn(),
+                read: () => chunks([switchingProtocolsResponse()]),
+                close: vi.fn(),
+                abort,
+            }),
+            observability: {
+                emit: (event) => emitted.push(event),
+            },
+            nowMs: () => 2_000,
+        });
+
+        expect(result).toEqual({ ok: false, reasonCode: "upstream_stream_failed" });
+        expect(abort).toHaveBeenCalledWith("preview_websocket_adapter_error");
+        expect(emitted).toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "websocket.opened" }),
+            expect.objectContaining({
+                kind: "websocket.errored",
+                data: expect.objectContaining({
+                    reasonCode: "preview_websocket_adapter_error",
+                    socketId: expect.stringContaining(`${preview.previewId}:ws:`),
+                }),
+            }),
+        ]));
+        expect(emitted).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ kind: "websocket.closed" }),
+        ]));
     });
 });

@@ -5,7 +5,7 @@ import type {
     UsageObservationCost,
     UsageObservationTokens,
 } from "@happier-dev/protocol";
-import { Prisma } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { buildUsageEphemeral, eventRouter } from "@/app/events/eventRouter";
 import { usageReportWritesCounter } from "@/app/monitoring/metrics/index";
 import { afterTx, inTx, type Tx } from "@/storage/inTx";
@@ -97,7 +97,7 @@ function toUsageEventCreateInput(
         accountId,
         sessionId: request.sessionId || null,
         observedAt: new Date(request.observedAt),
-        providerId: request.providerId,
+        agentId: request.agentId,
         backendMode: request.backendMode ?? null,
         modelId: request.modelId ?? null,
         projectKey: request.projectKey ?? null,
@@ -121,6 +121,7 @@ function toUsageEventCreateInput(
         billingContext: request.cost.billingContext ?? null,
         costSource: request.cost.costSource ?? null,
         currency: request.cost.currency,
+        costBreakdown: request.cost.breakdown ? JSON.stringify(request.cost.breakdown) : null,
         contextUsedTokens: request.context?.usedTokens ?? null,
         contextWindowTokens: request.context?.windowTokens ?? null,
         metadata: request.metadata ?? null,
@@ -190,14 +191,14 @@ function buildLegacyDeltaRequest(
     return {
         sessionId: params.sessionId ?? '',
         observedAt: params.observedAtMs,
-        providerId: 'legacy',
+        agentId: 'legacy',
         backendMode: null,
         modelId: null,
         projectKey: null,
         workspaceId: null,
         machineId: null,
         source: 'legacy_usage_report',
-        scope: 'session_cumulative',
+        scope: 'turn_delta',
         externalKey: params.sessionId ? `${params.key}:${params.observedAtMs}` : null,
         turnId: null,
         isCumulative: false,
@@ -230,6 +231,25 @@ function toLegacyUsageEphemeralCost(cost: UsageObservationCost): Record<string, 
     };
 }
 
+function emitUsageEventAfterTransaction(
+    tx: Tx,
+    accountId: string,
+    request: UsageEventIngestRequest,
+): void {
+    afterTx(tx, () => {
+        eventRouter.emitEphemeral({
+            userId: accountId,
+            payload: buildUsageEphemeral(
+                request.sessionId,
+                `${request.agentId}:${request.modelId ?? 'unknown'}`,
+                toLegacyUsageEphemeralTokens(request.tokens),
+                toLegacyUsageEphemeralCost(request.cost),
+            ),
+            recipientFilter: { type: 'user-scoped-only' },
+        });
+    });
+}
+
 export async function recordUsageEvent(
     accountId: string,
     request: UsageEventIngestRequest,
@@ -242,26 +262,17 @@ export async function recordUsageEvent(
         if (request.externalKey) {
             const idempotencyKey = buildUsageEventIdempotencyKey(accountId, request);
             const legacyIdempotencyKey = buildLegacyUsageEventIdempotencyKey(accountId, request);
-            const existingByCurrentKey = await tx.usageEvent.findUnique({
+            // Remove the raw-key candidate after all pre-hash UsageEvent rows have aged out.
+            const existing = await tx.usageEvent.findFirst({
                 where: {
-                    idempotencyKey: idempotencyKey ?? "",
+                    idempotencyKey: {
+                        in: [idempotencyKey, legacyIdempotencyKey].filter((key): key is string => key !== null),
+                    },
                 },
                 select: { id: true, createdAt: true },
             });
-            if (existingByCurrentKey) {
-                return { ok: true, event: existingByCurrentKey };
-            }
-
-            if (legacyIdempotencyKey) {
-                const existingByLegacyKey = await tx.usageEvent.findUnique({
-                    where: {
-                        idempotencyKey: legacyIdempotencyKey,
-                    },
-                    select: { id: true, createdAt: true },
-                });
-                if (existingByLegacyKey) {
-                    return { ok: true, event: existingByLegacyKey };
-                }
+            if (existing) {
+                return { ok: true, event: existing };
             }
 
             const created = await tx.usageEvent.upsert({
@@ -272,6 +283,7 @@ export async function recordUsageEvent(
                 create: toUsageEventCreateInput(accountId, request),
                 select: { id: true, createdAt: true },
             });
+            emitUsageEventAfterTransaction(tx, accountId, request);
             return { ok: true, event: created };
         }
 
@@ -279,6 +291,7 @@ export async function recordUsageEvent(
             data: toUsageEventCreateInput(accountId, request),
             select: { id: true, createdAt: true },
         });
+        emitUsageEventAfterTransaction(tx, accountId, request);
 
         return { ok: true, event: created };
     });
@@ -435,7 +448,21 @@ export async function recordLegacyUsageReport(
         });
 
         let usageEventId: string | null = null;
-        if (deltaRequest) {
+        const nearbyNativeEvent = deltaRequest && sessionId
+            ? await tx.usageEvent.findFirst({
+                where: {
+                    accountId,
+                    sessionId,
+                    source: { not: 'legacy_usage_report' },
+                    observedAt: {
+                        gte: new Date(report.updatedAt.getTime() - 15 * 60_000),
+                        lte: new Date(report.updatedAt.getTime() + 15 * 60_000),
+                    },
+                },
+                select: { id: true },
+            })
+            : null;
+        if (deltaRequest && !nearbyNativeEvent) {
             const created = await tx.usageEvent.create({
                 data: toUsageEventCreateInput(accountId, deltaRequest),
                 select: { id: true },

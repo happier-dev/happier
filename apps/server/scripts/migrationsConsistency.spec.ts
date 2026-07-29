@@ -41,6 +41,44 @@ function expectNoFileContains(paths: string[], pattern: string): void {
 }
 
 describe("migrations (provider completeness)", () => {
+    it("prepares MySQL digest identity without contracting the legacy writer", () => {
+        const root = process.cwd();
+        const migration = readText(
+            join(
+                root,
+                "prisma",
+                "mysql",
+                "migrations",
+                "20260710170000_add_voice_provider_conversation_keys",
+                "migration.sql",
+            ),
+        );
+        const createDigestIndex = migration.indexOf(
+            "CREATE UNIQUE INDEX `VoiceConversation_providerId_providerConversationKey_key`",
+        );
+        expect(createDigestIndex).toBeGreaterThanOrEqual(0);
+        expect(migration).not.toContain("DROP INDEX `VoiceConversation_providerId_providerConversationId_key`");
+        expect(migration).not.toContain("DROP INDEX `VoiceSessionLease_provider_binding_lookup_idx`");
+        expect(migration).not.toMatch(/UPDATE\s+`Voice(?:Conversation|SessionLease)`/);
+        expect(migration).not.toContain("MODIFY `providerConversationKey` CHAR(64) NOT NULL");
+    });
+
+    it("does not claim widened MySQL raw identifiers before the contract release", () => {
+        const root = process.cwd();
+        const migration = readText(
+            join(
+                root,
+                "prisma",
+                "mysql",
+                "migrations",
+                "20260710170000_add_voice_provider_conversation_keys",
+                "migration.sql",
+            ),
+        );
+        expect(migration).toContain("CREATE INDEX `VoiceSessionLease_provider_binding_key_lookup_idx`");
+        expect(migration).not.toMatch(/MODIFY\s+`providerConversationId`\s+VARCHAR\(512\)/);
+    });
+
     it("includes AccountChange entity FK columns across providers", () => {
         const root = process.cwd();
         const schema = readText(join(root, "prisma", "schema.prisma"));
@@ -150,14 +188,14 @@ describe("migrations (provider completeness)", () => {
         ]) {
             const schema = readText(schemaPath);
             expect(schema).toContain("lastRuntimeIssueJson");
-            expect(schema).toContain("providerRollbackOrdinal Int?");
+            expect(schema).toContain("agentRollbackOrdinal    Int?");
             expect(schema).not.toContain("rollbackProviderOrdinal");
             expect(schema).toContain("decision   String");
             expect(schema).toContain("observedAt BigInt");
             expect(schema).toContain("appliedAt  BigInt");
             expect(schema).toContain("@@index([sessionId, status])");
             expect(schema).toContain("@@index([sessionId, rollbackState])");
-            expect(schema).toContain("@@index([sessionId, provider, providerTurnId])");
+            expect(schema).toContain("@@index([sessionId, agentId, agentTurnId])");
             expect(schema).toContain("@@index([sessionId, appliedAt])");
         }
 
@@ -169,6 +207,12 @@ describe("migrations (provider completeness)", () => {
                 '"lastRuntimeIssueJson"',
                 '"providerRollbackOrdinal"',
                 'CREATE INDEX "SessionTurn_sessionId_provider_providerTurnId_idx"',
+            ]),
+        ).toBe(true);
+        expect(
+            anyFileContains(pgFiles, [
+                'RENAME COLUMN "providerRollbackOrdinal" TO "agentRollbackOrdinal"',
+                'RENAME TO "SessionTurn_sessionId_agentId_agentTurnId_idx"',
             ]),
         ).toBe(true);
         expect(
@@ -193,6 +237,12 @@ describe("migrations (provider completeness)", () => {
         ).toBe(true);
         expect(
             anyFileContains(sqliteFiles, [
+                'RENAME COLUMN "providerRollbackOrdinal" TO "agentRollbackOrdinal"',
+                'CREATE INDEX "SessionTurn_sessionId_agentId_agentTurnId_idx"',
+            ]),
+        ).toBe(true);
+        expect(
+            anyFileContains(sqliteFiles, [
                 'CREATE TABLE "SessionTurnMutationReceipt"',
                 '"decision" TEXT NOT NULL',
                 '"observedAt" BIGINT NOT NULL',
@@ -213,6 +263,12 @@ describe("migrations (provider completeness)", () => {
         ).toBe(true);
         expect(
             anyFileContains(mysqlFiles, [
+                "RENAME COLUMN `providerRollbackOrdinal` TO `agentRollbackOrdinal`",
+                "TO `SessionTurn_sessionId_agentId_agentTurnId_idx`",
+            ]),
+        ).toBe(true);
+        expect(
+            anyFileContains(mysqlFiles, [
                 "CREATE TABLE `SessionTurnMutationReceipt`",
                 "`decision` VARCHAR(191) NOT NULL",
                 "`observedAt` BIGINT NOT NULL",
@@ -224,6 +280,7 @@ describe("migrations (provider completeness)", () => {
 
     it("uses the remote-dev SessionTurn migration identity across providers", () => {
         const root = process.cwd();
+        const correctionMigration = "20260725110000_reconcile_predecessor_migration_lineage";
         for (const providerPath of [
             join(root, "prisma"),
             join(root, "prisma", "sqlite"),
@@ -237,7 +294,66 @@ describe("migrations (provider completeness)", () => {
                 existsSync(join(providerPath, "migrations", "20260521133000_add_session_turn_rows", "migration.sql")),
                 providerPath,
             ).toBe(false);
+            expect(
+                existsSync(join(providerPath, "migrations", correctionMigration, "migration.sql")),
+                providerPath,
+            ).toBe(true);
         }
+    });
+
+    it("reconciles predecessor physical names at the append-only provider boundary", () => {
+        const root = process.cwd();
+        const correctionMigration = "20260725110000_reconcile_predecessor_migration_lineage";
+        const predecessorSystemRecordMigration = "20260519183000_add_session_system_records";
+
+        const postgresPredecessor = readText(
+            join(root, "prisma", "migrations", predecessorSystemRecordMigration, "migration.sql"),
+        );
+        const postgresCorrection = readText(
+            join(root, "prisma", "migrations", correctionMigration, "migration.sql"),
+        );
+        expect(postgresPredecessor).toContain(
+            'CREATE INDEX "ssr_account_session_kind_updated_id_idx"',
+        );
+        expect(postgresCorrection).toContain(
+            'ALTER INDEX "ssr_account_session_kind_updated_id_idx"\n'
+            + 'RENAME TO "SessionSystemRecord_account_kind_updated_idx"',
+        );
+
+        const mysqlPredecessor = readText(
+            join(root, "prisma", "mysql", "migrations", predecessorSystemRecordMigration, "migration.sql"),
+        );
+        const mysqlCorrection = readText(
+            join(root, "prisma", "mysql", "migrations", correctionMigration, "migration.sql"),
+        );
+        expect(mysqlPredecessor).toContain(
+            "CREATE INDEX `ssr_account_session_kind_updated_id_idx`",
+        );
+        expect(mysqlCorrection).toContain(
+            "RENAME INDEX `ssr_account_session_kind_updated_id_idx`\n"
+            + "    TO `SessionSystemRecord_account_kind_updated_idx`",
+        );
+        expect(mysqlCorrection.match(/ALTER TABLE `SessionTurn`/g)).toHaveLength(1);
+        expect(mysqlCorrection.match(/ALTER TABLE `ConnectedServiceUsageSource`/g)).toHaveLength(1);
+
+        const sqlitePredecessor = readText(
+            join(root, "prisma", "sqlite", "migrations", predecessorSystemRecordMigration, "migration.sql"),
+        );
+        const sqliteCorrection = readText(
+            join(root, "prisma", "sqlite", "migrations", correctionMigration, "migration.sql"),
+        );
+        expect(sqlitePredecessor).toContain(
+            'CREATE INDEX "ssr_account_session_kind_updated_id_idx"',
+        );
+        expect(sqliteCorrection).toContain(
+            'DROP INDEX "ssr_account_session_kind_updated_id_idx"',
+        );
+        expect(sqliteCorrection).toContain(
+            'CREATE INDEX "SessionSystemRecord_account_kind_updated_idx"',
+        );
+        expect(sqliteCorrection).not.toContain("IF EXISTS");
+        expect(sqliteCorrection).not.toContain("IF NOT EXISTS");
+        expect(sqliteCorrection).not.toContain("csus_paur_idx");
     });
 
     it("does not ship primary turn projection state schema artifacts", () => {

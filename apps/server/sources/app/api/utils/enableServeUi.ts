@@ -4,6 +4,7 @@ import { extname, isAbsolute, relative, resolve } from "node:path";
 import { readFile, stat } from "node:fs/promises";
 import { warn } from "@/utils/logging/log";
 import { createReadStream, existsSync } from "node:fs";
+import { isServerApiPathname } from "./serverApiPath";
 
 type AnyFastifyInstance = FastifyInstance<any, any, any, any, any>;
 type UiEncoding = 'br' | 'gzip';
@@ -202,13 +203,7 @@ export function enableServeUi(app: AnyFastifyInstance, ui: UiConfig) {
             try {
                 const rawUrl = typeof request.url === 'string' ? request.url : '';
                 const pathname = rawUrl ? new URL(rawUrl, 'http://localhost').pathname : '/';
-                const lowerPathname = pathname.toLowerCase();
-                const isApiPath =
-                    lowerPathname === '/v1' ||
-                    lowerPathname.startsWith('/v1/') ||
-                    lowerPathname === '/api' ||
-                    lowerPathname.startsWith('/api/');
-                if (isApiPath) {
+                if (isServerApiPathname(pathname)) {
                     return reply.code(404).send({ error: 'Not found' });
                 }
                 const decoded = decodeURIComponent(pathname || '/').replace(/^\/+/, '');

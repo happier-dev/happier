@@ -8,31 +8,33 @@ describe("buildUsagePremiumSections", () => {
             {
                 sessionId: "session-1",
                 observedAt: new Date("2024-04-25T13:00:00.000Z"),
-                providerId: "claude",
+                agentId: "claude",
                 backendMode: "remote",
                 modelId: "claude-sonnet-4-6",
                 projectKey: "project-1",
                 workspaceId: "workspace-1",
                 source: "claude-sdk-result",
+                contributingEventIds: ["event-1"],
                 tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
                 cost: { reportedUsd: 0.12, estimatedUsd: 0.09, invoiceUsd: 0.08, currency: "USD" },
             },
             {
                 sessionId: "session-2",
                 observedAt: new Date("2024-04-25T13:15:00.000Z"),
-                providerId: "claude",
+                agentId: "claude",
                 backendMode: "remote",
                 modelId: "claude-sonnet-4-6",
                 projectKey: "project-1",
                 workspaceId: "workspace-1",
                 source: "claude-sdk-result",
+                contributingEventIds: ["event-2"],
                 tokens: { input: 8, output: 7, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 15 },
                 cost: { reportedUsd: 0.1, estimatedUsd: 0.08, invoiceUsd: 0.07, currency: "USD" },
             },
         ];
 
         const leaders = buildUsageLeaders(rows, 10);
-        expect(leaders?.providers?.[0]).toMatchObject({
+        expect(leaders?.agents?.[0]).toMatchObject({
             key: "claude",
             eventCount: 2,
             tokens: {

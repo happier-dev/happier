@@ -2,41 +2,25 @@ import { Socket } from "socket.io";
 import { AsyncLock } from "@/utils/runtime/lock";
 import { log } from "@/utils/logging/log";
 import { recordLegacyUsageReport } from "@/app/usage/usageWriteService";
+import { LegacyUsageReportRouteBodySchema } from "@/app/usage/legacyUsageReportSchema";
+import type { ClientConnection } from "@/app/events/eventPayloadTypes";
+import { canTargetSessionFromSocket } from "./sessionScopedBinding";
 
-export function usageHandler(userId: string, socket: Socket) {
+export function usageHandler(userId: string, socket: Socket, connection: ClientConnection) {
     const receiveUsageLock = new AsyncLock();
-    socket.on('usage-report', async (data: any, callback?: (response: any) => void) => {
+    socket.on('usage-report', async (data: unknown, callback?: (response: any) => void) => {
         await receiveUsageLock.inLock(async () => {
             try {
-                const { key, sessionId, tokens, cost } = data;
-
-                // Validate required fields
-                if (!key || typeof key !== 'string') {
-                    if (callback) {
-                        callback({ success: false, error: 'Invalid key' });
-                    }
+                const parsed = LegacyUsageReportRouteBodySchema.safeParse(data);
+                if (!parsed.success) {
+                    if (callback) callback({ success: false, error: 'Invalid parameters' });
                     return;
                 }
+                const { key, sessionId, tokens, cost } = parsed.data;
 
-                // Validate tokens and cost objects
-                if (!tokens || typeof tokens !== 'object' || typeof tokens.total !== 'number') {
+                if (!canTargetSessionFromSocket({ socket, connection, sessionId })) {
                     if (callback) {
-                        callback({ success: false, error: 'Invalid tokens object - must include total' });
-                    }
-                    return;
-                }
-
-                if (!cost || typeof cost !== 'object' || typeof cost.total !== 'number') {
-                    if (callback) {
-                        callback({ success: false, error: 'Invalid cost object - must include total' });
-                    }
-                    return;
-                }
-
-                // Validate sessionId if provided
-                if (sessionId && typeof sessionId !== 'string') {
-                    if (callback) {
-                        callback({ success: false, error: 'Invalid sessionId' });
+                        callback({ success: false, error: 'Forbidden' });
                     }
                     return;
                 }
@@ -45,7 +29,7 @@ export function usageHandler(userId: string, socket: Socket) {
                     const result = await recordLegacyUsageReport({
                         accountId: userId,
                         key,
-                        sessionId: sessionId || null,
+                        sessionId,
                         tokens,
                         cost,
                     });
@@ -61,7 +45,7 @@ export function usageHandler(userId: string, socket: Socket) {
                     }
 
                     if (result.changed) {
-                        log({ module: 'websocket' }, `Usage report saved: key=${key}, sessionId=${sessionId || 'none'}, userId=${userId}`);
+                        log({ module: 'websocket' }, `Usage report saved: key=${key}, sessionId=${sessionId}, userId=${userId}`);
                     }
 
                     if (callback) {

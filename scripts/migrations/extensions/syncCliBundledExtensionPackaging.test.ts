@@ -11,7 +11,7 @@ function writeJson(path: string, value: unknown): void {
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-test('syncCliBundledExtensionPackaging adds plugin workspaces to apps/cli bundledDependencies', async () => {
+test('syncCliBundledExtensionPackaging adds plugin workspaces to both CLI shipping declarations', async () => {
   const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-sync-'));
   mkdirSync(resolve(repoRoot, 'apps/cli'), { recursive: true });
 
@@ -21,12 +21,12 @@ test('syncCliBundledExtensionPackaging adds plugin workspaces to apps/cli bundle
   mkdirSync(resolve(repoRoot, 'packages/plugins/codex/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/claude/src/manifest.ts'),
-    'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+    'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { apiVersion: 1 }, contributes: {} });\n',
     'utf8',
   );
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/codex/src/manifest.ts'),
-    'export const PLUGIN_MANIFEST = Object.freeze({ id: "codex", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+    'export const PLUGIN_MANIFEST = Object.freeze({ id: "codex", runtime: { apiVersion: 1 }, contributes: {} });\n',
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src/agent'), { recursive: true });
@@ -36,13 +36,18 @@ test('syncCliBundledExtensionPackaging adds plugin workspaces to apps/cli bundle
 
   writeJson(resolve(repoRoot, 'apps/cli/package.json'), {
     name: '@happier-dev/cli',
-    bundledDependencies: ['@happier-dev/protocol'],
+    bundledDependencies: ['@happier-dev/protocol', 'tweetnacl'],
+    dependencies: {
+      '@happier-dev/protocol': '0.0.0',
+      tweetnacl: '^1.0.3',
+    },
   });
 
   await syncCliBundledExtensionPackaging(['--root', repoRoot, '--mode', 'write']);
 
   const updated = JSON.parse(readFileSync(resolve(repoRoot, 'apps/cli/package.json'), 'utf8')) as {
     bundledDependencies?: unknown;
+    dependencies?: Record<string, string>;
   };
   const bundled = Array.isArray(updated.bundledDependencies) ? updated.bundledDependencies.map(String) : [];
 
@@ -50,8 +55,39 @@ test('syncCliBundledExtensionPackaging adds plugin workspaces to apps/cli bundle
   assert.ok(bundled.includes('@happier-dev/plugins-claude'));
   assert.ok(bundled.includes('@happier-dev/plugins-codex'));
   assert.ok(
+    bundled.indexOf('@happier-dev/plugins-codex') < bundled.indexOf('tweetnacl'),
+    'expected bundled plugin workspaces before external bundled dependencies',
+  );
+  assert.ok(
     bundled.indexOf('@happier-dev/plugins-claude') < bundled.indexOf('@happier-dev/plugins-codex'),
     'expected lexical order for plugin package names',
+  );
+  assert.equal(updated.dependencies?.['@happier-dev/plugins-claude'], '0.0.0');
+  assert.equal(updated.dependencies?.['@happier-dev/plugins-codex'], '0.0.0');
+});
+
+test('syncCliBundledExtensionPackaging check mode rejects a bundled plugin missing from dependencies', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-sync-check-dependencies-'));
+  mkdirSync(resolve(repoRoot, 'apps/cli'), { recursive: true });
+
+  writeJson(resolve(repoRoot, 'packages/plugins/grok/package.json'), {
+    name: '@happier-dev/plugins-grok',
+  });
+  mkdirSync(resolve(repoRoot, 'packages/plugins/grok/src'), { recursive: true });
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/grok/src/manifest.ts'),
+    'export const PLUGIN_MANIFEST = Object.freeze({ id: "grok", runtime: { apiVersion: 1 }, contributes: {} });\n',
+    'utf8',
+  );
+  writeJson(resolve(repoRoot, 'apps/cli/package.json'), {
+    name: '@happier-dev/cli',
+    bundledDependencies: ['@happier-dev/plugins-grok'],
+    dependencies: {},
+  });
+
+  await assert.rejects(
+    () => syncCliBundledExtensionPackaging(['--root', repoRoot, '--mode', 'check']),
+    /dependencies are out of sync/u,
   );
 });
 
@@ -72,7 +108,7 @@ test('syncCliBundledExtensionPackaging skips reservation-only plugin packages', 
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/claude/src/manifest.ts'),
-    'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { capabilities: ["agents"] }, contributes: {} });\n',
+    'export const PLUGIN_MANIFEST = Object.freeze({ id: "claude", runtime: { apiVersion: 1 }, contributes: {} });\n',
     'utf8',
   );
   mkdirSync(resolve(repoRoot, 'packages/plugins/claude/src/agent'), { recursive: true });
@@ -102,7 +138,7 @@ test('syncCliBundledExtensionPackaging includes non-agent plugin packages withou
   mkdirSync(resolve(repoRoot, 'packages/plugins/scm-github/src'), { recursive: true });
   writeFileSync(
     resolve(repoRoot, 'packages/plugins/scm-github/src/manifest.ts'),
-    'export const PLUGIN_MANIFEST = Object.freeze({ id: "scm-github", runtime: { capabilities: ["scmHostingProviders"] } });\n',
+    'export const PLUGIN_MANIFEST = Object.freeze({ id: "scm-github", runtime: { apiVersion: 1 } });\n',
     'utf8',
   );
   writeJson(resolve(repoRoot, 'apps/cli/package.json'), {
@@ -133,5 +169,22 @@ test('syncCliBundledExtensionPackaging fails for unmarked plugin packages withou
   await assert.rejects(
     () => syncCliBundledExtensionPackaging(['--root', repoRoot, '--mode', 'write']),
     /Missing required plugin manifest/,
+  );
+});
+
+test('syncCliBundledExtensionPackaging fails when the CLI package manifest is missing', async () => {
+  const repoRoot = mkdtempSync(resolve(tmpdir(), 'happy-ps-04-sync-missing-cli-package-'));
+
+  writeJson(resolve(repoRoot, 'packages/plugins/scm-github/package.json'), { name: '@happier-dev/plugins-scm-github' });
+  mkdirSync(resolve(repoRoot, 'packages/plugins/scm-github/src'), { recursive: true });
+  writeFileSync(
+    resolve(repoRoot, 'packages/plugins/scm-github/src/manifest.ts'),
+    'export const PLUGIN_MANIFEST = Object.freeze({ id: "scm-github", runtime: { apiVersion: 1 } });\n',
+    'utf8',
+  );
+
+  await assert.rejects(
+    () => syncCliBundledExtensionPackaging(['--root', repoRoot, '--mode', 'write']),
+    /Missing CLI package\.json/,
   );
 });

@@ -8,15 +8,10 @@ import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 import { queryUsageAnalytics } from "@/app/usage/usageQueryService";
 import { recordLegacyUsageReport, recordUsageEvent } from "@/app/usage/usageWriteService";
+import { resolveBucketBounds } from "@/app/usage/query/bucketBounds";
+import { LegacyUsageReportRouteBodySchema } from "@/app/usage/legacyUsageReportSchema";
 import { type Fastify } from "../../types";
 import { accountUsageRoutePaths } from "./accountUsageRoutePaths";
-
-const LegacyUsageReportRouteBodySchema = z.object({
-    key: z.string(),
-    sessionId: z.string(),
-    tokens: z.object({ total: z.number() }).catchall(z.number()),
-    cost: z.object({ total: z.number() }).catchall(z.number()),
-});
 
 const LegacyUsageReportRouteResponseSchema = z.object({
     success: z.literal(true),
@@ -113,10 +108,8 @@ export function registerAccountUsageRoutes(app: Fastify): void {
 
             for (const report of reports) {
                 const data = report.data as PrismaJson.UsageReportData;
-                const date = new Date(report.createdAt);
-                const timestamp = actualGroupBy === 'hour'
-                    ? Math.floor(new Date(date.getFullYear(), date.getMonth(), date.getDate(), date.getHours(), 0, 0, 0).getTime() / 1000)
-                    : Math.floor(new Date(date.getFullYear(), date.getMonth(), date.getDate(), 0, 0, 0, 0).getTime() / 1000);
+                const { bucketStartMs } = resolveBucketBounds(actualGroupBy, report.createdAt.getTime(), 0);
+                const timestamp = Math.floor(bucketStartMs / 1000);
 
                 const current = aggregated.get(String(timestamp)) ?? {
                     tokens: {},

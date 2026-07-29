@@ -8,6 +8,7 @@ import {
     db,
     getDbProviderFromEnv,
     isPrismaErrorCode,
+    isPrismaUniqueConstraintError,
 } from "./prisma";
 
 function parseEnumValues(schemaText: string, enumName: string): string[] {
@@ -49,19 +50,19 @@ describe("storage/prisma", () => {
         expect(exportedValues.sort()).toEqual([...new Set(fullValues)].sort());
     });
 
-    it("ships runtime-activity Session projection migrations for every supported provider", () => {
+    it("ships the contracted runtime-activity projection migration for every supported provider", () => {
         const root = join(process.cwd());
-        const migrationName = "20260701140000_add_session_runtime_activity_projection";
+        const migrationName = "20260701123000_add_session_runtime_activity_projection";
         const migrationFiles = [
             join(root, "prisma", "migrations", migrationName, "migration.sql"),
             join(root, "prisma", "sqlite", "migrations", migrationName, "migration.sql"),
             join(root, "prisma", "mysql", "migrations", migrationName, "migration.sql"),
         ];
         const fields = [
+            "runtimeActivityState",
             "runtimeActivityActiveCount",
             "runtimeActivityObservedAt",
-            "runtimeActivityExpiresAt",
-            "runtimeActivitySourceClass",
+            "runtimeActivityRevision",
         ];
 
         for (const migrationFile of migrationFiles) {
@@ -69,6 +70,44 @@ describe("storage/prisma", () => {
             for (const field of fields) {
                 expect(migrationSql).toContain(field);
             }
+            expect(migrationSql).not.toContain("runtimeActivityExpiresAt");
+            expect(migrationSql).not.toContain("runtimeActivitySourceClass");
+        }
+    });
+
+    it("defines the External Sessions publication authority in every supported schema and migration", () => {
+        const root = join(process.cwd());
+        const migrationName = "20260723150000_add_external_session_publication_authority";
+        const providerRoots = [
+            join(root, "prisma"),
+            join(root, "prisma", "sqlite"),
+            join(root, "prisma", "mysql"),
+        ];
+        const expectedFields = [
+            "currentStorageState",
+            "acceptedThroughServerSeq",
+            "materializationPublicationId",
+            "materializedThroughSourceAt",
+            "publishedThroughServerSeq",
+        ];
+
+        for (const providerRoot of providerRoots) {
+            const schema = readFileSync(join(providerRoot, "schema.prisma"), "utf-8");
+            const sessionModel = schema.match(/model Session \{([\s\S]*?)\n\}/)?.[1];
+            expect(sessionModel, `${providerRoot} Session model`).toBeDefined();
+            for (const field of expectedFields) {
+                expect(sessionModel).toMatch(new RegExp(`^\\s*${field}\\s+`, "m"));
+            }
+            expect(sessionModel).toMatch(/^\s*currentStorageState\s+String\s+@default\("hosted"\)\s*$/m);
+
+            const migrationSql = readFileSync(
+                join(providerRoot, "migrations", migrationName, "migration.sql"),
+                "utf-8",
+            );
+            for (const field of expectedFields) {
+                expect(migrationSql).toContain(field);
+            }
+            expect(migrationSql).toMatch(/currentStorageState[^;]*NOT NULL[^;]*DEFAULT ['"]hosted['"]/i);
         }
     });
 
@@ -77,6 +116,15 @@ describe("storage/prisma", () => {
         expect(isPrismaErrorCode({ code: "P2002" }, "P2034")).toBe(false);
         expect(isPrismaErrorCode(new Error("no code"), "P2034")).toBe(false);
         expect(isPrismaErrorCode(null, "P2034")).toBe(false);
+    });
+
+    it("recognizes unique constraints from Prisma model and raw SQL writes on every supported provider", () => {
+        expect(isPrismaUniqueConstraintError({ code: "P2002" })).toBe(true);
+        expect(isPrismaUniqueConstraintError({ code: "P2010", meta: { code: "23505" } })).toBe(true);
+        expect(isPrismaUniqueConstraintError({ code: "P2010", meta: { code: 1062 } })).toBe(true);
+        expect(isPrismaUniqueConstraintError({ code: "P2010", meta: { code: 2067 } })).toBe(true);
+        expect(isPrismaUniqueConstraintError({ code: "P2010", meta: { code: "other" } })).toBe(false);
+        expect(isPrismaUniqueConstraintError({ code: "P2034", meta: { code: "23505" } })).toBe(false);
     });
 
     it("parses DB provider from env with a fallback", () => {

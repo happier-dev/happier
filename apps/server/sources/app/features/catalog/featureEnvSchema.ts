@@ -12,7 +12,6 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   voiceEnabled: 'HAPPIER_FEATURE_VOICE__ENABLED',
   voiceRequireSubscription: 'HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION',
 
-  connectedServicesEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES__ENABLED',
   connectedServicesQuotasEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED',
   connectedServicesAccountGroupsEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED',
   connectedServicesAccountFallbackEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_FALLBACK__ENABLED',
@@ -76,6 +75,13 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   machinesTunnelMaxDurationMs: 'HAPPIER_FEATURE_MACHINES_TUNNEL__MAX_DURATION_MS',
   machinesTunnelAllowedPorts: 'HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS',
 
+  // Core local-services product gates (server-represented + default-allow). Exposure
+  // (preview / publicPreview) below stays fail-closed default-off.
+  localServicesEnabled: 'HAPPIER_FEATURE_LOCAL_SERVICES__ENABLED',
+  localServicesManagedEnabled: 'HAPPIER_FEATURE_LOCAL_SERVICES_MANAGED__ENABLED',
+  localServicesLauncherEnabled: 'HAPPIER_FEATURE_LOCAL_SERVICES_LAUNCHER__ENABLED',
+  localServicesActionsEnabled: 'HAPPIER_FEATURE_LOCAL_SERVICES_ACTIONS__ENABLED',
+  localServicesActionsTerminateEnabled: 'HAPPIER_FEATURE_LOCAL_SERVICES_ACTIONS_TERMINATE__ENABLED',
   localServicesInventoryEnabled: 'HAPPIER_FEATURE_LOCAL_SERVICES_INVENTORY__ENABLED',
   localServicesPreviewEnabled: 'HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED',
   localServicesPreviewTokenTtlMs: 'HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__TOKEN_TTL_MS',
@@ -87,8 +93,51 @@ export const FEATURE_ENV_KEYS = Object.freeze({
     'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_CONCURRENT_EXPOSURES',
   localServicesPublicPreviewDnsTlsRequired: 'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED',
   localServicesPublicPreviewAuditRequired: 'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_REQUIRED',
+  localServicesPublicPreviewAuditSink: 'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_SINK',
+  localServicesPublicPreviewAuditLogPath:
+    'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_LOG_PATH',
+  localServicesPublicPreviewAllowTestAuditSink:
+    'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_AUDIT_SINK',
   localServicesPublicPreviewRateLimitProfileIds:
     'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS',
+  localServicesPublicPreviewRateLimitChecker:
+    'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_CHECKER',
+  localServicesPublicPreviewRateLimitMaxRequests:
+    'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_MAX_REQUESTS',
+  localServicesPublicPreviewRateLimitWindowMs:
+    'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_WINDOW_MS',
+  localServicesPublicPreviewAllowTestRateLimitChecker:
+    'HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER',
+
+  providersEnabled: 'HAPPIER_FEATURE_PROVIDERS__ENABLED',
+  providersLocalDiscoveryEnabled: 'HAPPIER_FEATURE_PROVIDERS_LOCAL_DISCOVERY__ENABLED',
+  providersLocalModelManagementEnabled: 'HAPPIER_FEATURE_PROVIDERS_LOCAL_MODEL_MANAGEMENT__ENABLED',
+
+  // Core browser product gates (server-represented + default-allow). The capture/automation
+  // surfaces (sidecar/diagnostics/context/recording/automation) are server-represented but default-off.
+  browserEnabled: 'HAPPIER_FEATURE_BROWSER__ENABLED',
+  browserViewTargetsEnabled: 'HAPPIER_FEATURE_BROWSER_VIEW_TARGETS__ENABLED',
+  browserInternalEnabled: 'HAPPIER_FEATURE_BROWSER_INTERNAL__ENABLED',
+  browserSidecarEnabled: 'HAPPIER_FEATURE_BROWSER_SIDECAR__ENABLED',
+  browserDiagnosticsEnabled: 'HAPPIER_FEATURE_BROWSER_DIAGNOSTICS__ENABLED',
+  browserContextEnabled: 'HAPPIER_FEATURE_BROWSER_CONTEXT__ENABLED',
+  browserRecordingEnabled: 'HAPPIER_FEATURE_BROWSER_RECORDING__ENABLED',
+  browserAutomationEnabled: 'HAPPIER_FEATURE_BROWSER_AUTOMATION__ENABLED',
+
+  // Core plugin platform + UI projection gates (server-represented + default-allow). The plugin UI
+  // tiers below are server-represented + default-ALLOW kill-switches (§4.1/§13.5.3): per-plugin
+  // install/enable/trust/runtime derivation (5.1/5.2) governs actual availability. devHotReload
+  // stays client + fail-closed (CLI/UI policy owns it).
+  pluginsEnabled: 'HAPPIER_FEATURE_PLUGINS__ENABLED',
+  pluginsUiEnabled: 'HAPPIER_FEATURE_PLUGINS_UI__ENABLED',
+  pluginsUiHostedWebEnabled: 'HAPPIER_FEATURE_PLUGINS_UI_HOSTED_WEB__ENABLED',
+  pluginsUiStructuredMessagesEnabled: 'HAPPIER_FEATURE_PLUGINS_UI_STRUCTURED_MESSAGES__ENABLED',
+  pluginsUiReactNativeBundlesEnabled: 'HAPPIER_FEATURE_PLUGINS_UI_REACT_NATIVE_BUNDLES__ENABLED',
+
+  // Device/simulator preview gates (server-represented + default-allow per §4.1): viewing your own
+  // simulator. The live-stream + browser.viewTargets dependency closure still gates availability.
+  devicesEnabled: 'HAPPIER_FEATURE_DEVICES__ENABLED',
+  devicesSimulatorPreviewEnabled: 'HAPPIER_FEATURE_DEVICES_SIMULATOR_PREVIEW__ENABLED',
 
   machinesLiveStreamDirectPeerEnabled: 'HAPPIER_FEATURE_MACHINES_LIVE_STREAM_DIRECT_PEER__ENABLED',
   machinesLiveStreamServerRoutedEnabled: 'HAPPIER_FEATURE_MACHINES_LIVE_STREAM_SERVER_ROUTED__ENABLED',
@@ -114,6 +163,7 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   peerMediationRouteGrantSigningExpiresAt: 'HAPPIER_PEER_MEDIATION_ROUTE_GRANT_SIGNING_EXPIRES_AT',
 
   terminalEmbeddedPtyEnabled: 'HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED',
+  terminalTransportByteStreamEnabled: 'HAPPIER_FEATURE_TERMINAL_TRANSPORT_BYTE_STREAM__ENABLED',
 
   socialFriendsEnabled: 'HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED',
   socialFriendsAllowUsername: 'HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME',

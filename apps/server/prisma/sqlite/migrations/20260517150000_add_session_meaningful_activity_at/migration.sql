@@ -1,6 +1,7 @@
--- Add a server-readable activity projection for list ordering/grouping without hydrating transcripts.
+-- AlterTable
 ALTER TABLE "Session" ADD COLUMN "meaningfulActivityAt" DATETIME;
 
+-- Backfill from durable transcript or pending activity, falling back to session creation.
 UPDATE "Session"
 SET "meaningfulActivityAt" = COALESCE(
     (
@@ -15,9 +16,8 @@ SET "meaningfulActivityAt" = COALESCE(
             WHERE "SessionPendingMessage"."sessionId" = "Session"."id"
         ) AS "SessionActivity"
     ),
-    "Session"."createdAt"
-)
-WHERE "meaningfulActivityAt" IS NULL;
+    "createdAt"
+);
 
-CREATE INDEX "Session_accountId_meaningfulActivityAt_id_idx"
-ON "Session"("accountId", "meaningfulActivityAt", "id");
+-- CreateIndex
+CREATE INDEX "Session_accountId_meaningfulActivityAt_id_idx" ON "Session"("accountId", "meaningfulActivityAt", "id");

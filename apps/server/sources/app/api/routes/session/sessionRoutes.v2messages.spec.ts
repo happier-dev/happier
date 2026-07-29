@@ -20,8 +20,8 @@ describe("sessionRoutes v2 messages", () => {
     it("fetches a message by localId", async () => {
         const createdAt = new Date("2020-01-01T00:00:00.000Z");
         const updatedAt = new Date("2020-01-01T00:00:01.000Z");
-        const { sessionMessageFindUnique } = await import("./sessionRoutes.testkit");
-        sessionMessageFindUnique.mockResolvedValueOnce({
+        const { txSessionMessageFindFirst } = await import("./sessionRoutes.testkit");
+        txSessionMessageFindFirst.mockResolvedValueOnce({
             id: "m1",
             seq: 10,
             localId: "l1",
@@ -38,8 +38,8 @@ describe("sessionRoutes v2 messages", () => {
             query: {},
         });
 
-        expect(sessionMessageFindUnique).toHaveBeenCalledWith({
-            where: { sessionId_localId: { sessionId: "s1", localId: "l1" } },
+        expect(txSessionMessageFindFirst).toHaveBeenCalledWith({
+            where: { sessionId: "s1", localId: "l1" },
             select: expect.any(Object),
         });
 
@@ -57,8 +57,8 @@ describe("sessionRoutes v2 messages", () => {
     });
 
     it("returns 404 when message localId is not found", async () => {
-        const { sessionMessageFindUnique } = await import("./sessionRoutes.testkit");
-        sessionMessageFindUnique.mockResolvedValueOnce(null);
+        const { txSessionMessageFindFirst } = await import("./sessionRoutes.testkit");
+        txSessionMessageFindFirst.mockResolvedValueOnce(null);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId/messages/by-local-id/:localId");
         const { reply } = await route.invoke({
@@ -69,6 +69,37 @@ describe("sessionRoutes v2 messages", () => {
 
         expect(reply.code).toHaveBeenCalledWith(404);
         expect(reply.send).toHaveBeenCalledWith({ error: "Message not found" });
+    });
+
+    it("cannot fetch an unpublished imported row by local id", async () => {
+        const {
+            txSessionFindUnique,
+            txSessionMessageFindFirst,
+        } = await import("./sessionRoutes.testkit");
+        txSessionFindUnique.mockResolvedValueOnce({
+            currentStorageState: "snapshot_complete",
+            acceptedThroughServerSeq: null,
+            materializationPublicationId: "publication-1",
+            materializedThroughSourceAt: 1_700_000_000_000n,
+            publishedThroughServerSeq: 7,
+        });
+        txSessionMessageFindFirst.mockResolvedValueOnce(null);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId/messages/by-local-id/:localId");
+        const { reply } = await route.invoke({
+            params: { sessionId: "s1", localId: "private-row" },
+            headers: {},
+            query: {},
+        });
+
+        expect(txSessionMessageFindFirst).toHaveBeenCalledWith(expect.objectContaining({
+            where: {
+                sessionId: "s1",
+                localId: "private-row",
+                seq: { lte: 7 },
+            },
+        }));
+        expect(reply.code).toHaveBeenCalledWith(404);
     });
 
     it("creates a message via service and emits updates using returned cursors", async () => {
@@ -110,6 +141,52 @@ describe("sessionRoutes v2 messages", () => {
         });
     });
 
+    it("emits trusted write-service attention impact with new-message updates", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        const attentionImpact = {
+            affectsUnread: false,
+            affectsMeaningfulActivity: false,
+        };
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            didUpdate: false,
+            badgeAttentionChanged: false,
+            attentionImpact,
+            message: {
+                id: "m1",
+                seq: 10,
+                localId: "agent-quota-wait:openai-codex:happier:reset_at_100",
+                messageRole: "event",
+                content: { t: "encrypted", c: "c" },
+                createdAt,
+                updatedAt: createdAt,
+            },
+            participantCursors: [
+                { accountId: "u1", cursor: 111 },
+            ],
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages");
+        await route.invoke({
+            params: { sessionId: "s1" },
+            headers: {},
+            body: {
+                ciphertext: "cipher",
+                localId: "agent-quota-wait:openai-codex:happier:reset_at_100",
+                messageRole: "event",
+            },
+        });
+
+        expect(buildNewMessageUpdate).toHaveBeenCalledWith(
+            expect.anything(),
+            "s1",
+            111,
+            expect.any(String),
+            { attentionImpact },
+        );
+    });
+
     it("ignores public ready hints when creating a message", async () => {
         const createdAt = new Date("2020-01-01T00:00:00.000Z");
         createSessionMessage.mockResolvedValue({
@@ -142,6 +219,40 @@ describe("sessionRoutes v2 messages", () => {
         expect(buildNewMessageUpdate).toHaveBeenCalledTimes(2);
         expect(buildUpdateSessionUpdate).not.toHaveBeenCalled();
         expect(emitUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not forward public unread suppression hints to the message write service", async () => {
+        const createdAt = new Date("2020-01-01T00:00:00.000Z");
+        createSessionMessage.mockResolvedValue({
+            ok: true,
+            didWrite: true,
+            didUpdate: false,
+            message: { id: "m1", seq: 10, localId: "l1", content: { t: "encrypted", c: "c" }, createdAt, updatedAt: createdAt },
+            participantCursors: [],
+        });
+
+        const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/messages");
+        await route.invoke({
+            params: { sessionId: "s1" },
+            headers: {},
+            body: {
+                ciphertext: "cipher",
+                localId: "l1",
+                attentionImpact: {
+                    affectsUnread: false,
+                    affectsMeaningfulActivity: false,
+                },
+                affectsUnread: false,
+            },
+        });
+
+        expect(createSessionMessage).toHaveBeenCalledWith({
+            actorUserId: "u1",
+            sessionId: "s1",
+            ciphertext: "cipher",
+            localId: "l1",
+            sidechainId: null,
+        });
     });
 
     it("forwards sidechainId to the message write service when provided", async () => {

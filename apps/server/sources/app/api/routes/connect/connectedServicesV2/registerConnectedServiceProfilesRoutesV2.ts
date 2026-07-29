@@ -1,12 +1,13 @@
 import { z } from "zod";
 
 import type { Fastify } from "../../../types";
-import { db } from "@/storage/db";
 import { ConnectedServiceIdSchema, type ConnectedServiceId } from "@happier-dev/protocol";
 
-import { isConnectedServiceCredentialMetadataV2 } from "./credentialMetadataV2";
-import { isConnectedServiceCredentialMetadataV3 } from "../connectedServicesV3/credentialMetadataV3";
-import { deriveConnectedServiceCredentialStatus } from "../credentialHealthMetadata";
+import { listQualifiedConnectedAccounts } from "../qualifiedConnectedAccounts/credentialRepository";
+import {
+  resolveLegacyCredentialKindForAuthenticationMode,
+  resolveLegacyQualifiedConnectedAccountService,
+} from "../qualifiedConnectedAccounts/identity";
 
 export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
   app.get("/v2/connect/:serviceId/profiles", {
@@ -32,24 +33,31 @@ export function registerConnectedServiceProfilesRoutesV2(app: Fastify): void {
     const userId = request.userId;
     const serviceId = request.params.serviceId satisfies ConnectedServiceId;
 
-    const rows = await db.serviceAccountToken.findMany({
-      where: { accountId: userId, vendor: serviceId },
-      orderBy: { updatedAt: "desc" },
-      select: { profileId: true, metadata: true, expiresAt: true, lastUsedAt: true },
+    const accounts = await listQualifiedConnectedAccounts({
+      accountId: userId,
+      service:
+        resolveLegacyQualifiedConnectedAccountService(serviceId),
     });
 
-    const profiles = rows.map((row) => {
-      const meta = isConnectedServiceCredentialMetadataV2(row.metadata) ? row.metadata : null;
-      const metaV3 = !meta && isConnectedServiceCredentialMetadataV3(row.metadata) ? row.metadata : null;
-      return {
-        profileId: row.profileId,
-        status: deriveConnectedServiceCredentialStatus(meta ?? metaV3),
-        kind: meta?.kind ?? metaV3?.kind ?? null,
-        providerEmail: meta?.providerEmail ?? metaV3?.providerEmail ?? null,
-        providerAccountId: meta?.providerAccountId ?? metaV3?.providerAccountId ?? null,
-        expiresAt: row.expiresAt ? row.expiresAt.getTime() : null,
-        lastUsedAt: row.lastUsedAt ? row.lastUsedAt.getTime() : null,
-      };
+    const profiles = accounts.flatMap((account) => {
+      const kind = account.authenticationModeId
+        ? resolveLegacyCredentialKindForAuthenticationMode({
+          serviceId,
+          authenticationModeId: account.authenticationModeId,
+        })
+        : null;
+      if (!kind) return [];
+      return [{
+        profileId: account.ref.accountId,
+        status: account.status,
+        kind,
+        providerEmail:
+          account.providerIdentity?.email ?? null,
+        providerAccountId:
+          account.providerIdentity?.accountId ?? null,
+        expiresAt: account.expiresAt,
+        lastUsedAt: account.lastUsedAt,
+      }];
     });
 
     return reply.send({ serviceId, profiles });

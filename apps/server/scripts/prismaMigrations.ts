@@ -2,6 +2,17 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
+import {
+    applySqliteMigrations as applySqliteMigrationsWithExecutor,
+    type SqliteMigrationBindValue,
+    type SqliteMigrationExecutor,
+} from "../sources/flavors/light/sqliteMigrations";
+import {
+    isLegacyTransactionWrapperStatement,
+    isSafeMissingMigrationReconciliationStatement,
+    splitMigrationStatements,
+} from "../sources/migrations/missingMigrationReconciliation";
+
 type PrismaMigration = Readonly<{
     name: string;
     sql: string;
@@ -14,6 +25,9 @@ type AppliedMigrationRecord = Readonly<{
 }>;
 
 type SqliteDatabaseModule = typeof import("node:sqlite");
+type CloseableSqliteMigrationExecutor = SqliteMigrationExecutor & Readonly<{
+    close: () => void;
+}>;
 type PostgresLikeDatabase = Readonly<{
     exec: (sql: string) => Promise<unknown> | unknown;
     query: (sql: string) => Promise<Readonly<{ rows: unknown[] }>>;
@@ -55,57 +69,17 @@ function createChecksumMismatchError(migration: PrismaMigration, appliedChecksum
     );
 }
 
-function createUnsafeLegacyMigrationError(migration: PrismaMigration, originalError: unknown): Error {
+function createUnsafeAlreadyAppliedMigrationError(migration: PrismaMigration, originalError: unknown): Error {
     const details = String((originalError as { message?: string })?.message ?? originalError ?? "").trim();
     return new Error(
         details
-            ? `[prisma-migrations] legacy migration ${migration.name} cannot be marked applied safely: ${details}`
-            : `[prisma-migrations] legacy migration ${migration.name} cannot be marked applied safely`,
+            ? `[prisma-migrations] migration ${migration.name} cannot be marked applied safely: ${details}`
+            : `[prisma-migrations] migration ${migration.name} cannot be marked applied safely`,
     );
 }
 
-function splitMigrationStatements(sql: string): string[] {
-    return String(sql ?? "")
-        .replace(/^\s*--.*$/gm, "")
-        .split(";")
-        .map((statement) => statement.trim())
-        .filter(Boolean)
-        .map((statement) => `${statement};`);
-}
-
-function normalizeSqlStatement(statement: string): string {
-    return String(statement ?? "")
-        .replace(/\s+/g, " ")
-        .trim()
-        .replace(/;$/, "")
-        .toLowerCase();
-}
-
-function isLegacyTransactionWrapperStatement(statement: string): boolean {
-    const normalized = normalizeSqlStatement(statement);
-    return (
-        normalized === "begin" ||
-        normalized === "begin transaction" ||
-        normalized === "start transaction" ||
-        normalized === "commit" ||
-        normalized === "commit transaction" ||
-        normalized === "end" ||
-        normalized === "rollback" ||
-        normalized === "rollback transaction" ||
-        normalized.startsWith("savepoint ") ||
-        normalized.startsWith("release savepoint ") ||
-        normalized.startsWith("rollback to savepoint ")
-    );
-}
-
-function isIdempotentLegacyCleanupStatement(statement: string): boolean {
-    const normalized = normalizeSqlStatement(statement);
-    return (
-        /^drop\s+(index|table|view|sequence|trigger)\s+if\s+exists\b/.test(normalized) ||
-        /^create\s+(unique\s+)?(index|table|view)\s+if\s+not\s+exists\b/.test(normalized) ||
-        /^alter\s+table\b.+\bdrop\s+(column|constraint)\s+if\s+exists\b/.test(normalized) ||
-        /^alter\s+table\b.+\badd\s+column\s+if\s+not\s+exists\b/.test(normalized)
-    );
+function createInvalidMigrationSqlError(migrationName: string, reason: string): Error {
+    return new Error(`[prisma-migrations] ${reason} for migration ${migrationName}`);
 }
 
 function mapAppliedMigrations(rows: ReadonlyArray<AppliedMigrationRecord>): Map<string, string> {
@@ -130,7 +104,7 @@ function ensureAppliedMigrationChecksum(migration: PrismaMigration, appliedCheck
     }
 }
 
-async function canSafelyRecordLegacyMigration(params: Readonly<{
+async function canSafelyRecordAlreadyAppliedMigration(params: Readonly<{
     migration: PrismaMigration;
     exec: (sql: string) => Promise<unknown> | unknown;
 }>): Promise<boolean> {
@@ -143,6 +117,9 @@ async function canSafelyRecordLegacyMigration(params: Readonly<{
             const statement = statements[index]!;
             if (isLegacyTransactionWrapperStatement(statement)) {
                 continue;
+            }
+            if (!isSafeMissingMigrationReconciliationStatement(statement)) {
+                return false;
             }
             probedStatements += 1;
             const savepointName = `legacy_probe_${index + 1}`;
@@ -159,10 +136,7 @@ async function canSafelyRecordLegacyMigration(params: Readonly<{
                 } catch {
                     // ignore
                 }
-                if (!isIdempotentLegacyCleanupStatement(statement)) {
-                    return false;
-                }
-            } catch (error) {
+            } catch {
                 try {
                     await params.exec(`ROLLBACK TO SAVEPOINT ${savepointName}`);
                 } catch {
@@ -173,9 +147,7 @@ async function canSafelyRecordLegacyMigration(params: Readonly<{
                 } catch {
                     // ignore
                 }
-                if (!isLikelyAlreadyAppliedError(error)) {
-                    return false;
-                }
+                return false;
             }
         }
     } finally {
@@ -200,9 +172,14 @@ async function listPrismaMigrations(migrationsDir: string): Promise<PrismaMigrat
     const migrations: PrismaMigration[] = [];
     for (const name of names) {
         const sqlPath = resolve(dir, name, "migration.sql");
-        const sql = await readFile(sqlPath, "utf8").catch(() => "");
+        let sql: string;
+        try {
+            sql = await readFile(sqlPath, "utf8");
+        } catch {
+            throw createInvalidMigrationSqlError(name, "missing migration.sql");
+        }
         if (!sql.trim()) {
-            continue;
+            throw createInvalidMigrationSqlError(name, "empty migration.sql");
         }
         migrations.push(Object.freeze({ name, sql, checksum: sha256Hex(sql) }));
     }
@@ -213,86 +190,71 @@ async function ensureSqliteModule(): Promise<SqliteDatabaseModule> {
     return await import("node:sqlite");
 }
 
-export async function applySqliteMigrations(params: Readonly<{ databasePath: string; migrationsDir: string }>): Promise<{ applied: string[] }> {
+async function createNodeSqliteExecutor(params: Readonly<{
+    databasePath: string;
+    busyTimeoutMs: number;
+}>): Promise<CloseableSqliteMigrationExecutor> {
     const { DatabaseSync } = await ensureSqliteModule();
-    await mkdir(dirname(params.databasePath), { recursive: true }).catch(() => {});
     const db = new DatabaseSync(params.databasePath);
-    try {
-        db.exec(
-            [
-                "CREATE TABLE IF NOT EXISTS _prisma_migrations (",
-                "  id TEXT PRIMARY KEY,",
-                "  checksum TEXT NOT NULL,",
-                "  finished_at DATETIME,",
-                "  migration_name TEXT NOT NULL,",
-                "  logs TEXT,",
-                "  rolled_back_at DATETIME,",
-                "  started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,",
-                "  applied_steps_count INTEGER NOT NULL DEFAULT 0",
-                ");",
-            ].join("\n"),
-        );
+    db.exec(`PRAGMA busy_timeout=${params.busyTimeoutMs};`);
 
-        const migrations = await listPrismaMigrations(params.migrationsDir);
-        const appliedRows = db
-            .prepare("SELECT migration_name, checksum FROM _prisma_migrations WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL")
-            .all() as Array<{ migration_name: string; checksum: string }>;
-        const appliedChecksums = mapAppliedMigrations(
-            appliedRows.map((row) => ({
+    return Object.freeze({
+        exec: (sql: string) => {
+            db.exec(sql);
+        },
+        queryRows: (
+            sql: string,
+            values: ReadonlyArray<SqliteMigrationBindValue> = [],
+        ) => db.prepare(sql).all(...values) as ReadonlyArray<
+            Readonly<Record<string, unknown>>
+        >,
+        run: (
+            sql: string,
+            values: ReadonlyArray<SqliteMigrationBindValue> = [],
+        ) => {
+            db.prepare(sql).run(...values);
+        },
+        queryTableNames: () => {
+            const rows = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
+            return new Set(rows.map((row) => String(row.name ?? "").trim()).filter(Boolean));
+        },
+        queryAppliedMigrations: () => {
+            const rows = db
+                .prepare("SELECT migration_name, checksum FROM _prisma_migrations WHERE rolled_back_at IS NULL AND finished_at IS NOT NULL")
+                .all() as Array<{ migration_name: string; checksum: string }>;
+            return rows.map((row) => ({
                 name: row.migration_name,
                 checksum: row.checksum,
-            })),
-        );
-        const applied = new Set(appliedChecksums.keys());
-        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as Array<{ name: string }>;
-        const tableNames = new Set(tables.map((row) => String(row.name ?? "").trim()).filter(Boolean));
-        const hasCoreTables = tableNames.has("Account") || tableNames.has("account") || tableNames.has("accounts");
-        const legacyMode = applied.size === 0 && hasCoreTables;
-        const insertApplied = db.prepare(
-            "INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) VALUES (?, ?, CURRENT_TIMESTAMP, ?, 1)",
-        );
+            }));
+        },
+        insertAppliedMigration: ({ name, checksum }: { name: string; checksum: string }) => {
+            db.prepare(
+                "INSERT INTO _prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) VALUES (?, ?, CURRENT_TIMESTAMP, ?, 1)",
+            ).run(randomUUID(), checksum, name);
+        },
+        close: () => {
+            db.close();
+        },
+    });
+}
 
-        const appliedNow: string[] = [];
-        for (const migration of migrations) {
-            if (applied.has(migration.name)) {
-                ensureAppliedMigrationChecksum(migration, appliedChecksums);
-                continue;
-            }
-            db.exec("BEGIN");
-            try {
-                db.exec(migration.sql);
-                insertApplied.run(randomUUID(), migration.checksum, migration.name);
-                db.exec("COMMIT");
-                appliedNow.push(migration.name);
-                applied.add(migration.name);
-                appliedChecksums.set(migration.name, migration.checksum);
-            } catch (error) {
-                try {
-                    db.exec("ROLLBACK");
-                } catch {
-                    // ignore
-                }
-                if (legacyMode && (isLikelyAlreadyAppliedError(error) || isLikelyNestedTransactionWrapperError(error))) {
-                    const safeLegacyBackfill = await canSafelyRecordLegacyMigration({
-                        migration,
-                        exec: (sql) => db.exec(sql),
-                    });
-                    if (!safeLegacyBackfill) {
-                        throw createUnsafeLegacyMigrationError(migration, error);
-                    }
-                    insertApplied.run(randomUUID(), migration.checksum, migration.name);
-                    appliedNow.push(migration.name);
-                    applied.add(migration.name);
-                    appliedChecksums.set(migration.name, migration.checksum);
-                    continue;
-                }
-                throw error;
-            }
-        }
-
-        return { applied: appliedNow };
+export async function applySqliteMigrations(params: Readonly<{
+    databasePath: string;
+    migrationsDir: string;
+    busyTimeoutMs?: number;
+}>): Promise<{ applied: string[] }> {
+    await mkdir(dirname(params.databasePath), { recursive: true }).catch(() => {});
+    const executor = await createNodeSqliteExecutor({
+        databasePath: params.databasePath,
+        busyTimeoutMs: params.busyTimeoutMs ?? 0,
+    });
+    try {
+        return await applySqliteMigrationsWithExecutor({
+            executor,
+            migrationsDir: params.migrationsDir,
+        });
     } finally {
-        db.close();
+        executor.close();
     }
 }
 
@@ -358,12 +320,12 @@ export async function applyPostgresMigrations(params: Readonly<{ db: PostgresLik
                 // ignore
             }
             if (legacyMode && (isLikelyAlreadyAppliedError(error) || isLikelyNestedTransactionWrapperError(error))) {
-                const safeLegacyBackfill = await canSafelyRecordLegacyMigration({
+                const safeLegacyBackfill = await canSafelyRecordAlreadyAppliedMigration({
                     migration,
                     exec: (sql) => params.db.exec(sql),
                 });
                 if (!safeLegacyBackfill) {
-                    throw createUnsafeLegacyMigrationError(migration, error);
+                    throw createUnsafeAlreadyAppliedMigrationError(migration, error);
                 }
                 await params.db.exec(
                     [

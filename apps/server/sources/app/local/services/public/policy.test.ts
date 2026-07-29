@@ -1,9 +1,17 @@
 import { describe, expect, it } from "vitest";
 
-type PublicPolicyModule = typeof import("./policy");
+import {
+    isLocalServicePublicExposureAccessible,
+    resolveLocalServicePublicExposureDecision,
+} from "./policy";
 
-async function loadPublicPolicyModule(): Promise<PublicPolicyModule | null> {
-    return import("./policy").catch(() => null);
+const publicPolicyModule = {
+    isLocalServicePublicExposureAccessible,
+    resolveLocalServicePublicExposureDecision,
+};
+
+async function loadPublicPolicyModule(): Promise<typeof publicPolicyModule> {
+    return publicPolicyModule;
 }
 
 describe("local service public exposure policy", () => {

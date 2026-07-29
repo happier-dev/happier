@@ -7,6 +7,9 @@ import { log } from "@/utils/logging/log";
 import { computeAccountActivityBadgeCounts } from "./accountActivityBadge";
 
 const expo = new Expo();
+const BADGE_REFRESH_COALESCE_MS = 25;
+const pendingBadgeRefreshAccountIds = new Set<string>();
+let pendingBadgeRefreshTimer: NodeJS.Timeout | null = null;
 
 type BadgeRefreshDelivery = Readonly<{
     accountId: string;
@@ -37,24 +40,10 @@ async function sendExpoBadgeRefreshMessages(deliveries: ReadonlyArray<BadgeRefre
         deliveryOffset += chunk.length;
         try {
             const ticketChunk = await expo.sendPushNotificationsAsync(chunk);
-            let receipts: Record<string, unknown> | undefined;
-            const receiptIds = ticketChunk
-                .map((ticket) => (typeof (ticket as { id?: unknown })?.id === "string" ? (ticket as { id: string }).id : null))
-                .filter((ticketId): ticketId is string => typeof ticketId === "string" && ticketId.length > 0);
-
-            if (receiptIds.length > 0) {
-                try {
-                    receipts = await expo.getPushNotificationReceiptsAsync(receiptIds);
-                } catch (error) {
-                    log({ module: "activity-badges", level: "warn" }, "failed to fetch Expo push receipts", error);
-                }
-            }
-
             const invalidTokens = new Set(
                 collectExpoPushTokensMarkedUnregistered({
                     messages: chunk,
                     tickets: ticketChunk,
-                    receipts,
                 }),
             );
             if (invalidTokens.size > 0) {
@@ -69,6 +58,23 @@ async function sendExpoBadgeRefreshMessages(deliveries: ReadonlyArray<BadgeRefre
     }
 
     await deleteInvalidAccountPushTokens([...invalidDeliveries.values()]);
+}
+
+function scheduleCoalescedBadgeRefresh(accountIds: ReadonlyArray<string>): void {
+    for (const accountId of accountIds) {
+        if (typeof accountId === "string" && accountId.trim().length > 0) {
+            pendingBadgeRefreshAccountIds.add(accountId);
+        }
+    }
+    if (pendingBadgeRefreshAccountIds.size === 0 || pendingBadgeRefreshTimer !== null) return;
+    pendingBadgeRefreshTimer = setTimeout(() => {
+        pendingBadgeRefreshTimer = null;
+        const accountIdsToRefresh = [...pendingBadgeRefreshAccountIds];
+        pendingBadgeRefreshAccountIds.clear();
+        void refreshAccountActivityBadgePushes({ accountIds: accountIdsToRefresh }).catch((error) => {
+            log({ module: "activity-badges", level: "warn" }, "failed to refresh coalesced badge pushes", error);
+        });
+    }, BADGE_REFRESH_COALESCE_MS);
 }
 
 export async function refreshAccountActivityBadgePushes(params: Readonly<{ accountIds: ReadonlyArray<string> }>): Promise<void> {
@@ -104,7 +110,5 @@ export async function refreshSessionParticipantBadgePushes(params: Readonly<{
     participantCursors: ReadonlyArray<{ accountId: string }>;
 }>): Promise<void> {
     if (!params.badgeAttentionChanged) return;
-    await refreshAccountActivityBadgePushes({
-        accountIds: params.participantCursors.map(({ accountId }) => accountId),
-    });
+    scheduleCoalescedBadgeRefresh(params.participantCursors.map(({ accountId }) => accountId));
 }

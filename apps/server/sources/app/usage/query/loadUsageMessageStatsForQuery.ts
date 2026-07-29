@@ -1,8 +1,11 @@
 import type { UsageAnalyticsQueryRequest } from "@happier-dev/protocol";
-import { db } from "@/storage/db";
+import {
+    buildSessionMessagesPublicationWhere,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
+import { inTx } from "@/storage/inTx";
 
-export type UsageMessageStats = {
-    sessionCount: number;
+export type UsageMessageCounts = {
     messageCount: number;
 };
 
@@ -21,26 +24,36 @@ export async function loadUsageMessageStatsForQuery(
     accountId: string,
     request: UsageAnalyticsQueryRequest,
     sessionIds: string[],
-): Promise<UsageMessageStats> {
+): Promise<UsageMessageCounts> {
     if (sessionIds.length === 0) {
         return {
-            sessionCount: 0,
             messageCount: 0,
         };
     }
 
-    const messageCount = await db.sessionMessage.count({
-        where: {
-            sessionId: { in: sessionIds },
-            createdAt: toObservedAtFilter(request),
-            session: {
+    const messageCount = await inTx(async (tx) => {
+        const publicationRows = await tx.session.findMany({
+            where: {
+                id: { in: sessionIds },
                 accountId,
             },
-        },
+            select: {
+                id: true,
+                ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+            },
+        });
+        return await tx.sessionMessage.count({
+            where: {
+                ...buildSessionMessagesPublicationWhere(publicationRows),
+                createdAt: toObservedAtFilter(request),
+                session: {
+                    accountId,
+                },
+            },
+        });
     });
 
     return {
-        sessionCount: sessionIds.length,
         messageCount,
     };
 }

@@ -129,6 +129,7 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     body: unknown;
 }>): Promise<Readonly<{
     actor: ReviewCommentActorRefV1;
+    currentIntent?: ReviewCommentPrincipalHeaderV1["currentIntent"];
     machineId: string;
     installationId: string;
 }>> {
@@ -163,6 +164,29 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
             "review_comment_permission_denied",
             "Review-comment principal proof body binding is invalid",
         );
+    }
+    const currentIntent = params.headerPrincipal.currentIntent;
+    if (currentIntent) {
+        const body = ReviewCommentCreateRequestV1Schema.safeParse(params.body);
+        if (
+            proof.method !== "POST"
+            || proof.path !== "/v1/reviews/comments"
+            || currentIntent.effectBodySha256Base64Url !== proof.bodySha256Base64Url
+            || params.headerPrincipal.actor.kind !== "agent"
+            || currentIntent.agentId !== params.headerPrincipal.actor.agentId
+            || currentIntent.sessionId !== params.headerPrincipal.actor.sessionId
+            || !body.success
+            || currentIntent.projectId !== body.data.projectId
+            || currentIntent.workspaceId !== body.data.workspaceId
+            || currentIntent.sessionId !== body.data.sessionId
+            || currentIntent.runId !== body.data.runId
+            || currentIntent.pluginId !== body.data.engineId
+        ) {
+            throw new ReviewCommentOperationError(
+                "review_comment_permission_denied",
+                "Review-comment current intent does not match the exact effect",
+            );
+        }
     }
     const machine = await db.machine.findFirst({
         where: {
@@ -202,6 +226,7 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     const verified = tweetnacl.sign.detached.verify(
         createReviewCommentPrincipalSigningInputV1({
             actor: params.headerPrincipal.actor,
+            ...(currentIntent ? { currentIntent } : {}),
             proof: {
                 v: proof.v,
                 alg: proof.alg,
@@ -225,6 +250,7 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     }
     return {
         actor: params.headerPrincipal.actor,
+        ...(currentIntent ? { currentIntent } : {}),
         machineId: proof.machineId,
         installationId: proof.installationId,
     };
@@ -252,11 +278,15 @@ async function resolveDefaultPrincipal(request: Readonly<{
         })
         : null;
     const actor = verifiedHeaderPrincipal?.actor ?? defaultActorForUser(request.userId);
-    const trustedGrants = actor.kind === "plugin"
+    const grantPluginId = actor.kind === "plugin"
+        ? actor.pluginId
+        : verifiedHeaderPrincipal?.currentIntent?.pluginId;
+    const trustedGrants = grantPluginId
         ? await resolveTrustedPluginPermissionGrants({
             accountId: request.userId,
             machineId: verifiedHeaderPrincipal?.machineId,
-            pluginId: actor.pluginId,
+            installationId: verifiedHeaderPrincipal?.installationId,
+            pluginId: grantPluginId,
             capability: REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1,
             targetScope: readReviewCommentCreateTargetScope(request.body),
         })
@@ -265,6 +295,7 @@ async function resolveDefaultPrincipal(request: Readonly<{
         accountId: request.userId,
         actor,
         grants: trustedGrants.map((grant) => grant.capability),
+        ...(verifiedHeaderPrincipal?.currentIntent ? { currentIntent: verifiedHeaderPrincipal.currentIntent } : {}),
         storageMode: account ? resolveEffectiveAccountEncryptionModeFromAccountRow(account) : "e2ee",
     };
 }
@@ -287,6 +318,9 @@ function withPrincipalRouteBinding(
 ): Parameters<ReviewCommentRoutePrincipalResolver>[0] {
     return {
         ...request,
+        userId: request.userId,
+        body: request.body,
+        headers: request.headers,
         method,
         path,
     };
@@ -296,7 +330,7 @@ function sendOperationError(reply: any, error: unknown): unknown {
     if (error instanceof ReviewCommentOperationError) {
         const statusCode = error.code === "review_comment_not_found"
             ? 404
-            : error.code === "review_comment_conflict"
+            : error.code === "review_comment_conflict" || error.code === "review_comment_idempotency_conflict"
                 ? 409
                 : 400;
         return reply.code(statusCode).send({ error: error.code, message: error.message });

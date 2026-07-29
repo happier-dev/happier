@@ -3,6 +3,28 @@ import { z } from "zod";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { log } from "@/utils/logging/log";
 
+async function findOwnedSessionAndMachine(params: Readonly<{
+    userId: string;
+    sessionId: string;
+    machineId: string;
+}>): Promise<Readonly<{ sessionExists: boolean; machineExists: boolean }>> {
+    const [session, machine] = await Promise.all([
+        db.session.findFirst({
+            where: { id: params.sessionId, accountId: params.userId },
+            select: { id: true },
+        }),
+        db.machine.findFirst({
+            where: { id: params.machineId, accountId: params.userId },
+            select: { id: true },
+        }),
+    ]);
+
+    return {
+        sessionExists: session !== null,
+        machineExists: machine !== null,
+    };
+}
+
 export function accessKeysRoutes(app: Fastify) {
     // Get Access Key API
     app.get('/v1/access-keys/:sessionId/:machineId', {
@@ -35,16 +57,9 @@ export function accessKeysRoutes(app: Fastify) {
 
         try {
             // Verify session and machine belong to user
-            const [session, machine] = await Promise.all([
-                db.session.findFirst({
-                    where: { id: sessionId, accountId: userId }
-                }),
-                db.machine.findFirst({
-                    where: { id: machineId, accountId: userId }
-                })
-            ]);
+            const ownership = await findOwnedSessionAndMachine({ userId, sessionId, machineId });
 
-            if (!session || !machine) {
+            if (!ownership.sessionExists || !ownership.machineExists) {
                 return reply.code(404).send({ error: 'Session or machine not found' });
             }
 
@@ -117,16 +132,9 @@ export function accessKeysRoutes(app: Fastify) {
 
         try {
             // Verify session and machine belong to user
-            const [session, machine] = await Promise.all([
-                db.session.findFirst({
-                    where: { id: sessionId, accountId: userId }
-                }),
-                db.machine.findFirst({
-                    where: { id: machineId, accountId: userId }
-                })
-            ]);
+            const ownership = await findOwnedSessionAndMachine({ userId, sessionId, machineId });
 
-            if (!session || !machine) {
+            if (!ownership.sessionExists || !ownership.machineExists) {
                 return reply.code(404).send({ error: 'Session or machine not found' });
             }
 

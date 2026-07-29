@@ -1,8 +1,8 @@
-import { Prisma } from "@prisma/client";
 import type { PluginPermissionGrantAuditEventV1 } from "@happier-dev/protocol";
 import { PluginPermissionGrantAuditEventV1Schema } from "@happier-dev/protocol";
 
 import type { Tx } from "@/storage/inTx";
+import { prismaRuntime } from "@/storage/prisma";
 
 function stringifyJson(value: unknown): string {
     return JSON.stringify(value);
@@ -29,7 +29,7 @@ export async function appendPluginPermissionGrantAuditEvent(
     eventInput: PluginPermissionGrantAuditEventV1,
 ): Promise<void> {
     const event = PluginPermissionGrantAuditEventV1Schema.parse(eventInput);
-    await tx.$executeRaw(Prisma.sql`
+    await tx.$executeRaw(prismaRuntime.sql`
         INSERT INTO plugin_permission_grant_events (
             event_id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id,
             authority_kind, authority_machine_id, authority_installation_id,

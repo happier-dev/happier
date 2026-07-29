@@ -3,17 +3,13 @@ import { log } from "@/utils/logging/log";
 import { sessionCacheCounter, databaseUpdatesSkippedCounter, recordPresenceFlushRetry } from "@/app/monitoring/metrics/index";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
-import { createSessionPresenceUpdateManyArgs } from "./sessionPresenceWritePlan";
 
 interface SessionCacheEntry {
     validUntil: number;
     lastUpdateSent: number;
-    pendingUpdate: number | null;
-    pendingThinking: boolean | null;
     userId: string;
     sessionId: string;
     active: boolean;
-    thinking: boolean | null;
 }
 
 interface MachineCacheEntry {
@@ -98,7 +94,6 @@ class ActivityCache {
     }>): void {
         this.maybeCleanup(Date.now());
         const cacheKey = `${params.sessionId}:${params.userId}`;
-        const existing = this.sessionCache.get(cacheKey);
         this.sessionCache.set(cacheKey, {
             ...this.buildSeededSessionEntry(
                 params.sessionId,
@@ -109,9 +104,6 @@ class ActivityCache {
                     lastActiveAt: params.lastActiveAt,
                 },
             ),
-            pendingUpdate: existing?.pendingUpdate ?? null,
-            pendingThinking: existing?.pendingThinking ?? null,
-            thinking: existing?.thinking ?? null,
         });
     }
 
@@ -138,12 +130,9 @@ class ActivityCache {
         return {
             validUntil: now + this.CACHE_TTL,
             lastUpdateSent: params.lastActiveAt?.getTime() ?? 0,
-            pendingUpdate: null,
-            pendingThinking: null,
             userId,
             sessionId,
             active: params.active,
-            thinking: null,
         };
     }
 
@@ -283,49 +272,12 @@ class ActivityCache {
         }
     }
 
-    queueSessionUpdate(sessionId: string, userId: string, timestamp: number, thinking?: boolean): boolean {
-        this.maybeCleanup(Date.now());
-        const cacheKey = `${sessionId}:${userId}`;
-        const cached = this.sessionCache.get(cacheKey);
-        if (!cached) {
-            return false; // Should validate first
-        }
-        const nextThinking = typeof thinking === "boolean" ? thinking : null;
-        const thinkingChanged = nextThinking !== null && cached.thinking !== nextThinking;
-
-        // If the session is currently marked inactive, force a DB write to flip it back to active
-        // even if `lastActiveAt` is already recent (e.g. after a restart or previously-buggy writes).
-        if (!cached.active || thinkingChanged) {
-            cached.pendingUpdate = timestamp;
-            cached.pendingThinking = nextThinking;
-            cached.active = true;
-            if (nextThinking !== null) {
-                cached.thinking = nextThinking;
-            }
-            return true;
-        }
-        
-        // Only queue if time difference is significant
-        const timeDiff = Math.abs(timestamp - cached.lastUpdateSent);
-        if (timeDiff > this.UPDATE_THRESHOLD) {
-            cached.pendingUpdate = timestamp;
-            cached.pendingThinking = nextThinking;
-            if (nextThinking !== null) {
-                cached.thinking = nextThinking;
-            }
-            return true;
-        }
-        
-        databaseUpdatesSkippedCounter.inc({ type: 'session' });
-        return false; // No update needed
-    }
-
     isSessionObservedActive(sessionId: string, now = Date.now()): boolean {
         this.maybeCleanup(now);
         for (const entry of this.sessionCache.values()) {
             if (entry.sessionId !== sessionId) continue;
             if (entry.validUntil <= now) continue;
-            if (entry.active || entry.pendingUpdate !== null) {
+            if (entry.active) {
                 return true;
             }
         }
@@ -356,19 +308,6 @@ class ActivityCache {
         
         databaseUpdatesSkippedCounter.inc({ type: 'machine' });
         return false; // No update needed
-    }
-
-    markSessionUpdateSent(sessionId: string, userId: string, timestamp: number, thinking?: boolean): void {
-        const cacheKey = `${sessionId}:${userId}`;
-        const cached = this.sessionCache.get(cacheKey);
-        if (!cached) return;
-        cached.lastUpdateSent = timestamp;
-        cached.pendingUpdate = null;
-        cached.pendingThinking = null;
-        cached.active = true;
-        if (typeof thinking === "boolean") {
-            cached.thinking = thinking;
-        }
     }
 
     markSessionInactive(sessionId: string, userId: string, timestamp: number): void {
@@ -407,34 +346,7 @@ class ActivityCache {
     private async flushPendingUpdatesInternal(): Promise<void> {
         const now = Date.now();
         if (now < this.dbFlushBackoffUntil) return;
-        let shouldAbortFlush = false;
-
-        const sessionUpdatesByOwner = new Map<string, { accountId: string; sessionId: string; timestamp: number; thinking: boolean | null; entries: SessionCacheEntry[] }>();
         const machineUpdates: { machineId: string; timestamp: number; entry: MachineCacheEntry }[] = [];
-        
-        // Collect session updates
-        for (const entry of this.sessionCache.values()) {
-            if (entry.pendingUpdate !== null) {
-                const timestamp = entry.pendingUpdate;
-                const key = `${entry.sessionId}:${entry.userId}`;
-                const existing = sessionUpdatesByOwner.get(key);
-                if (!existing) {
-                    sessionUpdatesByOwner.set(key, {
-                        accountId: entry.userId,
-                        sessionId: entry.sessionId,
-                        timestamp,
-                        thinking: entry.pendingThinking,
-                        entries: [entry],
-                    });
-                } else {
-                    if (timestamp >= existing.timestamp) {
-                        existing.timestamp = timestamp;
-                        existing.thinking = entry.pendingThinking;
-                    }
-                    existing.entries.push(entry);
-                }
-            }
-        }
         
         // Collect machine updates
         for (const [machineId, entry] of this.machineCache.entries()) {
@@ -445,64 +357,6 @@ class ActivityCache {
                     entry,
                 });
             }
-        }
-        
-        // Flush session presence updates (best-effort).
-        if (sessionUpdatesByOwner.size > 0) {
-            let okCount = 0;
-            try {
-                const operations = Array.from(sessionUpdatesByOwner.values()).flatMap((update) =>
-                    createSessionPresenceUpdateManyArgs({
-                        accountId: update.accountId,
-                        sessionId: update.sessionId,
-                        timestamp: update.timestamp,
-                        thinking: update.thinking,
-                    }).map((args) => db.session.updateMany(args)),
-                );
-                await db.$transaction(operations);
-
-                for (const update of sessionUpdatesByOwner.values()) {
-                    const { timestamp, entries } = update;
-                    for (const entry of entries) {
-                        entry.lastUpdateSent = timestamp;
-                        // Preserve newer queued updates that arrived while awaiting the DB write.
-                        // The flush snapshot uses the pendingUpdate value observed at collection time.
-                        const pending = entry.pendingUpdate;
-                        entry.pendingUpdate = pending !== null && pending > timestamp ? pending : null;
-                        if (entry.pendingUpdate === null) {
-                            entry.pendingThinking = null;
-                        }
-                        entry.active = true;
-                    }
-                }
-                okCount = sessionUpdatesByOwner.size;
-            } catch (error) {
-                const shouldBackoff = this.shouldBackoffDbFlush(error);
-                // Keep every pending update in the failed transaction so the next flush retries the full batch.
-                for (const update of sessionUpdatesByOwner.values()) {
-                    for (const entry of update.entries) {
-                        entry.pendingUpdate = Math.max(entry.pendingUpdate ?? 0, update.timestamp);
-                    }
-                }
-                recordPresenceFlushRetry({
-                    entityType: "session",
-                    reason: shouldBackoff ? "db-backoff" : "db-error",
-                });
-                log(
-                    { module: 'session-cache', level: 'error' },
-                    `Error updating sessions: ${error}`,
-                );
-                if (shouldBackoff) {
-                    this.dbFlushBackoffUntil = Date.now() + this.DB_FLUSH_BACKOFF_INTERVAL;
-                    shouldAbortFlush = true;
-                }
-            }
-
-            log({ module: 'session-cache' }, `Flushed ${okCount}/${sessionUpdatesByOwner.size} session updates`);
-        }
-
-        if (shouldAbortFlush) {
-            return;
         }
         
         // Flush machine presence updates (best-effort).

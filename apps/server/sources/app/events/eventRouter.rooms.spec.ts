@@ -191,6 +191,7 @@ describe("eventRouter (rooms)", () => {
     });
 
     it("records room fanout target counts for room-based dispatch", async () => {
+        vi.spyOn(Math, "random").mockReturnValue(0);
         const ioTo = vi.fn().mockReturnValue({ emit: vi.fn() });
         eventRouter.setIo({ to: ioTo } as any);
 
@@ -223,5 +224,32 @@ describe("eventRouter (rooms)", () => {
                 }),
             ]),
         );
+    });
+
+    it("samples room fanout payload byte metrics instead of measuring every emission", async () => {
+        vi.spyOn(Math, "random").mockReturnValue(0.99);
+        const ioTo = vi.fn().mockReturnValue({ emit: vi.fn() });
+        eventRouter.setIo({ to: ioTo } as any);
+
+        eventRouter.emitEphemeral({
+            userId: "u1",
+            payload: {
+                type: "transcript-stream-segment",
+                sessionId: "s1",
+                message: { accumulatedText: "x".repeat(100_000) },
+            } as any,
+            recipientFilter: { type: "all-interested-in-session", sessionId: "s1" },
+        });
+
+        const emitSamples = await readMetricSamples("event_fanout_emits_total");
+        expect(emitSamples).toContainEqual({
+            labels: {
+                dispatch_mode: "room",
+                event_name: "ephemeral",
+                filter_type: "all-interested-in-session",
+            },
+            value: 1,
+        });
+        expect(await readMetricSamples("event_fanout_payload_bytes")).toEqual([]);
     });
 });

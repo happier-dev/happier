@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "scripts/dev.full.ts",
+    "scripts/dev.light.ts",
+    "scripts/migrate.light.deploy.ts",
+    "scripts/migrate.sqlite.deploy.ts",
+    "scripts/runtime/migrateFullRuntime.ts",
+    "scripts/schemaSync.ts",
+    "sources/main.ts",
+    "sources/main.light.ts",
+    "sources/storage/types.ts",
+    "sources/types/**/*.d.ts"
+  ],
+  "exclude": [
+    "sources/**/*.test.ts",
+    "sources/**/*.test.tsx",
+    "sources/**/*.spec.ts",
+    "sources/**/*.spec.tsx",
+    "sources/**/__tests__/**/*",
+    "sources/trash/**/*",
+    "node_modules"
+  ]
+}

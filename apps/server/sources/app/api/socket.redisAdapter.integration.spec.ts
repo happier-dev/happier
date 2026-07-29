@@ -18,7 +18,8 @@ vi.mock("@socket.io/redis-streams-adapter", () => ({
     createAdapter: (arg: any, opts?: any) => createAdapter(arg, opts),
 }));
 
-const getRedisClient = vi.fn(() => ({ name: "redis" }));
+const redisClient = { name: "redis" };
+const getRedisClient = vi.fn(() => redisClient);
 vi.mock("@/storage/redis/redis", () => ({
     getRedisClient: () => getRedisClient(),
 }));
@@ -53,13 +54,12 @@ describe("startSocket redis adapter config", () => {
         startSocket(createFastifyLikeApp());
 
         expect(createAdapter).toHaveBeenCalledWith(
-            expect.anything(),
+            redisClient,
             expect.objectContaining({
                 maxLen: 200000,
                 readCount: 2000,
             }),
         );
-        expect(getRedisClient).toHaveBeenCalledTimes(1);
         expect(serverCtor).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({
@@ -84,13 +84,12 @@ describe("startSocket redis adapter config", () => {
         startSocket(createFastifyLikeApp());
 
         expect(createAdapter).toHaveBeenCalledWith(
-            expect.anything(),
+            redisClient,
             expect.objectContaining({
                 maxLen: 200000,
                 readCount: 2000,
             }),
         );
-        expect(getRedisClient).toHaveBeenCalledTimes(1);
         const options = serverCtor.mock.calls[0]?.[1];
         expect(options?.adapter).toEqual({
             name: "adapter",
@@ -139,13 +138,12 @@ describe("startSocket redis adapter config", () => {
         startSocket(createFastifyLikeApp());
 
         expect(createAdapter).toHaveBeenCalledWith(
-            expect.anything(),
+            redisClient,
             expect.objectContaining({
                 maxLen: 200000,
                 readCount: 2000,
             }),
         );
-        expect(getRedisClient).toHaveBeenCalledTimes(1);
     });
 
     it("passes through explicit adapter tuning overrides", async () => {
@@ -160,7 +158,7 @@ describe("startSocket redis adapter config", () => {
         startSocket(createFastifyLikeApp());
 
         expect(createAdapter).toHaveBeenCalledWith(
-            expect.anything(),
+            redisClient,
             expect.objectContaining({
                 maxLen: 54321,
                 readCount: 222,

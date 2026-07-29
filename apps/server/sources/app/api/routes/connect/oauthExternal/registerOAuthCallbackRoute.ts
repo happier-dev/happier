@@ -13,7 +13,6 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { validateUsername } from "@/app/social/usernamePolicy";
 import { deleteOAuthStateAttemptBestEffort, loadValidOAuthStateAttempt } from "../connectRoutes.oauthStateAttempt";
 import { log } from "@/utils/logging/log";
-import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
 import { readAuthOauthKeylessFeatureEnv, readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolveKeylessAccountsAvailability } from "@/app/features/e2ee/resolveKeylessAccountsEnabled";
 import { resolveAuthPolicyFromEnv } from "@/app/auth/authPolicy";
@@ -114,10 +113,6 @@ export function registerOAuthCallbackRoute(app: Fastify) {
                     error: availability.reason === "e2ee-required" ? "e2ee_required" : "keyless_disabled",
                 }));
             }
-        }
-
-        if (flow === "connect" && !isServerFeatureEnabledForRequest("connectedServices", process.env)) {
-            return reply.redirect(buildRedirectUrl(webAppUrl, { ...redirectBaseParams, error: "connect_disabled" }));
         }
 
         if (oauthError) {

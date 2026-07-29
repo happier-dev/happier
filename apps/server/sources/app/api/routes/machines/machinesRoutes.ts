@@ -13,6 +13,7 @@ import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCata
 import tweetnacl from "tweetnacl";
 import * as privacyKit from "privacy-kit";
 import { parseBooleanEnv } from "@/config/env";
+import { admitAccountContentKey } from "@/app/encryption/accountContentKeyAdmission";
 import {
     applyVerifiedMachineRegistrationReplacement,
     MachineRegistrationReplacementError,
@@ -229,78 +230,60 @@ export function machinesRoutes(app: Fastify) {
                 }
                 resolvedContentPublicKeyFingerprint = derivedContentPublicKeyFingerprint;
 
-                const account = await db.account.findUnique({
-                    where: { id: userId },
-                    select: { contentPublicKey: true, publicKey: true },
-                });
-
-                let accountContentPublicKey: Uint8Array | null = account?.contentPublicKey ?? null;
-                if (!accountContentPublicKey) {
-                    if (contentPublicKeySigTrimmed) {
-                        let decodedSig: Uint8Array;
-                        try {
-                            decodedSig = privacyKit.decodeBase64(contentPublicKeySigTrimmed);
-                        } catch {
-                            log(
-                                { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
-                                "Machine registration rejected (invalid contentPublicKeySig)",
-                            );
-                            return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
-                        }
-
-                        if (decodedSig.length !== tweetnacl.sign.signatureLength) {
-                            log(
-                                { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
-                                "Machine registration rejected (invalid contentPublicKeySig length)",
-                            );
-                            return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
-                        }
-
-                        const publicKeyHex = typeof account?.publicKey === "string" ? account.publicKey : "";
-                        const expectedHexLength = tweetnacl.sign.publicKeyLength * 2;
-                        if (!publicKeyHex || publicKeyHex.length !== expectedHexLength || !/^[0-9a-f]+$/i.test(publicKeyHex)) {
-                            log(
-                                { module: "machines", machineId: id, userId, reason: "account_missing_public_key" },
-                                "Machine registration rejected (account publicKey invalid/missing)",
-                            );
-                            return reply.code(500).send({ error: "internal" });
-                        }
-
-                        const publicKeyBytes = Uint8Array.from(Buffer.from(publicKeyHex, "hex"));
-
-                        const binding = Buffer.concat([
-                            Buffer.from("Happy content key v1\u0000", "utf8"),
-                            Buffer.from(decoded),
-                        ]);
-                        const contentSigOk = tweetnacl.sign.detached.verify(binding, decodedSig, publicKeyBytes);
-                        if (!contentSigOk) {
-                            log(
-                                { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
-                                "Machine registration rejected (invalid contentPublicKeySig binding)",
-                            );
-                            return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
-                        }
-
-                        // Prisma bytes fields require ArrayBuffer-backed Uint8Array (not SharedArrayBuffer).
-                        const contentPublicKeyCopy = new Uint8Array(decoded.byteLength);
-                        contentPublicKeyCopy.set(decoded);
-                        const contentPublicKeySigCopy = new Uint8Array(decodedSig.byteLength);
-                        contentPublicKeySigCopy.set(decodedSig);
-
-                        const updated = await db.account.updateMany({
-                            where: { id: userId, contentPublicKey: null },
-                            data: { contentPublicKey: contentPublicKeyCopy, contentPublicKeySig: contentPublicKeySigCopy },
-                        });
-                        if (updated.count > 0) {
-                            accountContentPublicKey = contentPublicKeyCopy;
-                        } else {
-                            const refetched = await db.account.findUnique({
-                                where: { id: userId },
-                                select: { contentPublicKey: true },
-                            });
-                            accountContentPublicKey = refetched?.contentPublicKey ?? null;
-                        }
+                let accountContentPublicKey: Uint8Array | null = null;
+                if (contentPublicKeySigTrimmed) {
+                    let decodedSignature: Uint8Array;
+                    try {
+                        decodedSignature = privacyKit.decodeBase64(
+                            contentPublicKeySigTrimmed,
+                        );
+                    } catch {
+                        log(
+                            { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
+                            "Machine registration rejected (invalid contentPublicKeySig)",
+                        );
+                        return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
                     }
+                    const admission = await admitAccountContentKey(db, {
+                        accountId: userId,
+                        contentPublicKey: decoded,
+                        contentPublicKeySignature: decodedSignature,
+                    });
+                    if (admission.status === "key_mismatch") {
+                        log(
+                            { module: "machines", machineId: id, userId, reason: "content_public_key_mismatch" },
+                            "Machine registration rejected (contentPublicKey mismatch)",
+                        );
+                        return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_mismatch" });
+                    }
+                    if (admission.status === "invalid_binding") {
+                        log(
+                            { module: "machines", machineId: id, userId, reason: "content_public_key_invalid" },
+                            "Machine registration rejected (invalid contentPublicKeySig binding)",
+                        );
+                        return reply.code(400).send({ error: "invalid-params", reason: "content_public_key_invalid" });
+                    }
+                    if (admission.status === "account_not_found") {
+                        log(
+                            { module: "machines", machineId: id, userId, reason: "account_missing" },
+                            "Machine registration rejected (account missing)",
+                        );
+                        return reply.code(500).send({ error: "internal" });
+                    }
+                    if (!("binding" in admission)) {
+                        return reply.code(500).send({
+                            error: "internal",
+                        });
+                    }
+                    accountContentPublicKey =
+                        admission.binding.contentPublicKey;
+                } else {
+                    const account = await db.account.findUnique({
+                        where: { id: userId },
+                        select: { contentPublicKey: true },
+                    });
+                    accountContentPublicKey =
+                        account?.contentPublicKey ?? null;
                 }
 
                 if (!accountContentPublicKey) {

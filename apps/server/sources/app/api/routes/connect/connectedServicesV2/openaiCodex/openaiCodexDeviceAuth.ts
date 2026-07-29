@@ -51,6 +51,15 @@ function parseRecipientPublicKey(publicKeyB64Url: string): Uint8Array {
   return bytes;
 }
 
+export function isValidOpenAiCodexDeviceAuthRecipientPublicKey(publicKeyB64Url: string): boolean {
+  try {
+    parseRecipientPublicKey(publicKeyB64Url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export type OpenAiCodexDeviceAuthStartResult = Readonly<{
   deviceAuthId: string;
   userCode: string;

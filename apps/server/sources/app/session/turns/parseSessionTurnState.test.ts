@@ -11,11 +11,11 @@ describe("parseSessionTurnState", () => {
             v: 1,
             scope: "primary_session",
             status: "failed",
-            code: "provider_process_exit_after_switch",
-            source: "provider_process_exit_after_switch",
+            code: "agent_process_exit_after_switch",
+            source: "agent_process_exit_after_switch",
             occurredAt: 2_000,
             provider: "pi",
-            providerProcessExitAfterSwitch: {
+            agentProcessExitAfterSwitch: {
                 exitCode: 1,
                 signal: null,
                 lastStderrLine: "session file missing",
@@ -26,8 +26,8 @@ describe("parseSessionTurnState", () => {
         });
 
         expect(parseStoredSessionRuntimeIssue(issueJson)).toMatchObject({
-            source: "provider_process_exit_after_switch",
-            providerProcessExitAfterSwitch: {
+            source: "agent_process_exit_after_switch",
+            agentProcessExitAfterSwitch: {
                 exitCode: 1,
                 signal: null,
                 lastStderrLine: "session file missing",
@@ -44,7 +44,7 @@ describe("parseSessionTurnState", () => {
             terminalAt: 2_000,
             lastRuntimeIssueJson: issueJson,
         })?.lastRuntimeIssue).toMatchObject({
-            source: "provider_process_exit_after_switch",
+            source: "agent_process_exit_after_switch",
         });
     });
 
@@ -55,7 +55,7 @@ describe("parseSessionTurnState", () => {
                 scope: "primary_session",
                 status: "failed",
                 code: "provider_temporary_throttle",
-                source: "provider_status_error",
+                source: "agent_status_error",
                 occurredAt: 2_000,
                 temporaryThrottle: {
                     v: 1,

@@ -1,6 +1,9 @@
 import type { Prisma } from "@prisma/client";
+import { z } from "zod";
 import {
     ConnectedServiceCredentialHealthV1Schema,
+    ConnectedServiceCredentialRevisionV1Schema,
+    QualifiedConnectedAccountCredentialMetadataV4Schema,
     type ConnectedServiceCredentialHealthV1,
 } from "@happier-dev/protocol";
 
@@ -9,6 +12,37 @@ type MetadataWithHealth = Readonly<{
     providerAccountId?: string | null;
     health?: ConnectedServiceCredentialHealthV1;
 }>;
+
+export const QualifiedConnectedServiceCredentialStoredMetadataV4Schema =
+    z.object({
+        v: z.literal(4),
+        storage: z.literal("stored_envelope_v1"),
+        credentialRevision: ConnectedServiceCredentialRevisionV1Schema,
+        values: QualifiedConnectedAccountCredentialMetadataV4Schema,
+        health: ConnectedServiceCredentialHealthV1Schema.optional(),
+    }).strict();
+
+export type QualifiedConnectedServiceCredentialStoredMetadataV4 = z.infer<
+    typeof QualifiedConnectedServiceCredentialStoredMetadataV4Schema
+>;
+
+export function parseQualifiedConnectedServiceCredentialStoredMetadataV4(
+    raw: unknown,
+): QualifiedConnectedServiceCredentialStoredMetadataV4 {
+    return QualifiedConnectedServiceCredentialStoredMetadataV4Schema.parse(
+        raw,
+    );
+}
+
+export function withQualifiedConnectedServiceCredentialHealth(
+    metadata: QualifiedConnectedServiceCredentialStoredMetadataV4,
+    health: ConnectedServiceCredentialHealthV1,
+): QualifiedConnectedServiceCredentialStoredMetadataV4 {
+    return QualifiedConnectedServiceCredentialStoredMetadataV4Schema.parse({
+        ...metadata,
+        health: ConnectedServiceCredentialHealthV1Schema.parse(health),
+    });
+}
 
 export function parseConnectedServiceCredentialHealth(raw: unknown): ConnectedServiceCredentialHealthV1 | undefined {
     if (raw === undefined || raw === null) return undefined;

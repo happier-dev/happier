@@ -1,6 +1,6 @@
 import { Counter, Histogram } from "prom-client";
 
-import { register } from "./registry";
+import { getOrCreateMetric, register } from "./registry";
 
 type RpcMethodScope = "user" | "session" | "machine";
 type RpcFailureReason =
@@ -22,91 +22,91 @@ function classifyRpcMethodScope(method: string): RpcMethodScope {
     return "user";
 }
 
-export const rpcRegistrationsCounter = new Counter({
+export const rpcRegistrationsCounter = getOrCreateMetric("rpc_registrations_total", () => new Counter({
     name: "rpc_registrations_total",
     help: "Total RPC method registrations",
     labelNames: ["scope"] as const,
     registers: [register],
-});
+}));
 
-export const rpcUnregistrationsCounter = new Counter({
+export const rpcUnregistrationsCounter = getOrCreateMetric("rpc_unregistrations_total", () => new Counter({
     name: "rpc_unregistrations_total",
     help: "Total RPC method unregistrations",
     labelNames: ["scope"] as const,
     registers: [register],
-});
+}));
 
-export const rpcCallsCounter = new Counter({
+export const rpcCallsCounter = getOrCreateMetric("rpc_calls_total", () => new Counter({
     name: "rpc_calls_total",
     help: "Total RPC calls by scope",
     labelNames: ["scope"] as const,
     registers: [register],
-});
+}));
 
-export const rpcCallDurationHistogram = new Histogram({
+export const rpcCallDurationHistogram = getOrCreateMetric("rpc_call_duration_seconds", () => new Histogram({
     name: "rpc_call_duration_seconds",
     help: "RPC call duration in seconds",
     labelNames: ["scope", "result"] as const,
     buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 120],
     registers: [register],
-});
+}));
 
-export const rpcCallFailuresCounter = new Counter({
+export const rpcCallFailuresCounter = getOrCreateMetric("rpc_call_failures_total", () => new Counter({
     name: "rpc_call_failures_total",
     help: "Total RPC call failures by scope and reason",
     labelNames: ["scope", "reason"] as const,
     registers: [register],
-});
+}));
 
-export const rpcTargetLookupFailuresCounter = new Counter({
+export const rpcTargetLookupFailuresCounter = getOrCreateMetric("rpc_target_lookup_failures_total", () => new Counter({
     name: "rpc_target_lookup_failures_total",
     help: "Total RPC target lookup failures by scope and result",
     labelNames: ["scope", "result"] as const,
     registers: [register],
-});
+}));
 
-export const rpcTargetLookupDurationHistogram = new Histogram({
+export const rpcTargetLookupDurationHistogram = getOrCreateMetric("rpc_target_lookup_duration_seconds", () => new Histogram({
     name: "rpc_target_lookup_duration_seconds",
     help: "RPC target lookup duration in seconds",
     labelNames: ["scope", "result"] as const,
     buckets: [0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1],
     registers: [register],
-});
+}));
 
-export const rpcMethodNotAvailableCounter = new Counter({
+export const rpcMethodNotAvailableCounter = getOrCreateMetric("rpc_method_not_available_total", () => new Counter({
     name: "rpc_method_not_available_total",
     help: "Total RPC calls rejected because the target method is unavailable",
     labelNames: ["scope"] as const,
     registers: [register],
-});
+}));
 
-export const rpcSelfCallRejectionsCounter = new Counter({
+export const rpcSelfCallRejectionsCounter = getOrCreateMetric("rpc_self_call_rejections_total", () => new Counter({
     name: "rpc_self_call_rejections_total",
     help: "Total RPC calls rejected because the caller targeted itself",
     labelNames: ["scope"] as const,
     registers: [register],
-});
+}));
 
-export const socketClusterFetchSocketsCounter = new Counter({
+export const socketClusterFetchSocketsCounter = getOrCreateMetric("socket_cluster_fetch_sockets_total", () => new Counter({
     name: "socket_cluster_fetch_sockets_total",
     help: "Total cluster fetchSockets discovery attempts",
     registers: [register],
-});
+}));
 
-export const socketClusterFetchSocketsDurationHistogram = new Histogram({
+export const socketClusterFetchSocketsDurationHistogram = getOrCreateMetric("socket_cluster_fetch_sockets_duration_seconds", () => new Histogram({
     name: "socket_cluster_fetch_sockets_duration_seconds",
     help: "Cluster fetchSockets discovery duration in seconds",
     labelNames: ["result"] as const,
     buckets: [0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1],
     registers: [register],
-});
+}));
 
-export const socketClusterFetchSocketsFailuresCounter = new Counter({
+export const socketClusterFetchSocketsFailuresCounter = getOrCreateMetric("socket_cluster_fetch_sockets_failures_total", () => new Counter({
     name: "socket_cluster_fetch_sockets_failures_total",
     help: "Total cluster fetchSockets discovery failures",
     labelNames: ["reason"] as const,
     registers: [register],
-});
+}));
 
 export function recordRpcRegistration(method: string): void {
     rpcRegistrationsCounter.inc({ scope: classifyRpcMethodScope(method) });

@@ -32,7 +32,7 @@ CREATE TABLE "AccountLiveActivityTarget" (
 CREATE UNIQUE INDEX "AccountLiveActivityTarget_accountId_targetIdentityHash_key" ON "AccountLiveActivityTarget"("accountId", "targetIdentityHash");
 
 -- CreateIndex
-CREATE INDEX "AccountLiveActivityTarget_accountId_serverId_sessionId_activityName_endedAt_idx" ON "AccountLiveActivityTarget"("accountId", "serverId", "sessionId", "activityName", "endedAt");
+CREATE INDEX "AccountLiveActivityTarget_lookup_active_idx" ON "AccountLiveActivityTarget"("accountId", "serverId", "sessionId", "activityName", "endedAt");
 
 -- CreateIndex
 CREATE INDEX "AccountLiveActivityTarget_accountId_transportMode_endedAt_idx" ON "AccountLiveActivityTarget"("accountId", "transportMode", "endedAt");

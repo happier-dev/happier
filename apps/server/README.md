@@ -49,7 +49,7 @@ That said, Happier Server is open source and self-hostable if you prefer running
 
 Happier Server supports two flavors that share the same API + internal logic. Flavors are **presets** (defaults); you can override individual backends via env vars.
 
-- **full** (default, recommended for production): Postgres (default) or MySQL 8+ + Redis (required for multi-replica Socket.IO) + S3/Minio-compatible public file storage (default) or local files (`HAPPIER_FILES_BACKEND=local`).
+- **full** (default, recommended for production): Postgres (default) or MySQL 8.0.16+ + Redis (required for multi-replica Socket.IO) + S3/Minio-compatible public file storage (default) or local files (`HAPPIER_FILES_BACKEND=local`).
 - **light** (recommended for self-hosting/testing): SQLite (default) or embedded Postgres via PGlite + local public file storage served by the server under `GET /files/*`.
 
 ## Required environment (full flavor)
@@ -64,7 +64,7 @@ The full flavor expects these env vars to be set:
 - `HAPPIER_DB_PROVIDER` (optional, defaults to `postgres`). Supported: `postgres`, `mysql`, `pglite`, `sqlite`.
 - `DATABASE_URL`, for example:
   - Postgres: `postgresql://user:pass@db.example.com:5432/happy?sslmode=require`
-  - MySQL 8+: `mysql://user:pass@db.example.com:3306/happy`
+  - MySQL 8.0.16+: `mysql://user:pass@db.example.com:3306/happy`
 - `HANDY_MASTER_SECRET` (used to derive auth/encryption secrets)
 - Public file storage:
   - Choose a backend via `HAPPIER_FILES_BACKEND=local|s3` (default: `s3` in full flavor, `local` in light flavor)
@@ -390,7 +390,7 @@ Migrations are provider-specific:
 - SQLite:
   - migrations: `prisma/sqlite/migrations/*`
   - deploy: `yarn migrate:sqlite:deploy` (expects `DATABASE_URL=file:...`)
-- MySQL 8+:
+- MySQL 8.0.16+:
   - migrations: `prisma/mysql/migrations/*`
   - deploy: `yarn migrate:mysql:deploy`
 

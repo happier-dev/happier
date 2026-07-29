@@ -26,4 +26,14 @@ describe("getSocketRooms", () => {
         expect(() => getSocketRooms({ userId: "u1", clientType: "session-scoped" })).toThrow(/sessionId/i);
         expect(() => getSocketRooms({ userId: "u1", clientType: "machine-scoped" })).toThrow(/machineId/i);
     });
+
+    it("a live-stream viewer (user-scoped) is a member of its emit-fallback room", () => {
+        // C5 room contract: the relay handler delivers viewer-targeted frames to the per-tab
+        // socket id room (`io.to(viewerSocketId)`) — socket.io auto-joins every socket to that
+        // private room, so per-tab isolation is structural. When no viewerSocketId is minted the
+        // handler falls back to the shared user room, which a user-scoped client provably joins.
+        // This is the `getSocketRooms(viewer) ⊇ emit-room` invariant for the fallback path.
+        const viewerRooms = getSocketRooms({ userId: "u1", clientType: "user-scoped" });
+        expect(viewerRooms).toContain("user:u1");
+    });
 });

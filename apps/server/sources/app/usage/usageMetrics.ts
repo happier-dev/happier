@@ -75,7 +75,21 @@ export function addUsageCost(
         billingContext: left.billingContext === right.billingContext ? left.billingContext : 'unknown',
         costSource: left.costSource === right.costSource ? left.costSource : 'none',
         currency: left.currency === right.currency ? left.currency : 'MIXED',
+        breakdown: addCostBreakdowns(left.breakdown, right.breakdown),
     };
+}
+
+function addCostBreakdowns(
+    left: UsageObservationCost['breakdown'],
+    right: UsageObservationCost['breakdown'],
+): Record<string, number> | undefined {
+    const keys = new Set([...Object.keys(left ?? {}), ...Object.keys(right ?? {})]);
+    if (keys.size === 0) return undefined;
+    const breakdown: Record<string, number> = {};
+    for (const key of keys) {
+        breakdown[key] = (left?.[key] ?? 0) + (right?.[key] ?? 0);
+    }
+    return breakdown;
 }
 
 export function usageHasAnyValue(tokens: UsageObservationTokens, cost: UsageObservationCost): boolean {
@@ -146,5 +160,19 @@ export function subtractUsageCost(
         billingContext: nextValue.billingContext ?? previousValue.billingContext ?? 'unknown',
         costSource: nextValue.costSource ?? previousValue.costSource ?? 'none',
         currency: nextValue.currency || previousValue.currency || 'USD',
+        breakdown: subtractCostBreakdowns(nextValue.breakdown, previousValue.breakdown),
     };
+}
+
+function subtractCostBreakdowns(
+    nextValue: UsageObservationCost['breakdown'],
+    previousValue: UsageObservationCost['breakdown'],
+): Record<string, number> | undefined {
+    const keys = new Set([...Object.keys(nextValue ?? {}), ...Object.keys(previousValue ?? {})]);
+    if (keys.size === 0) return undefined;
+    const breakdown: Record<string, number> = {};
+    for (const key of keys) {
+        breakdown[key] = clampNonNegative((nextValue?.[key] ?? 0) - (previousValue?.[key] ?? 0));
+    }
+    return breakdown;
 }

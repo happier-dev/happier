@@ -1,96 +1,96 @@
 import { Counter, Gauge, Histogram } from "prom-client";
 
-import { register } from "./registry";
+import { getOrCreateMetric, register } from "./registry";
 
-export const sessionAliveEventsCounter = new Counter({
+export const sessionAliveEventsCounter = getOrCreateMetric("session_alive_events_total", () => new Counter({
     name: "session_alive_events_total",
     help: "Total number of session-alive events",
     registers: [register],
-});
+}));
 
-export const machineAliveEventsCounter = new Counter({
+export const machineAliveEventsCounter = getOrCreateMetric("machine_alive_events_total", () => new Counter({
     name: "machine_alive_events_total",
     help: "Total number of machine-alive events",
     registers: [register],
-});
+}));
 
-export const sessionCacheCounter = new Counter({
+export const sessionCacheCounter = getOrCreateMetric("session_cache_operations_total", () => new Counter({
     name: "session_cache_operations_total",
     help: "Total session cache operations",
     labelNames: ["operation", "result"] as const,
     registers: [register],
-});
+}));
 
-export const databaseUpdatesSkippedCounter = new Counter({
+export const databaseUpdatesSkippedCounter = getOrCreateMetric("database_updates_skipped_total", () => new Counter({
     name: "database_updates_skipped_total",
     help: "Number of database updates skipped due to debouncing",
     labelNames: ["type"] as const,
     registers: [register],
-});
+}));
 
-export const presenceStreamReadsCounter = new Counter({
+export const presenceStreamReadsCounter = getOrCreateMetric("presence_stream_reads_total", () => new Counter({
     name: "presence_stream_reads_total",
     help: "Total presence stream entries read by source",
     labelNames: ["source"] as const,
     registers: [register],
-});
+}));
 
-export const presenceStreamBatchSizeHistogram = new Histogram({
+export const presenceStreamBatchSizeHistogram = getOrCreateMetric("presence_stream_batch_size", () => new Histogram({
     name: "presence_stream_batch_size",
     help: "Presence batch size written during a flush",
     labelNames: ["kind"] as const,
     buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1000],
     registers: [register],
-});
+}));
 
-export const presenceStreamReclaimsCounter = new Counter({
+export const presenceStreamReclaimsCounter = getOrCreateMetric("presence_stream_reclaims_total", () => new Counter({
     name: "presence_stream_reclaims_total",
     help: "Total number of reclaimed pending presence entries",
     registers: [register],
-});
+}));
 
-export const presenceStreamInvalidEntriesCounter = new Counter({
+export const presenceStreamInvalidEntriesCounter = getOrCreateMetric("presence_stream_invalid_entries_total", () => new Counter({
     name: "presence_stream_invalid_entries_total",
     help: "Total invalid presence stream entries skipped by the worker",
     registers: [register],
-});
+}));
 
-export const presenceStreamAckCounter = new Counter({
+export const presenceStreamAckCounter = getOrCreateMetric("presence_stream_acks_total", () => new Counter({
     name: "presence_stream_acks_total",
     help: "Total presence stream acknowledgements emitted by the worker",
     registers: [register],
-});
+}));
 
-export const presenceStreamLastFlushDurationGauge = new Gauge({
+export const presenceStreamLastFlushDurationGauge = getOrCreateMetric("presence_stream_last_flush_duration_seconds", () => new Gauge({
     name: "presence_stream_last_flush_duration_seconds",
     help: "Duration in seconds of the most recent presence flush",
     registers: [register],
-});
+}));
 
-export const presenceStreamPendingEntriesGauge = new Gauge({
+export const presenceStreamPendingEntriesGauge = getOrCreateMetric("presence_stream_pending_entries", () => new Gauge({
     name: "presence_stream_pending_entries",
     help: "Current in-process pending presence entries awaiting acknowledgement",
     registers: [register],
-});
+}));
 
-export const presenceStreamRedisPendingEntriesGauge = new Gauge({
+export const presenceStreamRedisPendingEntriesGauge = getOrCreateMetric("presence_stream_redis_pending_entries", () => new Gauge({
     name: "presence_stream_redis_pending_entries",
     help: "Current Redis consumer-group pending presence entries awaiting acknowledgement",
     registers: [register],
-});
+}));
 
-export const presenceStreamRedisPendingRefreshFailuresCounter = new Counter({
+export const presenceStreamRedisPendingRefreshFailuresCounter = getOrCreateMetric("presence_stream_redis_pending_refresh_failures_total", () => new Counter({
     name: "presence_stream_redis_pending_refresh_failures_total",
     help: "Total failures while refreshing Redis-backed pending presence depth",
     registers: [register],
-});
+}));
 
-export const presenceFlushRetriesCounter = new Counter({
+export const presenceFlushRetriesCounter = getOrCreateMetric("presence_flush_retries_total", () => new Counter({
     name: "presence_flush_retries_total",
     help: "Total presence flush retries triggered by failed or backed-off DB writes",
     labelNames: ["entity_type", "reason"] as const,
     registers: [register],
-});
+}));
 
 export function recordPresenceStreamRead(source: "reclaim" | "stream", entryCount: number): void {
     if (entryCount <= 0) {

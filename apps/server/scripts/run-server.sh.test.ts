@@ -15,7 +15,7 @@ async function writeFakeYarn(params: Readonly<{ dir: string; logPath: string }>)
 set -e
 echo "YARN $@" >> "${params.logPath}"
 echo "ENV DATABASE_URL=$DATABASE_URL" >> "${params.logPath}"
-if echo "$*" | grep -q "prisma migrate deploy"; then
+if echo "$*" | grep -Eq "prisma migrate deploy|migrate:sqlite:deploy"; then
   state_path="${statePath}"
   count=0
   if [ -f "$state_path" ]; then
@@ -143,7 +143,7 @@ describe('run-server.sh', () => {
     expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/mysql/schema.prisma');
   });
 
-  it('runs migrate deploy for sqlite and derives DATABASE_URL from HAPPIER_SERVER_LIGHT_DATA_DIR when missing', async () => {
+  it('runs the canonical sqlite deploy owner and derives DATABASE_URL from HAPPIER_SERVER_LIGHT_DATA_DIR when missing', async () => {
     const res = spawnSync('sh', [getScriptPath()], {
       env: {
         ...process.env,
@@ -151,6 +151,8 @@ describe('run-server.sh', () => {
         HAPPIER_SERVER_FLAVOR: 'light',
         HAPPIER_DB_PROVIDER: 'sqlite',
         HAPPIER_SERVER_LIGHT_DATA_DIR: '/data/server-light',
+        HAPPY_SQLITE_CONNECTION_LIMIT: '',
+        HAPPIER_SQLITE_CONNECTION_LIMIT: '',
         RUN_MIGRATIONS: '1',
         MIGRATIONS_MAX_ATTEMPTS: '1',
         MIGRATIONS_RETRY_DELAY_SECONDS: '0',
@@ -161,8 +163,8 @@ describe('run-server.sh', () => {
     expect(res.status).toBe(0);
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('YARN '));
-    expect(yarnLines[0]).toContain('YARN --cwd apps/server prisma migrate deploy --schema prisma/sqlite/schema.prisma');
-    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30');
+    expect(yarnLines[0]).toContain('YARN --cwd apps/server migrate:sqlite:deploy');
+    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30&connection_limit=4');
     expect(yarnLines[yarnLines.length - 1]).toContain('YARN --cwd apps/server start:light');
   });
 });

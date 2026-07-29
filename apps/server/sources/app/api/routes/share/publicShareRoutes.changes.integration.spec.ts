@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { encodeBase64, stringifySerializedJsonValue } from "@happier-dev/protocol";
 import { createHash } from "node:crypto";
 
 import { db } from "@/storage/db";
@@ -46,8 +47,19 @@ vi.mock("@/app/events/eventRouter", () => ({
 vi.mock("@/utils/keys/randomKeyNaked", () => ({ randomKeyNaked }));
 vi.mock("@/app/changes/markAccountChanged", () => ({ markAccountChanged }));
 
+const VALID_ENCRYPTED_DATA_KEY = encodeBase64(
+    new Uint8Array(
+        24 + 16 + new TextEncoder().encode(
+            stringifySerializedJsonValue({ v: 0, keyB64: "A".repeat(44) }),
+        ).byteLength,
+    ).fill(1),
+    "base64",
+);
+const MALFORMED_ENCRYPTED_DATA_KEY = encodeBase64(Uint8Array.from([0, ...new Array(73).fill(1)]), "base64");
+
 describe("publicShareRoutes (AccountChange integration)", () => {
     let harness: LightSqliteHarness;
+    let seedCounter = 0;
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
@@ -72,7 +84,6 @@ describe("publicShareRoutes (AccountChange integration)", () => {
         harness.resetEnv();
         await harness.resetDbTables([
             () => db.publicShareAccessLog.deleteMany(),
-            () => db.publicShareBlockedUser.deleteMany(),
             () => db.publicSessionShare.deleteMany(),
             () => db.sessionMessage.deleteMany(),
             () => db.accountChange.deleteMany(),
@@ -83,17 +94,21 @@ describe("publicShareRoutes (AccountChange integration)", () => {
     });
 
     async function seedOwnerSession(encryptionMode: "e2ee" | "plain" = "e2ee") {
+        seedCounter += 1;
+        const seedId = `${encryptionMode}-${seedCounter}`;
         const owner = await db.account.create({
-            data: { publicKey: `pk-${encryptionMode}` },
+            data: { publicKey: `pk-${seedId}` },
             select: { id: true },
         });
 
         const session = await db.session.create({
             data: {
                 accountId: owner.id,
-                tag: `session-${encryptionMode}`,
+                tag: `session-${seedId}`,
                 encryptionMode,
                 metadata: JSON.stringify({ v: 1 }),
+                metadataLayoutVersion: 1,
+                ownerMetadata: "oQoBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQGDb9gtt8Xqs3gDuzJU/wWRuslcRY3OZA==",
                 agentState: null,
                 dataEncryptionKey: encryptionMode === "plain" ? null : Buffer.from([1, 2, 3]),
             },
@@ -102,6 +117,90 @@ describe("publicShareRoutes (AccountChange integration)", () => {
 
         return { owner, session };
     }
+
+    it("POST create rejects malformed E2EE encryptedDataKey envelopes", async () => {
+        const { owner, session } = await seedOwnerSession();
+
+        await withAuthenticatedTestApp(
+            (app) => publicShareRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: `/v1/sessions/${session.id}/public-share`,
+                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    payload: {
+                        token: "tok-invalid-dek",
+                        encryptedDataKey: MALFORMED_ENCRYPTED_DATA_KEY,
+                    },
+                });
+
+                expect(res.statusCode).toBe(400);
+                expect(res.json()).toEqual({ error: "Invalid encryptedDataKey" });
+            },
+        );
+
+        await expect(db.publicSessionShare.findUnique({
+            where: { sessionId: session.id },
+            select: { id: true },
+        })).resolves.toBeNull();
+    });
+
+    it("POST create preserves released public sharing for a layout-zero session", async () => {
+        const { owner, session } = await seedOwnerSession();
+        await db.session.update({
+            where: { id: session.id },
+            data: {
+                metadataLayoutVersion: 0,
+                ownerMetadata: null,
+            },
+        });
+
+        await withAuthenticatedTestApp(
+            (app) => publicShareRoutes(app as any),
+            async (app) => {
+                const res = await app.inject({
+                    method: "POST",
+                    url: `/v1/sessions/${session.id}/public-share`,
+                    headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
+                    payload: {
+                        token: "tok-unsplit",
+                        encryptedDataKey: VALID_ENCRYPTED_DATA_KEY,
+                    },
+                });
+
+                expect(res.statusCode, res.body).toBe(200);
+                expect(res.json()).toEqual({
+                    publicShare: expect.objectContaining({
+                        token: "tok-unsplit",
+                        useCount: 0,
+                        isConsentRequired: false,
+                    }),
+                });
+            },
+        );
+
+        const stored = await db.publicSessionShare.findUnique({
+            where: { sessionId: session.id },
+            select: { sessionId: true, encryptedDataKey: true },
+        });
+        expect(stored?.sessionId).toBe(session.id);
+        expect(stored?.encryptedDataKey).toBeInstanceOf(Uint8Array);
+        expect(markAccountChanged).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ accountId: owner.id, kind: "share", entityId: session.id }),
+        );
+        expect(markAccountChanged).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ accountId: owner.id, kind: "session", entityId: session.id }),
+        );
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            userId: owner.id,
+            payload: expect.objectContaining({
+                seq: 51,
+                body: expect.objectContaining({ t: "public-share-created" }),
+            }),
+        }));
+    });
 
     it("POST create marks share+session and emits created update using latest cursor", async () => {
         const { owner, session } = await seedOwnerSession();
@@ -115,7 +214,7 @@ describe("publicShareRoutes (AccountChange integration)", () => {
                     headers: { "x-test-user-id": owner.id, "content-type": "application/json" },
                     payload: {
                         token: "tok-create",
-                        encryptedDataKey: Buffer.from("key").toString("base64"),
+                        encryptedDataKey: VALID_ENCRYPTED_DATA_KEY,
                     },
                 });
 

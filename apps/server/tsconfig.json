@@ -21,7 +21,6 @@
     // "removeComments": true,                      /* Do not emit comments to output. */
     // "noEmit": false,                              /* Do not emit outputs. */
     // "importHelpers": true,                       /* Import emit helpers from 'tslib'. */
-    "downlevelIteration": true,                  /* Provide full support for iterables in 'for-of', spread, and destructuring when targeting 'ES5' or 'ES3'. */
     // "isolatedModules": true,                     /* Transpile each file as a separate module (similar to 'ts.transpileModule'). */
 
     /* Strict Type-Checking Options */
@@ -74,5 +73,9 @@
       ]
     }
   },
-  "include": ["sources/**/*"]
+  "include": [
+    "sources/**/*",
+    "scripts/voiceProviderConversationIdentityMysqlUpgradeContract.ts",
+    "scripts/runtime/migrateFullRuntime.ts"
+  ]
 }

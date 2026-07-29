@@ -3,6 +3,7 @@ import type { Socket } from "socket.io";
 import type { ClientConnection } from "@/app/events/eventPayloadTypes";
 import { observeSessionScopedBindingStage } from "@/app/monitoring/metrics/sessionBindingMetrics";
 import { db } from "@/storage/db";
+import type { Tx } from "@/storage/inTx";
 
 export type SessionScopedBindingProof = "owner-session" | "machine-access-key";
 
@@ -34,6 +35,32 @@ type MachineAccessKeyAvailability = Readonly<{
         replacedByMachineId: string | null;
     }>;
 }> | null;
+
+/** Revalidates the exact machine/session access relationship inside the caller's transaction. */
+export async function hasCurrentSessionScopedMachineAccessInTx(params: Readonly<{
+    tx: Tx;
+    accountId: string;
+    machineId: string;
+    sessionId: string;
+}>): Promise<boolean> {
+    const accessKey = await params.tx.accessKey.findUnique({
+        where: {
+            accountId_machineId_sessionId: {
+                accountId: params.accountId,
+                machineId: params.machineId,
+                sessionId: params.sessionId,
+            },
+        },
+        select: {
+            machine: { select: { revokedAt: true, replacedByMachineId: true } },
+            session: { select: { accountId: true } },
+        },
+    });
+    return accessKey !== null
+        && accessKey.session.accountId === params.accountId
+        && accessKey.machine.revokedAt === null
+        && accessKey.machine.replacedByMachineId === null;
+}
 
 function normalizeNonEmptyString(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -191,26 +218,26 @@ function isAvailableMachineAccessKey(accessKey: MachineAccessKeyAvailability): b
     return Boolean(accessKey && !accessKey.machine.revokedAt && !accessKey.machine.replacedByMachineId);
 }
 
-export async function canRegisterSessionScopedRpcMethod(params: Readonly<{
+function readSessionScopedRpcMethodSessionId(method: string): string | null {
+    const lastColon = method.lastIndexOf(":");
+    if (lastColon <= 0) {
+        return null;
+    }
+    return normalizeNonEmptyString(method.slice(0, lastColon));
+}
+
+async function canUseSessionScopedRpcMethodWithMachineAccessKey(params: Readonly<{
     socket: Socket;
     accountId: string;
     method: string;
 }>): Promise<boolean> {
-    const clientType = (params.socket.data as { clientType?: unknown } | undefined)?.clientType;
-    if (clientType !== "session-scoped") {
-        return true;
-    }
-
     const binding = readSessionScopedSocketBinding(params.socket);
     if (!binding || binding.proof !== "machine-access-key") {
         return false;
     }
 
-    const lastColon = params.method.lastIndexOf(":");
-    if (lastColon <= 0) {
-        return false;
-    }
-    if (params.method.slice(0, lastColon) !== binding.sessionId) {
+    const methodSessionId = readSessionScopedRpcMethodSessionId(params.method);
+    if (methodSessionId !== binding.sessionId) {
         return false;
     }
 
@@ -226,6 +253,87 @@ export async function canRegisterSessionScopedRpcMethod(params: Readonly<{
     }));
 }
 
+export async function canRegisterSessionScopedRpcMethod(params: Readonly<{
+    socket: Socket;
+    accountId: string;
+    method: string;
+}>): Promise<boolean> {
+    const clientType = (params.socket.data as { clientType?: unknown } | undefined)?.clientType;
+    if (clientType !== "session-scoped") {
+        return true;
+    }
+
+    return canUseSessionScopedRpcMethodWithMachineAccessKey(params);
+}
+
+export async function canCallSessionScopedRpcMethod(params: Readonly<{
+    socket: Socket;
+    accountId: string;
+    method: string;
+}>): Promise<boolean> {
+    const clientType = (params.socket.data as { clientType?: unknown } | undefined)?.clientType;
+    if (clientType !== "session-scoped") {
+        return true;
+    }
+
+    return canUseSessionScopedRpcMethodWithMachineAccessKey(params);
+}
+
+function readSessionScopedConnectionSessionId(connection: ClientConnection): string | null {
+    if (connection.connectionType !== "session-scoped") return null;
+    return normalizeNonEmptyString(connection.sessionId);
+}
+
+export function canTargetSessionFromSocket(params: Readonly<{
+    socket: Socket;
+    connection: ClientConnection;
+    sessionId: string;
+}>): boolean {
+    const sessionId = normalizeNonEmptyString(params.sessionId);
+    if (!sessionId) return false;
+    if (params.connection.connectionType !== "session-scoped") {
+        return true;
+    }
+
+    const bindingSessionId = readSessionScopedSocketBinding(params.socket)?.sessionId ?? null;
+    const connectionSessionId = readSessionScopedConnectionSessionId(params.connection);
+    const scopedSessionIds = [bindingSessionId, connectionSessionId].filter((value): value is string => value !== null);
+    if (scopedSessionIds.length === 0) return false;
+    return scopedSessionIds.every((scopedSessionId) => scopedSessionId === sessionId);
+}
+
+export async function canReadAccessKeyFromSessionScopedSocket(params: Readonly<{
+    socket: Socket;
+    connection: ClientConnection;
+    sessionId: string;
+    machineId: string;
+}>): Promise<boolean> {
+    const machineId = normalizeNonEmptyString(params.machineId);
+    if (!machineId) {
+        return false;
+    }
+    if (!canTargetSessionFromSocket(params)) {
+        return false;
+    }
+    if (params.connection.connectionType !== "session-scoped") {
+        return true;
+    }
+
+    const binding = readSessionScopedSocketBinding(params.socket);
+    if (!binding || binding.proof !== "machine-access-key") {
+        return true;
+    }
+    if (binding.machineId !== machineId) {
+        return false;
+    }
+
+    return isAvailableMachineAccessKey(await readMachineAccessKeyAvailability({
+        accountId: params.connection.userId,
+        machineId,
+        sessionId: binding.sessionId,
+    }));
+}
+
 export async function canPublishFromSessionScopedSocket(params: Readonly<{
     socket: Socket;
     connection: ClientConnection;
@@ -235,9 +343,12 @@ export async function canPublishFromSessionScopedSocket(params: Readonly<{
     if (params.connection.connectionType !== "session-scoped") {
         return false;
     }
+    if (!canTargetSessionFromSocket(params)) {
+        return false;
+    }
 
     const binding = readSessionScopedSocketBinding(params.socket);
-    if (!binding || binding.sessionId !== params.sessionId) {
+    if (!binding) {
         return false;
     }
     if (params.requireMachineBinding === true) {

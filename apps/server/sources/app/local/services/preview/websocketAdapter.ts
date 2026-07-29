@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 
 import type {
@@ -6,12 +7,20 @@ import type {
     OpenLocalServicePreviewTunnel,
 } from "@/app/local/services/preview/httpAdapter";
 import { DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES } from "@/app/local/services/preview/limits";
+import { isPreviewControlledForwardingHeader } from "@/app/local/services/preview/headers";
+import {
+    createPeerMediationWebSocketEvent,
+    type PeerMediationObservabilityEmitter,
+} from "@/app/api/socket/peer/mediation/observability/events";
 
 const DEFAULT_PREVIEW_MAX_PROXY_HOPS = 5;
 const PREVIEW_HOP_HEADER = "x-happier-preview-hops";
 const HTTP_HEADER_TERMINATOR = "\r\n\r\n";
+const WEBSOCKET_ACCEPT_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
 const headerTerminatorBytes = textEncoder.encode(HTTP_HEADER_TERMINATOR);
+let nextSocketSequence = 0;
 
 export type LocalServicePreviewWebSocketClient = Readonly<{
     read(): AsyncIterable<Uint8Array>;
@@ -39,6 +48,7 @@ export type ProxyLocalServicePreviewWebSocketUpgradeResult =
               | "response_header_too_large"
               | "response_body_too_large"
               | "invalid_upgrade_request"
+              | "upstream_response_invalid"
               | "upstream_stream_failed";
       }>;
 
@@ -47,6 +57,9 @@ export type ProxyLocalServicePreviewWebSocketUpgradeInput = Readonly<{
     request: LocalServicePreviewWebSocketUpgradeRequest;
     openTunnel: OpenLocalServicePreviewTunnel;
     maxProxyHops?: number;
+    observability?: PeerMediationObservabilityEmitter;
+    observabilityAccountId?: string;
+    nowMs?: () => number;
 }>;
 
 function headerName(value: string): string {
@@ -90,6 +103,8 @@ function requestTargetPath(request: LocalServicePreviewWebSocketUpgradeRequest):
 
 function shouldForwardRawHeader(name: string): boolean {
     const normalized = headerName(name);
+    if (normalized === PREVIEW_HOP_HEADER) return false;
+    if (isPreviewControlledForwardingHeader(normalized)) return false;
     return ![
         "authorization",
         "connection",
@@ -103,6 +118,22 @@ function shouldForwardRawHeader(name: string): boolean {
         "transfer-encoding",
         "upgrade",
     ].includes(normalized);
+}
+
+function headersForObservability(request: LocalServicePreviewWebSocketUpgradeRequest): LocalServicePreviewHttpHeaders {
+    const merged: Record<string, string | readonly string[] | undefined> = {
+        ...request.headers,
+    };
+    for (let index = 0; index < request.rawHeaders.length; index += 2) {
+        const name = request.rawHeaders[index];
+        const value = request.rawHeaders[index + 1];
+        if (typeof name !== "string" || typeof value !== "string") continue;
+        const normalized = headerName(name);
+        if (normalized === "sec-websocket-protocol") {
+            merged[normalized] = value;
+        }
+    }
+    return merged;
 }
 
 function serializeUpgradeRequest(
@@ -156,6 +187,56 @@ function responseHeaderTooLarge(buffer: Uint8Array, headerEnd: number): boolean 
         return headerEnd > DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES;
     }
     return buffer.byteLength > DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES;
+}
+
+function headerTokenIncludes(values: readonly string[], token: string): boolean {
+    const expected = token.toLowerCase();
+    return values.some((value) => value
+        .split(",")
+        .some((item) => item.trim().toLowerCase() === expected));
+}
+
+function parseResponseHeaderBlock(headerBlock: Uint8Array): Readonly<{
+    statusCode: number | null;
+    headers: Map<string, string[]>;
+}> {
+    const lines = textDecoder.decode(headerBlock).split("\r\n");
+    const statusMatch = /^HTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s|$)/u.exec(lines[0] ?? "");
+    const headers = new Map<string, string[]>();
+    for (const line of lines.slice(1)) {
+        const separatorIndex = line.indexOf(":");
+        if (separatorIndex <= 0) continue;
+        const name = headerName(line.slice(0, separatorIndex));
+        const value = line.slice(separatorIndex + 1).trim();
+        headers.set(name, [...(headers.get(name) ?? []), value]);
+    }
+    return {
+        statusCode: statusMatch ? Number.parseInt(statusMatch[1], 10) : null,
+        headers,
+    };
+}
+
+function isValidUpstreamWebSocketHandshake(headerBlock: Uint8Array): boolean {
+    const response = parseResponseHeaderBlock(headerBlock);
+    return response.statusCode === 101
+        && headerTokenIncludes(response.headers.get("upgrade") ?? [], "websocket")
+        && headerTokenIncludes(response.headers.get("connection") ?? [], "upgrade");
+}
+
+function expectedWebSocketAccept(request: LocalServicePreviewWebSocketUpgradeRequest): string | null {
+    const key = readHeader(request.headers, "sec-websocket-key")?.trim();
+    if (!key) return null;
+    return createHash("sha1").update(`${key}${WEBSOCKET_ACCEPT_GUID}`).digest("base64");
+}
+
+function isValidUpstreamWebSocketAccept(
+    request: LocalServicePreviewWebSocketUpgradeRequest,
+    headerBlock: Uint8Array,
+): boolean {
+    const expected = expectedWebSocketAccept(request);
+    if (!expected) return false;
+    const response = parseResponseHeaderBlock(headerBlock);
+    return headerValues(response.headers.get("sec-websocket-accept")).some((value) => value.trim() === expected);
 }
 
 async function writeClientError(
@@ -214,6 +295,7 @@ async function pumpTunnelToClient(input: Readonly<{
     let handshakeBuffer: Uint8Array<ArrayBufferLike> = new Uint8Array();
     for await (const chunk of input.tunnel.read()) {
         let countedChunk = chunk;
+        let clientChunk = chunk;
         if (!handshakeComplete) {
             handshakeBuffer = concatBytes(handshakeBuffer, chunk);
             const headerEnd = findHeaderTerminator(handshakeBuffer);
@@ -223,11 +305,22 @@ async function pumpTunnelToClient(input: Readonly<{
                 return { ok: false, reasonCode: "response_header_too_large" };
             }
             if (headerEnd >= 0) {
+                const headerBlock = handshakeBuffer.subarray(0, headerEnd);
+                if (
+                    !isValidUpstreamWebSocketHandshake(headerBlock)
+                    || !isValidUpstreamWebSocketAccept(input.request, headerBlock)
+                ) {
+                    await input.tunnel.abort("upstream_response_invalid");
+                    input.request.client.destroy(new Error("upstream_response_invalid"));
+                    return { ok: false, reasonCode: "upstream_response_invalid" };
+                }
                 handshakeComplete = true;
                 countedChunk = handshakeBuffer.subarray(headerEnd + headerTerminatorBytes.byteLength);
+                clientChunk = handshakeBuffer;
                 handshakeBuffer = new Uint8Array();
             } else {
                 countedChunk = new Uint8Array();
+                continue;
             }
         }
         responseBytes += countedChunk.byteLength;
@@ -236,7 +329,12 @@ async function pumpTunnelToClient(input: Readonly<{
             input.request.client.destroy(new Error("response_body_too_large"));
             return { ok: false, reasonCode: "response_body_too_large" };
         }
-        await input.request.client.write(chunk);
+        await input.request.client.write(clientChunk);
+    }
+    if (!handshakeComplete) {
+        await input.tunnel.abort("upstream_response_invalid");
+        input.request.client.destroy(new Error("upstream_response_invalid"));
+        return { ok: false, reasonCode: "upstream_response_invalid" };
     }
     await input.request.client.end();
     return { ok: true };
@@ -245,6 +343,11 @@ async function pumpTunnelToClient(input: Readonly<{
 function isWebSocketUpgrade(request: LocalServicePreviewWebSocketUpgradeRequest): boolean {
     return readHeader(request.headers, "upgrade")?.toLowerCase() === "websocket"
         && /(^|,\s*)upgrade(\s*,|$)/iu.test(readHeader(request.headers, "connection") ?? "");
+}
+
+function nextSocketId(previewId: string): string {
+    nextSocketSequence += 1;
+    return `${previewId}:ws:${nextSocketSequence}`;
 }
 
 export async function proxyLocalServicePreviewWebSocketUpgrade(
@@ -260,10 +363,35 @@ export async function proxyLocalServicePreviewWebSocketUpgrade(
         return { ok: false, reasonCode: "preview_loop_detected" };
     }
 
+    const nowMs = input.nowMs ?? Date.now;
+    const startedAtMs = nowMs();
+    const socketId = nextSocketId(input.preview.previewId);
+    const observabilityAccountId = input.observabilityAccountId ?? "unknown";
     const tunnel = await input.openTunnel({ preview: input.preview });
+    function emitWebSocketLifecycle(inputEvent: Readonly<{
+        kind: "websocket.opened" | "websocket.closed" | "websocket.aborted" | "websocket.errored";
+        reasonCode?: string;
+        durationMs?: number;
+    }>): void {
+        input.observability?.emit(createPeerMediationWebSocketEvent({
+            kind: inputEvent.kind,
+            accountId: observabilityAccountId,
+            machineId: input.preview.machineId,
+            previewId: input.preview.previewId,
+            tunnelId: tunnel.tunnelId,
+            substreamId: tunnel.substreamId,
+            socketId,
+            url: requestTargetPath(input.request),
+            headers: headersForObservability(input.request),
+            ...(inputEvent.durationMs !== undefined ? { durationMs: inputEvent.durationMs } : {}),
+            ...(inputEvent.reasonCode ? { reasonCode: inputEvent.reasonCode } : {}),
+            nowMs: nowMs(),
+        }));
+    }
     try {
+        emitWebSocketLifecycle({ kind: "websocket.opened" });
         await tunnel.write(textEncoder.encode(serializeUpgradeRequest(input.preview, input.request)));
-        const [clientToTunnel, tunnelToClient] = await Promise.all([
+        const [clientToTunnel, tunnelToClient] = await Promise.allSettled([
             pumpClientToTunnel({
                 preview: input.preview,
                 request: input.request,
@@ -276,12 +404,43 @@ export async function proxyLocalServicePreviewWebSocketUpgrade(
             }),
         ]);
 
-        if (!clientToTunnel.ok) return clientToTunnel;
-        if (!tunnelToClient.ok) return tunnelToClient;
+        const failedPump = [clientToTunnel, tunnelToClient].find((result) => (
+            result.status === "fulfilled" && !result.value.ok
+        ));
+        if (failedPump?.status === "fulfilled" && !failedPump.value.ok) {
+            emitWebSocketLifecycle({
+                kind: "websocket.aborted",
+                reasonCode: failedPump.value.reasonCode,
+                durationMs: Math.max(0, nowMs() - startedAtMs),
+            });
+            return failedPump.value;
+        }
+
+        const rejectedPump = [clientToTunnel, tunnelToClient].find((result) => result.status === "rejected");
+        if (rejectedPump?.status === "rejected") {
+            input.request.client.destroy(rejectedPump.reason);
+            await tunnel.abort("preview_websocket_adapter_error");
+            emitWebSocketLifecycle({
+                kind: "websocket.errored",
+                reasonCode: "preview_websocket_adapter_error",
+                durationMs: Math.max(0, nowMs() - startedAtMs),
+            });
+            return { ok: false, reasonCode: "upstream_stream_failed" };
+        }
+
+        emitWebSocketLifecycle({
+            kind: "websocket.closed",
+            durationMs: Math.max(0, nowMs() - startedAtMs),
+        });
         return { ok: true };
     } catch (error) {
         input.request.client.destroy(error);
         await tunnel.abort("preview_websocket_adapter_error");
+        emitWebSocketLifecycle({
+            kind: "websocket.errored",
+            reasonCode: "preview_websocket_adapter_error",
+            durationMs: Math.max(0, nowMs() - startedAtMs),
+        });
         return { ok: false, reasonCode: "upstream_stream_failed" };
     } finally {
         await tunnel.close();

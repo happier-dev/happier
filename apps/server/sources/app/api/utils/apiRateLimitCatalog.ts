@@ -25,6 +25,8 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "connectedServices.quotas.read": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     "connectedServices.quotas.write": { defaultMax: 120, defaultWindow: "1 minute", keyMode: "user" },
     "connectedServices.quotas.refresh": { defaultMax: 60, defaultWindow: "1 minute", keyMode: "user" },
+    "connectedServices.deviceAuth.start": { defaultMax: 30, defaultWindow: "1 minute", keyMode: "user" },
+    "connectedServices.deviceAuth.poll": { defaultMax: 240, defaultWindow: "1 minute", keyMode: "user" },
     "session.pending": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
     "session.pending.materialize": { defaultMax: 120, defaultWindow: "1 minute", keyMode: "user" },
     "diagnostics.bugReportSnapshot": { defaultMax: 30, defaultWindow: "1 minute", keyMode: "user" },

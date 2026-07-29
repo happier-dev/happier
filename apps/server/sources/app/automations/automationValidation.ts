@@ -97,7 +97,10 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function assertTemplateEnvelopeForAccountMode(templateCiphertext: string, accountMode: "e2ee" | "plain"): void {
+export function assertAutomationTemplateEnvelopeForAccountMode(
+    templateCiphertext: string,
+    accountMode: "e2ee" | "plain",
+): void {
     let parsed: unknown;
     try {
         parsed = JSON.parse(templateCiphertext);
@@ -170,7 +173,7 @@ export function parseAutomationUpsertInput(
     }
 
     const accountMode = opts?.accountMode === "plain" ? "plain" : "e2ee";
-    assertTemplateEnvelopeForAccountMode(parsed.data.templateCiphertext, accountMode);
+    assertAutomationTemplateEnvelopeForAccountMode(parsed.data.templateCiphertext, accountMode);
     assertScheduleIsComputable(parsed.data.schedule);
 
     return {
@@ -190,7 +193,7 @@ export function parseAutomationPatchInput(
 
     if (typeof parsed.data.templateCiphertext === "string") {
         const accountMode = opts?.accountMode === "plain" ? "plain" : "e2ee";
-        assertTemplateEnvelopeForAccountMode(parsed.data.templateCiphertext, accountMode);
+        assertAutomationTemplateEnvelopeForAccountMode(parsed.data.templateCiphertext, accountMode);
     }
     if (parsed.data.schedule) {
         assertScheduleIsComputable(parsed.data.schedule);

@@ -84,58 +84,10 @@ describe('registerConnectedServiceOauthExchangeRoutes', () => {
     expect(JSON.parse(res.body)).toEqual({ error: 'connect_oauth_exchange_failed' });
   });
 
-  it('exchanges gemini tokens and returns a decryptable bundle', async () => {
+  it('rejects Gemini oauth exchange without contacting Google', async () => {
     const app = createTestApp();
 
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        access_token: 'access-token',
-        refresh_token: 'refresh-token',
-        expires_in: 60,
-        token_type: 'Bearer',
-        scope: 'email',
-      }),
-      text: async () => '',
-    }));
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
-    const keyPair = tweetnacl.box.keyPair();
-    const publicKey = encodeBase64(keyPair.publicKey, 'base64url');
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v2/connect/gemini/oauth/exchange',
-      payload: {
-        publicKey,
-        code: 'code-1',
-        verifier: 'verifier-1',
-        redirectUri: 'http://localhost:54545/oauth2callback',
-      },
-    });
-
-    expect(res.statusCode).toBe(200);
-    const json = JSON.parse(res.body);
-    expect(typeof json.bundle).toBe('string');
-    const bundleBytes = decodeBase64(String(json.bundle), 'base64url');
-    const opened = openBoxBundle({ bundle: bundleBytes, recipientSecretKeyOrSeed: keyPair.secretKey });
-    expect(opened).toBeTruthy();
-    const payload = JSON.parse(new TextDecoder().decode(opened!));
-    expect(payload.serviceId).toBe('gemini');
-    expect(payload.refreshToken).toBe('refresh-token');
-    expect(payload.accessToken).toBe('access-token');
-  });
-
-  it('maps gemini invalid_grant to a dedicated oauth error code', async () => {
-    const app = createTestApp();
-
-    const fetchMock = vi.fn(async () => ({
-      ok: false,
-      status: 400,
-      json: async () => ({ error: 'invalid_grant', error_description: 'Bad Request' }),
-      text: async () => 'invalid_grant',
-    }));
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
 
     const res = await app.inject({
@@ -150,39 +102,8 @@ describe('registerConnectedServiceOauthExchangeRoutes', () => {
     });
 
     expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: 'connect_oauth_invalid_grant' });
-  });
-
-  it('maps gemini missing refresh_token to a dedicated oauth error code', async () => {
-    const app = createTestApp();
-
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({
-        access_token: 'access-token',
-        // refresh_token intentionally omitted
-        expires_in: 60,
-        token_type: 'Bearer',
-        scope: 'email',
-      }),
-      text: async () => '',
-    }));
-    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
-
-    const res = await app.inject({
-      method: 'POST',
-      url: '/v2/connect/gemini/oauth/exchange',
-      payload: {
-        publicKey: encodeBase64(tweetnacl.box.keyPair().publicKey, 'base64url'),
-        code: 'code-1',
-        verifier: 'verifier-1',
-        redirectUri: 'http://localhost:54545/oauth2callback',
-      },
-    });
-
-    expect(res.statusCode).toBe(400);
-    expect(JSON.parse(res.body)).toEqual({ error: 'connect_oauth_missing_refresh_token' });
+    expect(JSON.parse(res.body)).toEqual({ error: 'connect_oauth_exchange_failed' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('exchanges claude-subscription tokens and requires a state', async () => {

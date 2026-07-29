@@ -56,6 +56,17 @@ describe("local service preview access tokens", () => {
             rawToken: "raw-preview-token",
             record: issued!.record,
             previewId: "preview_1",
+            sessionId: "session_1",
+            machineId: "machine_1",
+            nowMs: 2_000,
+            expectedExchangeMode: "url",
+        })).toEqual({ ok: false, reasonCode: "exchange_mode_mismatch" });
+
+        expect(mod?.validateLocalServicePreviewToken({
+            secret: "server-secret",
+            rawToken: "raw-preview-token",
+            record: issued!.record,
+            previewId: "preview_1",
             sessionId: "session_2",
             machineId: "machine_1",
             nowMs: 2_000,

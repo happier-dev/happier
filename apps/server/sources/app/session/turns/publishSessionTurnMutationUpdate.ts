@@ -5,7 +5,10 @@ import {
 } from "@/app/events/eventRouter";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
-import type { ApplySessionTurnMutationResult } from "@/app/session/sessionWriteService";
+import type {
+    ApplySessionTurnMutationResult,
+    ReassertSessionLatestTurnStatusResult,
+} from "@/app/session/sessionWriteService";
 
 function resolveSessionTurnUpdateSkipSenderConnection(connection?: ClientConnection): ClientConnection | undefined {
     if (!connection) return undefined;
@@ -16,7 +19,9 @@ export async function publishSessionTurnMutationUpdate(params: {
     sessionId: string;
     actorUserId: string;
     connection?: ClientConnection;
-    result: Extract<ApplySessionTurnMutationResult, { ok: true }>;
+    result:
+        | Extract<ApplySessionTurnMutationResult, { ok: true }>
+        | Extract<ReassertSessionLatestTurnStatusResult, { ok: true }>;
 }): Promise<void> {
     if (!params.result.didApply) return;
     const skipSenderConnection = resolveSessionTurnUpdateSkipSenderConnection(params.connection);

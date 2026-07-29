@@ -38,7 +38,7 @@ ON "ConnectedServiceAuthGroup"("accountId", "vendor", "groupId");
 CREATE INDEX "ConnectedServiceAuthGroup_accountId_vendor_idx"
 ON "ConnectedServiceAuthGroup"("accountId", "vendor");
 
-CREATE UNIQUE INDEX "ConnectedServiceAuthGroupMember_accountId_vendor_groupId_profileId_key"
+CREATE UNIQUE INDEX "csagm_account_vendor_group_profile_key"
 ON "ConnectedServiceAuthGroupMember"("accountId", "vendor", "groupId", "profileId");
 
 CREATE INDEX "ConnectedServiceAuthGroupMember_groupDbId_idx"

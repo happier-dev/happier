@@ -20,8 +20,8 @@ describe("presenceRedisQueue", () => {
     });
 
     it("adds MAXLEN trimming by default", async () => {
-        const { publishSessionAlive } = await import("./presenceRedisQueue");
-        await publishSessionAlive({ sessionId: "s1", timestamp: 1, accountId: "u1" });
+        const { publishMachineAlive } = await import("./presenceRedisQueue");
+        await publishMachineAlive({ accountId: "u1", machineId: "m1", timestamp: 1 });
 
         expect(getRedisClient).toHaveBeenCalled();
         expect(xadd).toHaveBeenCalledWith(
@@ -31,9 +31,9 @@ describe("presenceRedisQueue", () => {
             "100000",
             "*",
             "kind",
-            "session",
+            "machine",
             "id",
-            "s1",
+            "m1",
             "ts",
             "1",
             "accountId",
@@ -67,16 +67,16 @@ describe("presenceRedisQueue", () => {
     it("disables trimming when maxlen is 0", async () => {
         env.set("HAPPY_PRESENCE_STREAM_MAXLEN", "0");
 
-        const { publishSessionAlive } = await import("./presenceRedisQueue");
-        await publishSessionAlive({ sessionId: "s1", timestamp: 1, accountId: "u1" });
+        const { publishMachineAlive } = await import("./presenceRedisQueue");
+        await publishMachineAlive({ accountId: "u1", machineId: "m1", timestamp: 1 });
 
         expect(xadd).toHaveBeenCalledWith(
             "presence:alive:v1",
             "*",
             "kind",
-            "session",
+            "machine",
             "id",
-            "s1",
+            "m1",
             "ts",
             "1",
             "accountId",

@@ -1,5 +1,7 @@
+import { createHash } from "node:crypto";
 import {
     ReviewCommentV1Schema,
+    stringifyReviewCommentPrincipalCanonicalJsonV1,
     type ReviewCommentActorRefV1,
     type ReviewCommentAttachEvidenceRequestV1,
     type ReviewCommentAttachEvidenceResponseV1,
@@ -135,6 +137,55 @@ function assertValidReviewCommentSnapshot(snapshot: ReviewCommentCreateRequestV1
     }
 }
 
+function reviewCommentCreateRequestFingerprint(params: Readonly<{
+    actor: ReviewCommentActorRefV1;
+    input: ReviewCommentCreateRequestV1;
+    storageMode?: "plain" | "e2ee";
+}>): string {
+    const { clientMutationId: _clientMutationId, ...immutableInput } = params.input;
+    const immutableSnapshot = "capturedAt" in params.input.snapshot
+        ? (({ capturedAt: _capturedAt, ...snapshot }) => snapshot)(params.input.snapshot)
+        : params.input.snapshot;
+    return createHash("sha256")
+        .update("happier.reviewCommentCreateRequest.v1\0")
+        .update(stringifyReviewCommentPrincipalCanonicalJsonV1({
+            actor: params.actor,
+            input: {
+                ...immutableInput,
+                snapshot: immutableSnapshot,
+                authorIntent: immutableInput.authorIntent ?? "propose",
+            },
+            storageMode: params.storageMode ?? "plain",
+        }))
+        .digest("hex");
+}
+
+function assertReviewCommentCurrentIntent(params: ReviewCommentCreateOperationParams): void {
+    const intent = params.currentIntent;
+    const actor = params.actor;
+    const input = params.input;
+    const effectBodySha256Base64Url = createHash("sha256")
+        .update(stringifyReviewCommentPrincipalCanonicalJsonV1(input))
+        .digest("base64url");
+    if (
+        !intent
+        || actor.kind !== "agent"
+        || intent.agentId !== actor.agentId
+        || intent.sessionId !== actor.sessionId
+        || intent.projectId !== input.projectId
+        || intent.workspaceId !== input.workspaceId
+        || intent.sessionId !== input.sessionId
+        || intent.runId !== input.runId
+        || intent.pluginId !== input.engineId
+        || intent.effectBodySha256Base64Url !== effectBodySha256Base64Url
+    ) {
+        throw new ReviewCommentOperationError(
+            "review_comment_permission_denied",
+            "Direct review-comment writes require exact current intent",
+        );
+    }
+}
+
 export function createReviewCommentOperations(
     store: ReviewCommentStore,
     runtime: ReviewCommentOperationRuntime,
@@ -211,7 +262,8 @@ export function createReviewCommentOperations(
         async create(params) {
             assertValidReviewCommentSnapshot(params.input.snapshot);
             const direct = params.input.authorIntent === "open";
-            if (direct && params.actor.kind !== "user") {
+            if (params.actor.kind !== "user" && (direct || params.actor.kind === "agent")) {
+                assertReviewCommentCurrentIntent(params);
                 assertReviewCommentDirectWriteGrant(params);
             }
             const now = runtime.now();
@@ -271,14 +323,16 @@ export function createReviewCommentOperations(
                 clientLamport: params.input.clientLamport,
                 event: { comment },
             });
-            await store.commit({
+            const stored = await store.create({
                 accountId: params.accountId,
                 comment,
                 event,
                 storageMode: params.storageMode,
                 eventEnvelope: params.input.eventEnvelope,
+                createClientMutationId: params.input.clientMutationId,
+                createRequestFingerprint: reviewCommentCreateRequestFingerprint(params),
             });
-            return { comment };
+            return stored;
         },
         async list(params) {
             const result = await store.list({ accountId: params.accountId, filters: params.input });

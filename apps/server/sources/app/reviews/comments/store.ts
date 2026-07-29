@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import type { Prisma as PrismaTypes } from "@prisma/client";
 import type {
     ReviewCommentAnchorV1,
     ReviewCommentEventV1,
@@ -10,6 +10,7 @@ import { ReviewCommentEventV1Schema, ReviewCommentV1Schema, StoredJsonContentEnv
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { isPrismaErrorCode, prismaRuntime as Prisma } from "@/storage/prisma";
 import { ReviewCommentOperationError } from "./errors";
 import {
     applyReviewCommentListQuery,
@@ -36,10 +37,21 @@ export type ReviewCommentStoreCommitParams = Readonly<{
     eventEnvelope?: StoredJsonContentEnvelope;
 }>;
 
+export type ReviewCommentStoreCreateParams = ReviewCommentStoreCommitParams & Readonly<{
+    createClientMutationId: string;
+    createRequestFingerprint: string;
+}>;
+
+export type ReviewCommentStoreCreateResult = Readonly<{
+    comment: ReviewCommentV1;
+    replayed: boolean;
+}>;
+
 export interface ReviewCommentStore {
     get(params: ReviewCommentStoreCommentParams): Promise<ReviewCommentV1 | null>;
     list(params: ReviewCommentStoreListParams): Promise<ReviewCommentListResult>;
     listEvents(params: ReviewCommentStoreCommentParams): Promise<readonly ReviewCommentEventV1[]>;
+    create(params: ReviewCommentStoreCreateParams): Promise<ReviewCommentStoreCreateResult>;
     commit(params: ReviewCommentStoreCommitParams): Promise<void>;
 }
 
@@ -52,6 +64,8 @@ type ReviewCommentRow = {
     run_id: string | null;
     engine_id: string | null;
     finding_id: string | null;
+    create_client_mutation_id: string | null;
+    create_request_fingerprint: string | null;
     thread_id: string;
     parent_comment_id: string | null;
     state: string;
@@ -100,6 +114,8 @@ const COMMENT_SELECT_COLUMNS = Prisma.raw([
     "run_id",
     "engine_id",
     "finding_id",
+    "create_client_mutation_id",
+    "create_request_fingerprint",
     "thread_id",
     "parent_comment_id",
     "state",
@@ -253,9 +269,65 @@ function rowToEvent(row: ReviewCommentEventRow): ReviewCommentEventV1 {
     });
 }
 
+function buildStoredCommentValues(comment: ReviewCommentV1, mode: "plain" | "e2ee") {
+    const anchor = comment.anchor;
+    return {
+        flagsJson: stringifyJson(comment.flags),
+        anchorJson: stringifyJson(anchor),
+        anchorFilePath: anchorFilePath(anchor),
+        anchorFolderPath: anchorFolderPath(anchor),
+        snapshotEnvelopeJson: encodeStoredEnvelope({
+            value: comment.snapshot,
+            fieldName: "snapshot",
+            storageMode: mode,
+        }),
+        bodyEnvelopeJson: encodeStoredEnvelope({
+            value: comment.body,
+            fieldName: "body",
+            storageMode: mode,
+        }),
+        authorJson: stringifyJson(comment.author),
+        editsJson: stringifyJson(comment.edits),
+        dispositionsJson: stringifyJson(comment.dispositions),
+        evidenceJson: stringifyOptionalJson(comment.evidence),
+        transitionsJson: stringifyJson(comment.transitions),
+        fingerprintJson: stringifyOptionalJson(comment.fingerprint),
+        linkedRefsJson: stringifyOptionalJson(comment.linkedRefs),
+        suggestedFixJson: stringifyOptionalJson(comment.suggestedFix),
+        metadataJson: stringifyOptionalJson(comment.metadata),
+        tombstoneJson: stringifyOptionalJson(comment.tombstone),
+    };
+}
+
+function resolveCreateReplay(
+    row: ReviewCommentRow,
+    expectedRequestFingerprint: string,
+): ReviewCommentStoreCreateResult {
+    if (row.create_request_fingerprint !== expectedRequestFingerprint) {
+        throw new ReviewCommentOperationError(
+            "review_comment_idempotency_conflict",
+            "Review comment create mutation was already used for a different request",
+        );
+    }
+    return { comment: rowToComment(row), replayed: true };
+}
+
+function createMutationLookupQuery(accountId: string, createClientMutationId: string): PrismaTypes.Sql {
+    return Prisma.sql`
+        SELECT ${COMMENT_SELECT_COLUMNS}
+        FROM review_comments
+        WHERE account_id = ${accountId} AND create_client_mutation_id = ${createClientMutationId}
+        LIMIT 1
+    `;
+}
+
 export function createInMemoryReviewCommentStore(): ReviewCommentStore {
     const comments = new Map<string, ReviewCommentV1>();
     const events = new Map<string, ReviewCommentEventV1[]>();
+    const creates = new Map<string, Readonly<{
+        comment: ReviewCommentV1;
+        requestFingerprint: string;
+    }>>();
 
     return {
         async get(params) {
@@ -268,6 +340,25 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
         },
         async listEvents(params) {
             return events.get(`${params.accountId}:${params.commentId}`) ?? [];
+        },
+        async create(params) {
+            const createKey = `${params.accountId}:${params.createClientMutationId}`;
+            const existing = creates.get(createKey);
+            if (existing) {
+                if (existing.requestFingerprint !== params.createRequestFingerprint) {
+                    throw new ReviewCommentOperationError(
+                        "review_comment_idempotency_conflict",
+                        "Review comment create mutation was already used for a different request",
+                    );
+                }
+                return { comment: existing.comment, replayed: true };
+            }
+            const comment = ReviewCommentV1Schema.parse(params.comment);
+            const event = ReviewCommentEventV1Schema.parse(params.event);
+            creates.set(createKey, { comment, requestFingerprint: params.createRequestFingerprint });
+            comments.set(`${params.accountId}:${comment.id}`, comment);
+            events.set(`${params.accountId}:${comment.id}`, [event]);
+            return { comment, replayed: false };
         },
         async commit(params) {
             comments.set(`${params.accountId}:${params.comment.id}`, ReviewCommentV1Schema.parse(params.comment));
@@ -290,7 +381,7 @@ function escapeSqlLikePattern(value: string): string {
         .replace(/_/g, "~_");
 }
 
-function buildWhere(params: ReviewCommentStoreListParams): Prisma.Sql[] {
+function buildWhere(params: ReviewCommentStoreListParams): PrismaTypes.Sql[] {
     const filters = normalizeReviewCommentListFilters(params.filters);
     const where = [Prisma.sql`account_id = ${params.accountId}`];
     if (filters.projectId) where.push(Prisma.sql`project_id = ${filters.projectId}`);
@@ -353,6 +444,88 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
             `);
             return rows.map(rowToEvent);
         },
+        async create(params) {
+            const comment = ReviewCommentV1Schema.parse(params.comment);
+            const event = ReviewCommentEventV1Schema.parse(params.event);
+            const mode = storageMode(params);
+            const values = buildStoredCommentValues(comment, mode);
+            const eventEnvelopeJson = encodeStoredEnvelope({
+                value: params.eventEnvelope ?? event.event,
+                fieldName: "event",
+                storageMode: mode,
+            });
+            try {
+                return await inTx(async (tx) => {
+                    const existingRows = await tx.$queryRaw<ReviewCommentRow[]>(
+                        createMutationLookupQuery(params.accountId, params.createClientMutationId),
+                    );
+                    const existing = existingRows[0];
+                    if (existing) {
+                        return resolveCreateReplay(existing, params.createRequestFingerprint);
+                    }
+
+                    await tx.reviewComment.create({
+                        data: {
+                            id: comment.id,
+                            accountId: params.accountId,
+                            projectId: comment.projectId,
+                            workspaceId: comment.workspaceId,
+                            sessionId: comment.sessionId,
+                            runId: comment.runId,
+                            engineId: comment.engineId,
+                            findingId: comment.findingId,
+                            createClientMutationId: params.createClientMutationId,
+                            createRequestFingerprint: params.createRequestFingerprint,
+                            threadId: comment.threadId,
+                            parentCommentId: comment.parentCommentId,
+                            state: comment.state,
+                            flagsJson: values.flagsJson,
+                            anchorJson: values.anchorJson,
+                            anchorFilePath: values.anchorFilePath,
+                            anchorFolderPath: values.anchorFolderPath,
+                            snapshotEnvelopeJson: values.snapshotEnvelopeJson,
+                            bodyEnvelopeJson: values.bodyEnvelopeJson,
+                            bodyVersion: comment.bodyVersion,
+                            authorJson: values.authorJson,
+                            editsJson: values.editsJson,
+                            dispositionsJson: values.dispositionsJson,
+                            evidenceJson: values.evidenceJson,
+                            transitionsJson: values.transitionsJson,
+                            fingerprintJson: values.fingerprintJson,
+                            linkedRefsJson: values.linkedRefsJson,
+                            suggestedFixJson: values.suggestedFixJson,
+                            metadataJson: values.metadataJson,
+                            tombstoneJson: values.tombstoneJson,
+                            serverRevision: comment.serverRevision,
+                            createdAt: BigInt(comment.createdAt),
+                            updatedAt: BigInt(comment.updatedAt),
+                        },
+                    });
+                    await tx.$executeRaw(Prisma.sql`
+                        INSERT INTO review_comment_events (
+                            event_id, comment_id, account_id, project_id, event_kind, event_envelope_json,
+                            bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
+                            server_revision, created_at
+                        ) VALUES (
+                            ${event.eventId}, ${event.commentId}, ${params.accountId}, ${event.projectId},
+                            ${event.eventKind}, ${eventEnvelopeJson}, ${event.bulkActionId ?? null},
+                            ${eventClientMutationId(event)}, ${stringifyJson(event.actor)},
+                            ${event.authorDeviceId ?? null}, ${event.clientLamport ?? null},
+                            ${event.serverRevision}, ${event.createdAt}
+                        )
+                    `);
+                    return { comment, replayed: false };
+                });
+            } catch (error) {
+                if (!isPrismaErrorCode(error, "P2002")) throw error;
+                const racedRows = await db.$queryRaw<ReviewCommentRow[]>(
+                    createMutationLookupQuery(params.accountId, params.createClientMutationId),
+                );
+                const raced = racedRows[0];
+                if (!raced) throw error;
+                return resolveCreateReplay(raced, params.createRequestFingerprint);
+            }
+        },
         async commit(params) {
             const comment = ReviewCommentV1Schema.parse(params.comment);
             const event = ReviewCommentEventV1Schema.parse(params.event);
@@ -378,33 +551,7 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
                 }
 
                 const mode = storageMode(params);
-                const anchor = comment.anchor;
-                const values = {
-                    flagsJson: stringifyJson(comment.flags),
-                    anchorJson: stringifyJson(anchor),
-                    anchorFilePath: anchorFilePath(anchor),
-                    anchorFolderPath: anchorFolderPath(anchor),
-                    snapshotEnvelopeJson: encodeStoredEnvelope({
-                        value: comment.snapshot,
-                        fieldName: "snapshot",
-                        storageMode: mode,
-                    }),
-                    bodyEnvelopeJson: encodeStoredEnvelope({
-                        value: comment.body,
-                        fieldName: "body",
-                        storageMode: mode,
-                    }),
-                    authorJson: stringifyJson(comment.author),
-                    editsJson: stringifyJson(comment.edits),
-                    dispositionsJson: stringifyJson(comment.dispositions),
-                    evidenceJson: stringifyOptionalJson(comment.evidence),
-                    transitionsJson: stringifyJson(comment.transitions),
-                    fingerprintJson: stringifyOptionalJson(comment.fingerprint),
-                    linkedRefsJson: stringifyOptionalJson(comment.linkedRefs),
-                    suggestedFixJson: stringifyOptionalJson(comment.suggestedFix),
-                    metadataJson: stringifyOptionalJson(comment.metadata),
-                    tombstoneJson: stringifyOptionalJson(comment.tombstone),
-                };
+                const values = buildStoredCommentValues(comment, mode);
 
                 if (existing) {
                     await tx.$executeRaw(Prisma.sql`

@@ -15,16 +15,21 @@ describe("databaseTransactions", () => {
         });
     });
 
-    it("keeps lighter sqlite defaults", () => {
-        expect(readDatabaseTransactionConfigFromEnv({}, "sqlite")).toEqual({
+    it("keeps bounded sqlite defaults with enough budget for one full retry", () => {
+        const config = readDatabaseTransactionConfigFromEnv({}, "sqlite");
+
+        expect(config).toEqual({
             maxRetries: 8,
             retryBaseDelayMs: 100,
             retryMaxDelayMs: 1_600,
             retryJitterFactor: 0,
             timeoutMs: 10_000,
             maxWaitMs: 5_000,
-            totalRetryBudgetMs: 25_000,
+            totalRetryBudgetMs: 40_000,
         });
+        expect(config.totalRetryBudgetMs).toBeGreaterThanOrEqual(
+            2 * (config.maxWaitMs + config.timeoutMs) + config.retryBaseDelayMs,
+        );
     });
 
     it("allows environment overrides within safe bounds", () => {

@@ -44,7 +44,10 @@ function getDefaultMaxWaitMs(provider: DbProvider): number {
 }
 
 function getDefaultTotalRetryBudgetMs(provider: DbProvider): number {
-    if (provider === "sqlite") return 25_000;
+    // A SQLite attempt can spend maxWaitMs acquiring a connection and then
+    // timeoutMs inside the transaction. Keep enough room for one complete
+    // retry plus its initial backoff so a timeout is actually recoverable.
+    if (provider === "sqlite") return 40_000;
     return 600_000;
 }
 

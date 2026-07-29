@@ -9,23 +9,12 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { Server, Socket } from 'socket.io';
 
 import { getSocketRooms } from '../socketRooms';
+import {
+  transferRelayLifecycle,
+  type TransferRelayLogicalIdentity,
+} from './transferRelayLifecycle';
 
 type TransferRelayV2ScopeKey = string;
-type TransferRelayV2Key = string;
-
-const globalActiveTransfersByScope = new Map<TransferRelayV2ScopeKey, Set<TransferRelayV2Key>>();
-const globalTransferBytesByKey = new Map<TransferRelayV2Key, number>();
-const globalBlockedTransfers = new Set<TransferRelayV2Key>();
-const globalTransferScopeByKey = new Map<TransferRelayV2Key, TransferRelayV2ScopeKey>();
-const globalTransferSocketsByKey = new Map<TransferRelayV2Key, Set<string>>();
-const globalTransferParticipantsByKey = new Map<TransferRelayV2Key, Readonly<{
-  userId: string;
-  sender: TransferRelayV2Sender;
-  recipient: TransferRelayV2Recipient;
-  senderRoom: string;
-  recipientRoom: string;
-  transferId: string;
-}>>();
 
 const TRANSFER_RELAY_V2_MAX_BYTES_ERROR = 'Server-relayed transfer exceeds the configured max-bytes limit';
 const TRANSFER_RELAY_V2_MAX_ACTIVE_TRANSFERS_ERROR = 'Server-relayed transfer exceeds the configured active-transfer limit';
@@ -40,54 +29,27 @@ function buildRelayV2ScopeKey(params: Readonly<{
   return `${params.userId}:user`;
 }
 
-function buildRelayV2TransferKey(params: Readonly<{
-  scopeKey: TransferRelayV2ScopeKey;
-  recipient: TransferRelayV2Sender | TransferRelayV2Recipient;
+function buildRelayV2ParticipantKey(participant: TransferRelayV2Sender | TransferRelayV2Recipient): string {
+  return participant.kind === 'machine'
+    ? `machine:${participant.machineId}`
+    : 'user';
+}
+
+function buildRelayV2LogicalIdentity(params: Readonly<{
+  userId: string;
+  sender: TransferRelayV2Sender;
+  recipient: TransferRelayV2Recipient;
   transferId: string;
-}>): TransferRelayV2Key {
-  if (params.recipient.kind === 'machine') {
-    return `${params.scopeKey}:machine:${params.recipient.machineId}:${params.transferId}`;
-  }
-  return `${params.scopeKey}:user:${params.transferId}`;
-}
-
-function clearRelayV2TransferKey(key: TransferRelayV2Key): void {
-  globalBlockedTransfers.delete(key);
-  globalTransferBytesByKey.delete(key);
-  globalTransferSocketsByKey.delete(key);
-  globalTransferParticipantsByKey.delete(key);
-
-  const scopeKey = globalTransferScopeByKey.get(key);
-  if (!scopeKey) {
-    return;
-  }
-
-  globalTransferScopeByKey.delete(key);
-  const active = globalActiveTransfersByScope.get(scopeKey);
-  active?.delete(key);
-  if (active && active.size === 0) {
-    globalActiveTransfersByScope.delete(scopeKey);
-  }
-}
-
-function releaseRelayV2TransferAccounting(key: TransferRelayV2Key): void {
-  // Clear the active-transfer accounting for this key, but intentionally do not
-  // touch `globalBlockedTransfers` or the socket/participant metadata. Blocked
-  // transfers stay on the socket-owned disconnect cleanup path so they can fail
-  // closed until the last socket goes away without pinning the key forever.
-  globalTransferBytesByKey.delete(key);
-
-  const scopeKey = globalTransferScopeByKey.get(key);
-  if (!scopeKey) {
-    return;
-  }
-
-  globalTransferScopeByKey.delete(key);
-  const active = globalActiveTransfersByScope.get(scopeKey);
-  active?.delete(key);
-  if (active && active.size === 0) {
-    globalActiveTransfersByScope.delete(scopeKey);
-  }
+}>): TransferRelayLogicalIdentity {
+  return {
+    namespace: 'transfer-relay-v2',
+    userId: params.userId,
+    transferId: params.transferId,
+    participants: [
+      buildRelayV2ParticipantKey(params.sender),
+      buildRelayV2ParticipantKey(params.recipient),
+    ],
+  };
 }
 
 function getRelayV2ChunkPayloadSizeBytes(raw: TransferRelayV2SendEnvelope['envelope']): number | null {
@@ -138,11 +100,14 @@ function resolveRecipientRoom(params: Readonly<{
   recipient: TransferRelayV2Recipient;
 }>): string {
   if (params.recipient.kind === 'machine') {
-    return getSocketRooms({
+    const machineId = params.recipient.machineId;
+    const rooms = getSocketRooms({
       userId: params.userId,
       clientType: 'machine-scoped',
-      machineId: params.recipient.machineId,
-    })[0] ?? `machine:${params.recipient.machineId}:${params.userId}`;
+      machineId,
+    });
+    return rooms.find((room) => room.startsWith(`machine:${machineId}:`))
+      ?? `machine:${machineId}:${params.userId}`;
   }
   return getSocketRooms({
     userId: params.userId,
@@ -170,7 +135,6 @@ export function transferRelayV2Handler(
     serverRelayTransferMaxActiveTransfersPerSocket?: number | null;
   }>,
 ) {
-  const socketTransferKeys = new Set<TransferRelayV2Key>();
   const maxActiveTransfersPerSocket = (
     typeof ctx.serverRelayTransferMaxActiveTransfersPerSocket === 'number'
     && Number.isFinite(ctx.serverRelayTransferMaxActiveTransfersPerSocket)
@@ -241,13 +205,30 @@ export function transferRelayV2Handler(
     }
 
     const scopeKey = buildRelayV2ScopeKey({ userId, sender: relayEnvelope.sender });
-    const transferKey = buildRelayV2TransferKey({ scopeKey, recipient: relayEnvelope.recipient, transferId: relayEnvelope.envelope.transferId });
+    const logicalIdentity = buildRelayV2LogicalIdentity({
+      userId,
+      sender: relayEnvelope.sender,
+      recipient: relayEnvelope.recipient,
+      transferId: relayEnvelope.envelope.transferId,
+    });
+    const senderParticipantKey = buildRelayV2ParticipantKey(relayEnvelope.sender);
     const recipientRoom = resolveRecipientRoom({ userId, recipient: relayEnvelope.recipient });
     const senderRoom = resolveSenderRoom({ userId, sender: relayEnvelope.sender });
+    const onParticipantDisconnect = () => {
+      emitRelayV2Abort({
+        io: ctx.io,
+        userId,
+        recipientRoom,
+        senderRoom,
+        sender: relayEnvelope.sender,
+        recipient: relayEnvelope.recipient,
+        transferId: relayEnvelope.envelope.transferId,
+        reason: 'relay_socket_disconnected',
+      });
+    };
 
     if (relayEnvelope.envelope.kind === 'finish' || relayEnvelope.envelope.kind === 'abort') {
-      clearRelayV2TransferKey(transferKey);
-      socketTransferKeys.delete(transferKey);
+      transferRelayLifecycle.terminateTransfer(logicalIdentity);
     } else if (relayEnvelope.envelope.kind === 'open' || relayEnvelope.envelope.kind === 'chunk') {
       const payloadSizeBytes = relayEnvelope.envelope.kind === 'chunk'
         ? getRelayV2ChunkPayloadSizeBytes(relayEnvelope.envelope)
@@ -260,7 +241,21 @@ export function transferRelayV2Handler(
         return;
       }
 
-      if (globalBlockedTransfers.has(transferKey)) {
+      const lifecycleResult = transferRelayLifecycle.trackTransferFrame({
+        identity: logicalIdentity,
+        scopeKey,
+        participant: senderParticipantKey,
+        socketId: socket.id,
+        payloadSizeBytes: payloadSizeBytes ?? 0,
+        maxActiveTransfers: maxActiveTransfersPerSocket,
+        maxBytes: relayEnvelope.envelope.kind === 'chunk' && typeof ctx.serverRelayTransferMaxBytes === 'number'
+          ? ctx.serverRelayTransferMaxBytes
+          : null,
+        releaseActiveOnMaxBytes: true,
+        onParticipantDisconnect,
+      });
+
+      if (lifecycleResult.kind === 'blocked') {
         // The transfer key has already been force-aborted (for example due to max-bytes). Fail closed by
         // re-emitting an abort envelope so relay recipients do not hang waiting for more frames.
         emitRelayV2Abort({
@@ -280,49 +275,25 @@ export function transferRelayV2Handler(
         return;
       }
 
-      if (!globalTransferBytesByKey.has(transferKey)) {
-        const active = globalActiveTransfersByScope.get(scopeKey) ?? new Set<TransferRelayV2Key>();
-        if (!globalActiveTransfersByScope.has(scopeKey)) {
-          globalActiveTransfersByScope.set(scopeKey, active);
-        }
-        if (active.size >= maxActiveTransfersPerSocket) {
-          emitRelayV2Abort({
-            io: ctx.io,
-            userId,
-            recipientRoom,
-            senderRoom,
-            sender: relayEnvelope.sender,
-            recipient: relayEnvelope.recipient,
-            transferId: relayEnvelope.envelope.transferId,
-            reason: TRANSFER_RELAY_V2_MAX_ACTIVE_TRANSFERS_ERROR,
-          });
-          socket.emit(SOCKET_RPC_EVENTS.ERROR, {
-            type: 'transfer-relay',
-            error: TRANSFER_RELAY_V2_MAX_ACTIVE_TRANSFERS_ERROR,
-          });
-          return;
-        }
-        active.add(transferKey);
-        globalTransferScopeByKey.set(transferKey, scopeKey);
+      if (lifecycleResult.kind === 'active-limit-exceeded') {
+        emitRelayV2Abort({
+          io: ctx.io,
+          userId,
+          recipientRoom,
+          senderRoom,
+          sender: relayEnvelope.sender,
+          recipient: relayEnvelope.recipient,
+          transferId: relayEnvelope.envelope.transferId,
+          reason: TRANSFER_RELAY_V2_MAX_ACTIVE_TRANSFERS_ERROR,
+        });
+        socket.emit(SOCKET_RPC_EVENTS.ERROR, {
+          type: 'transfer-relay',
+          error: TRANSFER_RELAY_V2_MAX_ACTIVE_TRANSFERS_ERROR,
+        });
+        return;
       }
 
-      const sockets = globalTransferSocketsByKey.get(transferKey) ?? new Set<string>();
-      sockets.add(socket.id);
-      globalTransferSocketsByKey.set(transferKey, sockets);
-      globalTransferParticipantsByKey.set(transferKey, {
-        userId,
-        sender: relayEnvelope.sender,
-        recipient: relayEnvelope.recipient,
-        senderRoom,
-        recipientRoom,
-        transferId: relayEnvelope.envelope.transferId,
-      });
-      socketTransferKeys.add(transferKey);
-
-      const priorBytes = globalTransferBytesByKey.get(transferKey) ?? 0;
-      const nextBytes = relayEnvelope.envelope.kind === 'chunk' ? priorBytes + (payloadSizeBytes ?? 0) : priorBytes;
-      if (relayEnvelope.envelope.kind === 'chunk' && typeof ctx.serverRelayTransferMaxBytes === 'number' && nextBytes > ctx.serverRelayTransferMaxBytes) {
-        globalBlockedTransfers.add(transferKey);
+      if (lifecycleResult.kind === 'max-bytes-exceeded') {
         emitRelayV2Abort({
           io: ctx.io,
           userId,
@@ -337,60 +308,21 @@ export function transferRelayV2Handler(
           type: 'transfer-relay',
           error: TRANSFER_RELAY_V2_MAX_BYTES_ERROR,
         });
-        // Release the active-transfer accounting for this key so we do not leak the socket budget
-        // while still failing closed on subsequent frames for the same transfer key.
-        releaseRelayV2TransferAccounting(transferKey);
         return;
       }
-
-      globalTransferBytesByKey.set(transferKey, nextBytes);
+    } else {
+      transferRelayLifecycle.observeTransferFrame({
+        identity: logicalIdentity,
+        participant: senderParticipantKey,
+        socketId: socket.id,
+        onParticipantDisconnect,
+      });
     }
 
     ctx.io.to(recipientRoom).emit(TRANSFER_RELAY_V2_SOCKET_EVENT, relayEnvelope);
   });
 
   socket.on('disconnect', () => {
-    for (const transferKey of socketTransferKeys) {
-      if (globalBlockedTransfers.has(transferKey)) {
-        const sockets = globalTransferSocketsByKey.get(transferKey);
-        if (!sockets) {
-          clearRelayV2TransferKey(transferKey);
-          continue;
-        }
-
-        sockets.delete(socket.id);
-        if (sockets.size === 0) {
-          clearRelayV2TransferKey(transferKey);
-        } else {
-          globalTransferSocketsByKey.set(transferKey, sockets);
-        }
-        continue;
-      }
-
-      const sockets = globalTransferSocketsByKey.get(transferKey);
-      if (!sockets) {
-        continue;
-      }
-      sockets.delete(socket.id);
-      if (sockets.size === 0) {
-        const transfer = globalTransferParticipantsByKey.get(transferKey);
-        if (transfer) {
-          emitRelayV2Abort({
-            io: ctx.io,
-            userId: transfer.userId,
-            recipientRoom: transfer.recipientRoom,
-            senderRoom: transfer.senderRoom,
-            sender: transfer.sender,
-            recipient: transfer.recipient,
-            transferId: transfer.transferId,
-            reason: 'relay_socket_disconnected',
-          });
-        }
-        clearRelayV2TransferKey(transferKey);
-      } else {
-        globalTransferSocketsByKey.set(transferKey, sockets);
-      }
-    }
-    socketTransferKeys.clear();
+    transferRelayLifecycle.disconnectSocket(socket.id);
   });
 }

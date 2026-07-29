@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as privacyKit from "privacy-kit";
 import tweetnacl from "tweetnacl";
 import { z } from "zod";
@@ -25,6 +25,12 @@ import {
     ExternalOAuthFinalizeAuthSuccessResponseSchema,
 } from "@happier-dev/protocol";
 import { shouldDenyPublicSignupProvisioningAction } from "@/app/integrations/publicUrl/publicSignupProvisioningPolicy";
+import {
+    admitAccountContentKey,
+    verifyAccountContentKeyBinding,
+    type VerifiedAccountContentKeyBinding,
+} from "@/app/encryption/accountContentKeyAdmission";
+import { inTx } from "@/storage/inTx";
 
 export function registerExternalAuthFinalizeRoute(app: Fastify) {
     app.post("/v1/auth/external/:provider/finalize", {
@@ -39,6 +45,7 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
                 409: z.union([
                     z.object({ error: z.literal("username-taken") }),
                     z.object({ error: z.literal(PROVIDER_ALREADY_LINKED_ERROR), provider: z.string() }),
+                    z.object({ error: z.literal("content_public_key_mismatch") }),
                 ]),
             },
         },
@@ -77,28 +84,24 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
         }
         const publicKeyHex = privacyKit.encodeHex(new Uint8Array(publicKeyBytes));
 
-        let contentPublicKey: Uint8Array | null = null;
-        let contentPublicKeySig: Uint8Array | null = null;
+        let contentKeyBinding: VerifiedAccountContentKeyBinding | null = null;
         if (request.body.contentPublicKey && request.body.contentPublicKeySig) {
+            let contentPublicKey: Uint8Array;
+            let contentPublicKeySignature: Uint8Array;
             try {
                 contentPublicKey = privacyKit.decodeBase64(request.body.contentPublicKey);
-                contentPublicKeySig = privacyKit.decodeBase64(request.body.contentPublicKeySig);
+                contentPublicKeySignature = privacyKit.decodeBase64(
+                    request.body.contentPublicKeySig,
+                );
             } catch {
                 return reply.code(400).send({ error: "invalid-signature" });
             }
-            if (contentPublicKey.length !== tweetnacl.box.publicKeyLength) {
-                return reply.code(400).send({ error: "invalid-signature" });
-            }
-            if (contentPublicKeySig.length !== tweetnacl.sign.signatureLength) {
-                return reply.code(400).send({ error: "invalid-signature" });
-            }
-
-            const binding = Buffer.concat([
-                Buffer.from("Happy content key v1\u0000", "utf8"),
-                Buffer.from(contentPublicKey),
-            ]);
-            const contentSigOk = tweetnacl.sign.detached.verify(binding, contentPublicKeySig, publicKeyBytes);
-            if (!contentSigOk) {
+            contentKeyBinding = verifyAccountContentKeyBinding({
+                accountSigningPublicKey: publicKeyBytes,
+                contentPublicKey,
+                contentPublicKeySignature,
+            });
+            if (!contentKeyBinding) {
                 return reply.code(400).send({ error: "invalid-signature" });
             }
         }
@@ -291,8 +294,12 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
             const newAccount = await db.account.create({
                 data: {
                     publicKey: publicKeyHex,
-                    ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
-                    ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
+                    ...(contentKeyBinding ? {
+                        contentPublicKey:
+                            contentKeyBinding.contentPublicKey,
+                        contentPublicKeySig:
+                            contentKeyBinding.contentPublicKeySignature,
+                    } : {}),
                 },
                 select: { id: true },
             });
@@ -437,23 +444,69 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
             return reply.send({ success: true, token });
         }
 
-        const shouldSetUsername = !existingAccount?.username;
+        const accountWrite = await inTx(async (tx) => {
+            const proposedAccountId = randomUUID();
+            const accountCandidate = await tx.account.upsert({
+                where: { publicKey: publicKeyHex },
+                update: {},
+                create: {
+                    id: proposedAccountId,
+                    publicKey: publicKeyHex,
+                    username: desiredUsername,
+                    ...(contentKeyBinding ? {
+                        contentPublicKey:
+                            contentKeyBinding.contentPublicKey,
+                        contentPublicKeySig:
+                            contentKeyBinding
+                                .contentPublicKeySignature,
+                    } : {}),
+                },
+            });
+            const createdByThisFinalize =
+                accountCandidate.id === proposedAccountId;
+            if (contentKeyBinding) {
+                const admission = await admitAccountContentKey(tx, {
+                    accountId: accountCandidate.id,
+                    contentPublicKey:
+                        contentKeyBinding.contentPublicKey,
+                    contentPublicKeySignature:
+                        contentKeyBinding.contentPublicKeySignature,
+                });
+                if (admission.status === "key_mismatch") {
+                    return { status: "key_mismatch" as const };
+                }
+                if (
+                    admission.status === "account_not_found"
+                    || admission.status === "invalid_binding"
+                ) {
+                    return { status: "invalid_binding" as const };
+                }
+            }
 
-        const account = await db.account.upsert({
-            where: { publicKey: publicKeyHex },
-            update: {
-                updatedAt: new Date(),
-                ...(shouldSetUsername ? { username: desiredUsername } : {}),
-                ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
-                ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
-            },
-            create: {
-                publicKey: publicKeyHex,
-                username: desiredUsername,
-                ...(contentPublicKey ? { contentPublicKey: new Uint8Array(contentPublicKey) } : {}),
-                ...(contentPublicKeySig ? { contentPublicKeySig: new Uint8Array(contentPublicKeySig) } : {}),
-            },
+            const account = await tx.account.update({
+                where: { id: accountCandidate.id },
+                data: {
+                    updatedAt: new Date(),
+                    ...(!accountCandidate.username
+                        ? { username: desiredUsername }
+                        : {}),
+                },
+            });
+            return {
+                status: "written" as const,
+                account,
+                createdByThisFinalize,
+            };
         });
+        if (accountWrite.status === "key_mismatch") {
+            return reply.code(409).send({
+                error: "content_public_key_mismatch",
+            });
+        }
+        if (accountWrite.status === "invalid_binding") {
+            return reply.code(400).send({ error: "invalid-signature" });
+        }
+        const account = accountWrite.account;
 
         const ctx = Context.create(account.id);
         try {
@@ -467,20 +520,20 @@ export function registerExternalAuthFinalizeRoute(app: Fastify) {
             await db.repeatKey.deleteMany({ where: { key: pendingKey } });
         } catch (error) {
             if (error instanceof Error && error.message === "not-eligible") {
-                if (!existingAccount) {
+                if (accountWrite.createdByThisFinalize) {
                     await db.account.delete({ where: { id: account.id } }).catch(() => {});
                 }
                 await db.repeatKey.deleteMany({ where: { key: pendingKey } });
                 return reply.code(403).send({ error: "not-eligible" });
             }
             if (error instanceof Error && error.message === PROVIDER_ALREADY_LINKED_ERROR) {
-                if (!existingAccount) {
+                if (accountWrite.createdByThisFinalize) {
                     await db.account.delete({ where: { id: account.id } }).catch(() => {});
                 }
                 await db.repeatKey.deleteMany({ where: { key: pendingKey } });
                 return reply.code(409).send({ error: PROVIDER_ALREADY_LINKED_ERROR, provider: providerId });
             }
-            if (!existingAccount) {
+            if (accountWrite.createdByThisFinalize) {
                 await db.account.delete({ where: { id: account.id } }).catch(() => {});
             }
             throw error;

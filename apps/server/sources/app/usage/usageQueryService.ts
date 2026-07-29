@@ -7,6 +7,7 @@ import type {
     UsageAnalyticsSeriesBucket,
     UsageAnalyticsTotals,
     UsageObservationCost,
+    UsageObservationContext,
     UsageObservationTokens,
 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
@@ -18,10 +19,35 @@ import {
     buildUsageLeaders,
     buildUsageModelTimeline,
 } from "./query/buildUsagePremiumSections";
+import { resolveBucketBounds } from "./query/bucketBounds";
 import { loadUsageMessageStatsForQuery } from "./query/loadUsageMessageStatsForQuery";
-import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "./usageMetrics";
+import {
+    resolveScopedUsageContributions,
+    type ScopedUsageContribution,
+    type ScopedUsageEventRow,
+} from "./query/resolveScopedUsageContributions";
+import { addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "./usageMetrics";
+import { addUsageCostForMode, resolveUsageCostMode, withEffectiveUsageCost, type UsageCostMode } from "./query/resolveUsageCostMode";
 
 type UsageEventRow = Awaited<ReturnType<typeof loadUsageEventsForQuery>>[number];
+
+function readCostBreakdown(value: unknown): Record<string, number> | undefined {
+    if (typeof value === "string") {
+        try {
+            return readCostBreakdown(JSON.parse(value));
+        } catch {
+            return undefined;
+        }
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const breakdown: Record<string, number> = {};
+    for (const [key, entry] of Object.entries(value)) {
+        if (typeof entry === "number" && Number.isFinite(entry) && entry >= 0) {
+            breakdown[key] = entry;
+        }
+    }
+    return Object.keys(breakdown).length > 0 ? breakdown : undefined;
+}
 
 function toEventTokens(row: UsageEventRow): UsageObservationTokens {
     return {
@@ -42,78 +68,87 @@ function toEventCost(row: UsageEventRow): UsageObservationCost {
         billingContext: (row.billingContext ?? 'unknown') as UsageObservationCost['billingContext'],
         costSource: (row.costSource ?? 'none') as UsageObservationCost['costSource'],
         currency: row.currency,
+        breakdown: readCostBreakdown(row.costBreakdown),
     };
 }
 
-function toPremiumEventRow(row: UsageEventRow) {
+function toScopedUsageEventRow(row: UsageEventRow): ScopedUsageEventRow {
     return {
+        id: row.id,
         sessionId: row.sessionId,
         observedAt: row.observedAt,
-        providerId: row.providerId,
+        createdAt: row.createdAt,
+        agentId: row.agentId,
         backendMode: row.backendMode,
         modelId: row.modelId,
         projectKey: row.projectKey,
         workspaceId: row.workspaceId,
         source: row.source,
+        scope: row.scope,
+        isCumulative: row.isCumulative,
+        turnId: row.turnId,
+        contextUsedTokens: row.contextUsedTokens,
+        contextWindowTokens: row.contextWindowTokens,
         tokens: toEventTokens(row),
         cost: toEventCost(row),
     };
 }
 
-function toUsageTotals(rows: UsageEventRow[]): UsageAnalyticsTotals {
-    let tokens = createEmptyUsageTokens();
-    let cost = createEmptyUsageCost();
+function toPremiumEventRow(row: ScopedUsageContribution) {
+    return row;
+}
 
-    for (const row of rows) {
-        tokens = addUsageTokens(tokens, toEventTokens(row));
-        cost = addUsageCost(cost, toEventCost(row));
-    }
-
+function readContributionContext(row: ScopedUsageContribution): UsageObservationContext | undefined {
+    if (row.contextUsedTokens == null && row.contextWindowTokens == null) return undefined;
     return {
-        eventCount: rows.length,
-        tokens,
-        cost,
+        usedTokens: row.contextUsedTokens,
+        windowTokens: row.contextWindowTokens,
     };
 }
 
-function resolveBucketBounds(observedAt: Date, granularity: UsageAnalyticsQueryRequest['granularity']): {
-    bucketStartMs: number;
-    bucketEndMs: number;
-} {
-    const value = new Date(observedAt);
-    let start: Date;
-    let end: Date;
+function resolveLatestContributionContext(
+    rows: readonly ScopedUsageContribution[],
+): UsageObservationContext | undefined {
+    let latest: UsageObservationContext | undefined;
+    for (const row of rows) {
+        latest = readContributionContext(row) ?? latest;
+    }
+    return latest;
+}
 
-    if (granularity === 'hour') {
-        start = new Date(value.getFullYear(), value.getMonth(), value.getDate(), value.getHours(), 0, 0, 0);
-        end = new Date(value.getFullYear(), value.getMonth(), value.getDate(), value.getHours() + 1, 0, 0, 0);
-    } else if (granularity === 'week') {
-        const day = value.getDay();
-        const offset = day === 0 ? 6 : day - 1;
-        start = new Date(value.getFullYear(), value.getMonth(), value.getDate() - offset, 0, 0, 0, 0);
-        end = new Date(value.getFullYear(), value.getMonth(), value.getDate() + (7 - offset), 0, 0, 0, 0);
-    } else if (granularity === 'month') {
-        start = new Date(value.getFullYear(), value.getMonth(), 1, 0, 0, 0, 0);
-        end = new Date(value.getFullYear(), value.getMonth() + 1, 1, 0, 0, 0, 0);
-    } else {
-        start = new Date(value.getFullYear(), value.getMonth(), value.getDate(), 0, 0, 0, 0);
-        end = new Date(value.getFullYear(), value.getMonth(), value.getDate() + 1, 0, 0, 0, 0);
+function toUsageTotals(rows: ScopedUsageContribution[], costMode: UsageCostMode): UsageAnalyticsTotals {
+    let tokens = createEmptyUsageTokens();
+    let cost = createEmptyUsageCost();
+    const eventIds = new Set<string>();
+
+    for (const row of rows) {
+        tokens = addUsageTokens(tokens, row.tokens);
+        cost = addUsageCostForMode(cost, row.cost, costMode);
+        for (const eventId of row.contributingEventIds) eventIds.add(eventId);
     }
 
     return {
-        bucketStartMs: start.getTime(),
-        bucketEndMs: end.getTime(),
+        eventCount: eventIds.size,
+        tokens,
+        cost: withEffectiveUsageCost(cost, costMode),
+        context: resolveLatestContributionContext(rows),
     };
 }
 
 function buildSeries(
-    rows: UsageEventRow[],
+    rows: ScopedUsageContribution[],
     granularity: UsageAnalyticsQueryRequest['granularity'],
+    timeZoneOffsetMinutes: number,
+    costMode: UsageCostMode,
 ): UsageAnalyticsSeriesBucket[] {
     const buckets = new Map<number, UsageAnalyticsSeriesBucket>();
 
     for (const row of rows) {
-        const { bucketStartMs, bucketEndMs } = resolveBucketBounds(row.observedAt, granularity);
+        const { bucketStartMs, bucketEndMs } = resolveBucketBounds(
+            granularity,
+            row.observedAt.getTime(),
+            timeZoneOffsetMinutes,
+        );
         const current = buckets.get(bucketStartMs) ?? {
             bucketStartMs,
             bucketEndMs,
@@ -121,17 +156,18 @@ function buildSeries(
             tokens: createEmptyUsageTokens(),
             cost: createEmptyUsageCost(),
         };
-        current.eventCount += 1;
-        current.tokens = addUsageTokens(current.tokens, toEventTokens(row));
-        current.cost = addUsageCost(current.cost, toEventCost(row));
+        current.eventCount += row.contributingEventIds.length;
+        current.tokens = addUsageTokens(current.tokens, row.tokens);
+        current.cost = addUsageCostForMode(current.cost, row.cost, costMode);
+        current.context = readContributionContext(row) ?? current.context;
         buckets.set(bucketStartMs, current);
     }
 
     return Array.from(buckets.values()).sort((left, right) => left.bucketStartMs - right.bucketStartMs);
 }
 
-function resolveBreakdownKey(row: UsageEventRow, dimension: UsageAnalyticsBreakdownDimension): string | null {
-    if (dimension === 'provider') return row.providerId;
+function resolveBreakdownKey(row: ScopedUsageContribution, dimension: UsageAnalyticsBreakdownDimension): string | null {
+    if (dimension === 'agent') return row.agentId;
     if (dimension === 'model') return row.modelId;
     if (dimension === 'session') return row.sessionId;
     if (dimension === 'project') return row.projectKey;
@@ -141,9 +177,10 @@ function resolveBreakdownKey(row: UsageEventRow, dimension: UsageAnalyticsBreakd
 }
 
 function buildBreakdownEntries(
-    rows: UsageEventRow[],
+    rows: ScopedUsageContribution[],
     dimension: UsageAnalyticsBreakdownDimension,
     topLimit: number,
+    costMode: UsageCostMode,
 ): UsageAnalyticsBreakdownEntry[] {
     const entries = new Map<string, UsageAnalyticsBreakdownEntry>();
 
@@ -156,9 +193,18 @@ function buildBreakdownEntries(
             tokens: createEmptyUsageTokens(),
             cost: createEmptyUsageCost(),
         };
-        current.eventCount += 1;
-        current.tokens = addUsageTokens(current.tokens, toEventTokens(row));
-        current.cost = addUsageCost(current.cost, toEventCost(row));
+        current.eventCount += row.contributingEventIds.length;
+        current.tokens = addUsageTokens(current.tokens, row.tokens);
+        current.cost = addUsageCostForMode(current.cost, row.cost, costMode);
+        current.context = readContributionContext(row) ?? current.context;
+        if (dimension === 'session') {
+            if (row.contextUsedTokens !== null) {
+                current.latestContextUsedTokens = row.contextUsedTokens;
+            }
+            if (row.contextWindowTokens !== null) {
+                current.latestContextWindowTokens = row.contextWindowTokens;
+            }
+        }
         entries.set(key, current);
     }
 
@@ -169,7 +215,8 @@ function buildBreakdownEntries(
             if (right.eventCount !== left.eventCount) return right.eventCount - left.eventCount;
             return left.key.localeCompare(right.key);
         })
-        .slice(0, topLimit);
+        .slice(0, topLimit)
+        .map((entry) => ({ ...entry, cost: withEffectiveUsageCost(entry.cost, costMode) }));
 }
 
 async function loadUsageEventsForQuery(accountId: string, request: UsageAnalyticsQueryRequest) {
@@ -183,7 +230,7 @@ async function loadUsageEventsForQuery(accountId: string, request: UsageAnalytic
                 }
                 : undefined,
             sessionId: request.filters?.sessionIds?.length ? { in: request.filters.sessionIds } : undefined,
-            providerId: request.filters?.providerIds?.length ? { in: request.filters.providerIds } : undefined,
+            agentId: request.filters?.agentIds?.length ? { in: request.filters.agentIds } : undefined,
             modelId: request.filters?.modelIds?.length ? { in: request.filters.modelIds } : undefined,
             projectKey: request.filters?.projectKeys?.length ? { in: request.filters.projectKeys } : undefined,
             workspaceId: request.filters?.workspaceIds?.length ? { in: request.filters.workspaceIds } : undefined,
@@ -197,12 +244,17 @@ async function loadUsageEventsForQuery(accountId: string, request: UsageAnalytic
             id: true,
             sessionId: true,
             observedAt: true,
-            providerId: true,
+            createdAt: true,
+            agentId: true,
             backendMode: true,
             modelId: true,
             projectKey: true,
             workspaceId: true,
+            machineId: true,
             source: true,
+            scope: true,
+            isCumulative: true,
+            turnId: true,
             inputTokens: true,
             outputTokens: true,
             reasoningTokens: true,
@@ -215,6 +267,9 @@ async function loadUsageEventsForQuery(accountId: string, request: UsageAnalytic
             billingContext: true,
             costSource: true,
             currency: true,
+            costBreakdown: true,
+            contextUsedTokens: true,
+            contextWindowTokens: true,
         },
     });
 }
@@ -224,19 +279,32 @@ export async function queryUsageAnalytics(
     request: UsageAnalyticsQueryRequest,
 ): Promise<UsageAnalyticsQueryResponse> {
     const rows = await loadUsageEventsForQuery(accountId, request);
-    const premiumRows = rows.map(toPremiumEventRow);
-    const totals = toUsageTotals(rows);
+    const scopedRows = rows.map(toScopedUsageEventRow);
+    const { totalContributions, bucketAttributions } = resolveScopedUsageContributions(scopedRows);
+    const costMode = resolveUsageCostMode(request.costMode);
+    const premiumRows = totalContributions.map(toPremiumEventRow);
+    const premiumBucketRows = bucketAttributions.map(toPremiumEventRow);
+    const totals = toUsageTotals(totalContributions, costMode);
     const sessionIds = Array.from(
         new Set(
             premiumRows.flatMap((row) => (row.sessionId ? [row.sessionId] : [])),
         ),
     );
-    const messageStats = request.includeMessageStats || request.includeInsights
+    const messageCounts = request.includeMessageStats || request.includeInsights
         ? await loadUsageMessageStatsForQuery(accountId, request, sessionIds)
+        : undefined;
+    const insights = messageCounts
+        ? buildUsageInsights(premiumRows, messageCounts, request.timeZoneOffsetMinutes)
+        : undefined;
+    const messageStats = insights && messageCounts
+        ? {
+            sessionCount: insights.sessionsUsed,
+            messageCount: messageCounts.messageCount,
+        }
         : undefined;
     const breakdowns = request.breakdowns?.length
         ? request.breakdowns.reduce<UsageAnalyticsBreakdowns>((acc, dimension) => {
-            acc[dimension] = buildBreakdownEntries(rows, dimension, request.topLimit);
+            acc[dimension] = buildBreakdownEntries(totalContributions, dimension, request.topLimit, costMode);
             return acc;
         }, {})
         : undefined;
@@ -244,13 +312,33 @@ export async function queryUsageAnalytics(
     return {
         v: 1,
         totals,
-        series: request.includeSeries ? buildSeries(rows, request.granularity) : undefined,
+        series: request.includeSeries
+            ? buildSeries(bucketAttributions, request.granularity, request.timeZoneOffsetMinutes, costMode)
+            : undefined,
         breakdowns,
-        insights: request.includeInsights ? buildUsageInsights(premiumRows, messageStats ?? { sessionCount: 0, messageCount: 0 }) : undefined,
-        activity: request.includeActivity ? buildUsageActivity(premiumRows, request.activityResolution) : undefined,
-        leaders: request.includeLeaders ? buildUsageLeaders(premiumRows, request.topLimit) : undefined,
-        modelTimeline: request.includeModelTimeline ? buildUsageModelTimeline(premiumRows, request.granularity, request.topLimit) : undefined,
-        engineTimeline: request.includeModelTimeline ? buildUsageEngineTimeline(premiumRows, request.granularity, request.topLimit) : undefined,
+        insights: request.includeInsights ? insights : undefined,
+        activity: request.includeActivity
+            ? buildUsageActivity(premiumRows, request.activityResolution, request.timeZoneOffsetMinutes)
+            : undefined,
+        leaders: request.includeLeaders ? buildUsageLeaders(premiumRows, request.topLimit, request.costMode) : undefined,
+        modelTimeline: request.includeModelTimeline
+            ? buildUsageModelTimeline(
+                premiumBucketRows,
+                request.granularity,
+                request.topLimit,
+                request.timeZoneOffsetMinutes,
+                request.costMode,
+            )
+            : undefined,
+        engineTimeline: request.includeModelTimeline
+            ? buildUsageEngineTimeline(
+                premiumBucketRows,
+                request.granularity,
+                request.topLimit,
+                request.timeZoneOffsetMinutes,
+                request.costMode,
+            )
+            : undefined,
         messageStats,
         costPresentation: buildUsageCostPresentation(totals.cost, request.costMode),
     };

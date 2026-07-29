@@ -7,11 +7,12 @@ import {
 } from "@/app/monitoring/metrics/index";
 import { db } from "@/storage/db";
 import { log } from "@/utils/logging/log";
+import { isShutdown } from "@/utils/process/shutdown";
 
 const MONITORING_SERVICE_NAME = 'happier-server';
 const DB_READINESS_ERROR = 'Database connectivity failed';
 const DB_READINESS_TIMEOUT_MS_ENV = 'HAPPIER_DB_READINESS_TIMEOUT_MS';
-const DEFAULT_DB_READINESS_TIMEOUT_MS = 1_000;
+const DEFAULT_DB_READINESS_TIMEOUT_MS = 15_000;
 
 export type MonitoringReadinessEnv = Record<string, string | undefined>;
 export type DatabaseReadinessProbe = () => Promise<unknown>;
@@ -29,6 +30,12 @@ class DbReadinessTimeoutError extends Error {
 function resolveDbReadinessTimeoutMs(env: MonitoringReadinessEnv = process.env): number {
     return parseIntEnv(env[DB_READINESS_TIMEOUT_MS_ENV], DEFAULT_DB_READINESS_TIMEOUT_MS, { min: 1 });
 }
+
+let inFlightDbReadinessCheck: Readonly<{
+    databaseReadinessProbe: DatabaseReadinessProbe;
+    timeoutMs: number;
+    promise: Promise<unknown>;
+}> | null = null;
 
 async function withDbReadinessTimeout<T>(operation: () => Promise<T>, timeoutMs: number): Promise<T> {
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -53,6 +60,15 @@ export function createHealthyMonitoringResponse() {
         status: 'ok',
         timestamp: new Date().toISOString(),
         service: MONITORING_SERVICE_NAME,
+    };
+}
+
+export function createShuttingDownMonitoringResponse() {
+    return {
+        status: 'error',
+        timestamp: new Date().toISOString(),
+        service: MONITORING_SERVICE_NAME,
+        reason: 'shutting_down',
     };
 }
 
@@ -110,11 +126,34 @@ export async function sendDatabaseReadinessResponse(
         databaseReadinessProbe?: DatabaseReadinessProbe;
     }> = {},
 ): Promise<void> {
+    if (isShutdown()) {
+        reply.code(503).send(createShuttingDownMonitoringResponse());
+        return;
+    }
+
     const env = options.env ?? process.env;
     const databaseReadinessProbe = options.databaseReadinessProbe ?? createDefaultDatabaseReadinessProbe;
+    const timeoutMs = resolveDbReadinessTimeoutMs(env);
     const startedAtMs = Date.now();
     try {
-        await withDbReadinessTimeout(databaseReadinessProbe, resolveDbReadinessTimeoutMs(env));
+        if (
+            !inFlightDbReadinessCheck ||
+            inFlightDbReadinessCheck.databaseReadinessProbe !== databaseReadinessProbe ||
+            inFlightDbReadinessCheck.timeoutMs !== timeoutMs
+        ) {
+            const check = withDbReadinessTimeout(databaseReadinessProbe, timeoutMs);
+            const sharedCheck = check.finally(() => {
+                if (inFlightDbReadinessCheck?.promise === sharedCheck) {
+                    inFlightDbReadinessCheck = null;
+                }
+            });
+            inFlightDbReadinessCheck = {
+                databaseReadinessProbe,
+                timeoutMs,
+                promise: sharedCheck,
+            };
+        }
+        await inFlightDbReadinessCheck.promise;
         recordDbReadinessCheck('ok', 'none', startedAtMs);
         reply.send(createHealthyMonitoringResponse());
     } catch (error) {

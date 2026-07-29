@@ -5,22 +5,25 @@ import { applyPendingSessionStateChange } from "./applyPendingSessionStateChange
 
 type SessionState = {
     pendingCount: number;
+    pendingBlockedCount: number;
     pendingVersion: number;
     accountSeq: number;
 };
 
 type SessionMutationData = {
-    pendingCount?: number | { increment?: number; decrement?: number };
+    pendingCount?: number;
+    pendingBlockedCount?: number;
     pendingVersion?: { increment?: number };
+    meaningfulActivityAt?: Date;
 };
 
 function applySessionMutation(state: SessionState, data: SessionMutationData): void {
     if (typeof data.pendingCount === "number") {
         state.pendingCount = data.pendingCount;
-    } else if (data.pendingCount?.increment) {
-        state.pendingCount += data.pendingCount.increment;
-    } else if (data.pendingCount?.decrement) {
-        state.pendingCount -= data.pendingCount.decrement;
+    }
+
+    if (typeof data.pendingBlockedCount === "number") {
+        state.pendingBlockedCount = data.pendingBlockedCount;
     }
 
     if (data.pendingVersion?.increment) {
@@ -31,6 +34,7 @@ function applySessionMutation(state: SessionState, data: SessionMutationData): v
 function createConcurrentDecrementTx() {
     const state: SessionState = {
         pendingCount: 1,
+        pendingBlockedCount: 0,
         pendingVersion: 5,
         accountSeq: 0,
     };
@@ -58,6 +62,7 @@ function createConcurrentDecrementTx() {
             findUniqueOrThrow: vi.fn(async () => ({
                 seq: 0,
                 pendingCount: state.pendingCount,
+                pendingBlockedCount: state.pendingBlockedCount,
                 pendingVersion: state.pendingVersion,
                 lastViewedSessionSeq: 0,
                 pendingPermissionRequestCount: 0,
@@ -70,13 +75,20 @@ function createConcurrentDecrementTx() {
                 applySessionMutation(state, args.data);
                 return {
                     pendingCount: state.pendingCount,
+                    pendingBlockedCount: state.pendingBlockedCount,
                     pendingVersion: state.pendingVersion,
                 };
             }),
-            updateMany: vi.fn(async (args: { where: { pendingCount?: { gt?: number; lte?: number } }; data: SessionMutationData }) => {
+            updateMany: vi.fn(async (args: {
+                where: { pendingCount?: number; pendingBlockedCount?: number; pendingVersion?: number };
+                data: SessionMutationData;
+            }) => {
                 await waitForInitialMutationRace();
-                const gt = args.where.pendingCount?.gt;
-                if (typeof gt === "number" && !(state.pendingCount > gt)) {
+                if (
+                    (typeof args.where.pendingCount === "number" && state.pendingCount !== args.where.pendingCount)
+                    || (typeof args.where.pendingBlockedCount === "number" && state.pendingBlockedCount !== args.where.pendingBlockedCount)
+                    || (typeof args.where.pendingVersion === "number" && state.pendingVersion !== args.where.pendingVersion)
+                ) {
                     return { count: 0 };
                 }
 
@@ -112,6 +124,7 @@ function createConcurrentDecrementTx() {
 function createConcurrentEnqueueAfterFailedDecrementTx() {
     const state: SessionState = {
         pendingCount: 0,
+        pendingBlockedCount: 0,
         pendingVersion: 5,
         accountSeq: 0,
     };
@@ -130,6 +143,7 @@ function createConcurrentEnqueueAfterFailedDecrementTx() {
             findUniqueOrThrow: vi.fn(async () => ({
                 seq: 0,
                 pendingCount: state.pendingCount,
+                pendingBlockedCount: state.pendingBlockedCount,
                 pendingVersion: state.pendingVersion,
                 lastViewedSessionSeq: 0,
                 pendingPermissionRequestCount: 0,
@@ -142,27 +156,24 @@ function createConcurrentEnqueueAfterFailedDecrementTx() {
                 applySessionMutation(state, args.data);
                 return {
                     pendingCount: state.pendingCount,
+                    pendingBlockedCount: state.pendingBlockedCount,
                     pendingVersion: state.pendingVersion,
                 };
             }),
-            updateMany: vi.fn(async (args: { where: { pendingCount?: { gt?: number; lte?: number } }; data: SessionMutationData }) => {
-                const gt = args.where.pendingCount?.gt;
-                if (typeof gt === "number") {
-                    if (!(state.pendingCount > gt)) {
-                        return { count: 0 };
-                    }
-                    applySessionMutation(state, args.data);
-                    return { count: 1 };
+            updateMany: vi.fn(async (args: {
+                where: { pendingCount?: number; pendingBlockedCount?: number; pendingVersion?: number };
+                data: SessionMutationData;
+            }) => {
+                if (!didConcurrentEnqueue && args.where.pendingCount === 0) {
+                    applyConcurrentEnqueue();
                 }
 
-                const lte = args.where.pendingCount?.lte;
-                if (typeof lte === "number") {
-                    applyConcurrentEnqueue();
-                    if (!(state.pendingCount <= lte)) {
-                        return { count: 0 };
-                    }
-                    applySessionMutation(state, args.data);
-                    return { count: 1 };
+                if (
+                    (typeof args.where.pendingCount === "number" && state.pendingCount !== args.where.pendingCount)
+                    || (typeof args.where.pendingBlockedCount === "number" && state.pendingBlockedCount !== args.where.pendingBlockedCount)
+                    || (typeof args.where.pendingVersion === "number" && state.pendingVersion !== args.where.pendingVersion)
+                ) {
+                    return { count: 0 };
                 }
 
                 applySessionMutation(state, args.data);

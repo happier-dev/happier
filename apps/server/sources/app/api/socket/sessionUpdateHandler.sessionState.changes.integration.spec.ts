@@ -62,6 +62,8 @@ const accountPushTokenFindMany = db.accountPushToken.findMany;
 const sessionFindUnique = vi.hoisted(() => vi.fn(async (args: any) => {
     if (args?.select?.metadataVersion === true) {
         return {
+            metadataLayoutVersion: 0,
+            ownerMetadata: null,
             metadataVersion: 1,
             metadata: "m1",
             lastViewedSessionSeq: 0,
@@ -75,6 +77,8 @@ const sessionFindUnique = vi.hoisted(() => vi.fn(async (args: any) => {
     }
     if (args?.select?.agentStateVersion === true) {
         return {
+            metadataLayoutVersion: 0,
+            ownerMetadata: null,
             agentStateVersion: 1,
             agentState: "a1",
             seq: 7,
@@ -223,7 +227,12 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         await handler({ sid: "s1", metadata: "m2", expectedVersion: 1 }, callback);
 
         expect(sessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: "s1", metadataVersion: 1 },
+            where: {
+                id: "s1",
+                metadataVersion: 1,
+                metadataLayoutVersion: 0,
+                ownerMetadata: null,
+            },
             data: expect.objectContaining({ metadata: "m2", metadataVersion: 2 }),
         }));
 
@@ -263,12 +272,17 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         );
 
         expect(sessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: "s1", metadataVersion: 1 },
+            where: {
+                id: "s1",
+                metadataVersion: 1,
+                metadataLayoutVersion: 0,
+                ownerMetadata: null,
+            },
             data: expect.objectContaining({ lastViewedSessionSeq: 2 }),
         }));
     });
 
-    it("marks session agentState updates for all participants and emits updates using those cursors", async () => {
+    it("marks released layout-zero agentState updates and preserves legacy participant publication", async () => {
         sessionFindUnique.mockClear();
         emitUpdate.mockClear();
         buildUpdateSessionUpdate.mockClear();
@@ -299,7 +313,12 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         }, callback);
 
         expect(sessionUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: "s1", agentStateVersion: 1 },
+            where: {
+                id: "s1",
+                agentStateVersion: 1,
+                metadataLayoutVersion: 0,
+                ownerMetadata: null,
+            },
             data: expect.objectContaining({
                 agentState: "a2",
                 agentStateVersion: 2,
@@ -540,18 +559,7 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
         expect(callback).toHaveBeenCalledWith({ result: "error" });
     });
 
-    it("marks cached presence inactive before persisting session-end", async () => {
-        directSessionFindUnique.mockResolvedValue({
-            id: "s1",
-            seq: 7,
-            pendingCount: 0,
-            lastViewedSessionSeq: 2,
-            pendingPermissionRequestCount: 0,
-            pendingUserActionRequestCount: 0,
-            active: true,
-            archivedAt: null,
-        });
-
+    it("fails legacy session-end closed when no trusted machine-bound publisher is present", async () => {
         const { sessionUpdateHandler } = await import("./sessionUpdateHandler");
 
         const socket = createFakeSocket();
@@ -563,12 +571,12 @@ describe("sessionUpdateHandler (session state AccountChange integration)", () =>
 
         const handler = getSocketHandler(socket, "session-end");
 
-        await handler({ sid: "s1", time: Date.now() }, vi.fn());
+        const callback = vi.fn();
+        await handler({ sid: "s1", time: Date.now() }, callback);
 
-        expect(markSessionInactive).toHaveBeenCalledWith("s1", "owner", expect.any(Number));
-        expect(directSessionUpdate).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: "s1" },
-            data: expect.objectContaining({ active: false, lastActiveAt: expect.any(Date) }),
-        }));
+        expect(callback).toHaveBeenCalledWith({ ok: false, error: "forbidden" });
+        expect(markSessionInactive).not.toHaveBeenCalled();
+        expect(directSessionFindUnique).not.toHaveBeenCalled();
+        expect(directSessionUpdate).not.toHaveBeenCalled();
     });
 });

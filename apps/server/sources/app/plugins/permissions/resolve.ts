@@ -4,15 +4,13 @@ import type {
     PluginPermissionGrantV1,
 } from "@happier-dev/protocol";
 
-import {
-    authorityDeclaresOptionalCapability,
-    resolveDefaultPluginPermissionGrantAuthority,
-} from "./authority";
+import { resolveDefaultPluginPermissionGrantAuthority } from "./authority";
 import { createSqlPluginPermissionGrantStore } from "./storage";
 
 export async function resolveTrustedPluginPermissionGrants(params: Readonly<{
     accountId: string;
     machineId?: string;
+    installationId?: string;
     pluginId: string;
     capability: PluginPermissionCapabilityV1;
     targetScope?: PluginPermissionGrantTargetScopeV1 | null;
@@ -21,11 +19,12 @@ export async function resolveTrustedPluginPermissionGrants(params: Readonly<{
     const authority = await resolveDefaultPluginPermissionGrantAuthority({
         accountId: params.accountId,
         machineId: params.machineId,
+        installationId: params.installationId,
         pluginId: params.pluginId,
         capability: params.capability,
         targetScope: params.targetScope,
     });
-    if (!authority || authority.pluginId !== params.pluginId || !authorityDeclaresOptionalCapability(authority, params.capability)) {
+    if (!authority || authority.pluginId !== params.pluginId) {
         return [];
     }
     const store = createSqlPluginPermissionGrantStore();
@@ -40,14 +39,4 @@ export async function resolveTrustedPluginPermissionGrants(params: Readonly<{
         limit: 50,
     });
     return result.grants;
-}
-
-export async function hasTrustedPluginPermissionGrant(params: Readonly<{
-    accountId: string;
-    machineId?: string;
-    pluginId: string;
-    capability: PluginPermissionCapabilityV1;
-    targetScope?: PluginPermissionGrantTargetScopeV1 | null;
-}>): Promise<boolean> {
-    return (await resolveTrustedPluginPermissionGrants(params)).length > 0;
 }

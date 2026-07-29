@@ -9,19 +9,26 @@ import { connectConnectedServicesQuotasV3Routes } from "./connectRoutes.connecte
 import { connectConnectedServicesV3Routes } from "./connectRoutes.connectedServicesV3";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { registerOAuthCallbackRoute } from "./oauthExternal/registerOAuthCallbackRoute";
+import {
+    registerQualifiedConnectedAccountCredentialRoutesV4,
+} from "./qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4";
+import {
+    registerConnectedAccountAttemptTransactionRoutes,
+} from "./connectedAccountAttemptTransactions/registerConnectedAccountAttemptTransactionRoutes";
 
 export function connectRoutes(app: Fastify) {
     connectAuthExternalRoutes(app);
 
-    const connectedServicesApp = createServerFeatureGatedRouteApp(app, "connectedServices", process.env);
-    connectConnectExternalRoutes(connectedServicesApp);
-    connectVendorTokenRoutes(connectedServicesApp);
+    connectConnectExternalRoutes(app);
+    connectVendorTokenRoutes(app);
 
-    connectConnectedServicesV2Routes(createServerFeatureGatedRouteApp(app, "connectedServices", process.env));
-    connectConnectedServicesV3Routes(createServerFeatureGatedRouteApp(app, "connectedServices", process.env));
+    connectConnectedServicesV2Routes(app);
+    connectConnectedServicesV3Routes(app);
+    registerConnectedAccountAttemptTransactionRoutes(app);
+    registerQualifiedConnectedAccountCredentialRoutesV4(app);
     connectConnectedServicesQuotasV2Routes(createServerFeatureGatedRouteApp(app, "connectedServices.quotas", process.env));
     connectConnectedServicesQuotasV3Routes(createServerFeatureGatedRouteApp(app, "connectedServices.quotas", process.env));
 
-    // OAuth callback must stay mounted for auth flows; connect flows are rejected inside the handler when disabled.
+    // The shared OAuth callback stays mounted for both auth and core Connected Accounts flows.
     registerOAuthCallbackRoute(app);
 }

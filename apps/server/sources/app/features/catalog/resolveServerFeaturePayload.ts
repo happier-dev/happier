@@ -1,18 +1,16 @@
 import { featuresSchema, type FeaturesResponse } from '../types';
 import {
+    applyFeatureDependencies,
     evaluateFeatureBuildPolicy,
-    FEATURE_CATALOG,
     FEATURE_IDS,
     FeatureGatesSchema,
-    readServerEnabledBit,
     tryWriteServerEnabledBitInPlace,
 } from '@happier-dev/protocol';
 
 import type { ServerFeatureResolver } from './serverFeatureRegistry';
 import { resolveServerFeatureBuildPolicy } from './serverFeatureBuildPolicy';
 import { readPeerMediationFeatureEnv } from './readFeatureEnv';
-
-const DEPENDENCIES_BY_ID = new Map(FEATURE_IDS.map((featureId) => [featureId, FEATURE_CATALOG[featureId].dependencies] as const));
+import { applyBrowserCapabilityFeatureGateClosure } from '../browserFeature';
 
 const DEFAULT_SETUP_SURFACE_POLICY_FEATURES: Record<string, unknown> = Object.freeze({
     setup: {
@@ -78,6 +76,8 @@ export function resolveServerFeaturePayload(
             machines: {
                 peerMediation: {
                     grantSigningKeys: peerMediationEnv.grantSigningKeys,
+                    directRouteGrantProofMintVersions: [2],
+                    tcpTunnelRelayAuthorizationMintVersions: [2],
                 },
             },
         }));
@@ -108,20 +108,9 @@ export function resolveServerFeaturePayload(
         evaluateFeatureBuildPolicy(buildPolicy, "voice.happierVoice") === "deny" ||
         evaluateFeatureBuildPolicy(buildPolicy, "voice") === "deny";
 
-    // 2) Enforce dependencies between represented server features.
-    for (const featureId of FEATURE_IDS) {
-        const enabled = readServerEnabledBit(payload, featureId);
-        if (enabled !== true) continue;
-
-        const dependencies = DEPENDENCIES_BY_ID.get(featureId) ?? [];
-        for (const depId of dependencies) {
-            const depEnabled = readServerEnabledBit(payload, depId);
-            if (depEnabled === true) continue;
-
-            tryWriteServerEnabledBitInPlace(payload, featureId, false);
-            break;
-        }
-    }
+    // 2) Enforce dependencies between represented server features to a fixed point.
+    applyFeatureDependencies({ serverPayload: payload });
+    applyBrowserCapabilityFeatureGateClosure(payload);
 
     return payload;
 }

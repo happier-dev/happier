@@ -29,19 +29,27 @@ const resource: LocalServicePreviewResourceV1 = {
     },
 };
 
+const hostResource: LocalServicePreviewResourceV1 = {
+    ...resource,
+    previewId: "alpha-beta",
+    originMode: "host",
+};
+
 describe("local service preview runtime", () => {
     it("registers a preview resource, issues a scoped token, and resolves a load URL", async () => {
         const mod = await loadPreviewRuntimeModule();
         expect(mod?.createLocalServicePreviewRuntime).toBeTypeOf("function");
         if (!mod?.createLocalServicePreviewRuntime) return;
 
+        const rawTokens = ["raw_url_token_1", "raw_cookie_token_1"];
+        const tokenIds = ["token_id_url_1", "token_id_cookie_1"];
         const runtime = mod.createLocalServicePreviewRuntime({
             tokenSecret: "secret",
             publicBaseUrl: "https://app.happier.test",
             hostOriginBaseDomain: null,
             nowMs: () => 1_000,
-            generateTokenId: () => "token_id_1",
-            generateRawToken: () => "raw_token_1",
+            generateTokenId: () => tokenIds.shift() ?? "token_id_extra",
+            generateRawToken: () => rawTokens.shift() ?? "raw_extra",
             tokenTtlMs: 60_000,
         });
 
@@ -52,7 +60,7 @@ describe("local service preview runtime", () => {
         expect(registered).toEqual({
             ok: true,
             resource,
-            accessUrl: "https://app.happier.test/v1/local-services/preview/preview_1/dashboard?tab=preview&previewToken=raw_token_1",
+            accessUrl: "https://app.happier.test/v1/local-services/preview/preview_1/dashboard?tab=preview&previewToken=raw_url_token_1",
             expiresAt: 61_000,
         });
         expect(runtime.resolvePreview("preview_1")).toEqual(resource);
@@ -62,10 +70,40 @@ describe("local service preview runtime", () => {
         });
         expect(runtime.validateAccess({
             previewId: "preview_1",
-            rawToken: "raw_token_1",
+            rawToken: "raw_url_token_1",
+            sessionId: "session_1",
+            machineId: "machine_1",
+        })).toEqual({ ok: false, reasonCode: "exchange_mode_mismatch" });
+
+        const exchanged = runtime.exchangeAccessToken({
+            previewId: "preview_1",
+            rawToken: "raw_url_token_1",
+            sessionId: "session_1",
+            machineId: "machine_1",
+        });
+        expect(exchanged).toEqual({
+            ok: true,
+            rawToken: "raw_cookie_token_1",
+            expiresAt: 61_000,
+        });
+        expect(runtime.validateAccess({
+            previewId: "preview_1",
+            rawToken: "raw_cookie_token_1",
             sessionId: "session_1",
             machineId: "machine_1",
         })).toEqual({ ok: true });
+        expect(runtime.exchangeAccessToken({
+            previewId: "preview_1",
+            rawToken: "raw_url_token_1",
+            sessionId: "session_1",
+            machineId: "machine_1",
+        })).toEqual({ ok: false, reasonCode: "exchange_mode_mismatch" });
+        expect(runtime.validateAccess({
+            previewId: "preview_1",
+            rawToken: "raw_url_token_1",
+            sessionId: "session_1",
+            machineId: "machine_1",
+        })).toEqual({ ok: false, reasonCode: "token_mismatch" });
     });
 
     it("fails closed when token configuration is incomplete", async () => {
@@ -119,5 +157,47 @@ describe("local service preview runtime", () => {
             sessionId: "session_1",
             machineId: "machine_1",
         })).toEqual({ ok: false, reasonCode: "preview_not_found" });
+    });
+
+    it("fails closed when a second host-mode preview sanitizes to an occupied hostname", async () => {
+        const mod = await loadPreviewRuntimeModule();
+        expect(mod?.createLocalServicePreviewRuntime).toBeTypeOf("function");
+        if (!mod?.createLocalServicePreviewRuntime) return;
+
+        const runtime = mod.createLocalServicePreviewRuntime({
+            tokenSecret: "secret",
+            publicBaseUrl: "https://app.happier.test",
+            hostOriginBaseDomain: "preview.happier.test",
+            nowMs: () => 1_000,
+            generateTokenId: () => "token_id_1",
+            generateRawToken: () => "raw_token_1",
+            tokenTtlMs: 60_000,
+        });
+
+        expect(runtime.registerPreview({
+            resource: hostResource,
+            accountId: "account_1",
+        })).toEqual({
+            ok: true,
+            resource: hostResource,
+            accessUrl: "https://alpha-beta.preview.happier.test/dashboard?tab=preview&previewToken=raw_token_1",
+            expiresAt: 61_000,
+        });
+
+        const collidingResource: LocalServicePreviewResourceV1 = {
+            ...hostResource,
+            previewId: "alpha__beta",
+        };
+
+        expect(runtime.registerPreview({
+            resource: collidingResource,
+            accountId: "account_2",
+        })).toEqual({
+            ok: false,
+            reasonCode: "preview_hostname_collision",
+        });
+        expect(runtime.resolvePreview("alpha-beta")).toEqual(hostResource);
+        expect(runtime.resolvePreview("alpha__beta")).toBeNull();
+        expect(runtime.resolvePreviewByHost("alpha-beta.preview.happier.test")).toEqual(hostResource);
     });
 });

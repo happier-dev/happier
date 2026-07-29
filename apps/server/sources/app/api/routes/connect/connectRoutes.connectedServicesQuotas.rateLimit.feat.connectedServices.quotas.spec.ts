@@ -23,7 +23,7 @@ describe("connected services quota route rate limits", () => {
             ["GET", "/v2/connect/:serviceId/profiles/:profileId/quotas"],
             ["POST", "/v2/connect/:serviceId/profiles/:profileId/quotas/refresh"],
             ["DELETE", "/v2/connect/:serviceId/profiles/:profileId/quotas"],
-            ["POST", "/v3/connect/:serviceId/profiles/:profileId/quotas"],
+            // SD-1: the v3 quotas POST write route was retired (it only ever returned 400).
             ["GET", "/v3/connect/:serviceId/profiles/:profileId/quotas"],
             ["POST", "/v3/connect/:serviceId/profiles/:profileId/quotas/refresh"],
             ["DELETE", "/v3/connect/:serviceId/profiles/:profileId/quotas"],

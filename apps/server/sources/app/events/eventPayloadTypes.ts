@@ -1,11 +1,14 @@
 import { Socket } from "socket.io";
 import type { LinkedProvider } from "@/app/auth/providers/linkedProviders";
 import type {
-    ExternalSessionTranscriptDeltaEphemeral,
+    ExternalSessionTranscriptInvalidationV1,
     ExecutionRunPublicState,
     PrimaryTurnStatusV1,
+    SessionMessageDeliveryResolutionV1,
+    SessionMessageAttentionImpact,
     SessionRuntimeIssueV1,
     SessionStoredMessageContent,
+    SessionTranscriptObservationProvenanceV1,
 } from "@happier-dev/protocol";
 
 // === CONNECTION TYPES ===
@@ -58,8 +61,13 @@ export type UpdateEvent = {
         content: any;
         localId: string | null;
         sidechainId?: string | null;
+        deliveryResolution?: SessionMessageDeliveryResolutionV1;
+        attentionImpact?: SessionMessageAttentionImpact;
         createdAt: number;
         updatedAt: number;
+        sourceCreatedAt?: number;
+        sourceUpdatedAt?: number;
+        transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
     }
 } | {
     type: 'message-updated';
@@ -70,8 +78,13 @@ export type UpdateEvent = {
         content: any;
         localId: string | null;
         sidechainId?: string | null;
+        deliveryResolution?: SessionMessageDeliveryResolutionV1;
+        attentionImpact?: SessionMessageAttentionImpact;
         createdAt: number;
         updatedAt: number;
+        sourceCreatedAt?: number;
+        sourceUpdatedAt?: number;
+        transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
     }
 } | {
     type: 'new-session';
@@ -82,6 +95,7 @@ export type UpdateEvent = {
     agentState: string | null;
     agentStateVersion: number;
     dataEncryptionKey: string | null;
+    encryptionMode: "e2ee" | "plain";
     active: boolean;
     activeAt: number;
     createdAt: number;
@@ -115,6 +129,7 @@ export type UpdateEvent = {
     sessionId: string;
     pendingVersion: number;
     pendingCount: number;
+    pendingBlockedCount?: number;
     changedByAccountId?: string;
     meaningfulActivityAt?: number;
 } | {
@@ -308,10 +323,26 @@ export type EphemeralEvent = {
         localId: string;
         sidechainId?: string | null;
         content: SessionStoredMessageContent;
+        /** Live-stream tick this full snapshot corresponds to (delta-chaining checkpoint anchor). */
+        tick?: number;
         createdAt: number;
         updatedAt: number;
     };
-} | ExternalSessionTranscriptDeltaEphemeral | {
+} | {
+    type: 'transcript-stream-segment-delta';
+    sessionId: string;
+    message: {
+        localId: string;
+        sidechainId?: string | null;
+        content: SessionStoredMessageContent;
+        /** Per-segment live emission sequence (1-based, includes snapshot emissions). */
+        tick: number;
+        /** Accumulated text length (UTF-16 code units) BEFORE applying this delta. */
+        baseLength: number;
+        createdAt: number;
+        updatedAt: number;
+    };
+} | ExternalSessionTranscriptInvalidationV1 | {
     type: 'machine-activity';
     id: string;
     active: boolean;

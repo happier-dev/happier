@@ -1,30 +1,30 @@
 import { Counter, Histogram } from "prom-client";
 
-import { register } from "./registry";
+import { getOrCreateMetric, register } from "./registry";
 
 type RedisFailureReason = "connection" | "timeout" | "unknown";
 
-export const redisCommandsCounter = new Counter({
+export const redisCommandsCounter = getOrCreateMetric("redis_commands_total", () => new Counter({
     name: "redis_commands_total",
     help: "Total app-owned Redis command executions by command and result",
     labelNames: ["command", "result"] as const,
     registers: [register],
-});
+}));
 
-export const redisCommandDurationHistogram = new Histogram({
+export const redisCommandDurationHistogram = getOrCreateMetric("redis_command_duration_seconds", () => new Histogram({
     name: "redis_command_duration_seconds",
     help: "Duration of app-owned Redis command executions in seconds",
     labelNames: ["command", "result"] as const,
     buckets: [0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5],
     registers: [register],
-});
+}));
 
-export const redisCommandFailuresCounter = new Counter({
+export const redisCommandFailuresCounter = getOrCreateMetric("redis_command_failures_total", () => new Counter({
     name: "redis_command_failures_total",
     help: "Total app-owned Redis command failures by classified reason",
     labelNames: ["command", "reason"] as const,
     registers: [register],
-});
+}));
 
 function classifyRedisFailureReason(error: unknown): RedisFailureReason {
     if (!(error instanceof Error)) {

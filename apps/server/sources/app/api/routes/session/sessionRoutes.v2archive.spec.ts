@@ -4,6 +4,7 @@ import {
     createSessionRouteTestBuilder,
     resetSessionRouteMocks,
     checkSessionAccess,
+    clearSessionRuntimeActivityProjectionInTx,
     getSessionParticipantUserIds,
     buildUpdateSessionUpdate,
     emitUpdate,
@@ -29,6 +30,9 @@ describe("sessionRoutes v2 archive", () => {
 
         expect(reply.code).not.toHaveBeenCalledWith(403);
         expect(res).toEqual({ success: true, archivedAt: now.getTime() });
+        expect(clearSessionRuntimeActivityProjectionInTx).toHaveBeenCalledWith(expect.objectContaining({
+            sessionId: "s1",
+        }));
         expect(markAccountChanged).toHaveBeenCalledTimes(2);
         expect(buildUpdateSessionUpdate).toHaveBeenCalledWith(
             "s1",
@@ -36,9 +40,24 @@ describe("sessionRoutes v2 archive", () => {
             expect.any(String),
             undefined,
             undefined,
-            { archivedAt: now.getTime() },
+            {
+                archivedAt: now.getTime(),
+                runtimeActivityState: "unknown",
+                runtimeActivityActiveCount: 0,
+                runtimeActivityObservedAt: null,
+                runtimeActivityRevision: 0,
+            },
         );
-        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(emitUpdate).toHaveBeenCalledTimes(4);
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            recipientFilter: {
+                type: "all-interested-in-session",
+                sessionId: "s1",
+            },
+        }));
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            recipientFilter: { type: "user-machine-scoped-only" },
+        }));
     });
 
     it("returns 409 when attempting to archive an active session", async () => {
@@ -82,6 +101,15 @@ describe("sessionRoutes v2 archive", () => {
             undefined,
             { archivedAt: null },
         );
-        expect(emitUpdate).toHaveBeenCalledTimes(1);
+        expect(emitUpdate).toHaveBeenCalledTimes(2);
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            recipientFilter: {
+                type: "all-interested-in-session",
+                sessionId: "s1",
+            },
+        }));
+        expect(emitUpdate).toHaveBeenCalledWith(expect.objectContaining({
+            recipientFilter: { type: "user-machine-scoped-only" },
+        }));
     });
 });

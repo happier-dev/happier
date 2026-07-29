@@ -17,6 +17,14 @@ export const SessionPendingMessageStatus = {
 
 export type SessionPendingMessageStatus = (typeof SessionPendingMessageStatus)[keyof typeof SessionPendingMessageStatus];
 
+export const PendingProviderAction = {
+    send: "send",
+    steer: "steer",
+    interrupt_and_send: "interrupt_and_send",
+} as const;
+
+export type PendingProviderAction = (typeof PendingProviderAction)[keyof typeof PendingProviderAction];
+
 export const AutomationScheduleKind = {
     cron: "cron",
     interval: "interval",

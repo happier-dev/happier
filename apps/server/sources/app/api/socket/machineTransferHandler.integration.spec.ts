@@ -492,6 +492,233 @@ describe('machineTransferHandler', () => {
     });
   });
 
+  it('releases retained-v1 accounting after a reverse-direction finish, including a duplicate terminal', async () => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const requesterEmit = vi.fn();
+    const requesterSocket = createFakeSocket({ emit: requesterEmit, id: 'requester-socket' }) as any;
+    requesterSocket.data = { clientType: 'machine-scoped', machineId: 'machine-requester' };
+    const responderSocket = createFakeSocket({ emit: vi.fn(), id: 'responder-socket' }) as any;
+    responderSocket.data = { clientType: 'machine-scoped', machineId: 'machine-responder' };
+    const relayContext = {
+      io: { to } as any,
+      serverRoutedTransferMaxActiveTransfersPerSocket: 1,
+    };
+    machineTransferHandler('user-1', requesterSocket, relayContext);
+    machineTransferHandler('user-1', responderSocket, relayContext);
+    const requesterHandler = getSocketHandler(requesterSocket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    const responderHandler = getSocketHandler(responderSocket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+
+    await requesterHandler({
+      targetMachineId: 'machine-responder',
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'open',
+        manifestHash: 'manifest_1',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+    await responderHandler({
+      targetMachineId: 'machine-requester',
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'chunk',
+        sequence: 0,
+        payloadBase64: Buffer.from('chunk', 'utf8').toString('base64'),
+      },
+    });
+    await requesterHandler({
+      targetMachineId: 'machine-responder',
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'ack',
+        nextSequence: 1,
+      },
+    });
+    const finishEnvelope = {
+      targetMachineId: 'machine-requester',
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'finish',
+        manifestHash: 'manifest_1',
+      },
+    } as const;
+    await responderHandler(finishEnvelope);
+    await responderHandler(finishEnvelope);
+
+    await requesterHandler({
+      targetMachineId: 'machine-responder',
+      envelope: {
+        transferId: 'transfer_2',
+        kind: 'open',
+        manifestHash: 'manifest_2',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+
+    expect(requesterEmit.mock.calls.some(([, payload]) => (
+      payload?.error === 'Server-routed machine transfer exceeds the configured active-transfer limit'
+    ))).toBe(false);
+  });
+
+  it.each([
+    ['requester', 'requester'],
+    ['responder', 'responder'],
+  ] as const)('releases retained-v1 accounting when the %s aborts, including a duplicate terminal', async (_label, abortingParticipant) => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    const emit = vi.fn();
+    const to = vi.fn(() => ({ emit }));
+    const requesterEmit = vi.fn();
+    const requesterSocket = createFakeSocket({ emit: requesterEmit, id: 'requester-socket' }) as any;
+    requesterSocket.data = { clientType: 'machine-scoped', machineId: 'machine-requester' };
+    const responderSocket = createFakeSocket({ emit: vi.fn(), id: 'responder-socket' }) as any;
+    responderSocket.data = { clientType: 'machine-scoped', machineId: 'machine-responder' };
+    const relayContext = {
+      io: { to } as any,
+      serverRoutedTransferMaxActiveTransfersPerSocket: 1,
+    };
+    machineTransferHandler('user-1', requesterSocket, relayContext);
+    machineTransferHandler('user-1', responderSocket, relayContext);
+    const requesterHandler = getSocketHandler(requesterSocket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    const responderHandler = getSocketHandler(responderSocket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+
+    await requesterHandler({
+      targetMachineId: 'machine-responder',
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'open',
+        manifestHash: 'manifest_1',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+    const abortEnvelope = abortingParticipant === 'requester'
+      ? {
+        targetMachineId: 'machine-responder',
+        envelope: { transferId: 'transfer_1', kind: 'abort' as const, reason: 'cancelled' },
+      }
+      : {
+        targetMachineId: 'machine-requester',
+        envelope: { transferId: 'transfer_1', kind: 'abort' as const, reason: 'cancelled' },
+      };
+    const abortHandler = abortingParticipant === 'requester' ? requesterHandler : responderHandler;
+    await abortHandler(abortEnvelope);
+    await abortHandler(abortEnvelope);
+
+    await requesterHandler({
+      targetMachineId: 'machine-responder',
+      envelope: {
+        transferId: 'transfer_2',
+        kind: 'open',
+        manifestHash: 'manifest_2',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+
+    expect(requesterEmit.mock.calls.some(([, payload]) => (
+      payload?.error === 'Server-routed machine transfer exceeds the configured active-transfer limit'
+    ))).toBe(false);
+  });
+
+  it.each([
+    ['requester', 'requester'],
+    ['responder', 'responder'],
+  ] as const)('releases retained-v1 accounting when the %s disconnects', async (_label, disconnectingParticipant) => {
+    const { machineTransferHandler } = await import('./machineTransferHandler');
+    const emit = vi.fn();
+    const routedEnvelopes: Array<Readonly<{ room: string; event: string; payload: any }>> = [];
+    const to = vi.fn((room: string) => ({
+      emit(event: string, payload: any) {
+        emit(event, payload);
+        routedEnvelopes.push({ room, event, payload });
+      },
+    }));
+    const requesterSocket = createFakeSocket({ emit: vi.fn(), id: 'requester-socket' }) as any;
+    requesterSocket.data = { clientType: 'machine-scoped', machineId: 'machine-requester' };
+    const responderSocket = createFakeSocket({ emit: vi.fn(), id: 'responder-socket' }) as any;
+    responderSocket.data = { clientType: 'machine-scoped', machineId: 'machine-responder' };
+    const relayContext = {
+      io: { to } as any,
+      serverRoutedTransferMaxActiveTransfersPerSocket: 1,
+    };
+    machineTransferHandler('user-1', requesterSocket, relayContext);
+    machineTransferHandler('user-1', responderSocket, relayContext);
+    const requesterHandler = getSocketHandler(requesterSocket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+    const responderHandler = getSocketHandler(responderSocket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE);
+
+    await requesterHandler({
+      targetMachineId: 'machine-responder',
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'open',
+        manifestHash: 'manifest_1',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+    await responderHandler({
+      targetMachineId: 'machine-requester',
+      envelope: {
+        transferId: 'transfer_1',
+        kind: 'chunk',
+        sequence: 0,
+        payloadBase64: Buffer.from('chunk', 'utf8').toString('base64'),
+      },
+    });
+
+    routedEnvelopes.length = 0;
+    await getSocketHandler(
+      disconnectingParticipant === 'requester' ? requesterSocket : responderSocket,
+      'disconnect',
+    )();
+
+    const survivingMachineId = disconnectingParticipant === 'requester'
+      ? 'machine-responder'
+      : 'machine-requester';
+    const disconnectedMachineId = disconnectingParticipant === 'requester'
+      ? 'machine-requester'
+      : 'machine-responder';
+    const survivingRoom = `machine:${survivingMachineId}:user-1`;
+    expect(routedEnvelopes.filter(({ room, event, payload }) => (
+      room === survivingRoom
+      && event === SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE
+      && payload.envelope?.kind === 'abort'
+    ))).toEqual([
+      expect.objectContaining({
+        room: survivingRoom,
+        payload: {
+          sourceMachineId: disconnectedMachineId,
+          targetMachineId: survivingMachineId,
+          envelope: {
+            transferId: 'transfer_1',
+            kind: 'abort',
+            reason: 'machine_transfer_socket_disconnected',
+          },
+        },
+      }),
+    ]);
+
+    const replacementRequesterEmit = vi.fn();
+    const replacementRequesterSocket = createFakeSocket({
+      emit: replacementRequesterEmit,
+      id: 'replacement-requester-socket',
+    }) as any;
+    replacementRequesterSocket.data = { clientType: 'machine-scoped', machineId: 'machine-requester' };
+    machineTransferHandler('user-1', replacementRequesterSocket, relayContext);
+    await getSocketHandler(replacementRequesterSocket, SOCKET_RPC_EVENTS.MACHINE_TRANSFER_ENVELOPE)({
+      targetMachineId: 'machine-responder',
+      envelope: {
+        transferId: 'transfer_2',
+        kind: 'open',
+        manifestHash: 'manifest_2',
+        recipientPublicKeyBase64: Buffer.from('recipient-key-material', 'utf8').toString('base64'),
+      },
+    });
+
+    expect(replacementRequesterEmit.mock.calls.some(([, payload]) => (
+      payload?.error === 'Server-routed machine transfer exceeds the configured active-transfer limit'
+    ))).toBe(false);
+  });
+
   it('rejects cumulative max-bytes across multiple sockets (cannot bypass server max-bytes by splitting chunks)', async () => {
     const { machineTransferHandler } = await import('./machineTransferHandler');
     const emit = vi.fn();

@@ -40,11 +40,11 @@ export async function createMetricsServer() {
     return app;
 }
 
-export async function startMetricsServer(): Promise<void> {
+export async function startMetricsServer(): Promise<boolean> {
     const config = readMetricsServerConfigFromEnv(process.env);
     if (!config.enabled) {
         log({ module: 'metrics' }, 'Metrics server disabled');
-        return;
+        return false;
     }
 
     const app = await createMetricsServer();
@@ -52,6 +52,7 @@ export async function startMetricsServer(): Promise<void> {
     try {
         await app.listen({ port: config.port, host: '0.0.0.0' });
         log({ module: 'metrics' }, `Metrics server listening on port ${config.port}`);
+        return true;
     } catch (error) {
         log({ module: 'metrics', level: 'error' }, `Failed to start metrics server: ${error}`);
         throw error;

@@ -3,15 +3,19 @@ import tweetnacl from "tweetnacl";
 import {
     DirectRouteGrantRevocationV1Schema,
     DirectRouteGrantScopeV1Schema,
+    DirectRouteGrantPayloadV2Schema,
     PEER_MEDIATION_RECEIPTS,
     createDirectRouteGrantSigningInputV1,
+    createDirectRouteGrantSigningInputV2,
     validateMachineRpcGrantAllowedMethods,
     type DirectPeerRouteKindV1,
     type DirectRouteGrantPayloadV1,
+    type DirectRouteGrantPayloadV2,
     type DirectRouteGrantRevocationV1,
     type DirectRouteGrantScopeV1,
     type PeerFlowKindV1,
     type SignedDirectRouteGrantV1,
+    type SignedDirectRouteGrantV2,
 } from "@happier-dev/protocol";
 
 import { FEATURE_ENV_KEYS } from "@/app/features/catalog/featureEnvSchema";
@@ -65,6 +69,22 @@ export type MintDirectRouteGrantV1Input = Readonly<{
         secretKey: Uint8Array;
     }>;
 }>;
+
+export type MintDirectRouteGrantV2Input = MintDirectRouteGrantV1Input & Readonly<{
+    ephemeralPublicKeyBase64Url: string;
+}>;
+
+export type MintDirectRouteGrantV2Result =
+    | Readonly<{
+        ok: true;
+        grant: SignedDirectRouteGrantV2;
+        receipt: typeof PEER_MEDIATION_RECEIPTS.routeGrantMinted;
+    }>
+    | Readonly<{
+        ok: false;
+        reasonCode: Extract<MintDirectRouteGrantV1Result, Readonly<{ ok: false }>>["reasonCode"];
+        receipt: typeof PEER_MEDIATION_RECEIPTS.routeGrantRejected;
+    }>;
 
 function toBase64Url(bytes: Uint8Array): string {
     return Buffer.from(bytes).toString("base64url");
@@ -202,6 +222,42 @@ export function mintDirectRouteGrantV1(input: MintDirectRouteGrantV1Input): Mint
         ok: true,
         grant: {
             payload,
+            signature: {
+                keyId: input.signingKey.keyId,
+                alg: "Ed25519",
+                valueBase64Url: toBase64Url(signature),
+            },
+        },
+        receipt: PEER_MEDIATION_RECEIPTS.routeGrantMinted,
+    };
+}
+
+export function mintDirectRouteGrantV2(input: MintDirectRouteGrantV2Input): MintDirectRouteGrantV2Result {
+    const validated = mintDirectRouteGrantV1(input);
+    if (!validated.ok) return validated;
+
+    const candidate: DirectRouteGrantPayloadV2 = {
+        ...validated.grant.payload,
+        v: 2,
+        proofKind: "ephemeral_ed25519",
+        ephemeralPublicKeyBase64Url: input.ephemeralPublicKeyBase64Url,
+    };
+    const parsed = DirectRouteGrantPayloadV2Schema.safeParse(candidate);
+    if (!parsed.success) {
+        return {
+            ok: false,
+            reasonCode: "invalid_scope",
+            receipt: PEER_MEDIATION_RECEIPTS.routeGrantRejected,
+        };
+    }
+    const signature = tweetnacl.sign.detached(
+        Buffer.from(createDirectRouteGrantSigningInputV2(parsed.data), "utf8"),
+        input.signingKey.secretKey,
+    );
+    return {
+        ok: true,
+        grant: {
+            payload: parsed.data,
             signature: {
                 keyId: input.signingKey.keyId,
                 alg: "Ed25519",

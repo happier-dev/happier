@@ -91,6 +91,7 @@ describe("connected service auth group route schemas", () => {
         }).success).toBe(true);
         expect(RuntimeStatePatchBodySchema.safeParse({
             expectedGeneration: 2,
+            expectedRuntimeStateRevision: 3,
             state: { status: "exhausted" },
             memberStates: [],
         }).success).toBe(true);

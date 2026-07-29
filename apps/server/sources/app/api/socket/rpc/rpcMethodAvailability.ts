@@ -19,8 +19,26 @@ const SESSION_SCOPED_RPC_CLUSTER_FETCH_TIMEOUT_MS = parsePositiveIntOrDefault(
     1000,
 );
 
+const EXTERNAL_SESSIONS_RPC_METHOD_AVAILABILITY_GRACE_MS = parsePositiveIntOrDefault(
+    process.env.HAPPIER_DIRECT_SESSIONS_RPC_METHOD_AVAILABILITY_GRACE_MS,
+    15_000,
+);
+
+const LONG_STARTUP_GRACE_SCOPED_DAEMON_RPC_METHOD_PREFIXES = [
+    "daemon.externalSessions.",
+    "daemon.directSessions.",
+] as const;
+
 export function resolveRpcMethodAvailabilityGraceMs(method: string): number {
-    return method.includes(":") ? SESSION_SCOPED_RPC_METHOD_AVAILABILITY_GRACE_MS : 0;
+    const scopeSeparatorIndex = method.indexOf(":");
+    const normalizedMethod = scopeSeparatorIndex >= 0 ? method.slice(scopeSeparatorIndex + 1) : method;
+    if (LONG_STARTUP_GRACE_SCOPED_DAEMON_RPC_METHOD_PREFIXES.some((prefix) => normalizedMethod.startsWith(prefix))) {
+        return EXTERNAL_SESSIONS_RPC_METHOD_AVAILABILITY_GRACE_MS;
+    }
+
+    if (scopeSeparatorIndex < 0) return 0;
+
+    return SESSION_SCOPED_RPC_METHOD_AVAILABILITY_GRACE_MS;
 }
 
 export function resolveRpcMethodAvailabilityPollMs(): number {

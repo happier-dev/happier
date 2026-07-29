@@ -3,16 +3,32 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { applySqliteMigrationsIfNeeded, listSqliteMigrations, resolveSqliteDatabaseFilePath, resolveSqliteMigrationsDir } from './sqliteMigrations';
+import {
+  applySqliteMigrationsFromEnvironment,
+  applySqliteMigrationsIfNeeded,
+  listSqliteMigrations,
+  resolveSqliteDatabaseFilePath,
+  resolveSqliteMigrationsDir,
+} from './sqliteMigrations';
 
-type SqliteState = { tables: Set<string>; applied: Map<string, string>; closeCount: number; execStatements: string[] };
+type SqliteState = {
+  tables: Set<string>;
+  applied: Map<string, string>;
+  closeCount: number;
+  execStatements: string[];
+};
 
 const sqliteStore = new Map<string, SqliteState>();
 
 function getSqliteState(databasePath: unknown): SqliteState {
   const key = String(databasePath ?? '');
   if (!sqliteStore.has(key)) {
-    sqliteStore.set(key, { tables: new Set(), applied: new Map(), closeCount: 0, execStatements: [] });
+    sqliteStore.set(key, {
+      tables: new Set(),
+      applied: new Map(),
+      closeCount: 0,
+      execStatements: [],
+    });
   }
   return sqliteStore.get(key)!;
 }
@@ -125,6 +141,21 @@ describe('light sqlite migrations (unit)', () => {
     expect(migrations[1]?.sql).toContain('CREATE TABLE two');
   });
 
+  it('listSqliteMigrations rejects migration directories with missing or empty SQL', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-invalid-'));
+    const missing = join(dir, '20260101000000_missing');
+    const empty = join(dir, '20260201000000_empty');
+    await mkdir(missing, { recursive: true });
+
+    await expect(listSqliteMigrations(dir)).rejects.toThrow(/missing migration\.sql/i);
+
+    await writeFile(join(missing, 'migration.sql'), 'SELECT 1;\n', 'utf8');
+    await mkdir(empty, { recursive: true });
+    await writeFile(join(empty, 'migration.sql'), ' \n', 'utf8');
+
+    await expect(listSqliteMigrations(dir)).rejects.toThrow(/empty migration\.sql/i);
+  });
+
   it('resolveSqliteMigrationsDir expands ~/ overrides against HOME', () => {
     expect(resolveSqliteMigrationsDir({
       HOME: '/scoped/home',
@@ -147,7 +178,7 @@ describe('light sqlite migrations (unit)', () => {
     const env = {
       HAPPIER_SQLITE_AUTO_MIGRATE: '1',
       HAPPIER_SQLITE_MIGRATIONS_DIR: dir,
-      DATABASE_URL: `file:${dbPath}`,
+      DATABASE_URL: `file:${dbPath}?socket_timeout=7`,
     };
 
     const res = await applySqliteMigrationsIfNeeded({ env, dataDir });
@@ -157,7 +188,10 @@ describe('light sqlite migrations (unit)', () => {
     expect(state.tables.has('Widget')).toBe(true);
     expect(state.applied.has('20260101000000_first')).toBe(true);
     expect(state.applied.has('20260201000000_second')).toBe(true);
-    expect(state.execStatements[0]).toBe('PRAGMA auto_vacuum=INCREMENTAL;');
+    expect(state.execStatements.slice(0, 2)).toEqual([
+      'PRAGMA busy_timeout=7000;',
+      'PRAGMA auto_vacuum=INCREMENTAL;',
+    ]);
   });
 
   it('applySqliteMigrationsIfNeeded closes the Bun sqlite connection before Prisma starts', async () => {
@@ -211,6 +245,30 @@ describe('light sqlite migrations (unit)', () => {
     expect(state.applied.has('20260201000000_second')).toBe(true);
   });
 
+  it('keeps the normal-start auto-migration gate while explicit migrate-only invocation bypasses it', async () => {
+    vi.stubGlobal('Bun', {});
+    const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-explicit-'));
+    const migration = join(dir, '20260101000000_first');
+    await mkdir(migration, { recursive: true });
+    await writeFile(join(migration, 'migration.sql'), 'CREATE TABLE Account(id INTEGER);\n', 'utf8');
+
+    const dataDir = await mkdtemp(join(tmpdir(), 'happier-sqlite-data-explicit-'));
+    const dbPath = join(dataDir, 'happier.sqlite');
+    const env = {
+      HAPPIER_SQLITE_AUTO_MIGRATE: '0',
+      HAPPIER_SQLITE_MIGRATIONS_DIR: dir,
+      DATABASE_URL: `file:${dbPath}`,
+    };
+
+    await expect(applySqliteMigrationsIfNeeded({ env, dataDir })).resolves.toEqual({ applied: [] });
+    expect(sqliteStore.has(dbPath)).toBe(false);
+
+    await expect(applySqliteMigrationsFromEnvironment({ env, dataDir })).resolves.toEqual({
+      applied: ['20260101000000_first'],
+    });
+    expect(getSqliteState(dbPath).applied.has('20260101000000_first')).toBe(true);
+  });
+
   it('applySqliteMigrationsIfNeeded rejects checksum drift for already-applied migrations', async () => {
     vi.stubGlobal('Bun', {});
     const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-drift-'));
@@ -232,7 +290,7 @@ describe('light sqlite migrations (unit)', () => {
     await expect(applySqliteMigrationsIfNeeded({ env, dataDir })).rejects.toThrow(/checksum mismatch/i);
   });
 
-  it('applySqliteMigrationsIfNeeded tolerates legacy databases without migration history', async () => {
+  it('applySqliteMigrationsIfNeeded rejects legacy schema inference from duplicate table names', async () => {
     vi.stubGlobal('Bun', {});
     const dir = await mkdtemp(join(tmpdir(), 'happier-sqlite-migrations-legacy-'));
     const m1 = join(dir, '20260101000000_first');
@@ -253,10 +311,11 @@ describe('light sqlite migrations (unit)', () => {
       DATABASE_URL: `file:${dbPath}`,
     };
 
-    const res = await applySqliteMigrationsIfNeeded({ env, dataDir });
-    expect(res.applied).toEqual(['20260101000000_first', '20260201000000_second']);
-    expect(state.tables.has('Widget')).toBe(true);
-    expect(state.applied.has('20260101000000_first')).toBe(true);
-    expect(state.applied.has('20260201000000_second')).toBe(true);
+    await expect(applySqliteMigrationsIfNeeded({ env, dataDir })).rejects.toThrow(
+      /cannot be marked applied safely/i,
+    );
+    expect(state.tables.has('Widget')).toBe(false);
+    expect(state.applied.has('20260101000000_first')).toBe(false);
+    expect(state.applied.has('20260201000000_second')).toBe(false);
   });
 });

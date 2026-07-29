@@ -10,6 +10,7 @@ import type { SocketRoomBroadcastOperator, SocketRoomEmitter } from "./socketRoo
 
 const MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH = 80;
 const SAFE_EVENT_FANOUT_METRIC_LABEL_PATTERN = /^[a-zA-Z0-9_.:-]+$/;
+const EVENT_FANOUT_PAYLOAD_BYTES_SAMPLE_RATE = 0.01;
 
 function normalizeEventFanoutMetricLabel(value: unknown): string {
     if (typeof value !== "string" || value.length === 0 || value.length > MAX_EVENT_FANOUT_METRIC_LABEL_LENGTH) {
@@ -31,6 +32,10 @@ function estimateEventFanoutPayloadBytes(payload: any): number {
     } catch {
         return 0;
     }
+}
+
+function shouldSampleEventFanoutPayloadBytes(): boolean {
+    return Math.random() < EVENT_FANOUT_PAYLOAD_BYTES_SAMPLE_RATE;
 }
 
 class EventRouter {
@@ -158,7 +163,8 @@ class EventRouter {
         skipSenderConnection?: ClientConnection;
     }): void {
         const payloadType = resolveEventFanoutPayloadType(params.payload);
-        const payloadBytes = estimateEventFanoutPayloadBytes(params.payload);
+        const shouldSamplePayloadBytes = shouldSampleEventFanoutPayloadBytes();
+        const payloadBytes = shouldSamplePayloadBytes ? estimateEventFanoutPayloadBytes(params.payload) : undefined;
 
         if (this.io) {
             const skipSocketId = params.skipSenderConnection?.socket?.id;
@@ -176,7 +182,7 @@ class EventRouter {
                 targetKind: "room",
                 targetCount: Array.isArray(target) ? target.length : 1,
                 payloadType,
-                payloadBytes,
+                ...(payloadBytes !== undefined ? { payloadBytes } : {}),
             });
             return;
         }
@@ -232,7 +238,7 @@ class EventRouter {
             targetKind: "connection",
             targetCount: deliveredCount,
             payloadType,
-            payloadBytes,
+            ...(payloadBytes !== undefined ? { payloadBytes } : {}),
         });
     }
 

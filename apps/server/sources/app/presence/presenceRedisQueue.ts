@@ -57,25 +57,6 @@ function getConsumerName(env: NodeJS.ProcessEnv): string {
     return env.HAPPIER_INSTANCE_ID?.trim() || env.HAPPY_INSTANCE_ID?.trim() || `worker:${process.pid}:${randomUUID()}`;
 }
 
-export async function publishSessionAlive(params: { sessionId: string; timestamp: number; accountId?: string | null }): Promise<void> {
-    const redis = getRedisClient();
-    const maxLen = getStreamMaxLen(process.env);
-    const maxLenArgs = maxLen ? (["MAXLEN", "~", String(maxLen)] as const) : ([] as const);
-    await redis.xadd(
-        STREAM_KEY,
-        ...maxLenArgs,
-        "*",
-        "kind",
-        "session",
-        "id",
-        params.sessionId,
-        "ts",
-        params.timestamp.toString(),
-        "accountId",
-        params.accountId ?? "",
-    );
-}
-
 export async function publishMachineAlive(params: { accountId: string; machineId: string; timestamp: number }): Promise<void> {
     const redis = getRedisClient();
     const maxLen = getStreamMaxLen(process.env);
@@ -119,30 +100,6 @@ async function flushBatch(batcher: PresenceBatcher, dbWriteConcurrency: number):
     const startedAt = Date.now();
     const snapshot = batcher.snapshot();
     const { sessions, machines } = snapshot;
-
-    if (sessions.length > 0) {
-        await runWithConcurrencyLimit(
-            sessions,
-            dbWriteConcurrency,
-            async (sessionPresence) => {
-                try {
-                    await db.session.updateMany({
-                        where: {
-                            id: sessionPresence.sessionId,
-                            accountId: sessionPresence.accountId,
-                        },
-                        data: { lastActiveAt: new Date(sessionPresence.timestamp), active: true },
-                    });
-                } catch (error) {
-                    // Presence is best-effort; ignore missing/deleted entities and keep the worker alive.
-                    log(
-                        { module: "presence-redis-worker", level: "warn" },
-                        `Session presence update failed: ${error}`,
-                    );
-                }
-            },
-        );
-    }
 
     if (machines.length > 0) {
         await runWithConcurrencyLimit(

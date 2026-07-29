@@ -9,26 +9,18 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { afterTx, inTx } from "@/storage/inTx";
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { tryParseDirectShareEncryptedDataKey } from "./directShareEncryptedDataKeyValidation";
+import {
+    isSessionTranscriptShareable,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
+import {
+    createSessionMetadataPrivacyUpgradeRequiredResponse,
+    isSessionMetadataPrivacyUpgradeRequiredError,
+    projectSessionMetadataForRecipient,
+} from "@/app/session/metadata/sessionMetadataRecipientProjection";
 
 type SessionShareRow = Awaited<ReturnType<typeof db.sessionShare.findFirst>>;
-
-function parseEncryptedDataKeyV0(encryptedDataKeyB64: string): Uint8Array<ArrayBuffer> {
-    let bytes: Uint8Array<ArrayBuffer>;
-    try {
-        const buf = Buffer.from(encryptedDataKeyB64, 'base64');
-        bytes = new Uint8Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
-    } catch {
-        throw new Error('Invalid base64');
-    }
-    // version (1) + ephemeral pk (32) + nonce (24) + mac (16) = 73 minimum
-    if (bytes.length < 1 + 32 + 24 + 16) {
-        throw new Error('encryptedDataKey too short');
-    }
-    if (bytes[0] !== 0) {
-        throw new Error('Unsupported encryptedDataKey version');
-    }
-    return bytes;
-}
 
 function resolveEffectiveShareApprovalCapability(input: Readonly<{
     accessLevel: ShareAccessLevel;
@@ -109,20 +101,10 @@ export function shareRoutes(app: Fastify) {
         const { sessionId } = request.params;
         const { userId, accessLevel, canApprovePermissions, encryptedDataKey } = request.body;
 
-        const session = await db.session.findUnique({
-            where: { id: sessionId },
-            select: { id: true, encryptionMode: true }
-        });
-        if (!session) {
-            return reply.code(404).send({ error: 'Session not found' });
-        }
-        const sessionEncryptionMode: "e2ee" | "plain" = session.encryptionMode === "plain" ? "plain" : "e2ee";
-
         // Only owner or admin can create shares
         if (!await canManageSharing(ownerId, sessionId)) {
             return reply.code(403).send({ error: 'Forbidden' });
         }
-
         if (canApprovePermissions === true) {
             if (accessLevel === 'view') {
                 return reply.code(400).send({ error: 'Permission approvals require edit or admin access' });
@@ -152,23 +134,57 @@ export function shareRoutes(app: Fastify) {
             return reply.code(403).send({ error: 'Can only share with friends' });
         }
 
-        let encryptedDataKeyBytes: Uint8Array<ArrayBuffer> | null = null;
-        if (sessionEncryptionMode === "e2ee") {
-            if (typeof encryptedDataKey !== "string" || encryptedDataKey.length === 0) {
-                return reply.code(400).send({ error: "encryptedDataKey required" });
-            }
-            try {
-                encryptedDataKeyBytes = parseEncryptedDataKeyV0(encryptedDataKey);
-            } catch {
-                return reply.code(400).send({ error: 'Invalid encryptedDataKey' });
-            }
-        }
         const effectiveCanApprovePermissions = resolveEffectiveShareApprovalCapability({
             accessLevel: accessLevel as ShareAccessLevel,
             requestedCanApprovePermissions: canApprovePermissions,
         });
 
         const share = await inTx(async (tx) => {
+            const currentSession = await tx.session.findUnique({
+                where: { id: sessionId },
+                select: {
+                    id: true,
+                    accountId: true,
+                    encryptionMode: true,
+                    metadata: true,
+                    metadataVersion: true,
+                    metadataLayoutVersion: true,
+                    ownerMetadata: true,
+                    agentState: true,
+                    agentStateVersion: true,
+                    ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+                },
+            });
+            if (!currentSession) {
+                return { type: "not-found" as const };
+            }
+            try {
+                projectSessionMetadataForRecipient({
+                    session: currentSession,
+                    recipientAccountId: null,
+                });
+            } catch (error) {
+                if (isSessionMetadataPrivacyUpgradeRequiredError(error)) {
+                    return { type: "privacy-error" as const };
+                }
+                throw error;
+            }
+            if (!isSessionTranscriptShareable(currentSession)) {
+                return { type: "publication-error" as const };
+            }
+            const sessionEncryptionMode: "e2ee" | "plain" =
+                currentSession.encryptionMode === "plain" ? "plain" : "e2ee";
+            let encryptedDataKeyBytes: Uint8Array<ArrayBuffer> | null = null;
+            if (sessionEncryptionMode === "e2ee") {
+                if (typeof encryptedDataKey !== "string" || encryptedDataKey.length === 0) {
+                    return { type: "invalid-key" as const, error: "encryptedDataKey required" };
+                }
+                const parsedEncryptedDataKey = tryParseDirectShareEncryptedDataKey(encryptedDataKey);
+                if (parsedEncryptedDataKey.type === "error") {
+                    return { type: "invalid-key" as const, error: parsedEncryptedDataKey.error };
+                }
+                encryptedDataKeyBytes = parsedEncryptedDataKey.encryptedDataKey;
+            }
             const share = await tx.sessionShare.upsert({
                 where: {
                     sessionId_sharedWithUserId: {
@@ -215,17 +231,32 @@ export function shareRoutes(app: Fastify) {
                 });
             });
 
-            return share;
+            return { type: "ok" as const, share };
         });
+        if (share.type === "privacy-error") {
+            return reply.code(409).send(createSessionMetadataPrivacyUpgradeRequiredResponse());
+        }
+        if (share.type === "not-found") {
+            return reply.code(404).send({ error: "Session not found" });
+        }
+        if (share.type === "publication-error") {
+            return reply.code(409).send({
+                error: "Session transcript is not shareable",
+                code: "session_transcript_not_shareable",
+            });
+        }
+        if (share.type === "invalid-key") {
+            return reply.code(400).send({ error: share.error });
+        }
 
         return reply.send({
             share: {
-                id: share.id,
-                sharedWithUser: toShareUserProfile(share.sharedWithUser),
-                accessLevel: share.accessLevel,
-                canApprovePermissions: share.canApprovePermissions,
-                createdAt: share.createdAt.getTime(),
-                updatedAt: share.updatedAt.getTime()
+                id: share.share.id,
+                sharedWithUser: toShareUserProfile(share.share.sharedWithUser),
+                accessLevel: share.share.accessLevel,
+                canApprovePermissions: share.share.canApprovePermissions,
+                createdAt: share.share.createdAt.getTime(),
+                updatedAt: share.share.updatedAt.getTime()
             }
         });
     });

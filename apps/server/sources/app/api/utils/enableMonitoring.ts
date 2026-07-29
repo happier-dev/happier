@@ -9,10 +9,13 @@ import {
 } from "@/app/monitoring/metrics/index";
 import {
     createHealthyMonitoringResponse,
+    createShuttingDownMonitoringResponse,
     type DatabaseReadinessProbe,
     type MonitoringReadinessEnv,
     sendDatabaseReadinessResponse,
 } from "@/app/monitoring/readiness";
+import { isShutdown } from "@/utils/process/shutdown";
+import { redactPublicShareCapabilityUrl } from "@happier-dev/protocol";
 
 type EnableMonitoringOptions = Readonly<{
     env?: MonitoringReadinessEnv;
@@ -29,7 +32,9 @@ export function enableMonitoring(app: Fastify, options: EnableMonitoringOptions 
         const duration = (Date.now() - (request.startTime || Date.now())) / 1000;
         const method = request.method;
         // Use routeOptions.url for the route template, fallback to parsed URL path
-        const route = request.routeOptions?.url || request.url.split('?')[0] || 'unknown';
+        const route = request.routeOptions?.url
+            || redactPublicShareCapabilityUrl(request.url.split('?')[0])
+            || 'unknown';
         const status = reply.statusCode.toString();
 
         // Increment request counter
@@ -45,7 +50,13 @@ export function enableMonitoring(app: Fastify, options: EnableMonitoringOptions 
         }
     });
 
-    const livenessHandler = async (_request: FastifyRequest) => createHealthyMonitoringResponse();
+    const livenessHandler = async (_request: FastifyRequest, reply: FastifyReply) => {
+        if (isShutdown()) {
+            reply.code(503).send(createShuttingDownMonitoringResponse());
+            return;
+        }
+        reply.send(createHealthyMonitoringResponse());
+    };
 
     const readinessHandler = async (_request: FastifyRequest, reply: FastifyReply) => {
         await sendDatabaseReadinessResponse(reply, options);

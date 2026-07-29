@@ -1,5 +1,6 @@
 import type { ConnectedServiceCredentialHealthV1 } from "@happier-dev/protocol";
 import { hasValidCredentialHealth, parseConnectedServiceCredentialHealth } from "../credentialHealthMetadata";
+import { isConnectedServiceCredentialRevision } from "../credentials/credentialRevision";
 
 export type ConnectedServiceCredentialAtRestStorageV3 =
     | "plain_json_v1"
@@ -11,6 +12,7 @@ export type ConnectedServiceCredentialMetadataV3 = Readonly<{
     kind: "oauth" | "token";
     providerEmail?: string | null;
     providerAccountId?: string | null;
+    credentialRevision?: string;
     health?: ConnectedServiceCredentialHealthV1;
 }>;
 
@@ -19,7 +21,11 @@ export function isConnectedServiceCredentialMetadataV3(raw: unknown): raw is Con
     const rec = raw as any;
     const storageOk = rec.storage === "plain_json_v1" || rec.storage === "server_sealed_json_v1";
     const kindOk = rec.kind === "oauth" || rec.kind === "token";
-    return rec.v === 3 && storageOk && kindOk && hasValidCredentialHealth(rec.health);
+    return rec.v === 3
+        && storageOk
+        && kindOk
+        && (rec.credentialRevision === undefined || isConnectedServiceCredentialRevision(rec.credentialRevision))
+        && hasValidCredentialHealth(rec.health);
 }
 
 export function normalizeConnectedServiceCredentialMetadataV3(

@@ -98,7 +98,7 @@ describe("sessionRoutes session turns (integration)", () => {
                     turns: [
                         {
                             turnId: "turn-1",
-                            provider: "codex",
+                            agentId: "codex",
                             status: "in_progress",
                             startedAt: 100,
                             updatedAt: 100,

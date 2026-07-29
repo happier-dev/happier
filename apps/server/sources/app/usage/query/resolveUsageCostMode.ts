@@ -1,4 +1,5 @@
 import type { UsageAnalyticsQueryRequest, UsageObservationCost } from "@happier-dev/protocol";
+import { addUsageCost } from "../usageMetrics";
 
 export type UsageCostMode = NonNullable<UsageAnalyticsQueryRequest["costMode"]> | "auto";
 
@@ -13,6 +14,9 @@ export function resolveEffectiveUsageCostUsd(cost: UsageObservationCost, mode: U
     if (mode === "estimated") {
         return cost.estimatedUsd;
     }
+    if (cost.effectiveUsd !== undefined) {
+        return cost.effectiveUsd;
+    }
     if ((cost.invoiceUsd ?? 0) > 0) {
         return cost.invoiceUsd ?? 0;
     }
@@ -20,6 +24,27 @@ export function resolveEffectiveUsageCostUsd(cost: UsageObservationCost, mode: U
         return cost.reportedUsd;
     }
     return cost.estimatedUsd;
+}
+
+export function addUsageCostForMode(
+    left: UsageObservationCost,
+    right: UsageObservationCost,
+    mode: UsageCostMode,
+): UsageObservationCost {
+    return {
+        ...addUsageCost(left, right),
+        effectiveUsd: resolveEffectiveUsageCostUsd(left, mode) + resolveEffectiveUsageCostUsd(right, mode),
+    };
+}
+
+export function withEffectiveUsageCost(
+    cost: UsageObservationCost,
+    mode: UsageCostMode,
+): UsageObservationCost {
+    return {
+        ...cost,
+        effectiveUsd: resolveEffectiveUsageCostUsd(cost, mode),
+    };
 }
 
 export function resolveUsageCostPresentationSource(cost: UsageObservationCost, mode: UsageCostMode): string {

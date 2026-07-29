@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import tweetnacl from "tweetnacl";
-import { createDirectRouteGrantSigningInputV1 } from "@happier-dev/protocol";
+import {
+    createDirectRouteGrantSigningInputV1,
+    createDirectRouteGrantSigningInputV2,
+} from "@happier-dev/protocol";
 
 import {
     createDirectRouteGrantRevocationRegistry,
     mintDirectRouteGrantV1,
+    mintDirectRouteGrantV2,
     resolvePeerMediationGrantSigningConfig,
 } from "./mintDirectRouteGrantV1";
 
@@ -16,6 +20,46 @@ const seed = new Uint8Array(32).fill(4);
 const keyPair = tweetnacl.sign.keyPair.fromSeed(seed);
 
 describe("mintDirectRouteGrantV1", () => {
+    it("mints a strict V2 grant binding the caller ephemeral public key", () => {
+        const ephemeralKeyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+        const minted = mintDirectRouteGrantV2({
+            accountId: "account_1",
+            machineId: "machine_1",
+            flowKind: "machine_rpc",
+            routeKind: "loopback_direct",
+            scope: {
+                kind: "machine_rpc",
+                rpcScopeId: "rpc_1",
+                allowedMethods: ["daemon.memory.status"],
+                maxCalls: 1,
+                maxIdleMs: 1_000,
+            },
+            endpointFingerprint: "endpoint_1",
+            ephemeralPublicKeyBase64Url: toBase64Url(ephemeralKeyPair.publicKey),
+            nowMs: 1_000,
+            ttlMs: 60_000,
+            serverGateEnabled: true,
+            signingKey: { keyId: "key_1", secretKey: keyPair.secretKey },
+        });
+
+        expect(minted).toMatchObject({
+            ok: true,
+            grant: {
+                payload: {
+                    v: 2,
+                    proofKind: "ephemeral_ed25519",
+                    ephemeralPublicKeyBase64Url: toBase64Url(ephemeralKeyPair.publicKey),
+                },
+            },
+        });
+        if (!minted.ok) throw new Error("expected V2 grant");
+        expect(tweetnacl.sign.detached.verify(
+            Buffer.from(createDirectRouteGrantSigningInputV2(minted.grant.payload), "utf8"),
+            Buffer.from(minted.grant.signature.valueBase64Url, "base64url"),
+            keyPair.publicKey,
+        )).toBe(true);
+    });
+
     it("mints a signed bounded-transfer grant only when server policy allows direct route use", () => {
         const minted = mintDirectRouteGrantV1({
             accountId: "account_1",

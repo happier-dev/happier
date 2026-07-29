@@ -9,6 +9,7 @@ export type SessionReadCursorReadState = "read" | "unread" | "empty";
 
 export type ResolveSessionReadCursorOperationInput = Readonly<{
     sessionSeq: number | null | undefined;
+    readableSessionSeq?: number | null | undefined;
     currentLastViewedSessionSeq: number | null | undefined;
     operation: SessionReadCursorOperation;
 }>;
@@ -42,6 +43,7 @@ export function resolveSessionReadCursorOperation(
     input: ResolveSessionReadCursorOperationInput,
 ): ResolveSessionReadCursorOperationResult {
     const sessionSeq = normalizeSeq(input.sessionSeq);
+    const readableSessionSeq = normalizeSeq(input.readableSessionSeq ?? input.sessionSeq);
     const currentCursor = normalizeCursor(input.currentLastViewedSessionSeq);
 
     if (input.operation.kind === "advance") {
@@ -65,7 +67,7 @@ export function resolveSessionReadCursorOperation(
         };
     }
 
-    if (sessionSeq <= 0) {
+    if (readableSessionSeq <= 0) {
         return {
             nextLastViewedSessionSeq: currentCursor,
             didChange: false,
@@ -81,11 +83,11 @@ export function resolveSessionReadCursorOperation(
         };
     }
 
-    const targetCursor = resolveManualUnreadCursorBoundary({ sessionSeq });
+    const targetCursor = resolveManualUnreadCursorBoundary({ sessionSeq: readableSessionSeq });
     const nextCursor = currentCursor > targetCursor ? targetCursor : currentCursor;
     return {
         nextLastViewedSessionSeq: nextCursor,
         didChange: nextCursor !== currentCursor,
-        readState: resolveReadState(sessionSeq, nextCursor),
+        readState: resolveReadState(readableSessionSeq, nextCursor),
     };
 }

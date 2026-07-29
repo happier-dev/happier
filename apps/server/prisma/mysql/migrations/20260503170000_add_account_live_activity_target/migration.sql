@@ -26,7 +26,7 @@ CREATE TABLE `AccountLiveActivityTarget` (
     `diagnostics` JSON NULL,
 
     UNIQUE INDEX `AccountLiveActivityTarget_accountId_targetIdentityHash_key`(`accountId`, `targetIdentityHash`),
-    INDEX `AccountLiveActivityTarget_accountId_serverId_sessionId_activityName_endedAt_idx`(`accountId`, `serverId`, `sessionId`, `activityName`, `endedAt`),
+    INDEX `AccountLiveActivityTarget_lookup_active_idx`(`accountId`, `serverId`, `sessionId`, `activityName`, `endedAt`),
     INDEX `AccountLiveActivityTarget_accountId_transportMode_endedAt_idx`(`accountId`, `transportMode`, `endedAt`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

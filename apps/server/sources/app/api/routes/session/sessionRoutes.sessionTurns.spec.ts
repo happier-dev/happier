@@ -49,8 +49,8 @@ describe("sessionRoutes session turns", () => {
                 mutationId: "mutation-1",
                 turnId: "turn-1",
                 action: "complete",
-                provider: "codex",
-                providerTurnId: "provider-turn-1",
+                agentId: "codex",
+                agentTurnId: "provider-turn-1",
                 observedAt: 123,
             },
         });
@@ -63,8 +63,8 @@ describe("sessionRoutes session turns", () => {
                 mutationId: "mutation-1",
                 turnId: "turn-1",
                 action: "complete",
-                provider: "codex",
-                providerTurnId: "provider-turn-1",
+                agentId: "codex",
+                agentTurnId: "provider-turn-1",
                 observedAt: 123,
             },
         });
@@ -125,8 +125,8 @@ describe("sessionRoutes session turns", () => {
         sessionTurnFindMany.mockResolvedValue([
             {
                 turnId: "turn-1",
-                provider: "codex",
-                providerTurnId: "provider-turn-1",
+                agentId: "codex",
+                agentTurnId: "provider-turn-1",
                 status: "completed",
                 startedAt: BigInt(100),
                 updatedAt: BigInt(200),
@@ -135,7 +135,7 @@ describe("sessionRoutes session turns", () => {
                 transcriptAnchorsJson: JSON.stringify({ startUserMessageSeq: 5, endSeqInclusive: 8 }),
                 rollbackState: "eligible",
                 rollbackReason: "provider checkpoint",
-                providerRollbackOrdinal: 2,
+                agentRollbackOrdinal: 2,
                 rollbackUpdatedAt: BigInt(201),
                 lastMutationId: "mutation-1",
             },
@@ -159,8 +159,8 @@ describe("sessionRoutes session turns", () => {
             turns: [
                 {
                     turnId: "turn-1",
-                    provider: "codex",
-                    providerTurnId: "provider-turn-1",
+                    agentId: "codex",
+                    agentTurnId: "provider-turn-1",
                     status: "completed",
                     startedAt: 100,
                     updatedAt: 200,
@@ -170,7 +170,7 @@ describe("sessionRoutes session turns", () => {
                     rollback: {
                         state: "eligible",
                         reason: "provider checkpoint",
-                        providerRollbackOrdinal: 2,
+                        agentRollbackOrdinal: 2,
                         updatedAt: 201,
                     },
                     lastMutationId: "mutation-1",

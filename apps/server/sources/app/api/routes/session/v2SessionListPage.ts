@@ -8,6 +8,9 @@ import {
 } from "@happier-dev/protocol";
 import { db } from "@/storage/db";
 import {
+    collectSessionTranscriptVisibleRowsBeforeTake,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
+import {
     createV2SessionListLegacyRowSelect,
     createV2SessionListRowSelect,
     createV2SessionListVisibilityWhere,
@@ -66,6 +69,7 @@ export async function findV2SessionListRows(params: Readonly<{
             visibilityWhere,
             where,
             take,
+            userId,
         });
     } catch (error) {
         if (!isMissingAttentionProjectionColumnError(error)) {
@@ -77,6 +81,7 @@ export async function findV2SessionListRows(params: Readonly<{
             visibilityWhere,
             where,
             take,
+            userId,
         });
     }
 }
@@ -85,18 +90,25 @@ async function findV2SessionListRowsWithSelect(params: Readonly<{
     orderBy: Prisma.SessionOrderByWithRelationInput | Prisma.SessionOrderByWithRelationInput[];
     select: Prisma.SessionSelect;
     take?: number;
+    userId: string;
     visibilityWhere: Prisma.SessionWhereInput;
     where?: Prisma.SessionWhereInput;
 }>): Promise<V2SessionListRowCompat[]> {
-    const { orderBy, select, take, visibilityWhere, where } = params;
-    return await db.session.findMany({
-        where: {
-            ...visibilityWhere,
-            ...(where ?? {}),
-        },
-        orderBy,
+    const { orderBy, select, take, userId, visibilityWhere, where } = params;
+    return await collectSessionTranscriptVisibleRowsBeforeTake({
         take,
-        select,
+        fetchPage: async (page) => await db.session.findMany({
+            where: {
+                ...visibilityWhere,
+                ...(where ?? {}),
+            },
+            orderBy,
+            ...(page.skip === undefined ? {} : { skip: page.skip }),
+            ...(page.take === undefined ? {} : { take: page.take }),
+            select,
+        }),
+        isOwner: (row) => row.accountId === userId,
+        readPublication: (row) => row,
     });
 }
 
@@ -109,12 +121,31 @@ export const V2_SESSION_LIST_ORDER_BY = [
     { id: "desc" as const },
 ] satisfies Prisma.SessionOrderByWithRelationInput[];
 
+export const V2_ACTIVE_SESSION_LIST_ORDER_BY = [
+    { lastActiveAt: "desc" as const },
+    { id: "desc" as const },
+] satisfies Prisma.SessionOrderByWithRelationInput[];
+
 export function createV2SessionListPage(params: Readonly<{
     rows: ReadonlyArray<V2SessionListRowCompat>;
     userId: string;
     limit: number;
 }>) {
-    const { rows, userId, limit } = params;
+    const { userId } = params;
+    const page = createV2SessionListRowPage(params);
+
+    return {
+        sessions: mapV2SessionListRows({ rows: page.rows, userId }),
+        nextCursor: page.nextCursor,
+        hasNext: page.hasNext,
+    };
+}
+
+export function createV2SessionListRowPage(params: Readonly<{
+    rows: ReadonlyArray<V2SessionListRowCompat>;
+    limit: number;
+}>) {
+    const { rows, limit } = params;
     const hasNext = rows.length > limit;
     const resultRows = hasNext ? rows.slice(0, limit) : rows;
     const lastRow = resultRows[resultRows.length - 1] ?? null;
@@ -123,7 +154,7 @@ export function createV2SessionListPage(params: Readonly<{
         : 0;
 
     return {
-        sessions: mapV2SessionListRows({ rows: resultRows, userId }),
+        rows: resultRows,
         nextCursor: hasNext && lastRow
             ? encodeV2SessionListCursorV2({ sessionId: lastRow.id, meaningfulActivityAt })
             : null,
@@ -192,36 +223,48 @@ async function findV2SessionListRowsByEffectiveActivity(params: Readonly<{
     where?: Prisma.SessionWhereInput;
     take?: number;
 }>): Promise<V2SessionListRowCompat[]> {
-    const { select, visibilityWhere, where, take } = params;
+    const { select, userId, visibilityWhere, where, take } = params;
     const { baseWhere, cursor } = extractV2SessionListCursor(where);
     const branchTake = typeof take === "number" ? take + 1 : undefined;
 
     const [meaningfulRows, createdAtFallbackRows] = await Promise.all([
-        db.session.findMany({
-            where: mergeSessionWhereInputs(
-                {
-                    ...visibilityWhere,
-                    ...(baseWhere ?? {}),
-                    meaningfulActivityAt: { not: null },
-                },
-                createV2SessionListCursorWhere(cursor),
-            ),
-            orderBy: V2_SESSION_LIST_ORDER_BY,
+        collectSessionTranscriptVisibleRowsBeforeTake({
             take: branchTake,
-            select,
+            fetchPage: async (page) => await db.session.findMany({
+                where: mergeSessionWhereInputs(
+                    {
+                        ...visibilityWhere,
+                        ...(baseWhere ?? {}),
+                        meaningfulActivityAt: { not: null },
+                    },
+                    createV2SessionListCursorWhere(cursor),
+                ),
+                orderBy: V2_SESSION_LIST_ORDER_BY,
+                ...(page.skip === undefined ? {} : { skip: page.skip }),
+                ...(page.take === undefined ? {} : { take: page.take }),
+                select,
+            }),
+            isOwner: (row) => row.accountId === userId,
+            readPublication: (row) => row,
         }),
-        db.session.findMany({
-            where: mergeSessionWhereInputs(
-                {
-                    ...visibilityWhere,
-                    ...(baseWhere ?? {}),
-                    meaningfulActivityAt: null,
-                },
-                createV2SessionListCreatedAtCursorWhere(cursor),
-            ),
-            orderBy: V2_SESSION_LIST_CREATED_AT_FALLBACK_ORDER_BY,
+        collectSessionTranscriptVisibleRowsBeforeTake({
             take: branchTake,
-            select,
+            fetchPage: async (page) => await db.session.findMany({
+                where: mergeSessionWhereInputs(
+                    {
+                        ...visibilityWhere,
+                        ...(baseWhere ?? {}),
+                        meaningfulActivityAt: null,
+                    },
+                    createV2SessionListCreatedAtCursorWhere(cursor),
+                ),
+                orderBy: V2_SESSION_LIST_CREATED_AT_FALLBACK_ORDER_BY,
+                ...(page.skip === undefined ? {} : { skip: page.skip }),
+                ...(page.take === undefined ? {} : { take: page.take }),
+                select,
+            }),
+            isOwner: (row) => row.accountId === userId,
+            readPublication: (row) => row,
         }),
     ]);
 
@@ -386,5 +429,5 @@ export function isMissingAttentionProjectionColumnError(error: unknown): boolean
     if (code !== "P2022" && !/column|field|no such/i.test(message)) {
         return false;
     }
-    return /pendingRequestObservedAt|latestReadyEventSeq|latestReadyEventAt|thinkingAt|thinking|SessionTurn|rollbackState|turns/i.test(message);
+    return /pendingRequestObservedAt|latestReadyEventSeq|latestReadyEventAt|thinkingAt|thinking|runtimeActivityState|runtimeActivityActiveCount|runtimeActivityObservedAt|runtimeActivityRevision|SessionTurn|rollbackState|turns/i.test(message);
 }

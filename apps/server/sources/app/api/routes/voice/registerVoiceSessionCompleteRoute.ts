@@ -1,26 +1,26 @@
 import { z } from "zod";
 import { log } from "@/utils/logging/log";
 import { db } from "@/storage/db";
-import { resolveElevenLabsApiBaseUrl } from "@/voice/elevenLabsEnv";
-import { resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
+import { inTx } from "@/storage/inTx";
+import { isPrismaErrorCode } from "@/storage/prisma";
+import { createHostedElevenLabsService } from "@/voice/providers/elevenLabs";
+import { isResolvedServerFeatureEnabledForGating, resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
+import { elevenLabsAgentsVoiceProviderId } from "./voiceProviderIds";
+import { createVoiceRouteAbortScope } from "./voiceRouteAbortScope";
+import { type VoiceSessionLifecycleBody, voiceSessionLifecycleBodySchema } from "./voiceSessionLifecycleSchemas";
+import {
+    VoiceProviderConversationIdentityCollisionError,
+    assertVoiceProviderConversationIdentityExactMatch,
+    createVoiceProviderConversationIdentity,
+} from "./voiceProviderConversationIdentity";
 import { type Fastify } from "../../types";
 
-function extractConversationAgentId(payload: any): string | null {
-    const direct =
-        (typeof payload?.agent_id === "string" && payload.agent_id.trim()) ||
-        (typeof payload?.agentId === "string" && payload.agentId.trim()) ||
-        (typeof payload?.agent?.id === "string" && payload.agent.id.trim()) ||
-        (typeof payload?.metadata?.agent_id === "string" && payload.metadata.agent_id.trim()) ||
-        (typeof payload?.metadata?.agentId === "string" && payload.metadata.agentId.trim()) ||
-        "";
-    return direct || null;
-}
-
-function extractConversationStartUnixSecs(payload: any): number | null {
-    const raw = Number(payload?.metadata?.start_time_unix_secs);
-    if (!Number.isFinite(raw) || raw <= 0) return null;
-    return Math.floor(raw);
+class VoiceCompletionConflictError extends Error {
+    constructor() {
+        super("voice_completion_conflict");
+        this.name = "VoiceCompletionConflictError";
+    }
 }
 
 export function registerVoiceSessionCompleteRoute(app: Fastify): void {
@@ -30,10 +30,7 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
             rateLimit: resolveApiHotEndpointRateLimit(process.env, "voice.sessionComplete"),
         },
         schema: {
-            body: z.object({
-                leaseId: z.string(),
-                providerConversationId: z.string(),
-            }),
+            body: voiceSessionLifecycleBodySchema,
             response: {
                 200: z.object({
                     ok: z.literal(true),
@@ -51,139 +48,355 @@ export function registerVoiceSessionCompleteRoute(app: Fastify): void {
         },
     }, async (request, reply) => {
         const userId = request.userId;
-        const { leaseId, providerConversationId } = request.body as { leaseId: string; providerConversationId: string };
+        const { leaseId, providerConversationId } = request.body as VoiceSessionLifecycleBody;
+        const providerIdentity = createVoiceProviderConversationIdentity({
+            providerId: elevenLabsAgentsVoiceProviderId,
+            providerConversationId,
+        });
 
         const serverFeatures = resolveServerFeaturesForGating(process.env);
-        if (serverFeatures.features.voice.happierVoice.enabled !== true) {
+        if (!isResolvedServerFeatureEnabledForGating(serverFeatures, "voice.happierVoice")) {
             return reply.code(404).send({ ok: false, reason: "not_found" as const });
         }
 
-        const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY?.trim() ?? "";
-        const elevenLabsApiBaseUrl = resolveElevenLabsApiBaseUrl(process.env);
-        if (!elevenLabsApiKey) {
-            return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
-        }
-
         const lease = await db.voiceSessionLease.findFirst({
-            where: { id: leaseId, accountId: userId },
-            select: { id: true, accountId: true, elevenLabsAgentId: true, createdAt: true, expiresAt: true },
+            where: {
+                id: leaseId,
+                accountId: userId,
+            },
+            select: {
+                id: true,
+                accountId: true,
+                elevenLabsAgentId: true,
+                grantedBy: true,
+                periodKey: true,
+                providerBindingNonce: true,
+                createdAt: true,
+                expiresAt: true,
+            },
         });
         if (!lease) {
             // Fail closed without leaking whether the lease exists for other users.
             return reply.code(404).send({ ok: false, reason: "not_found" as const });
         }
-
-        let durationSeconds = 0;
-        let startedAt: Date | null = null;
-        let endedAt: Date | null = null;
-
-        try {
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 10_000);
-            let res: Response;
-            try {
-                res = await fetch(
-                    `${elevenLabsApiBaseUrl}/v1/convai/conversations/${encodeURIComponent(providerConversationId)}`,
-                    {
-                        method: "GET",
-                        headers: {
-                            "xi-api-key": elevenLabsApiKey,
-                            Accept: "application/json",
-                        },
-                        signal: controller.signal,
-                    },
-                );
-            } finally {
-                clearTimeout(timeoutId);
-            }
-            if (!res.ok) {
-                return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
-            }
-            const json = (await res.json().catch(() => null)) as any;
-            const dur = Number(json?.metadata?.call_duration_secs);
-            if (!Number.isFinite(dur) || dur < 0) {
-                return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
-            }
-            durationSeconds = Math.floor(dur);
-
-            const conversationAgentId = extractConversationAgentId(json);
-            if (!conversationAgentId || conversationAgentId !== lease.elevenLabsAgentId) {
-                // Do not disclose cross-lease/cross-user existence details.
-                return reply.code(404).send({ ok: false, reason: "not_found" as const });
-            }
-
-            const startUnix = extractConversationStartUnixSecs(json);
-            if (startUnix !== null) {
-                const candidateStartedAt = new Date(startUnix * 1000);
-                const lowerBound = lease.createdAt.getTime() - 5 * 60 * 1000;
-                const upperBound = lease.expiresAt.getTime() + 5 * 60 * 1000;
-                if (candidateStartedAt.getTime() < lowerBound || candidateStartedAt.getTime() > upperBound) {
-                    return reply.code(404).send({ ok: false, reason: "not_found" as const });
-                }
-                startedAt = candidateStartedAt;
-                const candidateEndedAt = new Date(startedAt.getTime() + durationSeconds * 1000);
-                if (candidateEndedAt.getTime() < lowerBound || candidateEndedAt.getTime() > upperBound) {
-                    return reply.code(404).send({ ok: false, reason: "not_found" as const });
-                }
-                endedAt = candidateEndedAt;
-            } else {
-                return reply.code(404).send({ ok: false, reason: "not_found" as const });
-            }
-        } catch (e) {
-            return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
+        if (!lease.providerBindingNonce) {
+            return reply.code(404).send({ ok: false, reason: "not_found" as const });
         }
 
+        // A completed row is already provider-attested durable truth. Retry it from storage so a
+        // lost response does not become an upstream failure if the provider is later unavailable.
+        // Legacy null-key rows still continue through verification so this request upgrades them.
         try {
-            const existingForConversation = await db.voiceConversation.findUnique({
-                where: {
-                    providerId_providerConversationId: {
-                        providerId: "elevenlabs_agents",
-                        providerConversationId,
-                    },
+            const completedForLease = await db.voiceConversation.findUnique({
+                where: { leaseId: lease.id },
+                select: {
+                    accountId: true,
+                    providerId: true,
+                    providerConversationId: true,
+                    providerConversationKey: true,
+                    durationSeconds: true,
+                    grantedBy: true,
+                    grantPeriodKey: true,
                 },
-                select: { accountId: true, leaseId: true },
             });
             if (
-                existingForConversation &&
-                (existingForConversation.accountId !== lease.accountId ||
-                    (existingForConversation.leaseId && existingForConversation.leaseId !== lease.id))
+                completedForLease?.providerConversationKey === providerIdentity.providerConversationKey &&
+                completedForLease.grantedBy !== null &&
+                completedForLease.grantPeriodKey !== null
+            ) {
+                assertVoiceProviderConversationIdentityExactMatch({
+                    expected: providerIdentity,
+                    stored: {
+                        providerId: completedForLease.providerId,
+                        providerConversationId: completedForLease.providerConversationId,
+                        providerConversationKey: completedForLease.providerConversationKey,
+                    },
+                });
+                if (
+                    completedForLease.accountId !== lease.accountId ||
+                    completedForLease.grantedBy !== lease.grantedBy ||
+                    completedForLease.grantPeriodKey !== lease.periodKey
+                ) {
+                    return reply.code(404).send({ ok: false, reason: "not_found" as const });
+                }
+                return reply.send({ ok: true, durationSeconds: completedForLease.durationSeconds });
+            }
+            if (
+                completedForLease &&
+                (completedForLease.providerId !== providerIdentity.providerId ||
+                    completedForLease.providerConversationId !== providerIdentity.providerConversationId)
             ) {
                 return reply.code(404).send({ ok: false, reason: "not_found" as const });
             }
+        } catch (e) {
+            if (e instanceof VoiceProviderConversationIdentityCollisionError) {
+                log({ module: "voice" }, "Voice provider conversation identity collision");
+            }
+            return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
+        }
 
-            const existingForLease = await db.voiceConversation.findUnique({
-                where: { leaseId: lease.id },
-                select: { providerConversationId: true },
+        const elevenLabsService = createHostedElevenLabsService(process.env);
+        const providerAbortScope = createVoiceRouteAbortScope(reply);
+        const verification = await elevenLabsService
+            .verifyConversation({
+                providerConversationId,
+                expectedAgentId: lease.elevenLabsAgentId,
+                expectedBindingNonce: lease.providerBindingNonce,
+                leaseCreatedAt: lease.createdAt,
+                leaseExpiresAt: lease.expiresAt,
+                signal: providerAbortScope.signal,
+            })
+            .finally(() => providerAbortScope.dispose());
+        if (!verification.ok) {
+            log(
+                { module: "voice", provider: "elevenlabs", diagnosticCode: verification.diagnosticCode },
+                "Hosted voice conversation verification failed",
+            );
+            return verification.reason === "not_found"
+                ? reply.code(404).send({ ok: false, reason: "not_found" as const })
+                : reply.code(503).send({ ok: false, reason: "upstream_error" as const });
+        }
+        let durationSeconds = verification.durationSeconds;
+        const startedAt = verification.startedAt;
+        const endedAt = verification.endedAt;
+
+        try {
+            const result = await inTx(async (tx) => {
+                // All rejection/conflict reads must finish before the first mutation. Returning a
+                // rejection after a write would commit that write in an interactive transaction.
+                const currentLease = await tx.voiceSessionLease.findFirst({
+                    where: {
+                        id: lease.id,
+                        accountId: lease.accountId,
+                    },
+                    select: {
+                        id: true,
+                        accountId: true,
+                        elevenLabsAgentId: true,
+                        grantedBy: true,
+                        periodKey: true,
+                        providerBindingNonce: true,
+                    },
+                });
+
+                const existingForConversationByKey = await tx.voiceConversation.findUnique({
+                    where: {
+                        providerId_providerConversationKey: {
+                            providerId: providerIdentity.providerId,
+                            providerConversationKey: providerIdentity.providerConversationKey,
+                        },
+                    },
+                    select: {
+                        id: true,
+                        accountId: true,
+                        leaseId: true,
+                        providerId: true,
+                        providerConversationId: true,
+                        providerConversationKey: true,
+                        durationSeconds: true,
+                        grantedBy: true,
+                        grantPeriodKey: true,
+                    },
+                });
+                if (existingForConversationByKey) {
+                    assertVoiceProviderConversationIdentityExactMatch({
+                        expected: providerIdentity,
+                        stored: {
+                            providerId: existingForConversationByKey.providerId,
+                            providerConversationId: existingForConversationByKey.providerConversationId,
+                            providerConversationKey: existingForConversationByKey.providerConversationKey ?? "",
+                        },
+                    });
+                }
+
+                // During the rolling migration, old rows can have a null digest. The exact-value
+                // fallback is read-only compatibility and disappears after the backfill gate.
+                const legacyExistingForConversation = existingForConversationByKey
+                    ? null
+                    : await tx.voiceConversation.findFirst({
+                          where: {
+                              providerId: providerIdentity.providerId,
+                              providerConversationId: providerIdentity.providerConversationId,
+                              providerConversationKey: null,
+                          },
+                          select: {
+                              id: true,
+                              accountId: true,
+                              leaseId: true,
+                              providerId: true,
+                              providerConversationId: true,
+                              providerConversationKey: true,
+                              durationSeconds: true,
+                              grantedBy: true,
+                              grantPeriodKey: true,
+                          },
+                      });
+                const existingForConversation = existingForConversationByKey ?? legacyExistingForConversation;
+
+                const existingForLease = await tx.voiceConversation.findUnique({
+                    where: { leaseId: lease.id },
+                    select: {
+                        accountId: true,
+                        providerId: true,
+                        providerConversationId: true,
+                        providerConversationKey: true,
+                        grantedBy: true,
+                        grantPeriodKey: true,
+                    },
+                });
+
+                if (
+                    !currentLease ||
+                    currentLease.providerBindingNonce !== lease.providerBindingNonce ||
+                    currentLease.elevenLabsAgentId !== lease.elevenLabsAgentId
+                ) {
+                    return "not_found" as const;
+                }
+                if (
+                    existingForConversation &&
+                    (existingForConversation.accountId !== lease.accountId ||
+                        existingForConversation.leaseId !== lease.id ||
+                        existingForConversation.providerId !== providerIdentity.providerId ||
+                        existingForConversation.providerConversationId !== providerIdentity.providerConversationId ||
+                        (existingForConversation.grantedBy !== null &&
+                            existingForConversation.grantedBy !== currentLease.grantedBy) ||
+                        (existingForConversation.grantPeriodKey !== null &&
+                            existingForConversation.grantPeriodKey !== currentLease.periodKey) ||
+                        (existingForConversation.providerConversationKey !== null &&
+                            existingForConversation.providerConversationKey !== providerIdentity.providerConversationKey))
+                ) {
+                    return "not_found" as const;
+                }
+                if (
+                    existingForLease &&
+                    (existingForLease.accountId !== lease.accountId ||
+                        existingForLease.providerId !== providerIdentity.providerId ||
+                        existingForLease.providerConversationId !== providerIdentity.providerConversationId ||
+                        (existingForLease.grantedBy !== null &&
+                            existingForLease.grantedBy !== currentLease.grantedBy) ||
+                        (existingForLease.grantPeriodKey !== null &&
+                            existingForLease.grantPeriodKey !== currentLease.periodKey) ||
+                        (existingForLease.providerConversationKey !== null &&
+                            existingForLease.providerConversationKey !== providerIdentity.providerConversationKey))
+                ) {
+                    return "not_found" as const;
+                }
+
+                const bindLease = await tx.voiceSessionLease.updateMany({
+                    where: {
+                        id: currentLease.id,
+                        accountId: currentLease.accountId,
+                        elevenLabsAgentId: currentLease.elevenLabsAgentId,
+                        providerBindingNonce: currentLease.providerBindingNonce,
+                    },
+                    data: {
+                        providerId: providerIdentity.providerId,
+                        providerConversationId: providerIdentity.providerConversationId,
+                        providerConversationKey: providerIdentity.providerConversationKey,
+                    },
+                });
+                if (bindLease.count !== 1) {
+                    throw new VoiceCompletionConflictError();
+                }
+
+                if (existingForConversation?.providerConversationKey === null) {
+                    const upgradeLegacyConversation = await tx.voiceConversation.updateMany({
+                        where: {
+                            id: existingForConversation.id,
+                            providerId: providerIdentity.providerId,
+                            providerConversationId: providerIdentity.providerConversationId,
+                            providerConversationKey: null,
+                        },
+                        data: {
+                            providerConversationKey: providerIdentity.providerConversationKey,
+                            grantedBy: currentLease.grantedBy,
+                            grantPeriodKey: currentLease.periodKey,
+                        },
+                    });
+                    if (upgradeLegacyConversation.count !== 1) {
+                        throw new VoiceCompletionConflictError();
+                    }
+                } else if (
+                    existingForConversation &&
+                    (existingForConversation.grantedBy === null ||
+                        existingForConversation.grantPeriodKey === null)
+                ) {
+                    const upgradeLegacyGrant = await tx.voiceConversation.updateMany({
+                        where: {
+                            id: existingForConversation.id,
+                            OR: [
+                                { grantedBy: null },
+                                { grantPeriodKey: null },
+                            ],
+                        },
+                        data: {
+                            grantedBy: existingForConversation.grantedBy ?? currentLease.grantedBy,
+                            grantPeriodKey: existingForConversation.grantPeriodKey ?? currentLease.periodKey,
+                        },
+                    });
+                    if (upgradeLegacyGrant.count !== 1) {
+                        throw new VoiceCompletionConflictError();
+                    }
+                } else if (!existingForConversation) {
+                    await tx.voiceConversation.create({
+                        data: {
+                            accountId: lease.accountId,
+                            leaseId: lease.id,
+                            providerId: providerIdentity.providerId,
+                            providerConversationId: providerIdentity.providerConversationId,
+                            providerConversationKey: providerIdentity.providerConversationKey,
+                            startedAt,
+                            endedAt,
+                            durationSeconds,
+                            billedUnits: null,
+                            grantedBy: currentLease.grantedBy,
+                            grantPeriodKey: currentLease.periodKey,
+                        },
+                    });
+                }
+                return {
+                    kind: "completed" as const,
+                    durationSeconds: existingForConversation?.durationSeconds ?? durationSeconds,
+                };
             });
-            if (existingForLease && existingForLease.providerConversationId !== providerConversationId) {
+            if (result === "not_found") {
                 return reply.code(404).send({ ok: false, reason: "not_found" as const });
             }
-
-            await db.voiceConversation.upsert({
-                where: {
-                    providerId_providerConversationId: {
-                        providerId: "elevenlabs_agents",
-                        providerConversationId,
-                    },
-                },
-                create: {
-                    accountId: lease.accountId,
-                    leaseId: lease.id,
-                    providerId: "elevenlabs_agents",
-                    providerConversationId,
-                    startedAt,
-                    endedAt,
-                    durationSeconds,
-                    billedUnits: null,
-                },
-                update: {
-                    leaseId: lease.id,
-                    startedAt,
-                    endedAt,
-                    durationSeconds,
-                },
-            });
+            durationSeconds = result.durationSeconds;
         } catch (e) {
+            if (e instanceof VoiceProviderConversationIdentityCollisionError) {
+                log({ module: "voice" }, "Voice provider conversation identity collision");
+                return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
+            }
+            if (e instanceof VoiceCompletionConflictError || isPrismaErrorCode(e, "P2002")) {
+                const winner = await db.voiceConversation.findUnique({
+                    where: {
+                        providerId_providerConversationKey: {
+                            providerId: providerIdentity.providerId,
+                            providerConversationKey: providerIdentity.providerConversationKey,
+                        },
+                    },
+                    select: {
+                        accountId: true,
+                        leaseId: true,
+                        providerId: true,
+                        providerConversationId: true,
+                        providerConversationKey: true,
+                        durationSeconds: true,
+                    },
+                }).catch(() => null);
+                if (
+                    winner &&
+                    winner.accountId === lease.accountId &&
+                    winner.leaseId === lease.id &&
+                    winner.providerId === providerIdentity.providerId &&
+                    winner.providerConversationId === providerIdentity.providerConversationId &&
+                    winner.providerConversationKey === providerIdentity.providerConversationKey
+                ) {
+                    return reply.send({ ok: true, durationSeconds: winner.durationSeconds });
+                }
+                return reply.code(404).send({ ok: false, reason: "not_found" as const });
+            }
             log({ module: "voice" }, "Failed to persist voice conversation");
             return reply.code(503).send({ ok: false, reason: "upstream_error" as const });
         }

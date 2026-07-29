@@ -12,6 +12,17 @@ export type InTxOptions = Readonly<{
     maxWaitMs?: number;
 }>;
 
+export class TransactionAcquisitionUnavailableError extends Error {
+    readonly code = "P2028";
+    readonly cause: unknown;
+
+    constructor(cause: unknown) {
+        super("Database transaction acquisition is temporarily unavailable");
+        this.name = "TransactionAcquisitionUnavailableError";
+        this.cause = cause;
+    }
+}
+
 const symbol = Symbol();
 
 function errorMessage(err: unknown): string {
@@ -24,6 +35,8 @@ function errorMessage(err: unknown): string {
 }
 
 export function isRetryableTransactionError(params: Readonly<{ provider: string; err: unknown }>): boolean {
+    // Acquisition-shaped P2028 requires callback-entry context, which only inTx owns.
+    if (isTransactionAcquisitionTimeout(params.err)) return false;
     if (isPrismaErrorCode(params.err, "P2034")) return true;
 
     if (params.provider === "postgres") {
@@ -38,6 +51,25 @@ export function isRetryableTransactionError(params: Readonly<{ provider: string;
     }
 
     return false;
+}
+
+function readTransactionErrorMessage(error: unknown): string {
+    if (error && typeof error === "object" && "meta" in error) {
+        const metaError = (error as { meta?: { error?: unknown } }).meta?.error;
+        if (typeof metaError === "string") return metaError;
+    }
+    return errorMessage(error);
+}
+
+export function isTransactionAcquisitionTimeout(error: unknown): boolean {
+    return isPrismaErrorCode(error, "P2028")
+        && readTransactionErrorMessage(error).toLowerCase().includes("unable to start a transaction");
+}
+
+export function isTransactionAcquisitionUnavailableError(
+    error: unknown,
+): error is TransactionAcquisitionUnavailableError {
+    return error instanceof TransactionAcquisitionUnavailableError;
 }
 
 export function afterTx(tx: Tx, callback: () => void) {
@@ -68,13 +100,16 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
     const transactionConfig = readDatabaseTransactionConfigFromEnv(process.env, provider);
     let counter = 0;
     const startedAtMs = Date.now();
+    let transactionCallbackEntered = false;
     let wrapped = async (tx: Tx) => {
+        transactionCallbackEntered = true;
         (tx as any)[symbol] = [];
         let result = await fn(tx);
         let callbacks = (tx as any)[symbol] as (() => void)[];
         return { result, callbacks };
     }
     while (true) {
+        transactionCallbackEntered = false;
         try {
             const txOpts =
                 provider === "sqlite"
@@ -97,7 +132,9 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
             }
             return result.result;
         } catch (e) {
-            if (isRetryableTransactionError({ provider, err: e }) && counter < transactionConfig.maxRetries) {
+            const acquisitionTimeout = isTransactionAcquisitionTimeout(e) && !transactionCallbackEntered;
+            const retryable = acquisitionTimeout || isRetryableTransactionError({ provider, err: e });
+            if (retryable && counter < transactionConfig.maxRetries) {
                 const nextAttempt = counter + 1;
                 const retryDelayMs = resolveTransactionRetryDelayMs({
                     attempt: nextAttempt,
@@ -113,12 +150,18 @@ export async function inTx<T>(fn: (tx: Tx) => Promise<T>, options?: InTxOptions)
                         startedAtMs,
                     })
                 ) {
+                    if (acquisitionTimeout) {
+                        throw new TransactionAcquisitionUnavailableError(e);
+                    }
                     throw e;
                 }
                 counter = nextAttempt;
                 recordDatabaseTransactionRetry(provider);
                 await delay(retryDelayMs);
                 continue;
+            }
+            if (acquisitionTimeout) {
+                throw new TransactionAcquisitionUnavailableError(e);
             }
             throw e;
         }

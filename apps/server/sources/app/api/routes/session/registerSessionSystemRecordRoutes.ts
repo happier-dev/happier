@@ -6,6 +6,7 @@ import {
     listSessionSystemRecords,
     upsertSessionSystemRecord,
 } from "@/app/session/systemRecords/sessionSystemRecordService";
+import { toPublicSessionSystemRecord } from "@/app/session/systemRecords/sessionSystemRecordSerialization";
 import {
     SessionSystemRecordLatestQuerySchema,
     SessionSystemRecordLatestResponseSchema,
@@ -17,28 +18,6 @@ import {
     SessionSystemRecordUpsertResponseSchema,
 } from "@happier-dev/protocol";
 import { type Fastify } from "../../types";
-
-function toRouteRecord(record: {
-    id: string;
-    sessionId: string;
-    namespace: "memory";
-    kind: "summary_shard.v1" | "synopsis.v1";
-    localId: string;
-    content: z.infer<typeof SessionSystemRecordUpsertRequestSchema>["content"];
-    createdAt: Date;
-    updatedAt: Date;
-}) {
-    return {
-        id: record.id,
-        sessionId: record.sessionId,
-        namespace: record.namespace,
-        kind: record.kind,
-        localId: record.localId,
-        content: record.content,
-        createdAt: record.createdAt.toISOString(),
-        updatedAt: record.updatedAt.toISOString(),
-    };
-}
 
 export function registerSessionSystemRecordRoutes(app: Fastify) {
     app.get("/v2/sessions/:sessionId/system-records", {
@@ -76,7 +55,7 @@ export function registerSessionSystemRecordRoutes(app: Fastify) {
         }
 
         return reply.send({
-            records: result.records.map(toRouteRecord),
+            records: result.records.map(toPublicSessionSystemRecord),
             nextCursor: result.nextCursor,
             hasNext: result.nextCursor !== null,
         });
@@ -112,7 +91,7 @@ export function registerSessionSystemRecordRoutes(app: Fastify) {
             return reply.code(500).send({ error: "Failed to fetch system record" });
         }
 
-        return reply.send({ record: result.record ? toRouteRecord(result.record) : null });
+        return reply.send({ record: result.record ? toPublicSessionSystemRecord(result.record) : null });
     });
 
     app.get("/v2/sessions/:sessionId/system-records/latest", {
@@ -145,7 +124,7 @@ export function registerSessionSystemRecordRoutes(app: Fastify) {
             return reply.code(500).send({ error: "Failed to fetch latest system record" });
         }
 
-        return reply.send({ record: result.record ? toRouteRecord(result.record) : null });
+        return reply.send({ record: result.record ? toPublicSessionSystemRecord(result.record) : null });
     });
 
     app.put("/v2/sessions/:sessionId/system-records", {
@@ -190,7 +169,7 @@ export function registerSessionSystemRecordRoutes(app: Fastify) {
         return reply.send({
             didCreate: result.didCreate,
             didUpdate: result.didUpdate,
-            record: toRouteRecord(result.record),
+            record: toPublicSessionSystemRecord(result.record),
         });
     });
 }

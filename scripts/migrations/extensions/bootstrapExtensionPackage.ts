@@ -8,7 +8,7 @@ type TemplateFile = Readonly<{ relativePath: string; content: string }>;
 
 function printUsage(): void {
   console.log([
-    'Usage: node --experimental-strip-types scripts/migrations/plugins/bootstrapExtensionPackage.ts <extensionId> [--root DIR] [--mode write|check]',
+    'Usage: node --experimental-strip-types scripts/migrations/extensions/bootstrapExtensionPackage.ts <extensionId> [--root DIR] [--mode write|check]',
     '',
     'Scaffolds a new first-party bundled extension package under `packages/plugins/<extensionId>` from `packages/plugins/_template`.',
   ].join('\n'));
@@ -84,7 +84,10 @@ function writeFileAtomic(path: string, content: string): void {
 }
 
 function replacePlaceholders(content: string, params: Readonly<{ extensionId: string }>): string {
-  return content.replaceAll('__extensionId__', params.extensionId);
+  return content
+    .replaceAll('__pluginId__', `happier.agent.${params.extensionId}`)
+    .replaceAll('__pluginDisplayName__', params.extensionId)
+    .replaceAll('__extensionId__', params.extensionId);
 }
 
 async function loadCanonicalAgentIds(repoRoot: string): Promise<readonly string[]> {
@@ -107,143 +110,27 @@ function validateExtensionId(params: Readonly<{ extensionId: string; canonicalAg
   }
 }
 
-function ensureMinimalTopology(root: string): void {
-  const requiredDirs = [
-    'src',
-    'src/ui',
-    'src/agent',
-    'src/hooks',
-    'src/actions',
-    'src/tools',
-    'src/commands',
-    'src/resources',
-    'src/shared',
-    'src/protocol',
-  ];
-
-  for (const rel of requiredDirs) {
-    ensureDir(resolve(root, rel));
+function assertCanonicalTemplateFiles(files: readonly TemplateFile[]): void {
+  const paths = new Set(files.map((file) => file.relativePath));
+  for (const required of ['package.json', 'tsconfig.json', 'src/index.ts', 'src/manifest.ts', 'src/activate.ts']) {
+    if (!paths.has(required)) throw new Error(`Missing canonical template file '${required}'`);
+  }
+  for (const retired of ['src/cli.ts', 'src/ui/index.ts', 'src/agent/index.ts', 'src/agent/definition.ts']) {
+    if (paths.has(retired)) throw new Error(`Retired template file '${retired}' must not be scaffolded`);
+  }
+  const source = files.map((file) => file.content).join('\n');
+  for (const retired of ['AGENT_DEFINITION', 'PluginApi', 'PluginContext', 'registerAction', 'registerTool', 'onDispose']) {
+    if (source.includes(retired)) throw new Error(`Retired authoring token '${retired}' remains in the canonical template`);
   }
 }
 
-function ensureEntryFile(path: string, content: string): void {
-  if (statSync(path, { throwIfNoEntry: false })) {
-    return;
+function renderPackageJson(templateJson: unknown, extensionId: string): Record<string, unknown> {
+  if (typeof templateJson !== 'object' || templateJson === null || Array.isArray(templateJson)) {
+    throw new Error('Canonical template package.json must contain a JSON object');
   }
-  writeFileAtomic(path, content);
-}
-
-function ensureScaffoldSourceFiles(extensionRoot: string, extensionId: string): void {
-  ensureMinimalTopology(extensionRoot);
-
-  ensureEntryFile(
-    resolve(extensionRoot, 'src/index.ts'),
-    [
-      "export * from './manifest.js';",
-      "export * from './activate.js';",
-      "export * from './cli.js';",
-      "export * from './ui/index.js';",
-      "export * from './agent/index.js';",
-      '',
-    ].join('\n'),
-  );
-
-  ensureEntryFile(
-    resolve(extensionRoot, 'src/manifest.ts'),
-    [
-      "import type { ExtensionManifestV2 } from '@happier-dev/protocol';",
-      '',
-      '// Thin composition file that declares this extension’s canonical manifest.',
-      '// Keep this mostly declarative; executable behavior lives in domain folders.',
-      'export const EXTENSION_MANIFEST: ExtensionManifestV2 = Object.freeze({',
-      '  schemaVersion: 2,',
-      `  id: ${JSON.stringify(extensionId)},`,
-      '  version: \'0.0.0\',',
-      `  displayName: ${JSON.stringify(extensionId)},`,
-      '  description: undefined,',
-      '  engines: Object.freeze({ happier: \'^0.0.0\' }),',
-      '  runtime: Object.freeze({ apiVersion: 1, capabilities: Object.freeze([]) }),',
-      '  targets: Object.freeze({}),',
-      '  permissions: Object.freeze([]),',
-      '  contributions: Object.freeze([]),',
-      '});',
-      '',
-    ].join('\n'),
-  );
-
-  ensureEntryFile(
-    resolve(extensionRoot, 'src/activate.ts'),
-    [
-      'export function activate(): void {',
-      '  // Extension activation hook (optional).',
-      '}',
-      '',
-    ].join('\n'),
-  );
-
-  ensureEntryFile(
-    resolve(extensionRoot, 'src/cli.ts'),
-    [
-      'export const cli = Object.freeze({});',
-      '',
-    ].join('\n'),
-  );
-
-  ensureEntryFile(
-    resolve(extensionRoot, 'src/ui/index.ts'),
-    [
-      'export const ui = Object.freeze({});',
-      '',
-    ].join('\n'),
-  );
-
-  ensureEntryFile(
-    resolve(extensionRoot, 'src/agent/index.ts'),
-    [
-      "export * from './definition.js';",
-      '',
-    ].join('\n'),
-  );
-
-  ensureEntryFile(
-    resolve(extensionRoot, 'src/agent/definition.ts'),
-    [
-      "import type { AgentDefinition } from '@happier-dev/agents';",
-      '',
-      '// IMPORTANT: this must stay JSON-serializable (data-only).',
-      'export const AGENT_DEFINITION: AgentDefinition = Object.freeze({',
-      `  id: ${JSON.stringify(extensionId)},`,
-      '  core: {',
-      `    id: ${JSON.stringify(extensionId)},`,
-      `    cliSubcommand: ${JSON.stringify(extensionId)},`,
-      `    detectKey: ${JSON.stringify(extensionId)},`,
-      "    resume: { vendorResume: 'unsupported', vendorResumeIdField: null },",
-      '    sessionStorage: { direct: false, persisted: false },',
-      '    sessionCapabilities: {',
-      "      sessionListing: 'unsupported',",
-      "      sessionFork: { conversation: 'unsupported', fromMessage: 'unsupported' },",
-      "      sessionRollback: { conversation: 'unsupported' },",
-      '    },',
-      "    handoff: { vendorStateTransfer: 'unsupported' },",
-      "    tools: { delivery: 'unsupported', support: 'unsupported' },",
-      '  },',
-      "  sessionModeDescriptor: { source: 'none', semantics: 'none', runtimeSwitch: 'none' },",
-      "  sessionModesKind: 'none',",
-      "  modelConfig: { supportsSelection: false, nonAcpApplyScope: 'spawn_only', defaultMode: 'default', allowedModes: ['default'] },",
-      "  authProbeConfig: { agentId: " + JSON.stringify(extensionId) + ", binaryNames: [" + JSON.stringify(extensionId) + "], statusCommand: null, parser: 'unknown', backgroundChecks: 'safe' },",
-      "  localCli: { agentId: " + JSON.stringify(extensionId) + ", detectKey: " + JSON.stringify(extensionId) + ", machineLoginKey: " + JSON.stringify(extensionId) + ", supportKind: 'unsupported', loginLaunch: null },",
-      `  agentCliRuntime: { id: ${JSON.stringify(extensionId)}, title: ${JSON.stringify(`${extensionId} CLI`)}, binaryName: ${JSON.stringify(extensionId)}, sourcePreferenceDefault: 'system-first', managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: null, acceptsJavaScriptFileOverride: false },`,
-      '  providerSettings: null,',
-      '});',
-      '',
-    ].join('\n'),
-  );
-}
-
-function renderPackageJson(templateJson: any, extensionId: string): any {
   const expectedName = `@happier-dev/plugins-${extensionId}`;
   return {
-    ...templateJson,
+    ...templateJson as Record<string, unknown>,
     name: expectedName,
   };
 }
@@ -261,6 +148,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 
   const files = walkTemplateFiles(templateRoot);
+  assertCanonicalTemplateFiles(files);
   const rendered = files.map((file) => ({
     relativePath: file.relativePath,
     content: replacePlaceholders(file.content, { extensionId: options.extensionId }),
@@ -287,9 +175,6 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     }
     writeFileAtomic(resolve(extensionRoot, file.relativePath), file.content);
   }
-
-  // Ensure required topology files exist even if template is minimal.
-  ensureScaffoldSourceFiles(extensionRoot, options.extensionId);
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? '').href) {

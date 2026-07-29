@@ -64,7 +64,7 @@ model Account {
     AccountPetPackage      AccountPetPackage[]
     AccountPetAsset        AccountPetAsset[]
     ServiceAccountToken    ServiceAccountToken[]
-    ServiceAccountQuotaSnapshot ServiceAccountQuotaSnapshot[]
+    ProviderAccountUsageRecord    ProviderAccountUsageRecord[]
     ConnectedServiceAuthGroup ConnectedServiceAuthGroup[]
     RelationshipsFrom      UserRelationship[]         @relation("RelationshipsFrom")
     RelationshipsTo        UserRelationship[]         @relation("RelationshipsTo")
@@ -77,21 +77,29 @@ model Account {
     SessionShareAccessLogs SessionShareAccessLog[]    @relation("SessionShareAccessLogs")
     PublicSessionShares    PublicSessionShare[]       @relation("PublicSessionShares")
     PublicShareAccessLogs  PublicShareAccessLog[]     @relation("PublicShareAccessLogs")
-    PublicShareBlockedUsers PublicShareBlockedUser[]  @relation("PublicShareBlockedUsers")
     AccountChanges         AccountChange[]
     AccountSettingsSnapshots AccountSettingsSnapshot[]
     SessionPendingMessage  SessionPendingMessage[]
     SessionSystemRecord    SessionSystemRecord[]
+    SessionSubagentCustody SessionSubagentCustody[]
+    SessionSubagentCustodyReceipt SessionSubagentCustodyReceipt[]
+    SessionSubagentCustodyRetiredGeneration SessionSubagentCustodyRetiredGeneration[]
     ReviewComments         ReviewComment[]
     ReviewCommentEvents    ReviewCommentEvent[]
     PluginPermissionGrants PluginPermissionGrant[]
     PluginPermissionGrantRequests PluginPermissionGrantRequest[]
     PluginPermissionGrantEvents PluginPermissionGrantEvent[]
-    PluginManifestProjections AccountPluginManifestProjection[]
     AccountIdentity        AccountIdentity[]
     automations            Automation[]
     automationRuns         AutomationRun[]
     SessionFolderAssignment SessionFolderAssignment[]
+    SessionPin                    SessionPin[]
+    SessionOrganizationFolder     SessionOrganizationFolder[]
+    SessionOrganizationTag        SessionOrganizationTag[]
+    SessionTagAssignment          SessionTagAssignment[]
+    SessionOrganizationOrderEntry SessionOrganizationOrderEntry[]
+    SessionOrganizationLabel      SessionOrganizationLabel[]
+    SessionOrganizationCheckpoint SessionOrganizationCheckpoint?
 }
 
 model AccountSettingsSnapshot {
@@ -149,7 +157,7 @@ model VoiceSessionLease {
     conversation     VoiceConversation?
 
     /// Optional Happier sessionId (used only for correlation/telemetry).
-    sessionId        String?
+    sessionId        String? @db.VarChar(512)
 
     /// UTC YYYY-MM (e.g. "2026-02") for monthly free-quota accounting.
     periodKey        String
@@ -160,10 +168,24 @@ model VoiceSessionLease {
     /// The ElevenLabs agent id used for minting.
     elevenLabsAgentId String
 
+    /// Provider id bound when the provider session starts, e.g. "elevenlabs_agents".
+    providerId String?
+
+    /// Provider-specific conversation id bound to this lease before completion.
+    providerConversationId String? @db.VarChar(191)
+
+    /// Domain-separated SHA-256 identity used for portable indexed lookups.
+    /// Nullable only for leases created before the rolling backfill migration.
+    providerConversationKey String? @db.Char(64)
+
+    /// Server-generated nonce echoed through the provider session dynamic variables.
+    providerBindingNonce String? @unique
+
     expiresAt        DateTime
     createdAt        DateTime @default(now())
 
     @@index([accountId, expiresAt])
+    @@index([accountId, providerId, providerConversationKey], map: "VoiceSessionLease_provider_binding_key_lookup_idx")
     @@index([accountId, periodKey])
     @@index([expiresAt])
 }
@@ -182,7 +204,11 @@ model VoiceConversation {
     providerId            String
 
     /// Provider-specific conversation id.
-    providerConversationId String
+    providerConversationId String @db.VarChar(191)
+
+    /// Domain-separated SHA-256 identity used for portable uniqueness.
+    /// Nullable only for conversations created before the rolling backfill migration.
+    providerConversationKey String? @db.Char(64)
 
     startedAt             DateTime?
     endedAt               DateTime?
@@ -191,9 +217,17 @@ model VoiceConversation {
     /// Optional normalized billing unit count (provider-specific).
     billedUnits           Int?
 
+    /// Grant classification copied from the verified lease at completion.
+    /// Null means legacy/unknown and is never inferred as free quota usage.
+    grantedBy             String?
+
+    /// UTC YYYY-MM grant period copied from the verified lease at completion.
+    /// Null means legacy/unknown and is never inferred into a quota period.
+    grantPeriodKey        String?
+
     createdAt             DateTime @default(now())
 
-    @@unique([providerId, providerConversationId])
+    @@unique([providerId, providerConversationKey])
     @@index([accountId, createdAt])
     @@index([accountId, providerId, createdAt])
 }
@@ -311,7 +345,7 @@ model AccountLiveActivityTarget {
     diagnostics         Json?
 
     @@unique([accountId, targetIdentityHash])
-    @@index([accountId, serverId, sessionId, activityName, endedAt])
+    @@index([accountId, serverId, sessionId, activityName, endedAt], map: "AccountLiveActivityTarget_lookup_active_idx")
     @@index([accountId, transportMode, endedAt])
 }
 
@@ -327,12 +361,22 @@ model Session {
     encryptionMode    String              @default("e2ee")
     metadata          String @db.LongText
     metadataVersion   Int                 @default(0)
+    ownerMetadata     String? @db.LongText
+    metadataLayoutVersion Int             @default(0)
     agentState        String? @db.LongText
     agentStateVersion Int                 @default(0)
     dataEncryptionKey Bytes?
     seq               Int                 @default(0)
+    // Server-readable External Sessions publication authority. Raw Agent-source
+    // watermarks stay local/E2EE-only; readers use only these bounded fields.
+    currentStorageState                 String @default("hosted")
+    acceptedThroughServerSeq            Int?
+    materializationPublicationId        String?
+    materializedThroughSourceAt         BigInt?
+    publishedThroughServerSeq           Int?
     pendingVersion    Int                 @default(0)
     pendingCount      Int                 @default(0)
+    pendingBlockedCount           Int                          @default(0)
     pendingQueueSeq   Int                 @default(0)
     // Server-readable per-session activity projection (minimal, E2EE-safe).
     // These fields exist to support authoritative badge counts for background/closed devices.
@@ -344,11 +388,15 @@ model Session {
     latestTurnStatus                String?
     latestTurnStatusObservedAt      BigInt?
     lastRuntimeIssue                String?
+    runtimeActivityState         String                       @default("unknown")
+    runtimeActivityActiveCount   Int                          @default(0)
+    runtimeActivityObservedAt    BigInt?
+    runtimeActivityRevision      BigInt                       @default(0)
     latestReadyEventSeq             Int?
     latestReadyEventAt              DateTime?
     thinking                        Boolean             @default(false)
     thinkingAt                      DateTime?
-    active            Boolean             @default(true)
+    active            Boolean             @default(false)
     archivedAt        DateTime?
     lastActiveAt      DateTime            @default(now())
     meaningfulActivityAt DateTime?
@@ -364,7 +412,11 @@ model Session {
     shares            SessionShare[]
     publicShare       PublicSessionShare?
     sessionFolderAssignments SessionFolderAssignment[]
+    sessionPins                   SessionPin[]
+    sessionTagAssignments         SessionTagAssignment[]
     systemRecords    SessionSystemRecord[]
+    subagentCustodyRecords SessionSubagentCustody[]
+    subagentCustodyReceipts SessionSubagentCustodyReceipt[]
     accountChanges    AccountChange[]    @relation("AccountChangeSession")
     producedByAutomationRuns AutomationRun[] @relation("AutomationRunProducedSession")
 
@@ -380,8 +432,8 @@ model SessionTurn {
     sessionId               String
     session                 Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
     turnId                  String
-    provider                String?
-    providerTurnId          String?
+    agentId                 String?
+    agentTurnId             String?
     status                  String
     startedAt               BigInt
     updatedAt               BigInt
@@ -390,7 +442,7 @@ model SessionTurn {
     transcriptAnchorsJson   String?
     rollbackState           String?
     rollbackReason          String?
-    providerRollbackOrdinal Int?
+    agentRollbackOrdinal    Int?
     rollbackUpdatedAt       BigInt?
     lastMutationId          String?
     createdAt               DateTime @default(now())
@@ -399,7 +451,7 @@ model SessionTurn {
     @@index([sessionId, updatedAt])
     @@index([sessionId, status])
     @@index([sessionId, rollbackState])
-    @@index([sessionId, provider, providerTurnId])
+    @@index([sessionId, agentId, agentTurnId])
 }
 
 model SessionTurnMutationReceipt {
@@ -434,12 +486,134 @@ model SessionFolderAssignment {
     @@index([sessionId])
 }
 
+model SessionPin {
+    id        String   @id @default(cuid())
+    accountId String
+    sessionId String
+    sortKey   String?
+    pinnedAt  DateTime @default(now())
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId])
+    @@index([accountId, sortKey])
+    @@index([sessionId])
+}
+
+model SessionOrganizationFolder {
+    id             String    @id @default(cuid())
+    accountId      String
+    folderKey      String
+    folderHash     String @db.VarChar(71)
+    parentKey      String?
+    parentHash     String? @db.VarChar(71)
+    sortKey        String?
+    displayDbValue String?
+    archivedAt     DateTime?
+    createdAt      DateTime  @default(now())
+    updatedAt      DateTime  @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, folderHash])
+    @@index([accountId, parentHash, sortKey])
+    @@index([accountId, archivedAt])
+}
+
+model SessionOrganizationTag {
+    id             String    @id @default(cuid())
+    accountId      String
+    tagKey         String
+    tagHash        String @db.VarChar(71)
+    sortKey        String?
+    displayDbValue String?
+    archivedAt     DateTime?
+    createdAt      DateTime  @default(now())
+    updatedAt      DateTime  @updatedAt
+
+    account     Account                @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    assignments SessionTagAssignment[]
+
+    @@unique([accountId, tagHash])
+    @@index([accountId, sortKey])
+    @@index([accountId, archivedAt])
+}
+
+model SessionTagAssignment {
+    id        String   @id @default(cuid())
+    accountId String
+    sessionId String
+    tagId     String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account                @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session                @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    tag     SessionOrganizationTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId, tagId])
+    @@index([accountId, tagId])
+    @@index([sessionId])
+    @@index([tagId])
+}
+
+model SessionOrganizationOrderEntry {
+    id        String   @id @default(cuid())
+    accountId String
+    scopeKind String @db.VarChar(64)
+    scopeKey  String
+    scopeHash String @db.VarChar(71)
+    itemKind  String @db.VarChar(64)
+    itemKey   String
+    itemHash  String @db.VarChar(71)
+    sortKey   String
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, scopeKind, scopeHash, itemKind, itemHash], map: "SessionOrgOrderEntry_scope_item_key")
+    @@index([accountId, scopeKind, scopeHash, sortKey], map: "SessionOrgOrderEntry_scope_sort_idx")
+}
+
+model SessionOrganizationLabel {
+    id             String    @id @default(cuid())
+    accountId      String
+    labelKind      String
+    scopeKey       String
+    scopeHash      String @db.VarChar(71)
+    displayDbValue String?
+    archivedAt     DateTime?
+    createdAt      DateTime  @default(now())
+    updatedAt      DateTime  @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, labelKind, scopeHash])
+    @@index([accountId, labelKind, archivedAt])
+}
+
+model SessionOrganizationCheckpoint {
+    id        String   @id @default(cuid())
+    accountId String   @unique
+    version   Int      @default(0)
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@index([accountId, version])
+}
+
 model SessionSystemRecord {
     id        String   @id @default(cuid())
     accountId String
     sessionId String
-    namespace String
-    kind      String
+    namespace String @db.VarChar(64)
+    kind      String @db.VarChar(64)
     localId   String
     content   Json
     createdAt DateTime @default(now())
@@ -449,8 +623,77 @@ model SessionSystemRecord {
     session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
     @@unique([accountId, sessionId, namespace, localId])
-    @@index([accountId, sessionId, namespace, kind, updatedAt, id])
+    @@index([accountId, sessionId, namespace, kind, updatedAt, id], map: "SessionSystemRecord_account_kind_updated_idx")
     @@index([sessionId, namespace, kind, updatedAt, id])
+}
+
+model SessionSubagentCustody {
+    id          String   @id @default(cuid())
+    accountId   String
+    sessionId   String
+    pluginId    String
+    contributionId String
+    immutableGenerationId String
+    custodyKey  String
+    subagentId  String @db.LongText
+    subagentKey String @db.Char(64)
+    groupId     String? @db.LongText
+    status      String
+    revision    Int      @default(0)
+    content     Json
+    terminalAt  DateTime?
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId, custodyKey, subagentKey], map: "SubagentCustody_scope_subagent_key")
+    @@index([accountId, sessionId, custodyKey, subagentKey], map: "SessionSubagentCustody_scope_list_idx")
+    @@index([accountId, pluginId, immutableGenerationId], map: "SubagentCustody_generation_retirement_idx")
+    @@index([sessionId])
+}
+
+model SessionSubagentCustodyReceipt {
+    id               String   @id @default(cuid())
+    accountId        String
+    sessionId        String
+    pluginId         String
+    contributionId   String
+    immutableGenerationId String
+    custodyKey       String
+    operationId      String
+    requestDigest    String
+    resultSubagentId String @db.LongText
+    resultGroupId    String? @db.LongText
+    resultStatus     String
+    resultRevision   Int
+    resultUpdatedAt  DateTime
+    expiresAt        DateTime
+    createdAt        DateTime @default(now())
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, sessionId, custodyKey, operationId], map: "SubagentCustodyReceipt_scope_operation_key")
+    @@index([accountId, sessionId, custodyKey, expiresAt], map: "SessionSubagentCustodyReceipt_scope_expiry_idx")
+    @@index([accountId, pluginId, immutableGenerationId], map: "SubagentCustodyReceipt_generation_retirement_idx")
+    @@index([expiresAt])
+    @@index([sessionId])
+}
+
+model SessionSubagentCustodyRetiredGeneration {
+    id                    String   @id @default(cuid())
+    accountId             String
+    pluginId              String
+    immutableGenerationId String
+    capacitySlot          Int
+    retiredAt             DateTime @default(now())
+
+    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+    @@unique([accountId, pluginId, immutableGenerationId], map: "SubagentCustodyRetiredGeneration_key")
+    @@unique([accountId, capacitySlot], map: "SubagentCustodyRetiredGeneration_capacity_slot_key")
 }
 
 model SessionMessage {
@@ -463,6 +706,12 @@ model SessionMessage {
     messageRole String?
     /// [SessionMessageContent]
     content   Json
+    sourceCreatedAt DateTime?
+    sourceUpdatedAt DateTime?
+    /// [SessionTranscriptObservationProvenanceV1]
+    transcriptObservationProvenance Json?
+    /// [SessionMessageDeliveryResolutionV1]
+    deliveryResolution Json?
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
@@ -479,6 +728,12 @@ enum SessionPendingMessageStatus {
     discarded
 }
 
+enum PendingProviderAction {
+    send
+    steer
+    interrupt_and_send
+}
+
 model SessionPendingMessage {
     id              String                     @id @default(cuid())
     sessionId        String
@@ -492,7 +747,13 @@ model SessionPendingMessage {
     messageRole      String?
     /// [SessionPendingMessageContent]
     content          Json
+    /// [PendingRequestedActionV1]
+    requestedAction  Json
+    /// Frozen provider operation for a claimed Pending row.
+    providerAction   PendingProviderAction?
     status           SessionPendingMessageStatus @default(queued)
+    deliveryState         String?
+    deliveryBlockedReason String?
     position         Int
     discardedAt      DateTime?
     discardedReason  String?
@@ -501,6 +762,7 @@ model SessionPendingMessage {
 
     @@unique([sessionId, localId])
     @@index([sessionId, status, position])
+    @@index([sessionId, status, deliveryState, position], map: "SessionPendingMessage_sid_status_dstate_position_idx")
     @@index([sessionId, authorAccountId])
     @@index([sessionId, status, updatedAt])
 }
@@ -571,7 +833,7 @@ model UsageEvent {
     sessionId          String?
     session            Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
     observedAt         DateTime
-    providerId         String
+    agentId            String
     backendMode        String?
     modelId            String?
     projectKey         String?
@@ -595,6 +857,7 @@ model UsageEvent {
     billingContext     String?
     costSource         String?
     currency           String   @default("USD")
+    costBreakdown      String?
     contextUsedTokens  Int?
     contextWindowTokens Int?
     metadata           Json?
@@ -603,7 +866,7 @@ model UsageEvent {
 
     @@index([accountId, observedAt])
     @@index([sessionId, observedAt])
-    @@index([accountId, providerId, observedAt])
+    @@index([accountId, agentId, observedAt])
     @@index([accountId, modelId, observedAt])
     @@index([accountId, projectKey, observedAt])
     @@index([accountId, workspaceId, observedAt])
@@ -642,7 +905,6 @@ model Machine {
     accountChanges     AccountChange[] @relation("AccountChangeMachine")
     automationAssignments AutomationAssignment[]
     automationClaimedRuns AutomationRun[] @relation("AutomationRunClaimedByMachine")
-    pluginManifestProjections AccountPluginManifestProjection[]
 
     @@unique([accountId, id])
     @@index([accountId])
@@ -820,57 +1082,123 @@ model ServiceAccountToken {
     id         String    @id @default(cuid())
     accountId  String
     account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-    vendor     String
-    profileId  String    @default("default")
+    /// Legacy V2/V3 compatibility shadows. Novel qualified services leave these null.
+    vendor     String?
+    profileId  String?
+    servicePluginId       String @db.LongText @map("service_plugin_id")
+    serviceLocalId        String @db.LongText @map("service_local_id")
+    qualifiedServiceDigest String @db.Char(64) @map("qualified_service_digest")
+    connectedAccountId    String @db.LongText @map("connected_account_id")
+    qualifiedIdentityDigest String @db.Char(64) @map("qualified_identity_digest")
     token      Bytes // Encrypted token
     metadata   Json? // Optional vendor metadata
+    authenticationModeId  String @map("authentication_mode_id")
+    configurationRevision String? @map("configuration_revision")
+    configurationContent  Bytes?  @map("configuration_content")
     expiresAt  DateTime?
     refreshLeaseOwnerMachineId String?
     refreshLeaseExpiresAt      DateTime?
     lastUsedAt DateTime?
     createdAt  DateTime  @default(now())
     updatedAt  DateTime  @updatedAt
-    members    ConnectedServiceAuthGroupMember[]
+    members    ConnectedServiceAuthGroupMember[] @relation("QualifiedConnectedAccountMemberCredential")
+    usageSources ConnectedServiceUsageSource[] @relation("QualifiedConnectedAccountUsageCredential")
 
     @@unique([accountId, vendor, profileId])
+    @@unique([accountId, qualifiedIdentityDigest], map: "sat_qualified_identity_key")
+    @@unique([accountId, qualifiedServiceDigest, qualifiedIdentityDigest, id], map: "sat_qualified_credential_fkey")
     @@index([accountId])
 }
 
-model ServiceAccountQuotaSnapshot {
+model ProviderAccountUsageRecord {
     id         String    @id @default(cuid())
     accountId  String
     account    Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
-    vendor     String
-    profileId  String    @default("default")
-    snapshot   Bytes
-    status     String?
+    /// Connected-services domain identity (keep-list; NOT an executable-agent id). Values are
+    /// connected-service vendor ids such as "openai-codex" (falls back to the quota snapshot's
+    /// serviceId in the record-key builder). Deliberately kept as `providerId` per
+    /// providers-first-class PLAN §2.3 keep-list — do not rename to agentId.
+    providerId         String
+    recordId           String
+    accountSubjectId   String
+    subjectKind        String
+    quotaScope         String
+    quotaScopeId       String?
+    quotaScopeIdKey    String
+    recordKeyJson      Json
+    payloadMode        String
+    status             String
+    snapshot           Json?
+    sealedPayload      Json?
     fetchedAt  DateTime?
     staleAfterMs Int?
+    refreshRequestedAt DateTime?
     metadata   Json?
     createdAt  DateTime  @default(now())
     updatedAt  DateTime  @updatedAt
 
-    @@unique([accountId, vendor, profileId])
-    @@index([accountId])
+    sources ConnectedServiceUsageSource[]
+
+    @@unique([accountId, recordId])
+
+    @@index([accountId, providerId])
+    @@index([accountId, status])
+}
+
+model ConnectedServiceUsageSource {
+    id                           String   @id @default(cuid())
+    accountId                    String
+    /// Legacy V2/V3 compatibility shadows.
+    serviceId                    String?
+    profileId                    String?
+    servicePluginId              String @db.LongText @map("service_plugin_id")
+    serviceLocalId               String @db.LongText @map("service_local_id")
+    qualifiedServiceDigest       String @db.Char(64) @map("qualified_service_digest")
+    connectedAccountId           String @db.LongText @map("connected_account_id")
+    qualifiedIdentityDigest      String @db.Char(64) @map("qualified_identity_digest")
+    credentialId                 String  @map("credential_id")
+    sourceKey                    String
+    providerAccountUsageRecordId String
+    bindingKind                  String
+    groupId                      String?
+    groupGeneration              Int?
+    createdAt                    DateTime @default(now())
+    updatedAt                    DateTime @updatedAt
+
+    providerAccountUsageRecord ProviderAccountUsageRecord @relation(fields: [accountId, providerAccountUsageRecordId], references: [accountId, recordId], onDelete: Cascade, onUpdate: Cascade, map: "csus_record_fkey")
+    credential ServiceAccountToken @relation("QualifiedConnectedAccountUsageCredential", fields: [accountId, qualifiedServiceDigest, qualifiedIdentityDigest, credentialId], references: [accountId, qualifiedServiceDigest, qualifiedIdentityDigest, id], onDelete: Cascade, onUpdate: Cascade, map: "csus_credential_fkey")
+
+    @@unique([accountId, sourceKey])
+    @@index([accountId, serviceId, profileId], map: "csus_account_service_profile_idx")
+    @@index([accountId, providerAccountUsageRecordId], map: "csus_record_idx")
 }
 
 model ConnectedServiceAuthGroup {
     id              String   @id @default(cuid())
     accountId       String
-    vendor          String
+    /// Legacy V2/V3 compatibility shadow.
+    vendor          String?
+    servicePluginId String @db.LongText @map("service_plugin_id")
+    serviceLocalId  String @db.LongText @map("service_local_id")
+    qualifiedServiceDigest String @db.Char(64) @map("qualified_service_digest")
+    qualifiedGroupDigest String @db.Char(64) @map("qualified_group_digest")
     groupId         String
     displayName     String?
-    policyJson      String
+    policyJson      String @db.LongText
     activeProfileId String?
+    activeConnectedAccountId String? @db.LongText @map("active_connected_account_id")
     generation      Int      @default(0)
-    stateJson       String?
+    runtimeStateRevision Int @default(0)
+    stateJson       String? @db.LongText
     createdAt       DateTime @default(now())
     updatedAt       DateTime @updatedAt
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
-    members ConnectedServiceAuthGroupMember[]
+    members ConnectedServiceAuthGroupMember[] @relation("QualifiedConnectedAccountGroupMember")
 
     @@unique([accountId, vendor, groupId])
+    @@unique([accountId, qualifiedGroupDigest], map: "csag_qualified_group_key")
+    @@unique([accountId, qualifiedServiceDigest, qualifiedGroupDigest, id], map: "csag_qualified_group_fkey")
     @@index([accountId, vendor])
 }
 
@@ -878,21 +1206,27 @@ model ConnectedServiceAuthGroupMember {
     id        String   @id @default(cuid())
     groupDbId String
     accountId String
-    vendor    String
-    groupId   String
-    profileId String
+    credentialId String @map("credential_id")
+    qualifiedServiceDigest String @db.Char(64) @map("qualified_service_digest")
+    qualifiedGroupDigest String @db.Char(64) @map("qualified_group_digest")
+    qualifiedIdentityDigest String @db.Char(64) @map("qualified_identity_digest")
+    /// Legacy V2/V3 compatibility shadows.
+    vendor    String?
+    groupId   String?
+    profileId String?
     priority  Int      @default(100)
     enabled   Boolean  @default(true)
-    stateJson String?
+    stateJson String? @db.LongText
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 
-    group      ConnectedServiceAuthGroup @relation(fields: [groupDbId], references: [id], onDelete: Cascade)
-    credential ServiceAccountToken @relation(fields: [accountId, vendor, profileId], references: [accountId, vendor, profileId], onDelete: Cascade)
+    group      ConnectedServiceAuthGroup @relation("QualifiedConnectedAccountGroupMember", fields: [accountId, qualifiedServiceDigest, qualifiedGroupDigest, groupDbId], references: [accountId, qualifiedServiceDigest, qualifiedGroupDigest, id], onDelete: Cascade, onUpdate: Cascade, map: "csagm_group_fkey")
+    credential ServiceAccountToken @relation("QualifiedConnectedAccountMemberCredential", fields: [accountId, qualifiedServiceDigest, qualifiedIdentityDigest, credentialId], references: [accountId, qualifiedServiceDigest, qualifiedIdentityDigest, id], onDelete: Cascade, onUpdate: Cascade, map: "csagm_credential_fkey")
 
-    @@unique([accountId, vendor, groupId, profileId])
+    @@unique([accountId, vendor, groupId, profileId], map: "csagm_account_vendor_group_profile_key")
+    @@unique([groupDbId, credentialId], map: "csagm_group_credential_key")
     @@index([groupDbId])
-    @@index([accountId, vendor, profileId])
+    @@index([credentialId])
 }
 
 //
@@ -1020,6 +1354,8 @@ model ReviewComment {
     runId                String?  @map("run_id")
     engineId             String?  @map("engine_id")
     findingId            String?  @map("finding_id")
+    createClientMutationId String? @map("create_client_mutation_id")
+    createRequestFingerprint String? @map("create_request_fingerprint")
     threadId             String   @map("thread_id")
     parentCommentId      String?  @map("parent_comment_id")
     state                String
@@ -1051,6 +1387,7 @@ model ReviewComment {
     @@index([projectId, runId, updatedAt])
     @@index([projectId, engineId, updatedAt])
     @@index([projectId, anchorFilePath, updatedAt])
+    @@unique([accountId, createClientMutationId], map: "review_comments_account_create_mutation_key")
     @@map("review_comments")
 }
 
@@ -1104,9 +1441,9 @@ model PluginPermissionGrant {
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-    @@index([accountId, pluginId, capability, scopeKind, scopeProjectId, scopeWorkspaceId, authorityKind, authorityMachineId, authorityInstallationId, status, updatedAt], map: "plugin_permission_grants_scope_idx")
-    @@index([accountId, requestId], map: "plugin_permission_grants_request_idx")
     @@unique([accountId, activeIdentityKey], map: "plugin_permission_grants_active_identity_key")
+    @@index([accountId(length: 64), pluginId(length: 64), capability(length: 64), scopeKind(length: 64), scopeProjectId(length: 64), scopeWorkspaceId(length: 64), authorityKind(length: 64), authorityMachineId(length: 64), authorityInstallationId(length: 64), status(length: 64), updatedAt], map: "plugin_permission_grants_scope_idx")
+    @@index([accountId, requestId], map: "plugin_permission_grants_request_idx")
     @@map("plugin_permission_grants")
 }
 
@@ -1124,6 +1461,7 @@ model PluginPermissionGrantRequest {
     requesterJson     String  @map("requester_json")
     reason            String
     status            String
+    activeIdentityKey String? @map("active_identity_key")
     grantId           String? @map("grant_id")
     createdByUserId   String? @map("created_by_user_id")
     decidedByUserId   String? @map("decided_by_user_id")
@@ -1133,7 +1471,8 @@ model PluginPermissionGrantRequest {
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-    @@index([accountId, pluginId, capability, scopeKind, scopeProjectId, scopeWorkspaceId, authorityKind, authorityMachineId, authorityInstallationId, status, updatedAt], map: "plugin_permission_requests_scope_idx")
+    @@unique([accountId, activeIdentityKey], map: "plugin_permission_requests_active_identity_key")
+    @@index([accountId(length: 64), pluginId(length: 64), capability(length: 64), scopeKind(length: 64), scopeProjectId(length: 64), scopeWorkspaceId(length: 64), authorityKind(length: 64), authorityMachineId(length: 64), authorityInstallationId(length: 64), status(length: 64), updatedAt], map: "plugin_permission_requests_scope_idx")
     @@index([accountId, grantId], map: "plugin_permission_requests_grant_idx")
     @@map("plugin_permission_grant_requests")
 }
@@ -1160,36 +1499,10 @@ model PluginPermissionGrantEvent {
 
     account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-    @@index([accountId, pluginId, capability, eventKind, createdAt], map: "plugin_permission_events_kind_idx")
+    @@index([accountId(length: 64), pluginId(length: 64), capability(length: 64), eventKind(length: 64), createdAt], map: "plugin_permission_events_kind_idx")
     @@index([accountId, requestId], map: "plugin_permission_events_request_idx")
     @@index([accountId, grantId], map: "plugin_permission_events_grant_idx")
     @@map("plugin_permission_grant_events")
-}
-
-model AccountPluginManifestProjection {
-    accountId                String  @map("account_id")
-    machineId                String  @map("machine_id")
-    pluginId                 String  @map("plugin_id")
-    schemaVersion            Int     @map("schema_version")
-    pluginVersion            String  @map("plugin_version")
-    displayName              String  @map("display_name")
-    manifestDigest           String  @map("manifest_digest")
-    sourceJson               String? @map("source_json")
-    requiredPermissionsJson  String  @map("required_permissions_json")
-    optionalPermissionsJson  String  @map("optional_permissions_json")
-    enabled                  Boolean @default(true)
-    disabledAt               BigInt? @map("disabled_at")
-    createdAt                BigInt  @map("created_at")
-    updatedAt                BigInt  @map("updated_at")
-
-    account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
-    machine Machine @relation(fields: [accountId, machineId], references: [accountId, id], onDelete: Cascade)
-
-    @@id([accountId, machineId, pluginId])
-    @@index([accountId, pluginId, enabled], map: "account_plugin_manifest_projection_plugin_lookup_idx")
-    @@index([accountId, machineId, pluginId, enabled], map: "account_plugin_manifest_projection_machine_lookup_idx")
-    @@index([accountId, enabled, updatedAt], map: "account_plugin_manifest_projection_list_idx")
-    @@map("account_plugin_manifest_projections")
 }
 
 //
@@ -1268,7 +1581,6 @@ model PublicSessionShare {
     createdAt         DateTime                  @default(now())
     updatedAt         DateTime                  @updatedAt
     accessLogs        PublicShareAccessLog[]
-    blockedUsers      PublicShareBlockedUser[]
 
     @@index([tokenHash])
     @@index([sessionId])
@@ -1289,19 +1601,4 @@ model PublicShareAccessLog {
     @@index([publicShareId])
     @@index([userId])
     @@index([accessedAt])
-}
-
-/// Blocked users for public session shares
-model PublicShareBlockedUser {
-    id            String             @id @default(cuid())
-    publicShareId String
-    publicShare   PublicSessionShare @relation(fields: [publicShareId], references: [id], onDelete: Cascade)
-    userId        String
-    user          Account            @relation("PublicShareBlockedUsers", fields: [userId], references: [id])
-    blockedAt     DateTime           @default(now())
-    reason        String?
-
-    @@unique([publicShareId, userId])
-    @@index([publicShareId])
-    @@index([userId])
 }

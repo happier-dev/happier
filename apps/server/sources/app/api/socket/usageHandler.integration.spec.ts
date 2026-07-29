@@ -19,7 +19,7 @@ vi.mock("@/utils/logging/log", () => ({ log: vi.fn() }));
 
 describe("usageHandler", () => {
     let harness: LightSqliteHarness;
-    let registerUsageHandler: (userId: string, socket: any) => void;
+    let registerUsageHandler: (userId: string, socket: any, connection: any) => void;
 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-usage-socket-", initAuth: false });
@@ -69,7 +69,7 @@ describe("usageHandler", () => {
         });
 
         const socket = createFakeSocket();
-        registerUsageHandler(account.id, socket as any);
+        registerUsageHandler(account.id, socket as any, { connectionType: "user-scoped", socket: socket as any, userId: account.id });
         const handler = getSocketHandler(socket, "usage-report");
 
         const firstCallback = vi.fn();
@@ -110,6 +110,7 @@ describe("usageHandler", () => {
 
         const analytics = await queryUsageAnalytics(account.id, {
             granularity: "day",
+            timeZoneOffsetMinutes: 0,
             includeSeries: true,
             topLimit: 20,
             filters: { sessionIds: [session.id] },
@@ -150,9 +151,62 @@ describe("usageHandler", () => {
         expect(emitEphemeral).toHaveBeenCalledTimes(2);
     });
 
+    it("rejects session-scoped usage reports whose target session does not match the socket binding", async () => {
+        const account = await db.account.create({
+            data: { publicKey: "pk-usage-socket-session-guard" },
+            select: { id: true },
+        });
+        const targetSession = await db.session.create({
+            data: {
+                accountId: account.id,
+                tag: "usage-socket-session-guard-target",
+                encryptionMode: "e2ee",
+                metadata: "ciphertext",
+                metadataVersion: 1,
+                agentState: null,
+                agentStateVersion: 0,
+                seq: 0,
+                pendingVersion: 0,
+                pendingCount: 0,
+                active: true,
+            },
+            select: { id: true },
+        });
+
+        const socket = createFakeSocket({
+            data: {
+                clientType: "session-scoped",
+                sessionScopedBinding: {
+                    sessionId: "s-bound",
+                    machineId: null,
+                    proof: "owner-session",
+                },
+            },
+        });
+        registerUsageHandler(account.id, socket as any, {
+            connectionType: "session-scoped",
+            socket: socket as any,
+            userId: account.id,
+            sessionId: "s-bound",
+        });
+
+        const callback = vi.fn();
+        await getSocketHandler(socket, "usage-report")({
+            key: "legacy-socket-cross-session",
+            sessionId: targetSession.id,
+            tokens: { total: 10 },
+            cost: { total: 0.1 },
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith({ success: false, error: "Forbidden" });
+        expect(await db.usageReport.count()).toBe(0);
+        expect(await db.usageEvent.count()).toBe(0);
+        expect(emitEphemeral).not.toHaveBeenCalled();
+    });
+
     it("does not throw when old clients omit the callback on invalid usage payloads", async () => {
         const socket = createFakeSocket();
-        registerUsageHandler("user-1", socket as any);
+        registerUsageHandler("user-1", socket as any, { connectionType: "user-scoped", socket: socket as any, userId: "user-1" });
         const handler = getSocketHandler(socket, "usage-report");
 
         await expect(handler({ key: "legacy-k1", tokens: { total: "bad" }, cost: { total: 1 } })).resolves.toBeUndefined();
@@ -160,5 +214,22 @@ describe("usageHandler", () => {
         expect(await db.usageReport.count()).toBe(0);
         expect(await db.usageEvent.count()).toBe(0);
         expect(emitEphemeral).not.toHaveBeenCalled();
+    });
+
+    it("rejects malformed nested legacy usage values before writing", async () => {
+        const socket = createFakeSocket();
+        registerUsageHandler("user-1", socket as any, { connectionType: "user-scoped", socket: socket as any, userId: "user-1" });
+        const callback = vi.fn();
+
+        await getSocketHandler(socket, "usage-report")({
+            key: "legacy-k1",
+            sessionId: "session-1",
+            tokens: { total: 1, input: "not-a-number" },
+            cost: { total: 1 },
+        }, callback);
+
+        expect(callback).toHaveBeenCalledWith({ success: false, error: "Invalid parameters" });
+        expect(await db.usageReport.count()).toBe(0);
+        expect(await db.usageEvent.count()).toBe(0);
     });
 });

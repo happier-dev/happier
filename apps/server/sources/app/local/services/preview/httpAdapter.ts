@@ -1,14 +1,25 @@
 import type { LocalServicePreviewResourceV1 } from "@happier-dev/protocol";
 
 import { DEFAULT_PREVIEW_MAX_RESPONSE_HEADER_BYTES } from "@/app/local/services/preview/limits";
+import { isPreviewControlledForwardingHeader } from "@/app/local/services/preview/headers";
+import { rewritePreviewResponseHeaders } from "@/app/local/services/preview/rewrites";
+import {
+    createPeerMediationFlowEvent,
+    createPeerMediationHttpRequestAbortedEvent,
+    createPeerMediationHttpRequestFinishedEvent,
+    createPeerMediationHttpRequestStartedEvent,
+    type PeerMediationObservabilityEmitter,
+} from "@/app/api/socket/peer/mediation/observability/events";
 
 const DEFAULT_PREVIEW_MAX_PROXY_HOPS = 5;
 const PREVIEW_HOP_HEADER = "x-happier-preview-hops";
 const HTTP_HEADER_TERMINATOR = "\r\n\r\n";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+let nextRequestSequence = 0;
 
 export type LocalServicePreviewHttpHeaders = Readonly<Record<string, string | readonly string[] | undefined>>;
+export type LocalServicePreviewHttpResponseHeaders = Readonly<Record<string, string | readonly string[]>>;
 
 export type LocalServicePreviewHttpRequest = Readonly<{
     method: string;
@@ -20,13 +31,15 @@ export type LocalServicePreviewHttpRequest = Readonly<{
 }>;
 
 export type LocalServicePreviewHttpResponseSink = Readonly<{
-    writeHead(statusCode: number, statusMessage: string, headers: Readonly<Record<string, string>>): void;
+    writeHead(statusCode: number, statusMessage: string, headers: LocalServicePreviewHttpResponseHeaders): void;
     write(chunk: Uint8Array): void | Promise<void>;
     end(): void | Promise<void>;
     destroy(error?: unknown): void;
 }>;
 
 export type LocalServicePreviewTunnelStream = Readonly<{
+    tunnelId: string;
+    substreamId: string;
     write(chunk: Uint8Array): void | Promise<void>;
     endWrite(): void | Promise<void>;
     read(): AsyncIterable<Uint8Array>;
@@ -58,12 +71,15 @@ export type ProxyLocalServicePreviewHttpRequestInput = Readonly<{
     response: LocalServicePreviewHttpResponseSink;
     openTunnel: OpenLocalServicePreviewTunnel;
     maxProxyHops?: number;
+    observability?: PeerMediationObservabilityEmitter;
+    observabilityAccountId?: string;
+    nowMs?: () => number;
 }>;
 
 type ParsedHeaderBlock = Readonly<{
     statusCode: number;
     statusMessage: string;
-    headers: Readonly<Record<string, string>>;
+    headers: LocalServicePreviewHttpResponseHeaders;
     bodyStart: Uint8Array<ArrayBufferLike>;
 }>;
 
@@ -125,6 +141,8 @@ function requestTargetPath(request: LocalServicePreviewHttpRequest): string {
 
 function shouldForwardRequestHeader(name: string): boolean {
     const normalized = headerName(name);
+    if (normalized === PREVIEW_HOP_HEADER) return false;
+    if (isPreviewControlledForwardingHeader(normalized)) return false;
     return ![
         "accept-encoding",
         "authorization",
@@ -201,13 +219,23 @@ function parseHeaderBlock(buffer: Uint8Array): ParsedHeaderBlock | null {
     const match = /^HTTP\/1\.[01]\s+(\d{3})(?:\s+(.*))?$/u.exec(statusLine ?? "");
     if (!match) return null;
 
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string | string[]> = {};
     for (const line of headerLines) {
         const separator = line.indexOf(":");
         if (separator <= 0) continue;
         const name = headerName(line.slice(0, separator));
         const value = line.slice(separator + 1).trim();
-        headers[name] = headers[name] ? `${headers[name]}, ${value}` : value;
+        if (name === "set-cookie") {
+            const existing = headers[name];
+            headers[name] = Array.isArray(existing)
+                ? [...existing, value]
+                : typeof existing === "string"
+                    ? [existing, value]
+                    : [value];
+            continue;
+        }
+        const existing = headers[name];
+        headers[name] = typeof existing === "string" ? `${existing}, ${value}` : value;
     }
 
     return {
@@ -227,16 +255,11 @@ function responseHeaderTooLarge(buffer: Uint8Array): boolean {
 }
 
 function responseHeadersForPreview(
-    _preview: LocalServicePreviewResourceV1,
-    headers: Readonly<Record<string, string>>,
-): Readonly<Record<string, string>> {
-    const out: Record<string, string> = {};
-    for (const [name, value] of Object.entries(headers)) {
-        if (name === "connection" || name === "transfer-encoding") continue;
-        if (name === "set-cookie") continue;
-        out[name] = value;
-    }
-    return out;
+    preview: LocalServicePreviewResourceV1,
+    request: LocalServicePreviewHttpRequest,
+    headers: LocalServicePreviewHttpResponseHeaders,
+): LocalServicePreviewHttpResponseHeaders {
+    return rewritePreviewResponseHeaders({ preview, request, headers });
 }
 
 async function writeRequest(input: Readonly<{
@@ -267,6 +290,13 @@ async function forwardResponse(input: Readonly<{
     request: LocalServicePreviewHttpRequest;
     response: LocalServicePreviewHttpResponseSink;
     tunnel: LocalServicePreviewTunnelStream;
+    observability?: PeerMediationObservabilityEmitter;
+    observabilityAccountId: string;
+    requestId: string;
+    tunnelId: string;
+    substreamId: string;
+    startedAtMs: number;
+    nowMs: () => number;
 }>): Promise<ProxyLocalServicePreviewHttpRequestResult> {
     let parsed: ParsedHeaderBlock | null = null;
     let buffered: Uint8Array<ArrayBufferLike> = new Uint8Array();
@@ -288,6 +318,20 @@ async function forwardResponse(input: Readonly<{
     for await (const chunk of input.tunnel.read()) {
         if (input.request.signal?.aborted) {
             await input.tunnel.abort("client_aborted");
+            input.observability?.emit(createPeerMediationHttpRequestAbortedEvent({
+                accountId: input.observabilityAccountId,
+                machineId: input.preview.machineId,
+                previewId: input.preview.previewId,
+                requestId: input.requestId,
+                tunnelId: input.tunnelId,
+                substreamId: input.substreamId,
+                method: input.request.method,
+                url: requestTargetPath(input.request),
+                reasonCode: "client_aborted",
+                durationMs: Math.max(0, input.nowMs() - input.startedAtMs),
+                responseBytes: responseBodyBytes,
+                nowMs: input.nowMs(),
+            }));
             return { ok: false, reasonCode: "upstream_stream_failed" };
         }
 
@@ -303,7 +347,7 @@ async function forwardResponse(input: Readonly<{
             input.response.writeHead(
                 parsed.statusCode,
                 parsed.statusMessage,
-                responseHeadersForPreview(input.preview, parsed.headers),
+                responseHeadersForPreview(input.preview, input.request, parsed.headers),
             );
             if (!(await writeBody(parsed.bodyStart))) {
                 return { ok: false, reasonCode: "response_body_too_large" };
@@ -323,12 +367,36 @@ async function forwardResponse(input: Readonly<{
     }
 
     await input.response.end();
+    input.observability?.emit(createPeerMediationHttpRequestFinishedEvent({
+        accountId: input.observabilityAccountId,
+        machineId: input.preview.machineId,
+        previewId: input.preview.previewId,
+        requestId: input.requestId,
+        tunnelId: input.tunnelId,
+        substreamId: input.substreamId,
+        method: input.request.method,
+        url: requestTargetPath(input.request),
+        statusCode: parsed.statusCode,
+        durationMs: Math.max(0, input.nowMs() - input.startedAtMs),
+        responseBytes: responseBodyBytes,
+        nowMs: input.nowMs(),
+    }));
     return { ok: true };
+}
+
+function nextRequestId(previewId: string): string {
+    nextRequestSequence += 1;
+    return `${previewId}:http:${nextRequestSequence}`;
 }
 
 export async function proxyLocalServicePreviewHttpRequest(
     input: ProxyLocalServicePreviewHttpRequestInput,
 ): Promise<ProxyLocalServicePreviewHttpRequestResult> {
+    const nowMs = input.nowMs ?? Date.now;
+    const startedAtMs = nowMs();
+    const requestId = nextRequestId(input.preview.previewId);
+    const observabilityAccountId = input.observabilityAccountId ?? "unknown";
+
     if (!isMethodAllowed(input.preview, input.request.method)) {
         input.response.writeHead(405, "Method Not Allowed", {});
         await input.response.end();
@@ -348,6 +416,20 @@ export async function proxyLocalServicePreviewHttpRequest(
     }
 
     const tunnel = await input.openTunnel({ preview: input.preview });
+    if (input.observability) {
+        input.observability.emit(createPeerMediationHttpRequestStartedEvent({
+            accountId: observabilityAccountId,
+            machineId: input.preview.machineId,
+            previewId: input.preview.previewId,
+            requestId,
+            tunnelId: tunnel.tunnelId,
+            substreamId: tunnel.substreamId,
+            method: input.request.method,
+            url: requestTargetPath(input.request),
+            headers: input.request.headers,
+            nowMs: startedAtMs,
+        }));
+    }
     try {
         const writeResult = await writeRequest({
             preview: input.preview,
@@ -360,6 +442,19 @@ export async function proxyLocalServicePreviewHttpRequest(
                 await input.response.end();
                 return { ok: false, reasonCode: "request_body_too_large" };
             }
+            input.observability?.emit(createPeerMediationHttpRequestAbortedEvent({
+                accountId: observabilityAccountId,
+                machineId: input.preview.machineId,
+                previewId: input.preview.previewId,
+                requestId,
+                tunnelId: tunnel.tunnelId,
+                substreamId: tunnel.substreamId,
+                method: input.request.method,
+                url: requestTargetPath(input.request),
+                reasonCode: writeResult.reasonCode,
+                durationMs: Math.max(0, nowMs() - startedAtMs),
+                nowMs: nowMs(),
+            }));
             input.response.destroy(new Error(writeResult.reasonCode));
             return { ok: false, reasonCode: "upstream_stream_failed" };
         }
@@ -368,10 +463,27 @@ export async function proxyLocalServicePreviewHttpRequest(
             request: input.request,
             response: input.response,
             tunnel,
+            observability: input.observability,
+            observabilityAccountId,
+            requestId,
+            tunnelId: tunnel.tunnelId,
+            substreamId: tunnel.substreamId,
+            startedAtMs,
+            nowMs,
         });
     } catch (error) {
         input.response.destroy(error);
         await tunnel.abort("preview_adapter_error");
+        input.observability?.emit(createPeerMediationFlowEvent({
+            accountId: observabilityAccountId,
+            machineId: input.preview.machineId,
+            flowKind: "tcp_tunnel",
+            flowId: tunnel.tunnelId,
+            kind: "flow.errored",
+            reasonCode: "preview_adapter_error",
+            nowMs: nowMs(),
+            metadata: { requestId },
+        }));
         return { ok: false, reasonCode: "upstream_stream_failed" };
     } finally {
         await tunnel.close();

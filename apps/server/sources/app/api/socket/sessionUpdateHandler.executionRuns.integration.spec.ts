@@ -572,7 +572,7 @@ describe("sessionUpdateHandler (transcript-stream-segment)", () => {
                         role: "agent",
                         content: {
                             type: "acp",
-                            provider: "codex",
+                            agentId: "codex",
                             data: { type: "message", message: "Hello" },
                         },
                         meta: {

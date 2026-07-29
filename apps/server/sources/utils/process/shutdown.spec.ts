@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 async function loadShutdownModule() {
     vi.resetModules();
@@ -6,8 +6,20 @@ async function loadShutdownModule() {
 }
 
 describe("shutdown", () => {
+    const originalShutdownDeadlineMs = process.env.HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS;
+
     beforeEach(() => {
         vi.resetModules();
+    });
+
+    afterEach(() => {
+        if (originalShutdownDeadlineMs === undefined) {
+            delete process.env.HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS;
+        } else {
+            process.env.HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS = originalShutdownDeadlineMs;
+        }
+        vi.useRealTimers();
+        vi.restoreAllMocks();
     });
 
     it("awaitShutdown resolves when shutdown is initiated programmatically", async () => {
@@ -88,5 +100,56 @@ describe("shutdown", () => {
         expect(order[0]).toBe("keepAlive:work:start");
         // Ensure keepAlive operation finishes before db handler runs.
         expect(order).toEqual(["keepAlive:work:start", "keepAlive:work:done", "db:start"]);
+    });
+
+    it("forces process exit when shutdown handlers exceed the configured deadline", async () => {
+        vi.useFakeTimers();
+        process.env.HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS = "25";
+        const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+        const { initiateShutdown, onShutdown } = await loadShutdownModule();
+        onShutdown("hung", async () => {
+            await new Promise(() => {});
+        });
+
+        void initiateShutdown("test");
+        await vi.advanceTimersByTimeAsync(24);
+        expect(exitSpy).not.toHaveBeenCalled();
+
+        await vi.advanceTimersByTimeAsync(1);
+        expect(exitSpy).toHaveBeenCalledWith(0);
+    });
+
+    it("clears the shutdown deadline when handlers finish before it fires", async () => {
+        vi.useFakeTimers();
+        process.env.HAPPIER_SERVER_SHUTDOWN_DEADLINE_MS = "50";
+        const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+
+        const { initiateShutdown, onShutdown } = await loadShutdownModule();
+        onShutdown("fast", async () => {});
+
+        await initiateShutdown("test");
+        await vi.advanceTimersByTimeAsync(50);
+
+        expect(exitSpy).not.toHaveBeenCalled();
+    });
+
+    it("runs api socket shutdown before api http shutdown and database teardown", async () => {
+        const { initiateShutdown, onShutdown } = await loadShutdownModule();
+        const order: string[] = [];
+
+        onShutdown("db", async () => {
+            order.push("db");
+        });
+        onShutdown("api:http", async () => {
+            order.push("api:http");
+        });
+        onShutdown("api:socket", async () => {
+            order.push("api:socket");
+        });
+
+        await initiateShutdown("test");
+
+        expect(order).toEqual(["api:socket", "api:http", "db"]);
     });
 });

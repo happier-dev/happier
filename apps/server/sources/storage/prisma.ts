@@ -312,6 +312,21 @@ export function isPrismaErrorCode(err: unknown, code: string): boolean {
     return (err as any).code === code;
 }
 
+export function isPrismaUniqueConstraintError(err: unknown): boolean {
+    if (isPrismaErrorCode(err, "P2002")) {
+        return true;
+    }
+    if (!isPrismaErrorCode(err, "P2010")) {
+        return false;
+    }
+    const rawCode = (err as { meta?: { code?: unknown } }).meta?.code;
+    return rawCode === 1062
+        || rawCode === 2067
+        || rawCode === "1062"
+        || rawCode === "2067"
+        || rawCode === "23505";
+}
+
 type SqliteJournalMode = "WAL" | "DELETE";
 type SqliteSynchronousMode = "OFF" | "NORMAL" | "FULL" | "EXTRA";
 

@@ -3,16 +3,28 @@ import { z } from "zod";
 
 import { buildMessageUpdatedUpdate, buildNewMessageUpdate, eventRouter } from "@/app/events/eventRouter";
 import { catchupFollowupFetchesCounter, catchupFollowupReturnedCounter } from "@/app/monitoring/metrics/index";
-import { SessionMessageRoleSchema, SessionStoredMessageContentSchema, type SessionMessageRole } from "@happier-dev/protocol";
+import {
+    SessionMessageDeliveryResolutionV1Schema,
+    SessionMessageRoleSchema,
+    SessionStoredMessageContentSchema,
+    SessionTranscriptObservationProvenanceV1Schema,
+    parseSessionMessageDeliveryResolutionV1,
+    type SessionMessageRole,
+} from "@happier-dev/protocol";
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { createSessionMessage } from "@/app/session/sessionWriteService";
 import { parseSessionMessageSidechainId } from "@/app/session/parseSessionMessageSidechainId";
+import {
+    buildSessionMessagePublicationWhere,
+    loadSessionTranscriptPublication,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { checkSessionAccess } from "@/app/share/accessControl";
 import { db } from "@/storage/db";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
+import { inTx } from "@/storage/inTx";
 import { type Fastify } from "../../types";
 
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
@@ -80,9 +92,13 @@ export function registerSessionMessageRoutes(app: Fastify) {
                         localId: z.string().nullable(),
                         sidechainId: z.string().nullable().optional(),
                         messageRole: SessionMessageRoleSchema.nullable().optional(),
+                        deliveryResolution: SessionMessageDeliveryResolutionV1Schema.optional(),
                         content: SessionStoredMessageContentSchema,
                         createdAt: z.number().int().min(0),
                         updatedAt: z.number().int().min(0),
+                        sourceCreatedAt: z.number().int().min(0).optional(),
+                        sourceUpdatedAt: z.number().int().min(0).optional(),
+                        transcriptObservationProvenance: SessionTranscriptObservationProvenanceV1Schema.optional(),
                     }).passthrough(),
                 }).passthrough(),
                 404: z.object({ error: z.string() }).passthrough(),
@@ -101,18 +117,28 @@ export function registerSessionMessageRoutes(app: Fastify) {
             return reply.code(404).send({ error: 'Session not found' });
         }
 
-        const row = await db.sessionMessage.findUnique({
-            where: { sessionId_localId: { sessionId, localId } },
-            select: {
-                id: true,
-                seq: true,
-                localId: true,
-                sidechainId: true,
-                messageRole: true,
-                content: true,
-                createdAt: true,
-                updatedAt: true,
-            },
+        const row = await inTx(async (tx) => {
+            const publication = await loadSessionTranscriptPublication(tx, sessionId);
+            return await tx.sessionMessage.findFirst({
+                where: buildSessionMessagePublicationWhere({
+                    where: { sessionId, localId },
+                    publication,
+                }),
+                select: {
+                    id: true,
+                    seq: true,
+                    localId: true,
+                    sidechainId: true,
+                    messageRole: true,
+                    content: true,
+                    deliveryResolution: true,
+                    createdAt: true,
+                    updatedAt: true,
+                    sourceCreatedAt: true,
+                    sourceUpdatedAt: true,
+                    transcriptObservationProvenance: true,
+                },
+            });
         });
         if (!row) {
             return reply.code(404).send({ error: 'Message not found' });
@@ -127,8 +153,18 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 ...(typeof row.sidechainId === "string" && row.sidechainId ? { sidechainId: row.sidechainId } : {}),
                 ...(messageRole ? { messageRole } : {}),
                 content: row.content,
+                ...(() => {
+                    const deliveryResolution = parseSessionMessageDeliveryResolutionV1(row.deliveryResolution);
+                    return deliveryResolution ? { deliveryResolution } : {};
+                })(),
                 createdAt: row.createdAt.getTime(),
                 updatedAt: row.updatedAt.getTime(),
+                ...(row.sourceCreatedAt ? { sourceCreatedAt: row.sourceCreatedAt.getTime() } : {}),
+                ...(row.sourceUpdatedAt ? { sourceUpdatedAt: row.sourceUpdatedAt.getTime() } : {}),
+                ...(() => {
+                    const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(row.transcriptObservationProvenance);
+                    return provenance.success ? { transcriptObservationProvenance: provenance.data } : {};
+                })(),
             },
         });
     });
@@ -220,20 +256,27 @@ export function registerSessionMessageRoutes(app: Fastify) {
             where.seq = { gt: afterSeq };
         }
 
-        const messages = await db.sessionMessage.findMany({
-            where,
-            orderBy: { seq: afterSeq !== undefined ? 'asc' : 'desc' },
-            take: limit + 1,
-            select: {
-                id: true,
-                seq: true,
-                localId: true,
-                sidechainId: true,
-                messageRole: true,
-                content: true,
-                createdAt: true,
-                updatedAt: true
-            }
+        const messages = await inTx(async (tx) => {
+            const publication = await loadSessionTranscriptPublication(tx, sessionId);
+            return await tx.sessionMessage.findMany({
+                where: buildSessionMessagePublicationWhere({ where, publication }),
+                orderBy: { seq: afterSeq !== undefined ? 'asc' : 'desc' },
+                take: limit + 1,
+                select: {
+                    id: true,
+                    seq: true,
+                    localId: true,
+                    sidechainId: true,
+                    messageRole: true,
+                    content: true,
+                    deliveryResolution: true,
+                    createdAt: true,
+                    updatedAt: true,
+                    sourceCreatedAt: true,
+                    sourceUpdatedAt: true,
+                    transcriptObservationProvenance: true,
+                },
+            });
         });
 
         const hasMore = messages.length > limit;
@@ -260,6 +303,10 @@ export function registerSessionMessageRoutes(app: Fastify) {
                 id: v.id,
                 seq: v.seq,
                 content: v.content,
+                ...(() => {
+                    const deliveryResolution = parseSessionMessageDeliveryResolutionV1(v.deliveryResolution);
+                    return deliveryResolution ? { deliveryResolution } : {};
+                })(),
                 localId: v.localId,
                 ...(typeof v.sidechainId === "string" && v.sidechainId ? { sidechainId: v.sidechainId } : {}),
                 ...(() => {
@@ -267,7 +314,13 @@ export function registerSessionMessageRoutes(app: Fastify) {
                     return messageRole ? { messageRole } : {};
                 })(),
                 createdAt: v.createdAt.getTime(),
-                updatedAt: v.updatedAt.getTime()
+                updatedAt: v.updatedAt.getTime(),
+                ...(v.sourceCreatedAt ? { sourceCreatedAt: v.sourceCreatedAt.getTime() } : {}),
+                ...(v.sourceUpdatedAt ? { sourceUpdatedAt: v.sourceUpdatedAt.getTime() } : {}),
+                ...(() => {
+                    const provenance = SessionTranscriptObservationProvenanceV1Schema.safeParse(v.transcriptObservationProvenance);
+                    return provenance.success ? { transcriptObservationProvenance: provenance.data } : {};
+                })()
             })),
             hasMore,
             nextBeforeSeq,
@@ -319,7 +372,12 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const body = request.body as Readonly<{ localId?: string; sidechainId?: string | null; messageRole?: unknown; sessionEventType?: "ready" } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
+        const body = request.body as Readonly<{
+            localId?: string;
+            sidechainId?: string | null;
+            messageRole?: unknown;
+            sessionEventType?: "ready";
+        } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
         const trustedSessionEventType = body.sessionEventType === "ready" ? "ready" : undefined;
         const localId = typeof body.localId === "string" ? body.localId : undefined;
         const parsedSidechainId = parseSessionMessageSidechainId(body.sidechainId, { emptyString: "invalid" });
@@ -372,7 +430,10 @@ export function registerSessionMessageRoutes(app: Fastify) {
 
         if (result.didWrite) {
             await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
-                const payload = buildNewMessageUpdate(result.message, sessionId, cursor, randomKeyNaked(12));
+                const options = result.attentionImpact ? { attentionImpact: result.attentionImpact } : undefined;
+                const payload = options
+                    ? buildNewMessageUpdate(result.message, sessionId, cursor, randomKeyNaked(12), options)
+                    : buildNewMessageUpdate(result.message, sessionId, cursor, randomKeyNaked(12));
                 eventRouter.emitUpdate({
                     userId: accountId,
                     payload,
@@ -385,7 +446,10 @@ export function registerSessionMessageRoutes(app: Fastify) {
             });
         } else if (result.didUpdate) {
             await Promise.all(result.participantCursors.map(async ({ accountId, cursor }) => {
-                const payload = buildMessageUpdatedUpdate(result.message, sessionId, cursor, randomKeyNaked(12));
+                const options = result.attentionImpact ? { attentionImpact: result.attentionImpact } : undefined;
+                const payload = options
+                    ? buildMessageUpdatedUpdate(result.message, sessionId, cursor, randomKeyNaked(12), options)
+                    : buildMessageUpdatedUpdate(result.message, sessionId, cursor, randomKeyNaked(12));
                 eventRouter.emitUpdate({
                     userId: accountId,
                     payload,

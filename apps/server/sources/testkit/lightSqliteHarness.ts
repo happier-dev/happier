@@ -24,6 +24,7 @@ export type LightSqliteHarness = {
 export type LightSqliteHarnessOptions = Readonly<{
     tempDirPrefix: string;
     tempDirBase?: string;
+    sqliteConnectionLimit?: number;
     initAuth?: boolean;
     initEncrypt?: boolean;
     initFiles?: boolean;
@@ -59,7 +60,13 @@ export async function createLightSqliteHarness(options: LightSqliteHarnessOption
         applyEnvValues({
             HAPPIER_DB_PROVIDER: "sqlite",
             HAPPY_DB_PROVIDER: "sqlite",
-            DATABASE_URL: renderPrismaCompatibleSqliteDatabaseUrl({ dbPath, platform: process.platform }),
+            DATABASE_URL: renderPrismaCompatibleSqliteDatabaseUrl({
+                dbPath,
+                platform: process.platform,
+                ...(options.sqliteConnectionLimit !== undefined
+                    ? { sqlite: { connectionLimit: options.sqliteConnectionLimit } }
+                    : {}),
+            }),
             HAPPY_SERVER_LIGHT_DATA_DIR: baseDir,
             HAPPIER_SERVER_LIGHT_DATA_DIR: baseDir,
             ...options.env,

@@ -2,11 +2,27 @@ import 'reflect-metadata';
 import 'dotenv/config';
 
 import { initializeServerSentry } from '@/app/monitoring/sentry';
+import {
+    applyLightDefaultEnv,
+    applyPackagedLightRuntimeSqliteDefaults,
+    resolveLightDataDir,
+} from '@/flavors/light/env';
+import { applySqliteMigrationsFromEnvironment } from '@/flavors/light/sqliteMigrations';
 import { registerProcessHandlers } from '@/utils/process/processHandlers';
 
-async function run(): Promise<void> {
+export async function runLightServerMain(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
     process.env.HAPPY_SERVER_FLAVOR = 'light';
     process.env.HAPPIER_SERVER_FLAVOR = 'light';
+
+    if (argv.includes('--migrate-only')) {
+        applyLightDefaultEnv(process.env);
+        applyPackagedLightRuntimeSqliteDefaults(process.env);
+        await applySqliteMigrationsFromEnvironment({
+            env: process.env,
+            dataDir: resolveLightDataDir(process.env),
+        });
+        return;
+    }
 
     // Initialize Sentry before importing the server runtime so auto-instrumentation can patch dependencies (Fastify, etc).
     initializeServerSentry(process.env);
@@ -16,7 +32,9 @@ async function run(): Promise<void> {
     await startServer('light');
 }
 
-void run().catch((e) => {
-    console.error(e);
-    process.exit(1);
-});
+if ((import.meta as ImportMeta & { main?: boolean }).main === true) {
+    void runLightServerMain().catch((e) => {
+        console.error(e);
+        process.exit(1);
+    });
+}

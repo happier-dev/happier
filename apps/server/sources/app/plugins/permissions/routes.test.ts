@@ -5,9 +5,6 @@ import { registerApiRoutes } from "@/app/api/api";
 import { registerPluginPermissionGrantRoutes } from "./routes";
 
 const ROUTES = [
-    "POST /v1/plugins/installations/manifests/list",
-    "POST /v1/plugins/installations/manifests/upsert",
-    "POST /v1/plugins/installations/manifests/delete",
     "POST /v1/plugins/permissions/grants/list",
     "POST /v1/plugins/permissions/grants/request",
     "POST /v1/plugins/permissions/grants/grant",

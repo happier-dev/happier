@@ -6,7 +6,8 @@ import {
     checkSessionAccess,
     createSessionRouteTestBuilder,
     resetSessionRouteMocks,
-    sessionMessageFindMany,
+    txSessionFindUnique as sessionFindUnique,
+    txSessionMessageFindMany as sessionMessageFindMany,
 } from "./sessionRoutes.testkit";
 
 describe("sessionRoutes v1 messages pagination", () => {
@@ -23,7 +24,7 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         const t0 = new Date(1);
         sessionMessageFindMany.mockResolvedValue([
-            { id: "m3", seq: 3, localId: null, sidechainId: null, messageRole: "user", content: { t: "encrypted", c: "c3" }, createdAt: t0, updatedAt: t0 },
+            { id: "m3", seq: 3, localId: null, sidechainId: null, messageRole: "user", content: { t: "encrypted", c: "c3" }, deliveryResolution: { v: 1, kind: "manual_handled" }, createdAt: t0, updatedAt: t0 },
             { id: "m4", seq: 4, localId: null, sidechainId: null, messageRole: "user", content: { t: "encrypted", c: "c4" }, createdAt: t0, updatedAt: t0 },
             { id: "m5", seq: 5, localId: null, sidechainId: null, messageRole: "user", content: { t: "encrypted", c: "c5" }, createdAt: t0, updatedAt: t0 },
         ]);
@@ -52,13 +53,38 @@ describe("sessionRoutes v1 messages pagination", () => {
 
         expect(res).toEqual({
             messages: [
-                { id: "m3", seq: 3, content: { t: "encrypted", c: "c3" }, localId: null, messageRole: "user", createdAt: 1, updatedAt: 1 },
+                { id: "m3", seq: 3, content: { t: "encrypted", c: "c3" }, localId: null, messageRole: "user", deliveryResolution: { v: 1, kind: "manual_handled" }, createdAt: 1, updatedAt: 1 },
                 { id: "m4", seq: 4, content: { t: "encrypted", c: "c4" }, localId: null, messageRole: "user", createdAt: 1, updatedAt: 1 },
             ],
             hasMore: true,
             nextBeforeSeq: null,
             nextAfterSeq: 4,
         });
+    });
+
+    it("intersects old-client pagination with the current operation's accepted sequence", async () => {
+        sessionFindUnique.mockResolvedValue({
+            currentStorageState: "server_partial",
+            acceptedThroughServerSeq: 4,
+            publishedThroughServerSeq: null,
+        });
+        sessionMessageFindMany.mockResolvedValue([]);
+
+        const route = await createSessionRouteTestBuilder("GET", "/v1/sessions/:sessionId/messages");
+        await route.invoke({
+            params: { sessionId: "s1" },
+            query: { afterSeq: 2, limit: 50 },
+        });
+
+        expect(sessionMessageFindMany).toHaveBeenCalledWith(
+            expect.objectContaining({
+                where: {
+                    sessionId: "s1",
+                    sidechainId: null,
+                    seq: { gt: 2, lte: 4 },
+                },
+            }),
+        );
     });
 
     it("includes legacy null-role rows in user role filters for encrypted history recovery", async () => {

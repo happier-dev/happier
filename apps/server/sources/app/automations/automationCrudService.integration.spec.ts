@@ -369,7 +369,7 @@ describe("automationCrudService (integration)", () => {
             data: {
                 tag: "unsupported-session",
                 accountId: account.id,
-                metadata: JSON.stringify({ flavor: "pi", piSessionId: "pi-session-1" }),
+                metadata: JSON.stringify({ flavor: "unknown-local-backend" }),
                 active: true,
             },
             select: { id: true },

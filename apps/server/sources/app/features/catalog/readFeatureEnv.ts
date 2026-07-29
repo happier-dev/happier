@@ -62,7 +62,6 @@ export type VoiceFeatureEnv = Readonly<{
 }>;
 
 export type ConnectedServicesFeatureEnv = Readonly<{
-  enabled: boolean;
   quotasEnabled: boolean;
   accountGroupsEnabled: boolean;
   accountFallbackEnabled: boolean;
@@ -134,13 +133,74 @@ export type MachineRpcFeatureEnv = Readonly<{
 }>;
 
 export type LocalServicesFeatureEnv = Readonly<{
+  // Core product gates (default-allow): the server is the gate for the user-facing product.
+  enabled: boolean;
+  managedEnabled: boolean;
+  launcherEnabled: boolean;
+  actionsEnabled: boolean;
+  actionsTerminateEnabled: boolean;
   inventoryEnabled: boolean;
+  // Exposure gates (default-off, fail-closed): genuinely server-impacting surfaces.
   previewEnabled: boolean;
   previewTokenTtlMs: number;
   previewHostOriginBaseDomain: string | null;
   publicPreviewEnabled: boolean;
   publicPolicy: LocalServicePublicPolicyV1;
+  publicAuditDependency: LocalServicePublicAuditDependencyEnv;
+  publicAuditTestSinkAllowed: boolean;
+  publicRateLimitDependency: LocalServicePublicRateLimitDependencyEnv;
+  publicRateLimitTestCheckerAllowed: boolean;
 }>;
+
+export type ProvidersFeatureEnv = Readonly<{
+  enabled: boolean;
+  localDiscoveryEnabled: boolean;
+  localModelManagementEnabled: boolean;
+}>;
+
+export type BrowserFeatureEnv = Readonly<{
+  // Core product gates (default-allow).
+  enabled: boolean;
+  viewTargetsEnabled: boolean;
+  internalEnabled: boolean;
+  // Capability-available surfaces (default-ALLOW per §13.4; the dangerous agent-initiated exercise
+  // is approval-gated, not flag-gated). The server can still disable any independently.
+  diagnosticsEnabled: boolean;
+  contextEnabled: boolean;
+  recordingEnabled: boolean;
+  automationEnabled: boolean;
+  // The managed sidecar stays the lone fail-closed exception (heavy binary, agent-CDP only).
+  sidecarEnabled: boolean;
+}>;
+
+export type PluginsFeatureEnv = Readonly<{
+  // Core platform + UI projection gates (default-allow).
+  enabled: boolean;
+  uiEnabled: boolean;
+  // Plugin UI tier kill-switches (server-represented + default-ALLOW per §4.1/§13.5.3). These are
+  // coarse server/build kill-switches only; per-plugin install/enable/trust/runtime derivation
+  // (5.1/5.2) governs actual availability. The finer devHotReload tier stays client + fail-closed.
+  uiHostedWebEnabled: boolean;
+  uiStructuredMessagesEnabled: boolean;
+  uiReactNativeBundlesEnabled: boolean;
+}>;
+
+export type DevicesFeatureEnv = Readonly<{
+  // Server-represented + default-allow (§4.1): viewing your own simulator. The live-stream +
+  // browser.viewTargets dependency closure still gates availability at the decision runtime.
+  enabled: boolean;
+  simulatorPreviewEnabled: boolean;
+}>;
+
+export type LocalServicePublicAuditDependencyEnv =
+  | Readonly<{ kind: 'none' }>
+  | Readonly<{ kind: 'test_dev' }>
+  | Readonly<{ kind: 'jsonl_file'; path: string }>;
+
+export type LocalServicePublicRateLimitDependencyEnv =
+  | Readonly<{ kind: 'none' }>
+  | Readonly<{ kind: 'test_dev' }>
+  | Readonly<{ kind: 'fixed_window'; maxRequests: number; windowMs: number }>;
 
 export type MachineLiveStreamFeatureEnv = Readonly<{
   directPeerEnabled: boolean;
@@ -161,6 +221,7 @@ export type PeerMediationFeatureEnv = Readonly<{
 
 export type TerminalFeatureEnv = Readonly<{
   embeddedPtyEnabled: boolean;
+  transportByteStreamEnabled: boolean;
 }>;
 
 export type SocialFriendsFeatureEnv = Readonly<{
@@ -261,6 +322,49 @@ function readTrimmedOptional(raw: string | undefined): string | null {
   return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
 }
 
+function readLocalServicePublicAuditDependency(
+  env: NodeJS.ProcessEnv,
+  allowTestDevDependency: boolean,
+): LocalServicePublicAuditDependencyEnv {
+  const sink = readTrimmedOptional(env[FEATURE_ENV_KEYS.localServicesPublicPreviewAuditSink])?.toLowerCase() ?? '';
+  if (sink === 'jsonl_file') {
+    const path = readTrimmedOptional(env[FEATURE_ENV_KEYS.localServicesPublicPreviewAuditLogPath]);
+    return path ? { kind: 'jsonl_file', path } : { kind: 'none' };
+  }
+  if (
+    allowTestDevDependency
+    && parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestAuditSink], false)
+  ) {
+    return { kind: 'test_dev' };
+  }
+  return { kind: 'none' };
+}
+
+function readLocalServicePublicRateLimitDependency(
+  env: NodeJS.ProcessEnv,
+  allowTestDevDependency: boolean,
+): LocalServicePublicRateLimitDependencyEnv {
+  const checker = readTrimmedOptional(env[FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitChecker])?.toLowerCase() ?? '';
+  if (checker === 'fixed_window') {
+    const maxRequests = readOptionalPositiveInt(
+      env[FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitMaxRequests],
+    );
+    const windowMs = readOptionalPositiveInt(
+      env[FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitWindowMs],
+    );
+    return maxRequests && windowMs
+      ? { kind: 'fixed_window', maxRequests, windowMs }
+      : { kind: 'none' };
+  }
+  if (
+    allowTestDevDependency
+    && parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPublicPreviewAllowTestRateLimitChecker], false)
+  ) {
+    return { kind: 'test_dev' };
+  }
+  return { kind: 'none' };
+}
+
 function normalizeIssuerDnLower(raw: string): string {
   return raw
     .trim()
@@ -353,7 +457,6 @@ export function readVoiceFeatureEnv(env: NodeJS.ProcessEnv): VoiceFeatureEnv {
 
 export function readConnectedServicesFeatureEnv(env: NodeJS.ProcessEnv): ConnectedServicesFeatureEnv {
   return {
-    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesEnabled], true),
     quotasEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesQuotasEnabled], true),
     accountGroupsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesAccountGroupsEnabled], true),
     accountFallbackEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.connectedServicesAccountFallbackEnabled], true),
@@ -545,11 +648,28 @@ export function readMachineTunnelFeatureEnv(env: NodeJS.ProcessEnv): MachineTunn
 }
 
 export function readLocalServicesFeatureEnv(env: NodeJS.ProcessEnv): LocalServicesFeatureEnv {
-  const previewEnabled = parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPreviewEnabled], false);
+  // PRV-1: private preview is the user's OWN dev server reached over loopback — there is no
+  // internet exposure, proxy, or tunnel involved — so it defaults ON (VS Code/Codespaces
+  // "private auto-forward"). `publicPreview` (real internet exposure) stays fail-closed
+  // default-off below: that is the explicit, per-use line.
+  const previewEnabled = parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPreviewEnabled], true);
   const publicPreviewEnabled = parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPublicPreviewEnabled], false);
+  const allowLocalPublicPreviewTestDependencies = env.NODE_ENV !== 'production';
+  const publicAuditDependency = readLocalServicePublicAuditDependency(env, allowLocalPublicPreviewTestDependencies);
+  const publicRateLimitDependency = readLocalServicePublicRateLimitDependency(env, allowLocalPublicPreviewTestDependencies);
+
+  // Core product gates default to allow (the server is the gate); inventory no longer derives
+  // from preview. Private `preview` defaults ON (loopback only); the `publicPreview` exposure
+  // gate stays fail-closed default-off.
+  const enabled = parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesEnabled], true);
 
   return {
-    inventoryEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesInventoryEnabled], previewEnabled),
+    enabled,
+    managedEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesManagedEnabled], true),
+    launcherEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesLauncherEnabled], true),
+    actionsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesActionsEnabled], true),
+    actionsTerminateEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesActionsTerminateEnabled], false),
+    inventoryEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesInventoryEnabled], true),
     previewEnabled,
     previewTokenTtlMs: parseIntEnv(
       env[FEATURE_ENV_KEYS.localServicesPreviewTokenTtlMs],
@@ -567,6 +687,70 @@ export function readLocalServicesFeatureEnv(env: NodeJS.ProcessEnv): LocalServic
       auditRequired: parseBooleanEnv(env[FEATURE_ENV_KEYS.localServicesPublicPreviewAuditRequired], true),
       rateLimitProfileIds: parseCsvList(env[FEATURE_ENV_KEYS.localServicesPublicPreviewRateLimitProfileIds]),
     },
+    publicAuditDependency,
+    publicAuditTestSinkAllowed: publicAuditDependency.kind === 'test_dev',
+    publicRateLimitDependency,
+    publicRateLimitTestCheckerAllowed: publicRateLimitDependency.kind === 'test_dev',
+  };
+}
+
+export function readProvidersFeatureEnv(env: NodeJS.ProcessEnv): ProvidersFeatureEnv {
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.providersEnabled], true),
+    localDiscoveryEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.providersLocalDiscoveryEnabled], true),
+    localModelManagementEnabled: parseBooleanEnv(
+      env[FEATURE_ENV_KEYS.providersLocalModelManagementEnabled],
+      true,
+    ),
+  };
+}
+
+export function readBrowserFeatureEnv(env: NodeJS.ProcessEnv): BrowserFeatureEnv {
+  // One default posture (FINALIZATION-PLAN §4.1/§13.4): the browser capabilities are available by
+  // default; the dangerous *agent-initiated* exercise stays approval-gated by the active agent
+  // approval floor (`AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS`), and user-initiated forms never
+  // prompt. So these gates are server-represented + default-ALLOW (the server can still disable any
+  // of them independently for its users via its own bit):
+  //   - diagnostics: read-only devtools on your own page (IMMEDIATE — split out of the dangerous
+  //     group per §13.4; needs no approval prerequisite).
+  //   - automation / context / recording: the *capability* is available by default now that the
+  //     ActionExecutor front door + surface-keyed `session_agent` approval defaults have landed
+  //     (Phase 3.1/3.2/3.4). Flipping them ON does NOT let an agent automate without consent — the
+  //     agent path is approval-gated; only user-initiated forms run unprompted.
+  // The managed Chromium sidecar is now source-backed and server-represented + default-ALLOW like
+  // the rest of the browser branch. Servers can still explicitly disable `browser.sidecar`.
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserEnabled], true),
+    viewTargetsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserViewTargetsEnabled], true),
+    internalEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserInternalEnabled], true),
+    sidecarEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserSidecarEnabled], true),
+    diagnosticsEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserDiagnosticsEnabled], true),
+    contextEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserContextEnabled], true),
+    recordingEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserRecordingEnabled], true),
+    automationEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.browserAutomationEnabled], true),
+  };
+}
+
+export function readPluginsFeatureEnv(env: NodeJS.ProcessEnv): PluginsFeatureEnv {
+  // Core plugin platform + UI projection default to allow (server is the gate). The plugin UI tiers
+  // are also server-represented + default-ALLOW kill-switches (§4.1/§13.5.3): the server/build can
+  // disable a tier for its users, but per-plugin install/enable/trust/runtime derivation (5.1/5.2)
+  // governs actual render. The finer reactNativeBundles.devHotReload tier stays client/fail-closed.
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsEnabled], true),
+    uiEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiEnabled], true),
+    uiHostedWebEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiHostedWebEnabled], true),
+    uiStructuredMessagesEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiStructuredMessagesEnabled], true),
+    uiReactNativeBundlesEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.pluginsUiReactNativeBundlesEnabled], true),
+  };
+}
+
+export function readDevicesFeatureEnv(env: NodeJS.ProcessEnv): DevicesFeatureEnv {
+  // Server-represented + default-allow (§4.1): the device/simulator preview product is on by
+  // default (viewing your own simulator); the server/build can disable it for its users.
+  return {
+    enabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.devicesEnabled], true),
+    simulatorPreviewEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.devicesSimulatorPreviewEnabled], true),
   };
 }
 
@@ -619,8 +803,11 @@ export function readMachineLiveStreamFeatureEnv(env: NodeJS.ProcessEnv): Machine
 }
 
 export function readTerminalFeatureEnv(env: NodeJS.ProcessEnv): TerminalFeatureEnv {
+  const embeddedPtyEnabled = parseBooleanEnv(env[FEATURE_ENV_KEYS.terminalEmbeddedPtyEnabled], true);
   return {
-    embeddedPtyEnabled: parseBooleanEnv(env[FEATURE_ENV_KEYS.terminalEmbeddedPtyEnabled], true),
+    embeddedPtyEnabled,
+    transportByteStreamEnabled: embeddedPtyEnabled
+      && parseBooleanEnv(env[FEATURE_ENV_KEYS.terminalTransportByteStreamEnabled], true),
   };
 }
 

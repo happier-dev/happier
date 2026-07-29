@@ -1,0 +1,3 @@
+ALTER TABLE `Session`
+ADD COLUMN `ownerMetadata` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NULL,
+ADD COLUMN `metadataLayoutVersion` INTEGER NOT NULL DEFAULT 0;

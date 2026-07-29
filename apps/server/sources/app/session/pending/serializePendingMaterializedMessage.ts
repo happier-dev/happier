@@ -1,9 +1,17 @@
-import type { MaterializeNextPendingMessageResult } from "@/app/session/pending/materializeNextPendingMessage";
+import type { PendingProviderAction, PendingRequestedActionV1, SessionMessageDeliveryResolutionV1 } from "@happier-dev/protocol";
 
-type MaterializedPendingMessage = Extract<
-    MaterializeNextPendingMessageResult,
-    { ok: true; didMaterialize: true }
->["message"];
+type MaterializedPendingMessage = Readonly<{
+    id: string | null;
+    seq: number | null;
+    localId: string;
+    messageRole: "user" | "agent" | "event" | "unknown" | null;
+    content: PrismaJson.SessionMessageContent;
+    requestedAction?: PendingRequestedActionV1;
+    providerAction?: PendingProviderAction;
+    deliveryResolution?: SessionMessageDeliveryResolutionV1 | null;
+    createdAt: Date;
+    updatedAt: Date;
+}>;
 
 export function serializePendingMaterializedMessage(message: MaterializedPendingMessage) {
     return {
@@ -12,6 +20,9 @@ export function serializePendingMaterializedMessage(message: MaterializedPending
         localId: message.localId,
         ...(typeof message.messageRole === "string" ? { messageRole: message.messageRole } : {}),
         content: message.content,
+        ...(message.requestedAction ? { requestedAction: message.requestedAction } : {}),
+        ...(message.providerAction ? { providerAction: message.providerAction } : {}),
+        ...(message.deliveryResolution ? { deliveryResolution: message.deliveryResolution } : {}),
         createdAt: message.createdAt.getTime(),
         updatedAt: message.updatedAt.getTime(),
     };

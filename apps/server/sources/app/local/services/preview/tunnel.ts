@@ -14,13 +14,14 @@ import {
 
 import { readMachineTunnelFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { resolvePeerMediationGrantSigningConfig } from "@/app/machines/peer/mediation/mintDirectRouteGrantV1";
-import { mintPeerTcpTunnelRelayAuthorizationV1 } from "@/app/machines/peer/mediation/tunnel";
+import { mintPeerTcpTunnelRelayAuthorizationV2 } from "@/app/machines/peer/mediation/tunnel";
 import type {
     LocalServicePreviewTunnelStream,
     OpenLocalServicePreviewTunnel,
 } from "@/app/local/services/preview/httpAdapter";
 
 export type PeerTcpTunnelRelayTransport = Readonly<{
+    relaySocketId: string;
     send(event: typeof PEER_TCP_TUNNEL_RELAY_SOCKET_EVENT, envelope: PeerTcpTunnelRelayEnvelope): void;
     subscribe(handler: (envelope: PeerTcpTunnelRelayEnvelope) => void): () => void;
     close(): void;
@@ -57,7 +58,7 @@ type PreviewSubstream = {
 };
 
 type QueuedRead =
-    | Readonly<{ kind: "chunk"; chunk: Uint8Array }>
+    | Readonly<{ kind: "chunk"; chunk: Uint8Array; onConsumed?: () => void }>
     | Readonly<{ kind: "done" }>
     | Readonly<{ kind: "error"; error: unknown }>;
 
@@ -66,9 +67,9 @@ class AsyncByteQueue implements AsyncIterable<Uint8Array> {
     private readonly waiters: ((item: QueuedRead) => void)[] = [];
     private closed = false;
 
-    push(chunk: Uint8Array): void {
+    push(chunk: Uint8Array, onConsumed?: () => void): void {
         if (this.closed) return;
-        this.publish({ kind: "chunk", chunk });
+        this.publish({ kind: "chunk", chunk, onConsumed });
     }
 
     close(): void {
@@ -105,6 +106,7 @@ class AsyncByteQueue implements AsyncIterable<Uint8Array> {
             const item = await this.nextItem();
             if (item.kind === "chunk") {
                 yield item.chunk;
+                item.onConsumed?.();
                 continue;
             }
             if (item.kind === "error") {
@@ -157,7 +159,7 @@ export function createLocalServicePreviewTunnelOpener(
         sendEnvelope(session, {
             v: 2,
             scopeUserId: session.accountId,
-            sender: { kind: "user" },
+            sender: { kind: "user", socketId: session.transport.relaySocketId },
             recipient: { kind: "machine", machineId: session.preview.machineId },
             encoding: PEER_TCP_TUNNEL_BINARY_FRAME_ENCODING_V2,
             frame: encodePeerTcpTunnelBinaryFrameV2({ header, payload }),
@@ -213,9 +215,11 @@ export function createLocalServicePreviewTunnelOpener(
         }
 
         const tunnelId = `preview_tunnel_${generateId()}`;
-        const authorization = mintPeerTcpTunnelRelayAuthorizationV1({
+        const transport = input.createRelayTransport({ accountId });
+        const authorization = mintPeerTcpTunnelRelayAuthorizationV2({
             accountId,
             targetMachineId: preview.machineId,
+            relaySocketId: transport.relaySocketId,
             destination: {
                 host: preview.target.host,
                 port: preview.target.port,
@@ -244,10 +248,10 @@ export function createLocalServicePreviewTunnelOpener(
             },
         });
         if (!authorization.ok) {
+            transport.close();
             throw createTunnelUnavailableError(authorization.reasonCode);
         }
 
-        const transport = input.createRelayTransport({ accountId });
         const session: PreviewTunnelSession = {
             accountId,
             preview,
@@ -289,7 +293,7 @@ export function createLocalServicePreviewTunnelOpener(
         sendEnvelope(session, {
             v: 1,
             scopeUserId: accountId,
-            sender: { kind: "user" },
+            sender: { kind: "user", socketId: transport.relaySocketId },
             recipient: { kind: "machine", machineId: preview.machineId },
             frame: {
                 v: 1,
@@ -345,10 +349,11 @@ export function createLocalServicePreviewTunnelOpener(
         }
 
         async function waitForClientWindow(): Promise<void> {
-            if (availableClientWindow() > 0 || closed) return;
-            await new Promise<void>((resolve) => {
-                waitForClientCredit = resolve;
-            });
+            while (availableClientWindow() <= 0 && !closed) {
+                await new Promise<void>((resolve) => {
+                    waitForClientCredit = resolve;
+                });
+            }
         }
 
         function releaseStream(): void {
@@ -388,16 +393,19 @@ export function createLocalServicePreviewTunnelOpener(
                         return;
                     }
                     daemonSequence += decoded.payload.byteLength;
-                    queue.push(decoded.payload);
-                    sendBinaryFrame(session, {
-                        version: 2,
-                        kind: "ack",
-                        tunnelId: session.tunnelId,
-                        substreamId,
-                        direction: "daemon_to_client",
-                        ack: daemonSequence,
-                        window: PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES,
-                        payloadLength: 0,
+                    const ackSequence = daemonSequence;
+                    queue.push(decoded.payload, () => {
+                        if (session.closed) return;
+                        sendBinaryFrame(session, {
+                            version: 2,
+                            kind: "ack",
+                            tunnelId: session.tunnelId,
+                            substreamId,
+                            direction: "daemon_to_client",
+                            ack: ackSequence,
+                            window: PEER_TCP_TUNNEL_DEFAULT_INITIAL_WINDOW_BYTES,
+                            payloadLength: 0,
+                        });
                     });
                     return;
                 }
@@ -427,7 +435,10 @@ export function createLocalServicePreviewTunnelOpener(
             for (let offset = 0; offset < chunk.byteLength;) {
                 await waitForClientWindow();
                 if (closed) return;
-                const available = Math.max(1, availableClientWindow());
+                const available = availableClientWindow();
+                if (available <= 0) {
+                    continue;
+                }
                 const length = Math.min(
                     chunk.byteLength - offset,
                     available,
@@ -449,6 +460,8 @@ export function createLocalServicePreviewTunnelOpener(
         }
 
         const tunnelStream: LocalServicePreviewTunnelStream = {
+            tunnelId: session.tunnelId,
+            substreamId,
             write: async (chunk) => {
                 await sendClientData(normalizeChunk(chunk));
             },

@@ -27,6 +27,8 @@ CREATE TABLE "review_comments" (
     "suggested_fix_json" TEXT,
     "metadata_json" TEXT,
     "tombstone_json" TEXT,
+    "create_client_mutation_id" TEXT,
+    "create_request_fingerprint" TEXT,
     "server_revision" INTEGER NOT NULL,
     "created_at" BIGINT NOT NULL,
     "updated_at" BIGINT NOT NULL,
@@ -70,3 +72,6 @@ ON "review_comment_events"("comment_id", "server_revision");
 
 CREATE INDEX "review_comment_events_account_project_idx"
 ON "review_comment_events"("account_id", "project_id", "created_at");
+
+CREATE UNIQUE INDEX "review_comments_account_create_mutation_key"
+ON "review_comments"("account_id", "create_client_mutation_id");

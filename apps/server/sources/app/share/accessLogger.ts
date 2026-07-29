@@ -1,5 +1,7 @@
 import { db } from "@/storage/db";
 
+type PublicShareAccessLogWriter = Pick<typeof db, "publicShareAccessLog">;
+
 /**
  * Log access to a direct session share
  *
@@ -36,9 +38,10 @@ export async function logPublicShareAccess(
     publicShareId: string,
     userId: string | null,
     ipAddress?: string,
-    userAgent?: string
+    userAgent?: string,
+    writer: PublicShareAccessLogWriter = db,
 ): Promise<void> {
-    await db.publicShareAccessLog.create({
+    await writer.publicShareAccessLog.create({
         data: {
             publicShareId,
             userId: userId ?? null,

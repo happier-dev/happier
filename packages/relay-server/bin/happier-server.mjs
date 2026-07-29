@@ -7,8 +7,8 @@ import { spawn } from 'node:child_process';
 import { resolveServerReleaseAssets, resolveUiWebReleaseAssets } from '../src/releaseAssets.mjs';
 import { resolveRunnerCacheRoot, resolveServerRunnerTarget } from '../src/target.mjs';
 import { parseRunnerInvocation } from '../src/runnerConfig.mjs';
+import { extractReleaseArchiveIntoCache } from '../src/archiveCache.mjs';
 import { downloadVerifiedReleaseAssetBundle } from '@happier-dev/release-runtime/verifiedDownload';
-import { planArchiveExtraction } from '@happier-dev/release-runtime/extractPlan';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
 
 const OWNER = 'happier-dev';
@@ -80,18 +80,10 @@ async function main() {
         userAgent: 'happier-server-runner',
       });
 
-      const plan = planArchiveExtraction({
+      await extractReleaseArchiveIntoCache({
         archiveName: downloaded.archiveName,
         archivePath: downloaded.archivePath,
-        destDir: cacheDir,
-        os: target.os,
-      });
-
-      // Extract archive into cache (archive root contains the artifactStem folder).
-      const extract = spawn(plan.command.cmd, plan.command.args, { stdio: 'inherit' });
-      await new Promise((resolve, reject) => {
-        extract.on('error', reject);
-        extract.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${plan.command.cmd} exited with ${code}`))));
+        cacheDir,
       });
     }
 
@@ -127,17 +119,10 @@ async function main() {
           userAgent: 'happier-server-runner',
         });
 
-        const uiPlan = planArchiveExtraction({
+        await extractReleaseArchiveIntoCache({
           archiveName: uiDownloaded.archiveName,
           archivePath: uiDownloaded.archivePath,
-          destDir: uiCacheDir,
-          os: target.os,
-        });
-
-        const extractUi = spawn(uiPlan.command.cmd, uiPlan.command.args, { stdio: 'inherit' });
-        await new Promise((resolve, reject) => {
-          extractUi.on('error', reject);
-          extractUi.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`${uiPlan.command.cmd} exited with ${code}`))));
+          cacheDir: uiCacheDir,
         });
       }
 

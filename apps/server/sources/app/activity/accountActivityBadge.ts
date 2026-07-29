@@ -1,8 +1,14 @@
 import { db } from "@/storage/db";
+import {
+    applySessionTranscriptPublicationCeilingToProjection,
+    SESSION_TRANSCRIPT_PUBLICATION_SELECT,
+    type SessionTranscriptPublicationFields,
+} from "@/app/session/sessionTranscriptPublicationPolicy";
 
-export type SessionActivityBadgeInputs = Readonly<{
+export type SessionActivityBadgeInputs = SessionTranscriptPublicationFields & Readonly<{
     seq?: number | null;
     pendingCount?: number | null;
+    pendingBlockedCount?: number | null;
     lastViewedSessionSeq?: number | null;
     pendingPermissionRequestCount?: number | null;
     pendingUserActionRequestCount?: number | null;
@@ -15,7 +21,13 @@ export type SessionActivityBadgeInputs = Readonly<{
 type SessionActivityBadgeRow = Readonly<{
     accountId: string;
     seq: number | null;
+    currentStorageState: string;
+    acceptedThroughServerSeq: number | null;
+    materializationPublicationId: string | null;
+    materializedThroughSourceAt: bigint | null;
+    publishedThroughServerSeq: number | null;
     pendingCount: number | null;
+    pendingBlockedCount: number | null;
     lastViewedSessionSeq: number | null;
     pendingPermissionRequestCount: number | null;
     pendingUserActionRequestCount: number | null;
@@ -29,12 +41,21 @@ export function computeSessionContributesToActivityBadge(session: SessionActivit
     if (session.active === false) return false;
     if (session.archivedAt) return false;
 
-    const seq = typeof session.seq === "number" ? session.seq : 0;
-    const lastViewedSessionSeq = typeof session.lastViewedSessionSeq === "number" ? session.lastViewedSessionSeq : null;
+    const publicationProjection = applySessionTranscriptPublicationCeilingToProjection({
+        seq: typeof session.seq === "number" ? session.seq : 0,
+        lastViewedSessionSeq:
+            typeof session.lastViewedSessionSeq === "number"
+                ? session.lastViewedSessionSeq
+                : session.lastViewedSessionSeq ?? null,
+    }, session);
+    const seq = publicationProjection.seq;
+    const lastViewedSessionSeq = publicationProjection.lastViewedSessionSeq;
     const pendingPermissionRequestCount =
         typeof session.pendingPermissionRequestCount === "number" ? session.pendingPermissionRequestCount : 0;
     const pendingUserActionRequestCount =
         typeof session.pendingUserActionRequestCount === "number" ? session.pendingUserActionRequestCount : 0;
+    const pendingBlockedCount =
+        typeof session.pendingBlockedCount === "number" ? session.pendingBlockedCount : 0;
     const hasFailedPrimaryRuntimeIssue =
         session.latestTurnStatus === "failed"
         && typeof session.lastRuntimeIssue === "string"
@@ -44,7 +65,11 @@ export function computeSessionContributesToActivityBadge(session: SessionActivit
         typeof lastViewedSessionSeq === "number"
             ? seq > lastViewedSessionSeq
             : seq > 0;
-    return hasFailedPrimaryRuntimeIssue || hasUnread || pendingPermissionRequestCount > 0 || pendingUserActionRequestCount > 0;
+    return hasFailedPrimaryRuntimeIssue
+        || hasUnread
+        || pendingPermissionRequestCount > 0
+        || pendingUserActionRequestCount > 0
+        || pendingBlockedCount > 0;
 }
 
 export function didSessionActivityBadgeContributionChange(
@@ -71,7 +96,9 @@ export async function computeAccountActivityBadgeCounts(accountIds: ReadonlyArra
         select: {
             accountId: true,
             seq: true,
+            ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
             pendingCount: true,
+            pendingBlockedCount: true,
             lastViewedSessionSeq: true,
             pendingPermissionRequestCount: true,
             pendingUserActionRequestCount: true,

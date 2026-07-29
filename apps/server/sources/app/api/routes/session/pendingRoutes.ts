@@ -1,23 +1,32 @@
 import { z } from "zod";
 import { type Fastify } from "../../types";
-import { buildNewMessageUpdate, buildPendingChangedUpdate, eventRouter } from "@/app/events/eventRouter";
+import { buildMessageUpdatedUpdate, buildNewMessageUpdate, buildPendingChangedUpdate, eventRouter } from "@/app/events/eventRouter";
 import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
 import { serializePendingMaterializedMessage } from "@/app/session/pending/serializePendingMaterializedMessage";
 import {
     deletePendingMessage,
+    dismissPendingDelivery,
     discardPendingMessage,
     enqueuePendingMessage,
     listPendingMessages,
-    materializeNextPendingMessage,
+    blockPendingDelivery,
+    markPendingDeliveryHandled,
     reorderPendingMessages,
+    sendPendingDeliveryAsNew,
     restorePendingMessage,
+    updatePendingRequestedAction,
     updatePendingMessage,
     type PendingMessageRow,
 } from "@/app/session/pending/pendingMessageService";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log } from "@/utils/logging/log";
-import { SessionStoredMessageContentSchema } from "@happier-dev/protocol";
+import {
+    PendingDeliveryBlockedReasonSchema,
+    PendingLocalIdSchema,
+    PendingRequestedActionV1Schema,
+    SessionStoredMessageContentSchema,
+} from "@happier-dev/protocol";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 
 type SessionStoredMessageContent = z.infer<typeof SessionStoredMessageContentSchema>;
@@ -27,7 +36,12 @@ function toPendingJson(row: PendingMessageRow) {
         localId: row.localId,
         ...(typeof row.messageRole === "string" ? { messageRole: row.messageRole } : {}),
         content: row.content,
+        ...(row.requestedAction ? { requestedAction: row.requestedAction } : {}),
+        ...(row.requestedActionMalformed ? { requestedActionMalformed: true } : {}),
         status: row.status,
+        deliveryStatus: row.deliveryStatus,
+        ...(row.deliveryState ? { deliveryState: row.deliveryState } : {}),
+        ...(row.deliveryBlockedReason ? { deliveryBlockedReason: row.deliveryBlockedReason } : {}),
         position: row.position,
         createdAt: row.createdAt.getTime(),
         updatedAt: row.updatedAt.getTime(),
@@ -44,13 +58,23 @@ function getOptionalErrorCode(value: unknown): string | undefined {
     return typeof code === "string" && code.length > 0 ? code : undefined;
 }
 
+function toPendingStateJson(value: { pendingCount: number; pendingBlockedCount?: number; pendingVersion: number }) {
+    return {
+        pendingCount: value.pendingCount,
+        ...(typeof value.pendingBlockedCount === "number" ? { pendingBlockedCount: value.pendingBlockedCount } : {}),
+        pendingVersion: value.pendingVersion,
+    };
+}
+
 async function emitPendingChanged(params: {
     sessionId: string;
     changedByAccountId: string;
     pendingCount: number;
+    pendingBlockedCount?: number;
     pendingVersion: number;
     meaningfulActivityAt?: Date;
     participantCursors: Array<{ accountId: string; cursor: number }>;
+    activationTarget?: Readonly<{ accountId: string; requestId: string }>;
 }): Promise<void> {
     const results = await Promise.allSettled(
         params.participantCursors.map(async ({ accountId, cursor }) => {
@@ -58,6 +82,7 @@ async function emitPendingChanged(params: {
                 {
                     sessionId: params.sessionId,
                     pendingCount: params.pendingCount,
+                    ...(typeof params.pendingBlockedCount === "number" ? { pendingBlockedCount: params.pendingBlockedCount } : {}),
                     pendingVersion: params.pendingVersion,
                     changedByAccountId: params.changedByAccountId,
                     ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
@@ -80,6 +105,71 @@ async function emitPendingChanged(params: {
             "failed to emit pending-changed update",
             result.reason,
         );
+    });
+    if (params.activationTarget) {
+        const ownerCursor = params.participantCursors.find(
+            ({ accountId }) => accountId === params.activationTarget!.accountId,
+        )?.cursor;
+        if (typeof ownerCursor === "number") {
+            const payload = buildPendingChangedUpdate(
+                {
+                    sessionId: params.sessionId,
+                    pendingCount: params.pendingCount,
+                    ...(typeof params.pendingBlockedCount === "number"
+                        ? { pendingBlockedCount: params.pendingBlockedCount }
+                        : {}),
+                    pendingVersion: params.pendingVersion,
+                    changedByAccountId: params.changedByAccountId,
+                    ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
+                    pendingActivationRequestId: params.activationTarget.requestId,
+                },
+                ownerCursor,
+                randomKeyNaked(12),
+            );
+            eventRouter.emitUpdate({
+                userId: params.activationTarget.accountId,
+                payload,
+                recipientFilter: { type: "user-machine-scoped-only" },
+            });
+        }
+    }
+}
+
+async function emitCommittedPendingDeliveryMessage(params: {
+    sessionId: string;
+    message?: Parameters<typeof buildNewMessageUpdate>[0];
+    eventKind?: "new-message" | "message-updated";
+    participantCursors?: Array<{ accountId: string; cursor: number }>;
+    readyProjection?: Parameters<typeof publishSessionReadyProjectionUpdate>[0]["readyProjection"];
+}): Promise<void> {
+    if (!params.message || !params.participantCursors || params.participantCursors.length === 0) return;
+    const buildMessageUpdate = params.eventKind === "message-updated"
+        ? buildMessageUpdatedUpdate
+        : buildNewMessageUpdate;
+    const results = await Promise.allSettled(
+        params.participantCursors.map(async ({ accountId, cursor }) => {
+            const payload = buildMessageUpdate(params.message!, params.sessionId, cursor, randomKeyNaked(12));
+            eventRouter.emitUpdate({
+                userId: accountId,
+                payload,
+                recipientFilter: { type: "all-interested-in-session", sessionId: params.sessionId },
+            });
+        }),
+    );
+    results.forEach((result, index) => {
+        if (result.status === "fulfilled") return;
+        const accountId = params.participantCursors?.[index]?.accountId ?? "unknown";
+        log(
+            { module: "session-pending-routes", level: "warn", sessionId: params.sessionId, accountId },
+            params.eventKind === "message-updated"
+                ? "failed to emit message-updated update after pending delivery resolution"
+                : "failed to emit new-message update after pending delivery resolution",
+            result.reason,
+        );
+    });
+    await publishSessionReadyProjectionUpdate({
+        sessionId: params.sessionId,
+        readyProjection: params.readyProjection,
     });
 }
 
@@ -138,15 +228,28 @@ export function sessionPendingRoutes(app: Fastify) {
                 body: z.union([
                     z.object({
                         ciphertext: z.string().min(1),
-                        localId: z.string().min(1),
+                        localId: PendingLocalIdSchema,
                         messageRole: z.unknown().optional(),
+                        deliveryMode: z.union([
+                            z.literal("external_handoff"),
+                            z.literal("continuation_if_no_queued_user_input"),
+                        ]).optional(),
+                        requestedAction: PendingRequestedActionV1Schema.optional(),
                     }),
                     z.object({
                         content: SessionStoredMessageContentSchema,
-                        localId: z.string().min(1),
+                        localId: PendingLocalIdSchema,
                         messageRole: z.unknown().optional(),
+                        deliveryMode: z.union([
+                            z.literal("external_handoff"),
+                            z.literal("continuation_if_no_queued_user_input"),
+                        ]).optional(),
+                        requestedAction: PendingRequestedActionV1Schema.optional(),
                     }),
                 ]),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
             },
         },
         async (request, reply) => {
@@ -168,6 +271,17 @@ export function sessionPendingRoutes(app: Fastify) {
                 body && typeof body === "object" && "messageRole" in body
                     ? (body as { messageRole?: unknown }).messageRole
                     : null;
+            const requestedDeliveryMode = body && typeof body === "object" && "deliveryMode" in body
+                ? (body as { deliveryMode?: unknown }).deliveryMode
+                : undefined;
+            const deliveryMode = requestedDeliveryMode === "external_handoff" ? "external_handoff" as const : undefined;
+            const admissionMode = requestedDeliveryMode === "continuation_if_no_queued_user_input"
+                ? "continuation_if_no_queued_user_input" as const
+                : undefined;
+            const requestedAction =
+                body && typeof body === "object" && "requestedAction" in body
+                    ? PendingRequestedActionV1Schema.parse((body as { requestedAction?: unknown }).requestedAction)
+                    : PendingRequestedActionV1Schema.parse({ v: 1, kind: "enqueue" });
 
             const res = await (content
                 ? enqueuePendingMessage({
@@ -176,6 +290,9 @@ export function sessionPendingRoutes(app: Fastify) {
                       localId,
                       content,
                       messageRole,
+                      ...(deliveryMode ? { deliveryMode } : {}),
+                      ...(admissionMode ? { admissionMode } : {}),
+                      requestedAction,
                   })
                 : enqueuePendingMessage({
                       actorUserId: request.userId,
@@ -183,6 +300,9 @@ export function sessionPendingRoutes(app: Fastify) {
                       localId,
                       ciphertext: ciphertext ?? "",
                       messageRole,
+                      ...(deliveryMode ? { deliveryMode } : {}),
+                      ...(admissionMode ? { admissionMode } : {}),
+                      requestedAction,
                   }));
 
             if (!res.ok) {
@@ -197,13 +317,25 @@ export function sessionPendingRoutes(app: Fastify) {
                 return reply.code(500).send({ error: res.error });
             }
 
+            if (res.suppressed === true) {
+                return reply.send({
+                    didWrite: false,
+                    suppressed: true,
+                    ...toPendingStateJson(res),
+                });
+            }
+
             await emitPendingChanged({
                 sessionId,
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
-                meaningfulActivityAt: res.meaningfulActivityAt,
+                meaningfulActivityAt: res.terminal === true ? undefined : res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
+                ...("activationTarget" in res && res.activationTarget
+                    ? { activationTarget: res.activationTarget }
+                    : {}),
             });
             await refreshSessionParticipantBadgePushes({
                 badgeAttentionChanged: res.badgeAttentionChanged,
@@ -212,10 +344,61 @@ export function sessionPendingRoutes(app: Fastify) {
 
             return reply.send({
                 didWrite: res.didWrite,
-                pending: toPendingJson(res.pending),
-                pendingCount: res.pendingCount,
-                pendingVersion: res.pendingVersion,
+                ...(res.terminal === true
+                    ? {
+                        terminal: true as const,
+                        message: serializePendingMaterializedMessage(res.message),
+                    }
+                    : { pending: toPendingJson(res.pending) }),
+                ...(res.terminal === true
+                    ? { requestedAction: res.message.requestedAction }
+                    : res.pending.requestedAction
+                        ? { requestedAction: res.pending.requestedAction }
+                        : {}),
+                ...toPendingStateJson(res),
             });
+        },
+    );
+
+    app.patch(
+        "/v2/sessions/:sessionId/pending/:localId/action",
+        {
+            preHandler: app.authenticate,
+            schema: {
+                params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
+                body: z.object({ requestedAction: PendingRequestedActionV1Schema }).strict(),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
+            },
+        },
+        async (request, reply) => {
+            const { sessionId, localId } = request.params;
+            const res = await updatePendingRequestedAction({
+                actorUserId: request.userId,
+                sessionId,
+                localId,
+                requestedAction: request.body.requestedAction,
+            });
+            if (!res.ok) {
+                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
+                if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "action-conflict") return reply.code(409).send({ error: res.error });
+                return reply.code(500).send({ error: res.error });
+            }
+
+            if (res.didUpdate) {
+                await emitPendingChanged({
+                    sessionId,
+                    changedByAccountId: request.userId,
+                    pendingCount: res.pendingCount,
+                    pendingBlockedCount: res.pendingBlockedCount,
+                    pendingVersion: res.pendingVersion,
+                    participantCursors: res.participantCursors,
+                });
+            }
+            return reply.send({ ok: true, didUpdate: res.didUpdate, requestedAction: res.requestedAction, ...toPendingStateJson(res) });
         },
     );
 
@@ -224,11 +407,14 @@ export function sessionPendingRoutes(app: Fastify) {
         {
             preHandler: app.authenticate,
             schema: {
-                params: z.object({ sessionId: z.string(), localId: z.string() }),
+                params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
                 body: z.union([
                     z.object({ ciphertext: z.string().min(1), messageRole: z.unknown().optional() }),
                     z.object({ content: SessionStoredMessageContentSchema, messageRole: z.unknown().optional() }),
                 ]),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
             },
         },
         async (request, reply) => {
@@ -259,6 +445,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 }
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "not-found") return reply.code(404).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
 
@@ -266,6 +453,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 sessionId,
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
                 meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
@@ -274,7 +462,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
-            return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
+            return reply.send({ ok: true, ...toPendingStateJson(res) });
         },
     );
 
@@ -282,7 +470,12 @@ export function sessionPendingRoutes(app: Fastify) {
         "/v2/sessions/:sessionId/pending/:localId",
         {
             preHandler: app.authenticate,
-            schema: { params: z.object({ sessionId: z.string(), localId: z.string() }) },
+            schema: {
+                params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
+            },
         },
         async (request, reply) => {
             const { sessionId, localId } = request.params;
@@ -296,6 +489,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 }
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "delivery-settlement-conflict") return reply.code(409).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
 
@@ -303,6 +497,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 sessionId,
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
                 meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
@@ -311,7 +506,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
-            return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
+            return reply.send({ ok: true, ...toPendingStateJson(res) });
         },
     );
 
@@ -320,8 +515,11 @@ export function sessionPendingRoutes(app: Fastify) {
         {
             preHandler: app.authenticate,
             schema: {
-                params: z.object({ sessionId: z.string(), localId: z.string() }),
+                params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
                 body: z.object({ reason: z.string().optional() }).optional(),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
             },
         },
         async (request, reply) => {
@@ -333,6 +531,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "delivery-settlement-conflict") return reply.code(409).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
 
@@ -340,6 +539,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 sessionId,
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
                 meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
@@ -348,7 +548,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
-            return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
+            return reply.send({ ok: true, ...toPendingStateJson(res) });
         },
     );
 
@@ -356,7 +556,10 @@ export function sessionPendingRoutes(app: Fastify) {
         "/v2/sessions/:sessionId/pending/:localId/restore",
         {
             preHandler: app.authenticate,
-            schema: { params: z.object({ sessionId: z.string(), localId: z.string() }) },
+            schema: { params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }) },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
+            },
         },
         async (request, reply) => {
             const { sessionId, localId } = request.params;
@@ -365,6 +568,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
                 if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "delivery-settlement-conflict") return reply.code(409).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
             }
 
@@ -372,6 +576,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 sessionId,
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
                 meaningfulActivityAt: res.meaningfulActivityAt,
                 participantCursors: res.participantCursors,
@@ -380,7 +585,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
-            return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
+            return reply.send({ ok: true, ...toPendingStateJson(res) });
         },
     );
 
@@ -391,6 +596,9 @@ export function sessionPendingRoutes(app: Fastify) {
             schema: {
                 params: z.object({ sessionId: z.string() }),
                 body: z.object({ orderedLocalIds: z.array(z.string().min(1)).min(1) }),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending"),
             },
         },
         async (request, reply) => {
@@ -407,6 +615,7 @@ export function sessionPendingRoutes(app: Fastify) {
                 sessionId,
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
                 participantCursors: res.participantCursors,
             });
@@ -414,85 +623,215 @@ export function sessionPendingRoutes(app: Fastify) {
                 badgeAttentionChanged: res.badgeAttentionChanged,
                 participantCursors: res.participantCursors,
             });
-            return reply.send({ ok: true, pendingCount: res.pendingCount, pendingVersion: res.pendingVersion });
+            return reply.send({ ok: true, ...toPendingStateJson(res) });
         },
     );
 
-    // Optional: HTTP materialize helper (debug/fallback when socket RPC isn't available).
     app.post(
-        "/v2/sessions/:sessionId/pending/materialize-next",
+        "/v2/sessions/:sessionId/pending/:localId/delivery/block",
         {
             preHandler: app.authenticate,
-            schema: { params: z.object({ sessionId: z.string() }) },
+            schema: {
+                params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
+                body: z.object({ reason: PendingDeliveryBlockedReasonSchema }),
+            },
             config: {
                 rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending.materialize"),
             },
         },
         async (request, reply) => {
-            const { sessionId } = request.params;
-            const res = await materializeNextPendingMessage({ actorUserId: request.userId, sessionId });
+            const { sessionId, localId } = request.params;
+            const res = await blockPendingDelivery({
+                actorUserId: request.userId,
+                sessionId,
+                localId,
+                reason: request.body.reason,
+            });
             if (!res.ok) {
                 if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
                 if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
-                if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
                 return reply.code(500).send({ error: res.error });
-            }
-            if (!res.didMaterialize) {
-                return reply.send({
-                    ok: true,
-                    didMaterialize: false,
-                    pendingCount: res.pendingCount,
-                    pendingVersion: res.pendingVersion,
-                });
-            }
-
-            if (res.didWriteMessage) {
-                const messageResults = await Promise.allSettled(
-                    res.participantCursorsMessage.map(async ({ accountId, cursor }) => {
-                        const payload = buildNewMessageUpdate(res.message, sessionId, cursor, randomKeyNaked(12));
-                        eventRouter.emitUpdate({
-                            userId: accountId,
-                            payload,
-                            recipientFilter: { type: "all-interested-in-session", sessionId },
-                        });
-                    }),
-                );
-                messageResults.forEach((result, index) => {
-                    if (result.status === "fulfilled") return;
-                    const accountId = res.participantCursorsMessage[index]?.accountId ?? "unknown";
-                    log(
-                        { module: "session-pending-routes", level: "warn", sessionId, accountId },
-                        "failed to emit new-message update after materialize-next",
-                        result.reason,
-                    );
-                });
-                await publishSessionReadyProjectionUpdate({
-                    sessionId,
-                    readyProjection: res.readyProjection,
-                });
             }
 
             await emitPendingChanged({
                 sessionId,
                 changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
-                meaningfulActivityAt: res.meaningfulActivityAt,
-                participantCursors: res.participantCursorsPending,
+                participantCursors: res.participantCursors,
             });
             await refreshSessionParticipantBadgePushes({
                 badgeAttentionChanged: res.badgeAttentionChanged,
-                participantCursors: [...res.participantCursorsMessage, ...res.participantCursorsPending],
+                participantCursors: res.participantCursors,
             });
+            return reply.send({ ok: true, ...toPendingStateJson(res) });
+        },
+    );
 
-            return reply.send({
-                ok: true,
-                didMaterialize: true,
-                didWriteMessage: res.didWriteMessage,
-                message: serializePendingMaterializedMessage(res.message),
+    app.post(
+        "/v2/sessions/:sessionId/pending/:localId/delivery/dismiss",
+        {
+            preHandler: app.authenticate,
+            schema: {
+                params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
+                body: z.object({}).optional(),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending.materialize"),
+            },
+        },
+        async (request, reply) => {
+            const { sessionId, localId } = request.params;
+            const res = await dismissPendingDelivery({ actorUserId: request.userId, sessionId, localId });
+            if (!res.ok) {
+                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
+                if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "delivery-settlement-conflict") return reply.code(409).send({ error: res.error });
+                return reply.code(500).send({ error: res.error });
+            }
+
+            await emitPendingChanged({
+                sessionId,
+                changedByAccountId: request.userId,
                 pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
                 pendingVersion: res.pendingVersion,
+                participantCursors: res.participantCursors,
             });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
+                participantCursors: res.participantCursors,
+            });
+            return reply.send({ ok: true, didDismiss: res.didDismiss, ...toPendingStateJson(res) });
+        },
+    );
+
+    app.post(
+        "/v2/sessions/:sessionId/pending/:localId/delivery/send-as-new",
+        {
+            preHandler: app.authenticate,
+            schema: {
+                params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }),
+                body: z.object({}),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending.materialize"),
+            },
+        },
+        async (request, reply) => {
+            const { sessionId, localId } = request.params;
+            const res = await sendPendingDeliveryAsNew({
+                actorUserId: request.userId,
+                sessionId,
+                localId,
+            });
+            if (!res.ok) {
+                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
+                if (res.error === "session-not-found" || res.error === "not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "delivery-settlement-conflict" || res.error === "identity-conflict") {
+                    return reply.code(409).send({ error: res.error });
+                }
+                return reply.code(500).send({ error: res.error });
+            }
+
+            await emitPendingChanged({
+                sessionId,
+                changedByAccountId: request.userId,
+                pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
+                pendingVersion: res.pendingVersion,
+                participantCursors: res.participantCursors,
+            });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
+                participantCursors: res.participantCursors,
+            });
+            return reply.send({ ok: true, newLocalId: res.newLocalId, ...toPendingStateJson(res) });
+        },
+    );
+
+    app.post(
+        "/v2/sessions/:sessionId/pending/:localId/delivery/handled",
+        {
+            preHandler: app.authenticate,
+            schema: { params: z.object({ sessionId: z.string(), localId: PendingLocalIdSchema }) },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending.materialize"),
+            },
+        },
+        async (request, reply) => {
+            const { sessionId, localId } = request.params;
+            const res = await markPendingDeliveryHandled({ actorUserId: request.userId, sessionId, localId });
+            if (!res.ok) {
+                if (res.error === "invalid-params") return reply.code(400).send({ error: res.error });
+                if (res.error === "forbidden") return reply.code(403).send({ error: res.error });
+                if (res.error === "session-not-found") return reply.code(404).send({ error: res.error });
+                if (res.error === "transcript-conflict") {
+                    if (res.pendingStateChanged === true) {
+                        const participantCursors = res.participantCursors ?? [];
+                        await emitPendingChanged({
+                            sessionId,
+                            changedByAccountId: request.userId,
+                            pendingCount: res.pendingCount ?? 0,
+                            pendingBlockedCount: res.pendingBlockedCount,
+                            pendingVersion: res.pendingVersion ?? 0,
+                            participantCursors,
+                        });
+                        await refreshSessionParticipantBadgePushes({
+                            badgeAttentionChanged: res.badgeAttentionChanged ?? false,
+                            participantCursors,
+                        });
+                    }
+                    return reply.code(409).send({ error: res.error });
+                }
+                return reply.code(500).send({ error: res.error });
+            }
+
+            await emitCommittedPendingDeliveryMessage({
+                sessionId,
+                message: res.message,
+                eventKind: res.didUpdate === true && res.didWrite !== true ? "message-updated" : "new-message",
+                participantCursors: res.participantCursorsMessage,
+                readyProjection: res.readyProjection,
+            });
+            await emitPendingChanged({
+                sessionId,
+                changedByAccountId: request.userId,
+                pendingCount: res.pendingCount,
+                pendingBlockedCount: res.pendingBlockedCount,
+                pendingVersion: res.pendingVersion,
+                participantCursors: res.participantCursorsPending ?? res.participantCursors,
+            });
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: res.badgeAttentionChanged,
+                participantCursors: [...(res.participantCursorsMessage ?? []), ...(res.participantCursorsPending ?? res.participantCursors)],
+            });
+            return reply.send({ ok: true, ...toPendingStateJson(res) });
+        },
+    );
+
+    app.post(
+        "/v2/sessions/:sessionId/pending/materialize-next",
+        {
+            preHandler: app.authenticate,
+            schema: {
+                params: z.object({ sessionId: z.string() }),
+                body: z.object({
+                    deliveryState: z.literal("provider").optional(),
+                    deliveryTiming: z.enum(["after_foreground_ready", "after_runtime_idle"]).optional(),
+                    foregroundState: z.enum(["ready", "active_steerable", "active_unsteerable"]).optional(),
+                }).optional(),
+            },
+            config: {
+                rateLimit: resolveApiHotEndpointRateLimit(process.env, "session.pending.materialize"),
+            },
+        },
+        async (_request, reply) => {
+            return reply.code(403).send({ error: "forbidden" });
         },
     );
 }

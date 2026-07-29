@@ -8,6 +8,9 @@ import {
     type ConnectedServiceId,
     CONNECTED_SERVICE_ERROR_CODES,
 } from "@happier-dev/protocol";
+import {
+    projectConnectedAccountOauthProfileMetadata,
+} from "@happier-dev/protocol";
 import { parseIntEnv } from "@/config/env";
 import { assertNonEmptyString } from "./connectValueParsers";
 import {
@@ -16,10 +19,8 @@ import {
 } from "./openaiCodex/openaiCodexIdTokenClaims";
 import {
     resolveClaudeSubscriptionOauthClientId,
+    resolveClaudeSubscriptionOauthProfileMetadata,
     resolveClaudeSubscriptionOauthTokenUrl,
-    resolveGeminiOauthClientId,
-    resolveGeminiOauthClientSecret,
-    resolveGeminiOauthTokenUrl,
     resolveOpenAiCodexOauthClientId,
     resolveOpenAiCodexOauthTokenUrl,
 } from "./oauthConfig";
@@ -78,7 +79,7 @@ type OauthExchangePayload = Readonly<{
     raw: unknown;
 }>;
 
-type SupportedConnectedServiceOauthExchangeId = "openai-codex" | "gemini" | "claude-subscription";
+type SupportedConnectedServiceOauthExchangeId = "openai-codex" | "claude-subscription";
 
 type ConnectedServiceOauthExchangeHandler = (params: Readonly<{
     code: string;
@@ -121,8 +122,9 @@ function createFetchWithTimeout(fetcher: typeof fetch, timeoutMs: number): typeo
 
 const CONNECTED_SERVICE_OAUTH_EXCHANGE_BLOCKED_REASON_BY_SERVICE_ID = {
     anthropic: "Anthropic OAuth exchange is not supported. Use an API key instead.",
+    gemini: "Gemini OAuth exchange is not supported. Use an API key or Vertex credentials instead.",
     openai: "OpenAI API key service does not support OAuth exchange.",
-} as const satisfies Readonly<Record<"anthropic" | "openai", string>>;
+} as const satisfies Readonly<Record<"anthropic" | "gemini" | "openai", string>>;
 
 export function resolveConnectedServiceOauthExchangeBlockedReason(serviceId: ConnectedServiceId): string | null {
     return serviceId in CONNECTED_SERVICE_OAUTH_EXCHANGE_BLOCKED_REASON_BY_SERVICE_ID
@@ -181,80 +183,6 @@ async function exchangeOpenAiCodex(params: Readonly<{
     };
 }
 
-async function exchangeGemini(params: Readonly<{
-    code: string;
-    verifier: string;
-    redirectUri: string;
-    now: number;
-    fetcher: typeof fetch;
-}>): Promise<OauthExchangePayload> {
-    const clientId = resolveGeminiOauthClientId(process.env);
-    const clientSecret = resolveGeminiOauthClientSecret(process.env);
-    const tokenUrl = resolveGeminiOauthTokenUrl(process.env);
-
-    const response = await params.fetcher(tokenUrl, {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-            grant_type: "authorization_code",
-            client_id: clientId,
-            client_secret: clientSecret,
-            code: params.code,
-            code_verifier: params.verifier,
-            redirect_uri: params.redirectUri,
-        }),
-    });
-    if (!response.ok) {
-        const json = await response.json().catch(() => null);
-        const providerError = json && typeof (json as any).error === "string" ? String((json as any).error) : "";
-        const providerDescription =
-            json && typeof (json as any).error_description === "string" ? String((json as any).error_description) : "";
-        if (providerError === "invalid_grant") {
-            throw new ConnectedServiceOauthExchangeError(
-                CONNECTED_SERVICE_ERROR_CODES.oauthInvalidGrant,
-                providerDescription || "Gemini OAuth code is invalid or expired.",
-            );
-        }
-        if (providerError === "invalid_client") {
-            throw new ConnectedServiceOauthExchangeError(
-                CONNECTED_SERVICE_ERROR_CODES.oauthInvalidClient,
-                providerDescription || "Gemini OAuth client credentials are invalid.",
-            );
-        }
-        throw new ConnectedServiceOauthExchangeError(
-            CONNECTED_SERVICE_ERROR_CODES.oauthExchangeFailed,
-            `Token exchange failed: ${response.status}`,
-        );
-    }
-
-    const json = (await response.json()) as any;
-    const accessToken = assertNonEmptyString(json?.access_token, "access_token");
-    const refreshToken = typeof json?.refresh_token === "string" ? json.refresh_token : "";
-    if (!refreshToken.trim()) {
-        throw new ConnectedServiceOauthExchangeError(
-            CONNECTED_SERVICE_ERROR_CODES.oauthMissingRefreshToken,
-            "Gemini OAuth did not return a refresh token.",
-        );
-    }
-    const expiresIn = Number.isFinite(json?.expires_in) ? Number(json.expires_in) : NaN;
-    const expiresAt = Number.isFinite(expiresIn) && expiresIn > 0 ? params.now + Math.trunc(expiresIn) * 1000 : null;
-
-    return {
-        serviceId: "gemini",
-        accessToken,
-        refreshToken,
-        idToken: typeof json?.id_token === "string" ? json.id_token : null,
-        scope: typeof json?.scope === "string" ? json.scope : null,
-        tokenType: typeof json?.token_type === "string" ? json.token_type : null,
-        providerEmail: null,
-        providerAccountId: null,
-        expiresAt,
-        raw: json,
-    };
-}
-
 async function exchangeClaudeSubscription(params: Readonly<{
     code: string;
     verifier: string;
@@ -290,6 +218,34 @@ async function exchangeClaudeSubscription(params: Readonly<{
 
     const providerEmail = typeof json?.account?.email_address === "string" ? json.account.email_address : null;
     const providerAccountId = typeof json?.account?.uuid === "string" ? json.account.uuid : null;
+    const raw = await (async () => {
+        const profileMetadata =
+            resolveClaudeSubscriptionOauthProfileMetadata();
+        let profileResponse: Response;
+        try {
+            profileResponse = await params.fetcher(profileMetadata.endpointUrl, {
+                method: "GET",
+                headers: {
+                    Authorization: `Bearer ${accessToken}`,
+                    ...profileMetadata.headers,
+                },
+            });
+        } catch {
+            return null;
+        }
+        if (profileResponse.status === 401) {
+            throw new Error("Claude OAuth access-token verification failed (401)");
+        }
+        if (!profileResponse.ok) return null;
+        try {
+            return projectConnectedAccountOauthProfileMetadata({
+                projection: profileMetadata.projection,
+                value: await profileResponse.json(),
+            });
+        } catch {
+            return null;
+        }
+    })();
 
     return {
         serviceId: "claude-subscription",
@@ -301,13 +257,12 @@ async function exchangeClaudeSubscription(params: Readonly<{
         providerEmail,
         providerAccountId,
         expiresAt,
-        raw: json,
+        raw,
     };
 }
 
 const CONNECTED_SERVICE_OAUTH_EXCHANGE_HANDLERS = {
     "openai-codex": exchangeOpenAiCodex,
-    gemini: exchangeGemini,
     "claude-subscription": async (params) => {
         const state = typeof params.state === "string" ? params.state.trim() : "";
         if (!state) throw new ConnectedServiceOauthStateMismatchError();

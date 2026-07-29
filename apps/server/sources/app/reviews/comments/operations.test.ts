@@ -1,11 +1,13 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import type {
     ReviewCommentActorRefV1,
+    ReviewCommentCreateRequestV1,
     ReviewCommentSnapshotV1,
 } from "@happier-dev/protocol";
 
-import { REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1 } from "@happier-dev/protocol";
+import { REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1, stringifyReviewCommentPrincipalCanonicalJsonV1 } from "@happier-dev/protocol";
 import { buildReviewCommentTextSnapshotHashes } from "./snapshots";
 import { createInMemoryReviewCommentStore } from "./store";
 import { createReviewCommentOperations } from "./operations";
@@ -51,7 +53,253 @@ const pluginActor: ReviewCommentActorRefV1 = {
     engineRunId: "run-1",
 };
 
+const reviewAgentActor = { kind: "agent", agentId: "claude", sessionId: "session-1" } as const;
+
+function directWriteCreate(input: ReviewCommentCreateRequestV1) {
+    const boundInput: ReviewCommentCreateRequestV1 = {
+        workspaceId: "workspace-1",
+        sessionId: reviewAgentActor.sessionId,
+        runId: "run-1",
+        engineId: "review-coderabbit",
+        ...input,
+    };
+    return {
+        actor: reviewAgentActor,
+        grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
+        currentIntent: {
+            v: 1 as const,
+            kind: "execution_run_host_action" as const,
+            actionId: "reviews.comments.create" as const,
+            subjectFingerprint: "a".repeat(64),
+            effectBodySha256Base64Url: createHash("sha256")
+                .update(stringifyReviewCommentPrincipalCanonicalJsonV1(boundInput))
+                .digest("base64url"),
+            sessionId: reviewAgentActor.sessionId,
+            runId: "run-1",
+            callId: "call-1",
+            profileId: "review-coderabbit/review",
+            pluginId: "review-coderabbit",
+            agentId: reviewAgentActor.agentId,
+            projectId: boundInput.projectId,
+            workspaceId: "workspace-1",
+            immutableGenerationId: "generation-1",
+            packageDigest: `sha256:${"b".repeat(64)}`,
+            manifestDigest: `sha256:${"c".repeat(64)}`,
+        },
+        input: boundInput,
+    };
+}
+
 describe("review comment operations", () => {
+    it("replays an equivalent create exactly once for the same account and client mutation", async () => {
+        const { store, operations } = createHarness();
+        const params = {
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" } as const,
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "line", filePath: "src/example.ts", line: 3 } as const,
+                snapshot: textSnapshot(["return value.name;"]),
+                body: "Null-check this value.",
+                authorIntent: "open" as const,
+                clientMutationId: "mutation-create-once",
+            },
+        };
+
+        const first = await operations.create(params);
+        const replay = await operations.create(params);
+
+        expect(first.replayed).toBe(false);
+        expect(replay).toEqual({ comment: first.comment, replayed: true });
+        expect(await store.listEvents({ accountId: "account-1", commentId: first.comment.id }))
+            .toHaveLength(1);
+    });
+
+    it("treats omitted and explicit propose intent as the same create request", async () => {
+        const { operations } = createHarness();
+        const common = {
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" } as const,
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/example.ts" } as const,
+                snapshot: textSnapshot(["return value.name;"]),
+                body: "Proposed comment.",
+                clientMutationId: "mutation-create-default-intent",
+            },
+        };
+
+        const first = await operations.create(common);
+        const replay = await operations.create({
+            ...common,
+            input: { ...common.input, authorIntent: "propose" },
+        });
+
+        expect(replay).toEqual({ comment: first.comment, replayed: true });
+    });
+
+    it("replays a recaptured equivalent snapshot for the same create mutation", async () => {
+        const { operations } = createHarness();
+        const common = {
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" } as const,
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/example.ts" } as const,
+                snapshot: textSnapshot(["return value.name;"]),
+                body: "Equivalent recaptured comment.",
+                clientMutationId: "mutation-recaptured-snapshot",
+            },
+        };
+
+        const first = await operations.create(common);
+        const replay = await operations.create({
+            ...common,
+            input: {
+                ...common.input,
+                snapshot: { ...common.input.snapshot, capturedAt: 2 },
+            },
+        });
+
+        expect(replay).toEqual({ comment: first.comment, replayed: true });
+    });
+
+    it("rejects reuse of a create mutation for a different immutable request", async () => {
+        const { operations } = createHarness();
+        const base = {
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" } as const,
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/example.ts" } as const,
+                snapshot: textSnapshot(["return value.name;"]),
+                body: "Original body.",
+                authorIntent: "open" as const,
+                clientMutationId: "mutation-create-conflict",
+            },
+        };
+
+        await operations.create(base);
+
+        await expect(operations.create({
+            ...base,
+            input: { ...base.input, body: "Different body." },
+        })).rejects.toMatchObject({ code: "review_comment_idempotency_conflict" });
+    });
+
+    it("canonicalizes object key order while binding create replay to the trusted actor", async () => {
+        const { operations } = createHarness();
+        const common = {
+            accountId: "account-1",
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/example.ts" } as const,
+                snapshot: textSnapshot(["return value.name;"]),
+                body: "Canonical comment.",
+                clientMutationId: "mutation-create-canonical",
+            },
+        };
+        const first = await operations.create({
+            ...common,
+            actor: { kind: "user", userId: "user-1" },
+            input: {
+                ...common.input,
+                fingerprint: {
+                    ruleId: "rule-1",
+                    normalizedMessageHash: "message-hash",
+                    engineId: "engine-1",
+                },
+            },
+        });
+        const replay = await operations.create({
+            ...common,
+            actor: { kind: "user", userId: "user-1" },
+            input: {
+                ...common.input,
+                fingerprint: {
+                    engineId: "engine-1",
+                    normalizedMessageHash: "message-hash",
+                    ruleId: "rule-1",
+                },
+            },
+        });
+
+        expect(replay).toEqual({ comment: first.comment, replayed: true });
+        await expect(operations.create({
+            ...common,
+            actor: { kind: "user", userId: "user-2" },
+            input: {
+                ...common.input,
+                fingerprint: {
+                    ruleId: "rule-1",
+                    normalizedMessageHash: "message-hash",
+                    engineId: "engine-1",
+                },
+            },
+        })).rejects.toMatchObject({ code: "review_comment_idempotency_conflict" });
+    });
+
+    it("isolates create mutation identity by account", async () => {
+        const { operations } = createHarness();
+        const input = {
+            projectId: "project-1",
+            anchor: { kind: "file", filePath: "src/example.ts" } as const,
+            snapshot: textSnapshot(["return value.name;"]),
+            body: "Account-local comment.",
+            authorIntent: "open" as const,
+            clientMutationId: "shared-account-local-mutation",
+        };
+
+        const first = await operations.create({
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" },
+            grants: [],
+            input,
+        });
+        const second = await operations.create({
+            accountId: "account-2",
+            actor: { kind: "user", userId: "user-2" },
+            grants: [],
+            input,
+        });
+
+        expect(first.replayed).toBe(false);
+        expect(second.replayed).toBe(false);
+        expect(second.comment.id).not.toBe(first.comment.id);
+    });
+
+    it("admits one durable create under concurrent equivalent requests", async () => {
+        const { store, operations } = createHarness();
+        const params = {
+            accountId: "account-1",
+            actor: { kind: "user", userId: "user-1" } as const,
+            grants: [],
+            input: {
+                projectId: "project-1",
+                anchor: { kind: "file", filePath: "src/example.ts" } as const,
+                snapshot: textSnapshot(["return value.name;"]),
+                body: "Concurrent comment.",
+                authorIntent: "open" as const,
+                clientMutationId: "mutation-create-concurrent",
+            },
+        };
+
+        const results = await Promise.all([
+            operations.create(params),
+            operations.create(params),
+        ]);
+
+        expect(new Set(results.map((result) => result.comment.id))).toEqual(new Set([results[0]!.comment.id]));
+        expect(results.map((result) => result.replayed).sort()).toEqual([false, true]);
+        expect(await store.listEvents({ accountId: "account-1", commentId: results[0]!.comment.id }))
+            .toHaveLength(1);
+    });
+
     it("stores current-state rows and append-only events for proposed plugin comments", async () => {
         const { store, operations } = createHarness();
 
@@ -90,32 +338,56 @@ describe("review comment operations", () => {
 
         await expect(operations.create({
             accountId: "account-1",
-            actor: pluginActor,
-            grants: [],
-            input: {
+            ...directWriteCreate({
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/config.ts" },
                 snapshot: textSnapshot(["secret = readEnv();"]),
                 body: "Investigate secret handling.",
                 authorIntent: "open",
                 clientMutationId: "mutation-1",
-            },
+            }),
+            grants: [],
         })).rejects.toMatchObject({ code: "review_comment_direct_write_permission_required" });
 
         const result = await operations.create({
             accountId: "account-1",
-            actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
-            input: {
+            ...directWriteCreate({
                 projectId: "project-1",
                 anchor: { kind: "file", filePath: "src/config.ts" },
                 snapshot: textSnapshot(["secret = readEnv();"]),
                 body: "Investigate secret handling.",
                 authorIntent: "open",
                 clientMutationId: "mutation-2",
-            },
+            }),
         });
         expect(result.comment.state).toBe("open");
+    });
+
+    it("requires the durable host-action grant for agent-authored proposed comments", async () => {
+        const { operations } = createHarness();
+        const create = directWriteCreate({
+            projectId: "project-1",
+            anchor: { kind: "file", filePath: "src/config.ts" },
+            snapshot: textSnapshot(["secret = readEnv();"]),
+            body: "Investigate secret handling.",
+            authorIntent: "propose",
+            clientMutationId: "mutation-agent-proposal",
+        });
+
+        await expect(operations.create({
+            accountId: "account-1",
+            ...create,
+            grants: [],
+        })).rejects.toMatchObject({ code: "review_comment_direct_write_permission_required" });
+
+        const result = await operations.create({
+            accountId: "account-1",
+            ...create,
+        });
+        expect(result.comment).toMatchObject({
+            state: "proposed",
+            author: reviewAgentActor,
+        });
     });
 
     it("allows user principals to create open comments without plugin direct-write grants", async () => {
@@ -181,16 +453,14 @@ describe("review comment operations", () => {
         const { store, operations } = createHarness();
         const created = await operations.create({
             accountId: "account-1",
-            actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
-            input: {
+            ...directWriteCreate({
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
                 snapshot: textSnapshot(["return value.name;"]),
                 body: "Null-check this value.",
                 authorIntent: "open",
                 clientMutationId: "mutation-1",
-            },
+            }),
         });
 
         await expect(operations.transition({
@@ -281,16 +551,14 @@ describe("review comment operations", () => {
         const { operations } = createHarness();
         const opened = await operations.create({
             accountId: "account-1",
-            actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
-            input: {
+            ...directWriteCreate({
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
                 snapshot: textSnapshot(["return value.name;"]),
                 body: "Null-check this value.",
                 authorIntent: "open",
                 clientMutationId: "mutation-1",
-            },
+            }),
         });
         const delegated = await operations.transition({
             accountId: "account-1",
@@ -305,7 +573,7 @@ describe("review comment operations", () => {
 
         await expect(operations.transition({
             accountId: "account-1",
-            actor: pluginActor,
+            actor: reviewAgentActor,
             input: {
                 commentId: delegated.comment.id,
                 toState: "resolved",
@@ -319,16 +587,14 @@ describe("review comment operations", () => {
         const { operations } = createHarness();
         const opened = await operations.create({
             accountId: "account-1",
-            actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
-            input: {
+            ...directWriteCreate({
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
                 snapshot: textSnapshot(["return value.name;"]),
                 body: "Null-check this value.",
                 authorIntent: "open",
                 clientMutationId: "mutation-1",
-            },
+            }),
         });
         const delegated = await operations.transition({
             accountId: "account-1",
@@ -592,16 +858,14 @@ describe("review comment operations", () => {
         const { operations } = createHarness();
         const open = await operations.create({
             accountId: "account-1",
-            actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
-            input: {
+            ...directWriteCreate({
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
                 snapshot: textSnapshot(["return value.name;"]),
                 body: "Null-check this value.",
                 authorIntent: "open",
                 clientMutationId: "mutation-1",
-            },
+            }),
         });
         const resolved = await operations.transition({
             accountId: "account-1",
@@ -649,16 +913,14 @@ describe("review comment operations", () => {
         const { store, operations } = createHarness();
         const open = await operations.create({
             accountId: "account-1",
-            actor: pluginActor,
-            grants: [REVIEW_COMMENT_DIRECT_WRITE_SCOPE_V1],
-            input: {
+            ...directWriteCreate({
                 projectId: "project-1",
                 anchor: { kind: "line", filePath: "src/example.ts", line: 3 },
                 snapshot: textSnapshot(["return value.name;"]),
                 body: "Null-check this value.",
                 authorIntent: "open",
                 clientMutationId: "mutation-1",
-            },
+            }),
         });
         const proposed = await operations.create({
             accountId: "account-1",

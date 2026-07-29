@@ -1,4 +1,4 @@
-import { Prisma } from "@prisma/client";
+import type { Prisma as PrismaTypes } from "@prisma/client";
 import type {
     PluginPermissionCapabilityV1,
     PluginPermissionGrantAuditEventV1,
@@ -8,12 +8,15 @@ import type {
     PluginPermissionGrantV1,
 } from "@happier-dev/protocol";
 import {
+    computeCanonicalDomainSeparatedDigest,
     PluginPermissionGrantRequestV1Schema,
     PluginPermissionGrantV1Schema,
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
+import { prismaRuntime as Prisma } from "@/storage/prisma";
+import { PluginPermissionGrantOperationError } from "./errors";
 import { appendPluginPermissionGrantAuditEvent } from "./events";
 
 export type PluginPermissionGrantListParams = Readonly<{
@@ -219,7 +222,7 @@ function rowAuthoritySource(row: Readonly<{
     return { kind: "bundled" };
 }
 
-function activeIdentityKey(params: Readonly<{
+export function pluginPermissionGrantActiveIdentityKey(params: Readonly<{
     pluginId: string;
     capability: PluginPermissionCapabilityV1;
     targetScope: PluginPermissionGrantTargetScopeV1;
@@ -227,16 +230,28 @@ function activeIdentityKey(params: Readonly<{
 }>): string {
     const scope = scopeColumns(params.targetScope);
     const authority = authoritySourceColumns(params.authoritySource);
-    return [
-        params.pluginId,
-        params.capability,
-        scope.scopeKind,
-        scope.projectId ?? "",
-        scope.workspaceId ?? "",
-        authority.authorityKind,
-        authority.machineId ?? "",
-        authority.installationId ?? "",
-    ].join("\u001F");
+    return computeCanonicalDomainSeparatedDigest(
+        "happier.pluginPermissionGrant.activeIdentity.v1",
+        [
+            params.pluginId,
+            params.capability,
+            scope.scopeKind,
+            scope.projectId ?? "",
+            scope.workspaceId ?? "",
+            authority.authorityKind,
+            authority.machineId ?? "",
+            authority.installationId ?? "",
+        ],
+    );
+}
+
+function assertTerminalTransitionWon(
+    affectedRows: number,
+    code: string,
+    message: string,
+): void {
+    if (affectedRows === 1) return;
+    throw new PluginPermissionGrantOperationError(code, message);
 }
 
 function rowTargetScope(row: Readonly<{
@@ -294,11 +309,11 @@ function rowToRequest(row: RequestRow): PluginPermissionGrantRequestV1 {
     });
 }
 
-function appendTargetScopeWhere(where: Prisma.Sql[], targetScope: PluginPermissionGrantTargetScopeV1): void {
+function appendTargetScopeWhere(where: PrismaTypes.Sql[], targetScope: PluginPermissionGrantTargetScopeV1): void {
     appendExactTargetScopeWhere(where, targetScope);
 }
 
-function appendExactTargetScopeWhere(where: Prisma.Sql[], targetScope: PluginPermissionGrantTargetScopeV1): void {
+function appendExactTargetScopeWhere(where: PrismaTypes.Sql[], targetScope: PluginPermissionGrantTargetScopeV1): void {
     const scope = scopeColumns(targetScope);
     where.push(Prisma.sql`scope_kind = ${scope.scopeKind}`);
     if (scope.projectId === null) {
@@ -313,7 +328,7 @@ function appendExactTargetScopeWhere(where: Prisma.Sql[], targetScope: PluginPer
     }
 }
 
-function appendExactAuthoritySourceWhere(where: Prisma.Sql[], authoritySource: PluginPermissionGrantAuthoritySourceV1): void {
+function appendExactAuthoritySourceWhere(where: PrismaTypes.Sql[], authoritySource: PluginPermissionGrantAuthoritySourceV1): void {
     const authority = authoritySourceColumns(authoritySource);
     where.push(Prisma.sql`authority_kind = ${authority.authorityKind}`);
     if (authority.machineId === null) {
@@ -328,7 +343,7 @@ function appendExactAuthoritySourceWhere(where: Prisma.Sql[], authoritySource: P
     }
 }
 
-function buildGrantWhere(params: PluginPermissionGrantListParams): Prisma.Sql[] {
+function buildGrantWhere(params: PluginPermissionGrantListParams): PrismaTypes.Sql[] {
     const where = [Prisma.sql`account_id = ${params.accountId}`];
     if (params.pluginId) where.push(Prisma.sql`plugin_id = ${params.pluginId}`);
     if (params.capability) where.push(Prisma.sql`capability = ${params.capability}`);
@@ -338,7 +353,7 @@ function buildGrantWhere(params: PluginPermissionGrantListParams): Prisma.Sql[] 
     return where;
 }
 
-function buildRequestWhere(params: PluginPermissionGrantListParams): Prisma.Sql[] {
+function buildRequestWhere(params: PluginPermissionGrantListParams): PrismaTypes.Sql[] {
     const where = [Prisma.sql`account_id = ${params.accountId}`];
     if (params.pluginId) where.push(Prisma.sql`plugin_id = ${params.pluginId}`);
     if (params.capability) where.push(Prisma.sql`capability = ${params.capability}`);
@@ -401,13 +416,19 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
                     INSERT INTO plugin_permission_grant_requests (
                         id, account_id, plugin_id, capability, scope_kind, scope_project_id, scope_workspace_id,
                         authority_kind, authority_machine_id, authority_installation_id,
-                        requester_json, reason, status, grant_id, created_by_user_id, decided_by_user_id,
+                        requester_json, reason, status, active_identity_key, grant_id, created_by_user_id, decided_by_user_id,
                         decided_at, created_at, updated_at
                     ) VALUES (
                         ${pendingRequest.id}, ${pendingRequest.accountId}, ${pendingRequest.pluginId},
                         ${pendingRequest.capability}, ${scope.scopeKind}, ${scope.projectId}, ${scope.workspaceId},
                         ${authority.authorityKind}, ${authority.machineId}, ${authority.installationId},
                         ${stringifyJson(pendingRequest.requester)}, ${pendingRequest.reason}, ${pendingRequest.status},
+                        ${pendingRequest.status === "pending" ? pluginPermissionGrantActiveIdentityKey({
+                            pluginId: pendingRequest.pluginId,
+                            capability: pendingRequest.capability,
+                            targetScope: pendingRequest.targetScope,
+                            authoritySource: pendingRequest.authoritySource,
+                        }) : null},
                         ${pendingRequest.grantId ?? null}, ${pendingRequest.createdByUserId ?? null},
                         ${pendingRequest.decidedByUserId ?? null}, ${pendingRequest.decidedAt ?? null},
                         ${pendingRequest.createdAt}, ${pendingRequest.updatedAt}
@@ -434,7 +455,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
                         ${grant.id}, ${grant.accountId}, ${grant.pluginId}, ${grant.capability},
                         ${grantScope.scopeKind}, ${grantScope.projectId}, ${grantScope.workspaceId},
                         ${grantAuthority.authorityKind}, ${grantAuthority.machineId}, ${grantAuthority.installationId}, ${grant.status},
-                        ${grant.status === "active" ? activeIdentityKey({
+                        ${grant.status === "active" ? pluginPermissionGrantActiveIdentityKey({
                             pluginId: grant.pluginId,
                             capability: grant.capability,
                             targetScope: grant.targetScope,
@@ -444,7 +465,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
                         ${grant.revokedByUserId ?? null}, ${grant.revokedAt ?? null}, ${grant.createdAt}, ${grant.updatedAt}
                     )
                 `);
-                await tx.$executeRaw(Prisma.sql`
+                const affectedRequests = await tx.$executeRaw(Prisma.sql`
                     UPDATE plugin_permission_grant_requests
                     SET scope_kind = ${requestScope.scopeKind},
                         scope_project_id = ${requestScope.projectId},
@@ -453,12 +474,20 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
                         authority_machine_id = ${requestAuthority.machineId},
                         authority_installation_id = ${requestAuthority.installationId},
                         status = ${pendingRequest.status},
+                        active_identity_key = NULL,
                         grant_id = ${pendingRequest.grantId ?? null},
                         decided_by_user_id = ${pendingRequest.decidedByUserId ?? null},
                         decided_at = ${pendingRequest.decidedAt ?? null},
                         updated_at = ${pendingRequest.updatedAt}
-                    WHERE account_id = ${pendingRequest.accountId} AND id = ${pendingRequest.id}
+                    WHERE account_id = ${pendingRequest.accountId}
+                      AND id = ${pendingRequest.id}
+                      AND status = 'pending'
                 `);
+                assertTerminalTransitionWon(
+                    affectedRequests,
+                    "plugin_permission_grant_request_not_found",
+                    "Plugin permission grant request was already resolved",
+                );
                 await appendPluginPermissionGrantAuditEvent(tx, params.event);
             });
         },
@@ -467,7 +496,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
             const requestScope = scopeColumns(pendingRequest.targetScope);
             const requestAuthority = authoritySourceColumns(pendingRequest.authoritySource);
             await inTx(async (tx) => {
-                await tx.$executeRaw(Prisma.sql`
+                const affectedRequests = await tx.$executeRaw(Prisma.sql`
                     UPDATE plugin_permission_grant_requests
                     SET scope_kind = ${requestScope.scopeKind},
                         scope_project_id = ${requestScope.projectId},
@@ -476,12 +505,20 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
                         authority_machine_id = ${requestAuthority.machineId},
                         authority_installation_id = ${requestAuthority.installationId},
                         status = ${pendingRequest.status},
+                        active_identity_key = NULL,
                         grant_id = ${pendingRequest.grantId ?? null},
                         decided_by_user_id = ${pendingRequest.decidedByUserId ?? null},
                         decided_at = ${pendingRequest.decidedAt ?? null},
                         updated_at = ${pendingRequest.updatedAt}
-                    WHERE account_id = ${pendingRequest.accountId} AND id = ${pendingRequest.id}
+                    WHERE account_id = ${pendingRequest.accountId}
+                      AND id = ${pendingRequest.id}
+                      AND status = 'pending'
                 `);
+                assertTerminalTransitionWon(
+                    affectedRequests,
+                    "plugin_permission_grant_request_not_found",
+                    "Plugin permission grant request was already resolved",
+                );
                 await appendPluginPermissionGrantAuditEvent(tx, params.event);
             });
         },
@@ -489,6 +526,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
             const grant = PluginPermissionGrantV1Schema.parse(params.grant);
             const identityWhere = [
                 Prisma.sql`account_id = ${grant.accountId}`,
+                Prisma.sql`id = ${grant.id}`,
                 Prisma.sql`plugin_id = ${grant.pluginId}`,
                 Prisma.sql`capability = ${grant.capability}`,
                 Prisma.sql`status = 'active'`,
@@ -496,7 +534,7 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
             appendExactTargetScopeWhere(identityWhere, grant.targetScope);
             appendExactAuthoritySourceWhere(identityWhere, grant.authoritySource);
             await inTx(async (tx) => {
-                await tx.$executeRaw(Prisma.sql`
+                const affectedGrants = await tx.$executeRaw(Prisma.sql`
                     UPDATE plugin_permission_grants
                     SET status = ${grant.status},
                         active_identity_key = NULL,
@@ -505,20 +543,33 @@ export function createSqlPluginPermissionGrantStore(): PluginPermissionGrantStor
                         updated_at = ${grant.updatedAt}
                     WHERE ${Prisma.join(identityWhere, " AND ")}
                 `);
+                assertTerminalTransitionWon(
+                    affectedGrants,
+                    "plugin_permission_grant_not_found",
+                    "Plugin permission grant was already revoked",
+                );
                 await appendPluginPermissionGrantAuditEvent(tx, params.event);
             });
         },
         async dismissPendingRequest(params) {
             const pendingRequest = PluginPermissionGrantRequestV1Schema.parse(params.pendingRequest);
             await inTx(async (tx) => {
-                await tx.$executeRaw(Prisma.sql`
+                const affectedRequests = await tx.$executeRaw(Prisma.sql`
                     UPDATE plugin_permission_grant_requests
                     SET status = ${pendingRequest.status},
+                        active_identity_key = NULL,
                         decided_by_user_id = ${pendingRequest.decidedByUserId ?? null},
                         decided_at = ${pendingRequest.decidedAt ?? null},
                         updated_at = ${pendingRequest.updatedAt}
-                    WHERE account_id = ${pendingRequest.accountId} AND id = ${pendingRequest.id}
+                    WHERE account_id = ${pendingRequest.accountId}
+                      AND id = ${pendingRequest.id}
+                      AND status = 'pending'
                 `);
+                assertTerminalTransitionWon(
+                    affectedRequests,
+                    "plugin_permission_grant_request_not_found",
+                    "Plugin permission grant request was already resolved",
+                );
                 await appendPluginPermissionGrantAuditEvent(tx, params.event);
             });
         },

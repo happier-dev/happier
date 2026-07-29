@@ -169,10 +169,16 @@ describe('enableServeUi (mountRoot)', () => {
         enableServeUi(app, { dir, prefix: '/', mountRoot: true, required: false });
         await app.ready();
 
-        const res = await app.inject({ method: 'GET', url: '/v1/unknown-route' });
-        expect(res.statusCode).toBe(404);
-        expect(res.headers['content-type']).toMatch(/application\/json/i);
-        expect(res.body).toContain('Not found');
+        for (const url of [
+          '/v1/unknown-route',
+          '/v2/connect/openai-codex/profiles/work/refresh-lease',
+          '/v3/connect/openai-codex/groups/happier',
+        ]) {
+          const res = await app.inject({ method: 'GET', url });
+          expect(res.statusCode).toBe(404);
+          expect(res.headers['content-type']).toMatch(/application\/json/i);
+          expect(res.body).toContain('Not found');
+        }
       });
     });
   });

@@ -1,63 +1,144 @@
-import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { serializerCompiler, validatorCompiler, ZodTypeProvider } from "fastify-type-provider-zod";
 
 import { db } from "@/storage/db";
 import { connectRoutes } from "./connectRoutes";
-import { auth } from "@/app/auth/auth";
-import { createAppCloseTracker } from "../../testkit/appLifecycle";
-
-const { trackApp, closeTrackedApps } = createAppCloseTracker();
-
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import {
+    closeProviderAccountUsageTrackedApps,
+    createProviderAccountUsageRecordKey,
+    createProviderAccountUsageTestApp,
+} from "./providerAccountUsageTestkit";
+import {
+    buildProviderAccountUsageRecordId,
+    type ConnectedServiceId,
+} from "@happier-dev/protocol";
+import { readProviderAccountUsageRecord } from "./providerAccountUsage";
+import {
+    readExactQualifiedConnectedServiceUsageSource,
+} from "./qualifiedConnectedAccounts/usageRepository";
+import {
+    resolveLegacyQualifiedConnectedAccountService,
+} from "./qualifiedConnectedAccounts/identity";
+import {
+    createLegacyCredentialFixtureIdentity,
+    createLegacyGroupFixtureIdentity,
+    createLegacyGroupMemberFixtureIdentity,
+} from "./testkit/qualifiedConnectedAccountFixtureIdentity";
 
-
-function createTestApp() {
-    const app = Fastify();
-    app.setValidatorCompiler(validatorCompiler);
-    app.setSerializerCompiler(serializerCompiler);
-    const typed = app.withTypeProvider<ZodTypeProvider>() as any;
-
-    typed.decorate("authenticate", async (request: any, reply: any) => {
-        const userId = request.headers["x-test-user-id"];
-        if (typeof userId !== "string" || !userId) {
-            return reply.code(401).send({ error: "Unauthorized" });
-        }
-        request.userId = userId;
-    });
-
-    return trackApp(typed);
-}
-
-function createV2QuotaPayload(params: Readonly<{
-    ciphertext: string;
-    fetchedAt: number;
-    fingerprint?: string;
-    status?: "ok" | "unavailable" | "estimated" | "error";
-}>) {
-    return {
-        sealed: { format: "account_scoped_v1", ciphertext: params.ciphertext },
-        metadata: {
-            fetchedAt: params.fetchedAt,
-            staleAfterMs: 300000,
-            status: params.status ?? "ok",
-            ...(params.fingerprint ? { materialFingerprint: params.fingerprint } : {}),
+async function readConnectedServiceUsageSource(params: Readonly<{
+    accountId: string;
+    serviceId: ConnectedServiceId;
+    profileId: string;
+}>): Promise<Readonly<{
+    providerAccountUsageRecordId: string;
+    bindingKind: "profile";
+}> | null> {
+    const result = await readExactQualifiedConnectedServiceUsageSource({
+        accountId: params.accountId,
+        source: {
+            ref: {
+                service:
+                    resolveLegacyQualifiedConnectedAccountService(
+                        params.serviceId,
+                    ),
+                accountId: params.profileId,
+            },
+            bindingKind: "account",
         },
-    };
+    });
+    return result
+        ? {
+            providerAccountUsageRecordId: result.recordId,
+            bindingKind: "profile",
+        }
+        : null;
 }
 
-function readRefreshRequestedAt(metadata: unknown): number {
-    if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
-        throw new Error("Expected quota metadata object with refreshRequestedAt");
-    }
-    const value = (metadata as { refreshRequestedAt?: unknown }).refreshRequestedAt;
-    if (typeof value !== "number") {
-        throw new Error("Expected quota metadata refreshRequestedAt");
-    }
-    return value;
+async function createConnectedServiceProfileBinding(
+    accountId: string,
+    profileId: string = "work",
+    params: Readonly<{ providerAccountId?: string | null }> = {},
+): Promise<{ id: string }> {
+    return await db.serviceAccountToken.create({
+        data: {
+            accountId,
+            vendor: "openai-codex",
+            profileId,
+            ...createLegacyCredentialFixtureIdentity({
+                serviceId: "openai-codex",
+                profileId,
+                credentialKind: "oauth",
+            }),
+            token: Buffer.from(`token:openai-codex:${profileId}`, "utf8"),
+            metadata: {
+                v: 2,
+                format: "account_scoped_v1",
+                kind: "oauth",
+                ...(params.providerAccountId !== null ? { providerAccountId: params.providerAccountId ?? "acct_provider_subject" } : {}),
+            },
+        },
+        select: { id: true },
+    });
 }
 
-describe("connectRoutes (connected services quotas v2) sealed quota snapshot endpoints (integration)", () => {
+async function createConnectedServiceGroupMember(params: Readonly<{
+    accountId: string;
+    profileId?: string;
+    groupId?: string;
+    generation?: number;
+}>): Promise<void> {
+    const profileId = params.profileId ?? "work";
+    const groupId = params.groupId ?? "team";
+    const credential = await db.serviceAccountToken.findUniqueOrThrow({
+        where: {
+            accountId_vendor_profileId: {
+                accountId: params.accountId,
+                vendor: "openai-codex",
+                profileId,
+            },
+        },
+        select: { id: true },
+    });
+    const group = await db.connectedServiceAuthGroup.create({
+        data: {
+            accountId: params.accountId,
+            vendor: "openai-codex",
+            groupId,
+            ...createLegacyGroupFixtureIdentity({
+                serviceId: "openai-codex",
+                groupId,
+            }),
+            displayName: null,
+            policyJson: JSON.stringify({ v: 1, strategy: "priority", autoSwitch: true }),
+            activeProfileId: profileId,
+            activeConnectedAccountId: profileId,
+            generation: params.generation ?? 0,
+            stateJson: null,
+        },
+        select: { id: true },
+    });
+    await db.connectedServiceAuthGroupMember.create({
+        data: {
+            groupDbId: group.id,
+            accountId: params.accountId,
+            vendor: "openai-codex",
+            groupId,
+            profileId,
+            ...createLegacyGroupMemberFixtureIdentity({
+                serviceId: "openai-codex",
+                profileId,
+                groupId,
+                credentialId: credential.id,
+                credentialKind: "oauth",
+            }),
+            priority: 10,
+            enabled: true,
+            stateJson: null,
+        },
+    });
+}
+
+describe("connectRoutes (connected services quotas v2) sealed quota endpoints", () => {
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {
@@ -71,529 +152,417 @@ describe("connectRoutes (connected services quotas v2) sealed quota snapshot end
     afterAll(async () => {
         await harness.close();
     });
+
     afterEach(async () => {
-        await closeTrackedApps();
+        await closeProviderAccountUsageTrackedApps();
         harness.resetEnv();
-        await (db as any).serviceAccountQuotaSnapshot?.deleteMany?.().catch(() => {});
+        vi.unstubAllGlobals();
+        await db.connectedServiceUsageSource.deleteMany().catch(() => {});
+        await db.providerAccountUsageRecord.deleteMany().catch(() => {});
         await db.serviceAccountToken.deleteMany().catch(() => {});
         await db.account.deleteMany().catch(() => {});
     });
 
-    it("does not register quota snapshot routes when HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED=0", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "0" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-disabled" }, select: { id: true } });
+    it("returns the source-bound kind-4 compatibility projection without exposing canonical PAU ciphertext", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await db.account.create({
+            data: { publicKey: "pk-quota-v2", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_projection" });
 
-        const app = createTestApp();
+        const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const res = await app.inject({
+        const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v2_projection" });
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const write = await app.inject({
+            method: "POST",
+            url: `/v2/connect/provider-account-usage/${recordId}`,
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                recordKey,
+                sealed: { format: "account_scoped_v1", ciphertext: "sealed-legacy-quota" },
+                legacyQuotaCompatibility: {
+                    format: "account_scoped_v1",
+                    ciphertext:
+                        "oQQhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5fEl9K9e0gbQcLrSkvsMc0Wbde5VEgjODqJnwlP50/98/oh/sEPqZQamcCTwpYsU=",
+                },
+                metadata: {
+                    fetchedAt: 1_234,
+                    staleAfterMs: 300_000,
+                    status: "ok",
+                    materialFingerprint: "legacy:v2:test",
+                },
+                source: {
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                    bindingKind: "profile",
+                },
+            },
+        });
+        expect(write.statusCode).toBe(200);
+
+        const read = await app.inject({
             method: "GET",
             url: "/v2/connect/openai-codex/profiles/work/quotas",
             headers: { "x-test-user-id": user.id },
         });
-        expect(res.statusCode).toBe(404);
-    });
-
-    it("stores and returns sealed quota snapshots when enabled", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-enabled" }, select: { id: true } });
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const put = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: JSON.stringify({
-                sealed: { format: "account_scoped_v1", ciphertext: "ciphertext-quota-snapshot" },
-                metadata: { fetchedAt: Date.now(), staleAfterMs: 300000, status: "ok" },
-            }),
+        expect(read.statusCode).toBe(200);
+        expect(read.json()).toEqual({
+            sealed: {
+                format: "account_scoped_v1",
+                ciphertext:
+                    "oQQhIiMkJSYnKCkqKywtLi8wMTIzNDU2Nzg5fEl9K9e0gbQcLrSkvsMc0Wbde5VEgjODqJnwlP50/98/oh/sEPqZQamcCTwpYsU=",
+            },
+            metadata: {
+                fetchedAt: 1_234,
+                staleAfterMs: 300_000,
+                status: "ok",
+            },
         });
-        expect(put.statusCode).toBe(200);
 
-        const get = await app.inject({
+        await expect(readConnectedServiceUsageSource({
+            accountId: user.id,
+            serviceId: "openai-codex",
+            profileId: "work",
+        })).resolves.toEqual(expect.objectContaining({
+            providerAccountUsageRecordId: recordId,
+        }));
+        await expect(readProviderAccountUsageRecord({
+            accountId: user.id,
+            recordId,
+        })).resolves.toEqual(expect.objectContaining({
+            payloadMode: "sealed_account_scoped_v1",
+            sealedPayload: { format: "account_scoped_v1", ciphertext: "sealed-legacy-quota" },
+        }));
+
+        const newerWrite = await app.inject({
+            method: "POST",
+            url: `/v2/connect/provider-account-usage/${recordId}`,
+            headers: {
+                "content-type": "application/json",
+                "x-test-user-id": user.id,
+            },
+            payload: {
+                recordKey,
+                sealed: {
+                    format: "account_scoped_v1",
+                    ciphertext: "newer-canonical-pau-without-shadow",
+                },
+                metadata: {
+                    fetchedAt: 1_235,
+                    staleAfterMs: 300_000,
+                    status: "ok",
+                    materialFingerprint: "legacy:v2:newer",
+                },
+                source: {
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                    bindingKind: "profile",
+                },
+            },
+        });
+        expect(newerWrite.statusCode).toBe(200);
+        const staleProjectionRead = await app.inject({
             method: "GET",
             url: "/v2/connect/openai-codex/profiles/work/quotas",
             headers: { "x-test-user-id": user.id },
         });
-        expect(get.statusCode).toBe(200);
-        const body = get.json() as any;
-        expect(body.sealed?.format).toBe("account_scoped_v1");
-        expect(body.sealed?.ciphertext).toBe("ciphertext-quota-snapshot");
-        expect(typeof body.metadata?.fetchedAt).toBe("number");
-        expect(typeof body.metadata?.staleAfterMs).toBe("number");
-        expect(body.metadata?.status).toBe("ok");
+        expect(staleProjectionRead.statusCode).toBe(404);
     });
 
-    it("does not rewrite sealed quota snapshot bytes when material fingerprint is unchanged and not newer", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-idempotent" }, select: { id: true } });
+    it("rejects source-attached provider-account usage when the source link belongs to another provider account", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await db.account.create({
+            data: { publicKey: "pk-quota-v2-source-mismatch", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_connected_profile_subject" });
 
-        const app = createTestApp();
+        const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const fetchedAt = Date.now();
-        const first = await app.inject({
+        const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_usage_subject" });
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const write = await app.inject({
             method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-first", fetchedAt, fingerprint: "hmac:v2-same" }),
+            url: `/v2/connect/provider-account-usage/${recordId}`,
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                recordKey,
+                sealed: { format: "account_scoped_v1", ciphertext: "sealed-source-mismatch" },
+                metadata: {
+                    fetchedAt: 2_468,
+                    staleAfterMs: 300_000,
+                    status: "ok",
+                },
+                source: {
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                    bindingKind: "profile",
+                },
+            },
         });
-        expect(first.statusCode).toBe(200);
-
-        const before = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { snapshot: true, fetchedAt: true, metadata: true },
+        expect(write.statusCode).toBe(400);
+        expect(write.json()).toEqual({
+            error: "invalid-params",
+            reason: "connected_service_usage_source_incompatible",
         });
-
-        const duplicate = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-randomized-retry", fetchedAt, fingerprint: "hmac:v2-same" }),
-        });
-        expect(duplicate.statusCode).toBe(200);
-
-        const after = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { snapshot: true, fetchedAt: true, metadata: true },
-        });
-        expect(Buffer.from(after.snapshot).toString("utf8")).toBe(Buffer.from(before.snapshot).toString("utf8"));
-        expect(after.fetchedAt?.getTime()).toBe(before.fetchedAt?.getTime());
-        expect(after.metadata).toMatchObject({ materialFingerprint: "hmac:v2-same" });
+        await expect(readConnectedServiceUsageSource({
+            accountId: user.id,
+            serviceId: "openai-codex",
+            profileId: "work",
+        })).resolves.toBeNull();
+        await expect(readProviderAccountUsageRecord({ accountId: user.id, recordId })).resolves.toBeNull();
     });
 
-    it("does not let older sealed quota snapshots overwrite newer stored material", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-stale" }, select: { id: true } });
+    it("returns a machine-readable provider/source compatibility reason for rejected source links", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await db.account.create({
+            data: { publicKey: "pk-quota-v2-source-incompatible", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
 
-        const app = createTestApp();
+        const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const fetchedAt = Date.now();
-        const newer = await app.inject({
+        const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_source_incompatible" });
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const write = await app.inject({
             method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-newer", fetchedAt, fingerprint: "hmac:v2-newer" }),
-        });
-        expect(newer.statusCode).toBe(200);
-
-        const older = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-older", fetchedAt: fetchedAt - 1, fingerprint: "hmac:v2-older" }),
-        });
-        expect(older.statusCode).toBe(200);
-
-        const row = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { snapshot: true, fetchedAt: true, metadata: true },
-        });
-        expect(Buffer.from(row.snapshot).toString("utf8")).toBe("ciphertext-newer");
-        expect(row.fetchedAt?.getTime()).toBe(fetchedAt);
-        expect(row.metadata).toMatchObject({ materialFingerprint: "hmac:v2-newer" });
-    });
-
-    it("retries a changed-fingerprint sealed write when a newer writer wins the conditional update race", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-v2-changed-race" }, select: { id: true } });
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const fetchedAt = Date.now();
-        const competingFetchedAt = fetchedAt + 100;
-        const newestFetchedAt = fetchedAt + 200;
-        await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-original", fetchedAt, fingerprint: "hmac:v2-original" }),
+            url: `/v2/connect/provider-account-usage/${recordId}`,
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                recordKey,
+                sealed: { format: "account_scoped_v1", ciphertext: "sealed-source-incompatible" },
+                metadata: {
+                    fetchedAt: 3_579,
+                    staleAfterMs: 300_000,
+                    status: "ok",
+                },
+                source: {
+                    serviceId: "claude-subscription",
+                    profileId: "work",
+                    bindingKind: "profile",
+                },
+            },
         });
 
-        const originalRow = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { id: true, updatedAt: true },
-        });
-
-        const quotaSnapshotModel = db.serviceAccountQuotaSnapshot;
-        const originalUpdateMany = quotaSnapshotModel.updateMany.bind(quotaSnapshotModel);
-        type QuotaSnapshotUpdateManyArgs = Parameters<typeof quotaSnapshotModel.updateMany>[0];
-        type QuotaSnapshotUpdateManyResult = ReturnType<typeof quotaSnapshotModel.updateMany>;
-        let injectedCompetingWrite = false;
-        async function updateManyWithCompetingWrite(args: QuotaSnapshotUpdateManyArgs) {
-            if (!injectedCompetingWrite && args?.where?.id === originalRow.id && args?.where?.updatedAt) {
-                injectedCompetingWrite = true;
-                await quotaSnapshotModel.update({
-                    where: { id: originalRow.id },
-                    data: {
-                        updatedAt: new Date(originalRow.updatedAt.getTime() + 1),
-                        snapshot: new TextEncoder().encode("ciphertext-competing"),
-                        status: "estimated",
-                        fetchedAt: new Date(competingFetchedAt),
-                        staleAfterMs: 300000,
-                        metadata: { v: 1, format: "account_scoped_v1", materialFingerprint: "hmac:v2-competing" },
-                    },
-                });
-            }
-            return await originalUpdateMany(args);
-        }
-        const updateManySpy = vi.spyOn(quotaSnapshotModel, "updateMany").mockImplementation((args: QuotaSnapshotUpdateManyArgs): QuotaSnapshotUpdateManyResult => {
-            // Vitest async mocks return native Promises while Prisma brands delegate results as PrismaPromise.
-            return updateManyWithCompetingWrite(args) as unknown as QuotaSnapshotUpdateManyResult;
-        });
-
-        try {
-            const newest = await app.inject({
-                method: "POST",
-                url: "/v2/connect/openai-codex/profiles/work/quotas",
-                headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-                payload: createV2QuotaPayload({ ciphertext: "ciphertext-newest", fetchedAt: newestFetchedAt, fingerprint: "hmac:v2-newest" }),
-            });
-            expect(newest.statusCode).toBe(200);
-        } finally {
-            updateManySpy.mockRestore();
-            quotaSnapshotModel.updateMany = originalUpdateMany;
-        }
-
-        expect(injectedCompetingWrite).toBe(true);
-        const row = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { snapshot: true, fetchedAt: true, metadata: true },
-        });
-        expect(Buffer.from(row.snapshot).toString("utf8")).toBe("ciphertext-newest");
-        expect(row.fetchedAt?.getTime()).toBe(newestFetchedAt);
-        expect(row.metadata).toMatchObject({ materialFingerprint: "hmac:v2-newest" });
-    });
-
-    it("stores the newest sealed write after repeated refresh metadata races", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-v2-refresh-race" }, select: { id: true } });
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const fetchedAt = Date.now();
-        const newestFetchedAt = fetchedAt + 200;
-        const refreshRequestedAt = newestFetchedAt + 1000;
-        await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-original", fetchedAt, fingerprint: "hmac:v2-original" }),
-        });
-
-        const originalRow = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { id: true, updatedAt: true },
-        });
-
-        const quotaSnapshotModel = db.serviceAccountQuotaSnapshot;
-        const originalUpdateMany = quotaSnapshotModel.updateMany.bind(quotaSnapshotModel);
-        type QuotaSnapshotUpdateManyArgs = Parameters<typeof quotaSnapshotModel.updateMany>[0];
-        type QuotaSnapshotUpdateManyResult = ReturnType<typeof quotaSnapshotModel.updateMany>;
-        let injectedRefreshWrites = 0;
-        async function updateManyWithRepeatedRefreshRace(args: QuotaSnapshotUpdateManyArgs) {
-            const guardedUpdatedAt = args?.where?.updatedAt;
-            if (injectedRefreshWrites < 3 && args?.where?.id === originalRow.id && guardedUpdatedAt instanceof Date) {
-                injectedRefreshWrites += 1;
-                await quotaSnapshotModel.update({
-                    where: { id: originalRow.id },
-                    data: {
-                        updatedAt: new Date(guardedUpdatedAt.getTime() + 1),
-                        metadata: {
-                            v: 1,
-                            format: "account_scoped_v1",
-                            materialFingerprint: "hmac:v2-original",
-                            refreshRequestedAt,
-                        },
-                    },
-                });
-            }
-            return await originalUpdateMany(args);
-        }
-        const updateManySpy = vi.spyOn(quotaSnapshotModel, "updateMany").mockImplementation((args: QuotaSnapshotUpdateManyArgs): QuotaSnapshotUpdateManyResult => {
-            // Vitest async mocks return native Promises while Prisma brands delegate results as PrismaPromise.
-            return updateManyWithRepeatedRefreshRace(args) as unknown as QuotaSnapshotUpdateManyResult;
-        });
-
-        try {
-            const newest = await app.inject({
-                method: "POST",
-                url: "/v2/connect/openai-codex/profiles/work/quotas",
-                headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-                payload: createV2QuotaPayload({ ciphertext: "ciphertext-newest", fetchedAt: newestFetchedAt, fingerprint: "hmac:v2-newest" }),
-            });
-            expect(newest.statusCode).toBe(200);
-        } finally {
-            updateManySpy.mockRestore();
-            quotaSnapshotModel.updateMany = originalUpdateMany;
-        }
-
-        expect(injectedRefreshWrites).toBe(3);
-        const row = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { snapshot: true, fetchedAt: true, metadata: true },
-        });
-        expect(Buffer.from(row.snapshot).toString("utf8")).toBe("ciphertext-newest");
-        expect(row.fetchedAt?.getTime()).toBe(newestFetchedAt);
-        expect(row.metadata).toMatchObject({
-            materialFingerprint: "hmac:v2-newest",
-            refreshRequestedAt,
+        expect(write.statusCode).toBe(400);
+        expect(write.json()).toEqual({
+            error: "invalid-params",
+            reason: "connected_service_usage_source_incompatible",
         });
     });
 
-    it("clears a refresh request when a duplicate fingerprint arrives with newer freshness", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-clear" }, select: { id: true } });
+    it("refreshes and deletes sealed quota views through the source relation", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await db.account.create({
+            data: { publicKey: "pk-quota-v2-refresh", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_refresh" });
+        const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v2_refresh" });
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
 
-        const app = createTestApp();
+        const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const fetchedAt = Date.now();
-        await app.inject({
+        expect((await app.inject({
             method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-before-refresh", fetchedAt, fingerprint: "hmac:v2-refresh" }),
-        });
+            url: `/v2/connect/provider-account-usage/${recordId}`,
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                recordKey,
+                sealed: { format: "account_scoped_v1", ciphertext: "sealed-legacy-quota" },
+                metadata: {
+                    fetchedAt: 9_999,
+                    staleAfterMs: 60_000,
+                    status: "ok",
+                },
+                source: {
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                    bindingKind: "profile",
+                },
+            },
+        })).statusCode).toBe(200);
 
         const refresh = await app.inject({
             method: "POST",
             url: "/v2/connect/openai-codex/profiles/work/quotas/refresh",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: {},
+            headers: { "x-test-user-id": user.id },
         });
         expect(refresh.statusCode).toBe(200);
+        expect(refresh.json()).toEqual({ success: true });
+        expect((await readProviderAccountUsageRecord({ accountId: user.id, recordId }))?.refreshRequestedAt).toEqual(expect.any(Number));
 
-        const refreshRow = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { metadata: true },
-        });
-        const refreshedAt = readRefreshRequestedAt(refreshRow.metadata) + 1;
-
-        const refreshed = await app.inject({
-            method: "POST",
+        const deleted = await app.inject({
+            method: "DELETE",
             url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({
-                ciphertext: "ciphertext-after-refresh",
-                fetchedAt: refreshedAt,
-                fingerprint: "hmac:v2-refresh",
-                status: "estimated",
-            }),
+            headers: { "x-test-user-id": user.id },
         });
-        expect(refreshed.statusCode).toBe(200);
+        expect(deleted.statusCode).toBe(200);
+        expect(deleted.json()).toEqual({ success: true });
 
-        const row = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { fetchedAt: true, status: true, metadata: true },
-        });
-        expect(row.fetchedAt?.getTime()).toBe(refreshedAt);
-        expect(row.status).toBe("estimated");
-        expect(row.metadata).toMatchObject({ materialFingerprint: "hmac:v2-refresh" });
-        expect(row.metadata).not.toHaveProperty("refreshRequestedAt");
+        await expect(readConnectedServiceUsageSource({
+            accountId: user.id,
+            serviceId: "openai-codex",
+            profileId: "work",
+        })).resolves.toBeNull();
+        await expect(readProviderAccountUsageRecord({ accountId: user.id, recordId })).resolves.toEqual(expect.objectContaining({
+            recordId,
+            payloadMode: "sealed_account_scoped_v1",
+        }));
     });
 
-    it("does not clear a refresh request when a duplicate fingerprint was observed before the request", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-stale-duplicate" }, select: { id: true } });
+    it("preserves explicit group-member source context on canonical sealed provider-account usage writes", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await db.account.create({
+            data: { publicKey: "pk-quota-v2-group", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_group_member" });
+        await createConnectedServiceGroupMember({ accountId: user.id, profileId: "work", groupId: "team", generation: 4 });
 
-        const app = createTestApp();
+        const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const fetchedAt = Date.now() - 10_000;
-        await app.inject({
+        const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v2_group_member" });
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const write = await app.inject({
             method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-before-refresh", fetchedAt, fingerprint: "hmac:v2-refresh-stale" }),
+            url: `/v2/connect/provider-account-usage/${recordId}`,
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                recordKey,
+                source: {
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                    bindingKind: "group_member",
+                    groupId: "team",
+                    groupGeneration: 4,
+                },
+                sealed: { format: "account_scoped_v1", ciphertext: "sealed-group-member-quota" },
+                metadata: {
+                    fetchedAt: 12_345,
+                    staleAfterMs: 60_000,
+                    status: "ok",
+                },
+            },
         });
 
-        const refresh = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas/refresh",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: {},
-        });
-        expect(refresh.statusCode).toBe(200);
-
-        const refreshRow = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { metadata: true },
-        });
-        const refreshRequestedAt = readRefreshRequestedAt(refreshRow.metadata);
-
-        const staleDuplicate = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: createV2QuotaPayload({ ciphertext: "ciphertext-stale-duplicate", fetchedAt, fingerprint: "hmac:v2-refresh-stale" }),
-        });
-        expect(staleDuplicate.statusCode).toBe(200);
-
-        const row = await db.serviceAccountQuotaSnapshot.findUniqueOrThrow({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { fetchedAt: true, metadata: true },
-        });
-        expect(row.fetchedAt?.getTime()).toBe(fetchedAt);
-        expect(row.metadata).toMatchObject({ materialFingerprint: "hmac:v2-refresh-stale", refreshRequestedAt });
+        expect(write.statusCode).toBe(200);
+        await expect(readExactQualifiedConnectedServiceUsageSource({
+            accountId: user.id,
+            source: {
+                ref: {
+                    service:
+                        resolveLegacyQualifiedConnectedAccountService(
+                            "openai-codex",
+                        ),
+                    accountId: "work",
+                },
+                bindingKind: "group_member",
+                groupId: "team",
+                groupGeneration: 4,
+            },
+        })).resolves.toEqual(expect.objectContaining({
+            source: expect.objectContaining({
+                bindingKind: "group_member",
+                groupId: "team",
+                groupGeneration: 4,
+            }),
+        }));
     });
 
-    it("accepts a refresh request and exposes refreshRequestedAt in metadata", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-refresh" }, select: { id: true } });
+    it("does not flatten group-member PAU ciphertext into a legacy profile quota view", async () => {
+        harness.resetEnv({
+            HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "true",
+            HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: "required_e2ee",
+            HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: "e2ee",
+        });
+        const user = await db.account.create({
+            data: { publicKey: "pk-quota-v2-stale-generation", encryptionMode: "e2ee" },
+            select: { id: true },
+        });
+        await createConnectedServiceProfileBinding(user.id, "work", { providerAccountId: "acct_quota_v2_stale_generation" });
+        await createConnectedServiceGroupMember({ accountId: user.id, profileId: "work", groupId: "team", generation: 4 });
 
-        const app = createTestApp();
+        const app = createProviderAccountUsageTestApp();
         connectRoutes(app as any);
         await app.ready();
 
-        const fetchedAt = Date.now();
-        await app.inject({
+        const recordKey = createProviderAccountUsageRecordKey({ accountSubjectId: "acct_quota_v2_stale_generation" });
+        const recordId = buildProviderAccountUsageRecordId(recordKey);
+        const write = await app.inject({
             method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: JSON.stringify({
-                sealed: { format: "account_scoped_v1", ciphertext: "ciphertext-quota-snapshot" },
-                metadata: { fetchedAt, staleAfterMs: 300000, status: "ok" },
-            }),
+            url: `/v2/connect/provider-account-usage/${recordId}`,
+            headers: { "content-type": "application/json", "x-test-user-id": user.id },
+            payload: {
+                recordKey,
+                source: {
+                    serviceId: "openai-codex",
+                    profileId: "work",
+                    bindingKind: "group_member",
+                    groupId: "team",
+                    groupGeneration: 4,
+                },
+                sealed: { format: "account_scoped_v1", ciphertext: "sealed-stale-generation-quota" },
+                metadata: {
+                    fetchedAt: 45_678,
+                    staleAfterMs: 60_000,
+                    status: "ok",
+                },
+            },
+        });
+        expect(write.statusCode).toBe(200);
+
+        await db.connectedServiceAuthGroup.update({
+            where: {
+                accountId_vendor_groupId: {
+                    accountId: user.id,
+                    vendor: "openai-codex",
+                    groupId: "team",
+                },
+            },
+            data: { generation: 5 },
         });
 
-        const refresh = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas/refresh",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: JSON.stringify({}),
-        });
-        expect(refresh.statusCode).toBe(200);
-
-        const get = await app.inject({
+        const read = await app.inject({
             method: "GET",
             url: "/v2/connect/openai-codex/profiles/work/quotas",
             headers: { "x-test-user-id": user.id },
         });
-        const body = get.json() as any;
-        expect(typeof body.metadata?.refreshRequestedAt).toBe("number");
-        expect(body.metadata.refreshRequestedAt).toBeGreaterThan(0);
-    });
-
-    it("accepts a refresh request even when no quota snapshot exists yet", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-missing" }, select: { id: true } });
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const refresh = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas/refresh",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: JSON.stringify({}),
+        expect(read.statusCode).toBe(404);
+        expect(read.json()).toEqual({
+            error: "connect_quotas_not_found",
         });
-        expect(refresh.statusCode).toBe(200);
-
-        const row = await (db as any).serviceAccountQuotaSnapshot?.findUnique?.({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { metadata: true },
-        });
-        expect(row?.metadata).toBeTruthy();
-
-        const get = await app.inject({
-            method: "GET",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id },
-        });
-        expect(get.statusCode).toBe(404);
-    });
-
-    it("rejects quota refresh requests with non-canonical profile ids", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-invalid-profile" }, select: { id: true } });
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const refresh = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work.bad/quotas/refresh",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: JSON.stringify({}),
-        });
-
-        expect(refresh.statusCode).toBe(400);
-    });
-
-    it("includes refreshRequestedAt in metadata even when it is 0", async () => {
-        harness.resetEnv({ HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: "1" });
-        const user = await db.account.create({ data: { publicKey: "pk-quota-refresh-zero" }, select: { id: true } });
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const fetchedAt = Date.now();
-        await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: JSON.stringify({
-                sealed: { format: "account_scoped_v1", ciphertext: "ciphertext-quota-snapshot" },
-                metadata: { fetchedAt, staleAfterMs: 300000, status: "ok" },
-            }),
-        });
-
-        const existing = await (db as any).serviceAccountQuotaSnapshot?.findUnique?.({
-            where: { accountId_vendor_profileId: { accountId: user.id, vendor: "openai-codex", profileId: "work" } },
-            select: { id: true, metadata: true },
-        });
-        expect(existing?.id).toBeTruthy();
-
-        await (db as any).serviceAccountQuotaSnapshot?.update?.({
-            where: { id: existing.id },
-            data: { metadata: { ...(existing.metadata ?? {}), refreshRequestedAt: 0 } },
-        });
-
-        const get = await app.inject({
-            method: "GET",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id },
-        });
-        expect(get.statusCode).toBe(200);
-        const body = get.json() as any;
-        expect(body.metadata).toHaveProperty("refreshRequestedAt");
-        expect(body.metadata.refreshRequestedAt).toBe(0);
-    });
-
-    it("rejects oversized ciphertext payloads", async () => {
-        const user = await db.account.create({ data: { publicKey: "pk-quota-oversize" }, select: { id: true } });
-
-        const app = createTestApp();
-        connectRoutes(app as any);
-        await app.ready();
-
-        const huge = "x".repeat(400_000);
-        const put = await app.inject({
-            method: "POST",
-            url: "/v2/connect/openai-codex/profiles/work/quotas",
-            headers: { "x-test-user-id": user.id, "content-type": "application/json" },
-            payload: JSON.stringify({
-                sealed: { format: "account_scoped_v1", ciphertext: huge },
-                metadata: { fetchedAt: Date.now(), staleAfterMs: 300000, status: "ok" },
-            }),
-        });
-        expect(put.statusCode).toBe(400);
     });
 });

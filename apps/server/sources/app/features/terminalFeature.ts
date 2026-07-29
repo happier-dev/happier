@@ -4,6 +4,7 @@ import { readTerminalFeatureEnv } from "./catalog/readFeatureEnv";
 export function resolveTerminalFeature(env: NodeJS.ProcessEnv): FeaturesPayloadDelta {
     const config = readTerminalFeatureEnv(env);
     const embeddedPtyEnabled = config.embeddedPtyEnabled;
+    const transportByteStreamEnabled = config.transportByteStreamEnabled;
 
     return {
         features: {
@@ -11,8 +12,12 @@ export function resolveTerminalFeature(env: NodeJS.ProcessEnv): FeaturesPayloadD
                 embeddedPty: {
                     enabled: embeddedPtyEnabled,
                 },
+                transport: {
+                    byteStream: {
+                        enabled: transportByteStreamEnabled,
+                    },
+                },
             },
         },
     };
 }
-

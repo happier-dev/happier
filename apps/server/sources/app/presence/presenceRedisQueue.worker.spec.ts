@@ -80,10 +80,8 @@ describe("presenceRedisQueue worker", () => {
         // Consumer name derived from instance id
         expect((xreadgroup as any).mock.calls[0]?.[2]).toBe("inst-1");
 
-        // Flush happened before ACK
-        expect(dbMocks.db.session.updateMany).toHaveBeenCalledWith(expect.objectContaining({
-            where: { id: "s1", accountId: "u1" },
-        }));
+        // Supported predecessor session entries are consumed, but only the exact socket publisher owner may write reachability.
+        expect(dbMocks.db.session.updateMany).not.toHaveBeenCalled();
         expect(xpending).toHaveBeenCalled();
         expect(xack).toHaveBeenCalled();
     });

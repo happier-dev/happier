@@ -15,6 +15,8 @@ declare global {
         // Pending queue content types (same encrypted wrapper).
         type SessionPendingMessageContent = SessionMessageContent;
 
+        type SessionMessageDeliveryResolutionV1 = import("@happier-dev/protocol").SessionMessageDeliveryResolutionV1;
+
         // Usage report data structure
         type UsageReportData = {
             tokens: {

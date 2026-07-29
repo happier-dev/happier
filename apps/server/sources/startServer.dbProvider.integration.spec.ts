@@ -6,6 +6,7 @@ import {
     createStartServerDbMocks,
     installStartServerDbModuleMock,
     installStartServerCommonWiringMocks,
+    startVoiceProviderIdentityBackfillWorkerMock,
 } from "@/testkit/startServerMocks";
 import { createStartServerHarness } from "@/testkit/startServerHarness";
 
@@ -22,6 +23,16 @@ const startServerDbMocks = createStartServerDbMocks({
 });
 const { initDbPostgres, initDbPglite, initDbMysql, initDbSqlite } = startServerDbMocks;
 const initializeServerIdentityCache = vi.fn(async () => "srv_startupCache123");
+
+vi.mock("@/storage/redis/redis", () => ({
+    getRedisClient: () => ({ ping: vi.fn(async () => "PONG") }),
+}));
+vi.mock("@/app/events/createRedisStreamsRoomEmitter", () => ({
+    createRedisStreamsRoomEmitter: vi.fn(() => ({})),
+}));
+vi.mock("@/app/events/eventRouter", () => ({
+    eventRouter: { setIo: vi.fn() },
+}));
 
 installStartServerDbModuleMock(startServerDbMocks);
 
@@ -49,6 +60,8 @@ describe("startServer DB provider selection", () => {
         SERVER_ROLE: undefined,
         HAPPY_SERVER_LIGHT_DATA_DIR: undefined,
         HAPPIER_SERVER_LIGHT_DATA_DIR: undefined,
+        HAPPY_SQLITE_CONNECTION_LIMIT: undefined,
+        HAPPIER_SQLITE_CONNECTION_LIMIT: undefined,
         DATABASE_URL: undefined,
     });
 
@@ -57,6 +70,7 @@ describe("startServer DB provider selection", () => {
         initializeServerIdentityCache.mockReset().mockResolvedValue("srv_startupCache123");
         startServerHarness.reset();
         applySqliteMigrationsIfNeeded.mockReset().mockImplementation(async () => {});
+        startVoiceProviderIdentityBackfillWorkerMock.mockReset().mockReturnValue(null);
     });
 
     afterEach(() => {
@@ -71,6 +85,37 @@ describe("startServer DB provider selection", () => {
 
         expect(initDbMysql).toHaveBeenCalledTimes(1);
         expect(initDbPostgres).not.toHaveBeenCalled();
+    });
+
+    it("starts the identity backfill worker only for an all/worker role and passes the selected provider", async () => {
+        await startServerHarness.start("full", {
+            SERVER_ROLE: "all",
+            HAPPIER_DB_PROVIDER: "postgres",
+        });
+
+        expect(startVoiceProviderIdentityBackfillWorkerMock).toHaveBeenCalledWith({
+            provider: "postgres",
+            env: process.env,
+        });
+
+        startVoiceProviderIdentityBackfillWorkerMock.mockClear();
+        await startServerHarness.start("full", {
+            SERVER_ROLE: "worker",
+            HAPPIER_DB_PROVIDER: "postgres",
+            REDIS_URL: "redis://localhost:6379",
+            HAPPIER_SOCKET_ADAPTER: "redis-streams",
+        });
+        expect(startVoiceProviderIdentityBackfillWorkerMock).toHaveBeenCalledWith({
+            provider: "postgres",
+            env: process.env,
+        });
+
+        startVoiceProviderIdentityBackfillWorkerMock.mockClear();
+        await startServerHarness.start("full", {
+            SERVER_ROLE: "api",
+            HAPPIER_DB_PROVIDER: "postgres",
+        });
+        expect(startVoiceProviderIdentityBackfillWorkerMock).not.toHaveBeenCalled();
     });
 
     it("uses SQLite when HAPPY_DB_PROVIDER=sqlite (light flavor)", async () => {
@@ -115,7 +160,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `${pathToFileURL(join("/tmp/happy server #light", "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=1`,
+            `${pathToFileURL(join("/tmp/happy server #light", "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=4`,
         );
     });
 
@@ -129,7 +174,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `${pathToFileURL(join("/Users/tester/happy-server-light", "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=1`,
+            `${pathToFileURL(join("/Users/tester/happy-server-light", "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=4`,
         );
     });
 
@@ -143,7 +188,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `${pathToFileURL(join("/tmp/happier-preferred-dir", "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=1`,
+            `${pathToFileURL(join("/tmp/happier-preferred-dir", "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=4`,
         );
         expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
             dataDir: "/tmp/happier-preferred-dir",
@@ -163,7 +208,7 @@ describe("startServer DB provider selection", () => {
         });
 
         expect(process.env.DATABASE_URL).toBe(
-            `${pathToFileURL(join(expectedDataDir, "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=1`,
+            `${pathToFileURL(join(expectedDataDir, "happier-server-light.sqlite")).href}?socket_timeout=30&connection_limit=4`,
         );
         expect(applySqliteMigrationsIfNeeded).toHaveBeenCalledWith(expect.objectContaining({
             dataDir: expectedDataDir,

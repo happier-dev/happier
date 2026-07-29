@@ -11,8 +11,8 @@ type LegacyConnectedServiceVendorCore = Readonly<{
 }>;
 
 type LegacyConnectedServiceVendorRow = Readonly<{
-    vendor: string;
-    profileId: string;
+    vendor: string | null;
+    profileId: string | null;
 }>;
 
 export function collectLegacyConnectedServiceVendorKeys(

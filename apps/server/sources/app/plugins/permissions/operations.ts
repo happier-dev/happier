@@ -23,7 +23,7 @@ import {
     PluginPermissionGrantRequestActionOutputV1Schema,
     PluginPermissionGrantRevokeActionOutputV1Schema,
 } from "@happier-dev/protocol";
-import { isPrismaErrorCode } from "@/storage/prisma";
+import { isPrismaUniqueConstraintError } from "@/storage/prisma";
 
 import { PluginPermissionGrantOperationError } from "./errors";
 import {
@@ -31,8 +31,6 @@ import {
     type PluginPermissionGrantStore,
 } from "./storage";
 import {
-    authorityDeclaresOptionalCapability,
-    isBundledPluginPermissionGrantAuthority,
     resolveDefaultPluginPermissionGrantAuthority,
     type ResolvePluginPermissionGrantAuthority,
 } from "./authority";
@@ -160,6 +158,43 @@ async function findActiveGrantForRequest(
     })).grants[0] ?? null;
 }
 
+async function findPendingRequestForIdentity(
+    store: PluginPermissionGrantStore,
+    params: Readonly<{
+        accountId: string;
+        pluginId: PluginPermissionGrantRequestV1["pluginId"];
+        capability: PluginPermissionGrantRequestV1["capability"];
+        targetScope: PluginPermissionGrantRequestV1["targetScope"];
+        authoritySource: PluginPermissionGrantRequestV1["authoritySource"];
+    }>,
+): Promise<PluginPermissionGrantRequestV1 | null> {
+    return (await store.list({
+        accountId: params.accountId,
+        pluginId: params.pluginId,
+        capability: params.capability,
+        targetScope: params.targetScope,
+        authoritySource: params.authoritySource,
+        includeRevoked: false,
+        includeResolvedRequests: false,
+        limit: 1,
+    })).pendingRequests[0] ?? null;
+}
+
+async function readGrantedRequestOutcome(
+    store: PluginPermissionGrantStore,
+    request: PluginPermissionGrantRequestV1 | null,
+): Promise<Readonly<{
+    grant: PluginPermissionGrantV1;
+    pendingRequest: PluginPermissionGrantRequestV1;
+}> | null> {
+    if (request?.status !== "granted" || !request.grantId) return null;
+    const grant = await store.getGrant({
+        accountId: request.accountId,
+        grantId: request.grantId,
+    });
+    return grant ? { grant, pendingRequest: request } : null;
+}
+
 async function assertTrustedOptionalGrantAuthority(params: Readonly<{
     accountId: string;
     authoritySource?: PluginPermissionGrantAuthoritySourceV1;
@@ -168,19 +203,17 @@ async function assertTrustedOptionalGrantAuthority(params: Readonly<{
     targetScope: PluginPermissionGrantAuditEventV1["targetScope"];
     resolveAuthority: ResolvePluginPermissionGrantAuthority;
 }>): Promise<PluginPermissionGrantAuthoritySourceV1> {
-    const isBundledAuthority = isBundledPluginPermissionGrantAuthority(params.pluginId);
-    const expectedAuthoritySource = isBundledAuthority ? undefined : params.authoritySource;
-    if (!expectedAuthoritySource && !isBundledAuthority) {
+    const expectedAuthoritySource = params.authoritySource;
+    if (expectedAuthoritySource?.kind !== "machine_installation") {
         throw new PluginPermissionGrantOperationError(
             "plugin_permission_grant_publisher_proof_required",
-            "External plugin permission grant requests require a trusted machine publisher proof",
+            "Plugin permission grant requests require a trusted machine publisher proof",
         );
     }
     const authority = await params.resolveAuthority({
         accountId: params.accountId,
-        machineId: expectedAuthoritySource?.kind === "machine_installation"
-            ? expectedAuthoritySource.machineId
-            : undefined,
+        machineId: expectedAuthoritySource.machineId,
+        installationId: expectedAuthoritySource.installationId,
         pluginId: params.pluginId,
         capability: params.capability,
         targetScope: params.targetScope,
@@ -192,22 +225,13 @@ async function assertTrustedOptionalGrantAuthority(params: Readonly<{
         );
     }
     if (
-        expectedAuthoritySource?.kind === "machine_installation"
-        && (
-            authority.source.kind !== "machine_installation"
-            || authority.source.machineId !== expectedAuthoritySource.machineId
-            || authority.source.installationId !== expectedAuthoritySource.installationId
-        )
+        authority.source.kind !== "machine_installation"
+        || authority.source.machineId !== expectedAuthoritySource.machineId
+        || authority.source.installationId !== expectedAuthoritySource.installationId
     ) {
         throw new PluginPermissionGrantOperationError(
             "plugin_permission_grant_plugin_not_trusted",
             "Plugin permission grant authority source is no longer trusted",
-        );
-    }
-    if (!authorityDeclaresOptionalCapability(authority, params.capability)) {
-        throw new PluginPermissionGrantOperationError(
-            "plugin_permission_grant_capability_not_declared",
-            "Plugin manifest does not declare the requested optional permission",
         );
     }
     return authority.source;
@@ -241,6 +265,18 @@ export function createPluginPermissionGrantOperations(
                 targetScope: params.input.targetScope,
                 resolveAuthority,
             });
+            const existingPendingRequest = await findPendingRequestForIdentity(store, {
+                accountId: params.accountId,
+                pluginId: params.input.pluginId,
+                capability: params.input.capability,
+                targetScope: params.input.targetScope,
+                authoritySource,
+            });
+            if (existingPendingRequest) {
+                return PluginPermissionGrantRequestActionOutputV1Schema.parse({
+                    pendingRequest: existingPendingRequest,
+                });
+            }
             const now = runtime.now();
             const pendingRequest: PluginPermissionGrantRequestV1 = {
                 v: 1,
@@ -270,14 +306,38 @@ export function createPluginPermissionGrantOperations(
                 nextState: { status: pendingRequest.status },
                 reason: pendingRequest.reason,
             });
-            await store.createPendingRequest({ pendingRequest, event });
+            try {
+                await store.createPendingRequest({ pendingRequest, event });
+            } catch (error) {
+                if (!isPrismaUniqueConstraintError(error)) {
+                    throw error;
+                }
+                const racedPendingRequest = await findPendingRequestForIdentity(store, {
+                    accountId: params.accountId,
+                    pluginId: params.input.pluginId,
+                    capability: params.input.capability,
+                    targetScope: params.input.targetScope,
+                    authoritySource,
+                });
+                if (!racedPendingRequest) {
+                    throw error;
+                }
+                return PluginPermissionGrantRequestActionOutputV1Schema.parse({
+                    pendingRequest: racedPendingRequest,
+                });
+            }
             return PluginPermissionGrantRequestActionOutputV1Schema.parse({ pendingRequest });
         },
         async grant(params) {
-            const existing = assertPendingRequest(await store.getRequest({
+            const storedRequest = await store.getRequest({
                 accountId: params.accountId,
                 requestId: params.input.requestId,
-            }));
+            });
+            const terminalOutcome = await readGrantedRequestOutcome(store, storedRequest);
+            if (terminalOutcome) {
+                return PluginPermissionGrantGrantActionOutputV1Schema.parse(terminalOutcome);
+            }
+            const existing = assertPendingRequest(storedRequest);
             await assertTrustedOptionalGrantAuthority({
                 accountId: params.accountId,
                 authoritySource: existing.authoritySource,
@@ -359,7 +419,14 @@ export function createPluginPermissionGrantOperations(
             try {
                 await store.grantPendingRequest({ pendingRequest, grant, event });
             } catch (error) {
-                if (!isPrismaErrorCode(error, "P2002")) {
+                const currentOutcome = await readGrantedRequestOutcome(store, await store.getRequest({
+                    accountId: params.accountId,
+                    requestId: existing.id,
+                }));
+                if (currentOutcome) {
+                    return PluginPermissionGrantGrantActionOutputV1Schema.parse(currentOutcome);
+                }
+                if (!isPrismaUniqueConstraintError(error)) {
                     throw error;
                 }
                 const racedActiveGrant = await findActiveGrantForRequest(store, existing);
@@ -389,10 +456,21 @@ export function createPluginPermissionGrantOperations(
                     nextState: { requestStatus: racedPendingRequest.status, grantStatus: racedActiveGrant.status },
                     reason: params.input.reason,
                 });
-                await store.resolvePendingRequestWithExistingGrant({
-                    pendingRequest: racedPendingRequest,
-                    event: racedEvent,
-                });
+                try {
+                    await store.resolvePendingRequestWithExistingGrant({
+                        pendingRequest: racedPendingRequest,
+                        event: racedEvent,
+                    });
+                } catch (resolveError) {
+                    const resolvedOutcome = await readGrantedRequestOutcome(store, await store.getRequest({
+                        accountId: params.accountId,
+                        requestId: existing.id,
+                    }));
+                    if (resolvedOutcome) {
+                        return PluginPermissionGrantGrantActionOutputV1Schema.parse(resolvedOutcome);
+                    }
+                    throw resolveError;
+                }
                 return PluginPermissionGrantGrantActionOutputV1Schema.parse({
                     grant: racedActiveGrant,
                     pendingRequest: racedPendingRequest,
@@ -401,10 +479,16 @@ export function createPluginPermissionGrantOperations(
             return PluginPermissionGrantGrantActionOutputV1Schema.parse({ grant, pendingRequest });
         },
         async revoke(params) {
-            const existing = assertActiveGrant(await store.getGrant({
+            const storedGrant = await store.getGrant({
                 accountId: params.accountId,
                 grantId: params.input.grantId,
-            }));
+            });
+            if (storedGrant?.status === "revoked") {
+                return PluginPermissionGrantRevokeActionOutputV1Schema.parse({
+                    grant: storedGrant,
+                });
+            }
+            const existing = assertActiveGrant(storedGrant);
             const now = runtime.now();
             const grant: PluginPermissionGrantV1 = {
                 ...existing,
@@ -428,14 +512,33 @@ export function createPluginPermissionGrantOperations(
                 nextState: { grantStatus: grant.status },
                 reason: params.input.reason,
             });
-            await store.revokeGrant({ grant, event });
+            try {
+                await store.revokeGrant({ grant, event });
+            } catch (error) {
+                const current = await store.getGrant({
+                    accountId: params.accountId,
+                    grantId: existing.id,
+                });
+                if (current?.status === "revoked") {
+                    return PluginPermissionGrantRevokeActionOutputV1Schema.parse({
+                        grant: current,
+                    });
+                }
+                throw error;
+            }
             return PluginPermissionGrantRevokeActionOutputV1Schema.parse({ grant });
         },
         async dismissRequest(params) {
-            const existing = assertPendingRequest(await store.getRequest({
+            const storedRequest = await store.getRequest({
                 accountId: params.accountId,
                 requestId: params.input.requestId,
-            }));
+            });
+            if (storedRequest?.status === "dismissed") {
+                return PluginPermissionGrantDismissRequestActionOutputV1Schema.parse({
+                    pendingRequest: storedRequest,
+                });
+            }
+            const existing = assertPendingRequest(storedRequest);
             const now = runtime.now();
             const pendingRequest: PluginPermissionGrantRequestV1 = {
                 ...existing,
@@ -458,7 +561,20 @@ export function createPluginPermissionGrantOperations(
                 nextState: { requestStatus: pendingRequest.status },
                 reason: params.input.reason,
             });
-            await store.dismissPendingRequest({ pendingRequest, event });
+            try {
+                await store.dismissPendingRequest({ pendingRequest, event });
+            } catch (error) {
+                const current = await store.getRequest({
+                    accountId: params.accountId,
+                    requestId: existing.id,
+                });
+                if (current?.status === "dismissed") {
+                    return PluginPermissionGrantDismissRequestActionOutputV1Schema.parse({
+                        pendingRequest: current,
+                    });
+                }
+                throw error;
+            }
             return PluginPermissionGrantDismissRequestActionOutputV1Schema.parse({ pendingRequest });
         },
     };

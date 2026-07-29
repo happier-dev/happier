@@ -100,10 +100,31 @@ describe('readAuthMtlsFeatureEnv', () => {
 });
 
 describe('readTerminalFeatureEnv', () => {
-  it('defaults embeddedPtyEnabled to true when env is unset', () => {
+  it('defaults embeddedPtyEnabled and transportByteStreamEnabled to true when env is unset', () => {
     const env: NodeJS.ProcessEnv = {};
     const res = readTerminalFeatureEnv(env);
     expect(res.embeddedPtyEnabled).toBe(true);
+    expect(res.transportByteStreamEnabled).toBe(true);
+  });
+
+  it('keeps terminal byte-stream disabled when embedded PTY is disabled', () => {
+    const res = readTerminalFeatureEnv({
+      HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED: 'false',
+      HAPPIER_FEATURE_TERMINAL_TRANSPORT_BYTE_STREAM__ENABLED: 'true',
+    });
+
+    expect(res.embeddedPtyEnabled).toBe(false);
+    expect(res.transportByteStreamEnabled).toBe(false);
+  });
+
+  it('can disable terminal byte-stream while leaving embedded PTY available for legacy fallback', () => {
+    const res = readTerminalFeatureEnv({
+      HAPPIER_FEATURE_TERMINAL_EMBEDDED_PTY__ENABLED: 'true',
+      HAPPIER_FEATURE_TERMINAL_TRANSPORT_BYTE_STREAM__ENABLED: 'false',
+    });
+
+    expect(res.embeddedPtyEnabled).toBe(true);
+    expect(res.transportByteStreamEnabled).toBe(false);
   });
 });
 
@@ -265,15 +286,28 @@ describe('readMachineTunnelFeatureEnv', () => {
 });
 
 describe('readLocalServicesFeatureEnv', () => {
-  it('defaults local-service preview and public exposure server features to disabled', async () => {
+  it('defaults private preview ON (loopback only) while public exposure stays disabled', async () => {
     const mod = await loadFeatureEnvModule();
     expect(mod.readLocalServicesFeatureEnv).toBeTypeOf('function');
 
     const res = mod.readLocalServicesFeatureEnv({});
 
-    expect(res.previewEnabled).toBe(false);
+    // PRV-1: private preview reaches the user's own loopback dev server — no internet exposure —
+    // so it defaults ON. Public exposure (real internet reach) stays explicit/default-off.
+    expect(res.previewEnabled).toBe(true);
     expect(res.publicPreviewEnabled).toBe(false);
     expect(res.publicPolicy.enabled).toBe(false);
+  });
+
+  it('allows an explicit env opt-out of the private-preview product', async () => {
+    const mod = await loadFeatureEnvModule();
+
+    const res = mod.readLocalServicesFeatureEnv({
+      HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: '0',
+    });
+
+    expect(res.previewEnabled).toBe(false);
+    expect(res.publicPreviewEnabled).toBe(false);
   });
 
   it('reads local-service preview and public exposure policy from canonical feature env keys', async () => {
@@ -289,6 +323,8 @@ describe('readLocalServicesFeatureEnv', () => {
       HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: '600000',
       HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: '0',
       HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_PROFILE_IDS: 'default,strict',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_AUDIT_SINK: '1',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: '1',
     });
 
     expect(res.previewEnabled).toBe(true);
@@ -302,6 +338,46 @@ describe('readLocalServicesFeatureEnv', () => {
       dnsTlsRequired: false,
       auditRequired: true,
       rateLimitProfileIds: ['default', 'strict'],
+    });
+    expect(res.publicAuditTestSinkAllowed).toBe(true);
+    expect(res.publicRateLimitTestCheckerAllowed).toBe(true);
+  });
+
+  it('ignores public exposure test audit and rate overrides in production', async () => {
+    const mod = await loadFeatureEnvModule();
+    expect(mod.readLocalServicesFeatureEnv).toBeTypeOf('function');
+
+    const res = mod.readLocalServicesFeatureEnv({
+      NODE_ENV: 'production',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_AUDIT_SINK: '1',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOW_TEST_RATE_LIMIT_CHECKER: '1',
+    });
+
+    expect(res.publicAuditTestSinkAllowed).toBe(false);
+    expect(res.publicRateLimitTestCheckerAllowed).toBe(false);
+  });
+
+  it('reads real production public exposure audit and rate dependencies', async () => {
+    const mod = await loadFeatureEnvModule();
+    expect(mod.readLocalServicesFeatureEnv).toBeTypeOf('function');
+
+    const res = mod.readLocalServicesFeatureEnv({
+      NODE_ENV: 'production',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_SINK: 'jsonl_file',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__AUDIT_LOG_PATH: '/var/log/happier/public-preview-audit.jsonl',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_CHECKER: 'fixed_window',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_MAX_REQUESTS: '120',
+      HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__RATE_LIMIT_WINDOW_MS: '60000',
+    });
+
+    expect(res.publicAuditDependency).toEqual({
+      kind: 'jsonl_file',
+      path: '/var/log/happier/public-preview-audit.jsonl',
+    });
+    expect(res.publicRateLimitDependency).toEqual({
+      kind: 'fixed_window',
+      maxRequests: 120,
+      windowMs: 60_000,
     });
   });
 });

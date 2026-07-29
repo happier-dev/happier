@@ -3,9 +3,17 @@ import { parseIntEnv } from "@/config/env";
 import { delay } from "@/utils/runtime/delay";
 import { forever } from "@/utils/runtime/forever";
 import { shutdownSignal } from "@/utils/process/shutdown";
-import { buildMachineActivityEphemeral, buildSessionActivityEphemeral, eventRouter } from "@/app/events/eventRouter";
+import {
+    buildMachineActivityEphemeral,
+    buildSessionActivityEphemeral,
+    buildUpdateSessionUpdate,
+    eventRouter,
+} from "@/app/events/eventRouter";
 import { isRetryableSqliteWriteError } from "@/storage/sqliteRetryClassifier";
 import { warn } from "@/utils/logging/log";
+import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { refreshSessionParticipantBadgePushes } from "@/app/activity/refreshAccountActivityBadgePushes";
+import { expireSessionPublisherCandidates } from "./sessionPublisherPresence";
 
 export interface PresenceTimeoutConfig {
     sessionTimeoutMs: number;
@@ -44,46 +52,30 @@ type TimedOutPresenceCandidate = {
     lastActiveAt: Date;
 };
 
-type UpdateManyAndReturnDelegate = {
-    updateManyAndReturn?: (args: {
-        where: {
-            id: { in: string[] };
-            active: true;
-        };
-        data: { active: false };
-        select: { id: true; accountId: true; lastActiveAt: true };
-    }) => Promise<TimedOutPresenceCandidate[]>;
+type ExactFenceUpdateDelegate = {
     updateMany: (args: {
         where: {
-            id: { in: string[] };
+            id: string;
             active: true;
+            lastActiveAt: Date;
         };
         data: { active: false };
     }) => Promise<{ count: number }>;
 };
 
-async function markTimedOutRowsInactive(
-    delegate: UpdateManyAndReturnDelegate,
+async function markTimedOutMachinesInactive(
+    delegate: ExactFenceUpdateDelegate,
     candidates: TimedOutPresenceCandidate[],
 ): Promise<TimedOutPresenceCandidate[]> {
-    if (candidates.length === 0) return [];
-
-    const ids = candidates.map((candidate) => candidate.id);
-    const where = { id: { in: ids }, active: true } as const;
-    const data = { active: false } as const;
-
-    if (delegate.updateManyAndReturn) {
-        return await delegate.updateManyAndReturn({
-            where,
-            data,
-            select: { id: true, accountId: true, lastActiveAt: true },
+    const changed: TimedOutPresenceCandidate[] = [];
+    for (const candidate of candidates) {
+        const result = await delegate.updateMany({
+            where: { id: candidate.id, active: true, lastActiveAt: candidate.lastActiveAt },
+            data: { active: false },
         });
+        if (result.count === 1) changed.push(candidate);
     }
-
-    const { count } = await delegate.updateMany({ where, data });
-    // Without RETURNING support, exact changed IDs are unknowable after a race. Emit only when
-    // every candidate was updated; otherwise stay conservative and let the next tick observe remaining active rows.
-    return count === candidates.length ? candidates : [];
+    return changed;
 }
 
 export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfig): Promise<void> {
@@ -97,11 +89,38 @@ export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfi
             },
             select: { id: true, accountId: true, lastActiveAt: true },
         });
-        const changedSessions = await markTimedOutRowsInactive(db.session, sessions);
-        for (const session of changedSessions) {
+        const candidateBySessionId = new Map(sessions.map((session) => [session.id, session]));
+        const expiryResults = await expireSessionPublisherCandidates({
+            candidates: sessions.map((session) => ({
+                sessionId: session.id,
+                observedFence: session.lastActiveAt,
+            })),
+        });
+        for (const result of expiryResults) {
+            if (result.status !== "expired") continue;
+            for (const { accountId, cursor } of result.participantCursors) {
+                eventRouter.emitUpdate({
+                    userId: accountId,
+                    payload: buildUpdateSessionUpdate(
+                        result.sessionId,
+                        cursor,
+                        randomKeyNaked(12),
+                        undefined,
+                        undefined,
+                        { active: false, activeAt: result.activeAt.getTime() },
+                    ),
+                    recipientFilter: { type: "all-interested-in-session", sessionId: result.sessionId },
+                });
+            }
+            await refreshSessionParticipantBadgePushes({
+                badgeAttentionChanged: result.badgeAttentionChanged,
+                participantCursors: result.participantCursors,
+            });
+            const candidate = candidateBySessionId.get(result.sessionId);
+            if (!candidate) continue;
             eventRouter.emitEphemeral({
-                userId: session.accountId,
-                payload: buildSessionActivityEphemeral(session.id, false, session.lastActiveAt.getTime(), false),
+                userId: candidate.accountId,
+                payload: buildSessionActivityEphemeral(result.sessionId, false, result.activeAt.getTime(), false),
                 recipientFilter: { type: 'user-scoped-only' }
             });
         }
@@ -121,7 +140,7 @@ export async function runPresenceTimeoutTick(timeoutConfig: PresenceTimeoutConfi
             },
             select: { id: true, accountId: true, lastActiveAt: true },
         });
-        const changedMachines = await markTimedOutRowsInactive(db.machine, machines);
+        const changedMachines = await markTimedOutMachinesInactive(db.machine, machines);
         for (const machine of changedMachines) {
             eventRouter.emitEphemeral({
                 userId: machine.accountId,
