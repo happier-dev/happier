@@ -13,16 +13,6 @@ import { ru } from './translations/ru';
 import { zhHans } from './translations/zh-Hans';
 import { zhHant } from './translations/zh-Hant';
 
-type VoiceMachineErrorKey = keyof typeof VOICE_MACHINE_ERROR_TRANSLATION_KEYS;
-
-type VoiceTranslationLocale = Readonly<{
-    settingsVoice: Readonly<{
-        local: Readonly<{
-            machineErrors: Readonly<Record<VoiceMachineErrorKey, string>>;
-        }>;
-    }>;
-}>;
-
 const supportedLocales = [
     { code: 'en', root: en },
     { code: 'ru', root: ru },
@@ -34,18 +24,25 @@ const supportedLocales = [
     { code: 'zh-Hans', root: zhHans },
     { code: 'zh-Hant', root: zhHant },
     { code: 'ja', root: ja },
-] satisfies ReadonlyArray<Readonly<{ code: string; root: VoiceTranslationLocale }>>;
+] as const;
+
+function readTranslation(root: unknown, path: string): unknown {
+    return path.split('.').reduce<unknown>((value, segment) => (
+        value !== null && typeof value === 'object'
+            ? (value as Readonly<Record<string, unknown>>)[segment]
+            : undefined
+    ), root);
+}
 
 describe('voice machine error translations', () => {
     it('keeps machine error labels present in every supported locale', () => {
         for (const { code, root } of supportedLocales) {
-            const machineErrors = root.settingsVoice?.local?.machineErrors;
-            if (!machineErrors) {
-                throw new Error(`${code}: settingsVoice.local.machineErrors is missing`);
-            }
-            for (const key of Object.keys(VOICE_MACHINE_ERROR_TRANSLATION_KEYS) as VoiceMachineErrorKey[]) {
-                expect(machineErrors[key], `${code}.${key}`).toEqual(expect.any(String));
-                expect(machineErrors[key].trim(), `${code}.${key}`).not.toHaveLength(0);
+            for (const [kind, translationKey] of Object.entries(
+                VOICE_MACHINE_ERROR_TRANSLATION_KEYS,
+            )) {
+                const translation = readTranslation(root, translationKey);
+                expect(translation, `${code}.${kind}`).toEqual(expect.any(String));
+                expect((translation as string).trim(), `${code}.${kind}`).not.toHaveLength(0);
             }
         }
     });
